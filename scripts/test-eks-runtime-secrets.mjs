@@ -51,6 +51,9 @@ try {
   workflowFull.runtimeDecisions.aiRuntime.status = 'selected';
   workflowFull.runtimeDecisions.aiRuntime.selected = 'direct';
   run('workflow-full-service', workflowFull, ['--full-service-ready'], true);
+  const workflowFullActive = structuredClone(workflowFull);
+  workflowFullActive.runtimeProfiles.backend.active = 'full-service';
+  run('workflow-full-service-active', workflowFullActive, ['--full-service-ready'], true);
 
   const external = clone();
   external.delivery = {
@@ -70,6 +73,10 @@ try {
     ['enabled-partial', (value) => { value.delivery.mode = 'external_secrets'; }],
     ['disabled-partial', (value) => { value.delivery.rotationOwner = 'service-team'; }],
     ['secret-key-drift', (value) => { value.secrets.backend.keys.pop(); }],
+    ['bounded-profile-drift', (value) => { value.runtimeProfiles.backend.boundedKeys.pop(); }],
+    ['bounded-profile-unknown-key', (value) => { value.runtimeProfiles.backend.boundedKeys.push('UNKNOWN'); }],
+    ['bounded-profile-active-drift', (value) => { value.runtimeProfiles.backend.active = 'unknown'; }],
+    ['full-service-active-unresolved', (value) => { value.runtimeProfiles.backend.active = 'full-service'; }],
     ['shared-binding-drift', (value) => { value.sharedBindings[0].bindings.pop(); }],
     ['file-mount-drift', (value) => { value.fileMounts[0].mountPath = '/tmp/ca.pem'; }],
     ['env-binding-drift', (value) => { value.envBindings[0].binding = 'backend:UNKNOWN'; }],

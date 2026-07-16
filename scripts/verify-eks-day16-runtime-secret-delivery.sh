@@ -5,9 +5,11 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
+BACKEND_SCOPE="${ASKLAKE_BACKEND_RUNTIME_SCOPE:-bounded}"
 INPUT="${ASKLAKE_DAY16_SECRET_INPUT:-$ROOT_DIR/infra/eks/secrets/dev.runtime-secret-input.json}"
 
 fail() {
@@ -138,20 +140,9 @@ jq -e '. == [
 ]' <<<"$airflow_keys" >/dev/null || fail "Airflow preserved key set drifted"
 
 backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data | keys | sort')"
-jq -e '. == [
-  "AIRFLOW_EXECUTION_API_TOKEN",
-  "AIRFLOW_INTERNAL_TOKEN",
-  "AIRFLOW_PASSWORD",
-  "BOOTSTRAP_ADMIN_PASSWORD",
-  "DATABASE_URL",
-  "TRINO_AUTH_PASSWORD",
-  "TRINO_AUTH_USERNAME",
-  "TRINO_MATERIALIZER_PASSWORD",
-  "TRINO_MATERIALIZER_USERNAME",
-  "TRINO_QUERY_CONFIRMATION_SECRET",
-  "TRINO_RESULT_CURSOR_SECRET",
-  "trino-ca.pem"
-]' <<<"$backend_keys" >/dev/null || fail "Backend preserved key set drifted"
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$BACKEND_SCOPE")" || \
+  fail "Backend runtime profile is invalid: $BACKEND_SCOPE"
+[[ "$backend_keys" == "$expected_backend_keys" ]] || fail "Backend preserved key set drifted"
 
 for service_account in asklake-frontend asklake-backend asklake-airflow asklake-msk-smoke asklake-spark asklake-trino; do
   status=0

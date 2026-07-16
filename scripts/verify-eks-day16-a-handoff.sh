@@ -4,6 +4,7 @@ set -euo pipefail
 set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
 HANDOFF="${ASKLAKE_DAY16_HANDOFF:-$ROOT_DIR/infra/eks/delivery/dev.day16-a.handoff.json}"
 RUNTIME="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16-a.runtime-secret-contract.json}"
 VALUES="${ASKLAKE_DAY16_TRINO_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.day16-a.private-values.json}"
@@ -35,7 +36,11 @@ node "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs" --ready "$RUNTIME" >/dev
 deploy_readiness_args=(--delivery "$HANDOFF" --runtime-secrets "$RUNTIME")
 [[ "$MODE" == "--ready" ]] && deploy_readiness_args=(--ready "${deploy_readiness_args[@]}")
 node "$ROOT_DIR/scripts/verify-eks-deploy-readiness.mjs" "${deploy_readiness_args[@]}" >/dev/null
-bash "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh" >/dev/null
+backend_scope="bounded"
+[[ "$MODE" == "--ready" ]] && backend_scope="full-service"
+ASKLAKE_BACKEND_RUNTIME_SCOPE="$backend_scope" \
+  bash "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh" >/dev/null
+runtime_secret_delivery="ready"
 bash "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh" >/dev/null
 
 jq -e --slurpfile state "$STATE" --slurpfile receipt "$RECEIPT" '
@@ -98,20 +103,8 @@ else
 fi
 
 backend_contract="blocked"
-expected_backend_keys="$(jq -cn '[
-  "AIRFLOW_EXECUTION_API_TOKEN",
-  "AIRFLOW_INTERNAL_TOKEN",
-  "AIRFLOW_PASSWORD",
-  "BOOTSTRAP_ADMIN_PASSWORD",
-  "DATABASE_URL",
-  "TRINO_AUTH_PASSWORD",
-  "TRINO_AUTH_USERNAME",
-  "TRINO_MATERIALIZER_PASSWORD",
-  "TRINO_MATERIALIZER_USERNAME",
-  "TRINO_QUERY_CONFIRMATION_SECRET",
-  "TRINO_RESULT_CURSOR_SECRET",
-  "trino-ca.pem"
-] | sort')"
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" "$backend_scope")" || \
+  fail "Backend runtime profile is invalid: $backend_scope"
 actual_backend_keys="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json | jq -c '.data|keys|sort')"
 if [[ "$expected_backend_keys" == "$actual_backend_keys" ]]; then
   backend_contract="ready"
@@ -128,6 +121,6 @@ fi
 
 status="ready"
 [[ "$blockers" -gt 0 ]] && status="integration_blocked"
-printf 'phase5_handoff_status=%s blockers=%d fixture_receipt=%s release_ownership=%s backend_runtime=%s full_service_contract=%s\n' \
-  "$status" "$blockers" "$fixture_state" "$release_ownership" "$backend_contract" "$full_service_contract"
+printf 'phase5_handoff_status=%s blockers=%d fixture_receipt=%s release_ownership=%s runtime_secret_delivery=%s backend_scope=%s backend_runtime=%s full_service_contract=%s\n' \
+  "$status" "$blockers" "$fixture_state" "$release_ownership" "$runtime_secret_delivery" "$backend_scope" "$backend_contract" "$full_service_contract"
 [[ "$MODE" == "--audit" || "$blockers" -eq 0 ]] || exit 1

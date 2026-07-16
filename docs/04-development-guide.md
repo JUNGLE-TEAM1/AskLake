@@ -658,6 +658,8 @@ helm template external-secrets external-secrets/external-secrets \
 
 15일차 최초 Backend runtime 전환은 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key의 수동 target에서 시작했으며 이후 Airflow 연결에서 5개로 확장됐다. 이 상태는 역사적 migration baseline이다. 현재 `infra/eks/secrets/backend-runtime-external-secret.yaml`은 bounded Backend가 실제 소비하는 DB 2개, Airflow 3개, Trino 인증·서명·CA 7개의 정확한 12-key canonical mapping이다. AI runtime 선택 전에는 planning 계약의 AI key를 placeholder로 만들지 않는다. 기존 target을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 staged target의 key 집합 및 전체 byte hash가 일치해야 한다. 값, endpoint와 ARN은 출력하거나 tracked·일반 artifact에 저장하지 않는다.
 
+Backend key 집합은 `runtime-secret-contract.example.json`의 `runtimeProfiles.backend`가 기준이다. 현재 `active=bounded`이며 운영 verifier, image preflight, handover와 rollback은 이 12-key profile을 읽는다. `full-service` scope는 같은 계약의 `secrets.backend.keys` 전체를 사용한다. AI runtime/provider 선택과 실제 source 확장이 모두 끝나기 전에는 full-service scope를 선택하지 않는다. `--audit`은 bounded profile을, `--ready`는 full-service profile을 요구하므로 12-key 하드코딩 때문에 향후 17-key 전환이 영구 차단되지 않는다.
+
 ```bash
 kubectl apply --dry-run=server \
   -f infra/eks/secrets/backend-runtime-external-secret.yaml
@@ -669,6 +671,8 @@ bash scripts/verify-eks-day15-backend-secret-runtime.sh
 ```
 
 실제 credential 값을 바꾸지 않은 강제 refresh와 FastAPI rollout restart를 rotation wiring smoke로 사용한다. DB password 자체의 회전은 RDS role password 변경과 source version 갱신을 함께 처리하는 별도 운영 절차이며, 이 smoke에서 수행하지 않는다.
+
+`--handover`는 현재 bounded 12-key source, 수동 target과 staged ESO target의 exact set·전체 hash가 같을 때만 진행한다. 실패 rollback도 12개 전체를 복원하고 canonical Secret 단독 참조, FastAPI 2/2, ALB/RDS health를 확인한다. 2-key 또는 5-key만 복구하는 코드는 허용하지 않는다.
 
 Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
 

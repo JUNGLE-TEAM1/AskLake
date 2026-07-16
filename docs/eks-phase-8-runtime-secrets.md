@@ -4,6 +4,8 @@
 
 Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
 
+같은 JSON의 `runtimeProfiles.backend`는 현재 live 범위를 `bounded`로 고정하고 12-key 집합을 제공한다. 전체 17-key 집합은 `secrets.backend.keys`가 full-service 기준이다. shell verifier가 자체 배열을 복사하지 않고 이 두 profile을 읽으며, 정적 verifier는 bounded exact set, active profile과 full-service 부분집합 관계를 검사한다.
+
 ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차에는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 적용했다. 최종 통합에서는 Backend source와 ExternalSecret을 실제 bounded runtime이 소비하는 12-key 계약으로 확장하고 Trino 인증 6개 key와 CA를 canonical `asklake-backend-runtime`에 수렴시켰다. 임시 `asklake-backend-trino-runtime`은 Backend rollout과 ALB/RDS/Trino 검증 뒤 삭제했다. 네 workload ExternalSecret은 모두 `Ready=True`이며 source/target byte 일치와 owner reference를 확인했다. AI 4개 key와 현재 dev가 사용하지 않는 `AIRFLOW_API_TOKEN`은 임의 값으로 추가하지 않고 full-service 선택 gate에 남긴다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
@@ -75,6 +77,8 @@ node scripts/verify-eks-deploy-readiness.mjs \
 그 다음 배포 주체가 Kubernetes API에서 Secret 이름과 필요한 key 존재 여부만 확인한다. base64 data와 decoded value를 stdout, CI log 또는 artifact에 출력하지 않는다. workload manifest의 `secretKeyRef`와 volume item은 이 문서의 이름/key/path를 그대로 참조해야 한다.
 
 완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store, Backend/Airflow/Spark/Trino source·mapping·target owner와 workload 주입을 완료했다. Backend/Airflow 공유 세 값의 동일성, FastAPI canonical Secret rolling restart, Airflow RDS TLS/API smoke, Trino TLS/auth 및 data-plane query도 확인했다. Backend는 단일 canonical Secret으로 수렴했고 임시 Trino 보조 Secret은 제거됐다. Airflow API 인증은 실제 dev workload와 같이 username/password로 확정했다. AI runtime과 provider workload 선택은 아직 남아 있으므로 `--full-service-ready`는 계속 닫혀 있으며, 이것을 현재 bounded data-pipeline runtime 장애로 표현하지 않는다.
+
+Backend handover와 rollback은 bounded profile 전체를 하나의 단위로 다룬다. source, stage, target 또는 복구 결과에서 Airflow/Trino key 하나라도 빠지거나 추가되면 실패하며 DB 2-key 역사 상태로 축소 복구하지 않는다. fake failure matrix는 delete/apply/hash/rollout 실패, missing/extra key와 2-key 축소를 검증한다.
 
 ## 6. A/B 인수 기준
 

@@ -165,6 +165,7 @@ exactKeys(contract, new Set([
   'sharedBindings',
   'envBindings',
   'fileMounts',
+  'runtimeProfiles',
   'forbiddenKeys',
   'runtimeDecisions',
 ]), 'contract');
@@ -252,6 +253,36 @@ for (const mount of contract.fileMounts ?? []) {
 }
 exactStringSet([...actualMountBindings], new Set(Object.keys(expectedMounts)), 'file mount bindings');
 
+exactKeys(contract.runtimeProfiles, new Set(['backend']), 'runtimeProfiles');
+exactKeys(contract.runtimeProfiles?.backend, new Set(['active', 'boundedKeys']), 'runtimeProfiles.backend');
+if (!['bounded', 'full-service'].includes(contract.runtimeProfiles?.backend?.active)) {
+  fail('Backend active runtime profile must be bounded or full-service');
+}
+const expectedBoundedBackendKeys = new Set([
+  'DATABASE_URL',
+  'BOOTSTRAP_ADMIN_PASSWORD',
+  'AIRFLOW_PASSWORD',
+  'AIRFLOW_EXECUTION_API_TOKEN',
+  'AIRFLOW_INTERNAL_TOKEN',
+  'TRINO_AUTH_USERNAME',
+  'TRINO_AUTH_PASSWORD',
+  'TRINO_MATERIALIZER_USERNAME',
+  'TRINO_MATERIALIZER_PASSWORD',
+  'TRINO_RESULT_CURSOR_SECRET',
+  'TRINO_QUERY_CONFIRMATION_SECRET',
+  'trino-ca.pem',
+]);
+exactStringSet(
+  contract.runtimeProfiles?.backend?.boundedKeys,
+  expectedBoundedBackendKeys,
+  'Backend bounded profile keys',
+);
+for (const key of contract.runtimeProfiles?.backend?.boundedKeys ?? []) {
+  if (!expectedSecrets.backend.keys.has(key)) {
+    fail(`Backend bounded profile references a key outside the full-service contract: ${key}`);
+  }
+}
+
 if (!Array.isArray(contract.envBindings)) fail('envBindings must be an array');
 const envBoundSecretKeys = new Set();
 const consumerEnvPairs = new Set();
@@ -332,6 +363,9 @@ const aiContractReady = aiDecision?.status === 'selected' && (
   (aiDecision.selected === 'gateway' && aiProviderDecision?.status === 'selected')
 );
 const fullServiceSecretContractReady = readyForSync && airflowContractReady && aiContractReady;
+if (contract.runtimeProfiles?.backend?.active === 'full-service' && !fullServiceSecretContractReady) {
+  fail('Backend full-service profile cannot be active while full-service decisions are unresolved');
+}
 
 const serialized = JSON.stringify(contract);
 for (const pattern of [

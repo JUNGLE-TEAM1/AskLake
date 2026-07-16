@@ -147,14 +147,24 @@ if [[ "${1:-}" == "rollout" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "secret" ]]; then
-  password="c2VjcmV0"
-  [[ "${FAKE_SECRET_ROLLBACK_SCENARIO:-healthy}" != "hash_mismatch" ]] || password="d3Jvbmc="
-  printf '{"type":"Opaque","metadata":{"ownerReferences":[]},"data":{"BOOTSTRAP_ADMIN_PASSWORD":"%s","DATABASE_URL":"cG9zdGdyZXM6Ly9leGFtcGxl"}}\n' "$password"
+  source_json="${FAKE_BACKEND_SOURCE_JSON:?}"
+  case "${FAKE_SECRET_ROLLBACK_SCENARIO:-healthy}" in
+    hash_mismatch)
+      source_json="$(jq '.BOOTSTRAP_ADMIN_PASSWORD="wrong"' <<<"$source_json")"
+      ;;
+    missing_key)
+      source_json="$(jq 'del(.TRINO_AUTH_PASSWORD)' <<<"$source_json")"
+      ;;
+    extra_key)
+      source_json="$(jq '.UNAPPROVED="fixture"' <<<"$source_json")"
+      ;;
+  esac
+  jq -cn --argjson source "$source_json" '{type:"Opaque",metadata:{ownerReferences:[]},data:($source|with_entries(.value|=@base64))}'
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "deployment" ]]; then
   cat <<'JSON'
-{"spec":{"replicas":2},"status":{"readyReplicas":2,"updatedReplicas":2,"availableReplicas":2,"unavailableReplicas":0}}
+{"spec":{"replicas":2,"template":{"spec":{"containers":[{"envFrom":[{"secretRef":{"name":"asklake-backend-runtime"}}]}]}}},"status":{"readyReplicas":2,"updatedReplicas":2,"availableReplicas":2,"unavailableReplicas":0}}
 JSON
   exit 0
 fi
@@ -275,25 +285,51 @@ unset FAKE_S3_RESIDUE_SCENARIO
 
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 source "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
-source_json='{"DATABASE_URL":"postgres://example","BOOTSTRAP_ADMIN_PASSWORD":"secret"}'
+source "$ROOT_DIR/scripts/lib/eks-backend-runtime-profile.sh"
+expected_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" bounded)"
+source_json="$(jq -cn --argjson keys "$expected_backend_keys" 'reduce $keys[] as $key ({}; .[$key] = ("fixture-" + ($key|ascii_downcase)))')"
+export FAKE_BACKEND_SOURCE_JSON="$source_json"
+expect_pass asklake_backend_runtime_hash "$source_json" "$expected_backend_keys"
+expect_fail asklake_backend_runtime_hash "$(jq 'del(.TRINO_AUTH_PASSWORD)' <<<"$source_json")" "$expected_backend_keys"
 export FAKE_SECRET_ROLLBACK_SCENARIO=healthy
 expect_pass asklake_cleanup_backend_secret_stage asklake-backend-runtime-stage asklake-dev
 expect_pass asklake_restore_backend_manual_secret \
-  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json"
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
 export FAKE_SECRET_ROLLBACK_SCENARIO=delete_failure
 expect_fail asklake_cleanup_backend_secret_stage asklake-backend-runtime-stage asklake-dev
 expect_fail asklake_restore_backend_manual_secret \
-  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json"
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
 export FAKE_SECRET_ROLLBACK_SCENARIO=apply_failure
 expect_fail asklake_restore_backend_manual_secret \
-  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json"
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
 export FAKE_SECRET_ROLLBACK_SCENARIO=hash_mismatch
 expect_fail asklake_restore_backend_manual_secret \
-  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json"
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
+export FAKE_SECRET_ROLLBACK_SCENARIO=missing_key
+expect_fail asklake_restore_backend_manual_secret \
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
+export FAKE_SECRET_ROLLBACK_SCENARIO=extra_key
+expect_fail asklake_restore_backend_manual_secret \
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
 export FAKE_SECRET_ROLLBACK_SCENARIO=rollout_failure
 expect_fail asklake_restore_backend_manual_secret \
-  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json"
-unset FAKE_SECRET_ROLLBACK_SCENARIO
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_json" "$expected_backend_keys"
+source_missing_key="$(jq 'del(.TRINO_AUTH_PASSWORD)' <<<"$source_json")"
+expect_fail asklake_restore_backend_manual_secret \
+  "$ROOT_DIR" asklake-backend-runtime asklake-dev "$source_missing_key" "$expected_backend_keys"
+unset FAKE_SECRET_ROLLBACK_SCENARIO FAKE_BACKEND_SOURCE_JSON
+
+grep -Fq 'asklake_backend_runtime_profile "$ROOT_DIR" bounded' \
+  "$ROOT_DIR/scripts/migrate-eks-backend-runtime-secret.sh" || \
+  fail "Backend handover does not use the bounded runtime profile"
+grep -Fq 'asklake_backend_runtime_hash "$stage_decoded" "$EXPECTED_KEYS"' \
+  "$ROOT_DIR/scripts/migrate-eks-backend-runtime-secret.sh" || \
+  fail "Backend handover does not hash the complete staged profile"
+if grep -Eq '\{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL\}|\["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"\]' \
+  "$ROOT_DIR/scripts/migrate-eks-backend-runtime-secret.sh" \
+  "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"; then
+  fail "Backend handover or rollback still contains a two-key recovery path"
+fi
 
 for runner in \
   "$ROOT_DIR/scripts/verify-eks-day15-final-integration.sh" \

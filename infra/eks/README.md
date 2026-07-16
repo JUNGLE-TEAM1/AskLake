@@ -15,7 +15,7 @@
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
 - `delivery/image-receipt.example.json`: 한 Git revision에서 만든 다섯 immutable ECR image의 전달 형식
-- `secrets/runtime-secret-contract.example.json`: 값 없이 workload별 Secret 이름·key·공유 binding을 고정하는 planning 계약
+- `secrets/runtime-secret-contract.example.json`: 값 없이 workload별 Secret 이름·key·공유 binding과 Backend bounded/full-service profile을 고정하는 planning 계약
 
 ## 안전 경계
 

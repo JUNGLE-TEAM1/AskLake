@@ -85,3 +85,5 @@ full-service contract blocked
 기존 release ownership과 Backend/Trino Secret blocker는 해결됐다. 남은 한 항목은 AI runtime과 provider workload 선택이다. 제품 기획상 실제 AI 호출과 RAG runtime은 후속 범위이며, 이번 bounded Kafka → Spark → Iceberg → Trino → Catalog 실행이 성공했다는 사실만으로 gateway/direct 또는 provider workload를 임의 선택하지 않는다.
 
 따라서 Phase 4의 실제 runtime·ownership 보완은 완료됐고, handoff 전체 판정은 `integration_blocked`를 유지한다. Phase 5의 기존 bounded E2E 증거를 현재 runtime과 대조한 뒤, Phase 6 `--ready` 이전에 AI를 이번 배포 범위에 포함할지 명시적으로 deferred할지 별도 결정해야 한다.
+
+handover/rollback과 향후 full-service 확장 가능성에 대한 후속 검수는 [Phase 4 보완 검수 기록](eks-day16-phase4-remediation-review.md)을 따른다.

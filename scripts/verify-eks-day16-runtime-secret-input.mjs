@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { validateTrinoPasswordDatabase } from './lib/validate-trino-password-db.mjs';
 
 const inputPath = resolve(process.cwd(), process.argv[2] ?? 'infra/eks/secrets/dev.runtime-secret-input.json');
 const keytoolImage = process.env.ASKLAKE_KEYTOOL_IMAGE ?? 'eclipse-temurin@sha256:9d8dcf999b0bce2453e913823595a5ff2a4e8e9e5d5241b45280d0ff069818ec';
@@ -108,16 +109,7 @@ try {
 } catch (error) {
   fail(`Trino file encoding is invalid: ${error.message}`);
 }
-const passwordLines = passwordDb.split(/\r?\n/).filter((line) => line.length > 0);
-if (passwordLines.length !== 2 ||
-    !passwordLines.some((line) => /^asklake-api:\$2[aby]\$\d{2}\$/.test(line)) ||
-    !passwordLines.some((line) => /^asklake-materializer:\$2[aby]\$\d{2}\$/.test(line))) {
-  fail('Trino password database must contain exactly the two approved bcrypt identities');
-}
-for (const line of passwordLines) {
-  const cost = Number(line.match(/^.+:\$2[aby]\$(\d{2})\$/)?.[1] ?? 0);
-  if (cost < 8) fail('Trino bcrypt cost must be at least 8');
-}
+for (const error of validateTrinoPasswordDatabase(passwordDb)) fail(error);
 
 let caCertificate;
 try {
