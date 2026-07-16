@@ -29,3 +29,4 @@ infra/eks/delivery/*.handoff.json
 infra/eks/delivery/*.image-receipt.json
 infra/eks/delivery/*.physical-read-input.json
 infra/eks/secrets/*.runtime-secret-contract.json
+infra/eks/secrets/*.runtime-secret-input.json

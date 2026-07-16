@@ -88,3 +88,5 @@ Phase 0은 통과했다. 기존 환경은 안정적이고 rollback 경계도 유
 5. Trino workload 배포와 MSK → Catalog E2E는 B 결과가 합쳐진 통합 단계 전에는 완료 선언하지 않는다.
 
 Phase 0 결과는 Spark·Trino Secret 생성, Trino 배포, fixture record 생산 또는 bounded E2E 성공 증거가 아니다.
+
+Phase 1의 입력 준비와 검증은 이후 [EKS 16일차 Pair A Phase 1 runtime Secret 입력 준비](eks-day16-a-runtime-secret-input.md)에서 완료했다. 이 후속 결과도 AWS source나 Kubernetes target 적용 증거로 확대하지 않는다.
