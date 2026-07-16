@@ -6,8 +6,9 @@ from typing import Any
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.permission_metadata import dedupe_grants, resource_permissions
+from app.application.catalog_publication import publish_catalog_payload
+from app.ports.catalog import CatalogWriterPort
 from app.repositories.audit_repository import safe_record_audit_event
-from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse, QueryEngineTableRef
 from app.schemas.trino import TrinoQueryRunError
 from app.services.trino_client import TrinoClient
@@ -41,7 +42,7 @@ def build_query_engine_table(
 class QueryEngineRegistrationService:
     def __init__(
         self,
-        repository: CatalogRepository,
+        repository: CatalogWriterPort,
         *,
         client: TrinoClient | None = None,
         runtime_settings: Settings | None = None,
@@ -63,7 +64,7 @@ class QueryEngineRegistrationService:
         target: QueryEngineTableRef,
     ) -> CatalogDatasetResponse:
         pending = self._registration_payload(payload, actor=actor, target=target, status="pending")
-        saved = self.repository.save_dataset_payload(pending)
+        saved = publish_catalog_payload(self.repository, pending).payload
         self._record("started", actor=actor, dataset_id=str(payload["id"]), run_id=run_id)
         return CatalogDatasetResponse.model_validate(saved)
 
@@ -81,7 +82,11 @@ class QueryEngineRegistrationService:
             return self.mark_failed(payload, actor=actor, run_id=run_id, target=target, error=exc)
         available = self._registration_payload(payload, actor=actor, target=target, status="available")
         available.pop("queryEngineError", None)
-        saved = self.repository.save_dataset_payload(available)
+        saved = publish_catalog_payload(
+            self.repository,
+            available,
+            require_version_identity=True,
+        ).payload
         self._record("succeeded", actor=actor, dataset_id=str(payload["id"]), run_id=run_id)
         return CatalogDatasetResponse.model_validate(saved)
 
@@ -96,7 +101,7 @@ class QueryEngineRegistrationService:
     ) -> CatalogDatasetResponse:
         failed = self._registration_payload(payload, actor=actor, target=target, status="registration_failed")
         failed["queryEngineError"] = registration_error_code(error)
-        saved = self.repository.save_dataset_payload(failed)
+        saved = publish_catalog_payload(self.repository, failed).payload
         self._record(
             "failed",
             actor=actor,

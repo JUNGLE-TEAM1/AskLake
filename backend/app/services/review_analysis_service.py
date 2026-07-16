@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.infrastructure.runtime_io import VersionedNodeBridge
+from app.ports.runtime_io import VersionedNodeBridgePort
 from app.schemas.common import ErrorCode
 
 
 class ReviewAnalysisService:
+    def __init__(self, bridge: VersionedNodeBridgePort | None = None) -> None:
+        self._bridge = bridge or VersionedNodeBridge(
+            backend_dir=Path(__file__).resolve().parents[2],
+        )
+
     def get_status(self) -> dict[str, Any]:
         summary_path = self._output_root() / "cellphones-latest-summary.json"
         if summary_path.exists():
@@ -34,55 +40,39 @@ class ReviewAnalysisService:
         }
 
     def suggest_schema(self, request: dict[str, Any]) -> dict[str, Any]:
-        return self._call_node("suggestReviewAnalysisSchema", request)
+        return self._call_node("reviewAnalysis.suggestSchema", request)
 
     def run(self, request: dict[str, Any]) -> dict[str, Any]:
-        return self._call_node("runCellphonesReviewAnalysis", request)
+        return self._call_node("reviewAnalysis.run", request)
 
     def _call_node(self, function_name: str, request: dict[str, Any]) -> dict[str, Any]:
-        module_uri = (Path(__file__).resolve().parents[2] / "src" / "reviewRowAnalysis.mjs").as_uri()
-        script = (
-            "const module = await import(process.argv[1]);"
-            f"const result = await module.{function_name}(JSON.parse(process.argv[2]));"
-            "process.stdout.write(JSON.stringify(result));"
-        )
         try:
-            completed = subprocess.run(
-                ["node", "--input-type=module", "-e", script, module_uri, json.dumps(request)],
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=max(1, int(os.environ.get("ASKLAKE_REVIEW_ANALYSIS_TIMEOUT_SECONDS", "900"))),
+            return self._bridge.execute_operation(
+                function_name,
+                request,
+                timeout_seconds=max(1, int(os.environ.get("ASKLAKE_REVIEW_ANALYSIS_TIMEOUT_SECONDS", "900"))),
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise ApiError(
-                ErrorCode.BACKEND_TIMEOUT,
-                "Review analysis request timed out or could not start",
-                status.HTTP_504_GATEWAY_TIMEOUT,
-                {"message": str(error)},
-            ) from error
-        if completed.returncode != 0:
+        except ApiError as error:
+            if error.code in {"NODE_BRIDGE_TIMEOUT", "NODE_BRIDGE_START_FAILED"}:
+                raise ApiError(
+                    ErrorCode.BACKEND_TIMEOUT,
+                    "Review analysis request timed out or could not start",
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    error.details,
+                ) from error
+            if error.code == "NODE_BRIDGE_PROTOCOL_ERROR":
+                raise ApiError(
+                    "REVIEW_ANALYSIS_INVALID_RESPONSE",
+                    "Review analysis returned invalid JSON",
+                    status.HTTP_502_BAD_GATEWAY,
+                    error.details,
+                ) from error
             raise ApiError(
                 "REVIEW_ANALYSIS_FAILED",
                 "Review analysis request failed",
                 status.HTTP_502_BAD_GATEWAY,
-                {"message": (completed.stderr or "").strip()[-2000:]},
-            )
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError as error:
-            raise ApiError(
-                "REVIEW_ANALYSIS_INVALID_RESPONSE",
-                "Review analysis returned invalid JSON",
-                status.HTTP_502_BAD_GATEWAY,
+                error.details,
             ) from error
-        if not isinstance(payload, dict):
-            raise ApiError(
-                "REVIEW_ANALYSIS_INVALID_RESPONSE",
-                "Review analysis returned an invalid response",
-                status.HTTP_502_BAD_GATEWAY,
-            )
-        return payload
 
     def _output_root(self) -> Path:
         configured = str(os.environ.get("ASKLAKE_REVIEW_ANALYSIS_DIR") or "").strip()

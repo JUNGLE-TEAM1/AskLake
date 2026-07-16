@@ -74,7 +74,9 @@ class ObjectStorageModeTest(TestCase):
         self.assertEqual(buckets, ["asklake-output"])
 
     def test_spark_etl_entrypoint_uses_provider_aware_builder(self) -> None:
-        source = (Path(__file__).parents[1] / "scripts" / "spark_job_run.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__).parents[1] / "scripts" / "runtime" / "spark_job_runtime.py"
+        ).read_text(encoding="utf-8")
         tree = parse(source)
         make_spark = next(
             node for node in tree.body if isinstance(node, FunctionDef) and node.name == "make_spark"

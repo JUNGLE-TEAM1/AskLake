@@ -188,6 +188,17 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml \
 scripts/deploy.sh restart
 ```
 
+Production Compose는 one-shot 초기화 대신 `spark-runtime-guard`를 `restart: unless-stopped`로 실행한다. guard는 Ivy `cache`/`jars`, report, local checkpoint/output path를 생성하고 기존 파일을 보존한 채 `185:185`, directory `2770`, file `0660` 계약을 복구한다. Spark worker와 backend는 실제 write/read probe가 통과한 뒤 시작하므로 Docker daemon 자동 restart에서도 `compose up` 순서에만 의존하지 않는다.
+
+재부팅 뒤 storage readiness를 별도로 확인하려면 다음을 실행한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml ps spark-runtime-guard spark-master spark-worker backend
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml logs --tail=100 spark-runtime-guard
+```
+
+오류 JSON의 `code`, `path`, expected/actual owner·mode를 확인한다. 수동 `chmod 777` 또는 report/checkpoint 삭제로 우회하지 않는다. 상세 복구·검증·rollback 절차는 [Spark runtime 경로 재부팅 복구 Runbook](./refactor-2026/operations/spark-runtime-reboot-recovery.md)을 따른다.
+
 ## 6. Health Check
 
 ```bash

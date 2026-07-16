@@ -60,8 +60,39 @@ type ContinuousRuntimeStatus =
   | "stopped"
   | "failed";
 
+type ContinuousDesiredState = "running" | "paused" | "stopped";
+type ContinuousObservedState =
+  | "unknown"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "failed";
+
+type ContinuousRuntimeErrorDetail = {
+  stage:
+    | "validation"
+    | "runtime_storage"
+    | "submission"
+    | "execution"
+    | "report"
+    | "checkpoint"
+    | "materialization"
+    | "catalog"
+    | "dashboard_publication"
+    | "reconciliation";
+  code: string;
+  message: string;
+  retryable: boolean;
+  context?: Record<string, unknown>;
+};
+
 type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
+  desiredState: ContinuousDesiredState;
+  observedState: ContinuousObservedState;
+  stateRevision: number;
+  fencingToken: string | null;
   checkpointPath: string;
   heartbeatAt: string | null;
   lastFlushAt: string | null;
@@ -77,8 +108,11 @@ type KafkaContinuousRuntime = {
   lastRuleResult: Record<string, unknown>;
   failedCount: number;
   lastError: string | null;
+  errorDetail: ContinuousRuntimeErrorDetail | null;
 };
 ```
+
+`status`는 기존 client용 호환 projection이고, command intent는 `desiredState`, 현재 worker 증거는 `observedState`가 각각 소유한다. `stateRevision`은 command commit 때만 증가하며 frontend는 더 작은 revision의 polling 응답을 버린다. `fencingToken`과 worker report attempt가 모두 있으면 반드시 일치해야 한다. `errorDetail`은 단계별 진단을 제공하고 `lastError` 문자열은 기존 client를 위해 유지한다. canonical writer, 전이표, fencing과 rollback 규칙은 [Continuous runtime 상태·오류 소유권](refactor-2026/contracts/runtime-state-ownership.md)을 따른다.
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
 - Each successful micro-batch applies the compiled canonical Rule set before appending the selected target dataset and advancing the checkpoint. The supported Transform operations are `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, and `rename`; Quality supports `accepted_values`, `not_null`, `range`, and `regex`.
@@ -112,6 +146,7 @@ type JobCommand =
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
 - Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads together with Docker container liveness. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by Docker container attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate signal and cannot be mistaken for an operator stop.
+- Every accepted command increments `continuousRuntime.stateRevision`. Worker observations keep that revision and are accepted only for the active fencing token; reports created before fencing metadata existed remain readable for backward compatibility.
 
 ## 6. Mutual Exclusion and Backfill
 

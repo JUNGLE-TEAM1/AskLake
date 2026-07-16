@@ -69,7 +69,7 @@ class EtlDataLakeSourceTests(unittest.TestCase):
             review = etl_service.review_pipeline(review_request(), db=db, actor=actor)
 
         self.assertTrue(review.can_create)
-        self.assertTrue(any(row.label == "소스 연결" and row.status == "ready" for row in review.validation))
+        self.assertTrue(any(row.label == "소스 데이터" and row.status == "ready" for row in review.validation))
 
     def test_review_rejects_unavailable_catalog_source(self) -> None:
         db = Mock()
@@ -82,7 +82,7 @@ class EtlDataLakeSourceTests(unittest.TestCase):
             review = etl_service.review_pipeline(review_request(), db=db, actor=actor)
 
         self.assertFalse(review.can_create)
-        self.assertTrue(any(row.label == "소스 연결" and row.status == "warning" for row in review.validation))
+        self.assertTrue(any(row.label == "소스 데이터" and row.status == "warning" for row in review.validation))
 
     def test_runtime_resolution_returns_iceberg_identity(self) -> None:
         db = Mock()

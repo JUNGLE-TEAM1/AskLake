@@ -402,11 +402,6 @@ spark_host_data_dir="$(env_value_for ASKLAKE_HOST_DATA_DIR)"
 spark_replay_input_dir="$(env_value_for ASKLAKE_REPLAY_HOST_INPUT_DIR)"
 
 require_host_directory ASKLAKE_HOST_DATA_DIR "$spark_host_data_dir"
-for spark_data_subdirectory in spark-ivy spark-output spark-runs samples review-text-models; do
-  require_host_directory \
-    "ASKLAKE_HOST_DATA_DIR/$spark_data_subdirectory" \
-    "$spark_host_data_dir/$spark_data_subdirectory"
-done
 require_host_directory ASKLAKE_REPLAY_HOST_INPUT_DIR "$spark_replay_input_dir"
 
 if [[ "$trino_enabled" == "true" ]]; then

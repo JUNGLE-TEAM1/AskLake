@@ -16,9 +16,10 @@ import duckdb
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
-from app.repositories.catalog_repository import CatalogRepository
+from app.ports.catalog import CatalogReaderPort
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
@@ -83,7 +84,6 @@ SQL_CTE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 @dataclass
 class RemotePreviewBudget:
     limit_bytes: int
@@ -121,7 +121,7 @@ class SqlService:
     def __init__(
         self,
         repository: SqlRepository,
-        catalog_repository: CatalogRepository,
+        catalog_repository: CatalogReaderPort,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
@@ -159,6 +159,16 @@ class SqlService:
         result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
         page_limit = request.limit or DEFAULT_PREVIEW_LIMIT
         run_id = f"sql_{uuid4().hex[:12]}"
+        record_compatibility_path(
+            CompatibilityPath.SQL_DUCKDB_ENGINE,
+            reason="query preview still executes through the retained DuckDB adapter",
+            context={
+                "datasetId": request.dataset_id,
+                "engine": "duckdb",
+                "mode": request.mode,
+                "runId": run_id,
+            },
+        )
         result_path = query_result_storage_path(run_id)
         query_result = execute_duckdb_query_to_artifact(
             statement,
