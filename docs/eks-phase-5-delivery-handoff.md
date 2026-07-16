@@ -10,7 +10,7 @@
 - Frontend, Backend, Airflow, Spark runtime, Trino의 immutable image 입력 위치
 - 실제 값이 아닌 ConfigMap과 Secret reference 이름
 - MSK Serverless + IAM, EKS 단일 Trino coordinator, 외부 EC2 Continuous 소유권
-- 격리된 fixture topic/group/output/checkpoint 이름
+- 격리된 fixture topic/group/output/checkpoint 이름. checkpoint는 실제 Terraform/IAM root 아래 `checkpoints/eks-mvp/`를 사용한다.
 - B workload가 필요로 하는 16개 network flow
 - 아직 학습과 선택이 필요한 인프라 결정의 상태
 

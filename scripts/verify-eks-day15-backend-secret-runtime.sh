@@ -37,6 +37,9 @@ jq -e \
       source: .remoteRef.key,
       property: .remoteRef.property
     }] | sort_by(.secretKey)) == ([
+      {secretKey: "AIRFLOW_EXECUTION_API_TOKEN", source: $source, property: "AIRFLOW_EXECUTION_API_TOKEN"},
+      {secretKey: "AIRFLOW_INTERNAL_TOKEN", source: $source, property: "AIRFLOW_INTERNAL_TOKEN"},
+      {secretKey: "AIRFLOW_PASSWORD", source: $source, property: "AIRFLOW_PASSWORD"},
       {secretKey: "BOOTSTRAP_ADMIN_PASSWORD", source: $source, property: "BOOTSTRAP_ADMIN_PASSWORD"},
       {secretKey: "DATABASE_URL", source: $source, property: "DATABASE_URL"}
     ] | sort_by(.secretKey))
@@ -46,7 +49,13 @@ jq -e \
 jq -e \
   --arg name "$EXTERNAL_SECRET_NAME" '
     .type == "Opaque"
-    and (.data | keys | sort) == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
+    and (.data | keys | sort) == [
+      "AIRFLOW_EXECUTION_API_TOKEN",
+      "AIRFLOW_INTERNAL_TOKEN",
+      "AIRFLOW_PASSWORD",
+      "BOOTSTRAP_ADMIN_PASSWORD",
+      "DATABASE_URL"
+    ]
     and ((.metadata.ownerReferences // []) | any(
       .apiVersion == "external-secrets.io/v1"
       and .kind == "ExternalSecret"
@@ -62,13 +71,18 @@ source_json="$(aws secretsmanager get-secret-value \
   --output text)"
 
 jq -e '
-  (keys | sort) == ["BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL"]
-  and (.DATABASE_URL | type == "string" and length > 0)
-  and (.BOOTSTRAP_ADMIN_PASSWORD | type == "string" and length > 0)
+  (keys | sort) == [
+    "AIRFLOW_EXECUTION_API_TOKEN",
+    "AIRFLOW_INTERNAL_TOKEN",
+    "AIRFLOW_PASSWORD",
+    "BOOTSTRAP_ADMIN_PASSWORD",
+    "DATABASE_URL"
+  ]
+  and all(.[]; type == "string" and length > 0)
 ' <<<"$source_json" >/dev/null
 
-source_hash="$(jq -S -c '{BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$source_json" | asklake_sha256)"
-target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d) | {BOOTSTRAP_ADMIN_PASSWORD,DATABASE_URL}' <<<"$target_secret_json" | asklake_sha256)"
+source_hash="$(jq -S -c . <<<"$source_json" | asklake_sha256)"
+target_hash="$(jq -S -c '.data | with_entries(.value |= @base64d)' <<<"$target_secret_json" | asklake_sha256)"
 unset source_json target_secret_json
 
 if [[ "$source_hash" != "$target_hash" ]]; then

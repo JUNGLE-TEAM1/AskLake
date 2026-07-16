@@ -689,6 +689,46 @@ run "workload_repository_contract" {
   }
 }
 
+run "external_fixture_producer_idempotent_policy" {
+  command = plan
+
+  variables {
+    environment                             = "dev"
+    owner                                   = "pair-a"
+    resource_lifecycle                      = "external"
+    cluster_mode                            = "existing"
+    existing_cluster_name                   = "shared-dev"
+    create_ecr_repositories                 = false
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+  }
+
+  assert {
+    condition = jsondecode(output.workload_iam_policy_documents.external_fixture_producer).Statement == [
+      {
+        Action   = ["kafka-cluster:Connect"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"]
+        Sid      = "ConnectToMskServerless"
+      },
+      {
+        Action   = ["kafka-cluster:WriteDataIdempotently"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"]
+        Sid      = "ProduceIdempotently"
+      },
+      {
+        Action   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:topic/asklake-dev-serverless/mock-uuid/asklake.eks-mvp.fixture.v1"]
+        Sid      = "ProduceFixtureTopic"
+      },
+    ]
+    error_message = "The external fixture producer must combine cluster-scoped idempotence with exact-topic write access."
+  }
+}
+
 run "network_ingress_defaults_fail_closed" {
   command = plan
 

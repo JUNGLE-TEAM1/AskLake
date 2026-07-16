@@ -4,7 +4,7 @@
 
 Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
 
-ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 실제 FastAPI가 이미 소비하던 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key를 승인된 Backend source에서 `ExternalSecret/asklake-backend-runtime`으로 연결했다. source/기존 수동 target/staged ESO target의 해시 일치 뒤 같은 이름의 target ownership을 ESO에 넘겼고, 강제 refresh와 FastAPI rolling restart 후 RDS health를 확인했다. 전체 Backend 계약의 나머지 key와 Airflow·Spark·Trino source/매핑은 consumer가 확정된 뒤 별도로 생성한다.
+ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차 Phase 2에서는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 staged hash 검증 뒤 적용했다. 현재 네 workload 이름의 source와 target은 존재하지만 Backend의 Trino client patch와 전체 AI 계약, Airflow extra key 정합성, 실제 Spark/Trino workload 주입은 별도 통합 gate다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
@@ -36,7 +36,7 @@ IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리�
 
 `infra/eks/secrets/aws-secrets-manager-store.yaml`은 controller의 기본 AWS credential chain을 사용하는 namespaced `SecretStore`다. static access key를 참조하는 `auth.secretRef`를 추가하지 않는다. `aws-secrets-manager-smoke.yaml`은 검증 전용 fixture이며 실제 runtime source 또는 상시 Kubernetes Secret이 아니다.
 
-`infra/eks/secrets/backend-runtime-external-secret.yaml`은 현재 dev FastAPI 최소 실행 범위의 실제 매핑이다. 같은 이름의 target을 `creationPolicy: Owner`, `deletionPolicy: Retain`으로 관리하고 정확히 두 key만 가져온다. 전체 planning 계약의 미사용 key를 빈 값이나 임의 값으로 채우지 않는다. 적용 결과와 rotation/rollback 경계는 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md)을 따른다.
+`infra/eks/secrets/backend-runtime-external-secret.yaml`은 현재 dev FastAPI의 승인된 5-key 실행 매핑이다. Spark와 Trino manifest도 같은 `creationPolicy: Owner`, `deletionPolicy: Retain` 경계를 사용하며 Trino의 JKS/password DB 두 property에만 `Base64` decoding을 적용한다. 전체 planning 계약의 미사용 key를 빈 값이나 임의 값으로 채우지 않는다. 초기 Backend 전환은 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md), 현재 Spark·Trino 적용은 [16일차 Phase 2 전달 기록](eks-day16-a-runtime-secret-delivery.md)을 따른다.
 
 `workflow_sync`와 Secrets Store CSI Driver는 현재 dev 적용 경로가 아니다. Terraform의 `workflow_sync` 입력은 계약 호환과 비교 검증을 위해 남지만, dev에서 병행 운영하지 않는다. 전달 방식을 변경하려면 controller·rotation·rollback 소유권과 기존 `ExternalSecret` 정리 순서를 별도 변경으로 검토한다.
 
@@ -74,7 +74,7 @@ node scripts/verify-eks-deploy-readiness.mjs \
 
 그 다음 배포 주체가 Kubernetes API에서 Secret 이름과 필요한 key 존재 여부만 확인한다. base64 data와 decoded value를 stdout, CI log 또는 artifact에 출력하지 않는다. workload manifest의 `secretKeyRef`와 volume item은 이 문서의 이름/key/path를 그대로 참조해야 한다.
 
-완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store와 임시 동기화·갱신 smoke까지 완료했다. `ready_for_sync`는 기반 전달 경로가 준비됐다는 뜻이며 실제 네 workload Secret이 존재한다는 뜻은 아니다. 실제 Secret 생성은 cluster의 이름/key 존재 확인 완료, workload 주입은 startup과 env/file reference 검증 완료를 뜻한다. 그 뒤 application health·rotation rollout·rollback evidence까지 있어야 운영 Secret 전달이 완료된다. 전체 서비스 production-ready는 image, network, database migration과 workload rollout까지 별도 gate를 모두 통과해야 한다.
+완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store와 네 workload 이름의 source/target 생성을 완료했다. 다만 Backend와 Airflow는 각각 현재 실행에 필요한 부분 계약이고 Spark/Trino는 아직 consumer workload가 없다. 실제 workload 주입은 startup과 env/file reference 검증 완료를 뜻한다. 그 뒤 application health·rotation rollout·rollback evidence까지 있어야 운영 Secret 전달이 완료된다. 전체 서비스 production-ready는 image, network, database migration과 workload rollout까지 별도 gate를 모두 통과해야 한다.
 
 ## 6. A/B 인수 기준
 
