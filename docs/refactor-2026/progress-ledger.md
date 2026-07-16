@@ -5,13 +5,13 @@
 ## 현재 상태
 
 - 계획 버전: `2026-07-16-15-pr`
-- 작업 배치: `3/5`
-- 현재 PR 단위: `09 완료`
-- 상태: `AWAITING_USER`
+- 작업 배치: `4/5`
+- 현재 PR 단위: `10 완료`
+- 상태: `IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#833` / `#835`
-- 현재 브랜치: `refactor-#833`
-- 다음 사용자 확인 지점: PR 07~09 생성 후
+- 최근 이슈/PR: `#836` / `#837`
+- 현재 브랜치: `refactor-#836`
+- 다음 사용자 확인 지점: PR 10~12 생성 후
 
 ## 15개 PR 원장
 
@@ -26,7 +26,7 @@
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | DONE |
 | 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | DONE |
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | DONE |
-| 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | WAITING |
+| 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | DONE |
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | WAITING |
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | WAITING |
 | 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | WAITING |
@@ -156,3 +156,14 @@
 - 제외: `JobsPages.tsx`·전역 data hook 전체 분해, 새 state library, CSS/Catalog/Layout 분리, API/DB 변경, production 배포
 - rollback: 단계 모듈과 App registry wiring, state contract, `EtlPages.tsx` façade를 함께 되돌린다. versioned browser draft는 서버 migration이 필요 없다.
 - 머지 순서: `#832` 다음 `#835`; PR 10은 `#835` 다음이다.
+
+## PR 10 작업 기록
+
+- 시작 HEAD: `dfebc595` (PR 09 branch HEAD)
+- branch/issue/PR: `refactor-#836`, `#836`, `#837`
+- 포함: Job 목록·상세·Continuous session/batch·Snapshot Run/DAG feature module, `useAskLakeData` 호환 façade, hydrate·Pipeline mutation·Job command·Catalog controller 분리, entity revision 기반 optimistic rollback
+- 하위 호환: 기존 `/jobs/*` URL, 세 public page와 `useAskLakeData` import, API/DB/Job/Run/Catalog payload, CSS class와 localStorage key를 유지한다.
+- 검증: request ownership 4건, Jobs/data 경계 3건, frontend UI regression 132 checks, TypeScript/Vite production build
+- 제외: CSS·Catalog·Layout 경계, API/DB migration, legacy/fallback 제거, production 배포
+- rollback: `pages/ingest/jobs/`, `state/asklake/`, 두 compatibility façade와 verifier module 목록을 함께 되돌린다. persisted data migration은 없다.
+- 머지 순서: `#835` 다음 `#837`; PR 11은 `#837` 다음이다.

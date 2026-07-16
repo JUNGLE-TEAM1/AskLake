@@ -5,6 +5,7 @@ import {
   createMutationLifecycle,
   createResourceQueryKey,
   LatestRequestGate,
+  MutationRevisionGate,
   transitionMutation,
 } from "../src/state/requestOwnership.ts";
 
@@ -32,4 +33,18 @@ test("mutation lifecycle keeps one revision across accepted and reconciled state
   assert.deepEqual([pending.phase, accepted.phase, reconciled.phase], ["pending", "accepted", "reconciled"]);
   assert.equal(reconciled.revision, 1);
   assert.equal(transitionMutation(pending, "failed", "network").error, "network");
+});
+
+test("mutation rollback ownership rejects an older entity revision", () => {
+  const gate = new MutationRevisionGate();
+  const first = gate.begin("job-1");
+  const second = gate.begin("job-1");
+  const otherJob = gate.begin("job-2");
+
+  assert.equal(gate.isCurrent(first), false);
+  assert.equal(gate.isCurrent(second), true);
+  assert.equal(gate.isCurrent(otherJob), true);
+
+  gate.invalidate("job-1");
+  assert.equal(gate.isCurrent(second), false);
 });

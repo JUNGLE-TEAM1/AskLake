@@ -19,6 +19,11 @@ export type MutationLifecycle = {
   revision: number;
 };
 
+export type MutationLease = {
+  key: string;
+  revision: number;
+};
+
 export function createResourceQueryKey({ resource, sessionId, version, params = {} }: ResourceQueryKeyInput) {
   const normalizedParams = Object.fromEntries(
     Object.entries(params)
@@ -65,6 +70,24 @@ export class LatestRequestGate {
 
   isCurrent(lease: RequestLease) {
     return lease.revision === this.revision && lease.key === this.key && !lease.signal.aborted;
+  }
+}
+
+export class MutationRevisionGate {
+  private revisions = new Map<string, number>();
+
+  begin(key: string): MutationLease {
+    const revision = (this.revisions.get(key) ?? 0) + 1;
+    this.revisions.set(key, revision);
+    return { key, revision };
+  }
+
+  invalidate(key: string) {
+    this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
+  }
+
+  isCurrent(lease: MutationLease) {
+    return this.revisions.get(lease.key) === lease.revision;
   }
 }
 
