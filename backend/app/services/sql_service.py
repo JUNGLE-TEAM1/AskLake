@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+import logging
 import os
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -18,7 +19,7 @@ from fastapi import status
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
-from app.repositories.catalog_repository import CatalogRepository
+from app.ports.catalog import CatalogReaderPort
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
@@ -83,6 +84,8 @@ SQL_CTE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class RemotePreviewBudget:
@@ -121,7 +124,7 @@ class SqlService:
     def __init__(
         self,
         repository: SqlRepository,
-        catalog_repository: CatalogRepository,
+        catalog_repository: CatalogReaderPort,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
@@ -159,6 +162,16 @@ class SqlService:
         result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
         page_limit = request.limit or DEFAULT_PREVIEW_LIMIT
         run_id = f"sql_{uuid4().hex[:12]}"
+        logger.warning(
+            "sql_compatibility_engine_selected",
+            extra={
+                "dataset_id": request.dataset_id,
+                "engine": "duckdb",
+                "event": "sql.compatibility_engine.selected",
+                "mode": request.mode,
+                "run_id": run_id,
+            },
+        )
         result_path = query_result_storage_path(run_id)
         query_result = execute_duckdb_query_to_artifact(
             statement,
