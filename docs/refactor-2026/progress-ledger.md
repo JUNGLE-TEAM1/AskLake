@@ -6,11 +6,11 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `3/5`
-- 현재 PR 단위: `08 진행 중`
-- 상태: `IN_PROGRESS`
+- 현재 PR 단위: `09 완료`
+- 상태: `AWAITING_USER`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#831` / `생성 예정`
-- 현재 브랜치: `refactor-#831`
+- 최근 이슈/PR: `#833` / `#835`
+- 현재 브랜치: `refactor-#833`
 - 다음 사용자 확인 지점: PR 07~09 생성 후
 
 ## 15개 PR 원장
@@ -24,8 +24,8 @@
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | DONE |
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | DONE |
-| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | IN_PROGRESS |
-| 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | WAITING |
+| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | DONE |
+| 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | DONE |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | WAITING |
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | WAITING |
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | WAITING |
@@ -79,13 +79,13 @@
 
 ## Latest handoff
 
-- 상태: 배치 2의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
-- 원격 PR: `#820`, `#824`, `#827` 모두 `dev` 대상 ready PR
-- 실제 변경: runtime I/O Port·Adapter, Continuous command/reconciliation, output·manifest·Catalog·Dashboard staged publication
-- 통과: backend 전체 unit 393건, Continuous/Kafka/production Spark 계약, 단계별 partial failure·retry·restart·동시 reconciler 회귀, Python compile, 문서 link와 diff check
-- 남은 경고: frontend 2.6 MB chunk warning은 R-014로 유지한다.
-- 차단 사항: 기술적 blocker 없음. `#820` → `#824` → `#827` 순서 머지가 필요하다.
-- 다음 단위: 사용자 승인 후 PR 07 — Pipeline·Snapshot·SQL·Catalog application 경계 추출
+- 상태: 배치 3의 이슈·브랜치·PR 3개 생성 완료, 사용자 승인 전 다음 배치 중지
+- 원격 PR: `#830`, `#832`, `#835` 모두 `dev` 대상 ready PR
+- 실제 변경: Pipeline·Snapshot·SQL·Catalog application 경계, Spark/Kafka runtime·Python/Node 경계, frontend 상태 소유권·ETL Wizard 단계 분리
+- 통과: backend unit 414건, runtime/bridge/Spark/Kafka 계약, frontend UI regression 132 checks, 요청·draft·step registry 9건, TypeScript/Vite production build, diff check
+- 남은 경고: frontend App chunk 약 2.63 MB warning은 R-014 및 PR 11 범위로 유지한다.
+- 차단 사항: 기술적 blocker 없음. `#830` → `#832` → `#835` 순서 머지가 필요하다.
+- 다음 단위: 사용자 승인 후 PR 10 — Jobs 화면·데이터 hook 분해
 
 ## PR 04 작업 기록
 
@@ -144,4 +144,15 @@
 - 검증: backend unit 414건(1 opt-in skip), runtime·bridge·Spark identity 집중 Python 39건, Node bridge 3건, production Spark, Spark schema, Kafka Continuous, Continuous runtime 39건 계약 통과
 - 제외: Node 전체 삭제, connector/Spark launcher 즉시 Python 전환, processing semantics 변경, destructive migration, live cluster soak, production 배포
 - rollback: entrypoint façade를 이전 구현으로 되돌리고 ReviewAnalysis adapter를 교체한다. additive version field는 이전 consumer가 무시하며 runtime data/checkpoint를 삭제하지 않는다.
-- 머지 순서: `#830` 다음 PR 08; PR 09는 PR 08 다음이다.
+- 머지 순서: `#830` 다음 `#832`; PR 09는 `#832` 다음이다.
+
+## PR 09 작업 기록
+
+- 시작 HEAD: `69c15c0c` (PR 08 branch HEAD)
+- branch/issue/PR: `refactor-#833`, `#833`, `#835`
+- 포함: 최신 요청 lease와 query key, 생성 mutation lifecycle, versioned·credential-safe ETL draft, ETL step registry, 단계별 page/model/panel 분리, compatibility re-export façade
+- 하위 호환: 기존 `/etl/*` URL, `DraftPipeline`·`useAskLakeData` public shape, API/DB 계약, CSS class, record parsing과 Continuous Kafka schedule 생략을 유지한다.
+- 검증: 요청 소유권 3건, draft contract 3건, step registry 3건, frontend UI regression 132 checks, TypeScript/Vite production build
+- 제외: `JobsPages.tsx`·전역 data hook 전체 분해, 새 state library, CSS/Catalog/Layout 분리, API/DB 변경, production 배포
+- rollback: 단계 모듈과 App registry wiring, state contract, `EtlPages.tsx` façade를 함께 되돌린다. versioned browser draft는 서버 migration이 필요 없다.
+- 머지 순서: `#832` 다음 `#835`; PR 10은 `#835` 다음이다.

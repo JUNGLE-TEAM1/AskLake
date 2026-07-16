@@ -20,10 +20,38 @@ const read = (path) => {
     : readFileSync(filePath, "utf8");
 };
 
+const readCheckSources = (check) => {
+  const files = check.files ?? [check.file];
+  return {
+    contents: files.map((file) => read(file)).join("\n"),
+    label: files.join(", "),
+  };
+};
+
+const etlWizardFiles = [
+  "src/pages/etl/EtlPages.tsx",
+  "src/pages/etl/SourceConnectionPage.tsx",
+  "src/pages/etl/SourceConnectionStages.tsx",
+  "src/pages/etl/sourceDefinitions.tsx",
+  "src/pages/etl/sourceModel.tsx",
+  "src/pages/etl/RecordParsingPage.tsx",
+  "src/pages/etl/SchemaInferencePage.tsx",
+  "src/pages/etl/schemaModel.ts",
+  "src/pages/etl/RuleApplicationPage.tsx",
+  "src/pages/etl/RuleEditorPanels.tsx",
+  "src/pages/etl/RulePreviewPanels.tsx",
+  "src/pages/etl/ruleModel.tsx",
+  "src/pages/etl/SchedulePage.tsx",
+  "src/pages/etl/PermissionPage.tsx",
+  "src/pages/etl/TargetPage.tsx",
+  "src/pages/etl/targetModel.ts",
+  "src/pages/etl/ReviewPage.tsx",
+];
+
 const checks = [
   {
     name: "ETL target storage path uses the deployed Spark output bucket",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
       /buildTargetStoragePathForBucket\(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer\)/,
@@ -43,7 +71,7 @@ const checks = [
   },
   {
     name: "ETL permission composes target selection, per-target actions, and a saved grant summary",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /title="권한 설정"/,
       /<EtlStepHeader[\s\S]*className="etl-step-standalone-header"[\s\S]*icon=\{<ShieldCheck \/>\}[\s\S]*title="권한 설정"/,
@@ -99,7 +127,7 @@ const checks = [
   },
   {
     name: "Kafka raw text creation removes repeated preview counts and keeps permission presets compact",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /previewShowsRawText && activeSourceType === "Stream \/ Kafka" \? undefined/,
       /"h-16 justify-center whitespace-normal px-4 py-3 text-center"/,
@@ -760,7 +788,7 @@ const checks = [
   },
   {
     name: "ETL source can select a folder and persist its collection policy",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const updateCollectionConfig = \(patches:/,
       /const loadSourceAssetChildren = async \(folderPath: string\) =>/,
@@ -772,7 +800,7 @@ const checks = [
   },
   {
     name: "Collection policy changes invalidate stale sample and schema state",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const updateCollectionConfig = \(patches:/,
       /\[\.\.\.patches, \["__Sample Object", ""\]\]/,
@@ -850,7 +878,7 @@ const checks = [
   },
   {
     name: "ETL source selection and connection settings share the common bordered panel",
-    file: "src/pages/etl/EtlPages.tsx",
+    file: "src/pages/etl/SourceConnectionStages.tsx",
     patterns: [
       /<Panel className="source-bordered-panel source-choice-panel">[\s\S]{0,180}<EtlSectionHeader icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
       /<Panel className="source-bordered-panel source-step-section active">[\s\S]{0,220}<EtlSectionHeader/,
@@ -976,7 +1004,7 @@ const checks = [
   },
   {
     name: "Target settings expose user-facing storage options while keeping normalized payloads",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const targetLayer = initialTargetLayer;/,
       /const \[targetFormat, setTargetFormat\] = useState\(initialTargetFormat\);/,
@@ -1495,7 +1523,7 @@ const checks = [
   },
   {
     name: "ETL schedule uses one conditional shadcn settings surface",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /<Card className="overflow-hidden" size="none">/,
       /<div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">/,
@@ -1545,16 +1573,16 @@ const checks = [
   },
   {
     name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
-    file: "src/App.tsx",
+    files: ["src/App.tsx", "src/pages/etl/stepRegistry.ts"],
     patterns: [
-      /\["source", \.\.\.\(requiresRecordParsing \? \["recordParsing" as const\] : \[\]\), "schema", "permission", "target", "review"\]/,
-      /labels\.filter\(\(step\) => step !== "스케줄"\)/,
+      /if \(requiresRecordParsing\) steps\.push\(baseStepRegistry\.recordParsing\);/,
+      /if \(!continuousKafka\) \{[\s\S]*label: "스케줄"/,
       /continuousKafkaDraft \? "permission" : lastScheduleFlow/,
     ],
   },
   {
     name: "Continuous Kafka source exposes compact advanced stream settings",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /고급 설정/,
       /label="시작 위치"/,
@@ -1619,7 +1647,7 @@ const checks = [
   },
   {
     name: "ETL review requests use stable payload keys with visible retry handling",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /getReviewSnapshotRequestKey\(buildReviewSnapshotRequest\(draft\)\)/,
       /\[reviewRequest, reviewRetryCount\]/,
@@ -1629,7 +1657,7 @@ const checks = [
   },
   {
     name: "Kafka target defaults keep runtime-supported layer and format combinations",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer\[\] = \["RAW", "BRONZE", "SILVER"\]/,
       /const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["jsonl"\]/,
@@ -1695,7 +1723,7 @@ const checks = [
   },
   {
     name: "ETL review separates saved permissions from creation readiness",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /<EtlSectionHeader[\s\S]{0,260}title="권한 설정"/,
       /label="권한 설정 수정"/,
@@ -1790,7 +1818,7 @@ const checks = [
     name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
     file: "src/hooks/useAskLakeData.ts",
     patterns: [
-      /const dataHydrationRequestRef = useRef\(0\);/,
+      /const dataHydrationRequests = useRef\(new LatestRequestGate\(\)\);/,
       /const refreshData = async \(\) =>/,
       /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
@@ -1878,15 +1906,15 @@ const checks = [
 const failures = [];
 
 for (const check of checks) {
-  const contents = read(check.file);
+  const { contents, label } = readCheckSources(check);
   check.patterns.forEach((pattern, index) => {
     if (!pattern.test(contents)) {
-      failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
+      failures.push(`${check.name}: missing pattern #${index + 1} in ${label}`);
     }
   });
   [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
-      failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
+      failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${label}`);
     }
   });
 }

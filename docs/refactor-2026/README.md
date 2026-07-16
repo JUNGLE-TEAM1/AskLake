@@ -15,6 +15,7 @@
 9. [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md): Spark 경로 재부팅 복구·검증·rollback
 10. [contracts/runtime-state-ownership.md](./contracts/runtime-state-ownership.md): Continuous desired/observed/public 상태와 오류·fencing 계약
 11. [testing/characterization-matrix.md](./testing/characterization-matrix.md): 분해 전 보호해야 할 backend/frontend 동작과 검증 위치
+12. [contracts/frontend-state-etl-wizard.md](./contracts/frontend-state-etl-wizard.md): frontend 요청·draft·route·mutation 소유권과 ETL Wizard 모듈 경계
 
 ## 기준선 재생성
 

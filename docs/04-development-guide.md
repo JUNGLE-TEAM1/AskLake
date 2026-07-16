@@ -963,6 +963,22 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:continuous-runtime-contra
 macOS 시스템 `python3`가 Python 3.9이면 backend의 union type 문법을 읽지 못할 수 있으므로 위 production verifier에는 `.venv/bin/python`을 명시한다. live Spark/Kafka 검증은 별도 opt-in profile로 실행하고 단위·계약 테스트는 Spark 없이 통과해야 한다.
 
 Node 호출을 추가할 때 application/service에서 inline JavaScript, module URI, shell command를 직접 조립하지 않는다. allow-list operation은 `VersionedNodeBridgePort`에 추가하고 Node runner 양쪽의 version/request/error contract test를 함께 갱신한다. stdout은 protocol JSON 전용이며 secret이 포함될 수 있는 진단은 stderr redaction을 거친다.
+
+## 15) Frontend 상태·ETL Wizard 변경 검증
+
+ETL route, 단계 page, draft hydrate, Job/Catalog hydrate 또는 mutation 순서를 변경할 때는 [Frontend 상태 소유권과 ETL Wizard 경계](refactor-2026/contracts/frontend-state-etl-wizard.md)를 먼저 확인한다. `EtlPages.tsx`에 새 화면 구현을 추가하거나, 최신 요청 판정을 page마다 별도 integer ref로 만들거나, credential을 localStorage에 평문 저장하지 않는다.
+
+```bash
+cd frontend
+npm run test:request-ownership
+npm run test:etl-draft-contract
+npm run test:etl-step-registry
+npm run verify:ui-regressions
+npm run build
+```
+
+`verify-ui-regressions.mjs`의 ETL 계약은 `etlWizardFiles` 모듈 집합을 검사한다. 화면을 추가로 분리하면 새 module path를 이 목록에 포함하고 기존 positive/forbidden pattern을 유지한다. `EtlPages.tsx` compatibility export와 기존 `/etl/*` URL을 제거하는 변경은 별도 deprecation 단계 없이는 허용하지 않는다.
+
 ### ETL Permission create-flow 검증
 
 ```powershell

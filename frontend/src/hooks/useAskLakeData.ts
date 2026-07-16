@@ -3,7 +3,7 @@ import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
-import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
+import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob, hydrateEtlDraft, serializeEtlDraft } from "../services/draftPipelineContract";
 import { isContinuousRuntimeTransition, shouldAcceptContinuousRuntimeUpdate } from "../services/continuousRuntimeContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
@@ -21,6 +21,7 @@ import {
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
+import { createMutationLifecycle, createResourceQueryKey, LatestRequestGate, transitionMutation } from "../state/requestOwnership";
 import type {
   AuditResult,
   AuditTargetType,
@@ -61,6 +62,25 @@ const maxStoredCatalogDatasets = 30;
 const snapshotPollIntervalMs = 1000;
 const snapshotPollMaxAttempts = 900;
 const snapshotPollMaxConsecutiveErrors = 5;
+const etlDraftStorageKey = "asklake.etlDraft.v1";
+
+function loadStoredEtlDraft(fallback: DraftPipeline) {
+  if (typeof window === "undefined") return hydrateEtlDraft(null, fallback);
+  try {
+    return hydrateEtlDraft(window.localStorage.getItem(etlDraftStorageKey), fallback);
+  } catch {
+    return hydrateEtlDraft(null, fallback);
+  }
+}
+
+function saveStoredEtlDraft(draft: DraftPipeline) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(etlDraftStorageKey, serializeEtlDraft(draft));
+  } catch {
+    // Browser storage is an optional draft recovery cache, never the durable source of truth.
+  }
+}
 
 function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   return {
@@ -857,7 +877,7 @@ export function useAskLakeData({
   const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
   const [jobListFacets, setJobListFacets] = useState<JobListFacets>(() => getJobListFacets(getInitialJobs()));
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
-  const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
+  const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(() => loadStoredEtlDraft(initialDraftPipeline));
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
@@ -867,6 +887,7 @@ export function useAskLakeData({
   const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
+  const [createMutationState, setCreateMutationState] = useState(createMutationLifecycle);
   const [dataLoading, setDataLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
@@ -874,8 +895,12 @@ export function useAskLakeData({
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
   const snapshotPollingRef = useRef<Set<string>>(new Set());
-  const dataHydrationRequestRef = useRef(0);
-  const jobsFilterRequestRef = useRef(0);
+  const dataHydrationRequests = useRef(new LatestRequestGate());
+  const jobsFilterRequests = useRef(new LatestRequestGate());
+
+  useEffect(() => {
+    saveStoredEtlDraft(draftPipeline);
+  }, [draftPipeline]);
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
@@ -902,10 +927,8 @@ export function useAskLakeData({
   const refreshData = async () => {
     if (!enabled) return false;
 
-    const requestId = dataHydrationRequestRef.current + 1;
-    const jobsRequestId = jobsFilterRequestRef.current + 1;
-    dataHydrationRequestRef.current = requestId;
-    jobsFilterRequestRef.current = jobsRequestId;
+    const hydrationLease = dataHydrationRequests.current.begin(createResourceQueryKey({ resource: "app-hydration", version: "manual-refresh" }));
+    const jobsLease = jobsFilterRequests.current.begin(createResourceQueryKey({ resource: "jobs", version: "manual-refresh" }));
     setDataLoading(true);
     setJobsLoading(false);
     setDataError(null);
@@ -914,9 +937,9 @@ export function useAskLakeData({
         getJobs(),
         getDatasets(),
       ]);
-      if (requestId !== dataHydrationRequestRef.current) return false;
+      if (!dataHydrationRequests.current.isCurrent(hydrationLease)) return false;
 
-      if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult);
+      if (jobsFilterRequests.current.isCurrent(jobsLease)) applyHydratedJobs(jobsResult);
       applyHydratedDatasets(
         apiConfig.useMock
           ? mergeCatalogDatasets(datasetsResult, loadStoredCatalogDatasets())
@@ -925,20 +948,21 @@ export function useAskLakeData({
       showToast("Job과 데이터셋 목록을 새로고침했습니다.");
       return true;
     } catch (error) {
-      if (requestId !== dataHydrationRequestRef.current) return false;
+      if (!dataHydrationRequests.current.isCurrent(hydrationLease)) return false;
       const detail = getInitialReadErrorMessage(error);
       setDataError(`refresh: ${detail}`);
       showToast(`새로고침 실패: ${detail}`, "info");
       return false;
     } finally {
-      if (requestId === dataHydrationRequestRef.current) setDataLoading(false);
+      if (dataHydrationRequests.current.complete(hydrationLease)) setDataLoading(false);
+      jobsFilterRequests.current.complete(jobsLease);
     }
   };
 
   useEffect(() => {
     if (!enabled) {
-      dataHydrationRequestRef.current += 1;
-      jobsFilterRequestRef.current += 1;
+      dataHydrationRequests.current.invalidate();
+      jobsFilterRequests.current.invalidate();
       setDataLoading(false);
       setJobsLoading(false);
       return;
@@ -956,10 +980,8 @@ export function useAskLakeData({
     }
 
     let cancelled = false;
-    const requestId = dataHydrationRequestRef.current + 1;
-    const jobsRequestId = jobsFilterRequestRef.current + 1;
-    dataHydrationRequestRef.current = requestId;
-    jobsFilterRequestRef.current = jobsRequestId;
+    const hydrationLease = dataHydrationRequests.current.begin(createResourceQueryKey({ resource: "app-hydration", version: "initial" }));
+    const jobsLease = jobsFilterRequests.current.begin(createResourceQueryKey({ resource: "jobs", version: "initial" }));
 
     async function hydrateData() {
       setDataError(null);
@@ -968,9 +990,9 @@ export function useAskLakeData({
           readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
           readInitialResource(getDatasets, "catalog", []),
         ]);
-        if (cancelled || requestId !== dataHydrationRequestRef.current) return;
+        if (cancelled || !dataHydrationRequests.current.isCurrent(hydrationLease)) return;
 
-        if (jobsRequestId === jobsFilterRequestRef.current) applyHydratedJobs(jobsResult.data);
+        if (jobsFilterRequests.current.isCurrent(jobsLease)) applyHydratedJobs(jobsResult.data);
         applyHydratedDatasets(datasetsResult.data);
 
         const fatalErrors = [jobsResult, datasetsResult]
@@ -987,7 +1009,8 @@ export function useAskLakeData({
           showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
         }
       } finally {
-        if (!cancelled && requestId === dataHydrationRequestRef.current) setDataLoading(false);
+        if (!cancelled && dataHydrationRequests.current.complete(hydrationLease)) setDataLoading(false);
+        jobsFilterRequests.current.complete(jobsLease);
       }
     }
 
@@ -995,17 +1018,17 @@ export function useAskLakeData({
 
     return () => {
       cancelled = true;
-      dataHydrationRequestRef.current += 1;
+      dataHydrationRequests.current.invalidate();
+      jobsFilterRequests.current.invalidate();
     };
   }, [enabled]);
 
   const filterJobs = async (query: JobListQuery) => {
-    const requestId = jobsFilterRequestRef.current + 1;
-    jobsFilterRequestRef.current = requestId;
+    const lease = jobsFilterRequests.current.begin(createResourceQueryKey({ resource: "jobs", params: query as Record<string, unknown>, version: "filtered" }));
     setJobsLoading(true);
     try {
       const result = await getJobs(query);
-      if (requestId !== jobsFilterRequestRef.current) return;
+      if (!jobsFilterRequests.current.isCurrent(lease)) return;
       const normalizedJobs = result.jobs.map(normalizeJobRow);
       const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
       setJobs(normalizedJobs);
@@ -1014,11 +1037,11 @@ export function useAskLakeData({
       setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
       setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
     } catch (error) {
-      if (requestId !== jobsFilterRequestRef.current) return;
+      if (!jobsFilterRequests.current.isCurrent(lease)) return;
       const message = error instanceof ApiError ? error.message : "작업 목록 필터를 불러오지 못했습니다.";
       showToast(message, "info");
     } finally {
-      if (requestId === jobsFilterRequestRef.current) setJobsLoading(false);
+      if (jobsFilterRequests.current.complete(lease)) setJobsLoading(false);
     }
   };
 
@@ -1046,6 +1069,7 @@ export function useAskLakeData({
     };
     createPendingRef.current = true;
     setApiPending(true);
+    setCreateMutationState((state) => transitionMutation(state, "pending"));
     try {
       const activeEditJobId = editingJobId === pipelineDraft.id ? editingJobId : null;
       const updatedJob = activeEditJobId
@@ -1060,6 +1084,7 @@ export function useAskLakeData({
           : await createLivePipelineDraft(pipelineDraft);
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = "dataset" in result && result.dataset ? normalizeDatasetRow(result.dataset) : null;
+      setCreateMutationState((state) => transitionMutation(state, "accepted"));
 
       setJobs((items) => upsertJobById(items, normalizedJob));
       setSelectedJob(normalizedJob);
@@ -1074,6 +1099,7 @@ export function useAskLakeData({
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       if (resetDraft) setDraftPipeline(initialDraftPipeline);
       if (navigateToJobs) onFlowChange("jobs");
+      setCreateMutationState((state) => transitionMutation(state, "reconciled"));
       return true;
     } catch (error) {
       setJobs(previousState.jobs);
@@ -1082,6 +1108,7 @@ export function useAskLakeData({
       setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", pipelineDraft.id, "failed");
       const message = error instanceof ApiError ? error.message : "파이프라인 생성 요청에 실패했습니다.";
+      setCreateMutationState((state) => transitionMutation(state, "failed", message));
       showToast(message, "info");
       return false;
     } finally {
@@ -1465,6 +1492,7 @@ export function useAskLakeData({
   return {
     apiPending,
     commandPendingByJobId,
+    createMutationState,
     createPipeline,
     dataError,
     dataLoading,
