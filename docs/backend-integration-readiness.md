@@ -556,6 +556,22 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] deny/조건부 정책과 공개 범위 정책 고도화
 - [ ] 민감 데이터 판정이 필요하면 frontend 컬럼명 정규식이 아닌 별도 backend 분류 결과 계약 추가
 
+## Realtime 2026 foundation readiness
+
+- [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
+- [x] SSE notification + REST refetch, durable cursor, resync ADR
+- [x] Continuous SQL V1과 PINNED_AT_START 기본 의미 확정
+- [x] deployment scope feature flag와 invalid value fail-closed
+- [x] 인증된 GET /api/realtime/config 및 frontend adapter
+- [x] backend/deploy example env와 production Compose 전달
+- [ ] durable event log와 PostgreSQL NOTIFY listener
+- [ ] SSE replay/heartbeat/resync endpoint
+- [ ] Dashboard hybrid/SSE client와 polling fallback E2E
+- [ ] Continuous SQL planner/runtime/publication
+- [ ] production PostgreSQL·proxy·Spark 통합 검증
+
+현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다.
+
 ## Full-stack E2E·recovery readiness
 
 - [x] PR/release/nightly 누적 profile과 선언형 fault matrix

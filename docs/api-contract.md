@@ -3837,6 +3837,25 @@ type PermissionGrant = {
 
 현재 그룹 후보는 backend의 `DEMO_GROUPS` 고정 정의이고 사용자 후보는 `auth_users` table을 우선한다. `permissionTemplate`은 과거 request 호환용 요약이며 권한 판정에는 사용하지 않는다.
 
+## Realtime 2026 전환 계약
+
+### GET /api/realtime/config
+
+인증된 frontend가 서버의 effective realtime mode를 읽는 진단 endpoint다. response field는 camelCase다.
+
+| 필드 | 타입 | 계약 |
+|---|---|---|
+| dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
+| realtimeEventsEnabled | boolean | durable event/SSE kill switch |
+| continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
+| latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
+| staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
+| featureScope | deployment | 현재 저장소에는 tenant model이 없으므로 고정 |
+| fallbackReason | string or null | invalid_dashboard_sync_mode, realtime_events_disabled |
+
+이 API는 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
+
+SSE와 Continuous SQL 상세 계약은 docs/realtime-2026/adr/001-sse-dashboard-sync.md와 002-continuous-stream-static-join.md에 고정한다.
 ## Internal runtime compatibility contract
 
 Spark/Kafka production entrypoint 경로, 기존 CLI/environment 입력, exit 의미와 public ETL API shape는 유지한다. runtime report에는 optional `runtimeReportSchemaVersion`, Continuous checkpoint contract에는 optional `contractSchemaVersion`, batch manifest에는 optional `manifestSchemaVersion`이 추가된다. 필드가 없는 기존 문서는 version 0으로 읽으며 기존 consumer는 새 필드를 무시할 수 있다.

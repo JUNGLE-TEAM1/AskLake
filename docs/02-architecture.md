@@ -492,7 +492,30 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 
-## 14) Pipeline·Snapshot·SQL·Catalog application 경계
+## 14) Realtime 2026 전환 아키텍처
+
+Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다.
+
+```text
+Spark/Iceberg commit
+→ Catalog 검증
+→ dataset revision + durable event를 한 DB transaction으로 기록
+→ PostgreSQL NOTIFY wake-up
+→ SSE cursor replay
+→ resource identity 기반 targeted REST refetch
+→ published Dashboard 교체
+```
+
+- PostgreSQL event log가 전달의 source of truth이고 NOTIFY는 multi-process listener를 깨우는 힌트다.
+- SSE payload는 change notification만 담으며 Dashboard 데이터 권위는 기존 REST response와 PostgreSQL widget result다.
+- REST snapshot은 event cursor를 함께 반환하고 client는 cursor 이후 replay를 구독한다. retention gap은 resync 후 snapshot 재조회로 복구한다.
+- 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
+- DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
+- Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
+- static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
+
+결정 근거와 race-free 계약은 docs/realtime-2026/adr에 있으며, 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+## 15) Pipeline·Snapshot·SQL·Catalog application 경계
 
 Pipeline 생성·수정은 `pipeline_contract`의 순수 validation과 `pipeline_mapping`의 persisted Job mapper를 거친다. `etl_service.py`는 actor 권한, source capability, repository transaction과 외부 runtime adapter를 조정하는 compatibility facade이며 필수값·target·permission 규칙과 draft 직렬화를 중복 구현하지 않는다.
 
@@ -500,7 +523,7 @@ Snapshot command는 종료되는 finite Run 정책으로 분리한다. `snapshot
 
 SQL과 ETL의 Catalog write는 `CatalogWriterPort`의 payload 계약을 사용한다. Dataset identity는 논리 `datasetId/name`, materialization version, physical `storageLocation`, 검증된 query-engine table mapping을 함께 묶는다. 같은 version/location/table의 재시도는 멱등으로 취급하며 terminal publication에 version evidence가 없으면 공개하지 않는다. 상세 경계와 rollback 조건은 [Pipeline·Snapshot·SQL·Catalog Application 경계](refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 따른다.
 
-## 15) Spark/Kafka runtime과 Python·Node 경계
+## 16) Spark/Kafka runtime과 Python·Node 경계
 
 배포 command가 참조하는 `spark_job_run.py`와 `kafka_continuous_stream.py` 경로는 compatibility façade로 고정한다. 실제 Spark/Kafka 구현은 `backend/scripts/runtime/`의 typed config, atomic document contract, cursor state, Spark text-analysis 모듈로 분리한다. report/checkpoint/manifest는 additive schema version을 가지며 이전 필드 없는 문서를 계속 읽는다.
 
@@ -508,7 +531,7 @@ production control-plane과 metadata의 권위는 FastAPI/Python이다. Node는 
 
 상세 authority matrix, Kafka 보장 범위, bridge error/rollback 계약은 [Spark/Kafka Runtime Script·Python/Node 경계](refactor-2026/contracts/runtime-scripts-node-boundary.md)를 따른다.
 
-## 16) Frontend 상태 소유권과 ETL Wizard 경계
+## 17) Frontend 상태 소유권과 ETL Wizard 경계
 
 Frontend 서버 상태는 `useAskLakeData`의 기존 façade를 유지하되 요청 순서는 `LatestRequestGate`가 소유한다. resource/session/version/params 기반 query key와 revision lease로 초기 hydrate, 수동 refresh, Job filter의 stale completion을 차단한다. 생성 mutation은 `idle`, `pending`, `accepted`, `reconciled`, `failed` 단계를 additive 상태로 노출하며 API 응답과 후속 목록 reconciliation을 구분한다.
 
@@ -516,7 +539,7 @@ ETL 편집 draft는 versioned browser document로 normalize·serialize·hydrate�
 
 ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx`는 기존 import용 re-export façade만 유지한다. `stepRegistry.ts`가 기존 `/etl/*` route, optional 레코드 구조화 단계, Continuous Kafka의 schedule 생략을 단일 규칙으로 제공한다. 상세 ownership, 호환 경로, 검증과 rollback은 [Frontend 상태 소유권과 ETL Wizard 경계](refactor-2026/contracts/frontend-state-etl-wizard.md)를 따른다.
 
-## 17) Frontend Job 화면과 데이터 Hook 경계
+## 18) Frontend Job 화면과 데이터 Hook 경계
 
 `JobsPages.tsx`는 기존 세 public page export만 유지하는 compatibility façade다. 목록, 상세, Continuous session/batch, Snapshot Run/DAG를 `pages/ingest/jobs/`의 독립 feature module로 분리한다. route, query/filter 의미, class name과 접근성 계약은 유지하며 화면 모듈이 backend fetch ownership을 새로 만들지 않는다.
 
@@ -524,7 +547,7 @@ ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx
 
 상세 모듈 책임, localStorage 분류, 동시성·rollback과 검증은 [Frontend Job 화면·데이터 Hook 경계](refactor-2026/contracts/frontend-jobs-data-hooks.md)를 따른다.
 
-## 18) Frontend CSS·Catalog·Layout 경계
+## 19) Frontend CSS·Catalog·Layout 경계
 
 `etl.css`와 `layout.css`는 기존 cascade 순서를 보존하는 import entrypoint만 담당한다. ETL 단계와 shell/account/admin/workflow 규칙은 feature stylesheet가 소유하며 분할 전 원문 SHA-256을 회귀 계약으로 고정한다. 기존 중복 selector는 이 단계에서 의미를 바꾸지 않는다.
 
@@ -532,7 +555,7 @@ Catalog의 기존 `CatalogPage` public import는 façade로 유지한다. 목록
 
 상세 CSS ownership, selector inventory, 접근성·호환 계약은 [Frontend CSS·Catalog·Layout 경계](refactor-2026/contracts/frontend-css-catalog-layout.md)를 따른다.
 
-## 19) API·DB 하위 호환과 Legacy 경로 가시성
+## 20) API·DB 하위 호환과 Legacy 경로 가시성
 
 리팩토링의 기준선은 `docs/refactor-2026/baseline/artifacts/`의 OpenAPI와 정적 모델 계약이다. CI/로컬 검증은 기존 path·method·response, request required field, schema/property/enum, SQLAlchemy table, Pydantic schema, frontend route와 wizard flow 제거를 차단한다. 응답 전용 additive field는 허용하되 보고서에 명시한다.
 
