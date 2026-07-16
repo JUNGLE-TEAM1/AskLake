@@ -70,7 +70,10 @@ class RuntimeIoPortTests(unittest.TestCase):
         self.assertEqual(result["storedCount"], 2)
         self.assertIn("SUCCESS=", result["stdout"])
         self.assertEqual(result["stderr"], "warning")
-        self.assertEqual(calls[0][0], ["node", "/backend/scripts/worker.mjs"])
+        self.assertEqual(
+            calls[0][0],
+            ["node", str(Path("/backend/scripts/worker.mjs"))],
+        )
         self.assertEqual(calls[0][1]["timeout"], 7)
 
     def test_subprocess_bridge_normalizes_process_failure(self) -> None:
