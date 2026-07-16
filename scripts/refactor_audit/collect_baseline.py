@@ -475,12 +475,16 @@ def package_scripts(path: Path) -> Dict[str, str]:
 
 
 def frontend_contracts() -> Dict[str, Any]:
-    app = text(ROOT / "frontend/src/App.tsx")
+    frontend_sources = "\n".join(
+        text(path)
+        for path in sorted((ROOT / "frontend/src").rglob("*"))
+        if path.is_file() and path.suffix in {".js", ".jsx", ".ts", ".tsx"}
+    )
     shell = text(ROOT / "frontend/src/data/appShellData.ts")
     route_literals = sorted(
         {
             value
-            for value in re.findall(r'["\'](/[^"\']*)["\']', app)
+            for value in re.findall(r'["\'](/[^"\']*)["\']', frontend_sources)
             if not value.startswith("/api/")
         }
     )
