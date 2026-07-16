@@ -36,6 +36,8 @@ Issue #798 Phase 3은 첫 새-image rollout에서 Kubernetes Ready와 ALB Health
 
 Issue #798 Phase 4의 live Catalog Iceberg rows 호출은 `NameError`/500이나 private marker 없이 HTTP 502 `SQL_STORAGE_ERROR`까지 확인했다. 추가로 reason이 `ErrorCode.BACKEND_TIMEOUT`으로 노출되는 enum 정규화 drift를 찾아 source와 focused test에서 `BACKEND_TIMEOUT` wire value로 수정했다. 이 추가 commit의 새 image 배포와 live 재검증 전에는 Phase 4 완료가 아니다.
 
+Issue #798 Phase 4 보완은 enum 수정 exact revision의 새 immutable AMD64 Backend image를 readiness-gate 기반으로 배포했다. 외부 health 343개 최종 표본 실패 0, 새 Pod gate/digest `2/2`, Frontend·Secret 무변경과 ALB/RDS·Continuous·EC2 postcheck가 통과했다. live Iceberg rows는 HTTP 502 `SQL_STORAGE_ERROR`, reason `BACKEND_TIMEOUT`을 반환하며 enum 구현명과 private marker를 노출하지 않았다. Trino 미배포 오류 계약은 완료됐고 snapshot-aware HTTP 200은 Trino 배포 후 별도 gate다.
+
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.

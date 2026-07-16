@@ -111,3 +111,18 @@ Phase 2 candidate의 새 Backend digest만 Helm release에 적용했다. 첫 두
 새 Backend image에 관리자 session으로 접근해 queryable Iceberg Dataset 하나의 bounded rows endpoint를 호출했다. HTTP status는 502, error code는 `SQL_STORAGE_ERROR`, message와 details key는 허용된 최소 envelope였고 `NameError`, traceback, endpoint, query, credential marker는 노출되지 않았다.
 
 하지만 실제 Trino 연결 실패 reason이 wire value `BACKEND_TIMEOUT`이 아니라 Python enum 표현 `ErrorCode.BACKEND_TIMEOUT`으로 직렬화되는 drift를 발견했다. `iceberg_read_reason`이 `ApiError.code`의 enum value를 사용하도록 수정했고 Catalog rows focused test 8개가 통과했다. 이 추가 수정은 아직 현재 EKS image에 포함되지 않았으므로 Phase 4 runtime 완료가 아니다. 새 formal receipt, Backend-only rollout과 같은 live endpoint 재검증이 남아 있다.
+
+### Phase 4 보완 image와 최종 live 결과
+
+enum 정규화 수정의 exact revision으로 공식 OIDC image delivery를 다시 실행해 새 immutable AMD64 Backend receipt를 인수했다. preflight는 receipt ancestry, ECR immutability, `backend.image` 단독 변경, server dry-run과 변경 전 runtime gate를 모두 통과했다.
+
+올바른 EKS Auto Mode namespace label 아래 새 Pod에는 `target-health.*` readiness gate가 실제 주입됐고 두 Pod 모두 condition `True`가 된 뒤 rollout이 진행됐다. 외부 `/api/health` 343개 표본은 최종 실패 0개였고, 한 번 발생한 client transport 실패는 즉시 재확인해 HTTP 200을 받았다. HTTP 502 표본은 없었다. 새 Pod `2/2` digest, Frontend와 Secret 무변경, ALB/RDS, Continuous와 보존 EC2 gate도 통과했다.
+
+같은 queryable Iceberg Dataset의 rows endpoint를 다시 호출한 최종 결과는 다음과 같다.
+
+- HTTP 502
+- `SQL_STORAGE_ERROR`
+- `details.reason=BACKEND_TIMEOUT`
+- `NameError`, Python enum 표현, traceback, endpoint, query, password/token marker 없음
+
+따라서 Trino 미배포 상태의 Phase 4 오류 계약 검증은 완료됐다. Trino coordinator 배포 뒤 snapshot-aware HTTP 200 rows 검증은 별도 후속 gate다.

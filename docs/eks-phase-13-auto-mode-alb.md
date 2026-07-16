@@ -52,7 +52,7 @@ asklake.io/ingress-access: asklake-dev
 eks.amazonaws.com/pod-readiness-gate-inject: enabled
 ```
 
-이 key는 일반 self-managed AWS Load Balancer Controller의 `elbv2.k8s.aws/pod-readiness-gate-inject`와 다르다. EKS Auto Mode cluster의 managed `eks-load-balancing-webhook` namespace selector를 읽어 exact key를 확인해야 하며 두 key를 혼용하지 않는다. 이 label만으로 성공 처리하지 않고 실제 rolling update 후 새 Pod의 readiness gate 존재와 `True`, ALB steady, 외부 health 연속 성공을 함께 확인한다.
+이 key는 일반 self-managed AWS Load Balancer Controller의 `elbv2.k8s.aws/pod-readiness-gate-inject`와 다르다. EKS Auto Mode cluster의 managed `eks-load-balancing-webhook` namespace selector를 읽어 exact key를 확인해야 하며 두 key를 혼용하지 않는다. condition 이름은 controller 구현별 suffix를 가정하지 않고 주입된 `target-health.*` gate와 같은 status condition이 `True`인지 검사한다. 이 label만으로 성공 처리하지 않고 실제 rolling update 후 새 Pod의 readiness gate 존재와 `True`, ALB steady, 외부 health 연속 성공을 함께 확인한다.
 
 두 Ingress는 class의 `group.name=asklake-dev`를 통해 하나의 ALB를 공유한다. Backend와 Frontend를 나누는 이유는 각각 `/api/health`와 `/`라는 다른 target health check를 유지하기 위해서다. 기존 Ingress group annotation과 order annotation에는 의존하지 않는다. `/api`와 `/`의 Prefix route와 실제 ALB listener rule은 server-side dry-run과 runtime target health로 다시 검증한다.
 

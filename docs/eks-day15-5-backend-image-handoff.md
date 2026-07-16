@@ -56,8 +56,6 @@ Trino coordinator와 runtime Secret이 준비된 뒤에는 같은 API를 기존 
 
 ## 현재 남은 인수 항목
 
-- atomic Backend-only rollout
-- Trino 미배포 상태의 sanitized HTTP 502 회귀 검증
 - 이후 Trino 배포 트랙의 snapshot-aware HTTP 200 검증
 
-Issue #798 Phase 1에서 수정 source를 포함한 exact build revision, 새 immutable AMD64 Backend image와 formal receipt를 인수했다. Phase 2는 현재 Helm values의 `backend.image`만 바꾼 candidate로 lint/render와 API server dry-run을 통과했고 cluster mutation이 없음을 확인했다. 실제 Backend rollout은 아직 수행하지 않았으므로 runtime은 기존 image를 유지한다.
+Issue #798 Phase 4에서 최종 enum 정규화 수정까지 포함한 immutable AMD64 Backend image를 EKS Auto Mode readiness gate 기반으로 atomic rollout했다. 새 Pod digest `2/2`, 외부 health, ALB/RDS, Frontend·Secret 무변경과 Continuous/EC2 경계를 확인했고, Trino 미배포 상태의 sanitized HTTP 502 `SQL_STORAGE_ERROR`와 `BACKEND_TIMEOUT` reason도 live 검증했다.

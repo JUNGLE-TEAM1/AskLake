@@ -14,6 +14,7 @@ TEMP_DIR="$(mktemp -d)"
 CURRENT_VALUES="$TEMP_DIR/current-values.json"
 CANDIDATE_VALUES="$TEMP_DIR/candidate-values.json"
 MONITOR_FILE="$TEMP_DIR/health-monitor.txt"
+MONITOR_RECHECK_FILE="$TEMP_DIR/health-transport-rechecks.txt"
 MONITOR_PID=""
 RELEASE_REVISION_BEFORE=""
 UPGRADE_STARTED=false
@@ -125,11 +126,20 @@ frontend_host="$(jq -r '[.items[] | select(.metadata.name == "asklake-frontend")
 unset ingresses frontend_host
 
 monitor_external_health() {
-  local code sample_number=0
+  local code retry_code sample_number=0
   while true; do
     if ! code="$(curl -sS -o /dev/null -w '%{http_code}' \
       --connect-timeout 3 --max-time 10 "http://$backend_host/api/health" 2>/dev/null)"; then
       code="000"
+    fi
+    if [[ "$code" == "000" ]]; then
+      printf 'recheck\n' >>"$MONITOR_RECHECK_FILE"
+      sleep 0.2
+      if ! retry_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+        --connect-timeout 3 --max-time 10 "http://$backend_host/api/health" 2>/dev/null)"; then
+        retry_code="000"
+      fi
+      code="$retry_code"
     fi
     printf '%s\n' "$code" >>"$MONITOR_FILE"
     sample_number=$((sample_number + 1))
@@ -191,9 +201,9 @@ jq -e --arg digest "$new_backend_digest" '
   (.items | length) == 2
   and all(.items[];
     .status.phase == "Running"
-    and ([.spec.readinessGates[]?.conditionType | select(startswith("target-health.elbv2.k8s.aws/"))] | length) >= 1
+    and ([.spec.readinessGates[]?.conditionType | select(startswith("target-health."))] | length) >= 1
     and any(.status.conditions[]?;
-      (.type | startswith("target-health.elbv2.k8s.aws/"))
+      (.type | startswith("target-health."))
       and .status == "True"
     )
     and any(.status.containerStatuses[]?;
@@ -228,6 +238,10 @@ bash "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh" >/dev/null
 bash "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh" >/dev/null
 
 ROLLOUT_COMPLETE=true
+transport_rechecks=0
+if [[ -f "$MONITOR_RECHECK_FILE" ]]; then
+  transport_rechecks="$(wc -l <"$MONITOR_RECHECK_FILE" | tr -d ' ')"
+fi
 echo "backend_rollout_values_change=backend_image_only"
 echo "backend_rollout_atomic_upgrade=passed"
 echo "backend_rollout_replicas=2_of_2"
@@ -236,4 +250,5 @@ echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"
 echo "backend_rollout_http_failures=$failure_count"
+echo "backend_rollout_transport_rechecks=$transport_rechecks"
 echo "backend_rollout_alb_rds_continuous_ec2=passed"

@@ -734,7 +734,9 @@ bash scripts/preflight-eks-backend-image-rollout.sh
 
 이 명령은 실제 Backend image를 배포하지 않는다. 성공 결과는 Backend-only atomic rollout의 입력이 준비됐다는 뜻이며 runtime 수정 완료 증거가 아니다.
 
-새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.elbv2.k8s.aws/*` readiness condition을 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. 외부 health 표본 하나라도 실패하거나 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
+새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.*` readiness condition을 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. condition suffix는 controller 구현에 종속되므로 exact prefix 하나를 가정하지 않고 주입된 target-health gate와 같은 condition이 `True`인지 확인한다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. 외부 health 표본 하나라도 실패하거나 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
+
+외부 health monitor는 HTTP 응답 code를 그대로 판정한다. client transport `000`만 0.2초 뒤 한 번 재확인해 검증 머신의 순간 연결 오류와 실제 ALB 응답을 구분하며, 재확인도 실패하거나 HTTP가 200이 아니면 rollout을 실패 처리한다. HTTP 502 같은 서버/ALB 응답은 재시도로 숨기지 않는다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
