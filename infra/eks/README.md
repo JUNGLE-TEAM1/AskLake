@@ -96,9 +96,13 @@ helm template asklake-foundation \
   -f infra/eks/values/dev.example.yaml
 ```
 
-실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver는 `asklake-spark` token과 namespace Role로 executor lifecycle만 관리한다. 이 두 ServiceAccount 외 application workload의 Kubernetes API token mount는 금지한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
+실제 runtime manifest는 chart가 만든 service account 이름을 참조해야 한다. 임의 이름을 별도로 만들지 않는다. FastAPI는 `asklake-backend` token과 namespace Role로만 SparkApplication을 제어하고 Spark driver는 `asklake-spark` token과 namespace Role로 executor lifecycle과 shutdown collection cleanup만 관리한다. PVC는 cleanup-only이고 생성·수정 권한은 없으며 Secret·Node·cluster-wide 접근도 금지한다. 이 두 ServiceAccount 외 application workload의 Kubernetes API token mount는 금지한다. 세부 인수 항목은 [Phase 1 인수 계약](../../docs/eks-msk-mvp-phase-1-handoff.md)을 따른다.
 
 dev SparkApplication CRD와 controller/webhook은 공식 Kubeflow Spark Operator 2.5.1 chart를 고정해 설치한다. `infra/eks/values/operators/spark-operator.dev.yaml`은 `asklake-dev`만 감시하고 Foundation의 `asklake-spark` ServiceAccount/RBAC를 재사용한다. chart archive checksum과 controller/hook image digest를 모두 검증하며 chart의 범용 job RBAC, Spark UI, batch scheduler, PodMonitor와 cert-manager는 만들지 않는다. `infra/eks/smoke/sparkapplication-admission.yaml`은 server dry-run 전용이고 실제 workload를 생성하지 않는다. 설치·삭제 전에 `scripts/verify-eks-spark-operator.sh`를 통과해야 하며, 삭제는 release 제거와 소유 CRD 제거를 별도 확인값으로 나눈다. 실제 적용 결과는 [Spark Operator 적용 기록](../../docs/eks-day15-spark-operator-evidence.md)을 따른다.
+
+운영자가 Catalog에서 선별한 exact Parquet object를 다시 확인할 때는 `scripts/run-eks-catalog-physical-read-smoke.sh --validate-only`와 `scripts/test-eks-catalog-physical-read-smoke.sh`를 먼저 통과한다. 실제 URI와 Dataset 문맥은 Git 제외 `infra/eks/delivery/*.physical-read-input.json`, image는 canonical `ASKLAKE_IMAGE_RECEIPT`의 Git 제외 formal receipt로만 전달한다. 실행기 자체는 Catalog API provenance를 재검증하지 않고 bounded exact S3 Parquet read만 증명한다. `--live`는 context, CRD/operator/capacity/Pod Identity/server dry-run과 confirmation을 추가로 요구하고 실제 row를 출력하지 않으며 fail-closed cleanup과 잔여 0을 강제한다.
+
+private input을 새로 만들 때는 `scripts/prepare-eks-physical-read-input.sh`가 현재 Catalog의 queryable Iceberg root와 그 아래 non-empty exact Parquet object를 대조한다. helper와 runner 모두 Dataset ID, bucket/object URI와 row를 출력하지 않는다.
 
 IRSA와 Pod Identity render 계약은 실제 ARN이 없는 fixture로 각각 확인할 수 있다. IRSA는 Backend/Trino/MSK smoke/Spark 네 ServiceAccount annotation을 만들고 Pod Identity는 annotation 없이 association output을 사용한다.
 

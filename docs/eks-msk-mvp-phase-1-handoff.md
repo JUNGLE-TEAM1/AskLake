@@ -22,7 +22,7 @@ ECR repository는 frontend, backend, Airflow, Trino와 Spark runtime을 분리�
 
 이 이름은 기본값이며 Terraform output과 Helm value를 통해 같은 값으로 전달한다. B는 workload manifest에서 별도 service account를 임의로 만들지 않는다.
 
-`asklake-backend`는 SparkApplication API 호출을 위해, `asklake-spark`는 driver가 executor Pod·Service·ConfigMap lifecycle을 관리하기 위해 Kubernetes API token 자동 mount를 `true`로 사용한다. Foundation은 `asklake-dev` namespace에서 Backend에는 SparkApplication `create/get/list/watch/delete`, Pod `get/list/watch`, Pod log `get`, Event `get/list/watch`만 허용하고 Spark에는 driver lifecycle 최소 권한만 허용한다. Frontend, Airflow, Trino와 MSK smoke의 token 자동 mount는 `false`로 고정한다. 어느 application Role에도 Secret, Node, Namespace, ClusterRole 또는 다른 namespace 권한은 부여하지 않는다.
+`asklake-backend`는 SparkApplication API 호출을 위해, `asklake-spark`는 driver가 executor Pod·Service·ConfigMap lifecycle과 shutdown collection cleanup을 관리하기 위해 Kubernetes API token 자동 mount를 `true`로 사용한다. Foundation은 `asklake-dev` namespace에서 Backend에는 SparkApplication `create/get/list/watch/delete`, Pod `get/list/watch`, Pod log `get`, Event `get/list/watch`만 허용한다. Spark에는 Pod·Service·ConfigMap lifecycle과 `deletecollection`, PVC cleanup-only `get/list/delete/deletecollection`만 허용하며 PVC 생성·수정은 허용하지 않는다. Frontend, Airflow, Trino와 MSK smoke의 token 자동 mount는 `false`로 고정한다. 어느 application Role에도 Secret, Node, Namespace, ClusterRole 또는 다른 namespace 권한은 부여하지 않는다.
 
 ## 2. B가 바로 사용할 수 있는 고정 경계
 

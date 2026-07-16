@@ -109,6 +109,7 @@ fi
 bash -n "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
 bash -n "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-spark-rbac.sh"
+bash "$ROOT_DIR/scripts/test-eks-spark-rbac-contract.sh"
 grep -q 'install-spark-operator-2.5.1' "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
 grep -q 'uninstall-spark-operator-after-empty-check' "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
 grep -q 'delete-owned-empty-spark-operator-crds' "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"

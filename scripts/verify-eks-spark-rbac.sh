@@ -30,24 +30,41 @@ expect_denied() {
   fi
 }
 
-for verb in create get list watch delete; do
+for verb in create get list watch delete deletecollection; do
   expect_allowed "$verb" pods "$SPARK_USER" "$JOB_NAMESPACE"
 done
 for resource in services configmaps; do
-  for verb in create get delete; do
+  for verb in create get list delete deletecollection; do
     expect_allowed "$verb" "$resource" "$SPARK_USER" "$JOB_NAMESPACE"
   done
+done
+for verb in get list delete deletecollection; do
+  expect_allowed "$verb" persistentvolumeclaims "$SPARK_USER" "$JOB_NAMESPACE"
 done
 
 expect_allowed create sparkapplications.sparkoperator.k8s.io "$BACKEND_USER" "$JOB_NAMESPACE"
 expect_allowed get sparkapplications.sparkoperator.k8s.io "$BACKEND_USER" "$JOB_NAMESPACE"
 expect_allowed delete sparkapplications.sparkoperator.k8s.io "$BACKEND_USER" "$JOB_NAMESPACE"
 
-expect_denied get secrets "$SPARK_USER" "$JOB_NAMESPACE"
-for resource in nodes namespaces clusterroles.rbac.authorization.k8s.io; do
-  expect_denied get "$resource" "$SPARK_USER" ""
+for verb in get list watch; do
+  expect_denied "$verb" secrets "$SPARK_USER" "$JOB_NAMESPACE"
 done
+for verb in get list watch; do
+  for resource in nodes namespaces clusterroles.rbac.authorization.k8s.io; do
+    expect_denied "$verb" "$resource" "$SPARK_USER" ""
+  done
+done
+expect_denied '*' '*' "$SPARK_USER" "$JOB_NAMESPACE"
+expect_denied '*' '*' "$SPARK_USER" ""
+expect_denied get '*' "$SPARK_USER" "$JOB_NAMESPACE"
 expect_denied create pods "$SPARK_USER" default
-expect_denied create persistentvolumeclaims "$SPARK_USER" "$JOB_NAMESPACE"
+for verb in create update patch; do
+  expect_denied "$verb" persistentvolumeclaims "$SPARK_USER" "$JOB_NAMESPACE"
+done
+for resource in pods services configmaps; do
+  for verb in update patch; do
+    expect_denied "$verb" "$resource" "$SPARK_USER" "$JOB_NAMESPACE"
+  done
+done
 
 echo "Spark runtime RBAC allow/deny matrix passed for $JOB_NAMESPACE."
