@@ -9,7 +9,7 @@ HANDOFF="${ASKLAKE_DAY16_HANDOFF:-$ROOT_DIR/infra/eks/delivery/dev.day16-a.hando
 RUNTIME="${ASKLAKE_DAY16_RUNTIME_CONTRACT:-$ROOT_DIR/infra/eks/secrets/dev.day16-a.runtime-secret-contract.json}"
 VALUES="${ASKLAKE_DAY16_TRINO_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.day16-a.private-values.json}"
 BASE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
-RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev-8d4414df.image-receipt.json}"
+RECEIPT="${ASKLAKE_IMAGE_RECEIPT:-}"
 STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstate}"
 FIXTURE_RECEIPT="${ASKLAKE_FIXTURE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev.fixture-receipt.json}"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-workloads"
@@ -18,6 +18,7 @@ MODE="${1:---audit}"
 
 fail() { echo "$1" >&2; exit 1; }
 [[ "$MODE" == "--audit" || "$MODE" == "--ready" ]] || fail "usage: verify-eks-day16-a-handoff.sh [--audit|--ready]"
+[[ -n "$RECEIPT" ]] || fail "set ASKLAKE_IMAGE_RECEIPT to the current private formal image receipt"
 for command in git helm jq kubectl node; do command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"; done
 for file in "$HANDOFF" "$RUNTIME" "$VALUES" "$BASE_VALUES" "$RECEIPT" "$STATE"; do [[ -s "$file" ]] || fail "Phase 5 handoff input is missing"; done
 export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value' "$STATE")}"
