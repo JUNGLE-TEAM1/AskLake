@@ -9,6 +9,12 @@ locals {
         Resource = [var.msk_cluster_arn]
       },
       {
+        Sid      = "ProduceIdempotently"
+        Effect   = "Allow"
+        Action   = ["kafka-cluster:WriteDataIdempotently"]
+        Resource = [var.msk_cluster_arn]
+      },
+      {
         Sid    = "ProduceFixtureTopic"
         Effect = "Allow"
         Action = [

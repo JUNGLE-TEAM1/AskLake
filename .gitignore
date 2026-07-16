@@ -31,3 +31,5 @@ infra/eks/delivery/*.physical-read-input.json
 infra/eks/secrets/*.runtime-secret-contract.json
 infra/eks/secrets/*.runtime-secret-input.json
 infra/eks/values/workloads/*.private-values.json
+infra/eks/delivery/*.fixture-producer-handoff.json
+infra/eks/delivery/*.fixture-receipt.json

@@ -226,9 +226,18 @@ if (readyMode) {
   for (const key of ['mskClusterArn', 'mskBootstrapBrokersSaslIam', 'rdsEndpoint', 'storageBuckets']) {
     if (!contract.dataPlaneReferences?.[key]) fail(`${key} is required in --ready mode`);
   }
+  const httpsIngress = String(contract.decisions?.ingressExposure?.selected ?? '').includes('https');
   for (const [name, decision] of Object.entries(contract.decisions ?? {})) {
-    if (name !== 'continuousReadPath' && decision.status !== 'selected') {
+    const mayRemainDeferred = name === 'continuousReadPath' ||
+      (name === 'domainAndCertificate' && !httpsIngress);
+    if (mayRemainDeferred && !['deferred', 'selected'].includes(decision.status)) {
+      fail(`${name} must be deferred or selected before deployment`);
+    }
+    if (!mayRemainDeferred && decision.status !== 'selected') {
       fail(`${name} must be selected before deployment`);
+    }
+    if (name === 'domainAndCertificate' && httpsIngress && decision.status !== 'selected') {
+      fail('domainAndCertificate must be selected for HTTPS ingress');
     }
   }
 }
