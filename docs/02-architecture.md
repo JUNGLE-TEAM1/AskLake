@@ -523,3 +523,11 @@ ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx
 `useAskLakeData.ts`도 `App.tsx` 호환 façade로 유지한다. 서버 상태는 `useAskLakeWorkspaceState`, 초기/필터 조회는 `useWorkspaceHydration`, ETL·SQL 생성은 `usePipelineMutations`, Job command와 polling은 `useJobController`, Catalog mutation/navigation은 `useCatalogController`가 소유하고 `useAskLakeWorkspace`가 기존 반환 shape로 조합한다. Job optimistic rollback은 entity revision lease가 최신일 때만 허용한다.
 
 상세 모듈 책임, localStorage 분류, 동시성·rollback과 검증은 [Frontend Job 화면·데이터 Hook 경계](refactor-2026/contracts/frontend-jobs-data-hooks.md)를 따른다.
+
+## 18) Frontend CSS·Catalog·Layout 경계
+
+`etl.css`와 `layout.css`는 기존 cascade 순서를 보존하는 import entrypoint만 담당한다. ETL 단계와 shell/account/admin/workflow 규칙은 feature stylesheet가 소유하며 분할 전 원문 SHA-256을 회귀 계약으로 고정한다. 기존 중복 selector는 이 단계에서 의미를 바꾸지 않는다.
+
+Catalog의 기존 `CatalogPage` public import는 façade로 유지한다. 목록·미리보기 표현, 상세, lineage, 순수 model, 검색·선택·상세 조회 state를 독립 module로 분리한다. 상세 요청 cleanup과 명시적 SQL dataset 선택 규칙은 state hook이 소유하고 표현 module은 API를 직접 호출하지 않는다.
+
+상세 CSS ownership, selector inventory, 접근성·호환 계약은 [Frontend CSS·Catalog·Layout 경계](refactor-2026/contracts/frontend-css-catalog-layout.md)를 따른다.

@@ -1,0 +1,258 @@
+.record-parsing-page-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 4px;
+}
+
+.record-parsing-page-header h2 {
+  color: var(--foreground);
+  font-family: var(--jobs-font-family);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  margin: 0;
+}
+
+.record-parsing-page-icon,
+.record-parsing-source-icon {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .06);
+  color: #1769ff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.record-parsing-page-icon {
+  height: 42px;
+  width: 42px;
+}
+
+.record-parsing-page-icon svg {
+  height: 20px;
+  stroke-width: 2.2;
+  width: 20px;
+}
+
+.record-parsing-workspace {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.record-parsing-panel {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border-color: #9bc7ff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, .05);
+}
+
+.record-parsing-panel-header {
+  align-items: center;
+  background: #eef6ff;
+  border-bottom: 1px solid #cfe2ff;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 16px;
+}
+
+.record-parsing-panel-header h2 {
+  align-items: center;
+  color: #263a67;
+  display: inline-flex;
+  font-family: var(--jobs-font-family);
+  font-size: 14px;
+  font-weight: 800;
+  gap: 8px;
+  letter-spacing: .01em;
+  margin: 0;
+}
+
+.record-parsing-panel-header h2 svg {
+  color: #1769ff;
+  height: 17px;
+  stroke-width: 2.3;
+  width: 17px;
+}
+
+.record-parsing-panel-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.record-parsing-preset-button {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-family: var(--jobs-font-family);
+  font-weight: 700;
+}
+
+.record-parsing-preset-button:hover {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+.record-parsing-preset-button svg {
+  height: 15px;
+  width: 15px;
+}
+
+.record-parsing-panel-header-warning {
+  background: #fff7ed;
+  border-bottom-color: #fed7aa;
+}
+
+.record-parsing-panel-header-warning h2,
+.record-parsing-panel-header-warning h2 svg {
+  color: #c2410c;
+}
+
+.record-parsing-panel-body {
+  min-width: 0;
+  padding: 16px;
+}
+
+.record-parsing-status {
+  align-items: center;
+  color: #1769ff;
+  display: inline-flex;
+  font-family: var(--jobs-font-family);
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.record-parsing-status svg {
+  height: 14px;
+  stroke-width: 2.6;
+  width: 14px;
+}
+
+.record-parsing-status.is-warning {
+  color: var(--destructive);
+}
+
+.record-parsing-raw {
+  box-sizing: border-box;
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  min-height: 236px;
+  resize: vertical;
+  white-space: pre;
+  width: 100%;
+}
+
+.record-parsing-settings-body {
+  display: grid;
+  gap: 16px;
+}
+
+.record-parsing-controls {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.record-parsing-controls label,
+.record-parsing-controls select,
+.record-parsing-table input,
+.record-parsing-table select {
+  font-family: var(--jobs-font-family);
+}
+
+.record-parsing-table-scroll {
+  max-width: 100%;
+}
+
+.record-parsing-table,
+.record-parsing-preview-table,
+.record-parsing-invalid-table {
+  font-family: var(--jobs-font-family);
+  min-width: 720px;
+}
+
+.record-parsing-table thead th,
+.record-parsing-preview-table thead th,
+.record-parsing-invalid-table thead th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.record-parsing-table tbody td,
+.record-parsing-preview-table tbody td,
+.record-parsing-invalid-table tbody td {
+  color: #172033;
+  font-size: 13px;
+}
+
+.record-parsing-table code,
+.record-parsing-invalid-table code {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.record-parsing-preview-body {
+  padding-top: 4px;
+}
+
+.record-parsing-error {
+  color: var(--destructive);
+  font-size: 13px;
+  margin: 0;
+}
+
+@media (max-width: 960px) {
+  .record-parsing-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .record-parsing-page-header {
+    min-height: 52px;
+  }
+
+  .record-parsing-page-header h2 {
+    font-size: 18px;
+  }
+
+  .record-parsing-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .record-parsing-panel-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    min-height: 50px;
+    padding: 10px 13px;
+  }
+
+  .record-parsing-panel-actions {
+    justify-content: flex-end;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .record-parsing-panel-body {
+    padding: 13px;
+  }
+}
