@@ -2,7 +2,7 @@
 
 - 작업일: 2026-07-16
 - 포함 원본 단계: PR-02, PR-03, PR-04
-- Issue/branch: #811 / `feat-#811`
+- Issue/branch/PR: #811 / `feat-#811` / #815 Draft
 - 판정: 구현 및 로컬 검증 완료, Draft PR 생성 전
 
 ## 구현 결과

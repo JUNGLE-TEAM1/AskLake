@@ -23,7 +23,7 @@ merge_order:
 | Stack PR | 상태 | 포함 원본 단계 | 목표 | Issue / branch / PR |
 |---|---|---|---|---|
 | STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
-| STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / 생성 예정 |
+| STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
 | STACK-03 | READY | PR-05, PR-06 | continuous SQL planner·runtime·publication | 생성 예정 |
 | STACK-04 | LOCKED | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | 생성 예정 |
 
