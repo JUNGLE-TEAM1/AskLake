@@ -1,0 +1,1519 @@
+{
+  "api_routes": [
+    {
+      "handler": "list_admin_audit_logs",
+      "line": 108,
+      "method": "GET",
+      "path": "/admin/audit-logs",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "list_admin_governance_controls",
+      "line": 82,
+      "method": "GET",
+      "path": "/admin/governance-controls",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "update_admin_principal_control",
+      "line": 90,
+      "method": "PATCH",
+      "path": "/admin/governance/principals",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "update_admin_resource_lock",
+      "line": 99,
+      "method": "PATCH",
+      "path": "/admin/governance/resource-locks",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "list_admin_groups",
+      "line": 38,
+      "method": "GET",
+      "path": "/admin/groups",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "list_admin_permissions",
+      "line": 46,
+      "method": "GET",
+      "path": "/admin/permissions",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "create_admin_permission_grant",
+      "line": 54,
+      "method": "POST",
+      "path": "/admin/permissions",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "delete_admin_permission_grant",
+      "line": 73,
+      "method": "DELETE",
+      "path": "/admin/permissions/{grant_id}",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "update_admin_permission_grant",
+      "line": 63,
+      "method": "PATCH",
+      "path": "/admin/permissions/{grant_id}",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "list_admin_users",
+      "line": 30,
+      "method": "GET",
+      "path": "/admin/users",
+      "source": "backend/app/api/admin.py"
+    },
+    {
+      "handler": "login",
+      "line": 69,
+      "method": "POST",
+      "path": "/auth/login",
+      "source": "backend/app/api/auth.py"
+    },
+    {
+      "handler": "logout",
+      "line": 149,
+      "method": "POST",
+      "path": "/auth/logout",
+      "source": "backend/app/api/auth.py"
+    },
+    {
+      "handler": "get_session",
+      "line": 126,
+      "method": "GET",
+      "path": "/auth/session",
+      "source": "backend/app/api/auth.py"
+    },
+    {
+      "handler": "signup",
+      "line": 56,
+      "method": "POST",
+      "path": "/auth/signup",
+      "source": "backend/app/api/auth.py"
+    },
+    {
+      "handler": "list_datasets",
+      "line": 40,
+      "method": "GET",
+      "path": "/catalog/datasets",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "list_demo_catalog_datasets",
+      "line": 29,
+      "method": "GET",
+      "path": "/catalog/datasets",
+      "source": "backend/app/api/demo_hydration.py"
+    },
+    {
+      "handler": "get_dataset",
+      "line": 48,
+      "method": "GET",
+      "path": "/catalog/datasets/{dataset_id}",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "get_dataset_lineage",
+      "line": 68,
+      "method": "GET",
+      "path": "/catalog/datasets/{dataset_id}/lineage",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "delete_materialization_run",
+      "line": 80,
+      "method": "DELETE",
+      "path": "/catalog/datasets/{dataset_id}/materialization-runs/{run_id}",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "get_dataset_rows",
+      "line": 57,
+      "method": "GET",
+      "path": "/catalog/datasets/{dataset_id}/rows",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "create_derived_dataset",
+      "line": 94,
+      "method": "POST",
+      "path": "/catalog/derived-datasets",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "get_catalog_models",
+      "line": 74,
+      "method": "GET",
+      "path": "/catalog/models",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "get_trino_materialization",
+      "line": 113,
+      "method": "GET",
+      "path": "/catalog/trino-materializations/{materialization_id}",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "create_trino_materialization",
+      "line": 103,
+      "method": "POST",
+      "path": "/catalog/trino-runs/{run_id}/materializations",
+      "source": "backend/app/api/catalog.py"
+    },
+    {
+      "handler": "list_dashboards",
+      "line": 26,
+      "method": "GET",
+      "path": "/dashboards",
+      "source": "backend/app/api/dashboard_card.py"
+    },
+    {
+      "handler": "create_dashboard",
+      "line": 57,
+      "method": "POST",
+      "path": "/dashboards",
+      "source": "backend/app/api/dashboard_card.py"
+    },
+    {
+      "handler": "request_dashboard_assistant",
+      "line": 20,
+      "method": "POST",
+      "path": "/dashboards/assistant",
+      "source": "backend/app/api/dashboard_assistant.py"
+    },
+    {
+      "handler": "query_dashboards",
+      "line": 48,
+      "method": "POST",
+      "path": "/dashboards/query",
+      "source": "backend/app/api/dashboard_card.py"
+    },
+    {
+      "handler": "delete_dashboard",
+      "line": 76,
+      "method": "DELETE",
+      "path": "/dashboards/{dashboard_id}",
+      "source": "backend/app/api/dashboard_card.py"
+    },
+    {
+      "handler": "update_dashboard_title",
+      "line": 66,
+      "method": "PATCH",
+      "path": "/dashboards/{dashboard_id}",
+      "source": "backend/app/api/dashboard_card.py"
+    },
+    {
+      "handler": "ensure_draft_dashboard_runtime",
+      "line": 40,
+      "method": "POST",
+      "path": "/dashboards/{dashboard_id}/draft/ensure",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "save_draft_layouts",
+      "line": 126,
+      "method": "PATCH",
+      "path": "/dashboards/{dashboard_id}/draft/layouts",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "create_draft_page",
+      "line": 51,
+      "method": "POST",
+      "path": "/dashboards/{dashboard_id}/draft/pages",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "delete_draft_page",
+      "line": 76,
+      "method": "DELETE",
+      "path": "/dashboards/{dashboard_id}/draft/pages/{page_id}",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "update_draft_page",
+      "line": 63,
+      "method": "PATCH",
+      "path": "/dashboards/{dashboard_id}/draft/pages/{page_id}",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "create_draft_widget",
+      "line": 88,
+      "method": "POST",
+      "path": "/dashboards/{dashboard_id}/draft/pages/{page_id}/widgets",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "delete_draft_widget",
+      "line": 114,
+      "method": "DELETE",
+      "path": "/dashboards/{dashboard_id}/draft/widgets/{widget_id}",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "update_draft_widget",
+      "line": 101,
+      "method": "PATCH",
+      "path": "/dashboards/{dashboard_id}/draft/widgets/{widget_id}",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "publish_dashboard",
+      "line": 138,
+      "method": "POST",
+      "path": "/dashboards/{dashboard_id}/publish",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "get_published_dashboard_runtime",
+      "line": 29,
+      "method": "GET",
+      "path": "/dashboards/{dashboard_id}/published",
+      "source": "backend/app/api/dashboard_runtime.py"
+    },
+    {
+      "handler": "query_published_dashboard_widgets",
+      "line": 141,
+      "method": "POST",
+      "path": "/dashboards/{dashboard_id}/widgets/query",
+      "source": "backend/app/api/dashboard_live.py"
+    },
+    {
+      "handler": "query_dataset_freshness",
+      "line": 112,
+      "method": "POST",
+      "path": "/datasets/freshness/query",
+      "source": "backend/app/api/dashboard_live.py"
+    },
+    {
+      "handler": "get_dataset_freshness",
+      "line": 95,
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/freshness",
+      "source": "backend/app/api/dashboard_live.py"
+    },
+    {
+      "handler": "execute_airflow_run",
+      "line": 156,
+      "method": "POST",
+      "path": "/etl/internal/airflow/jobs/{job_id}/runs/{run_id}/execute",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "list_demo_jobs",
+      "line": 18,
+      "method": "GET",
+      "path": "/etl/jobs",
+      "source": "backend/app/api/demo_hydration.py"
+    },
+    {
+      "handler": "list_jobs",
+      "line": 188,
+      "method": "GET",
+      "path": "/etl/jobs",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "create_job",
+      "line": 167,
+      "method": "POST",
+      "path": "/etl/jobs",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "delete_job",
+      "line": 226,
+      "method": "DELETE",
+      "path": "/etl/jobs/{job_id}",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_job",
+      "line": 207,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "update_job",
+      "line": 216,
+      "method": "PATCH",
+      "path": "/etl/jobs/{job_id}",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "command_job",
+      "line": 235,
+      "method": "POST",
+      "path": "/etl/jobs/{job_id}/commands",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "compact_continuous_target",
+      "line": 321,
+      "method": "POST",
+      "path": "/etl/jobs/{job_id}/continuous/compactions",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "maintain_continuous_iceberg_target",
+      "line": 331,
+      "method": "POST",
+      "path": "/etl/jobs/{job_id}/continuous/iceberg-maintenance",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_continuous_worker_logs",
+      "line": 252,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/logs",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "list_continuous_maintenance_runs",
+      "line": 302,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/maintenance-runs",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_continuous_quarantine",
+      "line": 292,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/quarantine",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "replay_continuous_quarantine",
+      "line": 311,
+      "method": "POST",
+      "path": "/etl/jobs/{job_id}/continuous/quarantine/replays",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "list_continuous_sessions",
+      "line": 262,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/sessions",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_continuous_session",
+      "line": 271,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/sessions/{session_id}",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "list_continuous_session_batches",
+      "line": 281,
+      "method": "GET",
+      "path": "/etl/jobs/{job_id}/continuous/sessions/{session_id}/batches",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "stop_kafka_replay_producer",
+      "line": 139,
+      "method": "DELETE",
+      "path": "/etl/kafka/replay-producer",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_kafka_replay_producer",
+      "line": 122,
+      "method": "GET",
+      "path": "/etl/kafka/replay-producer",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "start_kafka_replay_producer",
+      "line": 130,
+      "method": "POST",
+      "path": "/etl/kafka/replay-producer",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "ingest_kafka_reviews",
+      "line": 112,
+      "method": "POST",
+      "path": "/etl/kafka/reviews/ingest",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_permission_options",
+      "line": 93,
+      "method": "GET",
+      "path": "/etl/permission-options",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "preview_record_parsing",
+      "line": 88,
+      "method": "POST",
+      "path": "/etl/record-parsing/preview",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "review_pipeline",
+      "line": 102,
+      "method": "POST",
+      "path": "/etl/review",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "run_due_scheduled_jobs",
+      "line": 341,
+      "method": "POST",
+      "path": "/etl/schedules/run-due",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "infer_schema",
+      "line": 74,
+      "method": "POST",
+      "path": "/etl/schema-inference",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "list_source_assets",
+      "line": 65,
+      "method": "POST",
+      "path": "/etl/sources/assets",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_source_connector_defaults",
+      "line": 83,
+      "method": "GET",
+      "path": "/etl/sources/defaults",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "test_source_connector",
+      "line": 56,
+      "method": "POST",
+      "path": "/etl/sources/test",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "create_trino_sql_job",
+      "line": 178,
+      "method": "POST",
+      "path": "/etl/sql-jobs",
+      "source": "backend/app/api/etl.py"
+    },
+    {
+      "handler": "get_rest_sample",
+      "line": 21,
+      "method": "GET",
+      "path": "/harness/rest-sample",
+      "source": "backend/app/api/harness.py"
+    },
+    {
+      "handler": "health_check",
+      "line": 15,
+      "method": "GET",
+      "path": "/health",
+      "source": "backend/app/api/health.py"
+    },
+    {
+      "handler": "ai_health_check",
+      "line": 50,
+      "method": "GET",
+      "path": "/health/ai",
+      "source": "backend/app/api/health.py"
+    },
+    {
+      "handler": "liveness_check",
+      "line": 20,
+      "method": "GET",
+      "path": "/health/live",
+      "source": "backend/app/api/health.py"
+    },
+    {
+      "handler": "observability_metrics",
+      "line": 45,
+      "method": "GET",
+      "path": "/health/metrics",
+      "source": "backend/app/api/health.py"
+    },
+    {
+      "handler": "readiness_check",
+      "line": 25,
+      "method": "GET",
+      "path": "/health/ready",
+      "source": "backend/app/api/health.py"
+    },
+    {
+      "handler": "reconcile_spark_run_catalog",
+      "line": 54,
+      "method": "POST",
+      "path": "/internal/airflow/spark-runs/{run_id}/catalog",
+      "source": "backend/app/api/airflow_execution.py"
+    },
+    {
+      "handler": "execute_spark_run",
+      "line": 39,
+      "method": "POST",
+      "path": "/internal/airflow/spark-runs/{run_id}/execute",
+      "source": "backend/app/api/airflow_execution.py"
+    },
+    {
+      "handler": "create_query_ai_suggestion",
+      "line": 21,
+      "method": "POST",
+      "path": "/query/ai-suggestions",
+      "source": "backend/app/api/query.py"
+    },
+    {
+      "handler": "create_query_ai_suggestion",
+      "line": 148,
+      "method": "POST",
+      "path": "/query/ai-suggestions",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "create_query_estimate",
+      "line": 73,
+      "method": "POST",
+      "path": "/query/estimates",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "list_query_runs",
+      "line": 91,
+      "method": "GET",
+      "path": "/query/runs",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "execute_query",
+      "line": 16,
+      "method": "POST",
+      "path": "/query/runs",
+      "source": "backend/app/api/query.py"
+    },
+    {
+      "handler": "create_query_run",
+      "line": 51,
+      "method": "POST",
+      "path": "/query/runs",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "get_query_run",
+      "line": 102,
+      "method": "GET",
+      "path": "/query/runs/{run_id}",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "cancel_trino_query_run",
+      "line": 139,
+      "method": "POST",
+      "path": "/query/runs/{run_id}/cancel",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "download_trino_query_run_csv",
+      "line": 126,
+      "method": "GET",
+      "path": "/query/runs/{run_id}/exports/csv",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "get_trino_query_run_results",
+      "line": 116,
+      "method": "GET",
+      "path": "/query/runs/{run_id}/results",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "validate_trino_query",
+      "line": 82,
+      "method": "POST",
+      "path": "/query/validate",
+      "source": "backend/app/api/sql.py"
+    },
+    {
+      "handler": "get_cellphones_review_analysis",
+      "line": 51,
+      "method": "GET",
+      "path": "/review-analysis/cellphones",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "run_cellphones_review_analysis",
+      "line": 66,
+      "method": "POST",
+      "path": "/review-analysis/cellphones/run",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "suggest_review_analysis_schema",
+      "line": 58,
+      "method": "POST",
+      "path": "/review-analysis/schema-suggestion",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "get_s3_buckets",
+      "line": 30,
+      "method": "GET",
+      "path": "/s3/buckets",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "get_s3_prefixes",
+      "line": 37,
+      "method": "GET",
+      "path": "/s3/prefixes",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "test_sql_transform",
+      "line": 28,
+      "method": "POST",
+      "path": "/sql/test",
+      "source": "backend/app/api/sql_test.py"
+    },
+    {
+      "handler": "get_target_databases",
+      "line": 23,
+      "method": "GET",
+      "path": "/target/databases",
+      "source": "backend/app/api/integration.py"
+    },
+    {
+      "handler": "get_current_user",
+      "line": 19,
+      "method": "GET",
+      "path": "/users/me",
+      "source": "backend/app/api/users.py"
+    }
+  ],
+  "critical_contract_files": {
+    "backend/app/models/etl.py": {
+      "loc": 210,
+      "sha256": "9ee3956b6169d8a95689e088f1208a3aadb06a962d746d73cd1e636af29b30a9"
+    },
+    "backend/app/schemas/etl.py": {
+      "loc": 999,
+      "sha256": "4bb1a075bea873a750fe05b23d4393f62dd44f4628266a5bb43694992f2c4ef8"
+    },
+    "backend/app/services/etl_service.py": {
+      "loc": 8822,
+      "sha256": "0ae739a52816d30647106d5e22321248bb8cc9279d8a37ced6bec1e79d497842"
+    },
+    "backend/scripts/kafka_continuous_stream.py": {
+      "loc": 13,
+      "sha256": "b55f8f26326d4bdf6a035a190de7de2aa22aaa02b0a50eab1e5b7b0c05707d27"
+    },
+    "backend/scripts/spark_job_run.py": {
+      "loc": 16,
+      "sha256": "8c9f4b2eb340e8bffd7996048773175ee2712ed92b972648124b8f279fb1c540"
+    },
+    "deploy/docker-compose.prod.yml": {
+      "loc": 694,
+      "sha256": "9dabf06f0df9ddf0bdb726632a225e79f38f66b06e6e33d4dafb39df6d191a1b"
+    },
+    "frontend/src/App.tsx": {
+      "loc": 616,
+      "sha256": "6988de427adb6e263aceb8cb50306c440877be95f96fcfd2c98284165987305d"
+    },
+    "frontend/src/data/appShellData.ts": {
+      "loc": 176,
+      "sha256": "2a3bec4706c1424d27241c4f2e6d0d63c14e7e7c2bc3662af0227b7ae1b3511c"
+    },
+    "frontend/src/services/pipelineApi.ts": {
+      "loc": 141,
+      "sha256": "f47a783724d40e422610adb1e073fd95d0fc72ae694d2248297bd311acd88d40"
+    }
+  },
+  "frontend": {
+    "route_literals": [
+      "/",
+      "/* JOIN 키를 자동으로 찾지 못했습니다. ON 조건을 확인해서 바꿔 주세요.",
+      "/admin",
+      "/ai",
+      "/app/ingest",
+      "/asklake-wave-hero.svg",
+      "/asklake-wave-icon.png",
+      "/catalog",
+      "/checkout",
+      "/dashboards",
+      "/etl/permission",
+      "/etl/record-parsing",
+      "/etl/review",
+      "/etl/rules",
+      "/etl/schedule",
+      "/etl/schema",
+      "/etl/source",
+      "/etl/target",
+      "/g, ",
+      "/jobs",
+      "/login",
+      "/pricing",
+      "/profile",
+      "/sql"
+    ],
+    "wizard_flows": [
+      "source",
+      "recordParsing",
+      "schema",
+      "repeat",
+      "manual",
+      "permission",
+      "target",
+      "review"
+    ]
+  },
+  "head": "bce18f37ceb2923531cabd8948dc27b6caacdf7d",
+  "models": {
+    "literal_contracts": {
+      "backend/app/schemas/ai.py:PermissionName": [
+        "view",
+        "query",
+        "run",
+        "manage",
+        "delete",
+        "share"
+      ],
+      "backend/app/schemas/catalog.py:CatalogLayer": [
+        "RAW",
+        "BRONZE",
+        "SILVER",
+        "GOLD"
+      ],
+      "backend/app/schemas/catalog.py:DatasetFreshness": [
+        "latest",
+        "stale",
+        "approval"
+      ],
+      "backend/app/schemas/catalog.py:DatasetStatus": [
+        "available",
+        "approval_required"
+      ],
+      "backend/app/schemas/catalog.py:DerivedDatasetLayer": [
+        "SILVER",
+        "GOLD"
+      ],
+      "backend/app/schemas/catalog.py:LineageLayer": [
+        "SOURCE",
+        "PROCESS",
+        "RAW",
+        "BRONZE",
+        "SILVER",
+        "GOLD",
+        "CONSUMER"
+      ],
+      "backend/app/schemas/catalog.py:MaterializationMode": [
+        "snapshot",
+        "delta"
+      ],
+      "backend/app/schemas/catalog.py:MaterializationRunStatus": [
+        "queued",
+        "running",
+        "success",
+        "failed",
+        "canceled"
+      ],
+      "backend/app/schemas/catalog.py:MaterializationSourceKind": [
+        "etl",
+        "sql",
+        "kafka"
+      ],
+      "backend/app/schemas/catalog.py:QueryEngineStatus": [
+        "pending",
+        "available",
+        "registration_failed",
+        "unavailable"
+      ],
+      "backend/app/schemas/catalog.py:QueryEngineTableFormat": [
+        "iceberg",
+        "parquet"
+      ],
+      "backend/app/schemas/catalog.py:QueryRefreshPolicy": [
+        "manual"
+      ],
+      "backend/app/schemas/etl.py:CanonicalRuleErrorPolicy": [
+        "fail_batch",
+        "quarantine",
+        "warn"
+      ],
+      "backend/app/schemas/etl.py:CanonicalRuleFailureDisposition": [
+        "keep",
+        "drop_row",
+        "set_null"
+      ],
+      "backend/app/schemas/etl.py:CanonicalRuleKind": [
+        "transform",
+        "quality"
+      ],
+      "backend/app/schemas/etl.py:ContinuousDesiredRuntimeState": [
+        "running",
+        "paused",
+        "stopped"
+      ],
+      "backend/app/schemas/etl.py:ContinuousObservedRuntimeState": [
+        "unknown",
+        "starting",
+        "running",
+        "stopping",
+        "stopped",
+        "failed"
+      ],
+      "backend/app/schemas/etl.py:ContinuousRuntimeErrorStage": [
+        "validation",
+        "runtime_storage",
+        "submission",
+        "execution",
+        "report",
+        "checkpoint",
+        "materialization",
+        "catalog",
+        "dashboard_publication",
+        "reconciliation"
+      ],
+      "backend/app/schemas/etl.py:ContinuousRuntimeStatus": [
+        "starting",
+        "running",
+        "pausing",
+        "paused",
+        "stopping",
+        "stopped",
+        "failed"
+      ],
+      "backend/app/schemas/etl.py:JobCommand": [
+        "run",
+        "retry",
+        "pause",
+        "cancelRun",
+        "stopSchedule",
+        "resumeSchedule",
+        "startContinuous",
+        "pauseContinuous",
+        "resumeContinuous",
+        "stopContinuous"
+      ],
+      "backend/app/schemas/etl.py:JobDagStepStatus": [
+        "pending",
+        "running",
+        "success",
+        "failed",
+        "blocked"
+      ],
+      "backend/app/schemas/etl.py:JobKind": [
+        "pipeline",
+        "trino_sql_materialization"
+      ],
+      "backend/app/schemas/etl.py:JobRunOutcome": [
+        "success",
+        "failed",
+        "canceled"
+      ],
+      "backend/app/schemas/etl.py:JobRunStatus": [
+        "queued",
+        "running",
+        "success",
+        "failed",
+        "canceled"
+      ],
+      "backend/app/schemas/etl.py:JobScheduleKind": [
+        "daily",
+        "weekly",
+        "monthly",
+        "realtime",
+        "none",
+        "other"
+      ],
+      "backend/app/schemas/etl.py:JobStatus": [
+        "scheduled",
+        "failed",
+        "running",
+        "paused",
+        "canceled",
+        "stopped"
+      ],
+      "backend/app/schemas/etl.py:KafkaExecutionMode": [
+        "snapshot",
+        "continuous"
+      ],
+      "backend/app/schemas/etl.py:RuleContractVersion": [
+        "1.0"
+      ],
+      "backend/app/schemas/etl.py:TargetLayer": [
+        "RAW",
+        "BRONZE",
+        "SILVER",
+        "GOLD"
+      ],
+      "backend/app/schemas/iceberg.py:IcebergWriteMode": [
+        "append",
+        "replace"
+      ],
+      "backend/app/schemas/identity.py:AdminPrincipalControlType": [
+        "user",
+        "group"
+      ],
+      "backend/app/schemas/identity.py:AdminPrincipalStatus": [
+        "active",
+        "blocked"
+      ],
+      "backend/app/schemas/identity.py:AdminResourceType": [
+        "dataset",
+        "etl_job",
+        "dashboard"
+      ],
+      "backend/app/schemas/identity.py:AdminUserStatus": [
+        "active",
+        "invited",
+        "disabled"
+      ],
+      "backend/app/schemas/permissions.py:PermissionAction": [
+        "view",
+        "query",
+        "run",
+        "manage",
+        "delete",
+        "share"
+      ],
+      "backend/app/schemas/permissions.py:PermissionPrincipalType": [
+        "user",
+        "group",
+        "role",
+        "public"
+      ],
+      "backend/app/schemas/sql.py:QueryAiMode": [
+        "draft_sql"
+      ],
+      "backend/app/schemas/sql.py:QueryRunMode": [
+        "preview",
+        "run"
+      ],
+      "backend/app/schemas/trino.py:TrinoQueryRunStatus": [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "backend/app/services/materialization_projection.py:MaterializationMode": [
+        "snapshot",
+        "delta"
+      ]
+    },
+    "migration_files": [],
+    "schema_classes": [
+      "backend/app/schemas/ai.py:AiContextActor",
+      "backend/app/schemas/ai.py:AiContextClaims",
+      "backend/app/schemas/ai.py:AiContextColumn",
+      "backend/app/schemas/ai.py:AiGatewayProviderOutput",
+      "backend/app/schemas/ai.py:AiGatewayProviderResponse",
+      "backend/app/schemas/ai.py:AiGatewayQueryRequest",
+      "backend/app/schemas/ai.py:AiGatewayQueryResponse",
+      "backend/app/schemas/ai.py:CatalogDatasetContext",
+      "backend/app/schemas/auth.py:AuthSessionResponse",
+      "backend/app/schemas/auth.py:AuthUserResponse",
+      "backend/app/schemas/auth.py:LoginRequest",
+      "backend/app/schemas/auth.py:LogoutResponse",
+      "backend/app/schemas/auth.py:SignupRequest",
+      "backend/app/schemas/catalog.py:CatalogDatasetListResponse",
+      "backend/app/schemas/catalog.py:CatalogDatasetResponse",
+      "backend/app/schemas/catalog.py:CatalogDatasetRowsResponse",
+      "backend/app/schemas/catalog.py:CreateDerivedDatasetMetadata",
+      "backend/app/schemas/catalog.py:CreateDerivedDatasetRequest",
+      "backend/app/schemas/catalog.py:DatasetMaterializationRun",
+      "backend/app/schemas/catalog.py:DeleteMaterializationRunResponse",
+      "backend/app/schemas/catalog.py:LineageGraphColumn",
+      "backend/app/schemas/catalog.py:LineageGraphDataset",
+      "backend/app/schemas/catalog.py:LineageGraphEdge",
+      "backend/app/schemas/catalog.py:LineageGraphResponse",
+      "backend/app/schemas/catalog.py:QueryEngineTableRef",
+      "backend/app/schemas/common.py:CamelModel",
+      "backend/app/schemas/common.py:CursorPageMeta",
+      "backend/app/schemas/common.py:DiagnosticFields",
+      "backend/app/schemas/common.py:ErrorCode",
+      "backend/app/schemas/common.py:ErrorDetail",
+      "backend/app/schemas/common.py:ErrorResponse",
+      "backend/app/schemas/common.py:HealthResponse",
+      "backend/app/schemas/common.py:PageMeta",
+      "backend/app/schemas/common.py:PageRequest",
+      "backend/app/schemas/common.py:PageResponse",
+      "backend/app/schemas/common.py:SortDirection",
+      "backend/app/schemas/dashboard.py:AreaChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:BarChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:CreateDashboardRequest",
+      "backend/app/schemas/dashboard.py:CreateDraftPageRequest",
+      "backend/app/schemas/dashboard.py:CreateDraftWidgetRequest",
+      "backend/app/schemas/dashboard.py:DashboardAssistantCreateWidgetAction",
+      "backend/app/schemas/dashboard.py:DashboardAssistantCreateWidgetInput",
+      "backend/app/schemas/dashboard.py:DashboardAssistantMode",
+      "backend/app/schemas/dashboard.py:DashboardAssistantReportAction",
+      "backend/app/schemas/dashboard.py:DashboardAssistantRequest",
+      "backend/app/schemas/dashboard.py:DashboardAssistantResponse",
+      "backend/app/schemas/dashboard.py:DashboardAssistantUpdateWidgetAction",
+      "backend/app/schemas/dashboard.py:DashboardAssistantWidgetContext",
+      "backend/app/schemas/dashboard.py:DashboardAssistantWidgetPatch",
+      "backend/app/schemas/dashboard.py:DashboardCard",
+      "backend/app/schemas/dashboard.py:DashboardCardResponse",
+      "backend/app/schemas/dashboard.py:DashboardCardWidgetType",
+      "backend/app/schemas/dashboard.py:DashboardFilter",
+      "backend/app/schemas/dashboard.py:DashboardListFilterOptions",
+      "backend/app/schemas/dashboard.py:DashboardListQuery",
+      "backend/app/schemas/dashboard.py:DashboardListResponse",
+      "backend/app/schemas/dashboard.py:DashboardMeta",
+      "backend/app/schemas/dashboard.py:DashboardPageResponse",
+      "backend/app/schemas/dashboard.py:DashboardRevision",
+      "backend/app/schemas/dashboard.py:DashboardRuntimeMode",
+      "backend/app/schemas/dashboard.py:DashboardRuntimePage",
+      "backend/app/schemas/dashboard.py:DashboardRuntimeResponse",
+      "backend/app/schemas/dashboard.py:DashboardRuntimeWidget",
+      "backend/app/schemas/dashboard.py:DashboardRuntimeWidgetType",
+      "backend/app/schemas/dashboard.py:DashboardSortOption",
+      "backend/app/schemas/dashboard.py:DashboardSource",
+      "backend/app/schemas/dashboard.py:DashboardSqlResult",
+      "backend/app/schemas/dashboard.py:DashboardStatus",
+      "backend/app/schemas/dashboard.py:DashboardWidgetAggregation",
+      "backend/app/schemas/dashboard.py:DashboardWidgetColorConfig",
+      "backend/app/schemas/dashboard.py:DashboardWidgetConfigBase",
+      "backend/app/schemas/dashboard.py:DashboardWidgetDateUnit",
+      "backend/app/schemas/dashboard.py:DashboardWidgetFormat",
+      "backend/app/schemas/dashboard.py:DashboardWidgetLayout",
+      "backend/app/schemas/dashboard.py:DashboardWidgetLineCurve",
+      "backend/app/schemas/dashboard.py:DashboardWidgetMutationResponse",
+      "backend/app/schemas/dashboard.py:DashboardWidgetOrientation",
+      "backend/app/schemas/dashboard.py:DashboardWidgetPaletteId",
+      "backend/app/schemas/dashboard.py:DashboardWidgetQueryRequest",
+      "backend/app/schemas/dashboard.py:DashboardWidgetQueryResponse",
+      "backend/app/schemas/dashboard.py:DatasetFreshnessQueryRequest",
+      "backend/app/schemas/dashboard.py:DatasetFreshnessQueryResponse",
+      "backend/app/schemas/dashboard.py:DatasetFreshnessResponse",
+      "backend/app/schemas/dashboard.py:DeleteDashboardResponse",
+      "backend/app/schemas/dashboard.py:DeleteDraftPageResponse",
+      "backend/app/schemas/dashboard.py:DeleteDraftWidgetResponse",
+      "backend/app/schemas/dashboard.py:DonutChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:DraftLayoutItem",
+      "backend/app/schemas/dashboard.py:HeatmapChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:LineChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:MetricWidgetConfig",
+      "backend/app/schemas/dashboard.py:OkResponse",
+      "backend/app/schemas/dashboard.py:PieChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:PublishDashboardResponse",
+      "backend/app/schemas/dashboard.py:RadialBarChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:SaveDraftLayoutsRequest",
+      "backend/app/schemas/dashboard.py:TableWidgetConfig",
+      "backend/app/schemas/dashboard.py:TreemapChartWidgetConfig",
+      "backend/app/schemas/dashboard.py:UpdateDashboardRequest",
+      "backend/app/schemas/dashboard.py:UpdateDraftPageRequest",
+      "backend/app/schemas/dashboard.py:UpdateDraftWidgetRequest",
+      "backend/app/schemas/etl.py:AirflowCatalogReconciliationRequest",
+      "backend/app/schemas/etl.py:AirflowCatalogReconciliationResponse",
+      "backend/app/schemas/etl.py:AirflowRunExecutionRequest",
+      "backend/app/schemas/etl.py:AirflowRunExecutionResponse",
+      "backend/app/schemas/etl.py:AirflowSparkExecutionRequest",
+      "backend/app/schemas/etl.py:CanonicalRuleDraft",
+      "backend/app/schemas/etl.py:CatalogDataset",
+      "backend/app/schemas/etl.py:ContinuousCompactionRequest",
+      "backend/app/schemas/etl.py:ContinuousIcebergMaintenanceRequest",
+      "backend/app/schemas/etl.py:ContinuousMaintenanceRun",
+      "backend/app/schemas/etl.py:ContinuousQuarantineRecord",
+      "backend/app/schemas/etl.py:ContinuousQuarantineResponse",
+      "backend/app/schemas/etl.py:ContinuousReplayRequest",
+      "backend/app/schemas/etl.py:ContinuousRuntimeErrorDetail",
+      "backend/app/schemas/etl.py:ContinuousWorkerLogsResponse",
+      "backend/app/schemas/etl.py:CreateDerivedDatasetRequest",
+      "backend/app/schemas/etl.py:CreatePipelineRequest",
+      "backend/app/schemas/etl.py:CreatePipelineResponse",
+      "backend/app/schemas/etl.py:CreateTrinoSqlJobRequest",
+      "backend/app/schemas/etl.py:DeleteJobResponse",
+      "backend/app/schemas/etl.py:DerivedDatasetSpec",
+      "backend/app/schemas/etl.py:DraftPipelinePatch",
+      "backend/app/schemas/etl.py:JobCommandRequest",
+      "backend/app/schemas/etl.py:JobCommandResponse",
+      "backend/app/schemas/etl.py:JobDagStep",
+      "backend/app/schemas/etl.py:JobListFacets",
+      "backend/app/schemas/etl.py:JobListResponse",
+      "backend/app/schemas/etl.py:JobProgress",
+      "backend/app/schemas/etl.py:JobRowData",
+      "backend/app/schemas/etl.py:JobRunSummary",
+      "backend/app/schemas/etl.py:JobStats",
+      "backend/app/schemas/etl.py:KafkaContinuousBatch",
+      "backend/app/schemas/etl.py:KafkaContinuousConfigDraft",
+      "backend/app/schemas/etl.py:KafkaContinuousRuntime",
+      "backend/app/schemas/etl.py:KafkaContinuousSession",
+      "backend/app/schemas/etl.py:KafkaPartitionSnapshot",
+      "backend/app/schemas/etl.py:KafkaReplayProducerRequest",
+      "backend/app/schemas/etl.py:KafkaReplayProducerStatus",
+      "backend/app/schemas/etl.py:KafkaReviewIngestRequest",
+      "backend/app/schemas/etl.py:KafkaReviewIngestResponse",
+      "backend/app/schemas/etl.py:KafkaSchemaEvolutionPolicy",
+      "backend/app/schemas/etl.py:KafkaSnapshot",
+      "backend/app/schemas/etl.py:PermissionOptionGroup",
+      "backend/app/schemas/etl.py:PermissionOptionUser",
+      "backend/app/schemas/etl.py:PermissionOptionsResponse",
+      "backend/app/schemas/etl.py:QualityRuleDraft",
+      "backend/app/schemas/etl.py:QueryRunRequest",
+      "backend/app/schemas/etl.py:QueryRunResponse",
+      "backend/app/schemas/etl.py:RecordParsingColumnDraft",
+      "backend/app/schemas/etl.py:RecordParsingDraft",
+      "backend/app/schemas/etl.py:RecordParsingInvalidRow",
+      "backend/app/schemas/etl.py:RecordParsingPreviewRequest",
+      "backend/app/schemas/etl.py:RecordParsingPreviewResponse",
+      "backend/app/schemas/etl.py:RetryPolicyDraft",
+      "backend/app/schemas/etl.py:ReviewEntry",
+      "backend/app/schemas/etl.py:ReviewPipelineRequest",
+      "backend/app/schemas/etl.py:ReviewSchemaRow",
+      "backend/app/schemas/etl.py:ReviewSnapshot",
+      "backend/app/schemas/etl.py:ReviewValidationRow",
+      "backend/app/schemas/etl.py:RuleCompilationIssue",
+      "backend/app/schemas/etl.py:RuleCompilationResult",
+      "backend/app/schemas/etl.py:ScheduledJobRunItem",
+      "backend/app/schemas/etl.py:ScheduledJobRunRequest",
+      "backend/app/schemas/etl.py:ScheduledJobRunResponse",
+      "backend/app/schemas/etl.py:SchemaColumnDraft",
+      "backend/app/schemas/etl.py:SchemaDraft",
+      "backend/app/schemas/etl.py:SourceAssetsRequest",
+      "backend/app/schemas/etl.py:SourceAssetsResponse",
+      "backend/app/schemas/etl.py:SourceConnectorAnalysis",
+      "backend/app/schemas/etl.py:SourceConnectorDefaults",
+      "backend/app/schemas/etl.py:SourceConnectorRequest",
+      "backend/app/schemas/etl.py:SourceDatasetSummary",
+      "backend/app/schemas/etl.py:SourceDraft",
+      "backend/app/schemas/etl.py:TransformStepDraft",
+      "backend/app/schemas/etl.py:TrinoSqlJobGovernance",
+      "backend/app/schemas/etl.py:TrinoSqlJobSchedule",
+      "backend/app/schemas/etl.py:TrinoSqlJobTarget",
+      "backend/app/schemas/etl.py:UpdatePipelineRequest",
+      "backend/app/schemas/etl.py:WatermarkPolicyDraft",
+      "backend/app/schemas/iceberg.py:IcebergCommitEvidence",
+      "backend/app/schemas/iceberg.py:IcebergWriterTarget",
+      "backend/app/schemas/identity.py:AdminAuditLogEntry",
+      "backend/app/schemas/identity.py:AdminAuditLogsResponse",
+      "backend/app/schemas/identity.py:AdminGovernanceControlsResponse",
+      "backend/app/schemas/identity.py:AdminGroupsResponse",
+      "backend/app/schemas/identity.py:AdminPermissionGrantRequest",
+      "backend/app/schemas/identity.py:AdminPermissionGrantUpdateRequest",
+      "backend/app/schemas/identity.py:AdminPermissionSummary",
+      "backend/app/schemas/identity.py:AdminPermissionsResponse",
+      "backend/app/schemas/identity.py:AdminPrincipalControl",
+      "backend/app/schemas/identity.py:AdminPrincipalControlRequest",
+      "backend/app/schemas/identity.py:AdminResourceLock",
+      "backend/app/schemas/identity.py:AdminResourceLockRequest",
+      "backend/app/schemas/identity.py:AdminUser",
+      "backend/app/schemas/identity.py:AdminUsersResponse",
+      "backend/app/schemas/identity.py:CurrentUserResponse",
+      "backend/app/schemas/identity.py:IdentityGroup",
+      "backend/app/schemas/identity.py:IdentityProfile",
+      "backend/app/schemas/identity.py:PermissionSummary",
+      "backend/app/schemas/integration.py:CatalogModelArtifactResponse",
+      "backend/app/schemas/integration.py:ReviewAnalysisRunRequest",
+      "backend/app/schemas/integration.py:ReviewAnalysisSchemaSuggestionRequest",
+      "backend/app/schemas/integration.py:S3BucketsResponse",
+      "backend/app/schemas/integration.py:S3PrefixFile",
+      "backend/app/schemas/integration.py:S3PrefixFolder",
+      "backend/app/schemas/integration.py:S3PrefixesResponse",
+      "backend/app/schemas/integration.py:TargetDatabaseOption",
+      "backend/app/schemas/integration.py:TargetDatabasesResponse",
+      "backend/app/schemas/permissions.py:PermissionGrant",
+      "backend/app/schemas/permissions.py:ResourcePermissions",
+      "backend/app/schemas/sql.py:QueryAiSuggestionRequest",
+      "backend/app/schemas/sql.py:QueryAiSuggestionResponse",
+      "backend/app/schemas/sql.py:QueryRunRequest",
+      "backend/app/schemas/sql.py:QueryRunResponse",
+      "backend/app/schemas/trino.py:QueryRunSubmitRequest",
+      "backend/app/schemas/trino.py:SubmitTrinoQueryRunRequest",
+      "backend/app/schemas/trino.py:TrinoClientPage",
+      "backend/app/schemas/trino.py:TrinoMaterializationRunResponse",
+      "backend/app/schemas/trino.py:TrinoQueryEstimate",
+      "backend/app/schemas/trino.py:TrinoQueryEstimateRequest",
+      "backend/app/schemas/trino.py:TrinoQueryRunError",
+      "backend/app/schemas/trino.py:TrinoQueryRunEstimate",
+      "backend/app/schemas/trino.py:TrinoQueryRunHistoryItem",
+      "backend/app/schemas/trino.py:TrinoQueryRunHistoryResult",
+      "backend/app/schemas/trino.py:TrinoQueryRunHistoryStats",
+      "backend/app/schemas/trino.py:TrinoQueryRunListResponse",
+      "backend/app/schemas/trino.py:TrinoQueryRunResponse",
+      "backend/app/schemas/trino.py:TrinoQueryRunResult",
+      "backend/app/schemas/trino.py:TrinoQueryRunResultPage",
+      "backend/app/schemas/trino.py:TrinoQueryRunStats",
+      "backend/app/schemas/trino.py:TrinoQueryValidationRequest",
+      "backend/app/schemas/trino.py:TrinoQueryValidationResponse"
+    ],
+    "tables": [
+      {
+        "class": "AuditEventModel",
+        "source": "backend/app/models/identity.py",
+        "table": "audit_events"
+      },
+      {
+        "class": "AuthSessionModel",
+        "source": "backend/app/models/identity.py",
+        "table": "auth_sessions"
+      },
+      {
+        "class": "AuthUserModel",
+        "source": "backend/app/models/identity.py",
+        "table": "auth_users"
+      },
+      {
+        "class": "CatalogDatasetModel",
+        "source": "backend/app/models/catalog.py",
+        "table": "catalog_datasets"
+      },
+      {
+        "class": "DashboardPage",
+        "source": "backend/app/models/dashboard_runtime.py",
+        "table": "dashboard_pages"
+      },
+      {
+        "class": "DashboardRevision",
+        "source": "backend/app/models/dashboard_runtime.py",
+        "table": "dashboard_revisions"
+      },
+      {
+        "class": "DashboardWidgetResultModel",
+        "source": "backend/app/models/dashboard_live.py",
+        "table": "dashboard_widget_results"
+      },
+      {
+        "class": "DashboardWidget",
+        "source": "backend/app/models/dashboard_runtime.py",
+        "table": "dashboard_widgets"
+      },
+      {
+        "class": "DatasetFreshnessModel",
+        "source": "backend/app/models/dashboard_live.py",
+        "table": "dataset_freshness"
+      },
+      {
+        "class": "DatasetKafkaPartitionCursorModel",
+        "source": "backend/app/models/dashboard_live.py",
+        "table": "dataset_kafka_partition_cursors"
+      },
+      {
+        "class": "DatasetRevisionCommitModel",
+        "source": "backend/app/models/dashboard_live.py",
+        "table": "dataset_revision_commits"
+      },
+      {
+        "class": "ETLJobModel",
+        "source": "backend/app/models/etl.py",
+        "table": "etl_jobs"
+      },
+      {
+        "class": "ETLRunModel",
+        "source": "backend/app/models/etl.py",
+        "table": "etl_runs"
+      },
+      {
+        "class": "KafkaContinuousBatchModel",
+        "source": "backend/app/models/etl.py",
+        "table": "kafka_continuous_batches"
+      },
+      {
+        "class": "KafkaContinuousMaintenanceRunModel",
+        "source": "backend/app/models/etl.py",
+        "table": "kafka_continuous_maintenance_runs"
+      },
+      {
+        "class": "KafkaContinuousRuntimeModel",
+        "source": "backend/app/models/etl.py",
+        "table": "kafka_continuous_runtimes"
+      },
+      {
+        "class": "KafkaContinuousSessionModel",
+        "source": "backend/app/models/etl.py",
+        "table": "kafka_continuous_sessions"
+      },
+      {
+        "class": "KafkaSnapshotModel",
+        "source": "backend/app/models/etl.py",
+        "table": "kafka_snapshots"
+      },
+      {
+        "class": "PermissionGrantModel",
+        "source": "backend/app/models/identity.py",
+        "table": "permission_grants"
+      },
+      {
+        "class": "PrincipalControlModel",
+        "source": "backend/app/models/identity.py",
+        "table": "principal_controls"
+      },
+      {
+        "class": "ResourceLockModel",
+        "source": "backend/app/models/identity.py",
+        "table": "resource_locks"
+      },
+      {
+        "class": "SqlRunResultPageModel",
+        "source": "backend/app/models/sql.py",
+        "table": "sql_run_result_pages"
+      },
+      {
+        "class": "SqlRunModel",
+        "source": "backend/app/models/sql.py",
+        "table": "sql_runs"
+      }
+    ]
+  },
+  "package_scripts": {
+    "backend": {
+      "dev": "npm run start:fastapi",
+      "dev:query-runtime": "bash ../scripts/start-local-query-runtime.sh",
+      "install:production": "npm ci --omit=dev",
+      "kafka:click-log:convert": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_log_to_kafka_jsonl.py",
+      "kafka:reviews-fixture": "node scripts/seed-kafka-review-fixture.mjs",
+      "kafka:reviews-fixture:generate": "node scripts/generate-kafka-review-fixture.mjs",
+      "kafka:reviews-ingest": "node scripts/ingest-kafka-reviews.mjs",
+      "kafka:reviews-loop": "node scripts/seed-kafka-review-fixture.mjs --loop --no-recreate-topic",
+      "kafka:reviews-replay": "node scripts/seed-kafka-review-fixture.mjs",
+      "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",
+      "minio:seed-click-log": "node scripts/seed-minio-click-log.mjs",
+      "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
+      "sources:fixtures": "node scripts/setup-source-fixtures.mjs",
+      "sources:rest-fixture": "node scripts/source-rest-fixture-server.mjs",
+      "spark:start": "node scripts/start-spark-server.mjs",
+      "spark:validate": "node scripts/run-spark-validation.mjs",
+      "start": "npm run start:fastapi",
+      "start:fastapi": "npm run verify:node-dependencies && python -m uvicorn app.main:app --host 0.0.0.0 --port 8080",
+      "start:node-compat": "npm run verify:node-dependencies && node src/server.mjs",
+      "synthetic-commerce:click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_events_to_log.py",
+      "synthetic-commerce:upload": "node scripts/upload-synthetic-commerce.mjs",
+      "test:kafka-replay-record": "node --test scripts/kafka-replay-record.test.mjs",
+      "trino:cleanup-results": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/cleanup-expired-trino-results.py",
+      "trino:collect-results": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/collect-trino-results.py --once",
+      "trino:collector-worker": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/collect-trino-results.py",
+      "verify": "node scripts/verify-backend.mjs",
+      "verify:airflow-catalog-wiring": "python3 scripts/verify-airflow-dag-catalog-wiring.py",
+      "verify:airflow-smoke": "node scripts/verify-airflow-smoke.mjs",
+      "verify:airflow-spark": "node scripts/verify-fastapi-etl-catalog.mjs",
+      "verify:auth-password": "node scripts/verify-auth-password-compat.mjs",
+      "verify:auth-session": "node scripts/verify-auth-session.mjs",
+      "verify:backward-compatibility": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-backward-compatibility.py",
+      "verify:continuous-runtime-contract": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_continuous_runtime_contract tests.test_continuous_maintenance_fencing tests.test_kafka_continuous_dashboard_sync",
+      "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",
+      "verify:dashboard-live-postgres": "node scripts/run-python-verification.mjs scripts/verify-dashboard-live-postgres.py",
+      "verify:data-lake-iceberg-source": "PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_data_lake_source tests.test_etl_endpoint_auth && node scripts/verify-data-lake-iceberg-source.mjs",
+      "verify:dataset-identity": "PYTHONPATH=. .venv/bin/python scripts/verify-dataset-identity-contract.py",
+      "verify:etl-e2e-recovery": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-etl-e2e-recovery.py --profile pr",
+      "verify:etl-e2e-recovery:nightly": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-etl-e2e-recovery.py --profile nightly",
+      "verify:etl-e2e-recovery:release": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-etl-e2e-recovery.py --profile release",
+      "verify:etl-lineage": "node scripts/verify-etl-text-lineage.mjs",
+      "verify:fastapi-etl-catalog": "node scripts/verify-fastapi-etl-catalog.mjs",
+      "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
+      "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
+      "verify:iceberg-writer-foundation": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_iceberg_writer_foundation && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-iceberg-writer-foundation.py",
+      "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
+      "verify:job-list": "node scripts/verify-job-list.mjs",
+      "verify:kafka-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_log_to_kafka_jsonl.py",
+      "verify:kafka-continuous-contract": "node scripts/run-python-verification.mjs scripts/verify-kafka-continuous-contract.py",
+      "verify:kafka-continuous-e2e": "node scripts/verify-kafka-continuous-e2e.mjs",
+      "verify:kafka-continuous-iceberg": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-continuous-iceberg.py",
+      "verify:kafka-continuous-rules": "node scripts/verify-kafka-continuous-rules.mjs",
+      "verify:kafka-continuous-soak": "node scripts/verify-kafka-continuous-soak.mjs",
+      "verify:kafka-replay-producer": "PYTHONPATH=. .venv/bin/python scripts/verify-kafka-replay-producer.py",
+      "verify:kafka-review-scheduled-ingest": "node scripts/verify-kafka-review-scheduled-ingest.mjs",
+      "verify:kafka-snapshot-iceberg": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-snapshot-iceberg.py",
+      "verify:kafka-target-projection": "node scripts/verify-kafka-target-projection.mjs",
+      "verify:legacy-paths": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-legacy-path-register.py",
+      "verify:materialization-projection": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_materialization_run_projection tests.test_sql_storage_formats",
+      "verify:node-dependencies": "node --input-type=module -e \"await import('@aws-sdk/client-s3'); await import('kafkajs'); await import('mongodb'); await import('parquetjs-lite'); await import('pg');\"",
+      "verify:object-storage-mode": "node scripts/verify-object-storage-mode.mjs && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_object_storage_mode",
+      "verify:permission-create-flow": "python3 scripts/verify-permission-create-flow-contract.py",
+      "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",
+      "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
+      "verify:postgres-full-source": "node scripts/verify-postgres-full-execution-source.mjs",
+      "verify:prefix-spark-e2e": "node scripts/verify-prefix-spark-e2e.mjs",
+      "verify:production-spark": "node scripts/verify-production-spark-contract.mjs",
+      "verify:quality-gates": "python3 ../scripts/refactor_audit/quality_gate.py --base ${ASKLAKE_QUALITY_GATE_BASE:-origin/dev}",
+      "verify:query-engine-registration": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-query-engine-registration.py",
+      "verify:record-parsing": "PYTHONPATH=. .venv/bin/python scripts/verify-record-parsing-contract.py",
+      "verify:record-parsing:e2e": "node scripts/verify-record-parsing-e2e.mjs",
+      "verify:refactor-final-audit": "python3 ../scripts/refactor_audit/final_audit.py",
+      "verify:refactor-release-execution": "python3 ../scripts/refactor_audit/release_readiness.py --execution",
+      "verify:refactor-release-plan": "python3 ../scripts/refactor_audit/release_readiness.py",
+      "verify:rule-compiler": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-compiler-contract.py && node scripts/verify-rule-compiler-contract.mjs && PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
+      "verify:rule-persistence": "PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py",
+      "verify:schema-type-contract": "node scripts/verify-schema-type-contract.mjs",
+      "verify:snapshot-rule-conformance": "node scripts/verify-snapshot-rule-conformance.mjs",
+      "verify:snapshot-spark-pipeline": "node scripts/verify-snapshot-spark-pipeline.mjs",
+      "verify:sources": "node scripts/verify-all-sources.mjs",
+      "verify:spark-csv-quoting": "node scripts/verify-spark-csv-quoting.mjs",
+      "verify:spark-iceberg-batch": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-spark-iceberg-batch.py",
+      "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
+      "verify:spark-runtime-paths": "python3 scripts/verify-spark-runtime-paths.py",
+      "verify:spark-runtime-paths:container": "node scripts/verify-spark-runtime-paths-container.mjs",
+      "verify:spark-schema-contract": "node scripts/verify-spark-schema-contract.mjs",
+      "verify:synthetic-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_events_to_log.py",
+      "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
+      "verify:target-mode-contract": "PYTHONPATH=. .venv/bin/python scripts/verify-target-mode-contract.py",
+      "verify:trino-collector-resilience": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-collector-resilience.py",
+      "verify:trino-production-readiness": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-production-readiness.py",
+      "verify:trino-query-foundation": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-foundation.py",
+      "verify:trino-query-history": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-history.py",
+      "verify:trino-result-storage": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-result-storage.py",
+      "verify:trino-sql-job-e2e": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-sql-job-e2e.py",
+      "verify:trino-submission-guard": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-submission-guard.py"
+    },
+    "frontend": {
+      "api": "node server/index.js",
+      "build": "tsc -b && vite build --config vite.config.ts",
+      "db:seed": "node server/seed.js",
+      "dev": "vite --config vite.config.ts --host 127.0.0.1 --port 5174 --strictPort",
+      "preview": "vite preview --config vite.config.ts --host 0.0.0.0",
+      "test:compatibility-runtime": "node --experimental-strip-types --test scripts/compatibility-runtime.test.mts",
+      "test:continuous-runtime-contract": "node --experimental-strip-types --test scripts/continuous-runtime-contract.test.mts",
+      "test:css-catalog-boundary": "node --experimental-strip-types --test scripts/css-catalog-boundary.test.mts",
+      "test:dashboard-live-refresh": "node --experimental-strip-types --test scripts/dashboard-live-refresh.test.mts",
+      "test:diagnostic-contract": "node --experimental-strip-types --test scripts/diagnostic-contract.test.mts",
+      "test:e2e-contracts": "npm run test:continuous-runtime-contract && npm run test:e2e-selectors",
+      "test:e2e-selectors": "node --experimental-strip-types --test scripts/e2e-selectors.test.mts",
+      "test:etl-draft-contract": "node --experimental-strip-types --test scripts/etl-draft-contract.test.mts",
+      "test:etl-step-registry": "node --experimental-strip-types --test scripts/etl-step-registry.test.mts",
+      "test:jobs-data-boundary": "node --experimental-strip-types --test scripts/jobs-data-boundary.test.mts",
+      "test:record-parsing-ai-action": "node --experimental-strip-types --test scripts/record-parsing-ai-action.test.mts",
+      "test:request-ownership": "node --experimental-strip-types --test scripts/request-ownership.test.mts",
+      "test:source-raw-preview": "node --experimental-strip-types --test scripts/source-raw-preview.test.mts",
+      "test:sql-result-boundary": "node --experimental-strip-types --test scripts/sql-result-boundary.test.mts",
+      "test:trino-timeline": "node --experimental-strip-types --test scripts/trino-execution-timeline.test.mts",
+      "test:wizard-navigation": "node --experimental-strip-types --test scripts/wizard-navigation.test.mts",
+      "verify:rule-compiler": "node scripts/verify-rule-compiler-contract.mjs",
+      "verify:schema-transform-rules": "node scripts/verify-schema-transform-rules.mjs",
+      "verify:ui-regressions": "npm run test:trino-timeline && npm run test:sql-result-boundary && npm run test:dashboard-live-refresh && npm run test:continuous-runtime-contract && npm run test:source-raw-preview && npm run test:wizard-navigation && npm run test:record-parsing-ai-action && npm run test:request-ownership && npm run test:etl-draft-contract && npm run test:etl-step-registry && npm run test:jobs-data-boundary && npm run test:css-catalog-boundary && npm run test:compatibility-runtime && npm run test:diagnostic-contract && node scripts/verify-ui-regressions.mjs"
+    }
+  },
+  "production_compose_services": [
+    "ai-server",
+    "airflow-apiserver",
+    "airflow-dag-processor",
+    "airflow-init",
+    "airflow-postgres",
+    "airflow-scheduler",
+    "aws-s3-readiness",
+    "backend",
+    "caddy",
+    "frontend",
+    "mongo",
+    "postgres",
+    "redpanda",
+    "spark-master",
+    "spark-runtime-guard",
+    "spark-worker",
+    "trino",
+    "trino-postgres-bootstrap",
+    "trino-result-cleanup",
+    "trino-result-collector"
+  ],
+  "schema_version": 1
+}

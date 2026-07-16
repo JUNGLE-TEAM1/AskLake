@@ -25,7 +25,7 @@ import type { AuditResult, JobDagStep, JobDagStepStatus, JobExecutionEvidence, J
 
 import { normalizeWhitespace, truncateText } from "./jobDetailModel";
 import { JobDetailHeader } from "./JobDetailPage";
-import { RunStatusFilter } from "./JobsLandingPage";
+import { RunStatusFilter } from "./RunStatusFilter";
 import { JobRunsPageProps } from "./jobRunsModel";
 import { dagStepStatusMeta, formatCompactDateTime, getDagStatusTone, getRunStatusTone, runStatusFilterOrder, runStatusMeta } from "./jobShared";
 

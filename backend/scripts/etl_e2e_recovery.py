@@ -121,6 +121,9 @@ def guard_isolated_profile(profile: str, environment: dict[str, str]) -> None:
 def safe_environment(spec: dict[str, Any], correlation_id: str) -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items() if key not in SECRET_ENV_KEYS}
     environment.update({str(key): str(value) for key, value in spec.get("environment", {}).items()})
+    # Nested npm/Node checks must use the same supported interpreter as the
+    # harness instead of falling back to an older host-level python3.
+    environment.setdefault("ASKLAKE_FASTAPI_PYTHON", sys.executable)
     environment["ASKLAKE_E2E_CORRELATION_ID"] = correlation_id
     environment["ASKLAKE_CORRELATION_ID"] = correlation_id
     return environment

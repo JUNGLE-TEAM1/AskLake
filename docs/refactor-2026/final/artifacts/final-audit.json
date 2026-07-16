@@ -1,0 +1,257 @@
+{
+  "baselineHead": "b93ae27370fdfa50ce949bcabb9ff7fe37ca1098",
+  "contracts": {
+    "baselineCounts": {
+      "apiRoutes": 93,
+      "frontendRoutes": 18,
+      "persistedTables": 23,
+      "wizardFlows": 8
+    },
+    "currentCounts": {
+      "apiRoutes": 96,
+      "frontendRoutes": 24,
+      "persistedTables": 23,
+      "wizardFlows": 8
+    },
+    "removed": {
+      "apiRoutes": [],
+      "frontendRoutes": [],
+      "persistedTables": [],
+      "wizardFlows": []
+    }
+  },
+  "couplingInventory": {
+    "dockerCommandLiteral": {
+      "fileCount": 1,
+      "files": [
+        "backend/src/reviewRowAnalysis.mjs"
+      ]
+    },
+    "processInvocation": {
+      "fileCount": 45,
+      "files": [
+        "backend/app/infrastructure/runtime_io.py",
+        "backend/app/services/kafka_replay_producer_service.py",
+        "backend/scripts/etl_e2e_recovery.py",
+        "backend/scripts/manage-kafka-continuous-maintenance.mjs",
+        "backend/scripts/manage-kafka-continuous.mjs",
+        "backend/scripts/node-json-bridge.test.mjs",
+        "backend/scripts/run-python-verification.mjs",
+        "backend/scripts/run-spark-validation.mjs",
+        "backend/scripts/setup-source-fixtures.mjs",
+        "backend/scripts/start-spark-server.mjs",
+        "backend/scripts/verify-all-sources.mjs",
+        "backend/scripts/verify-auth-session.mjs",
+        "backend/scripts/verify-backend.mjs",
+        "backend/scripts/verify-dashboard-assistant-guard.mjs",
+        "backend/scripts/verify-etl-text-lineage.mjs",
+        "backend/scripts/verify-fastapi-etl-catalog.mjs",
+        "backend/scripts/verify-fastapi-pair2.mjs",
+        "backend/scripts/verify-fastapi-sources.mjs",
+        "backend/scripts/verify-identity-admin.mjs",
+        "backend/scripts/verify-kafka-continuous-e2e.mjs",
+        "backend/scripts/verify-kafka-continuous-iceberg.py",
+        "backend/scripts/verify-kafka-continuous-rest.mjs",
+        "backend/scripts/verify-kafka-continuous-rules.mjs",
+        "backend/scripts/verify-kafka-continuous-soak.mjs",
+        "backend/scripts/verify-kafka-review-scheduled-ingest.mjs",
+        "backend/scripts/verify-kafka-snapshot-iceberg.py",
+        "backend/scripts/verify-permission-dataset-access.mjs",
+        "backend/scripts/verify-permission-job-dashboard.mjs",
+        "backend/scripts/verify-postgres-full-execution-source.mjs",
+        "backend/scripts/verify-prefix-spark-e2e.mjs",
+        "backend/scripts/verify-production-spark-contract.mjs",
+        "backend/scripts/verify-snapshot-rule-conformance.mjs",
+        "backend/scripts/verify-snapshot-spark-pipeline.mjs",
+        "backend/scripts/verify-spark-bridge-timeout-contract.py",
+        "backend/scripts/verify-spark-csv-quoting.mjs",
+        "backend/scripts/verify-spark-iceberg-batch.py",
+        "backend/scripts/verify-spark-job-run.mjs",
+        "backend/scripts/verify-spark-rest-client.mjs",
+        "backend/scripts/verify-spark-runtime-paths-container.mjs",
+        "backend/scripts/verify-spark-schema-contract.mjs",
+        "backend/scripts/verify-target-metadata-contract.mjs",
+        "backend/src/connectors.mjs",
+        "backend/src/createPipeline.mjs",
+        "backend/src/reviewRowAnalysis.mjs",
+        "backend/src/sparkRunner.mjs"
+      ]
+    },
+    "rawRuntimeFileAccess": {
+      "fileCount": 10,
+      "files": [
+        "backend/scripts/synthetic-commerce/analyze.py",
+        "backend/scripts/synthetic-commerce/convert_click_events_to_log.py",
+        "backend/scripts/synthetic-commerce/generate.py",
+        "backend/scripts/synthetic-commerce/test_convert_click_events_to_log.py",
+        "backend/scripts/train_text_structuring_models.py",
+        "backend/scripts/validate_review_template_model_reuse.py",
+        "backend/scripts/verify-kafka-continuous-contract.py",
+        "backend/scripts/verify-spark-iceberg-batch.py",
+        "backend/scripts/verify-spark-runtime-paths.py",
+        "backend/scripts/verify_kafka_continuous_rule_runtime.py"
+      ]
+    }
+  },
+  "currentHead": "bce18f37ceb2923531cabd8948dc27b6caacdf7d",
+  "hardFacts": {
+    "etlServiceWithinTarget": false,
+    "legacyProductionPathsObserved": true,
+    "noImportCycles": true,
+    "noPythonSyntaxErrors": true,
+    "noRemovedStaticContracts": true
+  },
+  "importCycles": {
+    "backendJavaScript": [],
+    "frontend": [],
+    "python": []
+  },
+  "largestFiles": [
+    {
+      "file": "backend/app/services/etl_service.py",
+      "loc": 8822
+    },
+    {
+      "file": "frontend/src/styles/etl/02-schema.css",
+      "loc": 2806
+    },
+    {
+      "file": "frontend/src/styles/etl/01-source-shared.css",
+      "loc": 2471
+    },
+    {
+      "file": "backend/src/connectors.mjs",
+      "loc": 2319
+    },
+    {
+      "file": "backend/scripts/runtime/spark_text_analysis.py",
+      "loc": 1859
+    },
+    {
+      "file": "backend/scripts/runtime/kafka_continuous_runtime.py",
+      "loc": 1792
+    },
+    {
+      "file": "backend/app/services/sql_service.py",
+      "loc": 1762
+    },
+    {
+      "file": "frontend/src/styles/etl/07-schema-target-overrides.css",
+      "loc": 1603
+    },
+    {
+      "file": "backend/app/services/trino_query_run_service.py",
+      "loc": 1566
+    },
+    {
+      "file": "frontend/src/styles/landing.css",
+      "loc": 1528
+    },
+    {
+      "file": "backend/src/createPipeline.mjs",
+      "loc": 1487
+    },
+    {
+      "file": "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+      "loc": 1453
+    },
+    {
+      "file": "backend/scripts/runtime/spark_job_runtime.py",
+      "loc": 1369
+    },
+    {
+      "file": "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+      "loc": 1334
+    },
+    {
+      "file": "frontend/src/data/mockData.ts",
+      "loc": 1300
+    },
+    {
+      "file": "frontend/src/components/etl/SchemaTransformEditor.jsx",
+      "loc": 1265
+    },
+    {
+      "file": "backend/app/services/dashboard_runtime_service.py",
+      "loc": 1221
+    },
+    {
+      "file": "backend/src/sparkRunner.mjs",
+      "loc": 1215
+    },
+    {
+      "file": "frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+      "loc": 1172
+    },
+    {
+      "file": "frontend/src/styles/ingest.css",
+      "loc": 1169
+    }
+  ],
+  "legacyRegister": {
+    "invalidEntries": [],
+    "productionReachable": 10,
+    "productionWithoutStructuredTelemetry": [],
+    "registered": 15
+  },
+  "metrics": {
+    "files": {
+      "baseline": 512,
+      "current": 608,
+      "delta": 96
+    },
+    "files_over_1000_lines": {
+      "baseline": 27,
+      "current": 25,
+      "delta": -2
+    },
+    "files_over_2000_lines": {
+      "baseline": 6,
+      "current": 4,
+      "delta": -2
+    },
+    "files_over_5000_lines": {
+      "baseline": 3,
+      "current": 1,
+      "delta": -2
+    },
+    "files_over_500_lines": {
+      "baseline": 62,
+      "current": 79,
+      "delta": 17
+    },
+    "loc": {
+      "baseline": 152137,
+      "current": 158438,
+      "delta": 6301
+    }
+  },
+  "pythonFunctionsOver100Lines": {
+    "baseline": 51,
+    "current": 48,
+    "delta": -3
+  },
+  "schemaVersion": 1,
+  "termInventory": {
+    "compatibility": {
+      "baseline": 11,
+      "current": 30,
+      "delta": 19
+    },
+    "fallback": {
+      "baseline": 75,
+      "current": 94,
+      "delta": 19
+    },
+    "legacy": {
+      "baseline": 53,
+      "current": 58,
+      "delta": 5
+    },
+    "mock": {
+      "baseline": 23,
+      "current": 32,
+      "delta": 9
+    }
+  }
+}
