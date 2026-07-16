@@ -1,18 +1,23 @@
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   BookOpen,
   ChevronDown,
   ChevronUp,
   Minus,
   Pencil,
-  Plus
+  Plus,
+  ShieldCheck,
+  SlidersHorizontal
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 
 import {
   failureActionLabel,
@@ -106,73 +111,55 @@ export function RecipeStepsTable({
   selectedStepId: string;
   steps: RecipeStep[];
 }) {
+  const columns: ColumnDef<RecipeStep>[] = [
+    { cell: ({ row }) => <span className="hegun-step-number"><strong>{row.index + 1}</strong></span>, header: "단계", id: "step" },
+    { cell: ({ row }) => <span className="hegun-data-chip">{row.original.input}</span>, header: "입력", id: "input" },
+    { cell: ({ row }) => transformOperationLabel(row.original.operation), header: "작업", id: "operation" },
+    { cell: ({ row }) => <span className="hegun-data-chip muted">{row.original.output}</span>, header: "출력", id: "output" },
+    { accessorKey: "params", header: "옵션" },
+    {
+      cell: ({ row }) => <span className={`hegun-error-pill ${row.original.onError.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.original.onError)}</span>,
+      header: "오류 처리",
+      id: "on-error",
+    },
+    {
+      cell: ({ row }) => (
+        <div className="hegun-row-actions">
+          <button aria-label={`${row.index + 1}번 단계 수정`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onEdit(row.original);
+          }}><Pencil size={15} /></button>
+          <button aria-label={`${row.index + 1}번 단계 제거`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onRemove(row.original);
+          }}><Minus size={15} /></button>
+        </div>
+      ),
+      header: "작업",
+      id: "actions",
+    },
+  ];
+
   return (
     <section className="panel hegun-console-panel hegun-recipe-panel">
-      <div className="hegun-section-title">
-        <h2>변환 규칙 단계</h2>
-        <p>규칙은 샘플 데이터에 먼저 순서대로 적용되고, 실행 시 전체 데이터에 적용됩니다.</p>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-recipe-table">
-          <thead>
-            <tr>
-              <th>단계</th>
-              <th>입력</th>
-              <th>작업</th>
-              <th>출력</th>
-              <th>옵션</th>
-              <th>오류 처리</th>
-              <th>작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            {steps.map((row, index) => {
-              const stepNumber = index + 1;
-              const isSelected = row.id === selectedStepId;
-              return (
-                <tr
-                  aria-current={isSelected ? "step" : undefined}
-                  className={isSelected ? "selected" : undefined}
-                  key={`${row.id}-${row.input}`}
-                  onClick={() => onPreview(row)}
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onPreview(row);
-                    }
-                  }}
-                >
-                  <td>
-                    <span className="hegun-step-number"><strong>{stepNumber}</strong></span>
-                  </td>
-                  <td><span className="hegun-data-chip">{row.input}</span></td>
-                  <td>{transformOperationLabel(row.operation)}</td>
-                  <td><span className="hegun-data-chip muted">{row.output}</span></td>
-                  <td>{row.params}</td>
-                  <td><span className={`hegun-error-pill ${row.onError.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.onError)}</span></td>
-                  <td>
-                    <div className="hegun-row-actions">
-                      <button aria-label={`${stepNumber}번 단계 수정`} type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        onEdit(row);
-                      }}>
-                        <Pencil size={15} />
-                      </button>
-                      <button aria-label={`${stepNumber}번 단계 제거`} type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        onRemove(row);
-                      }}>
-                        <Minus size={15} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader
+        className="mb-6 rounded-lg"
+        description="규칙은 샘플 데이터에 먼저 순서대로 적용되고, 실행 시 전체 데이터에 적용됩니다."
+        icon={<SlidersHorizontal />}
+        title="변환 규칙 단계"
+      />
+      <DataTable
+        aria-label="변환 규칙 단계 표"
+        columns={columns}
+        data={steps}
+        enableSorting={false}
+        getRowClassName={(row) => row.original.id === selectedStepId ? "selected" : undefined}
+        getRowId={(row) => row.id}
+        onRowClick={(row) => onPreview(row.original)}
+        pagination={false}
+        tableClassName="schema-table hegun-recipe-table"
+        viewportClassName="hegun-table-scroll"
+      />
     </section>
   );
 }
@@ -190,70 +177,51 @@ export function QualityRulesTable({
   rules: QualityRule[];
   selectedRuleId: string;
 }) {
+  const columns: ColumnDef<QualityRule>[] = [
+    { cell: ({ row }) => <strong>{row.index + 1}</strong>, header: "규칙", id: "rule" },
+    { cell: ({ row }) => <span className="hegun-data-chip">{row.original.targetColumn}</span>, header: "컬럼", id: "column" },
+    { cell: ({ row }) => qualityValidationLabel(row.original.validationType), header: "검증", id: "validation" },
+    { cell: ({ row }) => <span className={`hegun-error-pill ${row.original.severity.toLowerCase()}`}>{qualitySeverityLabel(row.original.severity)}</span>, header: "심각도", id: "severity" },
+    { cell: ({ row }) => <span className={`hegun-error-pill ${row.original.failureAction.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.original.failureAction)}</span>, header: "실패 처리", id: "failure-action" },
+    { cell: ({ row }) => row.original.severity === "Error" ? "차단" : "모니터링", header: "상태", id: "status" },
+    {
+      cell: ({ row }) => (
+        <div className="hegun-row-actions">
+          <button aria-label={`${row.index + 1}번 품질 규칙 수정`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onEdit(row.original);
+          }}><Pencil size={15} /></button>
+          <button aria-label={`${row.index + 1}번 품질 규칙 제외`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onRemove(row.original);
+          }}><Minus size={15} /></button>
+        </div>
+      ),
+      header: "작업",
+      id: "actions",
+    },
+  ];
+
   return (
     <section className="panel hegun-console-panel hegun-recipe-panel">
-      <div className="hegun-section-title">
-        <h2>품질 검증 규칙</h2>
-        <p>검증 규칙은 샘플 행에 먼저 적용하고 실행 전 차단, 격리, 경고 여부를 결정합니다.</p>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-recipe-table hegun-quality-table">
-          <thead>
-            <tr>
-              <th>규칙</th>
-              <th>컬럼</th>
-              <th>검증</th>
-              <th>심각도</th>
-              <th>실패 처리</th>
-              <th>상태</th>
-              <th>작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((rule, index) => {
-              const isSelected = rule.id === selectedRuleId;
-              return (
-                <tr
-                  aria-current={isSelected ? "step" : undefined}
-                  className={isSelected ? "selected" : undefined}
-                  key={rule.id}
-                  onClick={() => onPreview(rule)}
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onPreview(rule);
-                    }
-                  }}
-                >
-                  <td><strong>{index + 1}</strong></td>
-                  <td><span className="hegun-data-chip">{rule.targetColumn}</span></td>
-                  <td>{qualityValidationLabel(rule.validationType)}</td>
-                  <td><span className={`hegun-error-pill ${rule.severity.toLowerCase()}`}>{qualitySeverityLabel(rule.severity)}</span></td>
-                  <td><span className={`hegun-error-pill ${rule.failureAction.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(rule.failureAction)}</span></td>
-                  <td>{rule.severity === "Error" ? "차단" : "모니터링"}</td>
-                  <td>
-                    <div className="hegun-row-actions">
-                      <button aria-label={`${index + 1}번 품질 규칙 수정`} type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        onEdit(rule);
-                      }}>
-                        <Pencil size={15} />
-                      </button>
-                      <button aria-label={`${index + 1}번 품질 규칙 제외`} type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        onRemove(rule);
-                      }}>
-                        <Minus size={15} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader
+        className="mb-6 rounded-lg"
+        description="검증 규칙은 샘플 행에 먼저 적용하고 실행 전 차단, 격리, 경고 여부를 결정합니다."
+        icon={<ShieldCheck />}
+        title="품질 검증 규칙"
+      />
+      <DataTable
+        aria-label="품질 검증 규칙 표"
+        columns={columns}
+        data={rules}
+        enableSorting={false}
+        getRowClassName={(row) => row.original.id === selectedRuleId ? "selected" : undefined}
+        getRowId={(row) => row.id}
+        onRowClick={(row) => onPreview(row.original)}
+        pagination={false}
+        tableClassName="schema-table hegun-recipe-table hegun-quality-table"
+        viewportClassName="hegun-table-scroll"
+      />
     </section>
   );
 }
@@ -325,19 +293,19 @@ export function RuleStepBuilder({
   };
   const selectedDraft = isTransform
     ? {
-      input: selectedInputColumn,
-      onError,
-      operation: selectedOperation,
-      output: outputColumn,
-      params: getTransformParams(selectedOperation),
-    }
+        input: selectedInputColumn,
+        onError,
+        operation: selectedOperation,
+        output: outputColumn,
+        params: getTransformParams(selectedOperation),
+      }
     : {
-      input: selectedTargetColumn,
-      onError: selectedFailureAction,
-      operation: selectedValidationType,
-      output: "validation_status",
-      params: selectedSeverity,
-    };
+        input: selectedTargetColumn,
+        onError: selectedFailureAction,
+        operation: selectedValidationType,
+        output: "validation_status",
+        params: selectedSeverity,
+      };
   const presetOptions = isTransform
     ? transformPresets.map((step) => ({ id: step.id, label: `${transformOperationLabel(step.operation)}: ${step.input} -> ${step.output}` }))
     : qualityPresets.map((rule) => ({ id: rule.id, label: `${qualityValidationLabel(rule.validationType)}: ${rule.targetColumn} · ${qualitySeverityLabel(rule.severity)} / ${failureActionLabel(rule.failureAction)}` }));
@@ -463,24 +431,21 @@ export function RuleStepBuilder({
 
   return (
     <section className={collapsed ? "panel hegun-console-panel hegun-builder-panel collapsed" : "panel hegun-console-panel hegun-builder-panel"}>
-      <div
-        className="hegun-builder-header"
+      <EtlSectionHeader
+        actions={(
+          <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "추가 영역 열기" : "추가 영역 접기"} type="button" onClick={(event) => {
+            event.stopPropagation();
+            toggleCollapsed();
+          }}>
+            {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+          </button>
+        )}
+        className={collapsed ? "cursor-pointer rounded-lg" : "mb-5 cursor-pointer rounded-lg"}
+        description={builderDescription}
+        icon={isEditing ? <Pencil /> : <Plus />}
+        title={builderTitle}
         onClick={toggleCollapsed}
-      >
-        <div>
-          <span className="hegun-builder-icon">{isEditing ? <Pencil size={20} /> : <Plus size={20} />}</span>
-          <div>
-            <h2>{builderTitle}</h2>
-            <p>{builderDescription}</p>
-          </div>
-        </div>
-        <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "추가 영역 열기" : "추가 영역 접기"} type="button" onClick={(event) => {
-          event.stopPropagation();
-          toggleCollapsed();
-        }}>
-          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-        </button>
-      </div>
+      />
       {!collapsed && (
         <>
           <div className="hegun-rule-builder">

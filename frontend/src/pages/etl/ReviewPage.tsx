@@ -1,13 +1,9 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { ValidationList } from "@/components/ui/validation-list";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from "@tanstack/react-table";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   Check,
   Database,
@@ -19,6 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import {
   buildReviewSnapshotRequest,
@@ -101,103 +98,74 @@ export function ReviewPage({
       variant="review"
       actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} split onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
-      <EtlStepHeader
-        className="etl-step-standalone-header"
-        icon={<FileText />}
-        title="검토 및 생성"
-      />
-      {reviewError ? (
-        <Alert className="mx-0" variant="destructive">
-          <AlertTitle>검토 정보를 불러오지 못했습니다.</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-            <span>{reviewError}</span>
-            <Button size="sm" type="button" variant="outline" onClick={() => setReviewRetryCount((count) => count + 1)}>
-              <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 시도
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      <div className="etl-review-stack">
-        <section className="etl-review-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon readiness"><Check size={17} /></span>
-            <div>
-              <h2>생성 준비 상태</h2>
-            </div>
-          </div>
-          <ValidationList
-            className="etl-review-validation"
-            items={validationRows.map(({ label, status, value }) => ({
-              label,
-              status,
-              value,
-            }))}
-          />
-        </section>
+        <EtlStepHeader
+          className="etl-step-standalone-header"
+          icon={<FileText />}
+          title="검토 및 생성"
+        />
+        {reviewError ? (
+          <Alert className="mx-0" variant="destructive">
+            <AlertTitle>검토 정보를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>{reviewError}</span>
+              <Button size="sm" type="button" variant="outline" onClick={() => setReviewRetryCount((count) => count + 1)}>
+                <RefreshCw aria-hidden="true" data-icon="inline-start" /> 다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="etl-review-stack">
+          <section className="etl-review-card">
+            <EtlSectionHeader icon={<Check />} title="생성 준비 상태" tone="success" />
+            <ValidationList
+              className="etl-review-validation"
+              items={validationRows.map(({ label, status, value }) => ({
+                label,
+                status,
+                value,
+              }))}
+            />
+          </section>
 
-        <section className="etl-review-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon"><FileText size={17} /></span>
-            <div>
-              <h2>기본 정보</h2>
-            </div>
-            <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
-          </div>
-          <KeyValueList
-            className="etl-review-kv"
-            items={basicInformationRows.map(({ label, value }) => ({
-              label,
-              value,
-            }))}
-          />
-        </section>
+          <section className="etl-review-card">
+            <EtlSectionHeader actions={<ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />} icon={<FileText />} title="기본 정보" />
+            <KeyValueList
+              className="etl-review-kv"
+              items={basicInformationRows.map(({ label, value }) => ({
+                label,
+                value,
+              }))}
+            />
+          </section>
 
-        <section className="etl-review-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon schema"><Database size={17} /></span>
-            <div>
-              <h2>출력 스키마</h2>
-            </div>
-            <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
-          </div>
-          <ReviewSchemaTable rows={schemaRows} />
-        </section>
+          <section className="etl-review-card">
+            <EtlSectionHeader actions={<ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />} icon={<Database />} title="출력 스키마" />
+            <ReviewSchemaTable rows={schemaRows} />
+          </section>
 
-        <section className="etl-review-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon destination"><HardDrive size={17} /></span>
-            <div>
-              <h2>저장 위치 설정</h2>
-            </div>
-            <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
-          </div>
-          <KeyValueList
-            className="etl-review-kv destination"
-            items={destinationRows.map(({ label, value }) => ({
-              className: label === "저장 경로" ? "wide" : undefined,
-              label,
-              value,
-            }))}
-          />
-        </section>
+          <section className="etl-review-card">
+            <EtlSectionHeader actions={<ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />} icon={<HardDrive />} title="저장 위치 설정" />
+            <KeyValueList
+              className="etl-review-kv destination"
+              items={destinationRows.map(({ label, value }) => ({
+                className: label === "저장 경로" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
+          </section>
 
-        <section className="etl-review-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-            <div>
-              <h2>권한 설정</h2>
-            </div>
-            <ReviewEditButton label="권한 설정 수정" onClick={() => onEdit("permission")} />
-          </div>
-          <KeyValueList
-            className="etl-review-kv permission"
-            items={permissionRows.map(({ label, value }) => ({
-              label,
-              value,
-            }))}
-          />
-        </section>
-      </div>
+          <section className="etl-review-card">
+            <EtlSectionHeader actions={<ReviewEditButton label="권한 설정 수정" onClick={() => onEdit("permission")} />} icon={<ShieldCheck />} title="권한 설정" />
+            <KeyValueList
+              className="etl-review-kv permission"
+              items={permissionRows.map(({ label, value }) => ({
+                label,
+                value,
+              }))}
+            />
+          </section>
+        </div>
     </CreationFlowLayout>
   );
 }
@@ -210,7 +178,7 @@ function ReviewEditButton({ label, onClick }: { label: string; onClick: () => vo
   );
 }
 
-function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[]; }) {
+function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
   const columns = useMemo<ColumnDef<ReviewSchemaRow>[]>(
     () => [
       { accessorKey: "columnName", cell: (info) => info.getValue<string>(), header: "컬럼명" },
@@ -220,41 +188,18 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[]; }) {
     ],
     [],
   );
-  const table = useReactTable({
-    columns,
-    data: rows,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   return (
-    <div aria-label="출력 스키마 표" className="review-schema-table-viewport" role="region" tabIndex={0}>
-      <table className="schema-table review-schema-table">
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-              ))}
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      aria-label="출력 스키마 표"
+      columns={columns}
+      data={rows}
+      emptyState={<span className="block px-4 py-8 text-center text-sm font-semibold text-slate-500">소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</span>}
+      enableSorting={false}
+      pagination={false}
+      role="region"
+      tableClassName="schema-table review-schema-table"
+      viewportClassName="review-schema-table-viewport rounded-none border-0"
+    />
   );
 }

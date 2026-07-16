@@ -12,24 +12,6 @@
   font-size: 16px;
 }
 
-.target-config-card .etl-review-card-header {
-  padding: 18px 20px;
-}
-
-.target-config-card .etl-review-card-header h2 {
-  font-size: 18px;
-}
-
-.target-config-card .etl-review-icon {
-  width: 32px;
-  height: 32px;
-}
-
-.target-config-card .etl-review-icon svg {
-  width: 18px;
-  height: 18px;
-}
-
 .target-config-card .field > span {
   color: #334155;
   font-size: 15px;
