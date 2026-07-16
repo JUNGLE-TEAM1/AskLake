@@ -138,11 +138,7 @@ const emptyDashboardCopy = {
   title: "게시된 위젯이 없습니다",
 };
 
-export function DashboardRuntimeView({
-  actions,
-  datasets,
-  runtime,
-}: DashboardRuntimeViewProps) {
+export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
@@ -169,7 +165,6 @@ export function DashboardRuntimeView({
     notice,
     pages,
     publishedRuntime,
-    realtimeConnectionState,
     renamingPageId,
     runtimeError,
     runtimeLoading,
@@ -237,7 +232,6 @@ export function DashboardRuntimeView({
       다시 시도
     </Button>
   );
-
   const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
     config: {
       ...widget.config,
@@ -509,7 +503,7 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={realtimeConnectionState}
+        realtimeConnectionState={runtime.realtimeConnectionState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

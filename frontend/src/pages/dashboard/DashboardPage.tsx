@@ -174,9 +174,7 @@ export function DashboardPage({
   }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
 
   const runtimeResources = useDashboardRuntimeResources({
-    active: view === "runtime",
-    dashboardId: runtimeSelection.dashboardId,
-    mode: runtimeSelection.mode,
+    active: view === "runtime", dashboardId: runtimeSelection.dashboardId, mode: runtimeSelection.mode,
   });
   const {
     draftError,
