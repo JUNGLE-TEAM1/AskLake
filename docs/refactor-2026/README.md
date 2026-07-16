@@ -13,6 +13,8 @@
 7. [baseline/test-command-map.md](./baseline/test-command-map.md): 검증 명령과 실행 조건
 8. [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md): 변경 전 실패 목록
 9. [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md): Spark 경로 재부팅 복구·검증·rollback
+10. [contracts/runtime-state-ownership.md](./contracts/runtime-state-ownership.md): Continuous desired/observed/public 상태와 오류·fencing 계약
+11. [testing/characterization-matrix.md](./testing/characterization-matrix.md): 분해 전 보호해야 할 backend/frontend 동작과 검증 위치
 
 ## 기준선 재생성
 

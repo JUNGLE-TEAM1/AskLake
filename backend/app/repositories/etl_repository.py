@@ -4,6 +4,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
     CatalogDatasetModel,
     ETLJobModel,
@@ -747,8 +748,18 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         return None
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
+    contract = runtime_contract_projection(
+        metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
     return KafkaContinuousRuntime(
         status=runtime.status,
+        desired_state=contract["desiredState"],
+        observed_state=contract["observedState"],
+        state_revision=contract["stateRevision"],
+        fencing_token=contract["fencingToken"],
+        error_detail=contract["errorDetail"],
         checkpoint_path=runtime.checkpoint_path,
         heartbeat_at=runtime.heartbeat_at,
         last_flush_at=runtime.last_flush_at,

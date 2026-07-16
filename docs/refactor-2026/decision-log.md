@@ -43,3 +43,16 @@
 - 상태: Accepted
 - 결정: 이후 상태 계약 변경은 additive field/table을 먼저 도입하고 기존 persisted Job/Run/checkpoint/manifest를 유지한다.
 - 이유: 운영 데이터와 구버전 worker의 동시 호환을 보장하기 위해서다.
+
+## D-008 — Continuous 상태 계약은 기존 metrics JSON에 확장
+
+- 상태: Accepted
+- 결정: desired/observed state, command revision, active worker fencing과 structured error를 기존 `kafka_continuous_runtimes.metrics.runtimeContract`에 저장한다.
+- 이유: destructive migration 없이 기존 Job/session/checkpoint/report와 이전 backend rollback을 모두 유지하기 위해서다.
+- 제약: 기존 `status`, `lastError`, `currentWorkerAttemptId`는 제거하지 않고 호환 projection/mirror로 유지한다.
+
+## D-009 — 기준선 3개 실패는 제품 변경 없이 test drift로 정리
+
+- 상태: Accepted
+- 결정: Data Lake review의 현재 label과 Spark source identity 실행 seam을 source of truth로 보고 stale assertion/fixture만 수정한다.
+- 이유: 제품 동작을 되돌리면 현재 UI/API 계약이 회귀하고, 실패 원인은 테스트가 이름과 함수 경계 변경을 따라가지 못한 것이기 때문이다.

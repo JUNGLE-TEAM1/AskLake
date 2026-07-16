@@ -7,10 +7,10 @@
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `1/5`
 - 현재 PR 단위: `03 — Characterization Test·Continuous 상태 계약`
-- 상태: `READY`
+- 상태: `TESTED · PR 생성 대기`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 현재 이슈: PR 03 시작 시 생성
-- 현재 브랜치: PR 03 시작 시 `fix-#810`에서 분기
+- 현재 이슈: `#814`
+- 현재 브랜치: `refactor-#814` (`fix-#810`에서 분기)
 - 다음 사용자 확인 지점: PR 01~03 생성 후
 
 ## 15개 PR 원장
@@ -19,7 +19,7 @@
 |---:|---|---|---|---|
 | 01 | 00~01 | 현황·drift·기준선·작업 원장 | 없음 | DONE |
 | 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | DONE |
-| 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | READY |
+| 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | TESTED |
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | WAITING |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | WAITING |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | WAITING |
@@ -64,13 +64,23 @@
 - rollback: `spark-runtime-guard`와 exec gate를 되돌리고 이전 one-shot init으로 복귀하되, 기존 runtime data는 삭제하지 않는다.
 - 머지 순서: `#809` 다음 `#813`; PR 03은 `#813` 다음이다.
 
+## PR 03 구현 기록
+
+- 시작 HEAD: `6988a2aa` (PR 02 branch HEAD)
+- branch/issue: `refactor-#814`, `#814`
+- 포함: characterization matrix, 순수 Continuous transition policy, desired/observed/public 상태, command revision, worker fencing, 단계별 구조화 오류, additive API/frontend field, stale polling 차단
+- 하위 호환: 기존 `status`/`lastError`, DB schema, persisted Job/session/checkpoint/report를 유지하고 `metrics.runtimeContract` JSON만 확장
+- 기준선 정리: stale Data Lake review assertion 2건과 Spark source identity fixture 1건을 현재 제품 계약에 맞춰 전체 backend unit을 녹색화
+- 검증: backend unit 368건(1 opt-in skip), Continuous contract 39건, Kafka Continuous contract, production Spark contract, OpenAPI 기존 path/method/field 보존, frontend UI regression 132 checks, TypeScript/Vite production build, Markdown link check
+- 제외: infrastructure port/adapter 이동, destructive migration, public field 제거, live Kafka/S3 fault injection, production 배포
+- rollback: domain mapper와 service wiring, additive schema/type, frontend stale guard를 함께 되돌린다. 저장된 `runtimeContract` JSON은 이전 코드가 무시하므로 data rewrite가 필요 없다.
+- 머지 순서: `#809` → `#813` → PR 03.
+
 ## Latest handoff
 
-- 상태: PR 02 구현·원격 PR 생성 완료
-- 변경 commit: `50328b4f` (`fix(deploy): make Spark runtime paths reboot-safe`)
-- 실제 변경: reboot-safe runtime guard, Spark writer/backend reader probe, 구조화된 storage 오류, production Compose와 운영 문서 정합화
-- 통과: clean path·권한 drift·기존 data 보존, 실제 Spark container, production Spark/Kafka contract, deploy regression, 전체 dependency build
-- 기준선 실패: backend unit 3건과 skip 1건만 동일하게 남아 있다.
-- rollback: [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md)의 rollback 절차를 따른다.
-- 차단 사항: 없음. GitHub CI는 PR #813에서 추적한다.
-- 다음 단위: PR 03 — Characterization Test·Continuous 상태 계약
+- 상태: PR 03 구현·로컬 검증 완료, 원격 PR 생성 대기
+- 실제 변경: Continuous 상태/오류 domain contract, active worker fencing, additive API/frontend projection, characterization 안전망
+- 통과: backend 전체 unit, Continuous/Kafka/production Spark 계약, OpenAPI 호환, frontend 회귀·build, 문서 link
+- 남은 경고: frontend 2.6 MB chunk warning은 R-014로 유지한다.
+- 차단 사항: 없음.
+- 다음 단위: 사용자 승인 후 PR 04 — 외부 I/O Port·Adapter 경계 추출
