@@ -1,11 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from "@tanstack/react-table";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   BarChart3,
   BookOpen,
@@ -46,9 +41,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CommandBar } from "@/components/ui/command-bar";
+import { DataTable } from "@/components/ui/data-table";
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
 import { Field as FormField, Field as ShadcnField, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
@@ -91,7 +87,7 @@ import {
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
-import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingInvalidRow, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -203,9 +199,7 @@ export function SchedulePage({
           title={title}
         />
         <Card className="overflow-hidden" size="none">
-          <CardHeader className="border-b border-slate-200 p-5">
-            <CardTitle>실행 방식</CardTitle>
-          </CardHeader>
+          <EtlSectionHeader icon={<PlayCircle />} title="실행 방식" />
           <CardContent className="grid gap-6 p-5">
             <div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">
               <ScheduleModeCard
@@ -1592,7 +1586,6 @@ export function SourceConnectionPage({
   const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
   const hasSelectedSource = activeSourceType.length > 0;
   const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
-  const activeSourceMeta = connectorMeta[activeSourceType] ?? connectorMeta["File / S3"];
   const isInternalDataLake = activeSourceType === "Data Lake";
   const editableFields = sourceFields[activeSourceType] ?? (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
@@ -2321,9 +2314,7 @@ export function SourceConnectionPage({
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
-              <div className="source-select-heading">
-                <h2>데이터 소스 선택</h2>
-              </div>
+              <EtlSectionHeader bordered={false} icon={<Database />} title="데이터 소스 선택" />
               <div className="source-choice-grid">
                 {sourceChoiceConnectors.map((connector) => {
                   const meta = connectorMeta[connector];
@@ -2354,15 +2345,15 @@ export function SourceConnectionPage({
             <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
               <div className="source-stage-screen">
               <section className="source-step-section active">
-                <div className="source-step-header">
-                  <div className="source-step-brand" aria-hidden="true">{activeSourceMeta.icon}</div>
-                  <div>
-                    <strong>{current.title}</strong>
-                  </div>
-                  <div className="hegun-status-actions">
+                <EtlSectionHeader
+                  actions={(
+                    <div className="hegun-status-actions">
                     {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
-                  </div>
-                </div>
+                    </div>
+                  )}
+                  icon={<SourceBrandIcon kind={getSourceBrandMeta(activeSourceType).kind} size={22} />}
+                  title={current.title}
+                />
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <FormFieldGroup
@@ -2382,10 +2373,7 @@ export function SourceConnectionPage({
                 </div>
                 {activeSourceType === "Stream / Kafka" && (
                   <section className="source-step-section" aria-label="Kafka 실행 방식">
-                    <div className="source-step-header">
-                      <em>2</em>
-                      <div><strong>Kafka 실행 방식</strong></div>
-                    </div>
+                    <EtlSectionHeader density="compact" icon={<Repeat2 />} title="Kafka 실행 방식" />
                     <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
                       <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                         <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
@@ -2624,6 +2612,12 @@ function DataLakeDatasetList({
   );
 }
 
+type RecordParsingResultRow = {
+  id: string;
+  values: string[];
+};
+type RecordParsingColumnDraft = RecordParsingDraft["columns"][number];
+
 export function RecordParsingPage({
   draft,
   onAction,
@@ -2704,6 +2698,76 @@ export function RecordParsingPage({
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
   const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
   const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
+  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = [
+    {
+      cell: ({ row }) => row.original.position + 1,
+      header: "순서",
+      id: "position",
+      meta: { widthClassName: "w-20" },
+    },
+    {
+      cell: ({ row }) => (
+        <code className="record-parsing-code-cell">
+          {preview?.sampleRows[0]?.[row.original.position] || "-"}
+        </code>
+      ),
+      header: "샘플 값",
+      id: "sample-value",
+      meta: { widthClassName: "min-w-56" },
+    },
+    {
+      cell: ({ row }) => (
+        <Input
+          aria-label={`${row.original.position + 1}번째 출력 컬럼명`}
+          value={row.original.name}
+          onChange={(event) => updateColumn(row.original.position, { name: event.target.value })}
+        />
+      ),
+      header: "출력 컬럼명",
+      id: "output-column-name",
+      meta: { widthClassName: "min-w-52" },
+    },
+    {
+      cell: ({ row }) => (
+        <NativeSelect
+          value={row.original.inferredType}
+          onChange={(event) => updateColumn(row.original.position, {
+            inferredType: event.target.value as RecordParsingColumnDraft["inferredType"],
+          })}
+        >
+          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+        </NativeSelect>
+      ),
+      header: "추론 타입",
+      id: "inferred-type",
+      meta: { widthClassName: "min-w-44" },
+    },
+  ];
+  const invalidRowColumns: ColumnDef<RecordParsingInvalidRow>[] = [
+    { accessorKey: "lineNumber", header: "원본 행", meta: { widthClassName: "w-28" } },
+    { accessorKey: "expectedFieldCount", header: "예상", meta: { widthClassName: "w-24" } },
+    { accessorKey: "actualFieldCount", header: "실제", meta: { widthClassName: "w-24" } },
+    {
+      cell: ({ row }) => <code className="record-parsing-code-cell">{row.original.rawPreview}</code>,
+      header: "원문",
+      id: "raw-preview",
+      meta: { widthClassName: "min-w-[32rem]" },
+    },
+  ];
+  const resultRows: RecordParsingResultRow[] = (preview?.sampleRows ?? []).slice(0, 5).map((values, index) => ({
+    id: `record-parsing-result-${index}`,
+    values,
+  }));
+  const resultColumns: ColumnDef<RecordParsingResultRow>[] = parsing.columns.map((column) => ({
+    cell: ({ row }) => {
+      const value = row.original.values[column.position] ?? "-";
+      return <span className="record-parsing-result-cell" title={value}>{value}</span>;
+    },
+    enableSorting: false,
+    header: column.name,
+    id: `record-parsing-result-${column.position}`,
+    meta: { widthClassName: "min-w-40" },
+  }));
 
   const applyAndContinue = () => {
     if (!preview || !canApply) {
@@ -2808,25 +2872,17 @@ export function RecordParsingPage({
               </FormFieldGroup>
             </div>
             {error && <p className="record-parsing-error">{error}</p>}
-            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-              <table className="schema-table record-parsing-table">
-                <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
-                <tbody>
-                  {parsing.columns.map((column) => (
-                    <tr key={column.position}>
-                      <td>{column.position + 1}</td>
-                      <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
-                      <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
-                      <td>
-                        <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
-                          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
-                        </NativeSelect>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollArea>
+            <DataTable
+              aria-label="필드 추론 표"
+              cellClassName="text-sm text-slate-800"
+              columns={fieldInferenceColumns}
+              data={parsing.columns}
+              enableSorting={false}
+              getRowId={(row) => String(row.position)}
+              pagination={false}
+              tableClassName="record-parsing-data-table min-w-[720px]"
+              viewportClassName="record-parsing-data-table-viewport"
+            />
             {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
           </div>
         </section>
@@ -2836,10 +2892,17 @@ export function RecordParsingPage({
         <section className="panel record-parsing-panel">
           <EtlSectionHeader icon={<Info />} title="필드 개수 불일치" tone="warning" />
           <div className="record-parsing-panel-body">
-            <table className="schema-table record-parsing-invalid-table">
-              <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
-              <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
-            </table>
+            <DataTable
+              aria-label="필드 개수 불일치 표"
+              cellClassName="text-sm text-slate-800"
+              columns={invalidRowColumns}
+              data={preview.invalidRows}
+              enableSorting={false}
+              getRowId={(row) => String(row.lineNumber)}
+              pagination={false}
+              tableClassName="record-parsing-data-table min-w-[720px]"
+              viewportClassName="record-parsing-data-table-viewport"
+            />
           </div>
         </section>
       ) : preview && (
@@ -2862,12 +2925,17 @@ export function RecordParsingPage({
           />
           {resultPreviewExpanded ? (
             <div className="record-parsing-panel-body record-parsing-preview-body" id="record-parsing-result-preview">
-              <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-                <table className="schema-table record-parsing-preview-table">
-                  <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
-                  <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
-                </table>
-              </ScrollArea>
+              <DataTable
+                aria-label="레코드 구조화 결과 미리보기 표"
+                cellClassName="text-sm text-slate-800"
+                columns={resultColumns}
+                data={resultRows}
+                enableSorting={false}
+                getRowId={(row) => row.id}
+                pagination={false}
+                tableClassName="record-parsing-data-table min-w-max"
+                viewportClassName="record-parsing-data-table-viewport"
+              />
             </div>
           ) : null}
         </section>
@@ -4687,73 +4755,55 @@ function RecipeStepsTable({
   selectedStepId: string;
   steps: RecipeStep[];
 }) {
+  const columns: ColumnDef<RecipeStep>[] = [
+    { cell: ({ row }) => <span className="hegun-step-number"><strong>{row.index + 1}</strong></span>, header: "단계", id: "step" },
+    { cell: ({ row }) => <span className="hegun-data-chip">{row.original.input}</span>, header: "입력", id: "input" },
+    { cell: ({ row }) => transformOperationLabel(row.original.operation), header: "작업", id: "operation" },
+    { cell: ({ row }) => <span className="hegun-data-chip muted">{row.original.output}</span>, header: "출력", id: "output" },
+    { accessorKey: "params", header: "옵션" },
+    {
+      cell: ({ row }) => <span className={`hegun-error-pill ${row.original.onError.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.original.onError)}</span>,
+      header: "오류 처리",
+      id: "on-error",
+    },
+    {
+      cell: ({ row }) => (
+        <div className="hegun-row-actions">
+          <button aria-label={`${row.index + 1}번 단계 수정`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onEdit(row.original);
+          }}><Pencil size={15} /></button>
+          <button aria-label={`${row.index + 1}번 단계 제거`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onRemove(row.original);
+          }}><Minus size={15} /></button>
+        </div>
+      ),
+      header: "작업",
+      id: "actions",
+    },
+  ];
+
   return (
     <section className="panel hegun-console-panel hegun-recipe-panel">
-      <div className="hegun-section-title">
-        <h2>변환 규칙 단계</h2>
-        <p>규칙은 샘플 데이터에 먼저 순서대로 적용되고, 실행 시 전체 데이터에 적용됩니다.</p>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-recipe-table">
-          <thead>
-            <tr>
-              <th>단계</th>
-              <th>입력</th>
-              <th>작업</th>
-              <th>출력</th>
-              <th>옵션</th>
-              <th>오류 처리</th>
-              <th>작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            {steps.map((row, index) => {
-              const stepNumber = index + 1;
-              const isSelected = row.id === selectedStepId;
-              return (
-              <tr
-                aria-current={isSelected ? "step" : undefined}
-                className={isSelected ? "selected" : undefined}
-                key={`${row.id}-${row.input}`}
-                onClick={() => onPreview(row)}
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onPreview(row);
-                  }
-                }}
-              >
-                <td>
-                  <span className="hegun-step-number"><strong>{stepNumber}</strong></span>
-                </td>
-                <td><span className="hegun-data-chip">{row.input}</span></td>
-                <td>{transformOperationLabel(row.operation)}</td>
-                <td><span className="hegun-data-chip muted">{row.output}</span></td>
-                <td>{row.params}</td>
-                <td><span className={`hegun-error-pill ${row.onError.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.onError)}</span></td>
-                <td>
-                  <div className="hegun-row-actions">
-                    <button aria-label={`${stepNumber}번 단계 수정`} type="button" onClick={(event) => {
-                      event.stopPropagation();
-                      onEdit(row);
-                    }}>
-                      <Pencil size={15} />
-                    </button>
-                    <button aria-label={`${stepNumber}번 단계 제거`} type="button" onClick={(event) => {
-                      event.stopPropagation();
-                      onRemove(row);
-                    }}>
-                      <Minus size={15} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader
+        className="mb-6 rounded-lg"
+        description="규칙은 샘플 데이터에 먼저 순서대로 적용되고, 실행 시 전체 데이터에 적용됩니다."
+        icon={<SlidersHorizontal />}
+        title="변환 규칙 단계"
+      />
+      <DataTable
+        aria-label="변환 규칙 단계 표"
+        columns={columns}
+        data={steps}
+        enableSorting={false}
+        getRowClassName={(row) => row.original.id === selectedStepId ? "selected" : undefined}
+        getRowId={(row) => row.id}
+        onRowClick={(row) => onPreview(row.original)}
+        pagination={false}
+        tableClassName="schema-table hegun-recipe-table"
+        viewportClassName="hegun-table-scroll"
+      />
     </section>
   );
 }
@@ -4771,70 +4821,51 @@ function QualityRulesTable({
   rules: QualityRule[];
   selectedRuleId: string;
 }) {
+  const columns: ColumnDef<QualityRule>[] = [
+    { cell: ({ row }) => <strong>{row.index + 1}</strong>, header: "규칙", id: "rule" },
+    { cell: ({ row }) => <span className="hegun-data-chip">{row.original.targetColumn}</span>, header: "컬럼", id: "column" },
+    { cell: ({ row }) => qualityValidationLabel(row.original.validationType), header: "검증", id: "validation" },
+    { cell: ({ row }) => <span className={`hegun-error-pill ${row.original.severity.toLowerCase()}`}>{qualitySeverityLabel(row.original.severity)}</span>, header: "심각도", id: "severity" },
+    { cell: ({ row }) => <span className={`hegun-error-pill ${row.original.failureAction.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.original.failureAction)}</span>, header: "실패 처리", id: "failure-action" },
+    { cell: ({ row }) => row.original.severity === "Error" ? "차단" : "모니터링", header: "상태", id: "status" },
+    {
+      cell: ({ row }) => (
+        <div className="hegun-row-actions">
+          <button aria-label={`${row.index + 1}번 품질 규칙 수정`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onEdit(row.original);
+          }}><Pencil size={15} /></button>
+          <button aria-label={`${row.index + 1}번 품질 규칙 제외`} type="button" onClick={(event) => {
+            event.stopPropagation();
+            onRemove(row.original);
+          }}><Minus size={15} /></button>
+        </div>
+      ),
+      header: "작업",
+      id: "actions",
+    },
+  ];
+
   return (
     <section className="panel hegun-console-panel hegun-recipe-panel">
-      <div className="hegun-section-title">
-        <h2>품질 검증 규칙</h2>
-        <p>검증 규칙은 샘플 행에 먼저 적용하고 실행 전 차단, 격리, 경고 여부를 결정합니다.</p>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-recipe-table hegun-quality-table">
-          <thead>
-            <tr>
-              <th>규칙</th>
-              <th>컬럼</th>
-              <th>검증</th>
-              <th>심각도</th>
-              <th>실패 처리</th>
-              <th>상태</th>
-              <th>작업</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((rule, index) => {
-              const isSelected = rule.id === selectedRuleId;
-              return (
-              <tr
-                aria-current={isSelected ? "step" : undefined}
-                className={isSelected ? "selected" : undefined}
-                key={rule.id}
-                onClick={() => onPreview(rule)}
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onPreview(rule);
-                  }
-                }}
-              >
-                <td><strong>{index + 1}</strong></td>
-                <td><span className="hegun-data-chip">{rule.targetColumn}</span></td>
-                <td>{qualityValidationLabel(rule.validationType)}</td>
-                <td><span className={`hegun-error-pill ${rule.severity.toLowerCase()}`}>{qualitySeverityLabel(rule.severity)}</span></td>
-                <td><span className={`hegun-error-pill ${rule.failureAction.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(rule.failureAction)}</span></td>
-                <td>{rule.severity === "Error" ? "차단" : "모니터링"}</td>
-                <td>
-                  <div className="hegun-row-actions">
-                    <button aria-label={`${index + 1}번 품질 규칙 수정`} type="button" onClick={(event) => {
-                      event.stopPropagation();
-                      onEdit(rule);
-                    }}>
-                      <Pencil size={15} />
-                    </button>
-                    <button aria-label={`${index + 1}번 품질 규칙 제외`} type="button" onClick={(event) => {
-                      event.stopPropagation();
-                      onRemove(rule);
-                    }}>
-                      <Minus size={15} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader
+        className="mb-6 rounded-lg"
+        description="검증 규칙은 샘플 행에 먼저 적용하고 실행 전 차단, 격리, 경고 여부를 결정합니다."
+        icon={<ShieldCheck />}
+        title="품질 검증 규칙"
+      />
+      <DataTable
+        aria-label="품질 검증 규칙 표"
+        columns={columns}
+        data={rules}
+        enableSorting={false}
+        getRowClassName={(row) => row.original.id === selectedRuleId ? "selected" : undefined}
+        getRowId={(row) => row.id}
+        onRowClick={(row) => onPreview(row.original)}
+        pagination={false}
+        tableClassName="schema-table hegun-recipe-table hegun-quality-table"
+        viewportClassName="hegun-table-scroll"
+      />
     </section>
   );
 }
@@ -5098,24 +5129,21 @@ function RuleStepBuilder({
 
   return (
     <section className={collapsed ? "panel hegun-console-panel hegun-builder-panel collapsed" : "panel hegun-console-panel hegun-builder-panel"}>
-      <div
-        className="hegun-builder-header"
+      <EtlSectionHeader
+        actions={(
+          <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "추가 영역 열기" : "추가 영역 접기"} type="button" onClick={(event) => {
+            event.stopPropagation();
+            toggleCollapsed();
+          }}>
+            {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+          </button>
+        )}
+        className={collapsed ? "cursor-pointer rounded-lg" : "mb-5 cursor-pointer rounded-lg"}
+        description={builderDescription}
+        icon={isEditing ? <Pencil /> : <Plus />}
+        title={builderTitle}
         onClick={toggleCollapsed}
-      >
-        <div>
-          <span className="hegun-builder-icon">{isEditing ? <Pencil size={20} /> : <Plus size={20} />}</span>
-          <div>
-            <h2>{builderTitle}</h2>
-            <p>{builderDescription}</p>
-          </div>
-        </div>
-        <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "추가 영역 열기" : "추가 영역 접기"} type="button" onClick={(event) => {
-          event.stopPropagation();
-          toggleCollapsed();
-        }}>
-          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-        </button>
-      </div>
+      />
       {!collapsed && (
         <>
           <div className="hegun-rule-builder">
@@ -5386,14 +5414,20 @@ function FinalDatasetPreviewPanel({
     { label: "생성된 파생 컬럼", value: derivedColumns.length.toLocaleString() },
     { label: "유효하지 않은 행", value: invalidRowCount.toLocaleString() },
   ];
+  const tableColumns: ColumnDef<TransformQualitySampleRow>[] = columns.map((column) => ({
+    cell: ({ row }) => row.original[column] ?? "",
+    header: () => (
+      <span className="hegun-final-column-header">
+        {column}
+        {derivedColumnSet.has(column) && <em>파생</em>}
+      </span>
+    ),
+    id: column,
+  }));
 
   return (
     <section className="panel hegun-console-panel hegun-final-preview-panel">
-      <div className="panel-header">
-        <Table2 size={18} />
-        <h2>최종 데이터셋 미리보기</h2>
-        <span className="panel-note">{showingRowsLabel}</span>
-      </div>
+      <EtlSectionHeader className="mb-5 rounded-lg" description={showingRowsLabel} icon={<Table2 />} title="최종 데이터셋 미리보기" />
       <div className="hegun-final-preview-summary">
         {summaryItems.map((item) => (
           <article key={item.label}>
@@ -5402,37 +5436,17 @@ function FinalDatasetPreviewPanel({
           </article>
         ))}
       </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-final-preview-table">
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column}>
-                  <span className="hegun-final-column-header">
-                    {column}
-                    {derivedColumnSet.has(column) && <em>파생</em>}
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {previewRows.length > 0 ? previewRows.map((row, rowIndex) => (
-              <tr key={row.row_id ?? `row-${rowIndex}`}>
-                {columns.map((column) => (
-                  <td key={`${row.row_id ?? rowIndex}-${column}`}>{row[column] ?? ""}</td>
-                ))}
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={columns.length}>
-                  <span className="hegun-empty-table-state">변환된 샘플 행이 없습니다.</span>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        aria-label="최종 데이터셋 미리보기 표"
+        columns={tableColumns}
+        data={previewRows}
+        emptyState={<span className="hegun-empty-table-state">변환된 샘플 행이 없습니다.</span>}
+        enableSorting={false}
+        getRowId={(row, index) => String(row.row_id ?? `row-${index}`)}
+        pagination={false}
+        tableClassName="schema-table hegun-final-preview-table"
+        viewportClassName="hegun-table-scroll"
+      />
       <div className="hegun-final-preview-footer">{showingRowsLabel}</div>
     </section>
   );
@@ -5461,11 +5475,12 @@ function StepPreviewAnalysis({
   const impactRows = buildStepImpactRows(beforeRows, afterRows, previewColumns, step, preview);
   return (
     <section className="panel hegun-console-panel">
-      <div className="panel-header">
-        <RefreshCw size={18} />
-        <h2>단계 미리보기 및 분석</h2>
-        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</Button>
-      </div>
+      <EtlSectionHeader
+        actions={<Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</Button>}
+        className="mb-5 rounded-lg"
+        icon={<RefreshCw />}
+        title="단계 미리보기 및 분석"
+      />
       <div className="hegun-selected-step-banner">
         <span>선택 단계</span>
         <strong>{step.id}. {transformOperationLabel(step.operation)}</strong>
@@ -5514,31 +5529,26 @@ function StepImpactRowsTable({
   rows: ReturnType<typeof buildStepImpactRows>;
   step: RecipeStep;
 }) {
+  type StepImpactRow = ReturnType<typeof buildStepImpactRows>[number];
+  const columns: ColumnDef<StepImpactRow>[] = [
+    { cell: ({ row }) => <strong>{row.original.rowId}</strong>, header: "행", id: "row" },
+    { cell: ({ row }) => <code className="hegun-impact-value">{row.original.beforeValue}</code>, header: `이전: ${step.input}`, id: "before" },
+    { cell: () => <span className="hegun-data-chip muted">{transformOperationLabel(step.operation)}</span>, header: "변환", id: "operation" },
+    { cell: ({ row }) => <code className="hegun-impact-value output">{row.original.afterValue}</code>, header: `이후: ${step.output}`, id: "after" },
+    { cell: ({ row }) => <span className={`hegun-impact-status ${row.original.statusClass}`}>{row.original.statusLabel}</span>, header: "상태", id: "status" },
+  ];
+
   return (
-    <div className="hegun-table-scroll">
-      <table className="schema-table hegun-impact-table">
-        <thead>
-          <tr>
-            <th>행</th>
-            <th>이전: {step.input}</th>
-            <th>변환</th>
-            <th>이후: {step.output}</th>
-            <th>상태</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.rowId}-${row.beforeValue}-${row.afterValue}`}>
-              <td><strong>{row.rowId}</strong></td>
-              <td><code className="hegun-impact-value">{row.beforeValue}</code></td>
-              <td><span className="hegun-data-chip muted">{transformOperationLabel(step.operation)}</span></td>
-              <td><code className="hegun-impact-value output">{row.afterValue}</code></td>
-              <td><span className={`hegun-impact-status ${row.statusClass}`}>{row.statusLabel}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      aria-label="규칙 영향 미리보기 표"
+      columns={columns}
+      data={rows}
+      enableSorting={false}
+      getRowId={(row) => `${row.rowId}-${row.beforeValue}-${row.afterValue}`}
+      pagination={false}
+      tableClassName="schema-table hegun-impact-table"
+      viewportClassName="hegun-table-scroll"
+    />
   );
 }
 
@@ -5611,11 +5621,12 @@ function QualityPreviewAnalysis({
   const firstFailure = invalidRows[0];
   return (
     <section className="panel hegun-console-panel">
-      <div className="panel-header">
-        <ShieldCheck size={18} />
-        <h2>품질 검증 미리보기</h2>
-        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</Button>
-      </div>
+      <EtlSectionHeader
+        actions={<Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</Button>}
+        className="mb-5 rounded-lg"
+        icon={<ShieldCheck />}
+        title="품질 검증 미리보기"
+      />
       <div className="hegun-preview-grid">
         <div className="hegun-preview-column">
           <h3>규칙 상세</h3>
@@ -5661,43 +5672,27 @@ function QualityFailedRowsPanel({
   const rowSummary = invalidRows.length === 0
     ? "선택한 검사에서 실패 행이 없습니다."
     : `${rule.targetColumn}의 ${qualityValidationLabel(rule.validationType)} 실패 행 ${invalidRows.length}개`;
+  const columns: ColumnDef<TransformQualityInvalidRow>[] = [
+    { accessorKey: "row", header: "행" },
+    { accessorKey: "column", header: "컬럼" },
+    { cell: ({ row }) => <code className="hegun-impact-value">{row.original.sampleValue || "(비어 있음)"}</code>, header: "샘플 값", id: "sample-value" },
+    { cell: ({ row }) => qualityFailureReasonLabel(row.original.reason), header: "사유", id: "reason" },
+    { cell: ({ row }) => <span className="hegun-data-chip muted">{failureActionLabel(row.original.action)}</span>, header: "처리", id: "action" },
+  ];
   return (
     <section className="panel hegun-console-panel hegun-quality-failures-panel">
-      <div className="panel-header">
-        <Table2 size={18} />
-        <h2>선택 검사 실패 행</h2>
-        <span className="panel-note">{rowSummary}</span>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-quality-failed-table">
-          <thead>
-            <tr>
-              <th>행</th>
-              <th>컬럼</th>
-              <th>샘플 값</th>
-              <th>사유</th>
-              <th>처리</th>
-            </tr>
-          </thead>
-          <tbody>
-            {previewRows.length > 0 ? previewRows.map((row) => (
-              <tr key={`${row.ruleId ?? rule.id}-${row.row}-${row.column}-${row.reason}`}>
-                <td>{row.row}</td>
-                <td>{row.column}</td>
-                <td><code className="hegun-impact-value">{row.sampleValue || "(비어 있음)"}</code></td>
-                <td>{qualityFailureReasonLabel(row.reason)}</td>
-                <td><span className="hegun-data-chip muted">{failureActionLabel(row.action)}</span></td>
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={5}>
-                  <span className="hegun-empty-table-state">선택한 검사가 모든 샘플 행을 통과했습니다.</span>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader className="mb-5 rounded-lg" description={rowSummary} icon={<Table2 />} title="선택 검사 실패 행" tone="warning" />
+      <DataTable
+        aria-label="선택 검사 실패 행 표"
+        columns={columns}
+        data={previewRows}
+        emptyState={<span className="hegun-empty-table-state">선택한 검사가 모든 샘플 행을 통과했습니다.</span>}
+        enableSorting={false}
+        getRowId={(row) => `${row.ruleId ?? rule.id}-${row.row}-${row.column}-${row.reason}`}
+        pagination={false}
+        tableClassName="schema-table hegun-quality-failed-table"
+        viewportClassName="hegun-table-scroll"
+      />
       <ActionGroup className="hegun-rule-form-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={() => {
           downloadCsv("asklake-quality-failed-rows.csv", ["행", "컬럼", "샘플 값", "사유", "처리"], previewRows.map((row) => [row.row, row.column, row.sampleValue, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action)]));
@@ -5718,37 +5713,26 @@ function InvalidRowsPanel({
   invalidRowsPreviewSummary: string;
   onAction: RuleActionHandler;
 }) {
+  const columns: ColumnDef<TransformQualityInvalidRow>[] = [
+    { accessorKey: "row", header: "행" },
+    { accessorKey: "column", header: "컬럼" },
+    { cell: ({ row }) => qualityFailureReasonLabel(row.original.reason), header: "사유", id: "reason" },
+    { cell: ({ row }) => <span className="hegun-data-chip muted">{failureActionLabel(row.original.action)}</span>, header: "처리", id: "action" },
+    { cell: ({ row }) => <code className="hegun-impact-value">{row.original.sampleValue || "(비어 있음)"}</code>, header: "샘플 값", id: "sample-value" },
+  ];
   return (
     <section className="panel hegun-console-panel hegun-invalid-panel">
-      <div className="panel-header">
-        <Info size={18} />
-        <h2>유효하지 않은 데이터 행</h2>
-        <span className="panel-note">{invalidRowsPreviewSummary}</span>
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table">
-          <thead>
-            <tr>
-              <th>행</th>
-              <th>컬럼</th>
-              <th>사유</th>
-              <th>처리</th>
-              <th>샘플 값</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invalidRows.map((row) => (
-              <tr key={`${row.row}-${row.column}`}>
-                <td>{row.row}</td>
-                <td>{row.column}</td>
-                <td>{qualityFailureReasonLabel(row.reason)}</td>
-                <td><span className="hegun-data-chip muted">{failureActionLabel(row.action)}</span></td>
-                <td><code className="hegun-impact-value">{row.sampleValue || "(비어 있음)"}</code></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <EtlSectionHeader className="mb-5 rounded-lg" description={invalidRowsPreviewSummary} icon={<Info />} title="유효하지 않은 데이터 행" tone="danger" />
+      <DataTable
+        aria-label="유효하지 않은 데이터 행 표"
+        columns={columns}
+        data={invalidRows}
+        enableSorting={false}
+        getRowId={(row) => `${row.row}-${row.column}`}
+        pagination={false}
+        tableClassName="schema-table"
+        viewportClassName="hegun-table-scroll"
+      />
       <ActionGroup className="hegun-rule-form-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={() => {
           downloadCsv("asklake-invalid-rows.csv", ["행", "컬럼", "사유", "처리", "샘플 값"], invalidRows.map((row) => [row.row, row.column, qualityFailureReasonLabel(row.reason), failureActionLabel(row.action), row.sampleValue]));
@@ -6246,12 +6230,7 @@ export function TargetPage({
       ) : null}
       <div className="etl-review-stack target-config-stack">
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon"><FileText size={17} /></span>
-            <div>
-              <h2>기본 정보</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<FileText />} title="기본 정보" />
           <div className="target-config-form-grid basic">
             <FormFieldGroup className="field" label="출력 데이터셋 이름">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
@@ -6286,12 +6265,7 @@ export function TargetPage({
         </section>
 
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon destination"><HardDrive size={17} /></span>
-            <div>
-              <h2>저장 위치 설정</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<HardDrive />} title="저장 위치 설정" />
           <div className="target-config-form-grid destination">
             <FormFieldGroup className="field target-format-field" label="파일 형식">
               <Select value={targetFormat} onValueChange={(value) => setTargetFormat(normalizeTargetFileFormat(value))}>
@@ -6312,12 +6286,7 @@ export function TargetPage({
           </div>
         </section>
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
-            <div>
-              <h2>파티션 설정</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<SlidersHorizontal />} title="파티션 설정" />
           <div className="target-partition-settings">
             <div className="target-partition-table">
               <div className="target-partition-header" aria-hidden="true">
@@ -6568,10 +6537,7 @@ export function PermissionPage({
         ) : permissionOptions ? (
           <>
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-                <CardTitle>빠른 권한 설정</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<SlidersHorizontal />} title="빠른 권한 설정" />
               <CardContent className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
                 {PERMISSION_PRESETS.map((preset) => {
                   const selected = permissionPreset === preset.id;
@@ -6595,11 +6561,11 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-                <CardTitle>권한 대상</CardTitle>
-                <span className="text-sm font-semibold text-slate-500">{selectedGrants.length}개 선택</span>
-              </CardHeader>
+              <EtlSectionHeader
+                actions={<span className="text-sm font-semibold text-slate-500">{selectedGrants.length}개 선택</span>}
+                icon={<CircleUser />}
+                title="권한 대상"
+              />
               <CardContent className="p-5">
                 <Tabs
                   className="grid min-w-0 gap-4"
@@ -6704,10 +6670,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-                <CardTitle>허용 작업</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<ShieldCheck />} title="허용 작업" />
               <CardContent className="grid gap-3 p-5">
                 {selectedGrants.length > 0 ? selectedGrants.map((grant) => {
                   const target = targetDisplay(grant);
@@ -6760,10 +6723,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-                <CardTitle>담당자와 전체 조회</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<CircleUser />} title="담당자와 전체 조회" />
               <CardContent className="grid gap-5 p-5 md:grid-cols-2">
                 <ShadcnField>
                   <FieldLabel htmlFor="permission-owner">작업 담당자</FieldLabel>
@@ -6795,10 +6755,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon permission"><Check size={17} /></span>
-                <CardTitle>저장될 권한</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<Check />} title="저장될 권한" tone="success" />
               <CardContent className="grid gap-2 p-5">
                 <div className="flex min-w-0 flex-col gap-2 rounded-md border border-blue-300 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="grid min-w-0 gap-1">
@@ -6935,12 +6892,7 @@ export function ReviewPage({
         ) : null}
         <div className="etl-review-stack">
           <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon readiness"><Check size={17} /></span>
-              <div>
-                <h2>생성 준비 상태</h2>
-              </div>
-            </div>
+            <EtlSectionHeader icon={<Check />} title="생성 준비 상태" tone="success" />
             <ValidationList
               className="etl-review-validation"
               items={validationRows.map(({ label, status, value }) => ({
@@ -6952,13 +6904,7 @@ export function ReviewPage({
           </section>
 
           <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon"><FileText size={17} /></span>
-              <div>
-                <h2>기본 정보</h2>
-              </div>
-              <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
-            </div>
+            <EtlSectionHeader actions={<ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />} icon={<FileText />} title="기본 정보" />
             <KeyValueList
               className="etl-review-kv"
               items={basicInformationRows.map(({ label, value }) => ({
@@ -6969,24 +6915,12 @@ export function ReviewPage({
           </section>
 
           <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon schema"><Database size={17} /></span>
-              <div>
-                <h2>출력 스키마</h2>
-              </div>
-              <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
-            </div>
+            <EtlSectionHeader actions={<ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />} icon={<Database />} title="출력 스키마" />
             <ReviewSchemaTable rows={schemaRows} />
           </section>
 
           <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon destination"><HardDrive size={17} /></span>
-              <div>
-                <h2>저장 위치 설정</h2>
-              </div>
-              <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
-            </div>
+            <EtlSectionHeader actions={<ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />} icon={<HardDrive />} title="저장 위치 설정" />
             <KeyValueList
               className="etl-review-kv destination"
               items={destinationRows.map(({ label, value }) => ({
@@ -6998,13 +6932,7 @@ export function ReviewPage({
           </section>
 
           <section className="etl-review-card">
-            <div className="etl-review-card-header">
-              <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-              <div>
-                <h2>권한 설정</h2>
-              </div>
-              <ReviewEditButton label="권한 설정 수정" onClick={() => onEdit("permission")} />
-            </div>
+            <EtlSectionHeader actions={<ReviewEditButton label="권한 설정 수정" onClick={() => onEdit("permission")} />} icon={<ShieldCheck />} title="권한 설정" />
             <KeyValueList
               className="etl-review-kv permission"
               items={permissionRows.map(({ label, value }) => ({
@@ -7036,42 +6964,19 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
     ],
     [],
   );
-  const table = useReactTable({
-    columns,
-    data: rows,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   return (
-    <div aria-label="출력 스키마 표" className="review-schema-table-viewport" role="region" tabIndex={0}>
-      <table className="schema-table review-schema-table">
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-              ))}
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      aria-label="출력 스키마 표"
+      columns={columns}
+      data={rows}
+      emptyState={<span className="block px-4 py-8 text-center text-sm font-semibold text-slate-500">소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</span>}
+      enableSorting={false}
+      pagination={false}
+      role="region"
+      tableClassName="schema-table review-schema-table"
+      viewportClassName="review-schema-table-viewport rounded-none border-0"
+    />
   );
 }
 

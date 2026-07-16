@@ -37,3 +37,17 @@ test("ETL section headers share one typography and icon treatment", () => {
   assert.match(sectionHeaderSource, /min-h-\[68px\] px-5 py-3\.5/);
   assert.match(sectionHeaderSource, /bg-blue-100 text-blue-600/);
 });
+
+test("ETL pages use shared headers and the TanStack plus shadcn table renderer", () => {
+  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const schemaEditorSource = readFileSync(new URL("../src/components/etl/SchemaTransformEditor.jsx", import.meta.url), "utf8");
+  const dataTableSource = readFileSync(new URL("../src/components/ui/data-table.tsx", import.meta.url), "utf8");
+
+  assert.match(etlPagesSource, /icon=\{<SourceBrandIcon[\s\S]{0,160}title=\{current\.title\}/);
+  assert.match(etlPagesSource, /aria-label="레코드 구조화 결과 미리보기 표"[\s\S]{0,240}<DataTable|<DataTable[\s\S]{0,240}aria-label="레코드 구조화 결과 미리보기 표"/);
+  assert.doesNotMatch(etlPagesSource, /<table|<CardTitle|source-step-header|etl-review-card-header|hegun-section-title/);
+  assert.doesNotMatch(schemaEditorSource, /<table/);
+  assert.match(schemaEditorSource, /<DataTable/);
+  assert.match(dataTableSource, /useReactTable\(/);
+  assert.match(dataTableSource, /<Table(?:\s|>)/);
+});

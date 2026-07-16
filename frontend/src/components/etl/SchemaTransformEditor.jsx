@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -29,13 +29,16 @@ import {
   Search,
   Sparkles,
   SlidersHorizontal,
+  Table2,
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
+import { EtlSectionHeader } from "./EtlSectionHeader";
 import { EtlStepHeader } from "./EtlStepHeader";
 import InlineAIInput from "../ai/InlineAIInput";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DataTable } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiConfig } from "@/services/apiClient";
@@ -735,6 +738,23 @@ export default function SchemaTransformEditor({
       onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
+  const sqlPreviewRows = useMemo(
+    () => sourceSampleRows.slice(0, 10).map((values, index) => ({ id: `schema-sql-preview-${index}`, values })),
+    [sourceSampleRows],
+  );
+  const sqlPreviewColumns = useMemo(
+    () => sourceSchema.map((column, columnIndex) => ({
+      cell: ({ row }) => {
+        const value = String(row.original.values[columnIndex] ?? "-");
+        return <span className="block max-w-64 truncate" title={value}>{value}</span>;
+      },
+      enableSorting: false,
+      header: column.name || column.field,
+      id: `schema-sql-preview-${columnIndex}`,
+      meta: { widthClassName: "min-w-40" },
+    })),
+    [sourceSchema],
+  );
 
   return (
     <div className="flex flex-col overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
@@ -1190,10 +1210,8 @@ export default function SchemaTransformEditor({
           </div>
 
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/50 px-4 py-3">
-              <h3 className="text-sm font-bold text-slate-900">결과 미리보기</h3>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500">최대 {Math.min(sourceSampleRows.length, 10)}개 행</span>
+            <EtlSectionHeader
+              actions={(
                 <button
                   aria-expanded={sqlPreviewPanelOpen}
                   aria-label={sqlPreviewPanelOpen ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
@@ -1204,23 +1222,23 @@ export default function SchemaTransformEditor({
                 >
                   {sqlPreviewPanelOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </button>
-              </div>
-            </div>
+              )}
+              density="compact"
+              icon={<Table2 />}
+              title="결과 미리보기"
+            />
             {sqlPreviewPanelOpen && (sqlPreviewVisible && sourceSampleRows.length > 0 ? (
-              <div className="overflow-auto">
-                <table className="w-full min-w-[720px] border-collapse text-sm">
-                  <thead className="bg-slate-50 text-left text-xs font-bold text-slate-500">
-                    <tr>{sourceSchema.map((column) => <th key={column.name || column.field} className="border-b border-slate-200 px-4 py-3">{column.name || column.field}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {sourceSampleRows.slice(0, 10).map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-b border-slate-100 last:border-0">
-                        {sourceSchema.map((column, columnIndex) => <td key={`${column.name || column.field}-${columnIndex}`} className="max-w-64 truncate px-4 py-3 font-medium text-slate-800">{String(row[columnIndex] ?? "-")}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                aria-label="SQL 변환 결과 미리보기 표"
+                cellClassName="text-sm font-medium text-slate-800"
+                columns={sqlPreviewColumns}
+                data={sqlPreviewRows}
+                enableSorting={false}
+                getRowId={(row) => row.id}
+                pagination={false}
+                tableClassName="min-w-[720px]"
+                viewportClassName="rounded-none border-0"
+              />
             ) : (
               <div className="grid min-h-[150px] place-items-center px-6 py-8 text-center text-sm font-semibold text-slate-400">
                 <span>{sqlPreviewVisible ? "표시할 샘플 행이 없습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>
