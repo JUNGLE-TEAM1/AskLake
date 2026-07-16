@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { Activity, BarChart3, ArrowLeft, ArrowRight, Calendar, Database, HardDrive, RefreshCw, Repeat2, Settings, ShieldCheck, Table2, TerminalSquare } from "lucide-react";
+import { Activity, BarChart3, ArrowLeft, ArrowRight, Calendar, Copy, Database, HardDrive, RefreshCw, Repeat2, Settings, ShieldCheck, Table2, TerminalSquare } from "lucide-react";
 import { Field } from "../../../components/common";
 import { getSourceBrandMeta } from "../../../components/source/SourceBrand";
 
@@ -414,6 +414,36 @@ export function JobDetailPage({
   );
 }
 
+function ContinuousRuntimeErrorFields({ runtime }: { runtime: JobRowData["continuousRuntime"] }) {
+  const diagnosticId = runtime?.errorDetail?.diagnosticId
+    ?? (typeof runtime?.errorDetail?.context?.correlationId === "string" ? runtime.errorDetail.context.correlationId : null);
+  const message = runtime?.errorDetail?.userMessage ?? runtime?.errorDetail?.message ?? runtime?.lastError;
+  const [copied, setCopied] = useState(false);
+  const copyDiagnostic = async () => {
+    if (!diagnosticId || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(diagnosticId);
+    setCopied(true);
+    globalThis.setTimeout(() => setCopied(false), 1_500);
+  };
+  return (
+    <>
+      {message && <Field label="최근 오류" value={message} />}
+      {diagnosticId && (
+        <div className="grid content-start gap-1 text-sm">
+          <span className="font-semibold text-slate-500">진단 ID</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <code className="min-w-0 truncate text-slate-700">{diagnosticId}</code>
+            <Button aria-label="진단 ID 복사" size="content" type="button" variant="ghost" onClick={() => void copyDiagnostic()}>
+              <Copy aria-hidden="true" className="size-3.5" />
+              {copied ? "복사됨" : "복사"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
   const runtime = job.continuousRuntime;
   const ruleMetrics = runtime?.ruleMetrics ?? {};
@@ -492,7 +522,7 @@ export function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
             <Field label="규칙 처리" value={`경고 ${(Number(ruleMetrics.transformWarnCount ?? 0) + Number(ruleMetrics.qualityWarnCount ?? 0)).toLocaleString()} · 격리 ${(Number(ruleMetrics.transformQuarantinedCount ?? 0) + Number(ruleMetrics.qualityQuarantinedCount ?? 0)).toLocaleString()} · 실패 배치 ${Number(ruleMetrics.failedBatchCount ?? 0).toLocaleString()}`} />
             <Field label="하트비트" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
             <Field label="체크포인트" value={runtime?.checkpointPath ?? "-"} />
-            {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
+            <ContinuousRuntimeErrorFields runtime={runtime} />
           </div>
         </div>
       </Panel>
