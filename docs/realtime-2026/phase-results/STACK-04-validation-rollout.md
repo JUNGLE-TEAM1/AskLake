@@ -22,6 +22,8 @@
 
 - `npm run verify:realtime-stack`: PASS, 69 tests + proxy/architecture gate
 - `npm run verify:etl-e2e-recovery`: PASS, PR profile 4 checks와 cross-platform artifact 생성
+- `npm run verify:refactor-final-audit`: PASS, import cycle 0·제거된 정적 계약 0
+- `npm run verify:refactor-release-plan`: PASS, production execution은 수동 증거 전까지 fail-closed
 - frontend `npm run verify:ui-regressions`: PASS, 136 checks
 - frontend realtime transport: PASS, 7 tests
 - frontend Dashboard live refresh: PASS, 6 tests

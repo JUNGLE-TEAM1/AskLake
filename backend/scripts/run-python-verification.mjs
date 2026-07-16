@@ -19,9 +19,13 @@ const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON
   || localPython
   || (process.platform === "win32" ? "python" : "python3");
 const scriptPath = path.resolve(backendDir, requestedScript);
+const allowedScriptRoots = [
+  path.resolve(backendDir, "scripts"),
+  path.resolve(backendDir, "..", "scripts", "refactor_audit"),
+];
 
-if (!scriptPath.startsWith(`${path.resolve(backendDir, "scripts")}${path.sep}`)) {
-  console.error("Verification scripts must stay inside backend/scripts.");
+if (!allowedScriptRoots.some((root) => scriptPath.startsWith(`${root}${path.sep}`))) {
+  console.error("Verification scripts must stay inside an approved scripts directory.");
   process.exit(2);
 }
 
