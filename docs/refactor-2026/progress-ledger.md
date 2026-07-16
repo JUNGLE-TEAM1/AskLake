@@ -179,3 +179,14 @@
 - 제외: 기존 selector 중복 제거, 디자인 변경, API/DB migration, production 배포
 - rollback: CSS entrypoint와 feature file, Catalog façade·feature module을 함께 되돌린다. persisted data migration은 없다.
 - 머지 순서: `#837` 다음 `#839`; PR 12는 `#839` 다음이다.
+
+## PR 12 작업 기록
+
+- 시작 HEAD: `ab8a3708` (PR 11 branch HEAD)
+- branch/issue/PR: `refactor-#840`, `#840`, 생성 대기
+- 포함: baseline OpenAPI·DB model·frontend route 자동 하위 호환 gate, 기존 Job/session/runtime/draft fixture, 15개 semantic legacy 경로 등록부, 운영 도달 10개 경로의 구조화 warning+counter, production mock API fail-closed
+- 하위 호환: 기존 83 paths/95 operations, 23개 table model, public status/lastError, Job/session/checkpoint/report와 versionless reader를 유지한다.
+- 검증: backend unit 418건(1 opt-in skip), backward compatibility breaking 0건, legacy registry 15건, frontend UI regression 132 checks, compatibility/draft 6건, TypeScript/Vite production build
+- 제외: DB migration·backfill 실행, legacy reader 즉시 삭제, endpoint/field 제거, production 배포
+- rollback: telemetry wiring과 production mock guard를 되돌리되 기존 Job/session/runtime/checkpoint/browser draft를 삭제하지 않는다.
+- 머지 순서: `#839` 다음 PR 12; PR 13은 PR 12 다음이다.

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
+from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -15,6 +18,10 @@ from uuid import uuid4
 RUNTIME_REPORT_SCHEMA_VERSION = 1
 CHECKPOINT_CONTRACT_SCHEMA_VERSION = 1
 BATCH_MANIFEST_SCHEMA_VERSION = 1
+LEGACY_RUNTIME_JSON_PATH = "runtime.versionless-json-reader"
+_compatibility_logger = logging.getLogger("asklake.runtime.compatibility")
+_compatibility_counts: Counter[str] = Counter()
+_compatibility_counts_lock = Lock()
 
 
 def json_object_env(name: str, *, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -136,7 +143,30 @@ def read_versioned_json(
         raise ValueError(f"Invalid {schema_field}: {raw_version}") from exc
     if version not in accepted_versions:
         raise ValueError(f"Unsupported {schema_field}: {version}")
+    if version == 0:
+        with _compatibility_counts_lock:
+            _compatibility_counts[LEGACY_RUNTIME_JSON_PATH] += 1
+            count = _compatibility_counts[LEGACY_RUNTIME_JSON_PATH]
+        _compatibility_logger.warning(
+            "runtime_compatibility_path_used",
+            extra={
+                "compatibility_count": count,
+                "compatibility_path": LEGACY_RUNTIME_JSON_PATH,
+                "event": "compatibility.path.used",
+                "schema_field": schema_field,
+            },
+        )
     return payload
+
+
+def runtime_compatibility_path_counts() -> dict[str, int]:
+    with _compatibility_counts_lock:
+        return dict(sorted(_compatibility_counts.items()))
+
+
+def reset_runtime_compatibility_path_counts_for_test() -> None:
+    with _compatibility_counts_lock:
+        _compatibility_counts.clear()
 
 
 def write_report(path: str | Path | None, result: dict[str, Any]) -> None:

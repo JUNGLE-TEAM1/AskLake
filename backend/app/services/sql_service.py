@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
-import logging
 import os
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -17,6 +16,7 @@ import duckdb
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
 from app.ports.catalog import CatalogReaderPort
@@ -83,9 +83,6 @@ SQL_CTE_NAME_RE = re.compile(
     rf"(?:\bwith|,)\s+({SQL_IDENTIFIER_PATTERN})\s+as\s*\(",
     re.IGNORECASE,
 )
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class RemotePreviewBudget:
@@ -162,14 +159,14 @@ class SqlService:
         result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
         page_limit = request.limit or DEFAULT_PREVIEW_LIMIT
         run_id = f"sql_{uuid4().hex[:12]}"
-        logger.warning(
-            "sql_compatibility_engine_selected",
-            extra={
-                "dataset_id": request.dataset_id,
+        record_compatibility_path(
+            CompatibilityPath.SQL_DUCKDB_ENGINE,
+            reason="query preview still executes through the retained DuckDB adapter",
+            context={
+                "datasetId": request.dataset_id,
                 "engine": "duckdb",
-                "event": "sql.compatibility_engine.selected",
                 "mode": request.mode,
-                "run_id": run_id,
+                "runId": run_id,
             },
         )
         result_path = query_result_storage_path(run_id)

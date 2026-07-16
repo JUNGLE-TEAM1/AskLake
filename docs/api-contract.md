@@ -3842,3 +3842,11 @@ type PermissionGrant = {
 Spark/Kafka production entrypoint 경로, 기존 CLI/environment 입력, exit 의미와 public ETL API shape는 유지한다. runtime report에는 optional `runtimeReportSchemaVersion`, Continuous checkpoint contract에는 optional `contractSchemaVersion`, batch manifest에는 optional `manifestSchemaVersion`이 추가된다. 필드가 없는 기존 문서는 version 0으로 읽으며 기존 consumer는 새 필드를 무시할 수 있다.
 
 Review analysis API request/response는 변경하지 않는다. 내부 Python→Node 호출만 `version/requestId/idempotencyKey/operation/payload` envelope로 전환하며 bridge 오류는 기존 `BACKEND_TIMEOUT`, `REVIEW_ANALYSIS_FAILED`, `REVIEW_ANALYSIS_INVALID_RESPONSE` public 오류로 변환한다.
+
+## Refactor persisted compatibility and legacy visibility
+
+리팩토링은 baseline API 83 paths/95 operations, 23개 persisted table model, 기존 Job·session·checkpoint shape를 하위 호환 기준으로 사용한다. `KafkaContinuousRuntime.desiredState`, `observedState`와 `ContinuousRuntimeErrorDetail`은 응답 전용 additive field/schema이며 기존 `status`, `lastError`를 제거하지 않는다.
+
+version field가 없는 runtime report/checkpoint/manifest는 version 0 reader로 읽고, 미래 version은 거절한다. `runtimeContract`가 없는 DB row는 기존 status/error로 투영한다. 구버전 Job의 `permissionRoles`, legacy transform/quality rule, dashboard scalar color와 lineage payload 부재는 제한된 compatibility adapter를 사용하며 활성화 시 `compatibility.path.used` warning/counter가 기록된다.
+
+frontend mock API는 개발 빌드에서만 허용한다. production build에서 `VITE_USE_MOCK_API=true`이면 실제 backend 대신 mock을 사용하지 않고 즉시 실패한다. 전체 owner·제거 조건은 `docs/refactor-2026/legacy-path-register.json`에 고정한다.

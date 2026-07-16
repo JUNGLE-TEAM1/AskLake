@@ -14,12 +14,15 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from runtime.contracts import (  # noqa: E402
+    LEGACY_RUNTIME_JSON_PATH,
     ShutdownCoordinator,
     append_secondary_error,
     atomic_write_json,
     bounded_int_env,
     read_versioned_json,
+    reset_runtime_compatibility_path_counts_for_test,
     required_env,
+    runtime_compatibility_path_counts,
 )
 from runtime.config import KafkaWorkerConfig, SparkJobConfig  # noqa: E402
 from runtime.kafka_state import (  # noqa: E402
@@ -36,6 +39,7 @@ class RuntimeScriptContractTests(unittest.TestCase):
             self.assertIn("sys.modules[__name__] = _implementation", source)
 
     def test_atomic_report_adds_version_and_legacy_reader_stays_compatible(self) -> None:
+        reset_runtime_compatibility_path_counts_for_test()
         with TemporaryDirectory() as directory:
             path = Path(directory) / "runtime.json"
             atomic_write_json(path, {"status": "running"}, schema_field="runtimeReportSchemaVersion")
@@ -46,6 +50,7 @@ class RuntimeScriptContractTests(unittest.TestCase):
             path.write_text(json.dumps({"status": "legacy"}), encoding="utf-8")
             legacy = read_versioned_json(path, schema_field="runtimeReportSchemaVersion")
             self.assertEqual(legacy["status"], "legacy")
+            self.assertEqual(runtime_compatibility_path_counts()[LEGACY_RUNTIME_JSON_PATH], 1)
 
     def test_future_report_version_fails_closed(self) -> None:
         with TemporaryDirectory() as directory:

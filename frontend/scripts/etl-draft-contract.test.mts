@@ -65,3 +65,12 @@ test("legacy unversioned draft and invalid JSON use compatible fallback behavior
   assert.equal(hydrateEtlDraft(legacy, fallback).target.datasetName, "legacy_events");
   assert.deepEqual(hydrateEtlDraft("not-json", fallback), hydrateEtlDraft(null, fallback));
 });
+
+test("future draft versions fail closed to the supplied fallback", () => {
+  const fallback = draftFixture();
+  const future = JSON.stringify({
+    draft: { ...fallback, target: { ...fallback.target, datasetName: "future_events" } },
+    version: 99,
+  });
+  assert.deepEqual(hydrateEtlDraft(future, fallback), hydrateEtlDraft(null, fallback));
+});

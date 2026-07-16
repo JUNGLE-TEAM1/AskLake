@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.compatibility import record_legacy_runtime_error_projection
 from app.domain.continuous_runtime import (
     ContinuousErrorStage,
     bind_worker_attempt,
@@ -196,6 +197,11 @@ def reconcile_continuous_runtime(
     container_state = str(worker_status.get("containerState") or "unknown")
     payload = report_document.value or {}
     contract_initialized = runtime_contract_initialized(runtime.metrics)
+    record_legacy_runtime_error_projection(
+        runtime.metrics,
+        runtime.last_error,
+        public_status=runtime.status,
+    )
     contract = runtime_contract_projection(
         runtime.metrics,
         public_status=runtime.status,
