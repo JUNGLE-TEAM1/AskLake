@@ -11,6 +11,7 @@ from app.api.catalog import get_catalog_service
 from app.core.auth_context import ActorContext, get_actor_context
 from app.core.errors import ApiError
 from app.main import create_app
+from app.schemas.common import ErrorCode
 from app.schemas.catalog import (
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
@@ -235,7 +236,7 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         })
         client = SimpleNamespace(
             submit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                ApiError("TRINO_UNAVAILABLE", sensitive_message, 503)
+                ApiError(ErrorCode.BACKEND_TIMEOUT, sensitive_message, 503)
             )
         )
 
@@ -255,12 +256,12 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         )
         self.assertEqual(
             raised.exception.details,
-            {"datasetId": dataset.id, "reason": "TRINO_UNAVAILABLE"},
+            {"datasetId": dataset.id, "reason": "BACKEND_TIMEOUT"},
         )
         self.assertNotIn(sensitive_message, raised.exception.message)
         self.assertNotIn(sensitive_message, str(raised.exception.details))
         self.assertIsInstance(raised.exception.__cause__, ApiError)
-        self.assertEqual(raised.exception.__cause__.code, "TRINO_UNAVAILABLE")
+        self.assertEqual(raised.exception.__cause__.code, ErrorCode.BACKEND_TIMEOUT)
 
     def test_rows_endpoint_returns_sanitized_http_502_envelope(self) -> None:
         sensitive_message = (

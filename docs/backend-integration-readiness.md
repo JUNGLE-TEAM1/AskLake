@@ -32,6 +32,10 @@ Issue #798 Phase 1은 source fix와 HTTP 회귀 test를 포함한 exact revision
 
 Issue #798 Phase 2는 현재 Helm values에서 `backend.image`만 새 receipt digest로 바꾼 candidate의 lint/render와 API server dry-run을 통과했다. dry-run 전후 Helm revision, Backend Deployment generation/image와 Pod UID는 변하지 않았고 ALB·RDS·ExternalSecret·Continuous·보존 EC2 gate도 정상이다. 승인된 concurrent Secret 확장은 source/target 전체 hash로 검증했으며 기존 digest의 외부 Pod restart를 덮어쓰지 않았다. 실제 EKS는 여전히 기존 Backend image이므로 Phase 3 atomic rollout과 runtime HTTP 회귀 검증 전에는 수정 반영 완료가 아니다.
 
+Issue #798 Phase 3은 첫 새-image rollout에서 Kubernetes Ready와 ALB Healthy 사이의 간격으로 외부 502를 발견해 두 차례 rollback했다. EKS Auto Mode managed webhook의 exact namespace selector인 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`를 Foundation에 반영했고 현재 새 Backend image는 `2/2`, ALB steady로 실행된다. 다만 해당 배포의 zero-failure 표본과 새 Pod readiness gate 증거는 남지 않아 다음 image rollout에서 다시 검증한다.
+
+Issue #798 Phase 4의 live Catalog Iceberg rows 호출은 `NameError`/500이나 private marker 없이 HTTP 502 `SQL_STORAGE_ERROR`까지 확인했다. 추가로 reason이 `ErrorCode.BACKEND_TIMEOUT`으로 노출되는 enum 정규화 drift를 찾아 source와 focused test에서 `BACKEND_TIMEOUT` wire value로 수정했다. 이 추가 commit의 새 image 배포와 live 재검증 전에는 Phase 4 완료가 아니다.
+
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.

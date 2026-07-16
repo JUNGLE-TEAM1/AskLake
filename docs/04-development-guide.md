@@ -734,6 +734,16 @@ bash scripts/preflight-eks-backend-image-rollout.sh
 
 이 명령은 실제 Backend image를 배포하지 않는다. 성공 결과는 Backend-only atomic rollout의 입력이 준비됐다는 뜻이며 runtime 수정 완료 증거가 아니다.
 
+새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.elbv2.k8s.aws/*` readiness condition을 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. 외부 health 표본 하나라도 실패하거나 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private Git-ignored *.image-receipt.json>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+export ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM='deploy-new-immutable-backend'
+bash scripts/rollout-eks-backend-image.sh
+```
+
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
 export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'

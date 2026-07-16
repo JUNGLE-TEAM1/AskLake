@@ -97,3 +97,17 @@ server dry-run 전후의 Helm release revision, Backend Deployment generation과
 - FastAPI `2/2`, ALB steady, Backend Secret, RDS-aware health, `external_ec2` Continuous 경계와 정확한 보존 EC2 상태가 통과했다.
 
 실제 EKS는 여전히 기존 Backend image를 실행한다. 다음 단계는 같은 private receipt와 candidate를 사용한 Backend-only atomic rollout이며, 그 뒤에 새 Pod digest와 Catalog rows HTTP 오류 계약을 실제로 검증한다.
+
+## Phase 3: Backend-only atomic rollout과 가용성 결함 발견
+
+Phase 2 candidate의 새 Backend digest만 Helm release에 적용했다. 첫 두 번의 실행은 새 Backend Pod가 `2/2`로 수렴했지만 외부 `/api/health` 연속 표본에서 각각 비-200 응답을 감지해 성공 처리하지 않았고 직전 revision으로 자동 복구했다. 재시도에서 확인한 실패 유형에는 실제 ALB HTTP 502가 포함됐다.
+
+원인은 Kubernetes Pod Ready가 ALB target Healthy보다 먼저 성립하는데 새 Pod에 target-health readiness gate가 없었던 것이다. 일반 controller용 namespace label을 처음 적용했지만 EKS Auto Mode managed webhook의 실제 selector와 달라 주입되지 않았다. cluster의 `eks-load-balancing-webhook`을 확인해 exact key를 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`로 정정하고 잘못된 `elbv2.k8s.aws/...` label은 제거했다. Foundation Helm values와 repository example도 같은 key로 맞췄다.
+
+세 번째 upgrade는 새 Backend digest, FastAPI `2/2`, ALB healthy 4·draining 0으로 수렴했다. 다만 실행 감시 process가 Helm upgrade 직후 중단돼 그 rollout 자체의 외부 health zero-failure와 readiness gate 주입 증거는 남지 않았다. 현재 새 image 배포 상태는 정상이나 무중단 rollout gate는 다음 새 Pod 교체에서 다시 입증해야 한다.
+
+## Phase 4: Catalog rows runtime 오류 계약 점검
+
+새 Backend image에 관리자 session으로 접근해 queryable Iceberg Dataset 하나의 bounded rows endpoint를 호출했다. HTTP status는 502, error code는 `SQL_STORAGE_ERROR`, message와 details key는 허용된 최소 envelope였고 `NameError`, traceback, endpoint, query, credential marker는 노출되지 않았다.
+
+하지만 실제 Trino 연결 실패 reason이 wire value `BACKEND_TIMEOUT`이 아니라 Python enum 표현 `ErrorCode.BACKEND_TIMEOUT`으로 직렬화되는 drift를 발견했다. `iceberg_read_reason`이 `ApiError.code`의 enum value를 사용하도록 수정했고 Catalog rows focused test 8개가 통과했다. 이 추가 수정은 아직 현재 EKS image에 포함되지 않았으므로 Phase 4 runtime 완료가 아니다. 새 formal receipt, Backend-only rollout과 같은 live endpoint 재검증이 남아 있다.
