@@ -555,7 +555,7 @@ Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실�
 bash scripts/verify-eks-foundation.sh
 ```
 
-dev 실제 foundation은 기본 fail-closed values 위에 `infra/eks/values/dev.example.yaml`과 `infra/eks/values/identity/pod-identity.example.yaml`을 함께 적용한다. 기존 Helm release를 다른 field manager의 `kubectl apply --server-side`로 강제 인수하지 않는다. `helm upgrade --dry-run=server` 후 같은 release를 upgrade해 ownership을 유지한다. 현재 revision 2는 Backend/Spark token이 `true`, 나머지 application token이 `false`, runtime boundary identity mode가 `pod_identity`임을 확인했다. Spark Operator CRD가 없으면 RBAC가 있어도 SparkApplication live smoke는 시작하지 않는다.
+dev 실제 foundation은 기본 fail-closed values 위에 `infra/eks/values/dev.example.yaml`과 `infra/eks/values/identity/pod-identity.example.yaml`을 함께 적용한다. 기존 Helm release를 다른 field manager의 `kubectl apply --server-side`로 강제 인수하지 않는다. `helm upgrade --dry-run=server` 후 같은 release를 upgrade해 ownership을 유지한다. 현재 revision 3은 Backend/Spark token이 `true`, 나머지 application token이 `false`, runtime boundary identity mode가 `pod_identity`이며 Spark shutdown cleanup 권한이 반영됐음을 확인했다. Spark Operator CRD가 없으면 RBAC가 있어도 SparkApplication live smoke는 시작하지 않는다.
 
 Spark Operator는 B manifest의 API group과 일치하는 Kubeflow chart 2.5.1만 사용한다. values는 `infra/eks/values/operators/spark-operator.dev.yaml`이며 chart version, chart archive SHA-256, controller와 CRD hook image digest, `asklake-dev` watch scope, 기존 `asklake-spark` ServiceAccount 재사용과 resource 경계를 고정한다. verifier와 deploy script는 chart를 임시 디렉터리로 내려받아 checksum을 확인한 같은 archive만 `show`·`template`·`upgrade`에 사용하며 임시 파일은 종료 시 삭제한다. 저장소에 binary chart를 vendoring하지 않는다. 설치 전 정적 검증을 실행한다.
 
@@ -581,7 +581,9 @@ export ASKLAKE_SPARK_OPERATOR_CRD_DESTROY_CONFIRM='delete-owned-empty-spark-oper
 bash scripts/destroy-eks-spark-operator.sh
 ```
 
-Spark 4.0.1의 bounded application을 실제 실행하기 전까지 driver Role에는 Pod `create/get/list/watch/delete`와 Service·ConfigMap `create/get/delete`만 둔다. B manifest는 PVC를 쓰지 않으므로 PVC 권한은 금지한다. Service·ConfigMap의 `update/patch`가 실제 실행에서 필요하다는 증거가 생기면 그 실패와 upstream 근거를 기록한 별도 변경으로 추가한다. 상세 증거는 [7월 15일 Spark Operator 적용 기록](eks-day15-spark-operator-evidence.md)을 따른다.
+Spark 4.0.1 대표 application 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 호출하는 것을 확인했다. 따라서 driver Role에는 Pod `create/get/list/watch/delete/deletecollection`, Service·ConfigMap `create/get/list/delete/deletecollection`, PVC cleanup-only `get/list/delete/deletecollection`을 둔다. B manifest는 PVC를 생성하지 않으므로 PVC `create/update/patch`는 계속 금지하고 Service·ConfigMap `update/patch`도 추가하지 않는다. `deletecollection`은 selector를 RBAC로 제한할 수 없어 같은 namespace의 다른 resource에 영향을 줄 수 있으므로 Airflow PVC 같은 stateful workload를 추가하기 전에 Spark 전용 namespace 여부를 다시 결정한다. 상세 증거는 [7월 15일 Spark Operator 적용 기록](eks-day15-spark-operator-evidence.md)을 따른다.
+
+`scripts/verify-eks-spark-rbac.sh`는 revision 3의 전체 `deletecollection`·PVC cleanup 허용과 PVC create/update/patch, Secret read, update/patch, 다른 namespace·cluster resource 거부를 실제 API authorization으로 검사한다. `scripts/verify-eks-foundation.sh`도 렌더된 Spark Role의 세 resource/verb rule을 정확히 확인하고 추가 rule이나 과권한을 거절한다.
 
 Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID를 출력하지 않는 아래 스크립트로 확인한다. `AccessDenied`는 빈 inventory로 해석하지 않으며 [Phase 2 AWS Inventory](eks-phase-2-inventory.md)의 read-only 권한과 생성 gate를 따른다.
 
@@ -592,6 +594,18 @@ bash scripts/inspect-eks-aws-inventory.sh
 Phase 3의 MSK/RDS/S3 Terraform은 기본적으로 모두 `disabled`이며 mock provider test만으로 정적 계약을 검증한다. S3 `managed-existing`은 기존 bucket을 state로 import하고 삭제 보호 아래 설정을 관리한다. `existing`, `managed-existing`, `create` 입력, MSK topic bootstrap, RDS 논리 database bootstrap, IAM identity 연결과 실제 apply 조건은 [Phase 3 Data Plane 계약](eks-phase-3-data-plane.md)을 따른다. 실제 식별자는 `terraform.tfvars` 또는 승인된 secret/config delivery에만 두고 문서나 PR 본문에 복사하지 않는다.
 
 Phase 4의 workload identity 기본값은 `disabled`다. dev EKS Auto Mode는 2026-07-15 Pod Identity를 선택해 Backend/MSK smoke/Spark/Trino의 분리 role과 association, STS·S3 positive/negative smoke까지 적용했다. 다른 환경은 실제 Auto Mode/Agent readiness 확인 없이 이를 활성화하지 않는다. 신규 cluster의 IRSA는 cluster/OIDC provider 단계와 identity 단계를 분리하며, 생성 예정 ARN을 resource key로 사용하지 않는다. dev RDS의 세 database/user bootstrap은 실제 endpoint·backup·rollback 승인, expected host 일치, `verify-full` CA와 명시적 confirmation 아래 EKS Job으로 실행했다. Job은 role flags, 실제 자기 database 로그인과 cross-database 거부를 검사하며 application schema migration을 대신하지 않는다. 상세 절차는 [Phase 4 Workload Identity와 RDS Bootstrap](eks-phase-4-identity-rds-bootstrap.md)을 따른다.
+
+Backend S3 runtime smoke는 현재 FastAPI의 immutable image와 `asklake-backend` Pod Identity를 재사용한다. runner가 live IAM policy에서 허용 resource를 찾으므로 실제 bucket/ARN을 repository argument나 문서에 넣지 않는다. negative GetObject는 존재하지 않는 key가 아니라 실행자가 만든 계약 밖 sentinel을 대상으로 해야 한다. `NoSuchKey`는 권한 거절 증거로 인정하지 않는다. 실행 명령은 다음과 같다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME=asklake-dev
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export AWS_REGION=ap-northeast-2
+export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM=run-backend-s3-boundary-smoke
+bash scripts/run-eks-backend-s3-smoke.sh
+```
+
+완료 조건은 예상 Pod Identity role, Raw/Output/Warehouse Get 성공과 Put 거절, Query Result/Evidence Put·Get·Delete 성공, 계약 밖 실제 Warehouse/Query Result object의 Get·prefix List 거절, GetBucketLocation 거절, exact object version/DeleteMarker와 임시 Pod/ConfigMap 정리다. runner는 실행마다 고유 이름을 사용하므로 연속 두 번 실행해 충돌과 잔여 자원이 없는지 확인한다. ListBucket statement는 bucket 하나만 가져야 하며 한 bucket의 `*` 조건을 다른 bucket statement와 합치지 않는다. 이 격리는 Backend뿐 아니라 Spark·Trino에도 적용하지만, 정적 policy 적용은 해당 workload의 runtime smoke를 대신하지 않는다. 실제 결과와 rollback은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 EC2 database 규모, 서울 리전 PostgreSQL·instance·비용 비교, 권장 Terraform 입력과 Continuous DB 분리 위험은 [EKS MVP 7월 15일 RDS 분석 결과](eks-day15-rds-analysis.md)에 기록한다. 실제 격리 RDS 적용, bootstrap 검증과 rollback 경계는 [7월 15일 RDS 적용 기록](eks-day15-rds-apply-receipt.md)을 따른다.
 
@@ -642,6 +656,20 @@ helm template external-secrets external-secrets/external-secrets \
 
 실제 환경의 선택 완료 여부는 `node scripts/verify-eks-runtime-secrets.mjs --ready <path>`로 확인한다. 이 gate와 `SecretStore Ready`는 전달 기반이 완전하다는 의미일 뿐 네 application Secret이 생성됐거나 workload가 기동했다는 증거가 아니다. 배포에서는 value를 출력하지 않고 Secret 이름/key 존재, workload `secretKeyRef`/file mount, rotation rollout과 rollback을 별도로 검증한다. smoke source는 `asklake/dev/smoke/` 아래에만 임시 생성하고 hash 비교 후 `ExternalSecret`, target Kubernetes Secret과 Secrets Manager source를 모두 삭제한다. 상세 경계는 [Phase 8 런타임 Secret 전달 계약](eks-phase-8-runtime-secrets.md)을 따른다.
 
+15일차 Backend runtime 전환은 `infra/eks/secrets/backend-runtime-external-secret.yaml`과 `scripts/migrate-eks-backend-runtime-secret.sh`만 사용한다. 현재 FastAPI가 실제로 소비하는 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key만 매핑하며, 아직 consumer가 없는 전체 runtime 계약 key를 placeholder로 만들지 않는다. 기존 수동 Secret을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 현재 target의 key 집합 및 값 해시가 일치해야 한다. migration script의 기본 `--verify-existing`은 이미 Ready인 ESO target을 재생성하지 않고 전체 verifier만 실행한다. 수동 target 인수는 staged target의 hash가 일치하고 exact confirmation을 준 `--handover`에서만 진행하며 실패하면 검증한 source를 pipe로 수동 target에 복구한다. 값, endpoint와 ARN은 출력하거나 임시 파일에 저장하지 않는다.
+
+```bash
+kubectl apply --dry-run=server \
+  -f infra/eks/secrets/backend-runtime-external-secret.yaml
+bash scripts/migrate-eks-backend-runtime-secret.sh --verify-existing
+# 수동 target을 실제로 인계할 때만:
+# ASKLAKE_BACKEND_SECRET_HANDOVER_CONFIRM=handover-validated-backend-runtime \
+#   bash scripts/migrate-eks-backend-runtime-secret.sh --handover
+bash scripts/verify-eks-day15-backend-secret-runtime.sh
+```
+
+실제 credential 값을 바꾸지 않은 강제 refresh와 FastAPI rollout restart를 rotation wiring smoke로 사용한다. DB password 자체의 회전은 RDS role password 변경과 source version 갱신을 함께 처리하는 별도 운영 절차이며, 이 smoke에서 수행하지 않는다.
+
 Phase 5와 Phase 8을 함께 검사할 때는 `verify-eks-deploy-readiness.mjs`를 사용한다. planning에서는 Phase 5가 미선택이면 Phase 8이 `disabled`인지 확인하고, `--ready`에서는 두 delivery 값의 일치와 full-service Secret contract까지 요구한다. Airflow 실행 token은 Secret key와 실제 DAG env 이름이 다르므로 `AIRFLOW_EXECUTION_API_TOKEN -> ASKLAKE_EXECUTION_API_TOKEN` binding을 유지한다.
 
 Phase 10은 신규 EKS foundation을 Auto Mode로 생성하고 표준 Managed Node Group을 사용하지 않는다. `cluster_mode = "create"`에는 검토한 `cluster_admin_principal_arn`이 필수이고, `cluster_mode = "existing"`에는 실제 환경에서 확인한 `existing_auto_mode_enabled = true`와 node role ARN이 필수다. 기존 cluster 경로의 입력은 Terraform이 해당 cluster를 활성화하거나 상태를 완전히 검증했다는 뜻이 아니다. AWS CLI/Console과 platform owner evidence가 없는 상태에서는 실제 배포 준비 완료로 표시하지 않는다.
@@ -663,13 +691,85 @@ bash scripts/verify-eks-foundation.sh
 
 Phase 13 ingress는 저장소 밖 values 파일로 먼저 `--render`한다. `routesEnabled=false` foundation 적용은 target cluster/context·namespace label·IngressClassParams API와 server-side dry-run을 확인하고 전용 confirmation으로 class/params만 설치한다. 이 상태는 Service를 요구하지 않고 ALB도 요청하지 않는다. 최종 Frontend/FastAPI Service가 준비된 뒤 `routesEnabled=true`를 적용할 때만 두 Service와 비용 confirmation을 요구하고 ALB를 생성한다. self-managed controller용 class/group/scheme/certificate annotation을 다시 추가하지 않는다. 삭제는 Ingress finalizer 완료, Helm class 삭제, AWS 잔여 ALB 확인, cluster/VPC 순서다. 명령과 runtime 증거는 [Phase 13 Auto Mode ALB 진입 경로](eks-phase-13-auto-mode-alb.md)를 따른다.
 
-Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
+기존 release upgrade의 API server preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지한다. 별도 `kubectl apply --server-side` manager로 IngressClassParams를 인수하지 않는다. route 적용 후에는 아래 runtime verifier로 두 Ingress의 shared ALB, 2개 AZ, listener route, target port와 health path, `/`, `/api/health`와 RDS health를 확인한다. 정상 상태에서는 `--steady`를 사용해 draining 0과 각 Service의 Ready EndpointSlice IP 집합이 ALB healthy target 집합과 정확히 같은지 확인한다. 의도한 rolling update 도중에만 `--rollout`을 사용하며 healthy/draining 외 상태는 허용하지 않는다. 실제 hostname, target IP와 ARN은 출력하거나 Git에 기록하지 않는다. 적용 결과는 [EKS 15일차 ALB route 적용 기록](eks-day15-alb-runtime-evidence.md)을 따른다.
+
+```bash
+bash scripts/verify-eks-day15-alb-runtime.sh --steady
+# 의도한 rolling update 중 일시적으로만 사용한다.
+bash scripts/verify-eks-day15-alb-runtime.sh --rollout
+```
+
+15일차 ALB·Secret·S3 통합을 시작하기 전에는 아래 read-only capture로 Frontend/FastAPI replica와 Service endpoint, RDS health, Ingress/ExternalSecret 부재, 수동 runtime Secret key, SecretStore와 General node 상태를 비밀 제외 JSON으로 고정한다. `--expect-pre-change`는 ALB route나 ExternalSecret을 적용하기 전 한 번만 사용하는 정확한 Phase 0 gate다. 적용 후 상태 확인에는 `--capture`를 사용한다. 기준 판정과 rollback 경계는 [EKS 15일차 통합 마무리 Phase 0 기준점](eks-day15-integration-baseline.md)을 따른다.
+
+```bash
+bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
+```
+
+위 live 검증 script와 Backend S3 runner는 모두 `ASKLAKE_EKS_CLUSTER_NAME`을 필수로 받고 AWS EKS endpoint와 현재 `kubectl` endpoint가 같은지 먼저 확인한다. namespace 존재 확인까지 통과하기 전에는 Kubernetes 또는 AWS runtime 검증을 수행하지 않는다.
+
+Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
 
 14일 Metrics Server/Node scale 계약은 `bash scripts/verify-eks-metrics-scale.sh`로 검사한다. 실제 cluster에서는 `describe-addon-versions`로 호환되는 exact community add-on version을 선택하고 Terraform plan/apply 뒤 Metrics API와 `kubectl top`을 확인한다. Node scale smoke는 저장소 밖 values와 evidence 경로를 사용하며 비용 confirmation 없이는 실행되지 않는다. scale-out 뒤 임시 Helm release를 제거하고 Auto Mode scale-in까지 별도 기록한다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
 
-수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. exact temporary `CreateTopic` permission으로 1 partition test topic을 bootstrap하고 권한을 제거한 뒤, 원래 Describe-only Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 이 기록은 S3 positive smoke와 외부 ALB URL을 완료로 주장하지 않는다.
+수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. exact temporary `CreateTopic` permission으로 1 partition test topic을 bootstrap하고 권한을 제거한 뒤, 원래 Describe-only Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. B 기록 당시 미완료였던 S3 positive/negative 경계는 후속 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)에서 완료했다. PR #774 머지 후에는 최신 `pair1`을 A 브랜치에 merge하고 최종 Backend source commit, ECR immutable digest와 현재 Pod imageID 일치, ALB `--steady`, ExternalSecret Ready와 RDS health를 다시 확인한다.
+
+최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Phase 6의 Git 제외 image receipt와 full Git SHA, Deployment/Pod imageID, ECR immutable digest를 대조한다. `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 지정한 정확한 rollback EC2가 running이고 instance/system status가 모두 `ok`인지 확인하며, 다른 실행 중 instance의 존재로 대신 통과하지 않는다. 이는 EC2 instance 보존 증거이고 Continuous 서비스 자체 health 증거는 아니다. rollout 동안 외부 `/api/health`를 1초 간격으로 측정하고 30초마다 식별자 없는 진행 건수를 출력한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 worker·maintenance Continuous process 0개를 다시 확인한다. 실제 receipt, commit과 instance ID는 저장소 밖에서 전달하고 전체 digest·repository·endpoint·instance ID는 출력하거나 Git에 기록하지 않는다.
+
+15.5 물리 조회에서 발견한 Iceberg rows `ApiError` import와 enum reason drift는 Issue #798에서 새 `linux/amd64` immutable digest로 Backend-only atomic upgrade했고 live 오류 계약까지 검증했다. 이후 같은 경로를 변경하거나 재배포할 때도 source 수정만으로 runtime 완료를 선언하지 않는다. formal receipt revision/digest와 Deployment/Pod imageID를 대조하고, Trino 미배포 상태에서는 rows API가 HTTP 200이 아니라 sanitized HTTP 502 `SQL_STORAGE_ERROR`, reason `BACKEND_TIMEOUT`을 반환하며 `NameError`/generic 500과 내부 marker를 만들지 않는지 확인한다. Trino snapshot HTTP 200은 별도 후속 gate다. 세부 handoff와 rollback 기준은 [15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
+
+Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15-5-runtime-remediation-evidence.md)에 둔다. 새 image rollout 전에는 FastAPI 2/2·Pod digest, ALB/RDS, ExternalSecret source/target hash, `external_ec2` process 0, exact 보존 EC2 status와 직전 Helm revision/ECR digest를 다시 확인한다. Phase 0 확인은 읽기 전용이며 새 image 반영이나 live 재검증 성공으로 확대하지 않는다.
+
+Issue #798 Phase 1은 수동 `EKS image delivery` workflow의 dev 보호 환경과 OIDC를 사용해 `f556e95e`를 포함하는 새 Backend AMD64 digest와 formal receipt를 인수했다. receipt가 함께 제공한 다른 component digest는 이번 Backend-only rollout 입력으로 승인하지 않는다. receipt는 Git 제외 경로에 두고 Phase 2에서 새 Backend digest만 private Helm values에 반영해 render와 server dry-run을 수행한다.
+
+Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽어 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·실제 AMD64 OCI index·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. 전후 Helm revision, Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend ExternalSecret은 승인된 2-key web baseline 또는 5-key runtime 계약 중 하나와 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private Git-ignored *.image-receipt.json>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+bash scripts/preflight-eks-backend-image-rollout.sh
+```
+
+이 명령은 실제 Backend image를 배포하지 않는다. 성공 결과는 Backend-only atomic rollout의 입력이 준비됐다는 뜻이며 runtime 수정 완료 증거가 아니다.
+
+새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.*` readiness condition을 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. condition suffix는 controller 구현에 종속되므로 exact prefix 하나를 가정하지 않고 주입된 target-health gate와 같은 condition이 `True`인지 확인한다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. 외부 health 표본 하나라도 실패하거나 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
+
+외부 health monitor는 HTTP 응답 code를 그대로 판정한다. client transport `000`만 0.2초 뒤 한 번 재확인해 검증 머신의 순간 연결 오류와 실제 ALB 응답을 구분하며, 재확인도 실패하거나 HTTP가 200이 아니면 rollout을 실패 처리한다. HTTP 502 같은 서버/ALB 응답은 재시도로 숨기지 않는다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private Git-ignored *.image-receipt.json>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+export ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM='deploy-new-immutable-backend'
+bash scripts/rollout-eks-backend-image.sh
+```
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed full 40-character commit>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+export ASKLAKE_BACKEND_ROLLOUT_CONFIRM='restart-same-immutable-backend'
+bash scripts/run-eks-day15-backend-rollout-smoke.sh
+```
+
+Issue #794의 페이즈 5 최종 인수는 인프라의 “Phase 5 배포 Handoff”와 다른 작업 단계다. 새 rollout이나 infrastructure apply 없이 formal receipt의 Backend digest, Pod `2/2`, ALB exact steady, Backend Secret/RDS, S3 positive/negative와 cleanup, `external_ec2`/Continuous process 0, 정확한 EC2 instance 보존을 한 번에 재검증한다. S3 sentinel과 임시 Pod·ConfigMap을 생성하므로 read-only 검증이 아니다. 두 mutation confirmation을 모두 명시해야 하며 runner는 현재 실행의 정확한 object version/DeleteMarker를 제거한 뒤 승인된 smoke prefix 전체와 Kubernetes label/name prefix의 과거 잔여물도 검사한다. 전체 audit만 별도로 실행할 때는 `run-eks-backend-s3-smoke.sh --audit-only`를 사용하며 이 mode는 object를 만들거나 삭제하지 않는다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_EXPECTED_BACKEND_COMMIT='<reviewed full 40-character commit>'
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID='<preserved instance id>'
+export ASKLAKE_BACKEND_S3_SMOKE_CONFIRM='run-backend-s3-boundary-smoke'
+export ASKLAKE_FINAL_INTEGRATION_CONFIRM='run-final-integration-with-s3-sentinels'
+bash scripts/verify-eks-day15-final-integration.sh
+```
+
+정적 실패 경로는 `bash scripts/test-eks-day15-validation-hardening.sh`로 검사한다. 이 test는 실제 AWS나 Kubernetes를 변경하지 않고 관계없는/stopped/impaired EC2, receipt 누락·short SHA·digest/platform 불일치, 중복 ALB target group·추가 weighted target·wrong port, S3 Version/DeleteMarker 잔여와 ExternalSecret manual rollback의 삭제·apply·hash·rollout 실패를 fake command로 재현한다.
+
+실제 dev 최종 결과, Terraform 무변경과 cleanup 증거는 [Issue #794 최종 통합 인수 기록](eks-day15-final-integration-evidence.md)에 남긴다. 이 gate의 성공은 Backend web runtime 범위이며 Airflow·Spark·Trino bounded E2E 또는 production cutover 승인이 아니다.
 
 ```bash
 docker run --rm --entrypoint sh \
@@ -1005,7 +1105,37 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 ## 14) EKS MVP workload 검증
 
-EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. 2026-07-16 dev에는 Backend와 Airflow source/ExternalSecret/target만 실제 동기화됐으며 Spark/Trino target은 아직 사전 생성됐다고 가정하지 않는다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
+
+Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
+
+15.5 bounded 물리 조회는 호환상 `scripts/run-eks-catalog-physical-read-smoke.sh` 이름을 유지한다. Git 제외 Phase 6 image receipt와 `datasetId`, `materializationRoot`, `objectUri`만 가진 Git 제외 `*.physical-read-input.json`을 명시한다. 이 실행기는 URI root 경계만 확인하며 Catalog API를 다시 조회하지 않으므로 `datasetId`는 운영자 인수 문맥이고 결과는 Catalog provenance 증거가 아니라 `bounded-s3-parquet-object` 증거다. `--validate-only`는 AWS/Kubernetes mutation 없이 receipt·입력·AMD64 image와 임시 SparkApplication manifest를 검사한다. `--live`는 별도 confirmation과 검증된 EKS context, Established CRD, Ready controller/webhook, `asklake-spark` ServiceAccount, Ready AMD64 Spark NodePool/NodeClass, 단일 Pod Identity association과 server-side dry-run을 모두 통과해야 한다. 그 뒤 최대 100행을 제한 조회하고 실제 row나 URI 대신 column/row count와 폭 일치만 출력한다. 성공·실패·timeout·signal 모두 현재 run label과 exact name prefix의 SparkApplication·Pod·Service·ConfigMap·PVC를 정리한다. cleanup/audit API 오류는 잔여 0으로 간주하지 않고 실패하며 Spark Secret read 거부도 확인한다. timeout은 1~3600초, poll은 0.1~30초로 제한한다.
+
+7/16 Pair A data-plane 작업 전에는 `scripts/capture-eks-day16-a-baseline.sh --expect-phase0`로 현재 Web/Airflow, Secret delivery, ServiceAccount/Pod Identity, Spark Operator, MSK endpoint, ECR/RDS/ALB, Continuous와 외부 EC2 rollback 기준점을 읽기 전용으로 고정한다. capture는 source/target Secret value를 출력하지 않고 canonical hash와 공유 token 동일성만 비교한다. Phase 0에서 Airflow는 이미 healthy하게 배포됐지만 정적 계약보다 `AIRFLOW_PASSWORD`가 하나 더 있는 상태가 확인됐다. A는 이를 임의 삭제하지 않고 Spark·Trino Secret 준비와 분리하며, 계약 정합성은 통합 전 별도 gate로 처리한다. 상세 증거는 [EKS 16일차 Pair A Phase 0 기준점](eks-day16-a-baseline.md)을 따른다.
+
+Phase 1의 실제 Spark·Trino 입력은 `scripts/prepare-eks-day16-runtime-secret-input.sh`로 생성한다. 이 helper는 available dev RDS와 `asklake/dev/rds/application-databases`의 기존 `iceberg_catalog` credential을 값 출력 없이 대조하고, Trino TLS/JKS·bcrypt password database·Backend client 인증 patch를 `infra/eks/secrets/*.runtime-secret-input.json`에 `0600`으로 기록한다. 해당 파일은 Git 제외 대상이며 Terraform/Helm values가 아니다. 유효한 입력이 이미 있으면 자동 회전하지 않고 재검증만 한다. `node scripts/verify-eks-day16-runtime-secret-input.mjs <private-input>`은 exact key, 공유 JDBC binding, password 분리, JKS/CA fingerprint와 SAN을 확인한다. Phase 1은 AWS source나 ExternalSecret을 변경하지 않는다. [Phase 1 입력 준비 기록](eks-day16-a-runtime-secret-input.md)을 따른다.
+
+Phase 2는 `ASKLAKE_DAY16_SECRET_APPLY_CONFIRM=apply-spark-trino-runtime-secrets bash scripts/deploy-eks-day16-runtime-secrets.sh`로 적용한다. 실행기는 기존 Backend/Airflow를 보존하고, Spark·Trino AWS source와 staged ExternalSecret의 일반 문자열/binary decode hash가 맞을 때만 최종 target을 만든다. `scripts/verify-eks-day16-runtime-secret-delivery.sh`는 private input/source/target, exact mapping, owner/Ready, 여섯 ServiceAccount의 Secret read deny와 Web/Airflow steady 상태를 값 출력 없이 검사한다. 결과와 Backend patch 보류 이유는 [Phase 2 전달 기록](eks-day16-a-runtime-secret-delivery.md)을 따른다.
+
+Phase 3의 Trino overlay는 `scripts/prepare-eks-day16-trino-values.sh`로 한 번 생성하고 `scripts/verify-eks-day16-trino-values.sh`로 검증한다. 실제 reference가 든 `infra/eks/values/workloads/*.private-values.json`은 `0600`, Git 제외 상태를 유지한다. Trino resource만 server-side dry-run하며 기존 Airflow/Web release ownership은 변경하지 않는다. 실제 data-plane smoke는 exact EKS context와 `ASKLAKE_TRINO_DATA_PLANE_SMOKE_CONFIRM=run-trino-data-plane-smoke`를 설정해 `scripts/run-eks-day16-trino-data-plane-smoke.sh`로 수행한다. 이 Job은 Trino Pod Identity, RDS isolated login, Warehouse/Query Result positive/negative S3 경계와 namespace DNS를 확인하고 모든 versioned object와 Kubernetes 임시 resource를 정리한다. [Phase 3 검증 기록](eks-day16-a-trino-data-plane.md)을 따른다.
+
+Phase 4 fixture producer는 `prepare-eks-day16-fixture-producer-identity.sh`로 Terraform의 exact policy를 전용 외부 role/policy에 반영한다. idempotent producer에는 exact cluster의 `Connect`, `WriteDataIdempotently`와 exact fixture topic의 `DescribeTopic`, `WriteData`만 허용한다. 로컬에서 private MSK에 접근할 수 없으면 confirmation 아래 `run-eks-day16-fixture-producer-ec2.sh`를 사용한다. 실행기는 ingress 없는 임시 security group, 잠금 파일 기반 `npm ci`, IMDSv2 instance-profile credential을 사용하고 정확히 100건과 broker ack를 private `0600` receipt로 검증한다. 종료 시 EC2, host role/profile, security group과 MSK 임시 ingress 잔여물이 없어야 한다. 장기 access key를 만들거나 receipt를 Git에 추가하지 않는다.
+
+Phase 5 private handoff는 `scripts/prepare-eks-day16-a-handoff.sh`로 생성하고 exact EKS context에서 `scripts/verify-eks-day16-a-handoff.sh --audit`로 검사한다. 실제 reference는 `*.handoff.json`, `*.runtime-secret-contract.json`, `*.private-values.json`, `*.fixture-receipt.json` Git 제외 파일에만 둔다. audit은 현재 blocker를 보고하지만 임시 ownership 충돌의 재현 자체를 성공 조건으로 삼지 않는다. `--ready`는 전체 server dry-run, fixture receipt, Backend full runtime/CA mount와 full-service decision이 모두 준비돼야 통과한다. HTTP ALB MVP에서는 domain/ACM이 deferred여도 되지만 HTTPS 선택 시에는 필수다. 모든 blocker가 0인 뒤 confirmation을 준 `scripts/promote-eks-day16-a-handoff.sh`만 private handoff를 `ready-for-deploy`로 올린다. 기존 Deployment ownership을 임의로 덮어쓰지 않는다. [Phase 5 검증 기록](eks-day16-a-handoff.md)을 따른다.
+
+private input이 없으면 `scripts/prepare-eks-physical-read-input.sh`로 현재 Catalog의 queryable Iceberg Dataset과 root 아래 non-empty Parquet object를 읽기 전용으로 대조해 생성한다. 이 helper도 Dataset ID와 URI를 출력하지 않으며 결과 파일은 `infra/eks/delivery/*.physical-read-input.json`에만 둔다. `kubectl auth can-i`는 deny일 때 `no`와 exit code 1을 반환하므로 runner는 둘을 함께 정상 거부 증거로 요구하고, exit 0 `yes`나 그 밖의 오류 code를 실패 처리한다.
+
+```bash
+export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_PHYSICAL_READ_INPUT='<private *.physical-read-input.json>'
+bash scripts/run-eks-catalog-physical-read-smoke.sh --validate-only
+bash scripts/test-eks-catalog-physical-read-smoke.sh
+
+# private input과 context gate를 검토한 실제 실행에서만 추가한다.
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_PHYSICAL_READ_CONFIRM='run-bounded-physical-read'
+bash scripts/run-eks-catalog-physical-read-smoke.sh --live
+```
 
 ```bash
 # Helm 3이 PATH에 있는 경우
@@ -1060,7 +1190,7 @@ helm upgrade --install asklake-airflow \
   --set trino.enabled=false
 ```
 
-chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 Backend/Airflow/Spark runtime delivery도 완료됐다. Trino runtime delivery는 아직 후속 gate다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 네 workload 이름의 runtime Secret source/target도 존재한다. Spark·Trino source-target hash와 Trino identity/RDS/S3/DNS, 실제 Spark/Trino consumer 주입은 검증했다. 다만 Backend main ExternalSecret의 Trino mapping과 임시 target 제거는 후속 통합 범위다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
 
 Frontend/FastAPI Service 계약은 `frontend:80`, `fastapi:8080`이다. A의 `asklake-web` application release 하나로 실제 배포했으며 B workload chart를 병행 설치하지 않는다. 이후 변경에서도 두 Helm release가 같은 Deployment/Service를 동시에 소유하게 하지 않는다.
 

@@ -42,19 +42,19 @@ Helm schema는 위 조합과 반대되는 override를 거절한다. application 
 
 ## 실제 dev 적용 결과
 
-- `asklake-foundation` Helm release revision 2가 `deployed` 상태다.
+- `asklake-foundation` Helm release revision 3이 `deployed` 상태다. revision 3은 Spark 4 shutdown의 label-selector cleanup에 필요한 Pod·Service·ConfigMap·PVC `deletecollection`을 namespace Role에 추가했다.
 - Backend와 Spark ServiceAccount token은 `true`다.
 - Frontend, Airflow, Trino와 MSK smoke token은 `false`다.
 - Backend/Spark Role과 RoleBinding이 각각 존재한다.
-- Backend의 Secret read와 Frontend의 Pod create는 허용되지 않는다.
+- Backend의 Secret read, Spark의 Secret read와 Frontend의 Pod create는 허용되지 않는다.
 - Backend, MSK smoke, Spark, Trino의 분리된 Pod Identity association이 존재한다.
 - runtime boundary ConfigMap은 실제 선택인 `pod_identity`를 기록한다.
 
 Helm이 기존 resource field를 소유하므로 다른 manager의 server-side apply conflict를 강제로 탈취하지 않았다. `helm upgrade --dry-run=server`와 동일 release upgrade로 반영했다.
 
-## 아직 막혀 있는 실제 smoke
+## 아직 남은 전체 workload smoke
 
-Spark Operator 2.5.1과 `v1beta2` CRD는 후속 단계에서 적용했고 B SparkApplication manifest의 server-side dry-run도 통과했다. 다만 B workload의 immutable ECR digest, 실제 runtime Secret mapping과 최종 Deployment/Service가 아직 A 브랜치에 인수되지 않았다.
+Spark Operator 2.5.1과 `v1beta2` CRD는 적용됐고 Git 제외 receipt의 Spark image로 대표 S3 Parquet 물리 읽기를 통과했다. 다만 B의 전체 workload release와 Airflow/Spark/Trino runtime Secret은 아직 배포되지 않았으므로 Kafka→Iceberg bounded E2E와 Trino snapshot 조회는 남아 있다.
 
 다음 순서는 다음과 같다.
 

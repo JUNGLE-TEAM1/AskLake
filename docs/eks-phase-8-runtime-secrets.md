@@ -4,7 +4,7 @@
 
 Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
 
-ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source의 최초 동기화·rotation smoke 뒤 2026-07-16에는 실제 Backend와 Airflow source 및 `ExternalSecret` 매핑도 적용했다. Spark와 Trino source/target도 JDBC/TLS 입력으로 생성했다. 다만 live Backend `ExternalSecret`에는 아직 Trino 인증/CA mapping이 없어 controller가 target의 수동 추가 key를 원복한다. Issue #828 검증에서는 AWS Backend source에서 필요한 Trino 여섯 key와 CA만 복사한 임시 별도 target `asklake-backend-trino-runtime`을 사용한다. 저장소의 정식 mapping을 권한 있는 배포 주체가 적용한 뒤 이 임시 target을 제거해야 전체 네 workload 전달 완료다.
+ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차 Phase 2에서는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 staged hash 검증 뒤 적용했다. 현재 네 workload 이름의 source와 target은 존재하지만 live Backend `ExternalSecret`에는 아직 Trino 인증/CA mapping이 없어 controller가 target의 수동 추가 key를 원복한다. Issue #828 검증에서는 AWS Backend source에서 필요한 Trino 여섯 key와 CA만 복사한 임시 별도 target `asklake-backend-trino-runtime`을 사용한다. 저장소의 정식 mapping을 권한 있는 배포 주체가 적용한 뒤 이 임시 target을 제거해야 전체 네 workload 전달 완료다. 전체 AI 계약과 Airflow extra key 정합성도 별도 통합 gate다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
@@ -35,6 +35,8 @@ dev는 `external_secrets`를 선택했다. Helm values는 controller를 `asklake
 IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리고 Terraform이 생성한 RDS 관리형 master secret의 정확한 ARN에 대해 `DescribeSecret`, `GetSecretValue`, `ListSecretVersionIds`만 허용한다. secret 생성·수정·삭제, `ListSecrets`, KMS decrypt와 다른 prefix 접근은 허용하지 않는다. 기본 AWS 관리형 Secrets Manager key를 사용한 현재 범위이므로 향후 customer-managed KMS key를 선택하면 해당 key의 `kms:Decrypt`를 별도 검토해야 한다.
 
 `infra/eks/secrets/aws-secrets-manager-store.yaml`은 controller의 기본 AWS credential chain을 사용하는 namespaced `SecretStore`다. static access key를 참조하는 `auth.secretRef`를 추가하지 않는다. `aws-secrets-manager-smoke.yaml`은 검증 전용 fixture이며 실제 runtime source 또는 상시 Kubernetes Secret이 아니다.
+
+`infra/eks/secrets/backend-runtime-external-secret.yaml`은 현재 dev FastAPI의 승인된 5-key 실행 매핑이다. Spark와 Trino manifest도 같은 `creationPolicy: Owner`, `deletionPolicy: Retain` 경계를 사용하며 Trino의 JKS/password DB 두 property에만 `Base64` decoding을 적용한다. 전체 planning 계약의 미사용 key를 빈 값이나 임의 값으로 채우지 않는다. 초기 Backend 전환은 [Backend runtime Secret 전환 기록](eks-day15-backend-secret-runtime-evidence.md), 현재 Spark·Trino 적용은 [16일차 Phase 2 전달 기록](eks-day16-a-runtime-secret-delivery.md)을 따른다.
 
 `workflow_sync`와 Secrets Store CSI Driver는 현재 dev 적용 경로가 아니다. Terraform의 `workflow_sync` 입력은 계약 호환과 비교 검증을 위해 남지만, dev에서 병행 운영하지 않는다. 전달 방식을 변경하려면 controller·rotation·rollback 소유권과 기존 `ExternalSecret` 정리 순서를 별도 변경으로 검토한다.
 

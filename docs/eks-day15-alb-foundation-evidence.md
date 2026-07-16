@@ -35,3 +35,7 @@ IngressClass → Backend /api Ingress + Frontend / Ingress → EKS Auto Mode ALB
 6. 이후 도메인·ACM·HTTPS를 선택하면 listener 계약과 DNS ownership을 별도 변경한다.
 
 기반 적용만으로 Phase 13 runtime 완료나 웹 공개 완료를 선언하지 않는다.
+
+## 후속 route 적용
+
+Issue #794에서 최종 `frontend:80`, `fastapi:8080` Service에 두 Ingress를 연결했고 shared ALB 기본 DNS의 `/`, `/api/health`와 RDS health를 검증했다. 이 문서는 revision 1 foundation-only 시점의 기준점으로 유지하며 현재 runtime 상태는 [EKS 15일차 ALB route 적용 기록](eks-day15-alb-runtime-evidence.md)을 따른다.

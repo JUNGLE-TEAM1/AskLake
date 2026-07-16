@@ -76,7 +76,9 @@ kubectl get serviceaccount asklake-frontend asklake-backend -n "$ASKLAKE_EKS_NAM
 kubectl get configmap asklake-runtime asklake-runtime-boundary -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
 kubectl get secret asklake-backend-runtime -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
 kubectl wait --for=condition=Ready node -l 'asklake.io/workload-class=general,kubernetes.io/arch=amd64' --timeout=30s >/dev/null || { echo "no Ready AMD64 node has the General placement label" >&2; exit 1; }
-kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE" >/dev/null
+helm upgrade --install asklake-web "$CHART_DIR" \
+  --namespace "$ASKLAKE_EKS_NAMESPACE" --create-namespace=false \
+  -f "$VALUES_FILE" --dry-run=server >/dev/null
 
 helm upgrade --install asklake-web "$CHART_DIR" \
   --namespace "$ASKLAKE_EKS_NAMESPACE" --create-namespace=false \

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/verify-spark-driver-role-contract.sh"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-foundation"
 INGRESS_CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-ingress"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/dev.example.yaml"
@@ -57,6 +58,13 @@ required_files=(
   "$ROOT_DIR/docs/eks-phase-13-auto-mode-alb.md"
   "$ROOT_DIR/docs/eks-phase-14-web-workloads.md"
   "$ROOT_DIR/docs/eks-day15-spark-operator-evidence.md"
+  "$ROOT_DIR/docs/eks-day15-backend-s3-runtime-evidence.md"
+  "$ROOT_DIR/docs/eks-day16-a-baseline.md"
+  "$ROOT_DIR/docs/eks-day16-a-runtime-secret-input.md"
+  "$ROOT_DIR/docs/eks-day16-a-runtime-secret-delivery.md"
+  "$ROOT_DIR/docs/eks-day16-a-trino-data-plane.md"
+  "$ROOT_DIR/docs/eks-day16-a-handoff.md"
+  "$ROOT_DIR/infra/eks/smoke/backend_s3_smoke.py"
   "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
@@ -64,6 +72,34 @@ required_files=(
   "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
   "$ROOT_DIR/scripts/verify-eks-metrics-scale.sh"
   "$ROOT_DIR/scripts/verify-eks-spark-operator.sh"
+  "$ROOT_DIR/scripts/run-eks-backend-s3-smoke.sh"
+  "$ROOT_DIR/scripts/verify-eks-backend-image-provenance.sh"
+  "$ROOT_DIR/scripts/preflight-eks-backend-image-rollout.sh"
+  "$ROOT_DIR/scripts/rollout-eks-backend-image.sh"
+  "$ROOT_DIR/scripts/verify-eks-catalog-rows-error-runtime.sh"
+  "$ROOT_DIR/scripts/prepare-eks-physical-read-input.sh"
+  "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
+  "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh"
+  "$ROOT_DIR/scripts/capture-eks-day16-a-baseline.sh"
+  "$ROOT_DIR/scripts/prepare-eks-day16-runtime-secret-input.sh"
+  "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-input.mjs"
+  "$ROOT_DIR/scripts/deploy-eks-day16-runtime-secrets.sh"
+  "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh"
+  "$ROOT_DIR/infra/eks/secrets/spark-runtime-external-secret.yaml"
+  "$ROOT_DIR/infra/eks/secrets/trino-runtime-external-secret.yaml"
+  "$ROOT_DIR/infra/eks/smoke/trino_data_plane_smoke.py"
+  "$ROOT_DIR/scripts/prepare-eks-day16-trino-values.sh"
+  "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh"
+  "$ROOT_DIR/scripts/run-eks-day16-trino-data-plane-smoke.sh"
+  "$ROOT_DIR/scripts/prepare-eks-day16-a-handoff.sh"
+  "$ROOT_DIR/scripts/verify-eks-day16-a-handoff.sh"
+  "$ROOT_DIR/scripts/test-eks-day15-validation-hardening.sh"
+  "$ROOT_DIR/scripts/run-eks-catalog-physical-read-smoke.sh"
+  "$ROOT_DIR/scripts/test-eks-catalog-physical-read-smoke.sh"
+  "$ROOT_DIR/scripts/lib/verify-spark-driver-role-contract.sh"
+  "$ROOT_DIR/scripts/test-eks-spark-rbac-contract.sh"
+  "$ROOT_DIR/scripts/lib/audit-eks-s3-smoke-residue.sh"
+  "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
   "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh"
@@ -76,6 +112,8 @@ for required_file in "${required_files[@]}"; do
     exit 1
   fi
 done
+
+bash "$ROOT_DIR/scripts/test-eks-spark-rbac-contract.sh"
 
 helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
@@ -136,6 +174,8 @@ for service_account in \
     exit 1
   fi
 done
+
+verify_asklake_spark_driver_role_contract "$RENDERED_FILE"
 
 backend_service_account="$({
   awk '
@@ -251,6 +291,7 @@ grep -q 'existing_auto_mode_enabled       = false' "$TERRAFORM_DIR/dev.tfvars.ex
 grep -q 'cluster_admin_principal_arn = null' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'network_mode               = "external"' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'private_egress_mode             = "undecided"' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'eks.amazonaws.com/pod-readiness-gate-inject: enabled' "$VALUES_FILE"
 grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 
@@ -314,10 +355,26 @@ done
 bash -n "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-rds-bootstrap.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
+bash -n "$ROOT_DIR/scripts/preflight-eks-backend-image-rollout.sh"
+bash -n "$ROOT_DIR/scripts/rollout-eks-backend-image.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-catalog-rows-error-runtime.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-physical-read-input.sh"
+bash -n "$ROOT_DIR/scripts/capture-eks-day16-a-baseline.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-day16-runtime-secret-input.sh"
+node --check "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-input.mjs"
+bash -n "$ROOT_DIR/scripts/deploy-eks-day16-runtime-secrets.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-day16-trino-values.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh"
+bash -n "$ROOT_DIR/scripts/run-eks-day16-trino-data-plane-smoke.sh"
+python3 -m py_compile "$ROOT_DIR/infra/eks/smoke/trino_data_plane_smoke.py"
+bash -n "$ROOT_DIR/scripts/prepare-eks-day16-a-handoff.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-day16-a-handoff.sh"
 bash "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 bash "$ROOT_DIR/scripts/verify-eks-network-ingress.sh"
 bash "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
 bash "$ROOT_DIR/scripts/verify-eks-metrics-scale.sh"
+bash "$ROOT_DIR/scripts/test-eks-day15-validation-hardening.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

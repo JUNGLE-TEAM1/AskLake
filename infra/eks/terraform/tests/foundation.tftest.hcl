@@ -689,6 +689,46 @@ run "workload_repository_contract" {
   }
 }
 
+run "external_fixture_producer_idempotent_policy" {
+  command = plan
+
+  variables {
+    environment                             = "dev"
+    owner                                   = "pair-a"
+    resource_lifecycle                      = "external"
+    cluster_mode                            = "existing"
+    existing_cluster_name                   = "shared-dev"
+    create_ecr_repositories                 = false
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+  }
+
+  assert {
+    condition = jsondecode(output.workload_iam_policy_documents.external_fixture_producer).Statement == [
+      {
+        Action   = ["kafka-cluster:Connect"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"]
+        Sid      = "ConnectToMskServerless"
+      },
+      {
+        Action   = ["kafka-cluster:WriteDataIdempotently"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:cluster/asklake-dev-serverless/mock-uuid"]
+        Sid      = "ProduceIdempotently"
+      },
+      {
+        Action   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
+        Effect   = "Allow"
+        Resource = ["arn:aws:kafka:ap-northeast-2:111122223333:topic/asklake-dev-serverless/mock-uuid/asklake.eks-mvp.fixture.v1"]
+        Sid      = "ProduceFixtureTopic"
+      },
+    ]
+    error_message = "The external fixture producer must combine cluster-scoped idempotence with exact-topic write access."
+  }
+}
+
 run "network_ingress_defaults_fail_closed" {
   command = plan
 
@@ -1001,6 +1041,30 @@ run "managed_existing_storage_contract" {
     )
     error_message = "Backend source browsing must be able to read objects from the approved Raw bucket boundary."
   }
+
+  assert {
+    condition = (
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Resource == [local.storage_bucket_arns.query_results] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Condition.StringLike["s3:prefix"] == ["query-results", "query-results/*"]
+    )
+    error_message = "Backend ListBucket conditions must be isolated per bucket so a wildcard for Raw/Output cannot widen Warehouse or Query Result prefixes."
+  }
+
+  assert {
+    condition = (
+      one([for statement in module.workload_iam_policies.contracts.trino.Statement : statement if statement.Sid == "ListTrinoWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
+      one([for statement in module.workload_iam_policies.contracts.trino.Statement : statement if statement.Sid == "ListTrinoWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.trino.Statement : statement if statement.Sid == "ListTrinoQueryResultBucket"]).Resource == [local.storage_bucket_arns.query_results] &&
+      one([for statement in module.workload_iam_policies.contracts.trino.Statement : statement if statement.Sid == "ListTrinoQueryResultBucket"]).Condition.StringLike["s3:prefix"] == ["query-results", "query-results/*"]
+    )
+    error_message = "Trino ListBucket conditions must be isolated between Warehouse and Query Result buckets."
+  }
 }
 
 run "reject_shared_data_plane_creation" {
@@ -1110,6 +1174,18 @@ run "irsa_workload_identity_contract" {
       local.storage_object_arns.evidence,
     )
     error_message = "Backend must be able to read its exact evidence prefix."
+  }
+
+  assert {
+    condition = (
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Condition.StringLike["s3:prefix"] == ["raw", "raw/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"]
+    )
+    error_message = "Spark ListBucket conditions must be isolated so Raw/Output prefixes cannot widen Warehouse listing."
   }
 
   assert {

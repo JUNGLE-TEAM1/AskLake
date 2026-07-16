@@ -2342,6 +2342,7 @@ Runtime/permission:
 - Dataset 상세 `view` 권한과 row 조회 `query` 권한을 모두 검사하며, 없으면 `403 FORBIDDEN`을 반환합니다.
 - Iceberg Dataset은 `storageFormat=iceberg`, `queryEngineStatus=available`, 완전한 `queryEngineTable`을 검증한 뒤 `$refs`의 `main` snapshot ID를 한 번 고정합니다. `COUNT(*)`와 bounded `LIMIT`/`OFFSET`은 모두 그 snapshot을 `FOR VERSION AS OF`로 읽으므로 한 응답 안에서 count/page가 서로 다른 commit을 보지 않습니다. warehouse의 Parquet object를 직접 glob하지 않습니다.
 - Iceberg row projection은 Catalog schema의 사용자 컬럼만 명시적으로 선택합니다. `_asklake_*` 같은 내부 idempotency/ingest marker는 물리 table에 남아도 API `columns`와 `rows`에 노출하지 않습니다.
+- Trino coordinator 연결·timeout 오류는 HTTP 502 `SQL_STORAGE_ERROR`로 감싸며 `details.reason`은 `BACKEND_TIMEOUT` 같은 원래 API error code의 wire value를 사용합니다. `ErrorCode.BACKEND_TIMEOUT` 같은 Python enum 표현이나 내부 endpoint/query/credential message는 노출하지 않습니다.
 - 전환 전 CSV/JSON/JSONL/Parquet Dataset은 성공 materialization history와 dataset storage metadata에서 active segment를 계산해 기존 DuckDB compatibility reader를 사용합니다. 물리 위치가 없거나 읽을 수 없으면 실제 row 조회 실패를 반환합니다.
 - 어느 reader도 response/DOM에 전체 row를 적재하지 않습니다.
 - `rowCount`는 고정한 snapshot의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다. 이 API는 preview용 offset pagination이며 정렬 key를 받지 않으므로 서로 다른 요청 사이의 안정적인 row order는 보장하지 않습니다.

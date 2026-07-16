@@ -71,3 +71,7 @@ FastAPI Service health를 1초마다 호출하면서 replica 하나를 삭제했
 ## 수요일 Pair B 통합 gate 완료
 
 이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계, 외부 ALB web/API route, EKS→MSK network/IAM·test topic metadata와 Backend S3 read/write/cleanup의 완료 증거다. 따라서 이 문서가 다루는 `eks-roadmap.md` 수요일 Pair B 통합 gate는 모두 통과했다. Airflow·Spark·Trino bounded E2E는 목요일 범위다.
+
+후속 Issue #794에서 A runner가 Raw/Output/Warehouse 읽기, Query Result/Evidence 쓰기와 계약 밖 Get/List·bucket metadata 거절을 실제 Backend Pod Identity로 반복 검증했고 version/DeleteMarker까지 정리했다. 따라서 현재 수요일 S3 gate의 기준은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)이며, 위 최초 실패는 당시 이력으로만 남긴다. PR #774는 `pair1`에 머지됐고 Phase 3.5에서 Backend source commit `059d8eaa`, immutable ECR digest와 현재 FastAPI 두 Pod imageID의 일치도 재확인했다.
+
+Phase 4에서는 같은 digest로 실제 FastAPI rolling restart를 수행했다. 외부 health 표본은 전부 HTTP 200이었고 새 Pod `2/2`, restart 0, ALB steady healthy target 4개, RDS·ExternalSecret과 S3 경계가 다시 통과했다. 두 새 Pod의 `external_ec2` 값과 Continuous process 합계 0개, 기존 실행 중 EC2 보존도 확인했으므로 Issue #794의 최종 rollout·Continuous gate는 완료됐다.

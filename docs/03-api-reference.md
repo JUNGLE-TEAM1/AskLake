@@ -166,6 +166,8 @@ Canonical status values:
 
 `GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
 
+Iceberg Dataset rows에서 Trino coordinator가 응답하지 않으면 HTTP 502 `SQL_STORAGE_ERROR`를 반환하고 `details.reason`은 원래 `ErrorCode`의 wire value인 `BACKEND_TIMEOUT`처럼 정규화한다. Python enum 표현, 내부 endpoint, query나 credential marker를 응답에 포함하지 않는다.
+
 Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않는다. 첫 메시지 이후 최소 샘플 수에 도달하면 idle window로 종료하고, 도달하지 못해도 bounded settle window 뒤 현재 샘플을 반환한다.
 
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행하고, 최종 Run/DAG/Spark manifest는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.

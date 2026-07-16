@@ -23,7 +23,7 @@ Pod Identity를 선택하면 annotation 대신 `aws_eks_pod_identity_association
 
 두 방식 모두 MSK와 S3 contract가 `disabled`가 아닐 때만 활성화된다. 실제 ARN과 bucket 경계가 없는 broad policy로 우회하지 않는다.
 
-workload policy는 AWS provider mock에 의해 대체되지 않는 순수 Terraform module에서 만든다. Spark는 전용 MSK topic/group과 Raw/Output/Warehouse/checkpoint/quarantine만 읽고 쓰며, Backend는 승인된 Raw/Output 읽기와 Warehouse/Query Result/evidence만 사용한다. `s3:*`, `kafka-cluster:*`와 `Resource: "*"`는 허용하지 않는다.
+workload policy는 AWS provider mock에 의해 대체되지 않는 순수 Terraform module에서 만든다. Spark는 전용 MSK topic/group과 Raw/Output/Warehouse/checkpoint/quarantine만 읽고 쓰며, Backend는 승인된 Raw/Output 읽기와 Warehouse·Query Result·evidence 경계만 사용한다. Backend의 bucket 목록 권한은 logical bucket별 statement로 나눠 Raw/Output의 bucket-wide `*` 조건이 Warehouse/Query Result resource로 전파되지 않게 한다. `s3:*`, `kafka-cluster:*`와 `Resource: "*"`는 허용하지 않는다.
 
 Helm handoff는 identity mode를 runtime boundary에 기록한다. IRSA fixture는 네 AWS workload ServiceAccount에만 role annotation을 렌더링하고, Pod Identity fixture는 IRSA annotation을 전혀 렌더링하지 않는다. 실제 Terraform output을 environment별 Helm values로 전달하는 deploy workflow는 후속 단계다.
 
@@ -39,6 +39,8 @@ dev EKS Auto Mode에는 Pod Identity를 선택해 다음 실제 검증을 완료
 - MSK smoke는 S3 접근 거절
 - Backend에는 불필요한 AWS Kafka control-plane 조회 권한이 없음을 확인
 - smoke Pod가 General node scale-out을 유발한 뒤 모든 임시 Pod를 삭제
+
+15일차 통합 Phase 3에서는 현재 FastAPI와 같은 immutable image·ServiceAccount로 Backend S3 경계를 다시 검증했다. 최초 정책의 결합된 `ListBackendBuckets` condition에서 Raw/Output의 `*`가 Query Result 목록까지 넓히는 문제가 발견돼 bucket별 statement로 분리했다. 수정 후 허용 result object의 Put/Get/Delete, 읽기 전용 prefix 쓰기 거절, 계약 밖 실제 sentinel 읽기와 목록 거절, 불필요한 bucket metadata 거절을 모두 확인했다. 상세 원인, 적용과 rollback은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)을 따른다. Spark/Trino policy는 이 Backend 증거로 완료 처리하지 않고 각 workload 배포 전에 별도 검증한다.
 
 MSK IAM data-plane의 실제 bootstrap/topic metadata 조회는 Kafka IAM client가 필요하므로 B의 smoke client를 받은 뒤 수행한다. 현재 완료 증거는 association, STS와 S3 positive/negative boundary까지다.
 

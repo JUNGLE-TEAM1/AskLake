@@ -42,7 +42,7 @@ export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
 bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
 ```
 
-스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·Ready AMD64 General node label, server-side dry-run을 확인한 뒤 Helm atomic rollout을 수행한다.
+스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·Ready AMD64 General node label을 확인한다. 기존 release의 Helm field ownership을 유지하기 위해 API server preflight도 같은 release의 `helm upgrade --install --dry-run=server`로 수행한 뒤 Helm atomic rollout을 실행한다. 별도 `kubectl apply --server-side` manager로 Deployment image field를 인수하지 않는다.
 
 ## 완료 기준
 

@@ -94,4 +94,12 @@ if grep -REiq '(AKIA[0-9A-Z]{16}|aws_secret_access_key|BEGIN (RSA|OPENSSH|EC) PR
   exit 1
 fi
 
+grep -q -- '--dry-run=server' "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
+grep -q 'helm upgrade --install asklake-web' "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
+if grep -q 'kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE"' \
+  "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"; then
+  echo "web workload upgrade preflight must preserve Helm field ownership" >&2
+  exit 1
+fi
+
 echo "EKS Phase 14 web workload contract verification passed."

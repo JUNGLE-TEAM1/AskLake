@@ -1,0 +1,9 @@
+{
+  "name": "asklake-eks-fixture-producer",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "aws-msk-iam-sasl-signer-js": "1.0.3",
+    "kafkajs": "2.2.4"
+  }
+}

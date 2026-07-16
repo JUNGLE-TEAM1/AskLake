@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 
 import duckdb
 
+from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse, CatalogDatasetRowsResponse
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,

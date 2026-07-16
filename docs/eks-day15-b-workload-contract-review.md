@@ -121,7 +121,7 @@ Backend/Airflow의 API password·execution/internal token과 Spark/Trino의 Iceb
 - executor ServiceAccount: `asklake-spark`
 - Spark Operator: 2.5.1, `asklake-dev` namespace만 감시
 
-FastAPI의 `asklake-backend` Role은 `SparkApplication` create/get/list/watch/delete와 Pod/Pod log/Event read만 가진다. `asklake-spark` Role은 Pod create/get/list/watch/delete와 Service/ConfigMap create/get/delete만 가진다. Secret read나 cluster-wide 권한은 없다.
+FastAPI의 `asklake-backend` Role은 `SparkApplication` create/get/list/watch/delete와 Pod/Pod log/Event read만 가진다. `asklake-spark` Role은 Pod create/get/list/watch/delete/deletecollection, Service/ConfigMap create/get/list/delete/deletecollection과 PVC cleanup-only get/list/delete/deletecollection을 가진다. 실제 Spark 4 shutdown cleanup에서 확인한 권한이며 PVC create/update/patch, Secret read와 cluster-wide 권한은 없다.
 
 이 Role/RoleBinding은 A foundation이 단독 소유한다. B workload chart의 중복 RBAC는 제거한다. 특히 Spark driver Role 이름은 양쪽 모두 `asklake-spark-driver`라 Helm 소유권 충돌이 나며, Backend Role은 이름이 다르더라도 같은 권한을 중복 부여한다.
 
@@ -192,7 +192,7 @@ Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같�
 10. A의 IngressClass/Params 기반에 최종 web route와 ALB가 적용돼 외부 `/`와 `/api/health`가 통과했다. RDS 복사는 rehearsal이며 EC2 rollback 원본과 cutover 전 delta gate가 남아 있다.
 11. 최신 `pair1` 병합에서 A의 foundation evidence와 B의 runtime·scheduler 계약을 문단 단위로 모두 보존한다.
 
-PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫혔다. Frontend/FastAPI workload rollout, 내부 live smoke와 외부 ALB web/API route도 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 따라서 web/RDS/MSK gate는 완료됐지만 S3 positive smoke까지 완료했다는 표현은 사용하지 않는다.
+PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫혔다. Frontend/FastAPI workload rollout, 내부 live smoke와 외부 ALB web/API route도 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 당시 B 기록만으로는 S3 positive smoke를 완료로 보지 않았으며, 후속 Issue #794의 Backend S3 runtime evidence가 그 gate를 별도로 완료했다.
 
 ## 9. `asklake-web` 정식 release probe·AMD64 gate (2026-07-15 B 검토)
 
