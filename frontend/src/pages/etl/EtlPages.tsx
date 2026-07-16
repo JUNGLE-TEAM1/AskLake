@@ -2646,6 +2646,8 @@ export function RecordParsingPage({
   const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [rawSampleExpanded, setRawSampleExpanded] = useState(true);
+  const [resultPreviewExpanded, setResultPreviewExpanded] = useState(true);
 
   const loadPreview = async (nextParsing: RecordParsingDraft) => {
     setLoading(true);
@@ -2757,10 +2759,22 @@ export function RecordParsingPage({
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
             <h2><FileText aria-hidden="true" />원본 샘플</h2>
+            <button
+              aria-controls="record-parsing-raw-sample"
+              aria-expanded={rawSampleExpanded}
+              aria-label={rawSampleExpanded ? "원본 샘플 접기" : "원본 샘플 펼치기"}
+              className="record-parsing-collapse-button"
+              type="button"
+              onClick={() => setRawSampleExpanded((expanded) => !expanded)}
+            >
+              {rawSampleExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+            </button>
           </div>
-          <div className="record-parsing-panel-body">
-            <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
-          </div>
+          {rawSampleExpanded ? (
+            <div className="record-parsing-panel-body" id="record-parsing-raw-sample">
+              <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+            </div>
+          ) : null}
         </section>
 
         <section className="panel record-parsing-panel">
@@ -2777,10 +2791,6 @@ export function RecordParsingPage({
                 <Sparkles aria-hidden="true" />
                 AI 필드 자동 추론
               </Button>
-              <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
-                {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
-                {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
-              </span>
             </div>
           </div>
           <div className="record-parsing-panel-body record-parsing-settings-body">
@@ -2834,15 +2844,27 @@ export function RecordParsingPage({
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
             <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
+            <button
+              aria-controls="record-parsing-result-preview"
+              aria-expanded={resultPreviewExpanded}
+              aria-label={resultPreviewExpanded ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
+              className="record-parsing-collapse-button"
+              type="button"
+              onClick={() => setResultPreviewExpanded((expanded) => !expanded)}
+            >
+              {resultPreviewExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+            </button>
           </div>
-          <div className="record-parsing-panel-body record-parsing-preview-body">
-            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-              <table className="schema-table record-parsing-preview-table">
-                <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
-                <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
-              </table>
-            </ScrollArea>
-          </div>
+          {resultPreviewExpanded ? (
+            <div className="record-parsing-panel-body record-parsing-preview-body" id="record-parsing-result-preview">
+              <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
+                <table className="schema-table record-parsing-preview-table">
+                  <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
+                  <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+                </table>
+              </ScrollArea>
+            </div>
+          ) : null}
         </section>
       )}
     </CreationFlowLayout>

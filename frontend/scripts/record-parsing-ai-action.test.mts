@@ -13,3 +13,15 @@ test("record parsing always renders the AI inference placeholder without preset 
     /data-testid="record-parsing-ai-button"[\s\S]{0,300}(?:disabled=|onClick=)/,
   );
 });
+
+test("record parsing keeps content focused and makes large previews collapsible", () => {
+  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(etlPagesSource, /record-parsing-source-strip/);
+  assert.doesNotMatch(etlPagesSource, /record-parsing-count/);
+  assert.doesNotMatch(etlPagesSource, /record-parsing-status/);
+  assert.match(etlPagesSource, /aria-controls="record-parsing-raw-sample"/);
+  assert.match(etlPagesSource, /aria-controls="record-parsing-result-preview"/);
+  assert.match(etlPagesSource, /aria-expanded=\{rawSampleExpanded\}/);
+  assert.match(etlPagesSource, /aria-expanded=\{resultPreviewExpanded\}/);
+});
