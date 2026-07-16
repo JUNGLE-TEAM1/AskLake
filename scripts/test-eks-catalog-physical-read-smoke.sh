@@ -190,7 +190,12 @@ if [[ "${1:-}" == "get" && "$*" == *"-o name"* ]]; then
   fi
   exit 0
 fi
-if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then echo "no"; exit 0; fi
+if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then
+  if [[ "${FAKE_MODE:-success}" == "secret-access-error" ]]; then exit 2; fi
+  if [[ "${FAKE_MODE:-success}" == "secret-access-allowed" ]]; then echo "yes"; exit 0; fi
+  echo "no"
+  exit 1
+fi
 
 echo "unexpected kubectl command" >&2
 exit 97
@@ -238,7 +243,8 @@ test "$(grep -c 'asklake.io/workload-class: spark' "$CAPTURED_MANIFEST")" -eq 2
 
 for failure_mode in \
   crd-unready operator-unready capacity-unready pod-identity-missing dry-run-failure apply-failure \
-  failed invalid-result zero-columns width-mismatch missing-result residue cleanup-failure audit-api-failure; do
+  failed invalid-result zero-columns width-mismatch missing-result residue cleanup-failure audit-api-failure \
+  secret-access-error secret-access-allowed; do
   : >"$FAKE_LOG"
   rm -f "$TEMP_DIR/prefix-count"
   FAKE_MODE="$failure_mode" assert_fails "$TEMP_DIR/${failure_mode}.out" run_live

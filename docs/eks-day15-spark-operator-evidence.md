@@ -48,7 +48,7 @@ resource 값은 이번 MVP controller용 시작값이다. 실제 동시 제출 �
 - `asklake-backend`가 SparkApplication을 생성할 RBAC를 가진다.
 - B PR #774의 실제 SparkApplication template이 server-side dry-run을 통과했다.
 - 설치 과정에서 SparkApplication은 생성하지 않았고 적용 후 개수도 0개다.
-- 후속 15.5 검증에서는 운영자가 Catalog API에서 선별한 Git 제외 입력과 receipt의 Spark runtime으로 대표 S3 Parquet object를 읽는 임시 SparkApplication이 `COMPLETED`됐고 정리 후 관련 resource 잔여가 0개였다. 재사용 실행기 자체의 증거 범위는 Catalog provenance가 아니라 bounded exact S3 Parquet object read다.
+- 후속 15.5 강화 검증에서는 현재 Catalog root 아래 non-empty exact Parquet object를 Git 제외 입력으로 고정하고 receipt의 Spark runtime으로 재실행했다. 임시 SparkApplication은 `COMPLETED`, 22 columns, bounded 5 rows와 width 일치를 반환했고 정리 후 관련 resource 잔여가 0개였다. 실제 `kubectl auth can-i` deny의 exit code 1을 정상 거부로 처리하고 allow/API 오류는 실패시키는 regression도 추가했다. 재사용 실행기의 증거 범위는 Trino/Catalog snapshot provenance가 아니라 bounded exact S3 Parquet object read다.
 - controller 최근 로그에서 error/fatal/panic은 확인되지 않았다.
 - destroy preflight가 exact release/version, 다른 Spark Operator release 부재, operator namespace 단독 사용, 세 workload kind 0개와 namespace ownership을 확인했고 아무것도 삭제하지 않은 채 통과했다.
 - Foundation verifier와 Terraform 1.15.8 validate 및 mock-provider test 44개가 통과했다.
