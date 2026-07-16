@@ -214,50 +214,7 @@ class ContinuousSqlService:
             )
 
         previous_run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
-        run = previous_run
-        external_action: str | None = None
-        if request.command == "start":
-            if job.desired_state != "stopped" or job.observed_state not in {"stopped", "failed"}:
-                self._invalid_transition(job, request.command)
-            run = self._new_run(job, observed_state="starting")
-            external_action = "start"
-        elif request.command == "recover":
-            if job.desired_state != "running" or job.observed_state not in {"failed", "stopped"}:
-                self._invalid_transition(job, request.command)
-            run = self._new_run(job, observed_state="recovering")
-            external_action = "recover"
-        elif request.command == "pause":
-            if job.desired_state == "paused" and job.observed_state in {"paused", "pausing"}:
-                external_action = None
-            elif job.desired_state != "running" or job.observed_state not in {"starting", "running", "recovering"}:
-                self._invalid_transition(job, request.command)
-            else:
-                job.desired_state = "paused"
-                job.observed_state = "pausing"
-                if run is not None:
-                    run.status = "pausing"
-                external_action = "pause"
-        elif request.command == "resume":
-            if job.desired_state != "paused" or job.observed_state not in {"paused", "failed"} or run is None:
-                self._invalid_transition(job, request.command)
-            job.desired_state = "running"
-            job.observed_state = "starting"
-            run.status = "starting"
-            run.ended_at = None
-            run.last_error_code = None
-            run.last_error_message = None
-            external_action = "start"
-        elif request.command == "stop":
-            if job.desired_state == "stopped" and job.observed_state == "stopped":
-                external_action = None
-            else:
-                job.desired_state = "stopped"
-                job.observed_state = "stopping"
-                if run is not None:
-                    run.status = "stopping"
-                external_action = "stop"
-        else:  # Pydantic prevents this, but keep the transition boundary explicit.
-            self._invalid_transition(job, request.command)
+        run, external_action = self._transition_command(job, previous_run, request.command)
 
         command = ContinuousSqlCommandModel(
             id=f"{job.id}:{request.command_id}",
@@ -293,6 +250,58 @@ class ContinuousSqlService:
             command_id=request.command_id,
             job=self._job_schema(refreshed),
         )
+
+    def _transition_command(
+        self,
+        job: ContinuousSqlJobModel,
+        previous_run: ContinuousSqlRunModel | None,
+        command: str,
+    ) -> tuple[ContinuousSqlRunModel | None, str | None]:
+        run = previous_run
+        external_action: str | None = None
+        if command == "start":
+            if job.desired_state != "stopped" or job.observed_state not in {"stopped", "failed"}:
+                self._invalid_transition(job, command)
+            run = self._new_run(job, observed_state="starting")
+            external_action = "start"
+        elif command == "recover":
+            if job.desired_state != "running" or job.observed_state not in {"failed", "stopped"}:
+                self._invalid_transition(job, command)
+            run = self._new_run(job, observed_state="recovering")
+            external_action = "recover"
+        elif command == "pause":
+            if job.desired_state == "paused" and job.observed_state in {"paused", "pausing"}:
+                external_action = None
+            elif job.desired_state != "running" or job.observed_state not in {"starting", "running", "recovering"}:
+                self._invalid_transition(job, command)
+            else:
+                job.desired_state = "paused"
+                job.observed_state = "pausing"
+                if run is not None:
+                    run.status = "pausing"
+                external_action = "pause"
+        elif command == "resume":
+            if job.desired_state != "paused" or job.observed_state not in {"paused", "failed"} or run is None:
+                self._invalid_transition(job, command)
+            job.desired_state = "running"
+            job.observed_state = "starting"
+            run.status = "starting"
+            run.ended_at = None
+            run.last_error_code = None
+            run.last_error_message = None
+            external_action = "start"
+        elif command == "stop":
+            if job.desired_state == "stopped" and job.observed_state == "stopped":
+                external_action = None
+            else:
+                job.desired_state = "stopped"
+                job.observed_state = "stopping"
+                if run is not None:
+                    run.status = "stopping"
+                external_action = "stop"
+        else:  # Pydantic prevents this, but keep the transition boundary explicit.
+            self._invalid_transition(job, command)
+        return run, external_action
 
     def list_batches(
         self,

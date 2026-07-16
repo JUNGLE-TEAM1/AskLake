@@ -40,6 +40,99 @@ def load_continuous_sql_plan() -> dict[str, Any]:
     return value
 
 
+def report_metadata(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "continuousSqlPlanHash": plan.get("planHash") if plan else None,
+        "continuousSqlRunGeneration": plan.get("runGeneration") if plan else None,
+        "continuousSqlFencingTokenHash": fencing_token_hash(plan) if plan else None,
+    }
+
+
+def contract_metadata(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "continuousSqlPlanHash": plan.get("planHash") if plan else None,
+        "continuousSqlStaticBindingPolicy": plan.get("staticBindingPolicy") if plan else None,
+    }
+
+
+def publication_metadata(
+    plan: dict[str, Any],
+    static_snapshots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "staticSnapshots": static_snapshots,
+        **report_metadata(plan),
+    }
+
+
+def batch_context_metadata(
+    source_boundary: dict[str, Any],
+    static_snapshots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "source_boundary": source_boundary,
+        "static_snapshots": static_snapshots,
+        "run_id": str(source_boundary["runId"]),
+    }
+
+
+def prepare_batch_identity(
+    spark: Any,
+    plan: dict[str, Any],
+    output_path: str,
+    batch_id: int,
+    source_ranges: list[dict[str, Any]],
+    checkpoint_path: str,
+    config: Any,
+    job_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    static_snapshots = prepare_batch_static_bindings(spark, plan, output_path, batch_id) if plan else []
+    identity = {
+        "batchId": int(batch_id),
+        "checkpointPath": checkpoint_path.rstrip("/"),
+        "consumerGroupId": str(config.consumer_group_id),
+        "jobId": job_id,
+        "kind": "kafka_continuous_batch",
+        "sourceRanges": source_ranges,
+        "topic": str(config.topic),
+    }
+    if plan:
+        identity.update({
+            "fencingTokenHash": fencing_token_hash(plan),
+            "kind": "continuous_sql_batch",
+            "planHash": str(plan["planHash"]),
+            "runGeneration": int(plan["runGeneration"]),
+            "staticSnapshots": static_snapshots,
+        })
+    boundary_id = canonical_hash(identity)
+    run_id = (
+        f"continuous-sql:{job_id}:generation:{int(plan['runGeneration'])}:batch:{batch_id}:{boundary_id[:16]}"
+        if plan else f"continuous:{job_id}:batch:{batch_id}:{boundary_id[:16]}"
+    )
+    return static_snapshots, {**identity, "boundaryId": boundary_id, "runId": run_id}
+
+
+def enforce_output_cardinality(
+    plan: dict[str, Any],
+    input_count: int,
+    output_count: int,
+) -> None:
+    if not plan:
+        return
+    multiplier = max(1, int(plan.get("maxOutputRowsPerInput") or 10))
+    if output_count > input_count * multiplier:
+        raise RuntimeError(
+            "CONTINUOUS_SQL_CARDINALITY_LIMIT_EXCEEDED:"
+            f"input={input_count},output={output_count},limit={multiplier}x"
+        )
+
+
+def validated_output_count(frame: Any, plan: dict[str, Any], input_count: int) -> int:
+    output_count = int(frame.count())
+    enforce_output_cardinality(plan, input_count, output_count)
+    return output_count
+
+
 def validate_runtime_plan(plan: dict[str, Any]) -> None:
     if str(plan.get("planVersion") or "") != PLAN_VERSION:
         raise RuntimeError("CONTINUOUS_SQL_PLAN_VERSION_UNSUPPORTED")

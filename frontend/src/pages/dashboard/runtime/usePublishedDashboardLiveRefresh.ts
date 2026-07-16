@@ -256,14 +256,74 @@ export function usePublishedDashboardLiveRefresh({
       }
     }
 
-    async function poll() {
-      if (
-        cancelled
-        || document.visibilityState === "hidden"
-        || pollingStrategy() === "suspended"
-      ) {
+    async function refreshDueDatasets(
+      dueDatasetIds: string[],
+      controller: AbortController,
+    ) {
+      let freshnessResponse;
+      try {
+        freshnessResponse = await queryDashboardDatasetFreshness(dueDatasetIds, {
+          signal: controller.signal,
+          timeoutMs: DASHBOARD_LIVE_REFRESH_REQUEST_TIMEOUT_MS,
+        });
+      } catch {
+        if (!cancelled && !controller.signal.aborted) {
+          const retryAt = Date.now() + DASHBOARD_LIVE_REFRESH_DEFAULT_MS;
+          dueDatasetIds.forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, retryAt));
+        }
         return;
       }
+      if (cancelled || controller.signal.aborted) return;
+      const freshnessDatasets = Array.isArray(freshnessResponse.datasets)
+        ? freshnessResponse.datasets
+        : [];
+      const freshnessByDatasetId = new Map(
+        freshnessDatasets.map((dataset) => [dataset.datasetId, dataset]),
+      );
+      const scheduledAt = Date.now();
+      const strategy = pollingStrategy();
+      dueDatasetIds.forEach((datasetId) => {
+        const freshness = freshnessByDatasetId.get(datasetId);
+        if (freshness && !freshness.isContinuous) {
+          eligibleDatasetIds.delete(datasetId);
+          nextCheckAtByDatasetId.delete(datasetId);
+          return;
+        }
+        const normalInterval = dashboardLiveRefreshInterval(
+          freshness?.nextCheckAfterMs,
+          datasetId,
+        );
+        nextCheckAtByDatasetId.set(
+          datasetId,
+          scheduledAt + (strategy === "safety"
+            ? Math.max(normalInterval, safetyPollAfterMs)
+            : normalInterval),
+        );
+      });
+      const staleWidgetIds = staleDashboardWidgetIds(runtimeRef.current, freshnessDatasets);
+      if (staleWidgetIds.length === 0) return;
+      try {
+        const widgetResponse = await queryPublishedDashboardWidgets(dashboardId, staleWidgetIds, {
+          signal: controller.signal,
+          timeoutMs: DASHBOARD_LIVE_REFRESH_REQUEST_TIMEOUT_MS,
+        });
+        if (cancelled || controller.signal.aborted) return;
+        const refreshedWidgets = Array.isArray(widgetResponse.widgets) ? widgetResponse.widgets : [];
+        const catchUpAt = Date.now() + DASHBOARD_LIVE_CATCH_UP_MS;
+        dashboardLiveCatchUpDatasetIds(runtimeRef.current, refreshedWidgets, freshnessDatasets)
+          .forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, catchUpAt));
+        setPublishedRuntime((current) => {
+          const merged = mergePublishedDashboardWidgets(current, dashboardId, refreshedWidgets);
+          runtimeRef.current = merged;
+          return merged;
+        });
+      } catch {
+        // Background refresh keeps the last successfully rendered widget result.
+      }
+    }
+
+    async function poll() {
+      if (cancelled || document.visibilityState === "hidden" || pollingStrategy() === "suspended") return;
       if (inFlight) {
         clearTimer();
         timer = window.setTimeout(() => {
@@ -272,7 +332,6 @@ export function usePublishedDashboardLiveRefresh({
         }, 50);
         return;
       }
-
       const now = Date.now();
       const dueDatasetIds = Array.from(eligibleDatasetIds).filter(
         (datasetId) => (nextCheckAtByDatasetId.get(datasetId) ?? now) <= now,
@@ -281,81 +340,11 @@ export function usePublishedDashboardLiveRefresh({
         scheduleNextPoll();
         return;
       }
-
       inFlight = true;
       const controller = new AbortController();
       requestController = controller;
-
       try {
-        let freshnessResponse;
-        try {
-          freshnessResponse = await queryDashboardDatasetFreshness(dueDatasetIds, {
-            signal: controller.signal,
-            timeoutMs: DASHBOARD_LIVE_REFRESH_REQUEST_TIMEOUT_MS,
-          });
-        } catch {
-          if (!cancelled && !controller.signal.aborted) {
-            const retryAt = Date.now() + DASHBOARD_LIVE_REFRESH_DEFAULT_MS;
-            dueDatasetIds.forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, retryAt));
-          }
-          return;
-        }
-
-        if (cancelled || controller.signal.aborted) return;
-        const freshnessDatasets = Array.isArray(freshnessResponse.datasets)
-          ? freshnessResponse.datasets
-          : [];
-        const freshnessByDatasetId = new Map(
-          freshnessDatasets.map((dataset) => [dataset.datasetId, dataset]),
-        );
-        const scheduledAt = Date.now();
-        const strategy = pollingStrategy();
-
-        dueDatasetIds.forEach((datasetId) => {
-          const freshness = freshnessByDatasetId.get(datasetId);
-          if (freshness && !freshness.isContinuous) {
-            eligibleDatasetIds.delete(datasetId);
-            nextCheckAtByDatasetId.delete(datasetId);
-            return;
-          }
-          const normalInterval = dashboardLiveRefreshInterval(
-            freshness?.nextCheckAfterMs,
-            datasetId,
-          );
-          nextCheckAtByDatasetId.set(
-            datasetId,
-            scheduledAt + (
-              strategy === "safety"
-                ? Math.max(normalInterval, safetyPollAfterMs)
-                : normalInterval
-            ),
-          );
-        });
-
-        const staleWidgetIds = staleDashboardWidgetIds(
-          runtimeRef.current,
-          freshnessDatasets,
-        );
-        if (staleWidgetIds.length === 0) return;
-
-        try {
-          const widgetResponse = await queryPublishedDashboardWidgets(dashboardId, staleWidgetIds, {
-            signal: controller.signal,
-            timeoutMs: DASHBOARD_LIVE_REFRESH_REQUEST_TIMEOUT_MS,
-          });
-          if (cancelled || controller.signal.aborted) return;
-          const refreshedWidgets = Array.isArray(widgetResponse.widgets) ? widgetResponse.widgets : [];
-          const catchUpAt = Date.now() + DASHBOARD_LIVE_CATCH_UP_MS;
-          dashboardLiveCatchUpDatasetIds(runtimeRef.current, refreshedWidgets, freshnessDatasets)
-            .forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, catchUpAt));
-          setPublishedRuntime((current) => {
-            const merged = mergePublishedDashboardWidgets(current, dashboardId, refreshedWidgets);
-            runtimeRef.current = merged;
-            return merged;
-          });
-        } catch {
-          // Background refresh keeps the last successfully rendered widget result.
-        }
+        await refreshDueDatasets(dueDatasetIds, controller);
       } finally {
         if (requestController === controller) requestController = null;
         inFlight = false;

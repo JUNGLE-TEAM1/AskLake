@@ -6,6 +6,22 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def catalog_relation_metadata(
+    row_count: int,
+    formatted_rows: str,
+    is_streaming: bool,
+    schema_fingerprint: Any,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "rows": formatted_rows,
+        "estimatedRowCount": int(row_count),
+        "relationMode": "streaming" if is_streaming else "static",
+    }
+    if schema_fingerprint:
+        metadata["schemaFingerprint"] = str(schema_fingerprint)
+    return metadata
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetIdentity:
     dataset_id: str

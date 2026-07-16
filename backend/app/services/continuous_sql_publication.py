@@ -48,6 +48,24 @@ class ContinuousSqlPublicationService:
         publication: dict[str, Any],
     ) -> ContinuousSqlBatchModel:
         evidence = validate_publication_identity(job, run, publication)
+        batch = self._stage_manifest_batch(job, run, evidence)
+        if batch.stage == "dashboard_ready" or evidence["rowCount"] == 0:
+            return batch
+
+        verified = self._verify_output_commit(job, run, evidence)
+        if verified is None:
+            failed_batch = self.repository.get_batch(job.id, run.generation, evidence["batchId"])
+            if failed_batch is None:
+                raise ContinuousSqlPublicationError("CONTINUOUS_SQL_BATCH_MISSING")
+            return failed_batch
+        return self._publish_verified_commit(job, run, evidence, verified)
+
+    def _stage_manifest_batch(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+        evidence: dict[str, Any],
+    ) -> ContinuousSqlBatchModel:
         batch = ContinuousSqlBatchModel(
             id=f"{job.id}:{run.generation}:{evidence['batchId']}",
             job_id=job.id,
@@ -76,7 +94,14 @@ class ContinuousSqlPublicationService:
             self.db.commit()
             return batch
         self.db.commit()
+        return batch
 
+    def _verify_output_commit(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+        evidence: dict[str, Any],
+    ) -> Any | None:
         target = IcebergWriterTarget.model_validate(job.output_target)
         commit = evidence["icebergCommit"]
         snapshot_id = str(commit.get("snapshotId") or "").strip()
@@ -111,8 +136,16 @@ class ContinuousSqlPublicationService:
             batch.last_error_message = str(exc)
             self.db.add(batch)
             self.db.commit()
-            return batch
+            return None
+        return verified
 
+    def _publish_verified_commit(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+        evidence: dict[str, Any],
+        verified: Any,
+    ) -> ContinuousSqlBatchModel:
         batch = self.repository.get_batch(job.id, run.generation, evidence["batchId"])
         if batch is None:
             raise ContinuousSqlPublicationError("CONTINUOUS_SQL_BATCH_MISSING")
@@ -156,6 +189,44 @@ class ContinuousSqlPublicationService:
     ) -> CatalogDatasetModel:
         existing = self.catalog_repository.get_dataset_model_for_update(job.output_dataset_id)
         previous_payload = dict(existing.payload or {}) if existing is not None else {}
+        payload, output_schema, relation_ids, now = self._catalog_payload(
+            job, evidence, verified, previous_payload,
+        )
+        values = {
+            "payload": payload,
+            "name": job.output_dataset_name,
+            "description": payload["description"],
+            "owner": job.owner,
+            "layer": job.output_layer,
+            "status": "available",
+            "freshness": "latest",
+            "source": job.name,
+            "rows": payload["rows"],
+            "size": payload["size"],
+            "quality": payload["quality"],
+            "last_updated": now,
+            "next_refresh": payload["nextRefresh"],
+            "rag": payload["rag"],
+            "tags": payload["tags"],
+            "schema_json": output_schema,
+            "sample_rows": payload["sampleRows"],
+            "upstream": relation_ids,
+            "downstream": payload["downstream"],
+            "lineage_graph": previous_payload.get("lineageGraph"),
+        }
+        if existing is None:
+            return CatalogDatasetModel(id=job.output_dataset_id, **values)
+        for key, value in values.items():
+            setattr(existing, key, value)
+        return existing
+
+    @staticmethod
+    def _catalog_payload(
+        job: ContinuousSqlJobModel,
+        evidence: dict[str, Any],
+        verified: dict[str, Any],
+        previous_payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[list[str]], list[str], str]:
         now = str(evidence["publishedAt"] or datetime.now(UTC).isoformat())
         materialization_run = {
             "createdAt": now,
@@ -194,7 +265,7 @@ class ContinuousSqlPublicationService:
             for item in job.relation_bindings or []
             if isinstance(item, dict) and str(item.get("datasetId") or "")
         ]
-        payload = {
+        payload: dict[str, Any] = {
             **previous_payload,
             "createdBy": previous_payload.get("createdBy") or job.created_by,
             "description": previous_payload.get("description") or f"Continuous SQL output for {job.name}",
@@ -232,33 +303,7 @@ class ContinuousSqlPublicationService:
             "tags": previous_payload.get("tags") or ["continuous-sql"],
             "upstream": relation_ids,
         }
-        values = {
-            "payload": payload,
-            "name": job.output_dataset_name,
-            "description": payload["description"],
-            "owner": job.owner,
-            "layer": job.output_layer,
-            "status": "available",
-            "freshness": "latest",
-            "source": job.name,
-            "rows": payload["rows"],
-            "size": payload["size"],
-            "quality": payload["quality"],
-            "last_updated": now,
-            "next_refresh": payload["nextRefresh"],
-            "rag": payload["rag"],
-            "tags": payload["tags"],
-            "schema_json": output_schema,
-            "sample_rows": payload["sampleRows"],
-            "upstream": relation_ids,
-            "downstream": payload["downstream"],
-            "lineage_graph": previous_payload.get("lineageGraph"),
-        }
-        if existing is None:
-            return CatalogDatasetModel(id=job.output_dataset_id, **values)
-        for key, value in values.items():
-            setattr(existing, key, value)
-        return existing
+        return payload, output_schema, relation_ids, now
 
 
 def validate_publication_identity(

@@ -131,118 +131,14 @@ class ContinuousSqlPlanner:
         self._validate_query_shape(expression)
         cte_relations = self._resolve_ctes(expression, relation_index)
 
-        base_table = select_base_table(expression)
-        base = bind_table(base_table, relation_index, cte_relations, relation_list)
-        bound_relations = [base]
-        alias_map = {normalize_identifier(base.alias): base}
-        joins = list(expression.args.get("joins") or [])
-        if not joins:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_STATIC_RELATION_REQUIRED",
-                "Continuous SQL requires at least one static JOIN relation.",
-            )
+        base, bound_relations, alias_map, joins = self._bind_relations(
+            expression, relation_index, cte_relations, relation_list,
+        )
+        streaming, static = self._validate_relation_modes(base, bound_relations)
 
-        for join in joins:
-            if not isinstance(join, exp.Join) or join.parent is not expression:
-                raise ContinuousSqlValidationError(
-                    "CONTINUOUS_SQL_NESTED_JOIN_UNSUPPORTED",
-                    "Nested JOINs are not supported in Continuous SQL V1.",
-                )
-            if not isinstance(join.this, exp.Table):
-                raise ContinuousSqlValidationError(
-                    "CONTINUOUS_SQL_RELATION_UNSUPPORTED",
-                    "JOIN targets must be Catalog relations.",
-                )
-            bound = bind_table(join.this, relation_index, cte_relations, relation_list)
-            alias_key = normalize_identifier(bound.alias)
-            if alias_key in alias_map:
-                raise ContinuousSqlValidationError(
-                    "CONTINUOUS_SQL_ALIAS_AMBIGUOUS",
-                    "Every Continuous SQL relation must use a distinct alias.",
-                    {"alias": bound.alias},
-                )
-            alias_map[alias_key] = bound
-            bound_relations.append(bound)
-
-        streaming = [item for item in bound_relations if item.relation.mode == "streaming"]
-        static = [item for item in bound_relations if item.relation.mode == "static"]
-        if len(streaming) != 1:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_STREAM_COUNT_INVALID",
-                "Continuous SQL V1 requires exactly one streaming relation.",
-                {"streamingRelationCount": len(streaming)},
-            )
-        if not static:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_STATIC_RELATION_REQUIRED",
-                "Continuous SQL V1 requires at least one static relation.",
-            )
-        if base.relation.mode != "streaming":
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_STREAM_MUST_BE_LEFT",
-                "The streaming relation must be the logical left input.",
-                {"leftDatasetId": base.relation.dataset_id},
-            )
-
-        referenced_columns: dict[str, set[str]] = {
-            normalize_identifier(item.alias): set() for item in bound_relations
-        }
-        compiled_joins: list[dict[str, Any]] = []
-        left_aliases = {normalize_identifier(base.alias)}
-        for join, right in zip(joins, bound_relations[1:], strict=True):
-            if right.relation.mode != "static":
-                raise ContinuousSqlValidationError(
-                    "CONTINUOUS_SQL_STREAM_STREAM_JOIN_UNSUPPORTED",
-                    "Stream-stream JOIN is not supported in Continuous SQL V1.",
-                    {"datasetId": right.relation.dataset_id},
-                )
-            join_type = normalize_join_type(join)
-            right_alias = normalize_identifier(right.alias)
-            predicates = equality_predicates(join)
-            right_keys: list[str] = []
-            compiled_keys: list[dict[str, str]] = []
-            for predicate in predicates:
-                left_column, right_column = orient_join_key(
-                    predicate,
-                    alias_map,
-                    left_aliases,
-                    right_alias,
-                )
-                left_owner, left_name, left_type = resolve_column(left_column, alias_map)
-                right_owner, right_name, right_type = resolve_column(right_column, alias_map)
-                if left_owner not in left_aliases or right_owner != right_alias:
-                    raise ContinuousSqlValidationError(
-                        "CONTINUOUS_SQL_JOIN_KEY_ORIENTATION_INVALID",
-                        "JOIN equality keys must connect the left input to the current static relation.",
-                    )
-                if not compatible_join_types(left_type, right_type):
-                    raise ContinuousSqlValidationError(
-                        "CONTINUOUS_SQL_JOIN_KEY_TYPE_MISMATCH",
-                        "JOIN equality key types are incompatible.",
-                        {
-                            "leftColumn": left_name,
-                            "leftType": left_type,
-                            "rightColumn": right_name,
-                            "rightType": right_type,
-                        },
-                    )
-                referenced_columns[left_owner].add(left_name)
-                referenced_columns[right_owner].add(right_name)
-                right_keys.append(normalize_identifier(right_name))
-                compiled_keys.append({
-                    "leftAlias": alias_map[left_owner].alias,
-                    "leftColumn": left_name,
-                    "rightAlias": right.alias,
-                    "rightColumn": right_name,
-                })
-            require_unique_static_key(right, right_keys)
-            compiled_joins.append({
-                "type": join_type,
-                "rightAlias": right.alias,
-                "rightDatasetId": right.relation.dataset_id,
-                "keys": compiled_keys,
-            })
-            left_aliases.add(right_alias)
+        referenced_columns, compiled_joins = self._compile_joins(
+            base, joins, bound_relations, alias_map,
+        )
 
         self._validate_all_columns(expression, alias_map, referenced_columns)
         output_schema = compile_output_schema(expression, alias_map, referenced_columns)
@@ -286,6 +182,133 @@ class ContinuousSqlPlanner:
             plan_hash=plan_hash,
             plan=plan,
         )
+
+    @staticmethod
+    def _bind_relations(
+        expression: exp.Select,
+        relation_index: dict[str, list[CatalogRelation]],
+        cte_relations: dict[str, CatalogRelation],
+        relation_list: list[CatalogRelation],
+    ) -> tuple[_BoundRelation, list[_BoundRelation], dict[str, _BoundRelation], list[exp.Join]]:
+        base = bind_table(select_base_table(expression), relation_index, cte_relations, relation_list)
+        bound_relations = [base]
+        alias_map = {normalize_identifier(base.alias): base}
+        joins = list(expression.args.get("joins") or [])
+        if not joins:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STATIC_RELATION_REQUIRED",
+                "Continuous SQL requires at least one static JOIN relation.",
+            )
+        for join in joins:
+            if not isinstance(join, exp.Join) or join.parent is not expression:
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_NESTED_JOIN_UNSUPPORTED",
+                    "Nested JOINs are not supported in Continuous SQL V1.",
+                )
+            if not isinstance(join.this, exp.Table):
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_RELATION_UNSUPPORTED",
+                    "JOIN targets must be Catalog relations.",
+                )
+            bound = bind_table(join.this, relation_index, cte_relations, relation_list)
+            alias_key = normalize_identifier(bound.alias)
+            if alias_key in alias_map:
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_ALIAS_AMBIGUOUS",
+                    "Every Continuous SQL relation must use a distinct alias.",
+                    {"alias": bound.alias},
+                )
+            alias_map[alias_key] = bound
+            bound_relations.append(bound)
+        return base, bound_relations, alias_map, joins
+
+    @staticmethod
+    def _validate_relation_modes(
+        base: _BoundRelation,
+        bound_relations: list[_BoundRelation],
+    ) -> tuple[list[_BoundRelation], list[_BoundRelation]]:
+        streaming = [item for item in bound_relations if item.relation.mode == "streaming"]
+        static = [item for item in bound_relations if item.relation.mode == "static"]
+        if len(streaming) != 1:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_COUNT_INVALID",
+                "Continuous SQL V1 requires exactly one streaming relation.",
+                {"streamingRelationCount": len(streaming)},
+            )
+        if not static:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STATIC_RELATION_REQUIRED",
+                "Continuous SQL V1 requires at least one static relation.",
+            )
+        if base.relation.mode != "streaming":
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_MUST_BE_LEFT",
+                "The streaming relation must be the logical left input.",
+                {"leftDatasetId": base.relation.dataset_id},
+            )
+        return streaming, static
+
+    @staticmethod
+    def _compile_joins(
+        base: _BoundRelation,
+        joins: list[exp.Join],
+        bound_relations: list[_BoundRelation],
+        alias_map: dict[str, _BoundRelation],
+    ) -> tuple[dict[str, set[str]], list[dict[str, Any]]]:
+        referenced_columns = {
+            normalize_identifier(item.alias): set() for item in bound_relations
+        }
+        compiled_joins: list[dict[str, Any]] = []
+        left_aliases = {normalize_identifier(base.alias)}
+        for join, right in zip(joins, bound_relations[1:], strict=True):
+            if right.relation.mode != "static":
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_STREAM_STREAM_JOIN_UNSUPPORTED",
+                    "Stream-stream JOIN is not supported in Continuous SQL V1.",
+                    {"datasetId": right.relation.dataset_id},
+                )
+            join_type = normalize_join_type(join)
+            right_alias = normalize_identifier(right.alias)
+            right_keys: list[str] = []
+            compiled_keys: list[dict[str, str]] = []
+            for predicate in equality_predicates(join):
+                left_column, right_column = orient_join_key(
+                    predicate, alias_map, left_aliases, right_alias,
+                )
+                left_owner, left_name, left_type = resolve_column(left_column, alias_map)
+                right_owner, right_name, right_type = resolve_column(right_column, alias_map)
+                if left_owner not in left_aliases or right_owner != right_alias:
+                    raise ContinuousSqlValidationError(
+                        "CONTINUOUS_SQL_JOIN_KEY_ORIENTATION_INVALID",
+                        "JOIN equality keys must connect the left input to the current static relation.",
+                    )
+                if not compatible_join_types(left_type, right_type):
+                    raise ContinuousSqlValidationError(
+                        "CONTINUOUS_SQL_JOIN_KEY_TYPE_MISMATCH",
+                        "JOIN equality key types are incompatible.",
+                        {
+                            "leftColumn": left_name, "leftType": left_type,
+                            "rightColumn": right_name, "rightType": right_type,
+                        },
+                    )
+                referenced_columns[left_owner].add(left_name)
+                referenced_columns[right_owner].add(right_name)
+                right_keys.append(normalize_identifier(right_name))
+                compiled_keys.append({
+                    "leftAlias": alias_map[left_owner].alias,
+                    "leftColumn": left_name,
+                    "rightAlias": right.alias,
+                    "rightColumn": right_name,
+                })
+            require_unique_static_key(right, right_keys)
+            compiled_joins.append({
+                "type": join_type,
+                "rightAlias": right.alias,
+                "rightDatasetId": right.relation.dataset_id,
+                "keys": compiled_keys,
+            })
+            left_aliases.add(right_alias)
+        return referenced_columns, compiled_joins
 
     def _validate_query_shape(self, expression: exp.Select) -> None:
         forbidden_args = {

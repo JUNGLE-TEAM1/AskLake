@@ -147,7 +147,7 @@ class RealtimeEventRepositoryTests(unittest.TestCase):
         live_repository = DashboardLiveRepository(self.db)
         with (
             patch(
-                "app.repositories.dashboard_live_repository.settings.realtime_events_enabled",
+                "app.services.dashboard_realtime_bridge.settings.realtime_events_enabled",
                 True,
             ),
             patch.object(
@@ -176,7 +176,7 @@ class RealtimeEventRepositoryTests(unittest.TestCase):
     def test_dataset_revision_produces_small_versioned_event(self) -> None:
         live_repository = DashboardLiveRepository(self.db)
         with patch(
-            "app.repositories.dashboard_live_repository.settings.realtime_events_enabled",
+            "app.services.dashboard_realtime_bridge.settings.realtime_events_enabled",
             True,
         ):
             commit, created = live_repository.record_dataset_commit(

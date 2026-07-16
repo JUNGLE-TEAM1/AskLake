@@ -9,7 +9,6 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.base import Base
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -19,7 +18,7 @@ from app.models.dashboard_live import (
 )
 from app.models.etl import ETLJobModel
 from app.models.catalog import CatalogDatasetModel
-from app.repositories.realtime_event_repository import RealtimeEventRepository
+from app.services.dashboard_realtime_bridge import append_dataset_revision_event
 
 
 DEFAULT_DASHBOARD_POLL_MS = 1_000
@@ -440,7 +439,6 @@ class DashboardLiveRepository:
                 raise ValueError("Kafka revision requires a durable storage location")
             if normalized_manifest_location is None:
                 raise ValueError("Kafka revision requires a publication manifest")
-
         existing_commit = self.commit_by_run_id(run_id)
         if existing_commit is not None:
             existing_ranges = normalize_kafka_source_ranges(
@@ -526,24 +524,7 @@ class DashboardLiveRepository:
         self.db.add(commit)
         self.db.add(freshness)
         self.db.flush()
-        if settings.realtime_events_enabled:
-            RealtimeEventRepository(self.db).append(
-                event_type="dataset.revision.committed",
-                resource_type="dataset",
-                resource_id=dataset_id,
-                aggregate_revision=revision,
-                correlation_id=run_id,
-                idempotency_key=f"dataset:{dataset_id}:revision:{revision}",
-                invalidations=[
-                    f"dataset:{dataset_id}:freshness",
-                    f"dashboard-widgets-by-dataset:{dataset_id}",
-                ],
-                payload={
-                    "runId": run_id,
-                    "commitKind": normalized_commit_kind,
-                },
-                occurred_at=now,
-            )
+        append_dataset_revision_event(self.db, dataset_id, revision, run_id, normalized_commit_kind, now)
         return commit, True
 
     def list_commits(
