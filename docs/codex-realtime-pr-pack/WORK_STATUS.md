@@ -12,7 +12,7 @@ last_result: DONE
 updated_at: 2026-07-16
 base_branch: dev
 synced_dev: ef385bb9
-refactor_prerequisite: "#843 (refactor-#842)"
+refactor_prerequisite: "#846 (refactor-#844)"
 merge_order:
   - STACK-01
   - STACK-02
@@ -83,7 +83,7 @@ merge_order:
 ### STACK-04
 
 - 시작 기준: `feat-#816`의 `243b70a5`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
-- 최신 동기화 기준: `origin/dev@ef385bb9`와 refactor prerequisite `refactor-#842` / #843을 4개 branch에 순서대로 반영했다.
+- 최신 동기화 기준: `origin/dev@ef385bb9`와 refactor prerequisite `refactor-#844` / #846을 4개 branch에 순서대로 반영했다.
 - Issue/branch: #823 / `feat-#823`.
 - Draft PR: #826 (`feat-#823 -> dev`), 선행 #822 merge 후 review-ready 전환.
 - backend recovery/security/Continuous SQL focused 69 tests, frontend UI 136 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.

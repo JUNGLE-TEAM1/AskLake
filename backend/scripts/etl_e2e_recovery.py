@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -128,7 +129,11 @@ def safe_environment(spec: dict[str, Any], correlation_id: str) -> dict[str, str
 
 def resolved_command(spec: dict[str, Any]) -> list[str]:
     python = os.environ.get("ASKLAKE_FASTAPI_PYTHON") or sys.executable
-    return [python if value == "{python}" else str(value) for value in spec["command"]]
+    command = [python if value == "{python}" else str(value) for value in spec["command"]]
+    executable = shutil.which(command[0])
+    if executable:
+        command[0] = executable
+    return command
 
 
 def redact(value: str) -> str:
@@ -159,6 +164,8 @@ def run_check(check_id: str, spec: dict[str, Any], correlation_id: str, dry_run:
             env=safe_environment(spec, correlation_id),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=int(spec["timeoutSeconds"]),
             check=False,
         )
@@ -179,6 +186,15 @@ def run_check(check_id: str, spec: dict[str, Any], correlation_id: str, dry_run:
             "status": "timed_out",
             "stdout": output_tail(_decoded(error.stdout)),
             "stderr": output_tail(_decoded(error.stderr)),
+        }
+    except OSError as error:
+        return {
+            **base,
+            "durationMs": round((time.monotonic() - started) * 1000),
+            "exitCode": None,
+            "status": "failed",
+            "stdout": "",
+            "stderr": output_tail(str(error)),
         }
 
 

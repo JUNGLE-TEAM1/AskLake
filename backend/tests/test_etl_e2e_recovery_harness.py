@@ -67,6 +67,11 @@ class EtlE2eRecoveryHarnessTests(unittest.TestCase):
         self.assertLess(set(pr), set(release))
         self.assertLess(set(release), set(nightly))
 
+    def test_pr_checks_do_not_depend_on_posix_shell_assignment(self) -> None:
+        backward = self.registry["checks"]["backward-compatibility"]
+        self.assertEqual(backward["command"][0], "{python}")
+        self.assertEqual(backward["environment"]["PYTHONPATH"], ".")
+
     def test_nightly_requires_an_explicit_loopback_isolated_environment(self) -> None:
         with self.assertRaisesRegex(ValueError, "ISOLATED_ENV"):
             harness.guard_isolated_profile("nightly", {})
@@ -91,6 +96,28 @@ class EtlE2eRecoveryHarnessTests(unittest.TestCase):
         self.assertNotIn("MINIO_SECRET_KEY", environment)
         self.assertEqual(environment["SAFE_VALUE"], "kept")
         self.assertEqual(environment["ASKLAKE_CORRELATION_ID"], "e2e-test")
+
+    def test_command_resolves_platform_launcher(self) -> None:
+        with patch("etl_e2e_recovery.shutil.which", return_value="C:/tools/npm.cmd"):
+            command = harness.resolved_command({"command": ["npm", "run", "test"]})
+        self.assertEqual(command, ["C:/tools/npm.cmd", "run", "test"])
+
+    def test_check_decodes_utf8_output_independent_of_host_locale(self) -> None:
+        result = harness.run_check(
+            "utf8-output",
+            {
+                "command": [
+                    "{python}", "-c",
+                    "import sys; sys.stdout.buffer.write('✓ 한글'.encode('utf-8'))",
+                ],
+                "cwd": "backend",
+                "timeoutSeconds": 10,
+            },
+            "e2e-test",
+            False,
+        )
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["stdout"], "✓ 한글")
 
     def test_dry_run_writes_json_junit_and_human_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
