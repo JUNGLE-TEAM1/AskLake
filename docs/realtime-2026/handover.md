@@ -17,7 +17,7 @@
 | 3 | #822 | `feat-#816` | #815 merge 후 Draft 해제 |
 | 4 | #826 | `feat-#823` | #822 merge 후 Draft 해제 |
 
-모든 PR base는 `dev`다. 최종 refactor PR #848까지 먼저 merge되어야 하며, 뒤 PR은 앞 PR이 merge되기 전까지 Draft로 유지한다.
+모든 PR base는 `dev`다. 최종 refactor PR #848은 `dev`에 merge됐고 네 branch에도 동기화됐다. 뒤 PR은 앞 PR이 merge되기 전까지 Draft로 유지한다.
 
 ## 담당 역할
 
