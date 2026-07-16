@@ -12,7 +12,11 @@ on:
       - "backend/**"
       - "frontend/**"
       - "infra/eks/helm/asklake-workloads/**"
+      - "infra/eks/secrets/**"
       - "infra/eks/values/workloads/**"
+      - "scripts/test-eks-runtime-secrets.mjs"
+      - "scripts/verify-eks-runtime-secrets.mjs"
+      - "scripts/verify-eks-runtime-secrets.sh"
       - "scripts/verify-eks-workloads.sh"
       - "docs/02-architecture.md"
       - "docs/03-api-reference.md"
@@ -61,9 +65,16 @@ jobs:
       - name: Verify Helm and AWS workload boundaries
         run: scripts/verify-eks-workloads.sh
 
+      - name: Verify runtime Secret contracts and dev mappings
+        run: scripts/verify-eks-runtime-secrets.sh
+
       - name: Verify Kubernetes Spark recovery and MSK IAM adapter
         working-directory: backend
         run: npm run test:spark-kubernetes
+
+      - name: Verify bounded Kafka fixture boundary
+        working-directory: backend
+        run: npm run test:kafka-fixture-boundary
 
       - name: Verify focused FastAPI runtime contracts
         working-directory: backend

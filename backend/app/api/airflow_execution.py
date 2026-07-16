@@ -47,6 +47,7 @@ def execute_spark_run(
         job_id=request.job_id,
         run_id=run_id,
         command=request.command,
+        airflow_source_boundary=request.source_boundary,
     )
 
 

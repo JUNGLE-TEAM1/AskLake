@@ -36,4 +36,6 @@ backend:
   runtimeConfigMapName: asklake-runtime
   runtimeBoundaryConfigMapName: asklake-runtime-boundary
   runtimeSecretName: asklake-backend-runtime
+  trinoRuntimeSecretName: asklake-backend-runtime
+  runtimeSecretTrinoCaKey: trino-ca.pem
   resources: {}

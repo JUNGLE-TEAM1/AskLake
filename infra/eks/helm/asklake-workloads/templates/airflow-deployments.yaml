@@ -69,6 +69,10 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.airflow.runtimeSecret.name }}
                   key: {{ $root.Values.airflow.runtimeSecret.keys.jwtSecret }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: {{ dir $root.Values.airflow.config.rdsCaMountPath | quote }}
+              readOnly: true
           {{- if eq $component "apiserver" }}
           ports:
             - name: http
@@ -112,5 +116,12 @@ spec:
           resources:
             {{- toYaml $root.Values.airflow.resources.scheduler | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ $root.Values.airflow.config.rdsCaConfigMapName }}
+            items:
+              - key: {{ $root.Values.airflow.config.rdsCaKey }}
+                path: {{ base $root.Values.airflow.config.rdsCaMountPath }}
 {{- end }}
 {{- end }}

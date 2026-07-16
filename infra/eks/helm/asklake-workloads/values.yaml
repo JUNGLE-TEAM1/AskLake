@@ -5,6 +5,7 @@ global:
   awsRegion: ap-northeast-2
 
 frontend:
+  enabled: true
   replicas: 2
   nodeSelector:
     kubernetes.io/arch: amd64
@@ -25,6 +26,7 @@ frontend:
       memory: 256Mi
 
 backend:
+  enabled: true
   replicas: 2
   nodeSelector:
     kubernetes.io/arch: amd64
@@ -104,12 +106,18 @@ airflow:
     executionApiBaseUrl: http://fastapi:8080
     dagId: asklake_etl_job
     jwtIssuer: asklake
+    apiUsername: airflow
+    apiUserEmail: airflow@asklake.local
+    rdsCaConfigMapName: asklake-rds-ca
+    rdsCaKey: ap-northeast-2-bundle.pem
+    rdsCaMountPath: /var/run/asklake/rds-ca/ap-northeast-2-bundle.pem
     internalTimeoutSeconds: 1800
     executionApiTimeoutSeconds: 7500
   runtimeSecret:
     name: asklake-airflow-runtime
     keys:
       databaseUrl: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+      apiPassword: AIRFLOW_PASSWORD
       executionApiToken: AIRFLOW_EXECUTION_API_TOKEN
       internalToken: AIRFLOW_INTERNAL_TOKEN
       fernetKey: AIRFLOW__CORE__FERNET_KEY
@@ -139,6 +147,14 @@ mskSmoke:
 
 sparkApplication:
   create: false
+  nodeSelector:
+    asklake.io/workload-class: spark
+    kubernetes.io/arch: amd64
+  tolerations:
+    - key: asklake.io/workload-class
+      operator: Equal
+      value: spark
+      effect: NoSchedule
   image:
     repository: ""
     digest: ""
@@ -155,10 +171,13 @@ sparkApplication:
     fixtureBatchId: ""
     expectedCount: 100
     authMode: iam
-    iamAuthPackage: software.amazon.msk:aws-msk-iam-auth:2.3.6
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
   output:
     bucket: ""
     prefix: eks-mvp/output
+  checkpoint:
+    bucket: ""
+    prefix: eks-mvp/checkpoints
   warehouse:
     bucket: ""
     prefix: warehouse
@@ -176,15 +195,17 @@ sparkApplication:
   driver:
     cores: 1
     memory: 2g
+    memoryOverhead: 512m
     resources:
-      requests: {cpu: "1", memory: 2Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: {cpu: "1", memory: 2560Mi}
+      limits: {cpu: "2", memory: 2560Mi}
   executor:
     instances: 1
     cores: 2
     memory: 4g
+    memoryOverhead: 1g
     resources:
-      requests: {cpu: "2", memory: 4Gi}
+      requests: {cpu: "2", memory: 5Gi}
       limits: {cpu: "3", memory: 5Gi}
 
 trino:

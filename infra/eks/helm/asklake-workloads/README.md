@@ -25,6 +25,20 @@ helm upgrade --install asklake-workloads \
 
 The application Services are `frontend:80` and `fastapi:8080`, matching the foundation handoff and Ingress defaults. Pod selectors use `app.kubernetes.io/name=asklake-workloads` plus the Helm release identity. Do not install an A-owned temporary `asklake-web` release and this chart as competing owners of the same Service names or frontend/backend workload scope.
 
+When the A-owned `asklake-web` release already owns Frontend/FastAPI, deploy Airflow as a component-scoped release. The disabled components render no Kubernetes objects, so this release cannot take ownership of `frontend`, `fastapi`, or Trino resources:
+
+```bash
+helm upgrade --install asklake-airflow \
+  infra/eks/helm/asklake-workloads \
+  --namespace asklake-dev \
+  --values /path/to/non-secret-values.yaml \
+  --set frontend.enabled=false \
+  --set backend.enabled=false \
+  --set trino.enabled=false
+```
+
+The `asklake-airflow-runtime` Secret, `asklake-rds-ca` ConfigMap, and immutable Airflow digest must exist before this command. In dev, `infra/eks/secrets/runtime-externalsecrets.dev.yaml` maps the Backend/Airflow AWS sources into ESO-owned target Secrets without storing values in Git. Removing or rolling back the component-scoped release does not reverse or drop an already applied RDS Airflow metadata migration.
+
 The normal install leaves both smoke resources disabled. Enable them only after A has supplied the real MSK endpoint, fixture topic, buckets, Pod Identity permissions, runtime Secret values, and image digests:
 
 ```bash
@@ -45,4 +59,4 @@ FastAPI's normal batch path uses the in-cluster Kubernetes API to create a deter
 
 The foundation ServiceAccount contract sets `asklake-backend` and `asklake-spark` to `automountServiceAccountToken: true`. FastAPI needs the token to manage `SparkApplication` objects; the Spark driver needs it to create and monitor executor Pods. The 15-day MVP keeps driver and executor on the same `asklake-spark` ServiceAccount, so executor Pods inherit the driver token/RBAC as a documented residual risk; split them before production. Frontend, Airflow, MSK smoke, and Trino keep the Kubernetes API token disabled. FastAPI startup/readiness use the DB-aware `/api/health` endpoint, while liveness uses a TCP socket so an RDS outage removes Pods from Service endpoints without causing restart loops.
 
-Airflow uses `LocalExecutor` with the DAG baked into its image and RDS metadata. The chart creates no EFS/PVC or shared DAG/log volume, so Pod-local logs are not durable across restarts. The complete A/B contract review is in `docs/eks-day15-b-workload-contract-review.md`.
+Airflow uses `LocalExecutor` with the DAG baked into its custom image and RDS metadata over `verify-full` TLS. Do not mirror the upstream Airflow base image as the application image: the delivery workflow must build `airflow/Dockerfile`, or `/opt/airflow/dags` will be empty. The migration hook explicitly enables FAB AuthManager, migrates the database, creates the API user when absent, and always resets its Secret-backed password. The chart creates no EFS/PVC or shared DAG/log volume, so Pod-local logs are not durable across restarts. The complete A/B contract review is in `docs/eks-day15-b-workload-contract-review.md`, and the dev deployment receipt is in `docs/eks-day16-b-airflow-live-evidence.md`.

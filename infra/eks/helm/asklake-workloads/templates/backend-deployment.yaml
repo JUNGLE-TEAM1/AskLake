@@ -1,3 +1,4 @@
+{{- if .Values.backend.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -99,3 +100,4 @@ spec:
             items:
               - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
                 path: trino-ca.pem
+{{- end }}

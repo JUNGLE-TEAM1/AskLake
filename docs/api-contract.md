@@ -633,6 +633,43 @@ type KafkaSnapshot = {
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
+EKS MVP bounded fixture routing은 기존 Snapshot direct target의 예외이며 다음 저장 필드를 사용한다.
+
+```ts
+type EksMvpFixtureSourceConfig = [
+  ["Broker / Endpoint", `${string}:9098`],
+  ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
+  ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+  ["__EKS MVP Fixture Batch ID", string],
+  ["__EKS MVP Expected Count", string],
+];
+```
+
+Snapshot Kafka Job에서 exact fixture topic/group 또는 두 내부 receipt field 중 하나가 보이면 backend는 fixture 실행 의도로 분류한다. 네 값, positive expected count(최대 100,000), IAM `9098` endpoint와 Kubernetes Spark runner가 모두 유효하면 기존 Kafka bridge 대신 Airflow Run을 예약하고 `AirflowDagRun.dagRunId=JobRunSummary.runId`를 유지한다. fixture 의도는 있지만 계약이 틀리면 executor를 하나도 호출하지 않고 fail-closed한다. fixture 표시가 없는 Kafka Snapshot은 기존 direct bridge, `executionMode=continuous`는 기존 Continuous control-plane 계약을 그대로 사용한다.
+
+Airflow 호출 전 같은 transaction에 다음 immutable Run state를 저장한다.
+
+```ts
+type EksMvpFixtureRunState = {
+  capturedAt: string;
+  contractVersion: 1;
+  runId: string;
+  sourceBoundary: {
+    broker: `${string}:9098`;
+    checkpointPath: `s3a://${string}/eks-mvp/checkpoints/${string}`;
+    consumerGroup: "asklake-eks-mvp-spark-v1";
+    expectedCount: number;
+    fixtureBatchId: string;
+    kind: "kafka_snapshot";
+    outputPath: `s3a://${string}/eks-mvp/output/${string}`;
+    snapshotId: string;
+    topic: "asklake.eks-mvp.fixture.v1";
+  };
+};
+```
+
+`taskStates.eksMvpFixture.runId`, `sourceBoundary.snapshotId`, Airflow `dagRunId`는 모두 `JobRunSummary.runId`와 같다. Airflow conf와 internal Spark execute body는 RDS의 `sourceBoundary`를 그대로 운반하며 FastAPI는 exact match 후에만 Spark lease/submission을 시작한다. Spark payload와 동적 SparkApplication manifest/env는 mutable Job source field가 아니라 이 persisted boundary를 사용한다. 실행 target은 `iceberg.asklake.eks_mvp_fixture`, write mode는 `replace`로 고정한다. Spark는 batch filter 후 실제 count가 `expectedCount`와 다르면 commit 전에 실패한다. FastAPI는 성공 result의 `sourceBoundary`, `inputRows`, `outputRows`, `icebergCommit.target/sourceBoundary/jobId/runId/snapshotId`를 RDS boundary와 재검증하며 불일치는 `EKS_MVP_FIXTURE_RESULT_INVALID`다.
+
 ### Kafka Continuous Runtime
 
 Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`.

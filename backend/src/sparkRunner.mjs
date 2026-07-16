@@ -31,7 +31,10 @@ const reviewTextModelHostDir = path.resolve(
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
+export const SPARK_MSK_IAM_SHADED_JAR = "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar";
 export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
+export const EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1";
+export const EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1";
 
 export function runSparkPipeline(job, command, runId, options = {}) {
   const executionMode = sparkExecutionMode();
@@ -52,20 +55,26 @@ export function runSparkPipeline(job, command, runId, options = {}) {
 }
 
 function runSparkPipelineWithSource(job, command, runId, source, executionMode, options = {}) {
-  if (executionMode === "kubernetes" && !usesS3A(source.path) && source.format !== "iceberg") {
+  if (
+    executionMode === "kubernetes"
+    && !usesS3A(source.path)
+    && !new Set(["iceberg", "kafka"]).has(String(source.format || "").toLowerCase())
+  ) {
     throw sparkConfigurationError(
       `Kubernetes Spark requires an S3 or Iceberg source; backend-local source paths cannot be mounted. source=${source.path}`,
     );
   }
   const output = sparkOutputPath(job, runId);
+  const kafkaFixtureEnvironment = sparkKafkaFixtureEnvironment(job, source, runId, executionMode);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packages = sparkPackages(job, source, output);
-  if (executionMode === "kubernetes" && String(process.env.ASKLAKE_KAFKA_AUTH_MODE || "").toLowerCase() === "iam") {
-    packages.push(process.env.ASKLAKE_SPARK_MSK_IAM_AUTH_PACKAGE || "software.amazon.msk:aws-msk-iam-auth:2.3.6");
-  }
+  const jars = sparkDependencyJars(source, executionMode, {
+    ...process.env,
+    ...kafkaFixtureEnvironment,
+  });
   const packageArgs = sparkPackageArgs(packages);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
@@ -86,6 +95,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   );
   const sparkEnvironment = {
     ...storageEnvironment,
+    ...kafkaFixtureEnvironment,
     ASKLAKE_SPARK_SOURCE_PATH: source.path,
     ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,
@@ -206,6 +216,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
       createSparkKubernetesApplication({
         appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
         environmentVariables: sparkEnvironment,
+        jars,
         jobId: job.id,
         packages,
         runId,
@@ -408,6 +419,7 @@ function sparkKubernetesPodPlacement() {
 export function createSparkKubernetesApplication({
   appName,
   environmentVariables = {},
+  jars = [],
   jobId,
   packages = [],
   runId,
@@ -416,6 +428,7 @@ export function createSparkKubernetesApplication({
   const serviceAccount = String(environment.ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT || "asklake-spark").trim();
   const image = requiredDigestImage(environment);
   const imageDigest = image.slice(image.lastIndexOf("@") + 1);
+  const fixtureBatchId = String(environmentVariables.ASKLAKE_KAFKA_FIXTURE_BATCH_ID || "").trim();
   const name = sparkKubernetesApplicationName(runId);
   const runLabel = kubernetesIdentifier(runId).slice(0, 63).replace(/-+$/g, "") || "run";
   const jobLabel = kubernetesIdentifier(jobId, "job").slice(0, 63).replace(/-+$/g, "") || "job";
@@ -436,6 +449,7 @@ export function createSparkKubernetesApplication({
     "S3_FORCE_PATH_STYLE",
   ]);
   const executorEnvironment = driverEnvironment.filter((item) => executorEnvironmentNames.has(item.name));
+  const jarList = [...new Set(jars.map((item) => String(item || "").trim()).filter(Boolean))];
   const packageList = [...new Set(packages.map((item) => String(item || "").trim()).filter(Boolean))];
   return {
     apiVersion: "sparkoperator.k8s.io/v1beta2",
@@ -445,6 +459,7 @@ export function createSparkKubernetesApplication({
         "asklake.io/image-digest": imageDigest,
         "asklake.io/job-id": String(jobId),
         "asklake.io/run-id": String(runId),
+        ...(fixtureBatchId ? { "asklake.io/fixture-batch-id": fixtureBatchId } : {}),
       },
       labels: {
         "app.kubernetes.io/name": "asklake-spark",
@@ -456,9 +471,18 @@ export function createSparkKubernetesApplication({
       namespace,
     },
     spec: {
-      deps: { packages: packageList },
+      deps: { jars: jarList, packages: packageList },
       driver: {
-        coreLimit: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES || "1"),
+        coreLimit: String(
+          environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_LIMIT
+            || environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES
+            || "1",
+        ),
+        coreRequest: String(
+          environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_REQUEST
+            || environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES
+            || "1",
+        ),
         cores: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES, 1),
         env: driverEnvironment,
         labels: { "asklake.io/run-id": runLabel },
@@ -468,7 +492,16 @@ export function createSparkKubernetesApplication({
         ...sparkKubernetesPodPlacement(),
       },
       executor: {
-        coreLimit: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES || "2"),
+        coreLimit: String(
+          environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT
+            || environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES
+            || "2",
+        ),
+        coreRequest: String(
+          environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST
+            || environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES
+            || "2",
+        ),
         cores: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES, 2),
         env: executorEnvironment,
         instances: positiveInteger(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES, 1),
@@ -788,6 +821,12 @@ function safeJsonParse(value) {
 
 export function sparkPackages(job, source, output) {
   const packages = [];
+  if (String(source?.format || "").trim().toLowerCase() === "kafka") {
+    packages.push(
+      process.env.ASKLAKE_SPARK_KAFKA_PACKAGE
+      || "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1",
+    );
+  }
   if (
     process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE !== "none"
     && (usesS3A(source.path) || usesS3A(output.sparkPath) || job?.icebergTarget)
@@ -803,6 +842,63 @@ export function sparkPackages(job, source, output) {
     );
   }
   return [...new Set(packages.filter((item) => item && item !== "none"))];
+}
+
+export function sparkDependencyJars(source, executionMode, environment = process.env) {
+  const sourceFormat = String(source?.format || "").trim().toLowerCase();
+  const authMode = String(environment.ASKLAKE_KAFKA_AUTH_MODE || "").trim().toLowerCase();
+  if (executionMode !== "kubernetes" || sourceFormat !== "kafka" || authMode !== "iam") return [];
+
+  const jar = String(environment.ASKLAKE_SPARK_MSK_IAM_AUTH_JAR || SPARK_MSK_IAM_SHADED_JAR).trim();
+  if (!/^local:\/\/\/opt\/asklake\/jars\/[a-zA-Z0-9._-]+\.jar$/.test(jar)) {
+    throw sparkConfigurationError(
+      "ASKLAKE_SPARK_MSK_IAM_AUTH_JAR must be a local:///opt/asklake/jars/*.jar image path.",
+    );
+  }
+  return [jar];
+}
+
+export function sparkKafkaFixtureEnvironment(job, source, runId, executionMode) {
+  if (String(source?.format || "").trim().toLowerCase() !== "kafka") return {};
+  if (executionMode !== "kubernetes") {
+    throw sparkConfigurationError("EKS MVP Kafka fixture execution requires Kubernetes Spark.");
+  }
+  const boundary = job?.sourceBoundary;
+  if (!boundary || typeof boundary !== "object" || Array.isArray(boundary)) {
+    throw sparkConfigurationError("EKS MVP Kafka fixture execution requires a persisted sourceBoundary.");
+  }
+  const broker = String(boundary.broker || "").trim();
+  const brokers = broker.split(",").map((item) => item.trim()).filter(Boolean);
+  const fixtureBatchId = String(boundary.fixtureBatchId || "").trim();
+  const expectedCount = Number(boundary.expectedCount);
+  const outputPath = String(boundary.outputPath || "").replace(/\/+$/g, "");
+  const checkpointPath = String(boundary.checkpointPath || "").replace(/\/+$/g, "");
+  if (
+    boundary.kind !== "kafka_snapshot"
+    || String(boundary.snapshotId || "") !== String(runId)
+    || String(boundary.topic || "") !== EKS_MVP_FIXTURE_TOPIC
+    || String(boundary.consumerGroup || "") !== EKS_MVP_FIXTURE_CONSUMER_GROUP
+    || !fixtureBatchId
+    || !Number.isInteger(expectedCount)
+    || expectedCount <= 0
+    || !brokers.length
+    || brokers.some((item) => !/^[^,\s:]+:9098$/.test(item))
+    || !/^s3a:\/\/[^/]+\/eks-mvp\/output\/[^/]+$/.test(outputPath)
+    || !/^s3a:\/\/[^/]+\/eks-mvp\/checkpoints\/[^/]+$/.test(checkpointPath)
+    || !outputPath.endsWith(`/${runId}`)
+    || !checkpointPath.endsWith(`/${runId}`)
+  ) {
+    throw sparkConfigurationError("Persisted EKS MVP Kafka fixture boundary is invalid.");
+  }
+  return {
+    ASKLAKE_KAFKA_AUTH_MODE: "iam",
+    ASKLAKE_KAFKA_BROKER: brokers.join(","),
+    ASKLAKE_KAFKA_CONSUMER_GROUP: EKS_MVP_FIXTURE_CONSUMER_GROUP,
+    ASKLAKE_KAFKA_EXPECTED_COUNT: String(expectedCount),
+    ASKLAKE_KAFKA_FIXTURE_BATCH_ID: fixtureBatchId,
+    ASKLAKE_KAFKA_TOPIC: EKS_MVP_FIXTURE_TOPIC,
+    ASKLAKE_SPARK_CHECKPOINT_PATH: checkpointPath,
+  };
 }
 
 export function sparkIcebergEnvironment(job, executionMode = sparkExecutionMode()) {
@@ -886,6 +982,12 @@ function ensureSparkServer() {
 export function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
+  if (job?.sourceBoundary?.kind === "kafka_snapshot" && job.sourceBoundary.fixtureBatchId) {
+    return {
+      format: "kafka",
+      path: String(job.sourceBoundary.topic || EKS_MVP_FIXTURE_TOPIC),
+    };
+  }
   if (sourceType === "File / S3") {
     const bucket = normalizeBucketName(fieldValue(sourceConfig, "Bucket / Stage Name") || defaultRawBucket());
     const selectionKind = String(fieldValue(sourceConfig, "__Selection Kind") || "file").trim().toLowerCase();
@@ -1095,6 +1197,13 @@ function setSourceField(item, name, value) {
 }
 
 function sparkOutputPath(job, runId) {
+  if (job?.sourceBoundary?.kind === "kafka_snapshot" && job.sourceBoundary.fixtureBatchId) {
+    const sparkPath = String(job.sourceBoundary.outputPath || "").replace(/\/+$/g, "");
+    if (!sparkPath || String(job.sourceBoundary.snapshotId || "") !== String(runId)) {
+      throw sparkConfigurationError("Persisted EKS MVP Kafka fixture output boundary is invalid.");
+    }
+    return { displayPath: sparkPath, sparkPath };
+  }
   const layer = normalizeColumnName(job.targetLayer || "gold") || "gold";
   const dataset = normalizeColumnName(job.target || job.name || "asklake_dataset");
   const prefix = normalizePrefix(process.env.ASKLAKE_SPARK_OUTPUT_PREFIX || "asklake-output");
@@ -1131,6 +1240,7 @@ export function normalizeSparkOutputTargetPath(value) {
 }
 
 function sparkRowLimitFromJob(job) {
+  if (job?.sourceBoundary?.kind === "kafka_snapshot" && job.sourceBoundary.fixtureBatchId) return "0";
   if (isPostgresSource(job.sourceType)) return "0";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   const configuredLimit = fieldValue(sourceConfig, "__Execution Row Limit") || fieldValue(sourceConfig, "Execution Row Limit");

@@ -84,11 +84,13 @@ def post_asklake_execution_api(
 
 def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
     run_id = str(conf["runId"])
+    source_boundary = conf.get("sourceBoundary")
     return post_asklake_execution_api(
         f"/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/execute",
         {
             "command": str(conf.get("command") or "run"),
             "jobId": str(conf["jobId"]),
+            **({"sourceBoundary": source_boundary} if isinstance(source_boundary, dict) else {}),
         },
         operation="Spark execution",
     )
