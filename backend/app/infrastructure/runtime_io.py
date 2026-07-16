@@ -19,6 +19,24 @@ from app.ports.runtime_io import (
 )
 
 
+class CallableKafkaRuntimeGateway:
+    """Adapt the existing worker facade to the application gateway contract."""
+
+    def __init__(self, handler: Callable[..., dict[str, Any]]) -> None:
+        self._handler = handler
+
+    def command(
+        self,
+        job: Any,
+        runtime: Any,
+        action: str,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if options is None:
+            return self._handler(job, runtime, action)
+        return self._handler(job, runtime, action, options)
+
+
 class SubprocessNodeBridge:
     """Execute a Node bridge and normalize timeout/process/response failures."""
 

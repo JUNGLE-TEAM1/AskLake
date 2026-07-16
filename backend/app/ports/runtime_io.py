@@ -67,6 +67,16 @@ class ObjectManifestPort(Protocol):
     def read_text(self, bucket: str, key: str) -> str: ...
 
 
+class KafkaRuntimeGateway(Protocol):
+    def command(
+        self,
+        job: Any,
+        runtime: Any,
+        action: str,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class AirflowGateway(Protocol):
     @property
     def config(self) -> Any: ...
