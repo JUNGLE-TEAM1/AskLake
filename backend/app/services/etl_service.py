@@ -29,6 +29,16 @@ from app.application.continuous_reconciliation import (
     ContinuousReconciliationHooks,
     reconcile_continuous_runtime,
 )
+from app.application.continuous_publication import (
+    ContinuousBatchPublicationHooks,
+    ContinuousPublicationHooks,
+    PublicationCatalogEvidence,
+    PublicationIdentity,
+    PublicationInputEvidence,
+    PublicationOutputEvidence,
+    execute_continuous_publication,
+    reconcile_continuous_publications,
+)
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import (
@@ -7101,161 +7111,33 @@ def materialize_continuous_batch(
     *,
     recover_completed_manifests: bool = False,
 ) -> int | None:
-    metrics = dict(runtime.metrics or {})
-    cursor = optional_int(metrics.get("catalogBatchCursor"))
-    publications = report.get("publishedBatches") if isinstance(report.get("publishedBatches"), list) else []
-    recovery_requested = (
-        recover_completed_manifests
-        or metrics.get("publicationRecoveryPending") is True
+    return reconcile_continuous_publications(
+        db,
+        job,
+        runtime,
+        report,
+        recover_completed_manifests=recover_completed_manifests,
+        hooks=ContinuousBatchPublicationHooks(
+            list_manifest_batch_ids=list_continuous_stream_manifest_batch_ids,
+            read_manifest=read_continuous_stream_manifest,
+            publish_one=materialize_continuous_publication,
+            dataset_id=lambda current_job: current_job.dataset_id or make_dataset_id(current_job.target),
+            list_partition_cursors=_list_continuous_stream_partition_cursors,
+            merge_partition_cursors=merge_stream_partition_cursor_metrics,
+        ),
     )
-    if recovery_requested:
-        completed_batch_ids = list_continuous_stream_manifest_batch_ids(
-            job,
-            after_batch_id=cursor if cursor is not None else -1,
-            through_batch_id=None,
-        )
-        if completed_batch_ids is None:
-            metrics["publicationRecoveryPending"] = True
-            runtime.metrics = metrics
-            runtime.last_error = (
-                "Catalog materialization pending retry: Completed Continuous publication "
-                "manifests could not be listed; Catalog ACK was not advanced."
-            )
-            return cursor
-        recovered_publications: list[dict[str, Any]] = []
-        for expected_batch_id in completed_batch_ids:
-            recovered_manifest = read_continuous_stream_manifest(
-                job,
-                str(expected_batch_id),
-            )
-            if recovered_manifest is None:
-                metrics["publicationRecoveryPending"] = True
-                runtime.metrics = metrics
-                runtime.last_error = (
-                    "Catalog materialization pending retry: Completed Continuous publication "
-                    f"manifest {expected_batch_id} could not be read; Catalog ACK was not advanced."
-                )
-                return cursor
-            recovered_publications.append(recovered_manifest)
-        publications = recovered_publications
-    report_has_unapplied_publication = any(
-        isinstance(publication, dict)
-        and optional_int(publication.get("batchId")) is not None
-        and (cursor is None or int(publication["batchId"]) > cursor)
-        for publication in publications
-    )
-    if not recovery_requested and not report_has_unapplied_publication:
-        last_batch_id = optional_int(report.get("lastBatchId"))
-        if (
-            last_batch_id is not None
-            and last_batch_id >= 0
-            and bool(report.get("lastBatchWritten"))
-            and (cursor is None or last_batch_id > cursor)
-        ):
-            last_evidence = report.get("lastBatchEvidence")
-            if not isinstance(last_evidence, dict):
-                last_evidence = (runtime.metrics or {}).get("lastBatchEvidence")
-            completed_batch_ids = list_continuous_stream_manifest_batch_ids(
-                job,
-                after_batch_id=cursor if cursor is not None else -1,
-                through_batch_id=last_batch_id,
-            )
-            if completed_batch_ids is None or last_batch_id not in completed_batch_ids:
-                runtime.last_error = (
-                    "Catalog materialization pending retry: The terminal Continuous publication "
-                    f"manifest for batch {last_batch_id} is not durably complete; "
-                    "Catalog ACK was not advanced."
-                )
-                return cursor
-            recovered_publications: list[dict[str, Any]] = []
-            missing_batch_id: int | None = None
-            for expected_batch_id in completed_batch_ids:
-                recovered_manifest: dict[str, Any] | None = None
-                if (
-                    expected_batch_id == last_batch_id
-                    and isinstance(last_evidence, dict)
-                    and optional_int(last_evidence.get("batchId")) == expected_batch_id
-                    and optional_string(last_evidence.get("manifestPath")) is not None
-                    and isinstance(last_evidence.get("sourceRanges"), list)
-                    and bool(last_evidence.get("sourceRanges"))
-                    and (
-                        nonnegative_int(last_evidence.get("storedCount"), 0) == 0
-                        or optional_string(last_evidence.get("dataPath")) is not None
-                    )
-                ):
-                    recovered_manifest = dict(last_evidence)
-                else:
-                    recovered_manifest = read_continuous_stream_manifest(
-                        job,
-                        str(expected_batch_id),
-                    )
-                if recovered_manifest is None:
-                    missing_batch_id = expected_batch_id
-                    break
-                recovered_publications.append(recovered_manifest)
-            if missing_batch_id is not None:
-                runtime.last_error = (
-                    "Catalog materialization pending retry: Continuous publication manifest "
-                    f"gap at batch {missing_batch_id}; Catalog ACK was not advanced."
-                )
-                return cursor
-            publications = recovered_publications
-    normalized = [
-        item for item in publications
-        if isinstance(item, dict) and optional_int(item.get("batchId")) is not None and int(item["batchId"]) >= 0
-    ]
-    normalized.sort(key=lambda item: nonnegative_int(item.get("batchId"), 0))
-    job_id = job.id
-    dataset_id = (job.dataset_id or make_dataset_id(job.target)) if db is not None else None
-    recovery_failed = False
-    for publication in normalized:
-        publication_batch_id = nonnegative_int(publication.get("batchId"), 0)
-        if cursor is not None and publication_batch_id <= cursor:
-            continue
-        materialized = materialize_continuous_publication(db, job, runtime, publication)
-        if db is not None:
-            # Catalog persistence commits independently. Reacquire the runtime
-            # row before any pending Job/runtime state can autoflush so every
-            # concurrent reconciler keeps the same runtime -> Job lock order.
-            with db.no_autoflush:
-                locked_runtime = etl_repository.lock_kafka_continuous_runtime(db, job_id)
-            if locked_runtime is not None:
-                runtime = locked_runtime
-                persisted_metrics = dict(runtime.metrics or {})
-                persisted_cursor = optional_int(persisted_metrics.get("catalogBatchCursor"))
-                if persisted_cursor is not None and (cursor is None or persisted_cursor > cursor):
-                    cursor = persisted_cursor
-                metrics = {**metrics, **persisted_metrics}
-        if not materialized:
-            recovery_failed = recovery_requested
-            break
-        if db is not None:
-            live_repository = DashboardLiveRepository(
-                db,
-                ensure_schema=False,
-            )
-            list_cursors = getattr(live_repository, "list_stream_partition_cursors", None)
-            if callable(list_cursors):
-                metrics["streamPartitionCursors"] = list_cursors(
-                    str(dataset_id),
-                    topic=runtime.topic,
-                )
-            else:
-                metrics["streamPartitionCursors"] = merge_stream_partition_cursor_metrics(
-                    metrics.get("streamPartitionCursors"),
-                    publication.get("sourceRanges"),
-                )
-        cursor = publication_batch_id if cursor is None else max(cursor, publication_batch_id)
-        metrics["catalogBatchCursor"] = cursor
-        runtime.metrics = metrics
-    if recovery_requested:
-        metrics["publicationRecoveryPending"] = recovery_failed
-        runtime.metrics = metrics
-        if not recovery_failed and str(runtime.last_error or "").startswith(
-            "Catalog materialization pending retry:"
-        ):
-            runtime.last_error = None
-    return cursor
+
+
+def _list_continuous_stream_partition_cursors(
+    db: Session,
+    dataset_id: str,
+    topic: str,
+) -> list[dict[str, Any]] | None:
+    repository = DashboardLiveRepository(db, ensure_schema=False)
+    list_cursors = getattr(repository, "list_stream_partition_cursors", None)
+    if not callable(list_cursors):
+        return None
+    return list_cursors(dataset_id, topic=topic)
 
 
 def write_continuous_catalog_ack(
@@ -7399,6 +7281,31 @@ def continuous_stream_publication_evidence(
     *,
     require_data: bool = True,
 ) -> tuple[str | None, str, list[dict[str, Any]], str]:
+    evidence = continuous_stream_publication_metadata(
+        job,
+        batch_id,
+        publication,
+        require_data=require_data,
+    )
+    data_path, manifest_path_value, _source_ranges, _target_root = evidence
+    # Iceberg data files do not expose a Spark `_SUCCESS` directory at the
+    # table URI. The manifest marker is verified here; the exact snapshot is
+    # verified through Trino by verify_spark_iceberg_result.
+    verify_continuous_publication_storage(
+        data_path,
+        manifest_path_value,
+        require_data_marker=False,
+    )
+    return evidence
+
+
+def continuous_stream_publication_metadata(
+    job: ETLJobModel,
+    batch_id: str,
+    publication: dict[str, Any],
+    *,
+    require_data: bool = True,
+) -> tuple[str | None, str, list[dict[str, Any]], str]:
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     target_root = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
     iceberg_target = IcebergWriterTarget.model_validate(job.iceberg_target)
@@ -7418,14 +7325,6 @@ def continuous_stream_publication_evidence(
         raise ValueError("Kafka publication data path does not match its batch identity")
     if canonical_storage_path(manifest_path_value) != canonical_storage_path(expected_manifest_path):
         raise ValueError("Kafka publication manifest path does not match its batch identity")
-    # Iceberg data files do not expose a Spark `_SUCCESS` directory at the
-    # table URI. The manifest marker is verified here; the exact snapshot is
-    # verified through Trino by verify_spark_iceberg_result below.
-    verify_continuous_publication_storage(
-        data_path,
-        manifest_path_value,
-        require_data_marker=False,
-    )
     return data_path, manifest_path_value, source_ranges, target_root
 
 
@@ -7457,185 +7356,273 @@ def materialize_continuous_publication(
     runtime: KafkaContinuousRuntimeModel,
     publication: dict[str, Any],
 ) -> bool:
-    batch_id = str(publication["batchId"])
-    run_id = optional_string(publication.get("runId")) or ""
-    expected_prefix = f"continuous:{job.id}:batch:{batch_id}:"
-    if not run_id.startswith(expected_prefix):
-        runtime.last_error = "Catalog materialization pending retry: Continuous publication run identity is invalid."
-        return False
-    stored_count = nonnegative_int(publication.get("storedCount"), 0)
-    dataset_id = job.dataset_id or make_dataset_id(job.target)
-    next_check_after_ms = recommended_dashboard_poll_ms(
-        (job.continuous_config or {}).get("triggerIntervalSeconds")
+    return execute_continuous_publication(
+        db,
+        job,
+        runtime,
+        publication,
+        hooks=ContinuousPublicationHooks(
+            prepare=_prepare_continuous_publication,
+            verify_output=_verify_continuous_publication_output,
+            verify_manifest=_verify_continuous_publication_manifest,
+            register_catalog=_register_continuous_publication_catalog,
+            publish_dashboard=_publish_continuous_dashboard_revision,
+            update_job_stats=_update_continuous_publication_stats,
+            compact_error=lambda value: compact_storage_text(str(value), limit=500),
+        ),
     )
-    try:
-        data_path, manifest_path_value, source_ranges, _target_root = continuous_stream_publication_evidence(
-            job,
-            batch_id,
-            publication,
-            require_data=stored_count > 0,
-        )
-        live_repository = DashboardLiveRepository(db, ensure_schema=False)
-        live_repository.lock_dataset_publication_identity(dataset_id)
-        if stored_count == 0:
-            live_repository.record_stream_progress(dataset_id, source_ranges)
-            db.commit()
-            return True
-    except Exception as exc:
-        db.rollback()
-        runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
-        return False
 
+
+def _prepare_continuous_publication(
+    job: ETLJobModel,
+    _runtime: KafkaContinuousRuntimeModel,
+    publication: dict[str, Any],
+    identity: PublicationIdentity,
+) -> PublicationInputEvidence:
+    data_path, manifest_path_value, source_ranges, _target_root = continuous_stream_publication_metadata(
+        job,
+        str(identity.batch_id),
+        publication,
+        require_data=nonnegative_int(publication.get("storedCount"), 0) > 0,
+    )
+    return PublicationInputEvidence(
+        data_path=data_path,
+        manifest_path=manifest_path_value,
+        source_ranges=source_ranges,
+    )
+
+
+def _verify_continuous_publication_output(
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    publication: dict[str, Any],
+    identity: PublicationIdentity,
+    inputs: PublicationInputEvidence,
+) -> PublicationOutputEvidence:
+    if inputs.data_path is None:
+        raise ValueError("Kafka publication is missing its durable data path")
+    target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else None
+    source_boundary = publication.get("sourceBoundary") if isinstance(publication.get("sourceBoundary"), dict) else None
+    committed_boundary = (
+        commit.get("sourceBoundary")
+        if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict)
+        else None
+    )
+    if not commit or not source_boundary or committed_boundary != source_boundary:
+        raise ValueError("Continuous publication does not include matching Iceberg source-boundary evidence.")
+    if any((
+        source_boundary.get("kind") != "kafka_continuous_batch",
+        str(source_boundary.get("jobId") or "") != job.id,
+        optional_int(source_boundary.get("batchId")) != identity.batch_id,
+        str(source_boundary.get("runId") or "") != identity.run_id,
+        str(source_boundary.get("checkpointPath") or "").rstrip("/") != str(runtime.checkpoint_path or "").rstrip("/"),
+        str(source_boundary.get("consumerGroupId") or "") != runtime.consumer_group_id,
+        str(source_boundary.get("topic") or "") != runtime.topic,
+        normalize_kafka_source_ranges(source_boundary.get("sourceRanges"), required=True) != inputs.source_ranges,
+        not str(source_boundary.get("boundaryId") or "").strip(),
+    )):
+        raise ValueError("Continuous publication source boundary does not match the persisted runtime.")
+    stored_count = nonnegative_int(publication.get("storedCount"), 0)
+    result = {
+        "endedAt": optional_string(publication.get("publishedAt")) or runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
+        "icebergCommit": commit,
+        "materializationRows": stored_count,
+        "outputPath": target.table_uri,
+        "outputRows": runtime.stored_count,
+        "publicationManifest": inputs.manifest_path,
+        "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
+        "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
+        "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
+        "runId": identity.run_id,
+        "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
+        "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
+        "sourceBoundary": source_boundary,
+        "sourceKind": "kafka",
+        "sourceRanges": inputs.source_ranges,
+        "status": "success",
+        "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
+    }
+    verified = verify_spark_iceberg_result(
+        job,
+        identity.run_id,
+        result,
+        expected_run_row_count=stored_count,
+    )
+    return PublicationOutputEvidence(
+        target_uri=target.table_uri,
+        verified_result={**verified, "sourceBoundary": source_boundary},
+    )
+
+
+def _verify_continuous_publication_manifest(
+    _job: ETLJobModel,
+    _publication: dict[str, Any],
+    inputs: PublicationInputEvidence,
+) -> None:
+    verify_continuous_publication_storage(
+        inputs.data_path,
+        inputs.manifest_path,
+        require_data_marker=False,
+    )
+
+
+def _register_continuous_publication_catalog(
+    db: Session,
+    job: ETLJobModel,
+    _runtime: KafkaContinuousRuntimeModel,
+    publication: dict[str, Any],
+    identity: PublicationIdentity,
+    _inputs: PublicationInputEvidence,
+    output: PublicationOutputEvidence | None,
+) -> PublicationCatalogEvidence:
+    dataset_id = job.dataset_id or make_dataset_id(job.target)
+    if output is None:
+        return PublicationCatalogEvidence(
+            dataset_id=dataset_id,
+            materialization_mode="delta",
+            catalog_created=False,
+            catalog_skipped=True,
+        )
+    live_repository = DashboardLiveRepository(db, ensure_schema=False)
+    live_repository.lock_dataset_publication_identity(dataset_id)
     existing = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
-    existing_runs = ((existing.payload or {}).get("materializationRuns") or []) if existing and existing.payload else []
+    existing_runs = (
+        ((existing.payload or {}).get("materializationRuns") or [])
+        if existing and existing.payload
+        else []
+    )
     existing_run = next(
         (
             item
             for item in existing_runs
-            if isinstance(item, dict) and str(item.get("runId") or "") == run_id
+            if isinstance(item, dict) and str(item.get("runId") or "") == identity.run_id
         ),
         None,
     )
-
-
-    if data_path is None:
-        runtime.last_error = "Catalog materialization pending retry: Kafka publication is missing its durable data path"
-        db.rollback()
-        return False
-    try:
-        target = IcebergWriterTarget.model_validate(job.iceberg_target)
-        commit = publication.get("icebergCommit") if isinstance(publication.get("icebergCommit"), dict) else None
-        source_boundary = publication.get("sourceBoundary") if isinstance(publication.get("sourceBoundary"), dict) else None
-        committed_boundary = commit.get("sourceBoundary") if isinstance(commit, dict) and isinstance(commit.get("sourceBoundary"), dict) else None
-        if not commit or not source_boundary or committed_boundary != source_boundary:
-            raise ValueError("Continuous publication does not include matching Iceberg source-boundary evidence.")
-        if any((
-            source_boundary.get("kind") != "kafka_continuous_batch",
-            str(source_boundary.get("jobId") or "") != job.id,
-            optional_int(source_boundary.get("batchId")) != int(batch_id),
-            str(source_boundary.get("runId") or "") != run_id,
-            str(source_boundary.get("checkpointPath") or "").rstrip("/") != str(runtime.checkpoint_path or "").rstrip("/"),
-            str(source_boundary.get("consumerGroupId") or "") != runtime.consumer_group_id,
-            str(source_boundary.get("topic") or "") != runtime.topic,
-            normalize_kafka_source_ranges(source_boundary.get("sourceRanges"), required=True) != source_ranges,
-            not str(source_boundary.get("boundaryId") or "").strip(),
-        )):
-            raise ValueError("Continuous publication source boundary does not match the persisted runtime.")
-        result = {
-            "endedAt": optional_string(publication.get("publishedAt")) or runtime.last_flush_at or runtime.heartbeat_at or iso_now(),
-            "icebergCommit": commit,
-            "materializationRows": nonnegative_int(publication.get("storedCount"), 0),
-            "outputPath": target.table_uri,
-            "outputRows": runtime.stored_count,
-            "publicationManifest": manifest_path_value,
-            "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},
-            "ruleContractVersion": optional_string(publication.get("ruleContractVersion")),
-            "ruleFingerprint": optional_string(publication.get("ruleFingerprint")),
-            "runId": run_id,
-            "runtimeFingerprint": optional_string(publication.get("runtimeFingerprint")),
-            "schemaFingerprint": optional_string(publication.get("schemaFingerprint")),
-            "sourceBoundary": source_boundary,
-            "sourceKind": "kafka",
-            "sourceRanges": source_ranges,
-            "status": "success",
-            "transform": publication.get("transform") if isinstance(publication.get("transform"), dict) else {},
-        }
-        verified = verify_spark_iceberg_result(
-            job,
-            run_id,
-            result,
-            expected_run_row_count=stored_count,
+    target = IcebergWriterTarget.model_validate(job.iceberg_target)
+    existing_mapping = (existing.payload or {}).get("queryEngineTable") if existing and existing.payload else None
+    same_mapping = isinstance(existing_mapping, dict) and all(
+        str(existing_mapping.get(key) or "") == expected
+        for key, expected in (
+            ("catalog", target.catalog),
+            ("schema", target.namespace),
+            ("table", target.table),
+            ("format", "iceberg"),
         )
-        existing_mapping = (existing.payload or {}).get("queryEngineTable") if existing and existing.payload else None
-        same_mapping = isinstance(existing_mapping, dict) and all(
-            str(existing_mapping.get(key) or "") == expected
-            for key, expected in (
-                ("catalog", target.catalog),
-                ("schema", target.namespace),
-                ("table", target.table),
-                ("format", "iceberg"),
-            )
-        )
-        computed_mode = "delta" if same_mapping else "snapshot"
-        existing_mode = str((existing_run or {}).get("materializationMode") or "").strip().lower()
-        materialization_mode = existing_mode if existing_mode in {"delta", "snapshot"} else computed_mode
-        verified = {
-            **verified,
-            "materializationMode": materialization_mode,
-            "sourceBoundary": source_boundary,
-        }
-        if existing_run is not None:
-            live_repository = DashboardLiveRepository(db, ensure_schema=False)
-            existing_commit = live_repository.commit_by_run_id(run_id)
-            if existing_commit is None:
-                # The Catalog already exposes this run, so the first live
-                # revision is a rebaseline even when the Catalog run was delta.
-                backfill_catalog_revision(
-                    db,
-                    dataset_id=existing.id,
-                    run_id=run_id,
-                    storage_location=str(verified["materializationOutputPath"]),
-                    storage_format="iceberg",
-                    materialization_mode="snapshot",
-                    row_count=nonnegative_int(existing_run.get("rowCount"), stored_count),
-                    next_check_after_ms=next_check_after_ms,
-                    source_ranges=source_ranges,
-                    manifest_location=manifest_path_value,
-                )
-            elif str(
-                existing_commit.get("commit_kind")
-                if isinstance(existing_commit, dict)
-                else getattr(existing_commit, "commit_kind", "")
-            ) == STREAM_COMMIT_KIND:
-                live_repository.record_dataset_commit(
-                    dataset_id=existing.id,
-                    run_id=run_id,
-                    storage_location=str(verified["materializationOutputPath"]),
-                    storage_format="iceberg",
-                    materialization_mode=materialization_mode,
-                    row_count=stored_count,
-                    next_check_after_ms=next_check_after_ms,
-                    source_ranges=source_ranges,
-                    commit_kind=STREAM_COMMIT_KIND,
-                    manifest_location=manifest_path_value,
-                )
-                db.commit()
-            return True
-        dataset = dataset_from_spark_result(job, verified, existing)
-        save_catalog_dataset_and_revision(
+    )
+    computed_mode = "delta" if same_mapping else "snapshot"
+    existing_mode = str((existing_run or {}).get("materializationMode") or "").strip().lower()
+    materialization_mode = existing_mode if existing_mode in {"delta", "snapshot"} else computed_mode
+    verified = {
+        **output.verified_result,
+        "materializationMode": materialization_mode,
+    }
+    catalog_created = existing_run is None
+    if catalog_created:
+        etl_repository.save_dataset(
             db,
-            dataset,
-            run_id=run_id,
-            storage_location=str(verified["materializationOutputPath"]),
+            dataset_from_spark_result(job, verified, existing),
+        )
+    else:
+        # Release the publication identity lock before Dashboard publication.
+        db.commit()
+    return PublicationCatalogEvidence(
+        dataset_id=dataset_id,
+        materialization_mode=materialization_mode,
+        catalog_created=catalog_created,
+    )
+
+
+def _publish_continuous_dashboard_revision(
+    db: Session,
+    job: ETLJobModel,
+    _runtime: KafkaContinuousRuntimeModel,
+    publication: dict[str, Any],
+    identity: PublicationIdentity,
+    inputs: PublicationInputEvidence,
+    output: PublicationOutputEvidence | None,
+    catalog: PublicationCatalogEvidence,
+) -> None:
+    live_repository = DashboardLiveRepository(db, ensure_schema=False)
+    live_repository.lock_dataset_publication_identity(catalog.dataset_id)
+    if output is None:
+        live_repository.record_stream_progress(catalog.dataset_id, inputs.source_ranges)
+        db.commit()
+        return
+    dataset = etl_repository.get_dataset_by_id_for_update(db, catalog.dataset_id)
+    if dataset is None:
+        raise ValueError("Catalog dataset is missing after Continuous materialization.")
+    existing_runs = ((dataset.payload or {}).get("materializationRuns") or []) if dataset.payload else []
+    existing_run = next(
+        (
+            item
+            for item in existing_runs
+            if isinstance(item, dict) and str(item.get("runId") or "") == identity.run_id
+        ),
+        None,
+    )
+    if existing_run is None:
+        raise ValueError("Catalog materialization run is missing before Dashboard publication.")
+    next_check_after_ms = recommended_dashboard_poll_ms(
+        (job.continuous_config or {}).get("triggerIntervalSeconds")
+    )
+    existing_commit = live_repository.commit_by_run_id(identity.run_id)
+    if existing_commit is None and not catalog.catalog_created:
+        # A Catalog run that predates the staged workflow becomes a safe full
+        # Dashboard baseline before later stream deltas are applied.
+        backfill_catalog_revision(
+            db,
+            dataset_id=dataset.id,
+            run_id=identity.run_id,
+            storage_location=str(output.verified_result["materializationOutputPath"]),
             storage_format="iceberg",
-            materialization_mode=materialization_mode,
+            materialization_mode="snapshot",
+            row_count=nonnegative_int(existing_run.get("rowCount"), nonnegative_int(publication.get("storedCount"), 0)),
+            next_check_after_ms=next_check_after_ms,
+            source_ranges=inputs.source_ranges,
+            manifest_location=inputs.manifest_path,
+        )
+        return
+    existing_commit_kind = str(
+        existing_commit.get("commit_kind")
+        if isinstance(existing_commit, dict)
+        else getattr(existing_commit, "commit_kind", "")
+    )
+    if existing_commit is None or existing_commit_kind == STREAM_COMMIT_KIND:
+        live_repository.record_dataset_commit(
+            dataset_id=dataset.id,
+            run_id=identity.run_id,
+            storage_location=str(output.verified_result["materializationOutputPath"]),
+            storage_format="iceberg",
+            materialization_mode=catalog.materialization_mode,
             row_count=nonnegative_int(publication.get("storedCount"), 0),
             next_check_after_ms=next_check_after_ms,
-            source_ranges=source_ranges,
+            source_ranges=inputs.source_ranges,
             commit_kind=STREAM_COMMIT_KIND,
-            manifest_location=manifest_path_value,
+            manifest_location=inputs.manifest_path,
         )
-    except Exception as exc:  # Catalog metadata must not roll back a committed streaming checkpoint.
-        runtime.last_error = f"Catalog materialization pending retry: {compact_storage_text(str(exc), limit=500)}"
-        return False
-    else:
-        if str(runtime.last_error or "").startswith((
-            "Catalog materialization pending retry:",
-            "Dashboard revision pending retry:",
-        )):
-            runtime.last_error = None
-        job.stats = {
-            **(job.stats or {}),
-            "inputRows": format_rows(runtime.consumed_count),
-            "lastSuccess": runtime.last_flush_at or runtime.heartbeat_at or "-",
-            "outputPath": target.table_uri,
-            "outputRows": format_rows(runtime.stored_count),
-            "icebergSnapshotId": str(verified.get("icebergCommit", {}).get("snapshotId") or ""),
-            "sampleScope": f"{runtime.topic} continuous micro-batch",
-            "sourceUnits": "Kafka topic",
-            "successRate": "100%" if runtime.failed_count == 0 else "확인 필요",
-        }
-        return True
+    db.commit()
+
+
+def _update_continuous_publication_stats(
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    output: PublicationOutputEvidence | None,
+) -> None:
+    if output is None:
+        return
+    job.stats = {
+        **(job.stats or {}),
+        "inputRows": format_rows(runtime.consumed_count),
+        "lastSuccess": runtime.last_flush_at or runtime.heartbeat_at or "-",
+        "outputPath": output.target_uri,
+        "outputRows": format_rows(runtime.stored_count),
+        "icebergSnapshotId": str(output.verified_result.get("icebergCommit", {}).get("snapshotId") or ""),
+        "sampleScope": f"{runtime.topic} continuous micro-batch",
+        "sourceUnits": "Kafka topic",
+        "successRate": "100%" if runtime.failed_count == 0 else "확인 필요",
+    }
 
 
 def normalize_continuous_source_ranges(value: Any) -> list[dict[str, Any]]:
