@@ -113,7 +113,7 @@ jobs:
 
       - name: Validate Caddy and NGINX streaming configuration
         run: |
-          docker run --rm --add-host backend:127.0.0.1 --add-host frontend:127.0.0.1 -e APP_DOMAIN=localhost -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.8-alpine validate --config /etc/caddy/Caddyfile
+          docker run --rm --add-host backend:127.0.0.1 --add-host frontend:127.0.0.1 -e APP_DOMAIN=localhost -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.8-alpine caddy validate --config /etc/caddy/Caddyfile
           docker run --rm -v "$PWD/ops/ec2/nginx.asklake.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.27-alpine nginx -t
 
   realtime-live-e2e:
