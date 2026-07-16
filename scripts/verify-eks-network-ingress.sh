@@ -101,5 +101,10 @@ grep -q 'apply-auto-mode-ingress-foundation' "$ROOT_DIR/scripts/deploy-eks-auto-
 grep -q 'delete-auto-mode-alb-before-cluster' "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 grep -q 'dns-record-removed-or-not-created' "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
 grep -q -- '--dry-run=server' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
+grep -q 'helm upgrade --install asklake-ingress' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
+if grep -q 'kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE"' "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"; then
+  echo "Ingress upgrade preflight must preserve Helm field ownership" >&2
+  exit 1
+fi
 
 echo "EKS Auto Mode ALB ingress contract verification passed."

@@ -121,4 +121,4 @@ rollback 원본인 기존 EC2 PostgreSQL, S3/volume과 Compose는 삭제하지 �
 - migration receipt에 실행 시각, dump 식별용 checksum, row/object 비교와 실패 항목이 기록됐다.
 - 실제 EKS cutover가 이 복사 리허설과 별도 단계라는 점이 유지됐다.
 
-dev의 구조 복사 리허설은 위 조건 중 PostgreSQL 복원, S3 object 연결과 EC2 rollback 보존까지 통과했다. EKS Spark/Trino application-level Dataset read는 B workload가 준비된 뒤 수행하므로 전체 cutover 완료 조건으로 남긴다.
+dev의 구조 복사 리허설은 PostgreSQL 복원, S3 object 연결, EC2 rollback 보존과 EKS Spark를 사용한 대표 materialization 물리 읽기까지 통과했다. Trino Iceberg snapshot 조회와 cutover 직전 delta 복사는 전체 cutover 완료 조건으로 남긴다.

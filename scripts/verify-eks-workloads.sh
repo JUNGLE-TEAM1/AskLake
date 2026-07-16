@@ -147,6 +147,7 @@ grep -q 'kind: SparkApplication' "$OPT_IN_RENDERED_FILE"
 test "$(grep -c '^    serviceAccount: asklake-spark$' "$OPT_IN_RENDERED_FILE")" -eq 2
 grep -q 'mainApplicationFile: "local:///opt/asklake/scripts/spark_job_run.py"' "$OPT_IN_RENDERED_FILE"
 grep -q 'software.amazon.msk:aws-msk-iam-auth:2.3.6' "$OPT_IN_RENDERED_FILE"
+grep -q '"spark.jars.ivy": "/tmp/.ivy2"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_SOURCE_FORMAT' "$OPT_IN_RENDERED_FILE"
 grep -q 'value: "kafka"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_KAFKA_FIXTURE_BATCH_ID' "$OPT_IN_RENDERED_FILE"

@@ -54,6 +54,22 @@ EKS Spark Pod Identity로 다음 368개 참조를 검증했다.
 
 초기 exact-object 검사에서 `manifest_location`을 파일로 해석하면 346개가 누락처럼 보이지만, 코드 계약상 해당 값은 `_batch-manifests/batch_id=...` directory다. 따라서 directory 자체를 `HeadObject`하지 않고 각 prefix의 `_SUCCESS`를 검증했다. 최종 결과는 존재 368개, 누락 0개, list 실패 0개다.
 
+## 2026-07-16 EKS Spark 물리 읽기
+
+RDS Catalog API에서 복원된 Dataset의 최신 성공 materialization을 선택하고, 해당 S3 prefix 안의 실제 Parquet object 하나를 exact path로 고정했다. Git 제외 image receipt의 Spark runtime과 `asklake-spark` Pod Identity를 사용한 임시 `SparkApplication`으로 해당 object를 읽었다.
+
+- SparkApplication terminal state: `COMPLETED`
+- 물리 schema: 22 columns
+- 제한 샘플: 5 rows, non-empty
+- 모든 row의 cell 수와 physical schema column 수 일치
+- 정리 후 SparkApplication·Pod·Service·ConfigMap·PVC 잔여 0
+
+첫 실행에서 Spark Operator package resolver의 Ivy cache가 쓸 수 없는 home을 선택하는 문제와 Spark 4 shutdown의 label-selector cleanup에 필요한 `deletecollection` RBAC 누락을 확인했다. `spark.jars.ivy=/tmp/.ivy2`와 namespace 범위 cleanup 권한을 보완한 후 성공했고, Spark ServiceAccount의 Secret read는 계속 거절된다.
+
+같은 점검에서 현재 배포된 Backend의 Iceberg rows 오류 처리 경로가 `ApiError` import 누락 때문에 원래 Trino 오류를 `NameError`로 가리는 문제도 확인했다. 이 브랜치의 source와 회귀 test는 수정했지만 immutable Backend image를 다시 만들거나 배포하지 않았으므로, 현재 EKS Backend runtime에는 아직 반영되지 않았다. 다음 Backend image receipt와 rollout에서 반영 여부를 다시 검증해야 한다.
+
+이 검증은 RDS의 Catalog row가 가리킨 S3 materialization을 EKS Spark가 실제로 열어 row를 수집했다는 증거다. Trino coordinator와 runtime Secret은 아직 배포되지 않았으므로 Iceberg table 전체의 snapshot-aware Trino 조회까지 완료했다고 간주하지 않는다.
+
 ## 민감 artifact 정리
 
 dump 전달에는 기존 private/versioned output bucket의 격리 prefix와 SSE-S3를 사용했다. restore와 검증 직후 다음을 정리했다.
@@ -72,10 +88,10 @@ RDS의 pre-copy snapshot은 rollback 증거로 유지한다. 실제 snapshot 이
 ## 남은 경계
 
 - EKS FastAPI/Airflow/Trino/Spark의 최종 RDS Secret·endpoint 연결
-- B의 workload가 준비된 뒤 기존 Dataset 하나를 EKS Spark 또는 Trino로 실제 조회
+- Trino runtime Secret·coordinator 배포 후 기존 Iceberg Dataset의 snapshot-aware 전체 table 조회
 - 실제 cutover 직전 delta 또는 두 번째 전체 복사 방식 선택
 - cutover maintenance window에서 writer 재중지와 최종 기준점 생성
 - MongoDB Source·Connection 데이터의 별도 이전/외부 유지 결정
 - EKS 검증과 안정화가 끝날 때까지 기존 EC2 rollback 원본 유지
 
-따라서 RDS·S3 **구조 복사 리허설은 성공**했지만, EKS application-level physical read와 사용자 traffic cutover는 완료되지 않았다.
+따라서 RDS·S3 구조 복사와 EKS Spark 대표 Dataset 물리 읽기는 성공했다. Trino Iceberg 전체 조회와 사용자 traffic cutover는 아직 완료되지 않았다.

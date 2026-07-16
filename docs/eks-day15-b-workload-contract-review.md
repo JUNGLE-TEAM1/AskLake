@@ -191,7 +191,7 @@ Snapshot/batch Job과 그 scheduler path는 EKS에 남는다. EC2와 EKS가 같�
 10. A의 IngressClass/Params 기반에 최종 web route와 ALB가 적용돼 외부 `/`와 `/api/health`가 통과했다. RDS 복사는 rehearsal이며 EC2 rollback 원본과 cutover 전 delta gate가 남아 있다.
 11. 최신 `pair1` 병합에서 A의 foundation evidence와 B의 runtime·scheduler 계약을 문단 단위로 모두 보존한다.
 
-PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫혔다. Frontend/FastAPI workload rollout, 내부 live smoke와 외부 ALB web/API route도 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 따라서 web/RDS/MSK gate는 완료됐지만 S3 positive smoke까지 완료했다는 표현은 사용하지 않는다.
+PR #788은 위 불일치와 MVP 예외를 계약으로 기록한 상태에서 infrastructure foundation 완료로 닫혔다. Frontend/FastAPI workload rollout, 내부 live smoke와 외부 ALB web/API route도 이후 완료됐다. MSK test topic은 exact temporary `CreateTopic` permission으로 1 partition을 bootstrap한 뒤 그 permission을 제거했고, 원래 Describe-only `asklake-msk-smoke` Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. 당시 B 기록만으로는 S3 positive smoke를 완료로 보지 않았으며, 후속 Issue #794의 Backend S3 runtime evidence가 그 gate를 별도로 완료했다.
 
 ## 9. `asklake-web` 정식 release probe·AMD64 gate (2026-07-15 B 검토)
 

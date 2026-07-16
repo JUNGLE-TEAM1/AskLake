@@ -57,6 +57,8 @@ required_files=(
   "$ROOT_DIR/docs/eks-phase-13-auto-mode-alb.md"
   "$ROOT_DIR/docs/eks-phase-14-web-workloads.md"
   "$ROOT_DIR/docs/eks-day15-spark-operator-evidence.md"
+  "$ROOT_DIR/docs/eks-day15-backend-s3-runtime-evidence.md"
+  "$ROOT_DIR/infra/eks/smoke/backend_s3_smoke.py"
   "$ROOT_DIR/scripts/deploy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/destroy-eks-auto-mode-ingress.sh"
   "$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
@@ -64,6 +66,13 @@ required_files=(
   "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
   "$ROOT_DIR/scripts/verify-eks-metrics-scale.sh"
   "$ROOT_DIR/scripts/verify-eks-spark-operator.sh"
+  "$ROOT_DIR/scripts/run-eks-backend-s3-smoke.sh"
+  "$ROOT_DIR/scripts/verify-eks-backend-image-provenance.sh"
+  "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
+  "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh"
+  "$ROOT_DIR/scripts/test-eks-day15-validation-hardening.sh"
+  "$ROOT_DIR/scripts/lib/audit-eks-s3-smoke-residue.sh"
+  "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
   "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh"
@@ -136,6 +145,10 @@ for service_account in \
     exit 1
   fi
 done
+
+grep -q 'resources: \["pods"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
+grep -q 'resources: \["persistentvolumeclaims"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
+test "$(grep -c 'deletecollection' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml")" -eq 3
 
 backend_service_account="$({
   awk '
@@ -318,6 +331,7 @@ bash "$ROOT_DIR/scripts/verify-eks-auto-mode-node-pools.sh"
 bash "$ROOT_DIR/scripts/verify-eks-network-ingress.sh"
 bash "$ROOT_DIR/scripts/verify-eks-web-workloads.sh"
 bash "$ROOT_DIR/scripts/verify-eks-metrics-scale.sh"
+bash "$ROOT_DIR/scripts/test-eks-day15-validation-hardening.sh"
 
 TERRAFORM_BIN="${ASKLAKE_TERRAFORM_BIN:-}"
 if [[ -z "$TERRAFORM_BIN" ]] && command -v terraform >/dev/null 2>&1; then

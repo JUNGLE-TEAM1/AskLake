@@ -120,13 +120,15 @@ Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, �
 
 Phase 4는 IRSA/Pod Identity를 선택형으로 연결하고 RDS의 세 논리 database/user를 만드는 멱등 bootstrap을 제공한다. identity와 bootstrap은 기본적으로 실행되지 않으며 실제 선택·secret 전달·migration 경계는 [Phase 4 Workload Identity와 RDS Bootstrap](../../docs/eks-phase-4-identity-rds-bootstrap.md)을 따른다.
 
+dev Backend의 S3 `ListBucket`은 Raw/Output의 bucket-wide prefix가 Warehouse/Query Result에 전파되지 않도록 bucket별 IAM statement를 사용한다. 현재 FastAPI와 같은 immutable image의 Pod Identity smoke가 허용 object 왕복과 계약 밖 실제 object/prefix 거절을 통과했다. 재실행과 rollback은 [Backend S3 최소 권한 검증 기록](../../docs/eks-day15-backend-s3-runtime-evidence.md)을 따른다.
+
 Phase 5는 실제 workload를 생성하지 않고 A의 infrastructure output과 B의 manifest 사이에 `delivery/dev.handoff.example.json` 계약을 둔다. planning 검증은 AWS 값 없이 통과하지만 실제 배포용 `--ready` 검증은 immutable ECR digest, data-plane reference와 중요한 platform 선택이 모두 채워지기 전까지 실패한다. 실제 값이 들어간 handoff는 Git에 커밋하지 않는다. 상세 기준은 [Phase 5 배포 Handoff](../../docs/eks-phase-5-delivery-handoff.md)를 따른다.
 
 Phase 6는 수동 GitHub workflow로 Frontend, Backend, Airflow mirror, Spark runtime, Trino mirror를 `linux/amd64`로 ECR에 전달하고 digest receipt를 만든다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
 
 Phase 7은 최초의 fail-closed ALB와 private network 선택 계약을 추가했다. Phase 13에서 controller 경계를 EKS Auto Mode managed ALB로 교체했으므로 현재 ingress 적용은 Phase 13 문서를 우선하고, Phase 7 문서는 선택 배경과 호환 output 설명으로 사용한다.
 
-Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. 상세 gate는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md)을 따른다.
+Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. dev FastAPI의 최소 두 key는 `secrets/backend-runtime-external-secret.yaml`로 실제 연결했으며 나머지 key/workload 매핑을 의미하지 않는다. 상세 gate와 적용 증거는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md), [Backend runtime Secret 전환 기록](../../docs/eks-day15-backend-secret-runtime-evidence.md)을 따른다.
 
 Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group 코드를 제거한다. 기존 cluster 경로는 외부 확인 없이는 닫혀 있고, General/Spark custom NodePool과 실제 AWS smoke는 완료로 간주하지 않는다. 상세 기준은 [Phase 10 EKS Auto Mode Foundation](../../docs/eks-phase-10-auto-mode-foundation.md)을 따른다.
 
@@ -134,7 +136,7 @@ Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public
 
 Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark NodePool chart를 추가한다. 기본 렌더는 비어 있고 테스트 fixture의 숫자는 운영 권장값이 아니다. 실제 workload selector, 비용·용량·disruption 선택과 apply/scheduling/scale smoke는 [Phase 12 Auto Mode NodeClass와 NodePool](../../docs/eks-phase-12-auto-mode-node-pools.md)을 따른다.
 
-Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 HTTPS ALB를 관리한다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md)을 따른다.
+Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 ALB를 관리한다. dev MVP는 AWS 기본 DNS + HTTP를 사용하고 사용자 도메인·ACM·HTTPS는 후속 결정으로 남긴다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector, Helm ownership preflight와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md), [ALB route 적용 기록](../../docs/eks-day15-alb-runtime-evidence.md)을 따른다.
 
 Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service 및 두 Deployment를 추가한다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
 
