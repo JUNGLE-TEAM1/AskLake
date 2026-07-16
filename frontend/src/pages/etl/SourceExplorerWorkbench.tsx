@@ -1,9 +1,10 @@
 import type React from "react";
 import { FolderSearch, Search, Table2 } from "lucide-react";
 
+import { EtlSectionHeader } from "@/components/etl/EtlSectionHeader";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Panel } from "@/components/ui/panel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export type SourceExplorerFilterOption = {
@@ -55,10 +56,8 @@ export function SourceExplorerWorkbench({
   return (
     <div className="source-explorer-workbench">
       <Panel className="source-explorer-panel source-explorer-assets-panel border-2 border-blue-300 shadow-[0_6px_18px_rgb(37_99_235_/_7%)]">
-        <PanelHeader
-          className="min-h-14 border-blue-200 bg-blue-50 px-4 py-3"
+        <EtlSectionHeader
           icon={<FolderSearch />}
-          iconClassName="size-9 rounded-md bg-blue-100 [&_svg]:size-[18px]"
           meta={explorerMeta}
           title={explorerTitle}
         />
@@ -104,10 +103,8 @@ export function SourceExplorerWorkbench({
       </Panel>
 
       <Panel className="source-explorer-panel source-explorer-preview-panel border-2 border-blue-300 shadow-[0_6px_18px_rgb(37_99_235_/_7%)]">
-        <PanelHeader
-          className="min-h-14 border-blue-200 bg-blue-50 px-4 py-3"
+        <EtlSectionHeader
           icon={previewIcon ?? <Table2 />}
-          iconClassName="size-9 rounded-md bg-blue-100 [&_svg]:size-[18px]"
           meta={previewMeta}
           title={previewTitle}
         />

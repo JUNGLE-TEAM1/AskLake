@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { AlertTriangle, ChevronRight, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
-import { Panel, PanelHeader } from "../../components/ui/panel";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
+import { Panel } from "../../components/ui/panel";
 import {
   summarizeSchemaRuleState,
   type FailurePolicyApplication,
@@ -88,8 +89,7 @@ export function SchemaRuleSummary({ columns, qualityRules, transformSteps }: Sch
 
   return (
     <Panel className="schema-applied-rules mt-4 border-blue-200" variant="plain">
-      <PanelHeader
-        className="min-h-[68px] bg-blue-50/40 px-5 py-3.5"
+      <EtlSectionHeader
         icon={<ShieldCheck />}
         title="적용 내용 확인"
       />
