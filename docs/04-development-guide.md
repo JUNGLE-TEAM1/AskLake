@@ -55,6 +55,10 @@ PYTHONPATH=backend backend/.venv/bin/python scripts/refactor_audit/export_openap
 수집기는 제품 코드를 import하지 않고 정량 지표와 정적 계약 JSON을 만든다. OpenAPI exporter만 FastAPI app을 import하며 network service를 시작하지 않는다. 생성물에는 timestamp, hostname, credential을 포함하지 않는다. 기준선 결과와 변경 전 실패는 [테스트 명령 지도](./refactor-2026/baseline/test-command-map.md)와 [기존 실패 목록](./refactor-2026/baseline/pre-existing-failures.md)에 기록한다.
 
 `npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+
+ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
+
+ETL 화면의 표는 `DataTable`을 사용한다. 이 컴포넌트가 TanStack Table의 row/column model과 shadcn `Table` primitives를 함께 제공하므로, 미리보기·검증 결과·편집 셀도 별도 `<table>` 마크업을 만들지 않고 `ColumnDef`의 `cell` renderer로 구현한다. 화면별 스타일은 최소 너비, 말줄임, 상태 표현처럼 데이터 의미에 필요한 범위만 `tableClassName`, `viewportClassName`, column meta로 추가한다.
 `npm run test:dashboard-live-refresh`는 published runtime의 Continuous dataset ID 중복 제거, `latestRevision > appliedRevision`인 widget 선택, 서버 polling 힌트의 1~60초 범위, 성공 widget만 기존 runtime에 병합하는 계약을 확인한다. partial 응답이 실제 전진했을 때만 250ms catch-up 대상이 되고 같은 revision을 다시 받으면 일반 주기로 돌아가는지도 검증한다.
 SQL/Catalog pagination 변경 시에는 같은 script가 SQL 전체 snapshot의 페이지 조작, 편집기 단일 스크롤·빈 SQL 유지, Catalog schema/sample viewer와 새로고침·첫/마지막 page 연결을 함께 확인한다. Backend unit test는 10,000행 경계뿐 아니라 20,001행 결과의 마지막 page까지 검증해 총행 제한이 다시 생기지 않게 한다.
 
@@ -835,7 +839,7 @@ npm run verify:prefix-spark-e2e
 
 같은 클릭 이벤트를 비정형 `.log`와 조건부 `레코드 구조화` 입력으로 사용할 때는 메모리 제한형 Python 변환기를 사용한다. 로컬 기본 입력은 `backend/fixtures/synthetic-commerce/click_events.jsonl`, 기본 출력은 ignored `backend/tmp/synthetic-commerce/click-events.log`다. 입력 JSONL을 한 줄씩 읽고 헤더 없는 10필드 로그와 행 수·byte·SHA-256 manifest를 함께 만든다.
 
-레코드 구조화 화면은 basename이 정확히 `click-events.log` 또는 `click_events.log`이고 파싱 결과가 10필드일 때만 `추천 스키마 적용`을 노출한다. 사용자가 누르면 `event_time`, `event_id`, `user_id`, `session_id`, `event_type`, `product_id`, `page_url`, `device_type`, `referrer`, `position` 순서와 타입 초안을 채우며 backend preview 검증과 최종 확정 절차는 그대로 거친다. 다른 10필드 로그에는 추천을 노출하지 않는다.
+레코드 구조화 화면은 File/S3와 Kafka raw text 등 소스 종류, 원본 파일명, 감지 필드 수와 무관하게 `AI 필드 자동 추론` action을 항상 노출한다. 현재 action은 향후 AI 추론과 사용자 검증·수정 흐름을 위한 UI placeholder이며 클릭 핸들러, 비활성화 조건, 하드코딩된 클릭 이벤트 schema preset을 갖지 않는다. 사용자는 기존 컬럼명·타입 입력으로 결과를 직접 검증하고 수정하며, backend preview 검증과 최종 확정 절차는 그대로 유지한다.
 
 ```bash
 cd backend
