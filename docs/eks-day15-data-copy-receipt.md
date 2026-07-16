@@ -70,6 +70,12 @@ RDS Catalog API에서 복원된 Dataset의 최신 성공 materialization을 선�
 
 이 검증은 RDS의 Catalog row가 가리킨 S3 materialization을 EKS Spark가 실제로 열어 row를 수집했다는 증거다. Trino coordinator와 runtime Secret은 아직 배포되지 않았으므로 Iceberg table 전체의 snapshot-aware Trino 조회까지 완료했다고 간주하지 않는다.
 
+15.5 트랙의 현재 완료 경계는 다음과 같다.
+
+- 실제 적용·검증: foundation revision 3 cleanup RBAC, 대표 Parquet 물리 읽기, 임시 resource 잔여 0, 기존 ALB·RDS health 유지
+- source만 준비: Backend `ApiError` 수정과 정보 노출 회귀 test, 새 Backend image 인수·rollback 계약
+- 아직 미완료: revision 3 전체 RBAC verifier 동기화, 재현 가능한 물리 읽기 smoke script, 새 Backend receipt·rollout, Airflow/Spark/Trino runtime Secret, Trino snapshot 조회, Kafka→Iceberg bounded E2E와 production cutover
+
 ## 민감 artifact 정리
 
 dump 전달에는 기존 private/versioned output bucket의 격리 prefix와 SSE-S3를 사용했다. restore와 검증 직후 다음을 정리했다.

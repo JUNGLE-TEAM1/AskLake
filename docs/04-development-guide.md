@@ -555,7 +555,7 @@ Phase 1 foundation과 Pair B 인수 계약을 변경하면 아래 검증을 실�
 bash scripts/verify-eks-foundation.sh
 ```
 
-dev 실제 foundation은 기본 fail-closed values 위에 `infra/eks/values/dev.example.yaml`과 `infra/eks/values/identity/pod-identity.example.yaml`을 함께 적용한다. 기존 Helm release를 다른 field manager의 `kubectl apply --server-side`로 강제 인수하지 않는다. `helm upgrade --dry-run=server` 후 같은 release를 upgrade해 ownership을 유지한다. 현재 revision 2는 Backend/Spark token이 `true`, 나머지 application token이 `false`, runtime boundary identity mode가 `pod_identity`임을 확인했다. Spark Operator CRD가 없으면 RBAC가 있어도 SparkApplication live smoke는 시작하지 않는다.
+dev 실제 foundation은 기본 fail-closed values 위에 `infra/eks/values/dev.example.yaml`과 `infra/eks/values/identity/pod-identity.example.yaml`을 함께 적용한다. 기존 Helm release를 다른 field manager의 `kubectl apply --server-side`로 강제 인수하지 않는다. `helm upgrade --dry-run=server` 후 같은 release를 upgrade해 ownership을 유지한다. 현재 revision 3은 Backend/Spark token이 `true`, 나머지 application token이 `false`, runtime boundary identity mode가 `pod_identity`이며 Spark shutdown cleanup 권한이 반영됐음을 확인했다. Spark Operator CRD가 없으면 RBAC가 있어도 SparkApplication live smoke는 시작하지 않는다.
 
 Spark Operator는 B manifest의 API group과 일치하는 Kubeflow chart 2.5.1만 사용한다. values는 `infra/eks/values/operators/spark-operator.dev.yaml`이며 chart version, chart archive SHA-256, controller와 CRD hook image digest, `asklake-dev` watch scope, 기존 `asklake-spark` ServiceAccount 재사용과 resource 경계를 고정한다. verifier와 deploy script는 chart를 임시 디렉터리로 내려받아 checksum을 확인한 같은 archive만 `show`·`template`·`upgrade`에 사용하며 임시 파일은 종료 시 삭제한다. 저장소에 binary chart를 vendoring하지 않는다. 설치 전 정적 검증을 실행한다.
 
@@ -581,7 +581,9 @@ export ASKLAKE_SPARK_OPERATOR_CRD_DESTROY_CONFIRM='delete-owned-empty-spark-oper
 bash scripts/destroy-eks-spark-operator.sh
 ```
 
-Spark 4.0.1의 bounded application을 실제 실행하기 전까지 driver Role에는 Pod `create/get/list/watch/delete`와 Service·ConfigMap `create/get/delete`만 둔다. B manifest는 PVC를 쓰지 않으므로 PVC 권한은 금지한다. Service·ConfigMap의 `update/patch`가 실제 실행에서 필요하다는 증거가 생기면 그 실패와 upstream 근거를 기록한 별도 변경으로 추가한다. 상세 증거는 [7월 15일 Spark Operator 적용 기록](eks-day15-spark-operator-evidence.md)을 따른다.
+Spark 4.0.1 대표 application 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 호출하는 것을 확인했다. 따라서 driver Role에는 Pod `create/get/list/watch/delete/deletecollection`, Service·ConfigMap `create/get/list/delete/deletecollection`, PVC cleanup-only `get/list/delete/deletecollection`을 둔다. B manifest는 PVC를 생성하지 않으므로 PVC `create/update/patch`는 계속 금지하고 Service·ConfigMap `update/patch`도 추가하지 않는다. `deletecollection`은 selector를 RBAC로 제한할 수 없어 같은 namespace의 다른 resource에 영향을 줄 수 있으므로 Airflow PVC 같은 stateful workload를 추가하기 전에 Spark 전용 namespace 여부를 다시 결정한다. 상세 증거는 [7월 15일 Spark Operator 적용 기록](eks-day15-spark-operator-evidence.md)을 따른다.
+
+현재 `scripts/verify-eks-spark-rbac.sh`는 revision 3의 전체 `deletecollection`·PVC cleanup matrix를 아직 검사하지 않는다. 이 verifier와 foundation render assertion을 현재 Role에 맞추기 전에는 15.5 RBAC guardrail 동기화가 완료됐다고 표시하지 않는다.
 
 Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID를 출력하지 않는 아래 스크립트로 확인한다. `AccessDenied`는 빈 inventory로 해석하지 않으며 [Phase 2 AWS Inventory](eks-phase-2-inventory.md)의 read-only 권한과 생성 gate를 따른다.
 

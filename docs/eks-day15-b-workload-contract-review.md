@@ -120,7 +120,7 @@ Backend/Airflow의 execution/internal token과 Spark/Trino의 Iceberg JDBC URL/u
 - executor ServiceAccount: `asklake-spark`
 - Spark Operator: 2.5.1, `asklake-dev` namespace만 감시
 
-FastAPI의 `asklake-backend` Role은 `SparkApplication` create/get/list/watch/delete와 Pod/Pod log/Event read만 가진다. `asklake-spark` Role은 Pod create/get/list/watch/delete와 Service/ConfigMap create/get/delete만 가진다. Secret read나 cluster-wide 권한은 없다.
+FastAPI의 `asklake-backend` Role은 `SparkApplication` create/get/list/watch/delete와 Pod/Pod log/Event read만 가진다. `asklake-spark` Role은 Pod create/get/list/watch/delete/deletecollection, Service/ConfigMap create/get/list/delete/deletecollection과 PVC cleanup-only get/list/delete/deletecollection을 가진다. 실제 Spark 4 shutdown cleanup에서 확인한 권한이며 PVC create/update/patch, Secret read와 cluster-wide 권한은 없다.
 
 이 Role/RoleBinding은 A foundation이 단독 소유한다. B workload chart의 중복 RBAC는 제거한다. 특히 Spark driver Role 이름은 양쪽 모두 `asklake-spark-driver`라 Helm 소유권 충돌이 나며, Backend Role은 이름이 다르더라도 같은 권한을 중복 부여한다.
 

@@ -48,6 +48,7 @@ resource 값은 이번 MVP controller용 시작값이다. 실제 동시 제출 �
 - `asklake-backend`가 SparkApplication을 생성할 RBAC를 가진다.
 - B PR #774의 실제 SparkApplication template이 server-side dry-run을 통과했다.
 - 설치 과정에서 SparkApplication은 생성하지 않았고 적용 후 개수도 0개다.
+- 후속 15.5 검증에서는 Git 제외 receipt의 Spark runtime으로 대표 S3 Parquet object를 읽는 임시 SparkApplication이 `COMPLETED`됐고 정리 후 관련 resource 잔여가 0개였다.
 - controller 최근 로그에서 error/fatal/panic은 확인되지 않았다.
 - destroy preflight가 exact release/version, 다른 Spark Operator release 부재, operator namespace 단독 사용, 세 workload kind 0개와 namespace ownership을 확인했고 아무것도 삭제하지 않은 채 통과했다.
 - Foundation verifier와 Terraform 1.15.8 validate 및 mock-provider test 44개가 통과했다.
@@ -58,15 +59,18 @@ resource 값은 이번 MVP controller용 시작값이다. 실제 동시 제출 �
 
 ## Spark runtime RBAC 경계
 
-Foundation의 driver Role은 현재 다음 권한만 허용한다.
+Foundation revision 3의 driver Role은 현재 다음 권한만 허용한다.
 
-- Pod: `create`, `get`, `list`, `watch`, `delete`
-- Service와 ConfigMap: `create`, `get`, `delete`
+- Pod: `create`, `get`, `list`, `watch`, `delete`, `deletecollection`
+- Service와 ConfigMap: `create`, `get`, `list`, `delete`, `deletecollection`
+- PVC: cleanup-only `get`, `list`, `delete`, `deletecollection`
 - Secret, Node, Namespace, ClusterRole 조회: 거부
 - 다른 namespace의 Pod 생성: 거부
 - PVC 생성: 거부
 
-upstream chart의 범용 job Role에 있는 Service·ConfigMap `update/patch`와 PVC 권한은 그대로 복사하지 않았다. B manifest는 PVC를 사용하지 않는다. Spark 4.0.1 bounded application의 실제 실행에서 update/patch 부족이 재현되면 실패 동작과 upstream 근거를 남긴 후 최소 verb만 추가한다. `scripts/verify-eks-spark-rbac.sh`가 위 positive/negative matrix를 실제 API authorization으로 확인한다.
+초기 설치 시에는 B manifest가 PVC를 생성하지 않는다는 이유로 PVC 권한을 두지 않았다. 후속 Spark 4.0.1 대표 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 시도해 403을 남기는 것을 확인했고, 실제 동작에 필요한 cleanup verb만 별도 foundation upgrade로 추가했다. PVC `create/update/patch`, Service·ConfigMap `update/patch`와 Secret read는 계속 거부한다. 현재 `scripts/verify-eks-spark-rbac.sh`는 초기 matrix만 검사하므로 revision 3의 positive/negative matrix와 일치하도록 보완하기 전에는 repository RBAC guardrail 완료로 간주하지 않는다.
+
+Kubernetes RBAC은 `deletecollection` 요청의 label selector까지 제한하지 못하므로 이 권한은 같은 namespace resource에 대한 잔여 blast radius를 가진다. 현재 MVP는 공유 `asklake-dev` namespace를 유지하지만 Airflow PVC나 다른 stateful workload를 추가하기 전에는 Spark 전용 namespace 분리, 공유 namespace 위험 수용, 별도 cleanup 구조 중 하나를 결정해야 한다.
 
 현재 B manifest는 driver와 executor가 같은 `asklake-spark` ServiceAccount를 사용하므로 둘 다 Kubernetes API token과 같은 Pod Identity 경계를 받는다. 가능한 후속 선택은 현재 구조 유지, executor 전용 ServiceAccount 분리, executor Pod template에서 token mount 차단이다. 분리는 executor의 Kubernetes API 권한과 AWS 권한을 최소화하지만 manifest·Pod Identity association이 추가되고, template 차단은 Spark 동작 검증이 선행돼야 한다. B manifest를 A가 임의 변경하지 않으며 bounded E2E 전에 A/B가 선택한다.
 
@@ -88,12 +92,11 @@ Helm release가 CRD와 cluster-scoped controller RBAC를 소유한다. Foundatio
 
 ## 아직 하지 않은 것
 
-- B Spark runtime image를 사용하는 실제 SparkApplication 제출
-- MSK IAM topic metadata/read smoke
 - Kafka fixture → Spark → Iceberg write
-- driver/executor scale-out, log, cancel, timeout과 cleanup 검증
+- B 전체 workload release와 Spark runtime Secret을 사용한 bounded SparkApplication E2E
+- driver/executor cancel, timeout과 실패 cleanup 검증
 - controller replica/PDB/장기 monitoring 운영 선택
 - executor ServiceAccount/token 분리 결정
 - operator namespace NetworkPolicy의 control-plane source 확인과 실제 적용
 
-다음 단계는 B image digest와 runtime Secret mapping을 인수한 뒤 MSK metadata smoke를 먼저 실행하고, 그다음 bounded SparkApplication E2E를 수행하는 것이다.
+MSK IAM metadata smoke와 대표 S3 Parquet 물리 읽기는 완료됐다. 다음 단계는 Spark runtime Secret과 B 전체 workload 계약을 인수한 뒤 Kafka fixture → Spark → Iceberg bounded E2E를 수행하고, Trino가 배포되면 snapshot-aware table 조회를 별도 검증하는 것이다.
