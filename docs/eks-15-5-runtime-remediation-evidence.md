@@ -52,3 +52,24 @@ Issue #798은 `f556e95e`의 Catalog Iceberg rows 오류 처리 수정이 현재 
 새 Backend image를 받기 전 기준점과 rollback 경로가 모두 정상이다. 현재 runtime은 안정적이지만 Catalog rows source fix는 포함하지 않으므로 다음 단계는 `f556e95e`를 포함하는 새 `linux/amd64` immutable Backend image와 formal receipt 인수다.
 
 Phase 0 결과는 새 image 배포, Catalog rows HTTP 502 실제 검증 또는 강화된 Spark live 재실행의 성공 증거가 아니다.
+
+## Phase 1: 수정 Backend image 인수
+
+GitHub의 수동 `EKS image delivery` workflow를 `fix-#798`의 Phase 0 commit에서 dev 보호 환경으로 실행했다. workflow는 short-lived OIDC credential을 사용했고 기존 immutable ECR repository만 확인한 뒤 `linux/amd64` image를 게시했다. 실행은 성공했고 30일 보존 formal receipt artifact를 생성했다.
+
+공식 receipt schema가 다섯 component image를 요구하므로 workflow는 Frontend, Backend, Airflow, Spark runtime과 Trino를 같은 revision으로 게시했다. Issue #798의 배포 승인 대상은 새 Backend digest 하나뿐이다. 나머지 새 digest는 Phase 2 private values에 넣거나 EKS workload를 변경하는 근거가 아니다.
+
+### 인수 검증
+
+- workflow source revision은 Phase 0 commit의 full SHA와 정확히 일치한다.
+- receipt revision은 `f556e95e`를 포함한다.
+- Backend focused test 8개가 통과했으며 service와 FastAPI TestClient HTTP 502 정보 비노출 scenario를 포함한다.
+- receipt는 Phase 6 schema를 통과하고 Git 제외 private 경로에 보관했다.
+- 새 Backend image는 `linux/amd64` OCI index이며 현재 배포 Backend digest와 다르다.
+- 새 digest는 ECR에 정확히 하나 존재하고 `git-<short-sha>` tag가 같은 digest를 가리킨다.
+- Backend ECR repository는 immutable 상태다.
+- 현재 Deployment와 Pod image는 변경하지 않았다.
+
+### Phase 1 결론
+
+`f556e95e` 이후 source를 포함한 새 Backend immutable image와 formal receipt 인수가 완료됐다. 아직 Helm render/server dry-run, Backend-only rollout과 실제 Catalog rows HTTP 검증은 수행하지 않았다. 다음 단계는 현재 Phase 0 기준점을 다시 확인하고 private values의 Backend digest만 교체하는 rollout 사전 검증이다.

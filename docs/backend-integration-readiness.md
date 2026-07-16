@@ -28,6 +28,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 Issue #798 Phase 0은 현재 receipt·Deployment·두 Pod digest 일치, FastAPI 2/2, ALB/RDS·ExternalSecret·Continuous 경계와 직전 Helm/ECR rollback artifact를 읽기 전용으로 확인했다. 이 기준점은 [15.5 runtime 보완 실행 기록](eks-15-5-runtime-remediation-evidence.md)에 남기며, 새 image 배포 전 상태가 정상이라는 뜻이지 source 수정이 runtime에 반영됐다는 뜻은 아니다.
 
+Issue #798 Phase 1은 source fix와 HTTP 회귀 test를 포함한 exact revision으로 Backend focused test 8개와 수동 OIDC image delivery를 통과했다. 새 formal receipt의 Backend digest는 immutable `linux/amd64`이고 현재 배포 image와 다르며 ECR에 존재한다. EKS Deployment는 아직 기존 digest이므로 Phase 2 render/server dry-run과 Phase 3 Backend-only rollout 전에는 runtime 반영 완료가 아니다.
+
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.

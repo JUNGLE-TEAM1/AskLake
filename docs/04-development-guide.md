@@ -721,6 +721,8 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15-5-runtime-remediation-evidence.md)에 둔다. 새 image rollout 전에는 FastAPI 2/2·Pod digest, ALB/RDS, ExternalSecret source/target hash, `external_ec2` process 0, exact 보존 EC2 status와 직전 Helm revision/ECR digest를 다시 확인한다. Phase 0 확인은 읽기 전용이며 새 image 반영이나 live 재검증 성공으로 확대하지 않는다.
 
+Issue #798 Phase 1은 수동 `EKS image delivery` workflow의 dev 보호 환경과 OIDC를 사용해 `f556e95e`를 포함하는 새 Backend AMD64 digest와 formal receipt를 인수했다. receipt가 함께 제공한 다른 component digest는 이번 Backend-only rollout 입력으로 승인하지 않는다. receipt는 Git 제외 경로에 두고 Phase 2에서 새 Backend digest만 private Helm values에 반영해 render와 server dry-run을 수행한다.
+
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
 export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
