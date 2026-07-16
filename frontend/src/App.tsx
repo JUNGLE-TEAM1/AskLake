@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import { steps, wizardFlows } from "./data/appShellData";
+import { wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
@@ -13,7 +13,15 @@ import { AiChatPage } from "./pages/ai/AiChatPage";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
-import { PermissionPage, RecordParsingPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
+import { PermissionPage } from "./pages/etl/PermissionPage";
+import { RecordParsingPage } from "./pages/etl/RecordParsingPage";
+import { ReviewPage } from "./pages/etl/ReviewPage";
+import { RuleApplicationPage } from "./pages/etl/RuleApplicationPage";
+import { SchedulePage } from "./pages/etl/SchedulePage";
+import { SchemaInferencePage } from "./pages/etl/SchemaInferencePage";
+import { SourceConnectionPage } from "./pages/etl/SourceConnectionPage";
+import { TargetPage } from "./pages/etl/TargetPage";
+import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath } from "./pages/etl/stepRegistry";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
@@ -114,17 +122,8 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
     return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "etl") {
-    if (id === "source") return { dashboardRoute: null, flow: "source" };
-    if (id === "record-parsing") return { dashboardRoute: null, flow: "recordParsing" };
-    if (id === "schema") return { dashboardRoute: null, flow: "schema" };
-    if (id === "rules") return { dashboardRoute: null, flow: "rules" };
-    if (id === "schedule" && segments.length === 3 && scheduleFlows.includes(action as ScheduleFlowId)) {
-      return { dashboardRoute: null, flow: action as ScheduleFlowId };
-    }
-    if (id === "schedule" && segments.length === 2) return { dashboardRoute: null, flow: currentScheduleFlow };
-    if (id === "permission") return { dashboardRoute: null, flow: "permission" };
-    if (id === "target") return { dashboardRoute: null, flow: "target" };
-    if (id === "review") return { dashboardRoute: null, flow: "review" };
+    const etlFlow = etlFlowFromRoute(id, action, segments.length, currentScheduleFlow);
+    if (etlFlow) return { dashboardRoute: null, flow: etlFlow };
     return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
   }
   if (area === "catalog") {
@@ -145,14 +144,8 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "jobs") return "/jobs";
   if (flow === "jobDetail" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}`;
   if (flow === "jobRuns" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}/runs`;
-  if (flow === "source") return "/etl/source";
-  if (flow === "recordParsing") return "/etl/record-parsing";
-  if (flow === "schema") return "/etl/schema";
-  if (flow === "rules") return "/etl/rules";
-  if (isScheduleFlow(flow)) return "/etl/schedule";
-  if (flow === "permission") return "/etl/permission";
-  if (flow === "target") return "/etl/target";
-  if (flow === "review") return "/etl/review";
+  const etlPath = etlFlowPath(flow);
+  if (etlPath) return etlPath;
   if (flow === "catalog") return "/catalog";
   if (flow === "catalogDetail" && context.selectedDataset && context.selectedDataset.id !== emptyDatasetId) return `/catalog/${encodePathSegment(context.selectedDataset.id)}`;
   if (flow === "sql") return "/sql";
@@ -306,19 +299,12 @@ export function App() {
   const requiresRecordParsing = Boolean(draftPipeline.source.requiresRecordParsing);
   const isIndependentFlow = activeFlow === "ai" || activeFlow === "admin" || activeFlow === "profile";
   const shouldRenderAppContent = isIndependentFlow || (!shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow);
-  const wizardStepFlows = useMemo<FlowId[]>(
-    () => continuousKafkaDraft
-      ? ["source", ...(requiresRecordParsing ? ["recordParsing" as const] : []), "schema", "permission", "target", "review"]
-      : ["source", ...(requiresRecordParsing ? ["recordParsing" as const] : []), "schema", lastScheduleFlow, "permission", "target", "review"],
+  const wizardSteps = useMemo(
+    () => buildEtlWizardSteps({ continuousKafka: continuousKafkaDraft, requiresRecordParsing, scheduleFlow: lastScheduleFlow }),
     [continuousKafkaDraft, lastScheduleFlow, requiresRecordParsing],
   );
-  const wizardStepLabels = useMemo(
-    () => {
-      const labels = requiresRecordParsing ? ["소스", "레코드 구조화", ...steps.slice(1)] : steps;
-      return continuousKafkaDraft ? labels.filter((step) => step !== "스케줄") : labels;
-    },
-    [continuousKafkaDraft, requiresRecordParsing],
-  );
+  const wizardStepFlows = useMemo<FlowId[]>(() => wizardSteps.map(({ flow }) => flow), [wizardSteps]);
+  const wizardStepLabels = useMemo(() => wizardSteps.map(({ label }) => label), [wizardSteps]);
   const wizardActiveIndex = Math.max(0, wizardStepFlows.indexOf(activeFlow));
   const wizardStepDisabled = useMemo(
     () => wizardStepFlows.map((_, targetIndex) => !canNavigateToWizardStep({

@@ -91,6 +91,17 @@ services:
       context: ../backend
       target: backend-runtime
     restart: unless-stopped
+    command:
+      - python
+      - /app/scripts/ensure_spark_runtime_paths.py
+      - wait-backend-exec
+      - --
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
     depends_on:
       airflow-apiserver:
         condition: service_healthy
@@ -100,8 +111,8 @@ services:
         condition: service_healthy
       redpanda:
         condition: service_healthy
-      spark-dir-init:
-        condition: service_completed_successfully
+      spark-runtime-guard:
+        condition: service_healthy
       spark-master:
         condition: service_healthy
       spark-worker:
@@ -174,9 +185,9 @@ services:
       TRINO_MATERIALIZER_PASSWORD: ${TRINO_MATERIALIZER_PASSWORD:-}
       TRINO_ICEBERG_CATALOG_NAME: ${TRINO_ICEBERG_CATALOG_NAME:-asklake}
       TRINO_ICEBERG_JDBC_DATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
-      TRINO_ICEBERG_JDBC_USER: ${TRINO_ICEBERG_JDBC_USER:?TRINO_ICEBERG_JDBC_USER is required}
-      TRINO_ICEBERG_JDBC_PASSWORD: ${TRINO_ICEBERG_JDBC_PASSWORD:?TRINO_ICEBERG_JDBC_PASSWORD is required}
-      TRINO_ICEBERG_WAREHOUSE_BUCKET: ${TRINO_ICEBERG_WAREHOUSE_BUCKET:?TRINO_ICEBERG_WAREHOUSE_BUCKET is required}
+      TRINO_ICEBERG_JDBC_USER: ${TRINO_ICEBERG_JDBC_USER:-}
+      TRINO_ICEBERG_JDBC_PASSWORD: ${TRINO_ICEBERG_JDBC_PASSWORD:-}
+      TRINO_ICEBERG_WAREHOUSE_BUCKET: ${TRINO_ICEBERG_WAREHOUSE_BUCKET:-}
       TRINO_ICEBERG_WAREHOUSE_PREFIX: ${TRINO_ICEBERG_WAREHOUSE_PREFIX:-warehouse}
       TRINO_TLS_CA_FILE: ${TRINO_TLS_CA_CONTAINER_FILE:-}
       ASKLAKE_MONGO_HOST: ${ASKLAKE_MONGO_HOST:-mongo}
@@ -269,10 +280,9 @@ services:
       - trino_internal
     healthcheck:
       test:
-        - CMD
-        - python
-        - -c
+        - CMD-SHELL
         - |
+          python /app/scripts/ensure_spark_runtime_paths.py check-backend >/dev/null && python - <<'PY'
           import json
           import urllib.request
 
@@ -289,6 +299,7 @@ services:
               and payload["database"].get("ok") is True
           )
           raise SystemExit(0 if ready else 1)
+          PY
       interval: 30s
       timeout: 5s
       retries: 5
@@ -334,38 +345,40 @@ services:
       ASKLAKE_S3_READINESS_WRITE_BUCKETS: ${ASKLAKE_S3_READINESS_WRITE_BUCKETS:?ASKLAKE_S3_READINESS_WRITE_BUCKETS is required}
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
 
-  spark-dir-init:
+  spark-runtime-guard:
     <<: *spark-runtime
-    restart: "no"
+    restart: unless-stopped
     user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
     command:
-      - |
-        set -eu
-        for directory in \
-          /var/lib/asklake/spark-ivy \
-          /var/lib/asklake/spark-output \
-          /var/lib/asklake/spark-runs \
-          /var/lib/asklake/samples \
-          /var/lib/asklake/review-text-models
-        do
-          mkdir -p "$$directory"
-          chown -R 185:185 "$$directory"
-          chmod -R u+rwX,g+rwX,o-rwx "$$directory"
-        done
+      - python3
+      - /opt/asklake/scripts/ensure_spark_runtime_paths.py
+      - guard
+    environment:
+      ASKLAKE_SPARK_RUNTIME_ROOT: /var/lib/asklake
+      ASKLAKE_SPARK_RUNTIME_UID: "185"
+      ASKLAKE_SPARK_RUNTIME_GID: "185"
+      ASKLAKE_SPARK_RUNTIME_DIRECTORY_MODE: "2770"
+      ASKLAKE_SPARK_RUNTIME_FILE_MODE: "0660"
+      ASKLAKE_SPARK_RUNTIME_GUARD_INTERVAL_SECONDS: "30"
     volumes:
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/spark-ivy:/var/lib/asklake/spark-ivy
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/spark-output:/var/lib/asklake/spark-output
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/spark-runs:/var/lib/asklake/spark-runs
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/samples:/var/lib/asklake/samples
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/review-text-models:/var/lib/asklake/review-text-models
+    healthcheck:
+      test: ["CMD", "python3", "/opt/asklake/scripts/ensure_spark_runtime_paths.py", "check-metadata"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
 
   spark-master:
     <<: *spark-runtime
     restart: unless-stopped
     depends_on:
-      spark-dir-init:
-        condition: service_completed_successfully
+      spark-runtime-guard:
+        condition: service_healthy
     user: "185:185"
     environment:
       HOME: /tmp
@@ -399,8 +412,8 @@ services:
     <<: *spark-runtime
     restart: unless-stopped
     depends_on:
-      spark-dir-init:
-        condition: service_completed_successfully
+      spark-runtime-guard:
+        condition: service_healthy
       spark-master:
         condition: service_healthy
     user: "185:185"
@@ -419,6 +432,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
+      - python3
+      - /opt/asklake/scripts/ensure_spark_runtime_paths.py
+      - wait-writer-exec
+      - --
       - /opt/spark/bin/spark-class
       - org.apache.spark.deploy.worker.Worker
       - spark://spark-master:7077
@@ -439,7 +456,7 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/samples:/var/lib/asklake/samples:ro
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/review-text-models:/var/lib/asklake/review-text-models:ro
     healthcheck:
-      test: ["CMD-SHELL", "bash -c ': </dev/tcp/127.0.0.1/8081'"]
+      test: ["CMD-SHELL", "python3 /opt/asklake/scripts/ensure_spark_runtime_paths.py check-metadata >/dev/null && bash -c ': </dev/tcp/127.0.0.1/8081'"]
       interval: 10s
       timeout: 3s
       retries: 12
