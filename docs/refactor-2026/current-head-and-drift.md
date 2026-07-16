@@ -38,8 +38,8 @@
 - `etl_service.py`는 9,088 LOC로 변하지 않았고 Continuous command, reconciliation, publication 책임이 계속 집중돼 있다.
 - `useAskLakeData.ts`는 1,502 LOC로 서버 상태와 UI orchestration을 계속 함께 소유한다.
 - `kafka_continuous_stream.py`는 1,820 LOC이고 실행 수명주기·manifest·batch 처리 결합이 유지된다.
-- Compose의 one-shot `spark-dir-init`와 자동 restart 경로 차이는 아직 해결되지 않았다.
-- backend 전체 unit, production Spark contract, deploy regression에 변경 전 실패가 있다.
+- PR 02 branch에서는 one-shot `spark-dir-init`를 restart-safe `spark-runtime-guard`와 worker/backend startup probe로 교체했다. 실제 UID 185 container smoke가 owner/mode repair, guard restart와 기존 report/checkpoint 보존을 검증한다.
+- backend 전체 unit의 변경 전 3건은 남아 있다. production Spark contract와 deploy regression의 기준선 실패는 PR 02 branch에서 해소됐다.
 
 ## 새로 확인된 drift 위험
 

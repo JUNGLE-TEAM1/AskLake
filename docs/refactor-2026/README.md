@@ -12,6 +12,7 @@
 6. [baseline/current-contracts.md](./baseline/current-contracts.md): API·DB·runtime·frontend 계약 기준선
 7. [baseline/test-command-map.md](./baseline/test-command-map.md): 검증 명령과 실행 조건
 8. [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md): 변경 전 실패 목록
+9. [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md): Spark 경로 재부팅 복구·검증·rollback
 
 ## 기준선 재생성
 
