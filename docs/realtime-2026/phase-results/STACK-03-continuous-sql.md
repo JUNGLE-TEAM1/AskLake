@@ -15,6 +15,7 @@
 - 기존 Kafka worker manager를 gateway로 재사용하되 SQL plan/generation identity를 REST state와 Docker label에 고정하고 다른 generation worker 재사용을 거절한다.
 - Spark adapter가 PINNED_AT_START와 opt-in LATEST_PER_BATCH static snapshot set을 generation/batch별 durable manifest에 먼저 고정한다. 같은 batch retry는 같은 binding을 재사용한다.
 - Catalog row 통계가 안전 한도 이하일 때만 static relation을 broadcast하고, 실제 static key 중복 및 output 증폭 hard limit을 commit 전에 검사한다.
+- 새 Continuous SQL trigger 기본값을 5초로 낮추고, bounded static snapshot cache와 snapshot별 유일키 검증 재사용을 추가했다. 새 output table은 `_asklake_run_id` partition으로 exact publication 및 Dashboard delta query를 가지치기한다.
 - batch manifest가 input offset, static snapshot, plan/generation/fence, deterministic Run ID와 exact Iceberg commit을 연결한다.
 - publication reconciler가 `output_committed -> catalog_ready -> dashboard_ready`로 전진하며 exact snapshot의 `_asklake_run_id` 행 수를 확인한 뒤 Dataset revision과 durable event를 같은 transaction에 한 번만 기록한다.
 - 기존 ETL Catalog publication에 additive `relationMode`, `estimatedRowCount`, schema fingerprint metadata를 추가했다.
@@ -29,7 +30,8 @@
 
 ## 검증 결과
 
-- `npm run verify:continuous-sql-contract`: PASS, 17 tests
+- `npm run verify:continuous-sql-contract`: PASS, 23 tests
+- `tests.test_iceberg_writer_foundation`: PASS, 12 tests, exact snapshot과 escaped `_asklake_run_id` count 유지
 - static SQL route/auth + Kafka Continuous + Continuous SQL focused suite: PASS, 56 tests
 - `npm run verify:kafka-continuous-contract`: PASS
 - `node scripts/verify-kafka-continuous-rest.mjs`: PASS, Continuous SQL plan 전달·generation mismatch 차단·ACK 포함

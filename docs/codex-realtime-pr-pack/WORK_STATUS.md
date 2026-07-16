@@ -72,8 +72,9 @@ merge_order:
 - Draft PR: #822 (`feat-#816 -> dev`), 선행 #815 merge 후 review-ready 전환.
 - SQL AST planner, persisted Job/Run/Batch/command, generation/fencing lifecycle을 구현했다.
 - PINNED/LATEST batch-local static binding과 Spark JOIN adapter, exact Iceberg 검증 및 3단계 publication을 구현했다.
+- 새 Continuous SQL 5초 기본 trigger, bounded static snapshot cache, snapshot별 유일키 검증 재사용과 신규 output `_asklake_run_id` partition을 추가했다.
 - API는 fencing token 원문을 숨기고 start/resume/recover 때 입력 권한·governance를 다시 검사한다.
-- Continuous SQL contract 17개와 기존 경로를 포함한 focused 56개 테스트, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
+- Continuous SQL contract 23개와 기존 경로를 포함한 focused 56개 테스트, exact Iceberg writer 12개, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
 - 전체 backend discovery의 기존 3개 drift는 결과 문서에 별도로 기록했고 이번 branch에서 범위를 넓혀 수정하지 않았다.
 - 실제 Spark/Iceberg/Trino fault·restart·soak는 STACK-04 opt-in gate로 이관했다.
 
@@ -82,7 +83,7 @@ merge_order:
 - 시작 기준: `feat-#816`의 `243b70a5`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
 - Issue/branch: #823 / `feat-#823`.
 - Draft PR: #826 (`feat-#823 -> dev`), 선행 #822 merge 후 review-ready 전환.
-- backend recovery/security/Continuous SQL focused 63 tests, frontend UI 132 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
+- backend recovery/security/Continuous SQL focused 69 tests, frontend UI 132 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
 - production Compose render, proxy/architecture static gate, Continuous SQL 17 tests와 Kafka contract/REST가 통과했다.
 - PR용 disposable PostgreSQL·Caddy/NGINX parser gate와 scheduled/manual Kafka/Spark/Iceberg fault harness를 추가했다.
 - canary/rollback/production runbook, handover와 항목별 final audit를 작성했다.

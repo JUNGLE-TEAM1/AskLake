@@ -20,7 +20,7 @@
 
 ## local 검증 결과
 
-- `npm run verify:realtime-stack`: PASS, 63 tests + proxy/architecture gate
+- `npm run verify:realtime-stack`: PASS, 69 tests + proxy/architecture gate
 - frontend `npm run verify:ui-regressions`: PASS, 132 checks
 - frontend realtime transport: PASS, 7 tests
 - frontend Dashboard live refresh: PASS, 6 tests

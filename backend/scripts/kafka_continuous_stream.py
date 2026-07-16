@@ -16,6 +16,7 @@ from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, String
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
 from continuous_sql_runtime import (
+    continuous_output_partition_columns,
     execute_continuous_sql_batch,
     fencing_token_hash,
     load_continuous_sql_plan,
@@ -1707,7 +1708,10 @@ def main() -> None:
                 iceberg_target,
                 job_id=JOB_ID,
                 run_id=run_id,
-                partition_columns=iceberg_target["partitionColumns"],
+                partition_columns=continuous_output_partition_columns(
+                    iceberg_target["partitionColumns"],
+                    CONTINUOUS_SQL_PLAN,
+                ),
                 schema_fingerprint=EXPECTED_SCHEMA_FINGERPRINT or SCHEMA_STATE.get("schemaFingerprint"),
                 rule_fingerprint=RULE_FINGERPRINT,
                 source_boundary=source_boundary,

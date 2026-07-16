@@ -14,12 +14,17 @@ from typing import Any
 
 
 PLAN_VERSION = "continuous-sql-v1"
+INTERNAL_RUN_PARTITION_COLUMN = "_asklake_run_id"
 RUNTIME_METADATA_COLUMNS = [
     "kafka_timestamp",
     "kafka_partition",
     "kafka_offset",
     "ingested_at",
 ]
+
+_STATIC_FRAME_CACHE: dict[tuple[str, str, str], Any] = {}
+_STATIC_FRAME_KEY_BY_DATASET: dict[str, tuple[str, str, str]] = {}
+_VERIFIED_STATIC_KEYS: set[tuple[str, str, str, tuple[str, ...]]] = set()
 
 
 def load_continuous_sql_plan() -> dict[str, Any]:
@@ -149,13 +154,13 @@ def execute_continuous_sql_batch(
         binding = bindings_by_dataset.get(str(relation.get("datasetId") or ""))
         if binding is None:
             raise RuntimeError("CONTINUOUS_SQL_STATIC_BINDING_MISSING")
-        static_frame = read_static_snapshot(
+        static_frame = reusable_static_snapshot(
             spark,
-            relation.get("queryEngineTable") or {},
-            str(binding.get("snapshotId") or ""),
+            relation,
+            binding,
         )
         validate_frame_schema(static_frame, relation)
-        verify_static_key_uniqueness(static_frame, relation, plan)
+        verify_static_key_uniqueness(static_frame, relation, plan, binding)
         if relation.get("broadcastHint") is True:
             from pyspark.sql.functions import broadcast
 
@@ -194,6 +199,7 @@ def verify_static_key_uniqueness(
     frame: Any,
     relation: dict[str, Any],
     plan: dict[str, Any],
+    binding: dict[str, Any],
 ) -> None:
     aliases = {
         normalize_identifier(str(relation.get("alias") or "")),
@@ -210,9 +216,110 @@ def verify_static_key_uniqueness(
     unique_keys = list(dict.fromkeys(key for key in join_keys if key))
     if not unique_keys:
         raise RuntimeError("CONTINUOUS_SQL_STATIC_KEY_MISSING")
+    frame_key = static_snapshot_cache_key(relation, binding)
+    evict_stale_static_verifications(frame_key)
+    verification_key = (*frame_key, tuple(normalize_identifier(key) for key in unique_keys))
+    if verification_key in _VERIFIED_STATIC_KEYS:
+        return
     duplicates = frame.groupBy(*unique_keys).count().where("count > 1").limit(1).count()
     if duplicates:
         raise RuntimeError("CONTINUOUS_SQL_STATIC_KEY_DUPLICATE")
+    _VERIFIED_STATIC_KEYS.add(verification_key)
+
+
+def evict_stale_static_verifications(current_key: tuple[str, str, str]) -> None:
+    stale_verifications = {
+        verification
+        for verification in _VERIFIED_STATIC_KEYS
+        if verification[0] == current_key[0] and verification[:3] != current_key
+    }
+    _VERIFIED_STATIC_KEYS.difference_update(stale_verifications)
+
+
+def reusable_static_snapshot(
+    spark: Any,
+    relation: dict[str, Any],
+    binding: dict[str, Any],
+) -> Any:
+    mapping = relation.get("queryEngineTable") or {}
+    snapshot_id = str(binding.get("snapshotId") or "")
+    if relation.get("cacheHint") is not True:
+        return read_static_snapshot(spark, mapping, snapshot_id)
+
+    key = static_snapshot_cache_key(relation, binding)
+    cached = _STATIC_FRAME_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    dataset_id = key[0]
+    previous_key = _STATIC_FRAME_KEY_BY_DATASET.get(dataset_id)
+    if previous_key is not None and previous_key != key:
+        evict_static_snapshot(previous_key)
+
+    frame = read_static_snapshot(spark, mapping, snapshot_id)
+    cache = getattr(frame, "cache", None)
+    if callable(cache):
+        cached_frame = cache()
+        if cached_frame is not None:
+            frame = cached_frame
+    _STATIC_FRAME_CACHE[key] = frame
+    _STATIC_FRAME_KEY_BY_DATASET[dataset_id] = key
+    return frame
+
+
+def static_snapshot_cache_key(
+    relation: dict[str, Any],
+    binding: dict[str, Any],
+) -> tuple[str, str, str]:
+    dataset_id = str(relation.get("datasetId") or binding.get("datasetId") or "").strip()
+    snapshot_id = str(binding.get("snapshotId") or "").strip()
+    schema_fingerprint = str(
+        binding.get("schemaFingerprint") or relation.get("schemaFingerprint") or ""
+    ).strip()
+    if not dataset_id or not snapshot_id or not schema_fingerprint:
+        raise RuntimeError("CONTINUOUS_SQL_STATIC_CACHE_IDENTITY_INVALID")
+    return dataset_id, snapshot_id, schema_fingerprint
+
+
+def evict_static_snapshot(key: tuple[str, str, str]) -> None:
+    frame = _STATIC_FRAME_CACHE.pop(key, None)
+    if frame is not None:
+        unpersist = getattr(frame, "unpersist", None)
+        if callable(unpersist):
+            try:
+                unpersist(blocking=False)
+            except TypeError:
+                unpersist()
+    if _STATIC_FRAME_KEY_BY_DATASET.get(key[0]) == key:
+        _STATIC_FRAME_KEY_BY_DATASET.pop(key[0], None)
+    stale_verifications = {
+        verification for verification in _VERIFIED_STATIC_KEYS if verification[:3] == key
+    }
+    _VERIFIED_STATIC_KEYS.difference_update(stale_verifications)
+
+
+def reset_static_snapshot_cache() -> None:
+    for key in list(_STATIC_FRAME_CACHE):
+        evict_static_snapshot(key)
+    _VERIFIED_STATIC_KEYS.clear()
+
+
+def continuous_output_partition_columns(
+    configured_columns: list[str] | tuple[str, ...] | None,
+    plan: dict[str, Any],
+) -> list[str]:
+    columns: list[str] = []
+    for value in configured_columns or []:
+        column = str(value or "").strip()
+        if column and normalize_identifier(column) not in {
+            normalize_identifier(existing) for existing in columns
+        }:
+            columns.append(column)
+    if plan and normalize_identifier(INTERNAL_RUN_PARTITION_COLUMN) not in {
+        normalize_identifier(existing) for existing in columns
+    }:
+        columns.append(INTERNAL_RUN_PARTITION_COLUMN)
+    return columns
 
 
 def read_static_snapshot(spark: Any, mapping: dict[str, Any], snapshot_id: str) -> Any:

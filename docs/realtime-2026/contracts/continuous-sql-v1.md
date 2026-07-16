@@ -22,6 +22,14 @@ Catalog relation은 `relationMode=streaming|static`, Iceberg `queryEngineTable`,
 
 Catalog row 통계가 있고 `estimatedRowCount <= CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS`인 static relation만 broadcast hint를 받는다. 통계가 없거나 큰 relation은 broadcast하지 않는다. 한 micro-batch의 output이 input의 `CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT` 배수를 넘으면 commit 전에 실패한다.
 
+## low-latency 실행 계약
+
+- 새 validate/create request에서 `triggerIntervalSeconds`를 생략하면 5초다. 허용 범위는 1~3,600초이고 기존 persisted Job은 저장된 값을 유지한다. 5초는 micro-batch 시작 주기이며 end-to-end SLA가 아니다.
+- `estimatedRowCount <= CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`인 static relation은 plan에 `cacheHint=true`를 기록한다. worker는 exact `(datasetId, snapshotId, schemaFingerprint)` identity의 frame을 memory/disk에 재사용하고, 같은 snapshot·JOIN key의 유일성 scan을 한 번만 수행한다.
+- snapshot이 바뀌면 이전 frame을 unpersist하고 유일성을 다시 검증한다. 통계가 없거나 한도를 넘는 relation은 frame을 cache하지 않고, 한도 0은 cache 비활성이다.
+- 새 Continuous SQL Iceberg output table은 `_asklake_run_id` identity partition을 갖는다. exact publication count와 Dashboard revision delta query는 해당 batch partition을 가지치기할 수 있다. 사용자 projection에는 marker를 노출하지 않는다.
+- 기존 output table은 partition spec을 자동 변경하지 않는다. 가지치기 이득은 없을 수 있지만 exact `_asklake_run_id` 행 수 검증은 동일하게 수행한다.
+
 ## lifecycle과 fencing
 
 Job은 desired state와 observed state를 분리하고 `start`, `pause`, `resume`, `stop`, `recover` command를 지원한다. `clientRequestId`와 `commandId`는 owner/Job 범위 idempotency key다. 새 Run은 monotonic generation과 비공개 fencing token을 가지며 API에는 token hash만 반환한다.
@@ -37,7 +45,7 @@ batch identity는 `(jobId, runGeneration, batchId)`이고 source topic/partition
 publication은 다음 단계를 전진만 한다.
 
 1. `output_committed`: exact Iceberg snapshot과 manifest evidence를 저장한다.
-2. `catalog_ready`: snapshot에서 `_asklake_run_id` 행 수와 queryability를 검증한다.
+2. `catalog_ready`: snapshot에서 `_asklake_run_id` 행 수와 queryability를 Trino로 exact 검증한다. cache나 partition 통계만으로 이 gate를 대체하지 않는다.
 3. `dashboard_ready`: Catalog Dataset revision과 durable realtime event를 같은 transaction에 기록한다.
 
 Catalog 또는 Dashboard publication 실패는 Spark input을 다시 처리하게 만들지 않는다. reconciler가 `output_committed` 또는 `catalog_ready`부터 재시도한다. 빈 결과 batch는 잘못된 Dataset revision/event를 만들지 않는다.
