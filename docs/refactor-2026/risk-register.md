@@ -2,7 +2,7 @@
 
 | ID | 심각도 | 위험 | 근거 | 해소 PR | 상태 |
 |---|---|---|---|---:|---|
-| R-001 | P0 | 재부팅 후 Spark ivy/report 경로가 없거나 UID 185가 쓸 수 없음 | 배포 감사와 `spark-dir-init` restart 정책 | 02 | OPEN |
+| R-001 | P0 | 재부팅 후 Spark ivy/report 경로가 없거나 UID 185가 쓸 수 없음 | restart-safe guard, worker/backend probe와 실제 container smoke | 02 | CLOSED |
 | R-002 | P0 | runtime report 유실 시 실제 실패 원인이 generic failed로 축약됨 | file report·container·DB 상태 분산 | 02~03 | OPEN |
 | R-003 | P1 | `etl_service.py` 9,088 LOC God Service | command, reconciliation, publication 집중 | 04~07 | OPEN |
 | R-004 | P1 | Continuous 상태 권위가 DB, container, report, checkpoint, manifest, Catalog에 분산 | 상태·오류 계약 부재 | 03~06 | OPEN |
@@ -11,8 +11,8 @@
 | R-007 | P1 | `useAskLakeData.ts` 1,502 LOC | server state와 optimistic UI 결합 | 09~10 | OPEN |
 | R-008 | P1 | `etl.css` 9,803 LOC 전역 cascade | selector 순서 의존 | 11 | OPEN |
 | R-009 | P1 | Python·Node·Spark 경계가 subprocess/file/env에 의존 | 단일 권위 불명확 | 08 | OPEN |
-| R-010 | P1 | production verifier가 현재 runtime signature와 불일치 | Spark timeout verifier 변경 전 실패 | 02 | OPEN |
-| R-011 | P1 | deploy regression fixture가 필수 AI env 계약과 불일치 | 30개 중 18개 실패 | 02 | OPEN |
+| R-010 | P1 | production verifier가 현재 runtime signature와 불일치 | 현재 signature와 outer timeout 계약 검증 통과 | 02 | CLOSED |
+| R-011 | P1 | deploy regression fixture가 필수 AI env 계약과 불일치 | AI env fixture와 Trino-disabled Compose 계약 보정 후 전체 통과 | 02 | CLOSED |
 | R-012 | P1 | backend 전체 unit에 변경 전 3개 실패 | data lake source review 2건, Spark identity 1건 | 03 | OPEN |
 | R-013 | P2 | production fallback/legacy/mock 경로 도달 가능성 불명확 | fallback 75, legacy 53, mock 23 files | 12 | OPEN |
 | R-014 | P2 | 프런트 번들 chunk 2.6 MB warning | Vite build baseline | 09~11 | OPEN |

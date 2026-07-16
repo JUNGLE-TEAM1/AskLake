@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -35,13 +36,13 @@ try:
         })
         return {"status": "success"}
 
-    etl_service.job_payload_for_spark = lambda _job: {"id": "timeout-contract"}
+    etl_service.job_payload_for_spark = lambda _job, *_args, **_kwargs: {"id": "timeout-contract"}
     etl_service.run_node_bridge = capture_bridge
-    etl_service.run_spark_job(object(), "run", "run-timeout-contract")
+    kafka_job = SimpleNamespace(source_type="Apache Kafka", source_config=[])
+    etl_service.run_spark_job(object(), kafka_job, "run", "run-timeout-contract")
 
-    assert captured["payload"]["sparkRestTimeoutMs"] == 1000
     assert captured["options"]["timeout_seconds"] == 61
-    assert captured["options"]["timeout_seconds"] * 1000 > captured["payload"]["sparkRestTimeoutMs"]
+    assert captured["options"]["timeout_seconds"] * 1000 > etl_service.spark_rest_poll_timeout_ms()
     assert captured["options"]["timeout_recovery"] is not None
     assert etl_service.continuous_maintenance_bridge_timeout_seconds(1000) == 31
 
