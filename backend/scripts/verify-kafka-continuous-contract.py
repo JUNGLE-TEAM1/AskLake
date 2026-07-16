@@ -566,7 +566,12 @@ def main() -> None:
             revision_commits[run_id] = commit
             return commit
 
-        def capture_dataset(_db, dataset, *, run_id, **metadata):
+        def capture_catalog_dataset(_db, dataset):
+            captured_dataset[dataset.id] = dataset
+            dataset_save_count["value"] += 1
+            return dataset
+
+        def capture_catalog_dataset_and_revision(_db, dataset, *, run_id, **metadata):
             captured_dataset[dataset.id] = dataset
             dataset_save_count["value"] += 1
             return capture_revision(dataset.id, run_id, **metadata)
@@ -590,16 +595,23 @@ def main() -> None:
                 stream_progress_ranges.append(source_ranges)
                 return True
 
-            def record_dataset_commit(self, *, run_id, source_ranges=None, **_metadata):
+            def record_dataset_commit(self, *, run_id, source_ranges=None, **metadata):
                 existing_commit = revision_commits.get(run_id)
-                if existing_commit is None:
-                    raise AssertionError("Expected an existing revision commit")
-                if existing_commit.get("source_ranges") != source_ranges:
-                    raise ValueError("Dataset revision run_id was reused with different publication metadata")
-                return existing_commit, False
+                if existing_commit is not None:
+                    if existing_commit.get("source_ranges") != source_ranges:
+                        raise ValueError("Dataset revision run_id was reused with different publication metadata")
+                    return existing_commit, False
+                dataset_id = metadata.pop("dataset_id")
+                return capture_revision(
+                    dataset_id,
+                    run_id,
+                    source_ranges=source_ranges,
+                    **metadata,
+                ), True
 
         etl_service.DashboardLiveRepository = FakeDashboardLiveRepository
-        etl_service.save_catalog_dataset_and_revision = capture_dataset
+        etl_repository.save_dataset = capture_catalog_dataset
+        etl_service.save_catalog_dataset_and_revision = capture_catalog_dataset_and_revision
         etl_service.backfill_catalog_revision = capture_revision_backfill
         runtime_relock_count = {"value": 0}
         runtime.metrics = {**(runtime.metrics or {}), "concurrentMarker": "stale"}

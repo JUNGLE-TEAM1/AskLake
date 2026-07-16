@@ -1,0 +1,95 @@
+.permission-list {
+  display: grid;
+  gap: 12px;
+}
+
+.permission-grid {
+  grid-template-columns: minmax(0, 860px) 320px;
+  max-width: var(--layout-main-width);
+}
+
+.permission-share-panel .info-box {
+  margin-bottom: 24px;
+}
+
+.permission-share-panel .form-grid {
+  gap: 22px 28px;
+}
+
+.permission-template-actions .secondary-button {
+  width: 100%;
+}
+
+.permission-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid #dee1e6;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.permission-row.active {
+  border-color: #2563eb;
+  background: #f8fbff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
+.permission-row input {
+  accent-color: #2563eb;
+  margin-top: 3px;
+}
+
+.permission-row span {
+  display: grid;
+  gap: 4px;
+}
+
+.permission-row small {
+  color: #565d6d;
+}
+
+.permission-row.detailed {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.permission-chip-row {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.permission-matrix {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #eef2f7;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.permission-matrix-table {
+  min-width: 720px;
+}
+
+.permission-aside {
+  align-self: start;
+}
+
+.permission-actions {
+  border-top: 1px solid #dee1e6;
+  padding-top: 18px;
+}
+
+.form-actions.inline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.form-actions.inline button {
+  min-width: 112px;
+}
+

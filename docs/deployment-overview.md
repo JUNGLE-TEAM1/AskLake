@@ -298,7 +298,7 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - Airflow metadata `postgres:16-alpine`
 - `redpandadata/redpanda:v24.3.1`
 - one-shot `aws-s3-readiness`, built from `backend/Dockerfile`
-- `spark-master`, `spark-worker`, and `spark-dir-init`, built from the `spark-runtime` target
+- `spark-master`, `spark-worker`, and restart-safe `spark-runtime-guard`, built from the `spark-runtime` target
 
 Airflow orchestration dependencies:
 

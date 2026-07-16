@@ -6,6 +6,17 @@ export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "non
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
 export type KafkaExecutionMode = "snapshot" | "continuous";
 export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
+export type ContinuousDesiredRuntimeState = "running" | "paused" | "stopped";
+export type ContinuousObservedRuntimeState = "unknown" | "starting" | "running" | "stopping" | "stopped" | "failed";
+export type ContinuousRuntimeErrorStage = "validation" | "runtime_storage" | "submission" | "execution" | "report" | "checkpoint" | "materialization" | "catalog" | "dashboard_publication" | "reconciliation";
+
+export type ContinuousRuntimeErrorDetail = {
+  stage: ContinuousRuntimeErrorStage;
+  code: string;
+  message: string;
+  retryable: boolean;
+  context?: Record<string, unknown> | null;
+};
 
 export type KafkaSchemaEvolutionPolicy = {
   additiveNullable: "allow" | "quarantine" | "pause";
@@ -23,6 +34,11 @@ export type KafkaContinuousConfigDraft = {
 
 export type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
+  desiredState?: ContinuousDesiredRuntimeState;
+  observedState?: ContinuousObservedRuntimeState;
+  stateRevision?: number;
+  fencingToken?: string | null;
+  errorDetail?: ContinuousRuntimeErrorDetail | null;
   checkpointPath: string;
   heartbeatAt?: string | null;
   lastFlushAt?: string | null;
