@@ -28,7 +28,7 @@ Trino는 HTTPS와 file password 인증을 사용한다. 입력 준비기는 다�
 - JKS password와 Trino internal shared secret
 - Backend result cursor와 destructive query confirmation용 서로 다른 signing secret
 
-Backend가 Trino에 HTTPS/password로 연결하려면 query/materializer identity, signing secret과 같은 인증서의 CA가 필요하다. 그래서 private 입력은 Spark·Trino source뿐 아니라 기존 Backend source에 안전하게 병합할 `backendPatch`도 함께 가진다. 이는 Phase 1에서 Backend source를 이미 변경했다는 뜻이 아니다. Phase 2에서 기존 Backend key를 보존하는 merge와 staged hash 검증을 통과한 뒤에만 반영한다.
+Backend가 Trino에 HTTPS/password로 연결하려면 query/materializer identity, signing secret과 같은 인증서의 CA가 필요하다. 그래서 private 입력은 Spark·Trino source뿐 아니라 기존 Backend source에 안전하게 병합할 `backendPatch`도 함께 가진다. 이는 Phase 1에서 Backend source를 이미 변경했다는 뜻이 아니다. 현재 Web chart에는 CA file mount가 없으므로 이 patch는 Phase 2에서 섞지 않고 B workload 통합 시 기존 key 보존, staged hash와 rollout/rollback을 함께 검증한 뒤 반영한다.
 
 ## 비공개 입력 구조
 
@@ -89,4 +89,4 @@ Phase 1은 완료됐다. 실제 dev credential과 TLS/auth 파일은 Phase 2가 
 - SparkApplication 실제 실행
 - Kafka fixture 생산과 MSK → Spark → Iceberg → Trino E2E
 
-Phase 2는 기존 Backend/Airflow runtime을 먼저 보존하고, staged source-target hash와 rollback 입력을 확보한 뒤 Spark·Trino source와 ExternalSecret을 적용해야 한다.
+Phase 2의 Spark·Trino source와 ExternalSecret 적용 결과는 [EKS 16일차 Pair A Phase 2 runtime Secret 전달 기록](eks-day16-a-runtime-secret-delivery.md)에 남겼다. Backend patch는 현재 Web runtime 보호를 위해 통합 단계까지 보류됐다.
