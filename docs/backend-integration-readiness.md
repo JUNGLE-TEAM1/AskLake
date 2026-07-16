@@ -40,6 +40,8 @@ Issue #798 Phase 4 보완은 enum 수정 exact revision의 새 immutable AMD64 B
 
 Issue #798 Phase 5는 현재 Catalog metadata에서 선택한 root 아래 non-empty exact Parquet object를 강화된 Spark runner로 다시 읽었다. `COMPLETED`, 22 columns, bounded 5 rows, width 일치와 임시 resource 잔여 0이 확인됐다. 실제 `kubectl auth can-i`의 deny exit code 1도 정상 거부로 검증하고 allow/API-error regression을 추가했다. 이 결과는 bounded object read 증거이며 Trino snapshot-aware table read나 Kafka→Iceberg 전체 E2E 증거는 아니다.
 
+Issue #798 Phase 6 최종 감사는 현재 formal receipt와 Backend Deployment·두 Ready Pod digest, target-health gate, ALB/RDS, sanitized rows 502, `external_ec2` Continuous process 0, 보존 EC2 status와 physical read 잔여 0을 다시 대조했다. Issue #798 acceptance는 완료됐으며 Trino snapshot HTTP 200과 Kafka 전체 E2E는 후속 배포 gate로 유지한다.
+
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.

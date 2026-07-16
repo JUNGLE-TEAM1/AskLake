@@ -143,3 +143,20 @@ enum 정규화 수정의 exact revision으로 공식 OIDC image delivery를 다�
 - SparkApplication·Pod·Service·ConfigMap·PVC label/exact-prefix 잔여 0
 
 실제 row, Dataset ID, S3 bucket/object URI, image digest와 Pod 식별자는 출력하거나 Git에 기록하지 않았다. Issue #798의 강화된 physical read acceptance 항목은 완료됐다.
+
+## Phase 6: Issue #798 최종 인수 감사
+
+Phase 0~5의 개별 성공 기록이 현재 runtime과 계속 일치하는지 읽기 전용으로 다시 대조했다. 현재 kubectl endpoint와 AWS EKS cluster를 exact match로 확인한 뒤, Git 제외 formal receipt와 실제 Backend Deployment·Pod 상태를 비교했다. Backend image는 수정 commit을 포함한 receipt와 일치하고 ECR repository의 immutable digest로 확인됐다. FastAPI는 두 replica 모두 Ready, restart 0이며 각 Pod의 target-health readiness gate도 `True`다.
+
+현재 live 환경의 결합 결과는 다음과 같다.
+
+- Frontend/Backend 공유 ALB steady와 Backend RDS health 통과
+- Catalog Iceberg rows HTTP 502 `SQL_STORAGE_ERROR`, reason `BACKEND_TIMEOUT` 및 private marker 부재 재확인
+- 두 FastAPI Pod의 Continuous control plane `external_ec2`, worker·maintenance process 합계 0
+- 보존 대상 외부 EC2 running, instance/system status check `ok`
+- physical read SparkApplication·Pod·Service·ConfigMap·PVC label/exact-prefix 잔여 0
+- Catalog rows focused test 8개, physical read fake regression, Day 15 validation hardening과 EKS foundation 계약 검증 통과
+
+로컬에는 Terraform CLI가 없어 foundation verifier의 Terraform 단계는 문서화된 Docker 검증 대상으로 skip됐으며, live runtime 감사와 Issue #798 acceptance에는 새 Terraform apply가 필요하지 않았다. 이번 단계에서는 image build/push, Helm upgrade, Kubernetes workload 생성·삭제, Terraform apply와 traffic 전환을 수행하지 않았다. 실제 account, endpoint, digest, Dataset·S3 URI, Pod·EC2 식별자와 Secret value는 기록하지 않았다.
+
+따라서 Issue #798의 source regression, immutable Backend rollout, sanitized runtime error와 강화된 bounded physical read cleanup acceptance는 모두 완료됐다. Trino snapshot-aware HTTP 200, Airflow/Spark/Trino runtime Secret 전체 연결, Kafka→Iceberg→Trino E2E와 production cutover는 이 이슈의 실패나 미완료가 아니라 명시된 후속 범위다.
