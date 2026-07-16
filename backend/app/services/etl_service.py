@@ -152,6 +152,15 @@ MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 60
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
+EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1"
+EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1"
+EKS_MVP_FIXTURE_BATCH_ID_FIELD = "__EKS MVP Fixture Batch ID"
+EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD = "__EKS MVP Expected Count"
+EKS_MVP_FIXTURE_MAX_COUNT = 100_000
+EKS_MVP_FIXTURE_CONTRACT_VERSION = 1
+EKS_MVP_FIXTURE_OUTPUT_PREFIX = "eks-mvp/output"
+EKS_MVP_FIXTURE_CHECKPOINT_PREFIX = "eks-mvp/checkpoints"
+EKS_MVP_FIXTURE_ICEBERG_TABLE = "eks_mvp_fixture"
 DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
 SCHEDULE_WEEKDAY_VALUES = {
     "월": 0,
@@ -1328,7 +1337,7 @@ def command_job(
     run_model = None
     dataset_model = None
     if command in {"run", "retry"}:
-        if is_kafka_job(job):
+        if is_kafka_job(job) and not is_eks_mvp_bounded_fixture_job(job):
             run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             run_model = kafka_run_reservation(job, run_id)
@@ -1371,6 +1380,7 @@ def command_job(
             finalize_job_from_kafka_result(job, command, result)
             job.dag_steps = dag_steps_from_kafka_result(job, command, run_schema.model_dump(by_alias=True), result)
         else:
+            validate_eks_mvp_bounded_fixture_job(job)
             airflow_client = build_airflow_client()
             run_model = airflow_run_reservation(job, command, airflow_client)
             run_schema = etl_repository.run_to_schema(run_model)
@@ -2399,6 +2409,186 @@ def is_kafka_job(job: ETLJobModel) -> bool:
     return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
+def is_eks_mvp_bounded_fixture_job(job: ETLJobModel) -> bool:
+    """Identify the explicit EKS-only Kafka fixture path without changing legacy Snapshot routing."""
+    fields = job.source_config or []
+    labels = {str(label) for label, _value in fields}
+    topic = field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")
+    consumer_group = field_value(fields, "CONSUMER GROUP ID") or field_value(fields, "Consumer Group ID")
+    return (
+        str(job.execution_mode or "snapshot").strip().casefold() == "snapshot"
+        and is_kafka_job(job)
+        and (
+            topic == EKS_MVP_FIXTURE_TOPIC
+            or consumer_group == EKS_MVP_FIXTURE_CONSUMER_GROUP
+            or EKS_MVP_FIXTURE_BATCH_ID_FIELD in labels
+            or EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD in labels
+        )
+    )
+
+
+def validate_eks_mvp_bounded_fixture_job(job: ETLJobModel) -> None:
+    if not is_eks_mvp_bounded_fixture_job(job):
+        return
+    if not spark_kubernetes_mode_enabled():
+        raise ApiError(
+            "EKS_MVP_FIXTURE_REQUIRES_KUBERNETES",
+            "The EKS MVP bounded fixture requires ASKLAKE_SPARK_RUNNER=kubernetes.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job.id},
+        )
+
+    fields = job.source_config or []
+    broker = (
+        field_value(fields, "Broker / Endpoint")
+        or field_value(fields, "Broker")
+        or os.environ.get("ASKLAKE_KAFKA_BROKER")
+        or ""
+    ).strip()
+    brokers = [item.strip() for item in broker.split(",") if item.strip()]
+    if not brokers or any(re.fullmatch(r"[^,\s:]+:9098", item) is None for item in brokers):
+        raise eks_mvp_fixture_contract_error(
+            job,
+            "Every MSK bootstrap endpoint must use IAM port 9098.",
+        )
+
+    topic = (
+        field_value(fields, "TOPIC / QUEUE NAME")
+        or field_value(fields, "Topic")
+        or field_value(fields, "topic")
+    )
+    consumer_group = (
+        field_value(fields, "CONSUMER GROUP ID")
+        or field_value(fields, "Consumer Group ID")
+    )
+    fixture_batch_id = field_value(fields, EKS_MVP_FIXTURE_BATCH_ID_FIELD)
+    expected_count = parse_positive_integer(
+        field_value(fields, EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD),
+    )
+    if topic != EKS_MVP_FIXTURE_TOPIC:
+        raise eks_mvp_fixture_contract_error(job, "The fixture topic is outside the EKS MVP boundary.")
+    if consumer_group != EKS_MVP_FIXTURE_CONSUMER_GROUP:
+        raise eks_mvp_fixture_contract_error(job, "The fixture consumer group is outside the EKS MVP boundary.")
+    if not fixture_batch_id:
+        raise eks_mvp_fixture_contract_error(job, "The producer fixture batch id is required.")
+    if expected_count is None or expected_count > EKS_MVP_FIXTURE_MAX_COUNT:
+        raise eks_mvp_fixture_contract_error(
+            job,
+            f"The producer expected count must be between 1 and {EKS_MVP_FIXTURE_MAX_COUNT}.",
+        )
+
+
+def eks_mvp_fixture_contract_error(job: ETLJobModel, message: str) -> ApiError:
+    return ApiError(
+        "EKS_MVP_FIXTURE_CONTRACT_INVALID",
+        message,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        {"jobId": job.id},
+    )
+
+
+def eks_mvp_fixture_run_state(
+    job: ETLJobModel,
+    run_id: str,
+    captured_at: str,
+) -> dict[str, Any] | None:
+    if not is_eks_mvp_bounded_fixture_job(job):
+        return None
+    validate_eks_mvp_bounded_fixture_job(job)
+    fields = job.source_config or []
+    broker = (
+        field_value(fields, "Broker / Endpoint")
+        or field_value(fields, "Broker")
+        or os.environ.get("ASKLAKE_KAFKA_BROKER")
+        or ""
+    )
+    normalized_broker = ",".join(item.strip() for item in broker.split(",") if item.strip())
+    fixture_batch_id = field_value(fields, EKS_MVP_FIXTURE_BATCH_ID_FIELD)
+    expected_count = parse_positive_integer(field_value(fields, EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD))
+    output_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", output_bucket) is None:
+        raise eks_mvp_fixture_contract_error(job, "ASKLAKE_SPARK_OUTPUT_BUCKET is not a valid S3 bucket name.")
+    source_boundary = {
+        "broker": normalized_broker,
+        "checkpointPath": f"s3a://{output_bucket}/{EKS_MVP_FIXTURE_CHECKPOINT_PREFIX}/{run_id}",
+        "consumerGroup": EKS_MVP_FIXTURE_CONSUMER_GROUP,
+        "expectedCount": expected_count,
+        "fixtureBatchId": fixture_batch_id,
+        "kind": "kafka_snapshot",
+        "outputPath": f"s3a://{output_bucket}/{EKS_MVP_FIXTURE_OUTPUT_PREFIX}/{run_id}",
+        "snapshotId": run_id,
+        "topic": EKS_MVP_FIXTURE_TOPIC,
+    }
+    return {
+        "capturedAt": captured_at,
+        "contractVersion": EKS_MVP_FIXTURE_CONTRACT_VERSION,
+        "runId": run_id,
+        "sourceBoundary": source_boundary,
+    }
+
+
+def persisted_eks_mvp_fixture_source_boundary(run: ETLRunModel) -> dict[str, Any] | None:
+    state = (run.task_states or {}).get("eksMvpFixture")
+    if state is None:
+        return None
+    boundary = state.get("sourceBoundary") if isinstance(state, dict) else None
+    broker = str(boundary.get("broker") or "") if isinstance(boundary, dict) else ""
+    brokers = [item.strip() for item in broker.split(",") if item.strip()]
+    expected_count = boundary.get("expectedCount") if isinstance(boundary, dict) else None
+    output_path = str(boundary.get("outputPath") or "") if isinstance(boundary, dict) else ""
+    checkpoint_path = str(boundary.get("checkpointPath") or "") if isinstance(boundary, dict) else ""
+    if (
+        not isinstance(state, dict)
+        or state.get("contractVersion") != EKS_MVP_FIXTURE_CONTRACT_VERSION
+        or state.get("runId") != run.run_id
+        or not str(state.get("capturedAt") or "").strip()
+        or not isinstance(boundary, dict)
+        or boundary.get("kind") != "kafka_snapshot"
+        or boundary.get("snapshotId") != run.run_id
+        or boundary.get("topic") != EKS_MVP_FIXTURE_TOPIC
+        or boundary.get("consumerGroup") != EKS_MVP_FIXTURE_CONSUMER_GROUP
+        or not str(boundary.get("fixtureBatchId") or "").strip()
+        or isinstance(expected_count, bool)
+        or not isinstance(expected_count, int)
+        or expected_count < 1
+        or expected_count > EKS_MVP_FIXTURE_MAX_COUNT
+        or not brokers
+        or any(re.fullmatch(r"[^,\s:]+:9098", item) is None for item in brokers)
+        or re.fullmatch(
+            rf"s3a://[^/]+/{re.escape(EKS_MVP_FIXTURE_OUTPUT_PREFIX)}/{re.escape(run.run_id)}",
+            output_path,
+        ) is None
+        or re.fullmatch(
+            rf"s3a://[^/]+/{re.escape(EKS_MVP_FIXTURE_CHECKPOINT_PREFIX)}/{re.escape(run.run_id)}",
+            checkpoint_path,
+        ) is None
+    ):
+        raise ApiError(
+            "EKS_MVP_FIXTURE_RUN_BOUNDARY_INVALID",
+            "The persisted EKS fixture boundary does not match its AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": run.job_id, "runId": run.run_id},
+        )
+    return dict(boundary)
+
+
+def require_matching_airflow_source_boundary(
+    run: ETLRunModel,
+    airflow_source_boundary: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    persisted = persisted_eks_mvp_fixture_source_boundary(run)
+    if persisted is None and airflow_source_boundary is None:
+        return None
+    if persisted is None or not isinstance(airflow_source_boundary, dict) or airflow_source_boundary != persisted:
+        raise ApiError(
+            "AIRFLOW_SOURCE_BOUNDARY_MISMATCH",
+            "Airflow source boundary does not match the persisted AskLake Run boundary.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": run.job_id, "runId": run.run_id},
+        )
+    return persisted
+
+
 def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
     default_mode = writer_mode_for_source(source_type)
     if default_mode == "append":
@@ -2412,12 +2602,22 @@ def writer_mode_for_pipeline(source_type: str, source_config: Any) -> str:
     return "append" if incremental_folder else "replace"
 
 
-def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def run_spark_job(
+    db: Session,
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    *,
+    spark_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    source_boundary: dict[str, Any] | None = None,
+    expected_kubernetes_execution: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
     kubernetes_mode = spark_kubernetes_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
+    kubernetes_state_file = spark_kubernetes_execution_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
     source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
     source_object_inventory = incremental_source_object_inventory(
@@ -2449,12 +2649,27 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_object_inventory,
                 source_window_rebaseline=source_window_rebaseline,
                 source_iceberg_table=source_iceberg_table,
+                source_boundary=source_boundary,
             ),
             "runId": run_id,
+            **(
+                {
+                    "sparkKubernetesProgressFile": str(kubernetes_state_file),
+                    **(
+                        {"expectedKubernetesExecution": expected_kubernetes_execution}
+                        if expected_kubernetes_execution is not None
+                        else {}
+                    ),
+                }
+                if kubernetes_mode
+                else {}
+            ),
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
         timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode or kubernetes_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
+        progress_callback=spark_progress_callback if kubernetes_mode else None,
+        progress_file=kubernetes_state_file if kubernetes_mode else None,
     )
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
@@ -2466,8 +2681,31 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
     return result
 
 
+def eks_mvp_fixture_iceberg_target() -> IcebergWriterTarget:
+    return IcebergWriterTarget(
+        catalog=settings.trino_catalog,
+        namespace=settings.trino_schema,
+        table=EKS_MVP_FIXTURE_ICEBERG_TABLE,
+        write_mode="replace",
+        partition_columns=[],
+    )
+
+
 def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
     if is_kafka_job(job):
+        if not is_eks_mvp_bounded_fixture_job(job):
+            return
+        expected_target = eks_mvp_fixture_iceberg_target()
+        if job.iceberg_target:
+            try:
+                if IcebergWriterTarget.model_validate(job.iceberg_target) == expected_target:
+                    return
+            except Exception:
+                pass
+        job.dataset_id = str(job.dataset_id or make_dataset_id(job.target))
+        job.iceberg_target = expected_target.model_dump(mode="json", by_alias=True)
+        db.add(job)
+        db.commit()
         return
     expected_write_mode = writer_mode_for_pipeline(job.source_type, job.source_config)
     if job.iceberg_target:
@@ -2486,12 +2724,74 @@ def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
     db.commit()
 
 
+def validate_eks_mvp_fixture_spark_result(
+    job: ETLJobModel,
+    run_id: str,
+    source_boundary: dict[str, Any] | None,
+    manifest: dict[str, Any],
+) -> None:
+    if source_boundary is None or manifest.get("status") != "success":
+        return
+
+    expected_count = source_boundary["expectedCount"]
+    expected_target = eks_mvp_fixture_iceberg_target()
+    commit = manifest.get("icebergCommit")
+    try:
+        persisted_target = IcebergWriterTarget.model_validate(job.iceberg_target)
+        committed_target = IcebergWriterTarget.model_validate(
+            commit.get("target") if isinstance(commit, dict) else None,
+        )
+    except Exception as exc:
+        raise ApiError(
+            "EKS_MVP_FIXTURE_RESULT_INVALID",
+            "Successful EKS fixture Spark result does not contain a valid Iceberg target.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"jobId": job.id, "runId": run_id},
+        ) from exc
+
+    mismatches: list[str] = []
+    if manifest.get("sourceBoundary") != source_boundary:
+        mismatches.append("sourceBoundary")
+    if manifest.get("inputRows") != expected_count:
+        mismatches.append("inputRows")
+    if manifest.get("outputRows") != expected_count:
+        mismatches.append("outputRows")
+    if persisted_target != expected_target:
+        mismatches.append("persistedIcebergTarget")
+    if committed_target != expected_target:
+        mismatches.append("committedIcebergTarget")
+    if str(manifest.get("outputPath") or "") != expected_target.table_uri:
+        mismatches.append("outputPath")
+    if not isinstance(commit, dict) or commit.get("sourceBoundary") != source_boundary:
+        mismatches.append("commitSourceBoundary")
+    if not isinstance(commit, dict) or str(commit.get("jobId") or "") != job.id:
+        mismatches.append("commitJobId")
+    if not isinstance(commit, dict) or str(commit.get("runId") or "") != run_id:
+        mismatches.append("commitRunId")
+    if not isinstance(commit, dict) or not str(commit.get("snapshotId") or "").strip():
+        mismatches.append("snapshotId")
+    if mismatches:
+        raise ApiError(
+            "EKS_MVP_FIXTURE_RESULT_INVALID",
+            "Spark result does not prove the persisted EKS fixture boundary was committed with the expected identity.",
+            status.HTTP_502_BAD_GATEWAY,
+            {
+                "expectedCount": expected_count,
+                "jobId": job.id,
+                "mismatches": mismatches,
+                "runId": run_id,
+                "target": expected_target.table_uri,
+            },
+        )
+
+
 def execute_airflow_spark_run(
     db: Session,
     *,
     job_id: str,
     run_id: str,
     command: str,
+    airflow_source_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     job = etl_repository.get_job(db, job_id)
     run = etl_repository.get_run_model(db, run_id)
@@ -2504,7 +2804,7 @@ def execute_airflow_spark_run(
             status.HTTP_409_CONFLICT,
             {"jobId": job_id, "runId": run_id},
         )
-
+    source_boundary = require_matching_airflow_source_boundary(run, airflow_source_boundary)
     existing_result = (run.task_states or {}).get("sparkResult")
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
         return existing_result
@@ -2531,7 +2831,6 @@ def execute_airflow_spark_run(
         generation=lease.generation,
         lease_seconds=lease_seconds,
     )
-    with_execution_lease.start()
 
     run = etl_repository.get_run_for_execution_fence(
         db,
@@ -2540,24 +2839,75 @@ def execute_airflow_spark_run(
         generation=lease.generation,
     )
     if run is None:
-        with_execution_lease.stop()
         raise run_execution_lease_lost(job_id, run_id)
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            "attemptId": attempt_id,
-            "generation": lease.generation,
-            "startedAt": iso_now(),
-            "status": "running",
-        },
-    }
-    db.commit()
+    try:
+        previous_execution = (run.task_states or {}).get("sparkExecution")
+        previous_kubernetes_execution = (
+            previous_execution.get("kubernetesExecution")
+            if isinstance(previous_execution, dict)
+            and isinstance(previous_execution.get("kubernetesExecution"), dict)
+            else None
+        )
+        if previous_kubernetes_execution is not None:
+            previous_kubernetes_execution = normalize_spark_kubernetes_execution(
+                previous_kubernetes_execution,
+                job_id=job_id,
+                run_id=run_id,
+            )
+        run.task_states = {
+            **(run.task_states or {}),
+            "sparkExecution": {
+                "attemptId": attempt_id,
+                "generation": lease.generation,
+                "startedAt": iso_now(),
+                "status": "running",
+                **(
+                    {"kubernetesExecution": previous_kubernetes_execution}
+                    if previous_kubernetes_execution is not None
+                    else {}
+                ),
+            },
+        }
+        db.commit()
+    except Exception:
+        db.rollback()
+        etl_repository.release_run_execution_lease(
+            db,
+            run_id,
+            owner=FASTAPI_EXECUTION_OWNER,
+            generation=lease.generation,
+        )
+        raise
+    with_execution_lease.start()
 
     try:
         job = etl_repository.get_job(db, job_id)
         if job is None:
             raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
-        result = run_spark_job(db, job, command, run_id)
+        if spark_kubernetes_mode_enabled():
+            progress_callback = spark_kubernetes_execution_progress_callback(
+                db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=lease.generation,
+            )
+            spark_kwargs: dict[str, Any] = {
+                "spark_progress_callback": progress_callback,
+            }
+            if source_boundary is not None:
+                spark_kwargs["source_boundary"] = source_boundary
+            if previous_kubernetes_execution is not None:
+                spark_kwargs["expected_kubernetes_execution"] = previous_kubernetes_execution
+            result = run_spark_job(
+                db,
+                job,
+                command,
+                run_id,
+                **spark_kwargs,
+            )
+        else:
+            spark_kwargs = {"source_boundary": source_boundary} if source_boundary is not None else {}
+            result = run_spark_job(db, job, command, run_id, **spark_kwargs)
     except Exception as exc:
         with_execution_lease.stop()
         finalize_spark_execution_attempt(
@@ -2573,6 +2923,32 @@ def execute_airflow_spark_run(
         raise run_execution_lease_lost(job_id, run_id)
 
     manifest = spark_result_manifest(result, run_id)
+    if str(manifest.get("runId") or "") != run_id:
+        mismatch = spark_execution_identity_mismatch(
+            "Spark result runId does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+        finalize_spark_execution_attempt(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            generation=lease.generation,
+            error=mismatch.message,
+        )
+        raise mismatch
+    try:
+        validate_eks_mvp_fixture_spark_result(job, run_id, source_boundary, manifest)
+    except ApiError as exc:
+        finalize_spark_execution_attempt(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            generation=lease.generation,
+            error=exc.message,
+        )
+        raise
+    db.expire_all()
     run = etl_repository.get_run_for_execution_fence(
         db,
         run_id,
@@ -2589,6 +2965,46 @@ def execute_airflow_spark_run(
     execution = (run.task_states or {}).get("sparkExecution")
     if not isinstance(execution, dict) or execution.get("generation") != lease.generation:
         raise run_execution_lease_lost(job_id, run_id)
+    if spark_kubernetes_mode_enabled():
+        try:
+            terminal_kubernetes_execution = normalize_spark_kubernetes_execution(
+                manifest.get("kubernetesExecution"),
+                job_id=job_id,
+                run_id=run_id,
+            )
+            persisted_kubernetes_execution = execution.get("kubernetesExecution")
+            if not isinstance(persisted_kubernetes_execution, dict):
+                raise spark_execution_identity_mismatch(
+                    "SparkApplication identity was not persisted before terminal result handling.",
+                    job_id=job_id,
+                    run_id=run_id,
+                )
+            terminal_kubernetes_execution = merge_spark_kubernetes_execution(
+                persisted_kubernetes_execution,
+                terminal_kubernetes_execution,
+                job_id=job_id,
+                run_id=run_id,
+            )
+            if manifest.get("status") == "success" and terminal_kubernetes_execution.get("resultMarkerFound") is not True:
+                raise spark_execution_identity_mismatch(
+                    "Spark success result is missing the driver result marker.",
+                    job_id=job_id,
+                    run_id=run_id,
+                )
+            manifest["kubernetesExecution"] = terminal_kubernetes_execution
+            execution = {
+                **execution,
+                "kubernetesExecution": terminal_kubernetes_execution,
+            }
+        except ApiError as exc:
+            finalize_spark_execution_attempt(
+                db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=lease.generation,
+                error=exc.message,
+            )
+            raise
     run.input_rows = format_rows(manifest.get("inputRows"))
     run.output_rows = format_rows(manifest.get("outputRows"))
     run.output_path = manifest.get("outputPath") or run.output_path
@@ -2632,6 +3048,11 @@ def finalize_spark_execution_attempt(
     generation: int,
     error: str,
 ) -> None:
+    # Kubernetes progress is committed through a separate session while the
+    # bridge is running. Expire this session's identity map so exception
+    # finalization cannot overwrite the persisted application UID with stale
+    # task state.
+    db.expire_all()
     run = etl_repository.get_run_for_execution_fence(
         db,
         run_id,
@@ -2669,6 +3090,152 @@ def run_execution_lease_lost(job_id: str, run_id: str) -> ApiError:
         status.HTTP_409_CONFLICT,
         {"jobId": job_id, "runId": run_id},
     )
+
+
+SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS = (
+    "runId",
+    "jobId",
+    "namespace",
+    "applicationName",
+    "applicationUid",
+    "imageDigest",
+    "driverPodName",
+)
+
+
+def spark_execution_identity_mismatch(message: str, *, job_id: str, run_id: str) -> ApiError:
+    return ApiError(
+        "SPARK_EXECUTION_IDENTITY_MISMATCH",
+        message,
+        status.HTTP_409_CONFLICT,
+        {"jobId": job_id, "runId": run_id},
+    )
+
+
+def normalize_spark_kubernetes_execution(
+    value: Any,
+    *,
+    job_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes execution identity is missing.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    normalized: dict[str, Any] = {}
+    for key in ("runId", "jobId", "namespace", "applicationName", "applicationUid", "imageDigest", "state"):
+        item = str(value.get(key) or "").strip()
+        if not item:
+            raise spark_execution_identity_mismatch(
+                f"Spark Kubernetes execution identity is missing {key}.",
+                job_id=job_id,
+                run_id=run_id,
+            )
+        normalized[key] = item
+    if normalized["runId"] != run_id or normalized["jobId"] != job_id:
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes run/job identity does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    for key in ("driverPodName", "driverPodPhase", "driverTerminationReason", "driverFinishedAt", "observedAt"):
+        item = str(value.get(key) or "").strip()
+        if item:
+            normalized[key] = item
+    if isinstance(value.get("driverExitCode"), int) and not isinstance(value.get("driverExitCode"), bool):
+        normalized["driverExitCode"] = value["driverExitCode"]
+    if isinstance(value.get("recovered"), bool):
+        normalized["recovered"] = value["recovered"]
+    if isinstance(value.get("resultMarkerFound"), bool):
+        normalized["resultMarkerFound"] = value["resultMarkerFound"]
+    return normalized
+
+
+def merge_spark_kubernetes_execution(
+    current: dict[str, Any],
+    observed: dict[str, Any],
+    *,
+    job_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    for key in SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS:
+        current_value = str(current.get(key) or "").strip()
+        observed_value = str(observed.get(key) or "").strip()
+        if current_value and observed_value and current_value != observed_value:
+            raise spark_execution_identity_mismatch(
+                f"Spark Kubernetes execution identity changed for {key}.",
+                job_id=job_id,
+                run_id=run_id,
+            )
+    return {**current, **observed}
+
+
+def persist_spark_kubernetes_execution_progress(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+    progress: dict[str, Any],
+) -> None:
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=generation,
+    )
+    if run is None:
+        raise run_execution_lease_lost(job_id, run_id)
+    if run.job_id != job_id:
+        raise spark_execution_identity_mismatch(
+            "Spark progress jobId does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    execution = (run.task_states or {}).get("sparkExecution")
+    if not isinstance(execution, dict) or execution.get("generation") != generation:
+        raise run_execution_lease_lost(job_id, run_id)
+    observed = normalize_spark_kubernetes_execution(progress, job_id=job_id, run_id=run_id)
+    current = execution.get("kubernetesExecution")
+    if isinstance(current, dict):
+        observed = merge_spark_kubernetes_execution(
+            current,
+            observed,
+            job_id=job_id,
+            run_id=run_id,
+        )
+    run.task_states = {
+        **(run.task_states or {}),
+        "sparkExecution": {
+            **execution,
+            "kubernetesExecution": observed,
+        },
+    }
+    db.commit()
+
+
+def spark_kubernetes_execution_progress_callback(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+) -> Callable[[dict[str, Any]], None]:
+    progress_sessions = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
+
+    def persist(progress: dict[str, Any]) -> None:
+        with progress_sessions() as progress_db:
+            persist_spark_kubernetes_execution_progress(
+                progress_db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=generation,
+                progress=progress,
+            )
+
+    return persist
 
 
 def reconcile_airflow_catalog(
@@ -2740,17 +3307,7 @@ def reconcile_airflow_catalog(
                 {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
             )
 
-        output_path = str(spark_result.get("outputPath") or "").strip()
-        if job.iceberg_target and not is_kafka_job(job):
-            enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
-        else:
-            validate_catalog_output_identity(job, run_id, output_path)
-            physical = inspect_spark_output(output_path)
-            enriched_result = {
-                **spark_result,
-                "parquetObjectCount": physical["parquetObjectCount"],
-                "storageSizeBytes": physical["storageSizeBytes"],
-            }
+        enriched_result = enrich_airflow_catalog_spark_result(job, run, spark_result)
         if heartbeat.lost:
             raise run_execution_lease_lost(job_id, run_id)
         response = commit_airflow_catalog_reconciliation(
@@ -2956,6 +3513,39 @@ def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path:
             "Spark output path does not match the persisted Job destination.",
             {"expected": expected, "outputPath": actual, "runId": run_id},
         )
+
+
+def enrich_airflow_catalog_spark_result(
+    job: ETLJobModel,
+    run: ETLRunModel,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    fixture_job = is_eks_mvp_bounded_fixture_job(job)
+    if job.iceberg_target and (not is_kafka_job(job) or fixture_job):
+        expected_run_row_count = None
+        if fixture_job:
+            source_boundary = persisted_eks_mvp_fixture_source_boundary(run)
+            if source_boundary is None:
+                raise catalog_reconciliation_error(
+                    "Persisted EKS fixture boundary is required for Catalog reconciliation.",
+                    {"jobId": job.id, "runId": run.run_id},
+                )
+            expected_run_row_count = source_boundary["expectedCount"]
+        return verify_spark_iceberg_result(
+            job,
+            run.run_id,
+            result,
+            expected_run_row_count=expected_run_row_count,
+        )
+
+    output_path = str(result.get("outputPath") or "").strip()
+    validate_catalog_output_identity(job, run.run_id, output_path)
+    physical = inspect_spark_output(output_path)
+    return {
+        **result,
+        "parquetObjectCount": physical["parquetObjectCount"],
+        "storageSizeBytes": physical["storageSizeBytes"],
+    }
 
 
 def verify_spark_iceberg_result(
@@ -3244,6 +3834,7 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "outputRows",
             "quality",
             "schema",
+            "sourceBoundary",
             "sourceCollection",
             "sourcePath",
             "sparkExitCode",
@@ -3413,12 +4004,20 @@ def airflow_execution_response_from_persisted(
 def airflow_run_reservation(job: ETLJobModel, command: str, airflow_client: Any) -> ETLRunModel:
     submitted_at = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
+    fixture_state = eks_mvp_fixture_run_state(job, run_id, submitted_at)
+    source_boundary = fixture_state.get("sourceBoundary") if fixture_state is not None else None
     reserved_dag_run = AirflowDagRun(
         dag_id=airflow_client.config.dag_id,
         dag_run_id=run_id,
         state="queued",
         asklake_status="queued",
-        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        conf=airflow_dag_run_conf(
+            job,
+            command,
+            run_id,
+            submitted_at,
+            source_boundary=source_boundary,
+        ),
         raw={"reservation": True},
     )
     reserved = run_from_airflow_submit(
@@ -3434,6 +4033,7 @@ def airflow_run_reservation(job: ETLJobModel, command: str, airflow_client: Any)
             "reservedAt": submitted_at,
             "status": "queued",
         },
+        **({"eksMvpFixture": fixture_state} if fixture_state is not None else {}),
     }
     return reserved
 
@@ -3445,13 +4045,20 @@ def submit_airflow_job_run(
     run_id: str | None = None,
     submitted_at: str | None = None,
     airflow_client: Any | None = None,
+    source_boundary: dict[str, Any] | None = None,
 ) -> ETLRunModel:
     submitted_at = submitted_at or iso_now()
     run_id = run_id or stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
     airflow_client = airflow_client or build_airflow_client()
     dag_run = airflow_client.trigger_dag_run(
         dag_run_id=run_id,
-        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        conf=airflow_dag_run_conf(
+            job,
+            command,
+            run_id,
+            submitted_at,
+            source_boundary=source_boundary,
+        ),
         note=f"AskLake {command} command for {job.id}",
     )
     if not dag_run.dag_run_id or dag_run.dag_run_id != run_id:
@@ -3481,6 +4088,7 @@ def submit_or_reconcile_airflow_job_run(
     reserved_run: ETLRunModel,
     airflow_client: Any,
 ) -> tuple[ETLRunModel | None, Exception | None]:
+    source_boundary = persisted_eks_mvp_fixture_source_boundary(reserved_run)
     try:
         return submit_airflow_job_run(
             job,
@@ -3488,6 +4096,7 @@ def submit_or_reconcile_airflow_job_run(
             run_id=reserved_run.run_id,
             submitted_at=reserved_run.started_at,
             airflow_client=airflow_client,
+            source_boundary=source_boundary,
         ), None
     except Exception as trigger_error:
         try:
@@ -3514,12 +4123,20 @@ def submit_or_reconcile_airflow_job_run(
         ), None
 
 
-def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_at: str) -> dict[str, Any]:
+def airflow_dag_run_conf(
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    submitted_at: str,
+    *,
+    source_boundary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "command": command,
         "executionMode": "spark",
         "jobId": job.id,
         "runId": run_id,
+        **({"sourceBoundary": source_boundary} if source_boundary is not None else {}),
         "submittedAt": submitted_at,
     }
 
@@ -3533,6 +4150,7 @@ def job_payload_for_spark(
     *,
     source_window_rebaseline: bool = False,
     source_iceberg_table: dict[str, Any] | None = None,
+    source_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
@@ -3566,6 +4184,7 @@ def job_payload_for_spark(
         "schemaFingerprint": job.schema_fingerprint,
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
+        "sourceBoundary": source_boundary,
         "sourceConfig": job.source_config or [],
         "sourceIncrementalBefore": incremental_before,
         "sourceIncrementalSince": incremental_since,
@@ -4464,6 +5083,7 @@ def sync_airflow_run(
     spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
     airflow_reservation = previous_task_states.get("airflowReservation")
+    eks_mvp_fixture = previous_task_states.get("eksMvpFixture")
     run.task_states = task_state_snapshot(task_instances)
     if isinstance(spark_execution, dict):
         run.task_states["sparkExecution"] = spark_execution
@@ -4473,6 +5093,8 @@ def sync_airflow_run(
         run.task_states["catalogResult"] = catalog_result
     if isinstance(airflow_reservation, dict):
         run.task_states["airflowReservation"] = airflow_reservation
+    if isinstance(eks_mvp_fixture, dict):
+        run.task_states["eksMvpFixture"] = eks_mvp_fixture
     run.last_synced_at = synced_at
     run.sync_error = None
 
@@ -5579,8 +6201,13 @@ def run_node_bridge(
     error_marker: str,
     timeout_seconds: int,
     timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    progress_file: Path | None = None,
 ) -> dict[str, Any]:
     script_path = SCRIPTS_DIR / script_name
+    progress_watcher = BridgeProgressFileWatcher(progress_file, progress_callback)
+    progress_watcher.start()
+    timeout_error: subprocess.TimeoutExpired | None = None
     try:
         result = subprocess.run(
             ["node", str(script_path)],
@@ -5593,6 +6220,13 @@ def run_node_bridge(
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
+        timeout_error = exc
+        result = None
+    finally:
+        progress_error = progress_watcher.stop()
+    if progress_error is not None:
+        raise progress_error
+    if timeout_error is not None:
         recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
         if timeout_recovery is not None:
             try:
@@ -5604,7 +6238,8 @@ def run_node_bridge(
             f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
             status.HTTP_504_GATEWAY_TIMEOUT,
             {"recovery": recovery, "timeoutSeconds": timeout_seconds},
-        ) from exc
+        ) from timeout_error
+    assert result is not None
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if result.returncode != 0:
@@ -5627,6 +6262,64 @@ def run_node_bridge(
         payload_result.setdefault("stdout", stdout)
         payload_result.setdefault("stderr", stderr)
     return payload_result
+
+
+class BridgeProgressFileWatcher:
+    def __init__(
+        self,
+        progress_file: Path | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        self._progress_file = progress_file
+        self._progress_callback = progress_callback
+        self._last_content: str | None = None
+        self._error: Exception | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._progress_file is None or self._progress_callback is None:
+            return
+        self._progress_file.unlink(missing_ok=True)
+        self._thread = threading.Thread(target=self._run, name="asklake-spark-kubernetes-progress", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> Exception | None:
+        if self._thread is None:
+            return None
+        self._stop.set()
+        self._thread.join(timeout=1)
+        self._consume()
+        try:
+            self._progress_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return self._error
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.05):
+            self._consume()
+
+    def _consume(self) -> None:
+        if self._error is not None or self._progress_file is None or self._progress_callback is None:
+            return
+        try:
+            content = self._progress_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            self._error = exc
+            return
+        if content == self._last_content:
+            return
+        self._last_content = content
+        try:
+            progress = json.loads(content)
+            if not isinstance(progress, dict):
+                raise ValueError("Spark Kubernetes progress state must be a JSON object")
+            self._progress_callback(progress)
+        except Exception as exc:
+            self._error = exc
 
 
 def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
@@ -5694,6 +6387,14 @@ def spark_rest_submission_state_file(run_id: str) -> Path:
         report_dir = BACKEND_DIR / report_dir
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
     return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
+
+
+def spark_kubernetes_execution_state_file(run_id: str) -> Path:
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    if not report_dir.is_absolute():
+        report_dir = BACKEND_DIR / report_dir
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
+    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-kubernetes-state.json")
 
 
 def continuous_maintenance_state_file(run_id: str) -> Path:

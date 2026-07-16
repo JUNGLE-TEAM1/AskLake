@@ -80,6 +80,7 @@ const expectedSecrets = {
     ]),
     keys: new Set([
       'AIRFLOW__DATABASE__SQL_ALCHEMY_CONN',
+      'AIRFLOW_PASSWORD',
       'AIRFLOW_EXECUTION_API_TOKEN',
       'AIRFLOW_INTERNAL_TOKEN',
       'AIRFLOW__CORE__FERNET_KEY',
@@ -111,6 +112,10 @@ const expectedSecrets = {
 };
 
 const expectedSharedBindings = {
+  'airflow-api-password': new Set([
+    'backend:AIRFLOW_PASSWORD',
+    'airflow:AIRFLOW_PASSWORD',
+  ]),
   'airflow-execution-api-token': new Set([
     'backend:AIRFLOW_EXECUTION_API_TOKEN',
     'airflow:AIRFLOW_EXECUTION_API_TOKEN',

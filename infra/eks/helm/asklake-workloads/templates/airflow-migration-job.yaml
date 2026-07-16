@@ -26,8 +26,34 @@ spec:
         - name: airflow-db-migrate
           image: "{{ required "airflow image repository is required" .Values.airflow.image.repository }}@{{ required "airflow image digest is required" .Values.airflow.image.digest }}"
           imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
-          args: ["db", "migrate"]
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              airflow db migrate
+              airflow users create \
+                --username "${AIRFLOW_API_USERNAME}" \
+                --firstname AskLake \
+                --lastname Admin \
+                --role Admin \
+                --email "${AIRFLOW_API_USER_EMAIL}" \
+                --password "${AIRFLOW_API_PASSWORD}"
+              airflow users reset-password \
+                --username "${AIRFLOW_API_USERNAME}" \
+                --password "${AIRFLOW_API_PASSWORD}"
+              airflow version
           env:
+            - name: AIRFLOW__CORE__AUTH_MANAGER
+              value: {{ .Values.airflow.config.authManager | quote }}
+            - name: AIRFLOW_API_USERNAME
+              value: {{ .Values.airflow.config.apiUsername | quote }}
+            - name: AIRFLOW_API_USER_EMAIL
+              value: {{ .Values.airflow.config.apiUserEmail | quote }}
+            - name: AIRFLOW_API_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.airflow.runtimeSecret.name }}
+                  key: {{ .Values.airflow.runtimeSecret.keys.apiPassword }}
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
               valueFrom:
                 secretKeyRef:
@@ -43,6 +69,17 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.airflow.runtimeSecret.name }}
                   key: {{ .Values.airflow.runtimeSecret.keys.jwtSecret }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: {{ dir .Values.airflow.config.rdsCaMountPath | quote }}
+              readOnly: true
           resources:
             {{- toYaml .Values.airflow.resources.migration | nindent 12 }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ .Values.airflow.config.rdsCaConfigMapName }}
+            items:
+              - key: {{ .Values.airflow.config.rdsCaKey }}
+                path: {{ base .Values.airflow.config.rdsCaMountPath }}
 {{- end }}

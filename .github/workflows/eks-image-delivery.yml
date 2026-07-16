@@ -99,6 +99,7 @@ jobs:
 
           docker buildx build \
             --platform linux/amd64 \
+            --provenance=false \
             --file frontend/Dockerfile \
             --build-arg VITE_USE_MOCK_API=false \
             --build-arg VITE_OBJECT_STORAGE_PROVIDER=aws \
@@ -109,6 +110,7 @@ jobs:
 
           docker buildx build \
             --platform linux/amd64 \
+            --provenance=false \
             --file backend/Dockerfile \
             --target backend-runtime \
             --tag "$ECR_REGISTRY/$ECR_PREFIX/backend:$display_tag" \
@@ -116,10 +118,18 @@ jobs:
 
           docker buildx build \
             --platform linux/amd64 \
+            --provenance=false \
             --file backend/Dockerfile \
             --target spark-runtime \
             --tag "$ECR_REGISTRY/$ECR_PREFIX/spark-runtime:$display_tag" \
             --push backend
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --file airflow/Dockerfile \
+            --tag "$ECR_REGISTRY/$ECR_PREFIX/airflow:$display_tag" \
+            --push airflow
 
           mirror_image() {
             local source_image="$1"
@@ -130,7 +140,6 @@ jobs:
             docker push "$ECR_REGISTRY/$ECR_PREFIX/$component:$display_tag" >/dev/null
           }
 
-          mirror_image apache/airflow:3.3.0 airflow
           mirror_image trinodb/trino:482 trino
 
           frontend_image="$ECR_REGISTRY/$ECR_PREFIX/frontend@$(get_digest "$ECR_PREFIX/frontend")"

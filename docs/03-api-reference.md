@@ -180,7 +180,9 @@ File / S3 Prefix Job의 `run`/`retry`는 저장된 `Path / Prefix` 아래에서 
 
 내부 실행 API는 `AIRFLOW_EXECUTION_API_TOKEN`이 없으면 `503 AIRFLOW_EXECUTION_NOT_CONFIGURED`, token이 다르면 `401 AIRFLOW_EXECUTION_UNAUTHORIZED`, 저장된 Job/Run/Airflow DAG Run identity가 일치하지 않으면 `409 AIRFLOW_RUN_MISMATCH`를 반환한다. 성공/실패 Spark manifest는 `JobRunSummary.taskStates.sparkResult`에 보존된다. 일반 non-Kafka batch 성공 manifest의 `outputPath`는 `iceberg://...`이고 `icebergCommit`에 snapshot ID, warehouse location, target, schema/rule fingerprint, source boundary가 포함된다.
 
-`publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. 일반 batch에서는 backend가 저장된 `sparkResult.status=success`, persisted `icebergTarget`, snapshot/fingerprint identity, Trino `DESCRIBE`/`$snapshots`/`$files`, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 snapshot ID, data-file count, storage location을 보존한다.
+같은 `runId`의 internal Spark execute 재호출은 저장된 `sparkResult.status=success`가 있으면 SparkApplication을 조회·생성하지 않고 그 manifest를 그대로 반환한다. 미완료 Run에 저장된 `sparkExecution.kubernetesExecution`이 있으면 RDS의 namespace/name/UID가 복구 기준이며 provider는 Kubernetes `POST` 전에 기존 object를 `GET`한다. object 부재, UID 교체 또는 run/job/image identity drift에서는 새 object를 만들지 않고 실패한다. 동일 Kafka snapshot boundary가 Iceberg에 이미 기록된 경우 commit은 새 snapshot 대신 기존 snapshot을 `operation=reuse`로 반환한다.
+
+`publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. 일반 batch에서는 backend가 저장된 `sparkResult.status=success`, persisted `icebergTarget`, snapshot/fingerprint identity, Trino `DESCRIBE`/`$snapshots`/`$files`, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. EKS bounded fixture는 RDS Run의 `expectedCount`와 Trino가 같은 snapshot에서 확인한 `_asklake_run_id=runId` 행 수가 같아야 한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 snapshot ID, data-file count, storage location을 보존한다.
 
 Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다.
 
@@ -202,7 +204,11 @@ Kafka replay producer API는 Continuous worker와 분리된 테스트 입력 도
 
 `PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Snapshot Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. Continuous는 checkpoint contract 초기화 전까지만 schema/Rule/physical target을 수정할 수 있고, 초기화 후에는 위 전용 `409` 오류로 Job copy를 요구한다. update는 Kafka consumer group offset, Snapshot 경계 또는 Continuous checkpoint를 변경하지 않는다.
 
-Kafka Source Snapshot Job의 `run`/`retry`는 Airflow 대신 backend Kafka ingest bridge와 Spark Iceberg writer를 실행한다. Job 시작 시 partition별 end offset snapshot을 고정하고 해당 range만 consume한 뒤 `topic -> transform/quality -> Iceberg append -> Trino physical verification -> Catalog materialization -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장된다. lag가 없으면 새 Iceberg data file이나 materialization 없이 0건 Run으로 성공한다. 같은 durable snapshot 재시도는 Iceberg source marker와 Catalog snapshot identity를 재사용해 중복 append하지 않는다.
+Kafka Source Snapshot Job의 `run`/`retry`는 기본적으로 Airflow 대신 backend Kafka ingest bridge와 Spark Iceberg writer를 실행한다. Job 시작 시 partition별 end offset snapshot을 고정하고 해당 range만 consume한 뒤 `topic -> transform/quality -> Iceberg append -> Trino physical verification -> Catalog materialization -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장된다. lag가 없으면 새 Iceberg data file이나 materialization 없이 0건 Run으로 성공한다. 같은 durable snapshot 재시도는 Iceberg source marker와 Catalog snapshot identity를 재사용해 중복 append하지 않는다.
+
+EKS MVP bounded fixture Snapshot은 이 기본 경로의 좁은 예외다. `sourceConfig`에 exact topic `asklake.eks-mvp.fixture.v1`, exact group `asklake-eks-mvp-spark-v1`, 내부 `__EKS MVP Fixture Batch ID`, `__EKS MVP Expected Count`가 있고 MSK endpoint가 IAM `9098`, runtime이 `ASKLAKE_SPARK_RUNNER=kubernetes`일 때만 `run`/`retry`를 Airflow에 예약한다. exact topic/group 또는 fixture 내부 필드 중 하나라도 보이면 fixture 의도로 간주하므로, 나머지 값이 잘못되거나 누락된 요청은 `409 EKS_MVP_FIXTURE_REQUIRES_KUBERNETES` 또는 `422 EKS_MVP_FIXTURE_CONTRACT_INVALID`로 거부되고 기존 Kafka bridge로 fallback하지 않는다.
+
+예약 transaction은 Airflow 호출 전에 `taskStates.eksMvpFixture.sourceBoundary`를 RDS Run에 고정한다. Airflow DAG conf와 `POST /api/internal/airflow/spark-runs/{runId}/execute` body의 `sourceBoundary`는 이 값을 그대로 사용해야 한다. FastAPI는 RDS 값과 exact match를 확인한 뒤 RDS boundary만 Spark payload에 넣으며, 불일치·누락은 `409 AIRFLOW_SOURCE_BOUNDARY_MISMATCH`, 손상된 RDS state는 `409 EKS_MVP_FIXTURE_RUN_BOUNDARY_INVALID`로 Spark 제출 전에 거부한다. 동적 SparkApplication driver env와 job manifest에는 같은 topic/group/batch/count/output/checkpoint가 들어가고 metadata annotation `asklake.io/fixture-batch-id`로 batch를 관찰할 수 있다. Spark는 batch filter 뒤 count를 `expectedCount`와 비교하고 다르면 Iceberg commit 전에 실패한다. 성공 report도 exact `sourceBoundary`, input/output count, 전용 `iceberg.asklake.eks_mvp_fixture` target, commit Job/Run/snapshot identity가 모두 맞아야 하며, 아니면 `502 EKS_MVP_FIXTURE_RESULT_INVALID`로 RDS 성공 저장을 거부한다.
 
 ### Kafka review ingest
 
@@ -1023,4 +1029,24 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 }
 ```
 
-`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. terminal 성공은 driver log에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 있어야 하며, timeout은 해당 application 삭제 후 실패 처리한다. API 응답에 저장되는 Spark manifest의 `kubernetesExecution`은 application name/UID, driver Pod name, image digest, recovery 여부와 final state를 포함한다.
+`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. create/recover 직후 terminal 전에도 `etl_runs.task_states.sparkExecution.kubernetesExecution`에 namespace, application name/UID, run/job/image identity, 관찰 state와 recovery 여부를 저장한다. driver가 생기면 Pod name을 연결하고 terminal에는 Pod phase, termination reason/exit code, result marker 존재 여부를 합친다. terminal manifest와 이미 저장한 RDS identity의 namespace/name/UID/image/driver Pod가 다르거나 `success`에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 없으면 `409 SPARK_EXECUTION_IDENTITY_MISMATCH`로 성공 처리를 차단한다. timeout은 해당 application 삭제 후 실패 처리한다.
+
+`kubernetesExecution`의 비밀값 없는 추적 필드는 다음과 같다. `driverPodName`과 terminal Pod 필드는 해당 단계가 관찰된 뒤 추가된다.
+
+```json
+{
+  "runId": "<AskLake runId>",
+  "jobId": "<AskLake jobId>",
+  "namespace": "asklake-dev",
+  "applicationName": "asklake-run-...",
+  "applicationUid": "<Kubernetes UID>",
+  "imageDigest": "<repository>@sha256:<digest>",
+  "state": "COMPLETED",
+  "recovered": false,
+  "driverPodName": "asklake-run-...-driver",
+  "driverPodPhase": "Succeeded",
+  "driverTerminationReason": "Completed",
+  "driverExitCode": 0,
+  "resultMarkerFound": true
+}
+```

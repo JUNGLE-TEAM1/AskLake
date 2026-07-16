@@ -6,15 +6,19 @@ CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-workloads"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 RENDERED_FILE="$(mktemp)"
 OPT_IN_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE"' EXIT
+AIRFLOW_ONLY_RENDERED_FILE="$(mktemp)"
+trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FILE"' EXIT
 
 required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
   "$ROOT_DIR/airflow/Dockerfile"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.test.mjs"
+  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+  "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
+  "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -59,6 +63,10 @@ fi
   --set-string sparkApplication.runId=run-eks-contract-001 \
   --set-string sparkApplication.jobId=job-eks-contract-001 \
   --set-string sparkApplication.kafka.fixtureBatchId=eks-smoke-batch-001 >"$OPT_IN_RENDERED_FILE"
+"$HELM_BIN" template asklake-airflow "$CHART_DIR" -f "$VALUES_FILE" \
+  --set frontend.enabled=false \
+  --set backend.enabled=false \
+  --set trino.enabled=false >"$AIRFLOW_ONLY_RENDERED_FILE"
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.config.sparkRunner=rest >/dev/null 2>&1; then
@@ -91,6 +99,24 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'sparkApplication.nodeSelector.asklake\.io/workload-class=general' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a non-Spark SparkApplication node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'sparkApplication.nodeSelector.kubernetes\.io/arch=arm64' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted an ARM64 SparkApplication node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'sparkApplication.tolerations[0].effect=PreferNoSchedule' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a non-NoSchedule Spark toleration" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set frontend.service.name=asklake-frontend >/dev/null 2>&1; then
   echo "EKS workload schema accepted a frontend Service name that drifts from the foundation handoff" >&2
   exit 1
@@ -111,6 +137,24 @@ test "$(grep -c '^kind: Job$' "$RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: SparkApplication$' "$RENDERED_FILE" || true)" -eq 0
 test "$(grep -c '^kind: Job$' "$OPT_IN_RENDERED_FILE")" -eq 2
 test "$(grep -c '^kind: SparkApplication$' "$OPT_IN_RENDERED_FILE")" -eq 1
+test "$(grep -c '^kind: Deployment$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 3
+test "$(grep -c '^kind: Service$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
+test "$(grep -c '^kind: ConfigMap$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
+test "$(grep -c '^kind: Job$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
+test "$(grep -c '^kind: SparkApplication$' "$AIRFLOW_ONLY_RENDERED_FILE" || true)" -eq 0
+
+for resource_name in asklake-frontend asklake-backend asklake-trino frontend fastapi asklake-trino; do
+  if grep -q "name: $resource_name" "$AIRFLOW_ONLY_RENDERED_FILE"; then
+    echo "Airflow-only render unexpectedly contains $resource_name" >&2
+    exit 1
+  fi
+done
+
+for resource_name in \
+  asklake-airflow-apiserver asklake-airflow-scheduler asklake-airflow-dag-processor \
+  asklake-airflow-db-migrate airflow-apiserver; do
+  grep -q "name: $resource_name" "$AIRFLOW_ONLY_RENDERED_FILE"
+done
 
 for resource_name in \
   asklake-frontend asklake-backend \
@@ -134,6 +178,14 @@ grep -q 'tcpSocket:' "$RENDERED_FILE"
 grep -q 'app.kubernetes.io/name: asklake-workloads' "$RENDERED_FILE"
 grep -q 'app.kubernetes.io/instance: "asklake-workloads"' "$RENDERED_FILE"
 grep -q 'path: /api/v2/monitor/health' "$RENDERED_FILE"
+grep -q 'name: asklake-rds-ca' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'key: ap-northeast-2-bundle.pem' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'mountPath: "/var/run/asklake/rds-ca"' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'key: AIRFLOW_PASSWORD' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'airflow users create' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'airflow users reset-password' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'name: AIRFLOW__CORE__AUTH_MANAGER' "$AIRFLOW_ONLY_RENDERED_FILE"
+grep -q 'value: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager"' "$AIRFLOW_ONLY_RENDERED_FILE"
 grep -q 'path: /v1/info' "$RENDERED_FILE"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: "60"' "$RENDERED_FILE"
@@ -142,26 +194,74 @@ grep -q 'ASKLAKE_SPARK_RUNNER: "kubernetes"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_KAFKA_AUTH_MODE: "iam"' "$RENDERED_FILE"
 grep -q 'TRINO_BASE_URL: "https://asklake-trino.asklake-dev.svc.cluster.local:8443"' "$RENDERED_FILE"
 grep -q 'TRINO_TLS_CA_FILE: "/var/run/asklake/secrets/trino-ca.pem"' "$RENDERED_FILE"
+grep -q 'discovery.uri=https://127.0.0.1:8443' "$RENDERED_FILE"
 grep -q '"helm.sh/hook": pre-install,pre-upgrade' "$RENDERED_FILE"
 grep -q 'kind: SparkApplication' "$OPT_IN_RENDERED_FILE"
 test "$(grep -c '^    serviceAccount: asklake-spark$' "$OPT_IN_RENDERED_FILE")" -eq 2
+test "$(grep -c '^      asklake.io/workload-class: spark$' "$OPT_IN_RENDERED_FILE")" -eq 2
+test "$(grep -c '^      kubernetes.io/arch: amd64$' "$OPT_IN_RENDERED_FILE")" -eq 2
+test "$(grep -c '^        value: spark$' "$OPT_IN_RENDERED_FILE")" -eq 2
+test "$(grep -c '^      - effect: NoSchedule$' "$OPT_IN_RENDERED_FILE")" -eq 2
 grep -q 'mainApplicationFile: "local:///opt/asklake/scripts/spark_job_run.py"' "$OPT_IN_RENDERED_FILE"
-grep -q 'software.amazon.msk:aws-msk-iam-auth:2.3.6' "$OPT_IN_RENDERED_FILE"
+grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$OPT_IN_RENDERED_FILE"
+if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
+  echo "SparkApplication rendered the unshaded MSK IAM Maven package" >&2
+  exit 1
+fi
+grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
+grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q '<shadedPattern>com.asklake.spark.msk.shadow.software.amazon.awssdk</shadedPattern>' \
+  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q '<pattern>io.netty</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+grep -q '<shadedPattern>com.asklake.spark.msk.shadow.io.netty</shadedPattern>' \
+  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
 grep -q '"spark.jars.ivy": "/tmp/.ivy2"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_SOURCE_FORMAT' "$OPT_IN_RENDERED_FILE"
 grep -q 'value: "kafka"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_KAFKA_FIXTURE_BATCH_ID' "$OPT_IN_RENDERED_FILE"
 grep -q 'eks-smoke-batch-001' "$OPT_IN_RENDERED_FILE"
+grep -q 'ASKLAKE_KAFKA_EXPECTED_COUNT' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_OUTPUT_PATH' "$OPT_IN_RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_CHECKPOINT_PATH' "$OPT_IN_RENDERED_FILE"
+grep -q 'eks-mvp/checkpoints/run-eks-contract-001' "$OPT_IN_RENDERED_FILE"
+grep -q 'consumerGroup' "$OPT_IN_RENDERED_FILE"
+grep -q 'expectedCount' "$OPT_IN_RENDERED_FILE"
+grep -q 'coreRequest: "1"' "$OPT_IN_RENDERED_FILE"
+grep -q 'coreLimit: "2"' "$OPT_IN_RENDERED_FILE"
+grep -q 'memoryOverhead: "512m"' "$OPT_IN_RENDERED_FILE"
+grep -q 'coreRequest: "2"' "$OPT_IN_RENDERED_FILE"
+grep -q 'coreLimit: "3"' "$OPT_IN_RENDERED_FILE"
+grep -q 'memoryOverhead: "1g"' "$OPT_IN_RENDERED_FILE"
 grep -q 'icebergTarget' "$OPT_IN_RENDERED_FILE"
 grep -q 'iceberg://iceberg/asklake/eks_mvp_fixture' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_ICEBERG_CATALOG_NAME' "$OPT_IN_RENDERED_FILE"
 grep -q 'software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider' "$OPT_IN_RENDERED_FILE"
 
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set sparkApplication.create=true \
+  --set-string sparkApplication.runId=run-eks-contract-001 \
+  --set-string sparkApplication.jobId=job-eks-contract-001 \
+  --set-string sparkApplication.kafka.fixtureBatchId=eks-smoke-batch-001 \
+  --set-string sparkApplication.output.prefix=continuous/output >/dev/null 2>&1; then
+  echo "EKS workload schema accepted an output prefix outside the bounded fixture contract" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set sparkApplication.create=true \
+  --set-string sparkApplication.runId=run-eks-contract-001 \
+  --set-string sparkApplication.jobId=job-eks-contract-001 \
+  --set-string sparkApplication.kafka.fixtureBatchId=eks-smoke-batch-001 \
+  --set-string sparkApplication.checkpoint.prefix=continuous/checkpoints >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a checkpoint prefix outside the bounded fixture contract" >&2
+  exit 1
+fi
+
 grep -q 'option("startingOffsets", "earliest")' "$ROOT_DIR/backend/scripts/spark_job_run.py"
 grep -q 'option("endingOffsets", "latest")' "$ROOT_DIR/backend/scripts/spark_job_run.py"
 grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/spark_job_run.py"
 grep -q 'Kafka fixture batch filter requires raw.fixture_batch_id' "$ROOT_DIR/backend/scripts/spark_job_run.py"
+grep -q 'validate_kafka_fixture_row_count' "$ROOT_DIR/backend/scripts/spark_job_run.py"
 grep -q 'platforms: linux/amd64' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
 grep -q 'npm run test:spark-kubernetes' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
 
@@ -198,4 +298,5 @@ fi
 
 bash -n "$ROOT_DIR/scripts/verify-eks-workloads.sh"
 node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
+PYTHONPATH="$ROOT_DIR/backend" python3 -m unittest tests.test_kafka_fixture_boundary
 echo "EKS workload contract verification passed."

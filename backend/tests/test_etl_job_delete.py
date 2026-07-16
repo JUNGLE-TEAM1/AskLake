@@ -38,6 +38,7 @@ from app.services.etl_service import (
     airflow_submission_error_is_definitive,
     command_job,
     delete_job,
+    ensure_batch_iceberg_target,
     execute_airflow_spark_run,
     record_airflow_sync_error,
     run_due_scheduled_jobs,
@@ -91,6 +92,88 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     job.target_layer = "BRONZE"
     job.target_format = "jsonl"
     return job
+
+
+def eks_mvp_bounded_fixture_job(job_id: str) -> ETLJobModel:
+    job = kafka_fixture_job(job_id)
+    job.source = "Kafka / asklake.eks-mvp.fixture.v1"
+    job.source_label = "asklake.eks-mvp.fixture.v1"
+    job.source_config = [
+        ["Broker / Endpoint", "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098"],
+        ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
+        ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+        ["__EKS MVP Fixture Batch ID", "fixture-batch-001"],
+        ["__EKS MVP Expected Count", "100"],
+    ]
+    return job
+
+
+def kubernetes_execution_fixture(job_id: str, run_id: str, *, recovered: bool = False) -> dict:
+    return {
+        "applicationName": "asklake-run-contract-001",
+        "applicationUid": "spark-uid-contract-001",
+        "driverPodName": "asklake-run-contract-001-driver",
+        "driverPodPhase": "Succeeded",
+        "driverTerminationReason": "Completed",
+        "driverExitCode": 0,
+        "imageDigest": f"example.invalid/spark@sha256:{'a' * 64}",
+        "jobId": job_id,
+        "namespace": "asklake-dev",
+        "observedAt": "2026-07-16T02:00:00Z",
+        "recovered": recovered,
+        "resultMarkerFound": True,
+        "runId": run_id,
+        "state": "COMPLETED",
+    }
+
+
+def spark_terminal_result(job_id: str, run_id: str, execution: dict) -> dict:
+    return {
+        "endedAt": "2026-07-16T02:00:02Z",
+        "inputRows": 2,
+        "kubernetesExecution": execution,
+        "outputPath": f"s3a://asklake-output/test/{run_id}",
+        "outputRows": 2,
+        "runId": run_id,
+        "startedAt": "2026-07-16T02:00:00Z",
+        "status": "success",
+    }
+
+
+def eks_mvp_iceberg_target() -> dict:
+    return {
+        "catalog": "iceberg",
+        "namespace": "asklake",
+        "partitionColumns": [],
+        "table": "eks_mvp_fixture",
+        "tableUri": "iceberg://iceberg/asklake/eks_mvp_fixture",
+        "writeMode": "replace",
+    }
+
+
+def eks_mvp_spark_terminal_result(
+    job_id: str,
+    run_id: str,
+    execution: dict,
+    source_boundary: dict,
+) -> dict:
+    target = eks_mvp_iceberg_target()
+    expected_count = source_boundary["expectedCount"]
+    return {
+        **spark_terminal_result(job_id, run_id, execution),
+        "icebergCommit": {
+            "createdTable": True,
+            "jobId": job_id,
+            "runId": run_id,
+            "snapshotId": "123456789",
+            "sourceBoundary": source_boundary,
+            "target": target,
+        },
+        "inputRows": expected_count,
+        "outputPath": target["tableUri"],
+        "outputRows": expected_count,
+        "sourceBoundary": source_boundary,
+    }
 
 
 class EtlJobDeleteTests(unittest.TestCase):
@@ -213,10 +296,12 @@ class BlockingAirflowClient:
         self.entered = entered
         self.release = release
         self.trigger_count = 0
+        self.last_conf: dict[str, object] | None = None
 
     def trigger_dag_run(self, *, dag_run_id: str, conf: dict[str, object], note: str) -> AirflowDagRun:
         del note
         self.trigger_count += 1
+        self.last_conf = conf
         if self.entered is not None:
             self.entered.set()
         if self.release is not None and not self.release.wait(timeout=10):
@@ -362,6 +447,308 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         with self.session_factory() as db:
             db.add(kafka_fixture_job(job_id))
             db.commit()
+
+    def insert_eks_mvp_fixture_job(self, job_id: str) -> None:
+        with self.session_factory() as db:
+            db.add(eks_mvp_bounded_fixture_job(job_id))
+            db.commit()
+
+    def test_eks_mvp_fixture_routes_through_airflow(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE"
+        self.insert_eks_mvp_fixture_job(job_id)
+        airflow = BlockingAirflowClient()
+        direct_ingest = Mock()
+
+        with (
+            patch.dict(os.environ, {
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "ASKLAKE_SPARK_RUNNER": "kubernetes",
+            }),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+            patch("app.services.etl_service.run_kafka_ingest_request", direct_ingest),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(response.run.status, "queued")
+        self.assertEqual(airflow.trigger_count, 1)
+        direct_ingest.assert_not_called()
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, response.run.run_id)
+            self.assertEqual(run.airflow_dag_run_id, run.run_id)
+            self.assertEqual(run.status, "queued")
+            fixture_state = run.task_states["eksMvpFixture"]
+            boundary = fixture_state["sourceBoundary"]
+            self.assertEqual(fixture_state["runId"], run.run_id)
+            self.assertEqual(boundary["snapshotId"], run.run_id)
+            self.assertEqual(boundary["fixtureBatchId"], "fixture-batch-001")
+            self.assertEqual(boundary["expectedCount"], 100)
+            self.assertEqual(
+                boundary["outputPath"],
+                f"s3a://asklake-dev-output-123-apne2/eks-mvp/output/{run.run_id}",
+            )
+            self.assertEqual(airflow.last_conf["sourceBoundary"], boundary)
+
+    def test_eks_mvp_fixture_execution_uses_persisted_boundary_after_job_drift(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-IMMUTABLE"
+        self.insert_eks_mvp_fixture_job(job_id)
+        airflow = BlockingAirflowClient()
+        with (
+            patch.dict(os.environ, {
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "ASKLAKE_SPARK_RUNNER": "kubernetes",
+            }),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        source_boundary = dict(airflow.last_conf["sourceBoundary"])
+        with self.session_factory() as db:
+            job = db.get(ETLJobModel, job_id)
+            job.source_config = [
+                [label, "fixture-batch-drifted" if label == "__EKS MVP Fixture Batch ID" else value]
+                for label, value in job.source_config
+            ]
+            db.commit()
+
+        observed_boundary: dict = {}
+
+        def spark_with_boundary(
+            spark_db,
+            spark_job,
+            _command,
+            requested_run_id,
+            *,
+            spark_progress_callback,
+            source_boundary,
+        ):
+            observed_boundary.update(source_boundary)
+            spark_job.iceberg_target = eks_mvp_iceberg_target()
+            spark_db.add(spark_job)
+            spark_db.commit()
+            progress = kubernetes_execution_fixture(job_id, requested_run_id)
+            spark_progress_callback(progress)
+            return eks_mvp_spark_terminal_result(
+                job_id,
+                requested_run_id,
+                progress,
+                source_boundary,
+            )
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=spark_with_boundary),
+            self.session_factory() as db,
+        ):
+            execute_airflow_spark_run(
+                db,
+                job_id=job_id,
+                run_id=response.run.run_id,
+                command="run",
+                airflow_source_boundary=source_boundary,
+            )
+
+        self.assertEqual(observed_boundary, source_boundary)
+        self.assertEqual(observed_boundary["fixtureBatchId"], "fixture-batch-001")
+
+    def test_eks_mvp_fixture_gets_dedicated_iceberg_target(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-TARGET"
+        self.insert_eks_mvp_fixture_job(job_id)
+
+        with self.session_factory() as db:
+            job = db.get(ETLJobModel, job_id)
+            ensure_batch_iceberg_target(db, job)
+
+        with self.session_factory() as db:
+            job = db.get(ETLJobModel, job_id)
+            self.assertEqual(job.iceberg_target, eks_mvp_iceberg_target())
+            self.assertTrue(job.dataset_id)
+
+    def test_eks_mvp_fixture_rejects_success_without_exact_count_and_commit_boundary(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-RESULT-MISMATCH"
+        self.insert_eks_mvp_fixture_job(job_id)
+        airflow = BlockingAirflowClient()
+        with (
+            patch.dict(os.environ, {
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "ASKLAKE_SPARK_RUNNER": "kubernetes",
+            }),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        source_boundary = dict(airflow.last_conf["sourceBoundary"])
+
+        def mismatched_spark(
+            spark_db,
+            spark_job,
+            _command,
+            requested_run_id,
+            *,
+            spark_progress_callback,
+            source_boundary,
+        ):
+            spark_job.iceberg_target = eks_mvp_iceberg_target()
+            spark_db.add(spark_job)
+            spark_db.commit()
+            progress = kubernetes_execution_fixture(job_id, requested_run_id)
+            spark_progress_callback(progress)
+            result = eks_mvp_spark_terminal_result(
+                job_id,
+                requested_run_id,
+                progress,
+                source_boundary,
+            )
+            result["inputRows"] = source_boundary["expectedCount"] - 1
+            result["icebergCommit"]["sourceBoundary"] = {
+                **source_boundary,
+                "fixtureBatchId": "wrong-batch",
+            }
+            return result
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=mismatched_spark),
+            self.session_factory() as db,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                execute_airflow_spark_run(
+                    db,
+                    job_id=job_id,
+                    run_id=response.run.run_id,
+                    command="run",
+                    airflow_source_boundary=source_boundary,
+                )
+
+        self.assertEqual(raised.exception.code, "EKS_MVP_FIXTURE_RESULT_INVALID")
+        self.assertEqual(
+            set(raised.exception.details["mismatches"]),
+            {"commitSourceBoundary", "inputRows"},
+        )
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, response.run.run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+            self.assertNotIn("sparkResult", run.task_states)
+
+    def test_eks_mvp_fixture_rejects_missing_or_drifted_airflow_boundary_before_spark(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-AIRFLOW-DRIFT"
+        self.insert_eks_mvp_fixture_job(job_id)
+        airflow = BlockingAirflowClient()
+        with (
+            patch.dict(os.environ, {
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "ASKLAKE_SPARK_RUNNER": "kubernetes",
+            }),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        drifted_boundary = {
+            **dict(airflow.last_conf["sourceBoundary"]),
+            "fixtureBatchId": "fixture-batch-drifted",
+        }
+        spark = Mock()
+        for supplied_boundary in (None, drifted_boundary):
+            with self.subTest(supplied_boundary=supplied_boundary):
+                with (
+                    patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+                    patch("app.services.etl_service.run_spark_job", spark),
+                    self.session_factory() as db,
+                ):
+                    with self.assertRaises(ApiError) as raised:
+                        execute_airflow_spark_run(
+                            db,
+                            job_id=job_id,
+                            run_id=response.run.run_id,
+                            command="run",
+                            airflow_source_boundary=supplied_boundary,
+                        )
+                    self.assertEqual(raised.exception.code, "AIRFLOW_SOURCE_BOUNDARY_MISMATCH")
+        spark.assert_not_called()
+
+    def test_invalid_eks_mvp_fixture_fails_closed_before_any_executor_runs(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-INVALID"
+        with self.session_factory() as db:
+            job = eks_mvp_bounded_fixture_job(job_id)
+            job.source_config = [
+                [label, "" if label == "__EKS MVP Fixture Batch ID" else value]
+                for label, value in job.source_config
+            ]
+            db.add(job)
+            db.commit()
+        airflow = BlockingAirflowClient()
+        direct_ingest = Mock()
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+            patch("app.services.etl_service.run_kafka_ingest_request", direct_ingest),
+        ):
+            with self.session_factory() as db:
+                with self.assertRaises(ApiError) as raised:
+                    command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(raised.exception.code, "EKS_MVP_FIXTURE_CONTRACT_INVALID")
+        self.assertEqual(airflow.trigger_count, 0)
+        direct_ingest.assert_not_called()
+        with self.session_factory() as db:
+            self.assertEqual(
+                list(db.scalars(select(ETLRunModel).where(ETLRunModel.job_id == job_id))),
+                [],
+            )
+
+    def test_eks_mvp_fixture_rejects_corrupted_persisted_boundary_before_spark(self) -> None:
+        job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-RDS-CORRUPT"
+        self.insert_eks_mvp_fixture_job(job_id)
+        airflow = BlockingAirflowClient()
+        with (
+            patch.dict(os.environ, {
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "ASKLAKE_SPARK_RUNNER": "kubernetes",
+            }),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            with self.session_factory() as db:
+                response = command_job(db, job_id, "run", ActorContext(name="Test Admin", role="admin"))
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, response.run.run_id)
+            state = dict(run.task_states["eksMvpFixture"])
+            corrupted_boundary = {**state["sourceBoundary"], "expectedCount": 100_001}
+            run.task_states = {
+                **run.task_states,
+                "eksMvpFixture": {**state, "sourceBoundary": corrupted_boundary},
+            }
+            db.commit()
+
+        spark = Mock()
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", spark),
+            self.session_factory() as db,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                execute_airflow_spark_run(
+                    db,
+                    job_id=job_id,
+                    run_id=response.run.run_id,
+                    command="run",
+                    airflow_source_boundary=corrupted_boundary,
+                )
+
+        self.assertEqual(raised.exception.code, "EKS_MVP_FIXTURE_RUN_BOUNDARY_INVALID")
+        spark.assert_not_called()
 
     def insert_airflow_run(self, job_id: str, run_id: str) -> None:
         with self.session_factory() as db:
@@ -659,6 +1046,14 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         with self.session_factory() as db:
             run = db.get(ETLRunModel, run_id)
             run.task_states = {
+                "eksMvpFixture": {
+                    "contractVersion": 1,
+                    "runId": run_id,
+                    "sourceBoundary": {
+                        "kind": "kafka_snapshot",
+                        "snapshotId": run_id,
+                    },
+                },
                 "sparkExecution": {
                     "attemptId": "attempt-1",
                     "startedAt": "2026-07-12T11:00:00Z",
@@ -682,6 +1077,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["attemptId"], "attempt-1")
             self.assertEqual(run.task_states["sparkExecution"]["status"], "running")
+            self.assertEqual(run.task_states["eksMvpFixture"]["runId"], run_id)
 
     def test_task_instance_404_does_not_mark_dag_run_missing(self) -> None:
         job_id = "JOB-SQLITE-AIRFLOW-TASKS-MISSING"
@@ -772,6 +1168,163 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             run = db.get(ETLRunModel, run_id)
             self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
             self.assertEqual(run.task_states["sparkResult"]["status"], "success")
+
+    def test_kubernetes_execution_identity_is_persisted_before_terminal_result(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-PROGRESS"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-PROGRESS"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        observed_while_running: dict = {}
+
+        def spark_with_progress(_db, _job, _command, _run_id, *, spark_progress_callback):
+            progress = kubernetes_execution_fixture(job_id, run_id)
+            spark_progress_callback(progress)
+            with self.session_factory() as observer:
+                running = observer.get(ETLRunModel, run_id)
+                observed_while_running.update(running.task_states["sparkExecution"]["kubernetesExecution"])
+            return spark_terminal_result(job_id, run_id, progress)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=spark_with_progress),
+            self.session_factory() as db,
+        ):
+            result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(observed_while_running["applicationUid"], "spark-uid-contract-001")
+        self.assertEqual(observed_while_running["namespace"], "asklake-dev")
+        self.assertEqual(result["kubernetesExecution"]["resultMarkerFound"], True)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
+            self.assertEqual(
+                run.task_states["sparkResult"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+
+    def test_kubernetes_terminal_identity_mismatch_is_not_marked_success(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-MISMATCH"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-MISMATCH"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+
+        def spark_with_mismatch(_db, _job, _command, _run_id, *, spark_progress_callback):
+            progress = kubernetes_execution_fixture(job_id, run_id)
+            spark_progress_callback(progress)
+            terminal = {**progress, "applicationUid": "spark-uid-different"}
+            return spark_terminal_result(job_id, run_id, terminal)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=spark_with_mismatch),
+            self.session_factory() as db,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(raised.exception.code, "SPARK_EXECUTION_IDENTITY_MISMATCH")
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.task_states["sparkExecution"]["status"], "failed")
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+            self.assertNotIn("sparkResult", run.task_states)
+
+    def test_kubernetes_retry_recovers_the_same_persisted_uid(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-KUBERNETES-RECOVERY"
+        run_id = "RUN-SQLITE-SPARK-KUBERNETES-RECOVERY"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        calls = 0
+        expected_executions: list[dict | None] = []
+
+        def recover_same_application(
+            _db,
+            _job,
+            _command,
+            _run_id,
+            *,
+            spark_progress_callback,
+            expected_kubernetes_execution=None,
+        ):
+            nonlocal calls
+            calls += 1
+            expected_executions.append(expected_kubernetes_execution)
+            progress = kubernetes_execution_fixture(job_id, run_id, recovered=calls > 1)
+            spark_progress_callback(progress)
+            if calls == 1:
+                raise RuntimeError("simulated FastAPI interruption")
+            return spark_terminal_result(job_id, run_id, progress)
+
+        with (
+            patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job", side_effect=recover_same_application),
+        ):
+            with self.session_factory() as db:
+                with self.assertRaisesRegex(RuntimeError, "interruption"):
+                    execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+            with self.session_factory() as db:
+                result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(result["kubernetesExecution"]["applicationUid"], "spark-uid-contract-001")
+        self.assertEqual(result["kubernetesExecution"]["recovered"], True)
+        self.assertIsNone(expected_executions[0])
+        self.assertEqual(
+            expected_executions[1]["applicationUid"],
+            "spark-uid-contract-001",
+        )
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.execution_generation, 2)
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
+
+    def test_successful_same_run_retry_returns_persisted_result_without_spark_call(self) -> None:
+        job_id = "JOB-SQLITE-SPARK-TERMINAL-RETRY"
+        run_id = "RUN-SQLITE-SPARK-TERMINAL-RETRY"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        persisted = spark_terminal_result(
+            job_id,
+            run_id,
+            kubernetes_execution_fixture(job_id, run_id),
+        )
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            run.execution_generation = 7
+            run.task_states = {
+                "sparkExecution": {
+                    "generation": 7,
+                    "kubernetesExecution": persisted["kubernetesExecution"],
+                    "status": "success",
+                },
+                "sparkResult": persisted,
+            }
+            db.commit()
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.run_spark_job") as run_spark,
+            self.session_factory() as db,
+        ):
+            result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
+
+        self.assertEqual(result, persisted)
+        run_spark.assert_not_called()
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.execution_generation, 7)
+            self.assertEqual(
+                run.task_states["sparkExecution"]["kubernetesExecution"]["applicationUid"],
+                "spark-uid-contract-001",
+            )
 
     def test_two_scheduler_ticks_reserve_one_airflow_run(self) -> None:
         job_id = "JOB-SQLITE-SCHEDULER-RACE"

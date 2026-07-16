@@ -6,10 +6,12 @@
 {{- $runLabel := regexReplaceAll "[^a-z0-9_.-]" (lower $runId) "-" | trimAll "-_." | trunc 63 | trimAll "-_." }}
 {{- $jobLabel := regexReplaceAll "[^a-z0-9_.-]" (lower $jobId) "-" | trimAll "-_." | trunc 63 | trimAll "-_." }}
 {{- $fixtureBatchId := required "sparkApplication.kafka.fixtureBatchId is required when create=true" .Values.sparkApplication.kafka.fixtureBatchId }}
+{{- $outputPath := printf "s3a://%s/%s/%s" .Values.sparkApplication.output.bucket (.Values.sparkApplication.output.prefix | trimAll "/") $runId }}
+{{- $checkpointPath := printf "s3a://%s/%s/%s" .Values.sparkApplication.checkpoint.bucket (.Values.sparkApplication.checkpoint.prefix | trimAll "/") $runId }}
 {{- $targetUri := printf "iceberg://%s/%s/%s" .Values.sparkApplication.target.catalog .Values.sparkApplication.target.namespace .Values.sparkApplication.target.table }}
 {{- $schemaColumns := list (dict "included" true "sourceName" "schema_version" "targetName" "schema_version" "type" "String") (dict "included" true "sourceName" "event_id" "targetName" "event_id" "type" "String") (dict "included" true "sourceName" "source" "targetName" "source" "type" "String") (dict "included" true "sourceName" "offset" "targetName" "offset" "type" "Long") (dict "included" true "sourceName" "review" "targetName" "review" "type" "String") (dict "included" true "sourceName" "created_at" "targetName" "created_at" "type" "Timestamp") (dict "included" true "sourceName" "raw.fixture_batch_id" "targetName" "raw.fixture_batch_id" "type" "String") (dict "included" true "sourceName" "raw.sequence" "targetName" "raw.sequence" "type" "Long") (dict "included" true "sourceName" "raw.expected_count" "targetName" "raw.expected_count" "type" "Long") }}
 {{- $icebergTarget := dict "catalog" .Values.sparkApplication.target.catalog "namespace" .Values.sparkApplication.target.namespace "table" .Values.sparkApplication.target.table "tableUri" $targetUri "writeMode" .Values.sparkApplication.target.writeMode "partitionColumns" (list) }}
-{{- $sourceBoundary := dict "expectedCount" .Values.sparkApplication.kafka.expectedCount "fixtureBatchId" $fixtureBatchId "kind" "kafka_snapshot" "snapshotId" $runId "topic" .Values.sparkApplication.kafka.topic }}
+{{- $sourceBoundary := dict "checkpointPath" $checkpointPath "consumerGroup" .Values.sparkApplication.kafka.consumerGroup "expectedCount" .Values.sparkApplication.kafka.expectedCount "fixtureBatchId" $fixtureBatchId "kind" "kafka_snapshot" "outputPath" $outputPath "snapshotId" $runId "topic" .Values.sparkApplication.kafka.topic }}
 {{- $jobManifest := dict "icebergTarget" $icebergTarget "jobId" $jobId "partitionColumns" (list) "schemaColumns" $schemaColumns "schemaFingerprint" "eks-mvp-fixture-v1" "sourceBoundary" $sourceBoundary }}
 apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
@@ -25,6 +27,8 @@ metadata:
     asklake.io/run-id: {{ $runId | quote }}
     asklake.io/job-id: {{ $jobId | quote }}
     asklake.io/fixture-batch-id: {{ $fixtureBatchId | quote }}
+    asklake.io/output-prefix: {{ .Values.sparkApplication.output.prefix | quote }}
+    asklake.io/checkpoint-prefix: {{ .Values.sparkApplication.checkpoint.prefix | quote }}
     asklake.io/image-digest: {{ .Values.sparkApplication.image.digest | quote }}
 spec:
   type: Python
@@ -37,8 +41,15 @@ spec:
   timeToLiveSeconds: 3600
   restartPolicy:
     type: Never
+  deps:
+    jars:
+      - {{ .Values.sparkApplication.kafka.iamAuthJar | quote }}
+    packages:
+      - "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1"
+      - "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0"
+      - "org.postgresql:postgresql:42.7.7"
+      - "org.apache.hadoop:hadoop-aws:3.4.1"
   sparkConf:
-    "spark.jars.packages": {{ printf "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1,org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0,org.postgresql:postgresql:42.7.7,org.apache.hadoop:hadoop-aws:3.4.1,%s" .Values.sparkApplication.kafka.iamAuthPackage | quote }}
     "spark.jars.ivy": "/tmp/.ivy2"
     "spark.driver.extraJavaOptions": "-Djava.io.tmpdir=/tmp"
     "spark.executor.extraJavaOptions": "-Djava.io.tmpdir=/tmp"
@@ -48,6 +59,8 @@ spec:
     "fs.s3a.path.style.access": "false"
   driver:
     serviceAccount: {{ .Values.sparkApplication.serviceAccountName }}
+    nodeSelector:{{ toYaml .Values.sparkApplication.nodeSelector | nindent 6 }}
+    tolerations:{{ toYaml .Values.sparkApplication.tolerations | nindent 6 }}
     cores: {{ .Values.sparkApplication.driver.cores }}
     memory: {{ .Values.sparkApplication.driver.memory | quote }}
     labels: {asklake.io/run-id: {{ $runLabel | quote }}}
@@ -57,12 +70,14 @@ spec:
       - {name: ASKLAKE_KAFKA_TOPIC, value: {{ .Values.sparkApplication.kafka.topic | quote }}}
       - {name: ASKLAKE_KAFKA_CONSUMER_GROUP, value: {{ .Values.sparkApplication.kafka.consumerGroup | quote }}}
       - {name: ASKLAKE_KAFKA_FIXTURE_BATCH_ID, value: {{ $fixtureBatchId | quote }}}
+      - {name: ASKLAKE_KAFKA_EXPECTED_COUNT, value: {{ .Values.sparkApplication.kafka.expectedCount | quote }}}
       - {name: ASKLAKE_KAFKA_AUTH_MODE, value: {{ .Values.sparkApplication.kafka.authMode | quote }}}
       - {name: ASKLAKE_OBJECT_STORAGE_PROVIDER, value: "aws"}
       - {name: S3_FORCE_PATH_STYLE, value: "false"}
       - {name: ASKLAKE_SPARK_SOURCE_FORMAT, value: "kafka"}
       - {name: ASKLAKE_SPARK_SOURCE_PATH, value: {{ .Values.sparkApplication.kafka.topic | quote }}}
-      - {name: ASKLAKE_SPARK_OUTPUT_PATH, value: {{ printf "s3a://%s/%s/%s" .Values.sparkApplication.output.bucket (.Values.sparkApplication.output.prefix | trimAll "/") $runId | quote }}}
+      - {name: ASKLAKE_SPARK_OUTPUT_PATH, value: {{ $outputPath | quote }}}
+      - {name: ASKLAKE_SPARK_CHECKPOINT_PATH, value: {{ $checkpointPath | quote }}}
       - {name: ASKLAKE_SPARK_RUN_ROW_LIMIT, value: "0"}
       - name: ASKLAKE_SPARK_JOB_MANIFEST_JSON
         value: {{ $jobManifest | toJson | quote }}
@@ -83,9 +98,11 @@ spec:
           secretKeyRef: {name: {{ .Values.sparkApplication.runtimeSecret.name }}, key: {{ .Values.sparkApplication.runtimeSecret.keys.jdbcPassword }}}
     coreRequest: {{ .Values.sparkApplication.driver.resources.requests.cpu | quote }}
     coreLimit: {{ .Values.sparkApplication.driver.resources.limits.cpu | quote }}
-    memoryOverhead: "512m"
+    memoryOverhead: {{ .Values.sparkApplication.driver.memoryOverhead | quote }}
   executor:
     serviceAccount: {{ .Values.sparkApplication.serviceAccountName }}
+    nodeSelector:{{ toYaml .Values.sparkApplication.nodeSelector | nindent 6 }}
+    tolerations:{{ toYaml .Values.sparkApplication.tolerations | nindent 6 }}
     instances: {{ .Values.sparkApplication.executor.instances }}
     cores: {{ .Values.sparkApplication.executor.cores }}
     memory: {{ .Values.sparkApplication.executor.memory | quote }}
@@ -94,5 +111,5 @@ spec:
       - {name: AWS_REGION, value: {{ .Values.global.awsRegion | quote }}}
     coreRequest: {{ .Values.sparkApplication.executor.resources.requests.cpu | quote }}
     coreLimit: {{ .Values.sparkApplication.executor.resources.limits.cpu | quote }}
-    memoryOverhead: "1g"
+    memoryOverhead: {{ .Values.sparkApplication.executor.memoryOverhead | quote }}
 {{- end }}

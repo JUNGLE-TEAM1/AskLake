@@ -1,6 +1,6 @@
 # EKS MVP Phase 6 ECR Image Delivery
 
-이 단계는 AskLake의 EKS용 이미지를 재현 가능하게 빌드하고 ECR의 immutable digest로 전달하는 자동화를 준비한다. Workflow 코드와 로컬 계약 검증은 완료했지만 실제 GitHub Environment와 AWS OIDC role을 설정하거나 ECR에 image를 push한 상태는 아니다.
+이 단계는 AskLake의 EKS용 이미지를 재현 가능하게 빌드하고 ECR의 immutable digest로 전달하는 자동화를 준비한다. Workflow 코드와 로컬 계약 검증은 완료했다. 2026-07-16 dev Airflow custom image는 실제 ECR push와 EKS 실행까지 검증했지만, 보호된 GitHub Environment에서 다섯 image 전체 workflow를 실행해 단일 receipt를 만든 증거와는 구분한다.
 
 ## 전달하는 이미지
 
@@ -9,10 +9,12 @@
 - `frontend`: `frontend/Dockerfile`의 Nginx runtime
 - `backend`: `backend/Dockerfile`의 `backend-runtime` target
 - `sparkRuntime`: `backend/Dockerfile`의 `spark-runtime` target
-- `airflow`: `apache/airflow:3.3.0`의 ECR mirror
+- `airflow`: `apache/airflow:3.3.0`을 base로 하고 `asklake_etl_job.py`를 bake하는 `airflow/Dockerfile` build
 - `trino`: `trinodb/trino:482`의 ECR mirror
 
 `git-<7자리 SHA>` tag는 사람이 revision을 찾기 위한 표시일 뿐이다. B workload manifest와 rollback 기록은 workflow artifact의 `repository@sha256:digest`만 사용한다. `latest`는 만들거나 소비하지 않는다.
+
+Frontend, Backend, Spark runtime, Airflow의 네 custom build는 `--platform linux/amd64 --provenance=false`를 사용해 단일 image manifest를 publish한다. Airflow를 upstream base 그대로 mirror하면 `/opt/airflow/dags`가 비어 DAG Processor가 파일을 발견하지 못하므로 금지한다. Trino만 pinned upstream image를 mirror한다.
 
 Frontend production image는 public hostname을 build에 고정하지 않는다. `VITE_API_BASE_URL` 미지정 기본값은 같은 browser origin이며, 이후 ALB가 `/`를 Frontend로, `/api`를 FastAPI로 routing한다. 로컬에서 별도 backend port를 사용할 때만 `.env.local`의 `VITE_API_BASE_URL`을 설정한다.
 
@@ -30,7 +32,7 @@ Workflow는 repository를 생성하지 않는다. `asklake/<environment>/fronten
 
 ## Image receipt
 
-성공한 실행은 `eks-<environment>-image-receipt-<git SHA>` artifact를 30일 보존한다. receipt에는 Git revision, AMD64 platform, 다섯 immutable ECR reference와 mirror upstream version만 들어간다. AWS credential이나 application secret은 들어가지 않는다.
+성공한 실행은 `eks-<environment>-image-receipt-<git SHA>` artifact를 30일 보존한다. receipt에는 Git revision, AMD64 platform, 다섯 immutable ECR reference와 pinned upstream base version만 들어간다. AWS credential이나 application secret은 들어가지 않는다.
 
 형식은 `infra/eks/delivery/image-receipt.example.json`으로 확인한다.
 

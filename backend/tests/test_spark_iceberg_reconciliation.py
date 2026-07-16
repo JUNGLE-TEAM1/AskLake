@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from app.core.errors import ApiError
 from app.schemas.iceberg import IcebergCommitEvidence
 from app.services.etl_service import (
     canonical_rule_fingerprint,
     dataset_payload_from_spark_result,
+    enrich_airflow_catalog_spark_result,
     verify_spark_iceberg_result,
 )
 from app.services.iceberg_writer_service import IcebergWriterError, build_iceberg_writer_target
@@ -169,6 +171,106 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 502)
         self.assertEqual(context.exception.code, "ICEBERG_TRINO_QUERY_FAILED")
+
+    def test_eks_fixture_catalog_uses_exact_snapshot_run_count_verification(self) -> None:
+        fixture_target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "eks_mvp_fixture",
+            "tableUri": "iceberg://iceberg/asklake/eks_mvp_fixture",
+            "writeMode": "replace",
+        }
+        fixture_job = SimpleNamespace(
+            execution_mode="snapshot",
+            iceberg_target=fixture_target,
+            id="JOB-EKS-FIXTURE",
+            source_config=[
+                ["Broker / Endpoint", "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098"],
+                ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
+                ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+                ["__EKS MVP Fixture Batch ID", "fixture-batch-001"],
+                ["__EKS MVP Expected Count", "100"],
+            ],
+            source_type="Kafka JSON",
+        )
+        source_boundary = {
+            "broker": "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098",
+            "checkpointPath": "s3a://asklake-output/eks-mvp/checkpoints/run_fixture_001",
+            "consumerGroup": "asklake-eks-mvp-spark-v1",
+            "expectedCount": 100,
+            "fixtureBatchId": "fixture-batch-001",
+            "kind": "kafka_snapshot",
+            "outputPath": "s3a://asklake-output/eks-mvp/output/run_fixture_001",
+            "snapshotId": "run_fixture_001",
+            "topic": "asklake.eks-mvp.fixture.v1",
+        }
+        fixture_run = SimpleNamespace(
+            job_id=fixture_job.id,
+            run_id="run_fixture_001",
+            task_states={
+                "eksMvpFixture": {
+                    "capturedAt": "2026-07-16T02:00:00Z",
+                    "contractVersion": 1,
+                    "runId": "run_fixture_001",
+                    "sourceBoundary": source_boundary,
+                },
+            },
+        )
+        result = {
+            "outputPath": fixture_target["tableUri"],
+            "runId": fixture_run.run_id,
+            "status": "success",
+        }
+        verified = {**result, "dataFileCount": 1, "storageSizeBytes": 1024}
+
+        with patch(
+            "app.services.etl_service.verify_spark_iceberg_result",
+            return_value=verified,
+        ) as verify:
+            actual = enrich_airflow_catalog_spark_result(fixture_job, fixture_run, result)
+
+        self.assertEqual(actual, verified)
+        verify.assert_called_once_with(
+            fixture_job,
+            fixture_run.run_id,
+            result,
+            expected_run_row_count=100,
+        )
+
+    def test_ordinary_kafka_job_keeps_legacy_catalog_output_verification(self) -> None:
+        kafka_job = SimpleNamespace(
+            execution_mode="snapshot",
+            iceberg_target={"tableUri": "iceberg://iceberg/asklake/legacy_kafka"},
+            id="JOB-KAFKA-LEGACY",
+            source_config=[
+                ["Broker / Endpoint", "kafka.test:9092"],
+                ["TOPIC / QUEUE NAME", "reviews.raw"],
+                ["CONSUMER GROUP ID", "asklake-reviews"],
+            ],
+            source_type="Kafka JSON",
+            storage_path=None,
+        )
+        kafka_run = SimpleNamespace(run_id="run_kafka_legacy")
+        result = {
+            "outputPath": "/tmp/asklake/run_kafka_legacy",
+            "runId": kafka_run.run_id,
+            "status": "success",
+        }
+
+        with (
+            patch(
+                "app.services.etl_service.inspect_spark_output",
+                return_value={"parquetObjectCount": 2, "storageSizeBytes": 2048},
+            ) as inspect,
+            patch("app.services.etl_service.verify_spark_iceberg_result") as verify,
+        ):
+            actual = enrich_airflow_catalog_spark_result(kafka_job, kafka_run, result)
+
+        inspect.assert_called_once_with(result["outputPath"])
+        verify.assert_not_called()
+        self.assertEqual(actual["parquetObjectCount"], 2)
+        self.assertEqual(actual["storageSizeBytes"], 2048)
 
     def test_positive_output_rows_require_physical_file_evidence(self) -> None:
         with self.assertRaises(ApiError) as context:

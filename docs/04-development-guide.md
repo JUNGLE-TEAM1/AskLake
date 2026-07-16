@@ -261,7 +261,7 @@ cd backend
 npm run verify:spark-csv-quoting
 ```
 
-현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.
+현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. EKS bounded fixture의 마지막 단계는 Trino에서 exact snapshot, `_asklake_run_id=runId`의 expected row count, data file/byte를 모두 확인한 뒤에만 Catalog를 확정한다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.
 
 Live frontend는 같은 Run id를 `queued` 또는 `running`으로 관찰한 뒤 `success`가 된 경우에만 `GET /api/catalog/datasets`를 한 번 다시 호출한다. 실행 버튼 직후의 optimistic 상태에서 서버의 이전 성공 Run을 읽더라도 조기 refresh하지 않는다. Catalog 재조회만 실패한 경우에는 이미 확정된 Job/Run 성공을 되돌리지 않고 기존 목록과 수동 새로고침 안내를 유지한다. Job 목록의 실행 관측 모달은 열 때 받은 객체 snapshot을 고정하지 않고 `jobId`와 `runId`로 중앙 polling이 갱신한 최신 Job/Run을 다시 찾아 표시한다. 별도 모달 polling을 만들지 않으므로 terminal 중단, 연속 오류 안내, Catalog 갱신 정책은 기존 단일 poller가 계속 소유한다. 정적 연결과 production build는 `cd frontend && npm run verify:ui-regressions && npm run build`로 확인한다.
 
@@ -1105,7 +1105,7 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 ## 14) EKS MVP workload 검증
 
-EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 계약한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 그러나 Backend Trino client patch, Airflow extra key 정합성과 실제 Spark/Trino consumer 주입은 아직 완료되지 않았다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
+EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 
@@ -1165,13 +1165,36 @@ ASKLAKE_TEST_POSTGRES_CONCURRENCY=1 \
   tests.test_etl_job_delete.EtlSchedulerPostgresConcurrencyTests -v
 ```
 
-검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, foundation-owned RBAC 비생성, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Role/RoleBinding, Secret, `LoadBalancer`, `StatefulSet`, PVC/EFS, replay producer, static AWS key 또는 mutable image가 workload chart에 들어오면 실패한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고 liveness는 TCP로 분리한다. Frontend/FastAPI는 AMD64 전용 image와 맞게 `kubernetes.io/arch=amd64`에만 스케줄한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. Trino ECR mirror/digest는 A의 foundation 입력이므로 이 image build matrix에 포함하지 않는다.
+검증 스크립트는 Helm schema/lint/render, Frontend/FastAPI/Airflow/Trino resource 개수, ClusterIP, health check, digest image, ConfigMap/Secret 경계, foundation-owned RBAC 비생성, Continuous 경계, MSK IAM과 bounded Spark smoke 설정을 확인한다. Role/RoleBinding, Secret, `LoadBalancer`, `StatefulSet`, PVC/EFS, replay producer, static AWS key 또는 mutable image가 workload chart에 들어오면 실패한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고 liveness는 TCP로 분리한다. Frontend/FastAPI는 AMD64 전용 image와 맞게 `kubernetes.io/arch=amd64`에만 스케줄한다. `.github/workflows/eks-b-workload-checks.yml`은 같은 계약 테스트와 Frontend/Backend/Spark/Airflow `linux/amd64` Docker build를 PR에서 실행한다. 수동 image delivery도 Airflow 공식 base mirror가 아니라 `airflow/Dockerfile`을 build하고 네 custom build에 `--provenance=false`를 적용한다. Trino만 upstream mirror/digest를 사용한다.
 
-chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 네 workload 이름의 runtime Secret source/target도 존재한다. Spark·Trino source-target hash와 Trino identity/RDS/S3/DNS는 실제 검증했지만 Backend Trino patch와 최종 consumer workload 주입은 통합 범위다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
+기존 `asklake-web` release를 유지한 채 Airflow만 배포할 때는 같은 chart를 별도 `asklake-airflow` release로 사용하고 Frontend, Backend, Trino를 명시적으로 끈다. verifier는 이 render가 Airflow Deployment 3개, ClusterIP Service 1개, ConfigMap 1개와 migration hook Job 1개만 포함하고 `frontend`, `fastapi`, Trino resource를 포함하지 않는지 검사한다. 이 경로에서도 실제 Secret 값은 values에 넣지 않는다.
+
+dev의 Backend/Airflow runtime mapping은 값이 없는 다음 manifest로 재현한다. 적용자는 namespaced custom resource 권한이 있어야 하며 target Secret의 key 이름과 shared binding 동일성만 확인하고 base64 value를 출력하지 않는다.
+
+```bash
+kubectl apply -f infra/eks/secrets/runtime-externalsecrets.dev.yaml
+kubectl wait --for=condition=Ready \
+  externalsecret/asklake-backend-runtime \
+  externalsecret/asklake-airflow-runtime \
+  --namespace asklake-dev \
+  --timeout=60s
+```
+
+```bash
+helm upgrade --install asklake-airflow \
+  infra/eks/helm/asklake-workloads \
+  --namespace asklake-dev \
+  --values /secure/path/dev.airflow-values.yaml \
+  --set frontend.enabled=false \
+  --set backend.enabled=false \
+  --set trino.enabled=false
+```
+
+chart 적용 전 EKS foundation은 `asklake-dev` namespace, `asklake-frontend`, `asklake-backend`, `asklake-airflow`, `asklake-msk-smoke`, `asklake-spark`, `asklake-trino` ServiceAccount/EKS Pod Identity, FastAPI/Spark driver RBAC, Spark operator, RDS/MSK/S3/ECR과 필요한 runtime Secret을 제공해야 한다. 7월 16일 기준 namespace, ServiceAccount/token, Backend/MSK smoke/Spark/Trino Pod Identity, RBAC, Spark Operator와 data plane이 적용됐고 네 workload 이름의 runtime Secret source/target도 존재한다. Spark·Trino source-target hash와 Trino identity/RDS/S3/DNS, 실제 Spark/Trino consumer 주입은 검증했다. 다만 Backend main ExternalSecret의 Trino mapping과 임시 target 제거는 후속 통합 범위다. `asklake-backend`와 `asklake-spark`는 각각 SparkApplication과 executor Pod를 관리하므로 `automountServiceAccountToken: true`다. 나머지 ServiceAccount의 Kubernetes API token은 끈다. 정상 install은 opt-in smoke 두 개를 만들지 않는다.
 
 Frontend/FastAPI Service 계약은 `frontend:80`, `fastapi:8080`이다. A의 `asklake-web` application release 하나로 실제 배포했으며 B workload chart를 병행 설치하지 않는다. 이후 변경에서도 두 Helm release가 같은 Deployment/Service를 동시에 소유하게 하지 않는다.
 
-Airflow MVP는 `LocalExecutor`, image-baked DAG와 RDS metadata를 사용한다. EFS/PVC, shared DAG volume과 shared log volume은 없으며 Pod-local log 비영속 제한을 수용한다. Airflow migration과 Spark executor의 최소 Secret consumer 범위는 [7월 15일 A foundation / B workload 계약 대조](eks-day15-b-workload-contract-review.md)를 따른다.
+Airflow MVP는 `LocalExecutor`, image-baked DAG와 RDS metadata를 사용한다. RDS CA ConfigMap을 read-only mount하고 DB URL은 `verify-full`이어야 한다. migration hook은 FAB AuthManager를 명시한 뒤 API user create와 password reset을 실행한다. EFS/PVC, shared DAG volume과 shared log volume은 없으며 Pod-local log 비영속 제한을 수용한다. Helm rollback/uninstall은 이미 적용된 RDS migration을 역변환하지 않는다. 실제 dev 배포와 smoke는 [목요일 Pair B Airflow 실환경 검증 기록](eks-day16-b-airflow-live-evidence.md), Secret consumer 범위는 [7월 15일 A foundation / B workload 계약 대조](eks-day15-b-workload-contract-review.md)를 따른다.
 
 병합 전에는 아래 항목을 모두 확인한다.
 
@@ -1180,8 +1203,25 @@ Airflow MVP는 `LocalExecutor`, image-baked DAG와 RDS metadata를 사용한다.
 - foundation의 `asklake-backend`와 `asklake-spark` ServiceAccount는 모두 `automountServiceAccountToken: true`여야 한다.
 - Frontend, Backend, Spark runtime, Airflow의 실제 ECR `repository@sha256:digest`와 `linux/amd64` 증거가 receipt 또는 배포 기록에 있어야 한다. PR의 build-only `push: false` CI는 ECR push 증거로 보지 않는다.
 - PR과 API 문서의 Continuous 차단 오류 코드는 `CONTINUOUS_CONTROL_OWNED_BY_EC2`로 일치해야 한다.
-- A의 임시 `asklake-web` release가 이미 설치돼 있으면 일반 Helm install을 진행하지 않는다. 동일 `frontend`/`fastapi` Service의 명시적 ownership 전환·rollback 절차가 합의되기 전까지 merge/deploy gate를 닫는다.
+- A의 `asklake-web` release가 이미 설치돼 있으면 Frontend/Backend가 활성화된 일반 Helm install을 진행하지 않는다. Airflow-only component release는 비활성 component가 0개 resource로 렌더되는 verifier를 통과한 경우에만 사용한다. 동일 `frontend`/`fastapi` Service의 ownership 전환은 별도 rollback 절차가 합의되기 전까지 금지한다.
 
-AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 `sparkApplication.create=true`, 고유 `runId`/`jobId`, producer receipt의 `sparkApplication.kafka.fixtureBatchId`로 bounded Kafka fixture smoke를 실행한다. Spark smoke는 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회하고 row count가 `sparkApplication.kafka.expectedCount`(기본 100)와 같은지 비교한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, Pod Identity, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
+AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 producer receipt의 batch ID/count로 bounded Kafka fixture를 실행한다. 정적 smoke는 `sparkApplication.create=true`와 고유 `runId`/`jobId`를 사용하고, 제품 경로는 exact fixture sourceConfig로 AskLake Job을 실행해 같은 `runId`가 Airflow와 동적 SparkApplication까지 전달되는지 확인한다. 두 경로 모두 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. Spark report의 input/output count, commit source boundary와 snapshot ID가 producer expected count와 같아야 한다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, Pod Identity, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
 
-일반 FastAPI batch 실행은 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 deterministic `SparkApplication`을 제출한다. provider unit test는 두 replica가 같은 run identity를 사용하고, create 응답 유실 뒤 한 번의 POST만으로 복구하며, 다른 identity object를 거절하는지 검증한다. 실제 cluster smoke에서는 FastAPI Pod 하나를 Spark 실행 중 종료한 뒤 같은 `runId` 재요청이 새 Spark 작업을 중복 생성하지 않고 기존 object를 복구하는지도 확인한다.
+일반 FastAPI batch 실행은 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 deterministic `SparkApplication`을 제출한다. driver와 executor에는 모두 Spark 전용 workload selector, AMD64 selector와 `NoSchedule` toleration을 넣고, package resolution cache는 `spark.jars.ivy=/tmp/.ivy2`로 고정한다. provider unit test는 두 replica가 같은 run identity를 사용하고, create 응답 유실 뒤 한 번의 POST만으로 복구하며, 다른 identity object를 거절하는지 검증한다. driver Pod가 생성되기 전 submission failure에서는 Pod log `404`가 SparkApplication status 원인을 덮지 않아야 한다. 실제 cluster smoke에서는 실행 중 같은 `runId` 요청이 RDS lease로 차단되고 terminal 재요청이 같은 UID object를 복구하며 label 기준 object 수가 하나인지 확인한다.
+
+Spark runtime은 `backend/spark-msk-iam-shaded/pom.xml`에서 MSK IAM `2.3.6`과 그 AWS SDK v2 `2.38.3`/Netty를 `com.asklake.spark.msk.shadow.*`로 relocation한 image-local JAR를 만든다. Hadoop S3A `3.4.1`의 AWS SDK bundle `2.24.6`은 변경하지 않는다. `ASKLAKE_SPARK_MSK_IAM_AUTH_JAR`는 `local:///opt/asklake/jars/*.jar`만 허용하고 Kubernetes Kafka source에만 주입한다. S3-only source에 MSK JAR가 들어가거나 SparkApplication에 `software.amazon.msk:aws-msk-iam-auth` Maven coordinate가 렌더되면 회귀다. Apache Hadoop도 `NoSuchMethodError` 방지를 위해 Hadoop이 빌드된 SDK와 다른 버전 또는 bundle과 개별 SDK module의 혼합을 금지한다: <https://hadoop.apache.org/docs/r3.4.1/hadoop-aws/tools/hadoop-aws/troubleshooting_s3a.html>.
+
+Kubernetes create/recover 응답의 namespace/name/UID는 terminal을 기다리지 않고 Pod-local progress file을 통해 RDS `sparkExecution.kubernetesExecution`에 저장한다. 이 파일은 bridge 전달용이며 종료 때 지워지고, FastAPI 재시작 뒤 복구 기준은 RDS다. 재시도 generation은 기존 UID를 보존해야 한다. terminal result의 run/job/application/image/driver identity가 RDS와 다르거나 성공 result marker가 없으면 API는 `SPARK_EXECUTION_IDENTITY_MISMATCH`로 fail-closed한다. driver Pod phase, termination reason/exit code와 marker 여부도 terminal manifest에 저장하므로 `runId → SparkApplication UID → driver Pod/log/result`를 한 row에서 추적할 수 있다. Node provider와 RDS generation/retry 계약은 `npm run test:spark-kubernetes`와 `tests.test_etl_job_delete.EtlJobDeleteRunConcurrencyTests`로 검증한다. 2026-07-16 dev 결과는 [FastAPI-Spark 연결 실환경 검증 기록](eks-day16-b-spark-link-live-evidence.md)을 따른다.
+
+CP4 retry 회귀에서는 저장된 UID가 있는 경로가 Kubernetes `GET`만 수행하고 `POST`하지 않는지, object 부재/UID drift가 replacement 없이 실패하는지, 성공한 같은 `runId`가 generation을 올리지 않는지 확인한다. fixture target은 `replace`여도 동일 Kafka boundary가 있으면 Iceberg writer를 호출하지 않고 기존 snapshot을 재사용해야 한다. 최소 검증 명령은 다음과 같다.
+
+```bash
+cd backend
+npm run test:spark-kubernetes
+.venv/bin/python -m unittest \
+  tests.test_etl_job_delete.EtlJobDeleteRunConcurrencyTests \
+  tests.test_spark_source_identity \
+  tests.test_kafka_fixture_boundary \
+  tests.test_eks_runtime_boundary
+npm run verify:airflow-catalog-wiring
+```

@@ -148,7 +148,7 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "resources"],
+      "required": ["image", "replicaCount", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
@@ -157,6 +157,8 @@
         "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
         "runtimeBoundaryConfigMapName": { "type": "string", "const": "asklake-runtime-boundary" },
         "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
+        "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
         "resources": { "type": "object" }
       }
     }

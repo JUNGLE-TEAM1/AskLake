@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import https from "node:https";
+import path from "node:path";
 import process from "node:process";
 
 const TERMINAL_STATES = new Set(["COMPLETED", "FAILED", "SUBMISSION_FAILED", "FAILING", "INVALIDATING"]);
@@ -112,10 +113,35 @@ async function getApplication(requestJson, namespace, name) {
   return response.body;
 }
 
-export async function createOrRecoverApplication({ application, requestJson }) {
+export async function createOrRecoverApplication({ application, expectedKubernetesExecution, requestJson }) {
   const namespace = application?.metadata?.namespace;
   const name = application?.metadata?.name;
   if (!namespace || !name) throw new Error("SparkApplication namespace and name are required");
+  if (expectedKubernetesExecution) {
+    const expectedNamespace = String(expectedKubernetesExecution.namespace || "").trim();
+    const expectedName = String(expectedKubernetesExecution.applicationName || "").trim();
+    const expectedUid = String(expectedKubernetesExecution.applicationUid || "").trim();
+    if (!expectedNamespace || !expectedName || !expectedUid) {
+      throw new Error("Persisted SparkApplication namespace, name, and UID are required for recovery");
+    }
+    if (expectedNamespace !== namespace || expectedName !== name) {
+      throw new Error("Persisted SparkApplication name or namespace does not match the deterministic application identity");
+    }
+    const existing = await getApplication(requestJson, namespace, name);
+    if (!existing) {
+      throw new Error(
+        `Persisted SparkApplication ${namespace}/${name} with UID ${expectedUid} was not found; refusing to create a replacement`,
+      );
+    }
+    validateExistingApplication(application, existing);
+    const actualUid = String(existing?.metadata?.uid || "").trim();
+    if (actualUid !== expectedUid) {
+      throw new Error(
+        `Persisted SparkApplication UID mismatch for ${namespace}/${name}: expected ${expectedUid}, observed ${actualUid || "missing"}`,
+      );
+    }
+    return { application: existing, recovered: true };
+  }
   try {
     const response = await requestJson("POST", applicationPath(namespace), { body: application });
     if (response.status === 200 || response.status === 201) return { application: response.body, recovered: false };
@@ -145,12 +171,13 @@ function applicationError(application) {
   );
 }
 
-async function driverLogs(requestJson, namespace, podName) {
+async function driverLogs(requestJson, namespace, podName, { allowMissing = false } = {}) {
   if (!podName) return "";
   const path = `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}/log`
     + "?container=spark-kubernetes-driver&timestamps=false&limitBytes=4194304";
   const response = await requestJson("GET", path, { timeoutMs: 30_000 });
   if (response.status === 403) throw new Error("Spark driver log access was denied by Kubernetes RBAC");
+  if (response.status === 404 && allowMissing) return "";
   if (response.status !== 200) throw apiError("Spark driver log", response);
   return typeof response.body === "string" ? response.body : response.text;
 }
@@ -165,19 +192,82 @@ function reportFromLogs(logs) {
   }
 }
 
+async function driverPod(requestJson, namespace, podName) {
+  if (!podName) return null;
+  const path = `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}`;
+  const response = await requestJson("GET", path);
+  if (response.status === 404) return null;
+  if (response.status !== 200) throw apiError("Spark driver Pod get", response);
+  return response.body;
+}
+
+function driverPodExecution(pod) {
+  const statuses = Array.isArray(pod?.status?.containerStatuses) ? pod.status.containerStatuses : [];
+  const driver = statuses.find((item) => item?.name === "spark-kubernetes-driver") || statuses[0];
+  const terminated = driver?.state?.terminated;
+  return {
+    driverExitCode: Number.isInteger(terminated?.exitCode) ? terminated.exitCode : undefined,
+    driverFinishedAt: String(terminated?.finishedAt || "") || undefined,
+    driverPodPhase: String(pod?.status?.phase || "") || undefined,
+    driverTerminationReason: String(terminated?.reason || pod?.status?.reason || "") || undefined,
+  };
+}
+
+function kubernetesExecutionIdentity(application, observed, recovered, extra = {}) {
+  const annotations = application?.metadata?.annotations || {};
+  return {
+    applicationName: String(observed?.metadata?.name || application?.metadata?.name || ""),
+    applicationUid: String(observed?.metadata?.uid || ""),
+    driverPodName: String(observed?.status?.driverInfo?.podName || "") || undefined,
+    imageDigest: String(annotations["asklake.io/image-digest"] || ""),
+    jobId: String(annotations["asklake.io/job-id"] || ""),
+    namespace: String(observed?.metadata?.namespace || application?.metadata?.namespace || ""),
+    observedAt: new Date().toISOString(),
+    recovered,
+    runId: String(annotations["asklake.io/run-id"] || ""),
+    state: applicationState(observed),
+    ...extra,
+  };
+}
+
+function writeProgressFile(progressFile, execution) {
+  const raw = String(progressFile || "");
+  if (!raw) return;
+  if (!path.isAbsolute(raw) || raw.includes("\0")) {
+    throw new Error("Spark Kubernetes progress file must be an absolute path");
+  }
+  const target = path.resolve(raw);
+  const temporary = `${target}.${process.pid}.tmp`;
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(temporary, JSON.stringify(execution), { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, target);
+}
+
 export async function submitAndWait({
   application,
+  expectedKubernetesExecution,
   requestJson,
   timeoutMs,
   pollIntervalMs = 2_000,
   delay = sleep,
   now = () => Date.now(),
+  onProgress,
 }) {
   const namespace = application.metadata.namespace;
   const name = application.metadata.name;
-  const created = await createOrRecoverApplication({ application, requestJson });
+  const created = await createOrRecoverApplication({ application, expectedKubernetesExecution, requestJson });
   const startedAt = now();
   let observed = created.application;
+  let lastProgressFingerprint = "";
+  const publishProgress = async (execution) => {
+    if (!onProgress) return;
+    const { observedAt: _observedAt, ...stableExecution } = execution;
+    const fingerprint = JSON.stringify(stableExecution);
+    if (fingerprint === lastProgressFingerprint) return;
+    lastProgressFingerprint = fingerprint;
+    await onProgress(execution);
+  };
+  await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered));
   while (!TERMINAL_STATES.has(applicationState(observed))) {
     if (now() - startedAt >= timeoutMs) {
       await requestJson("DELETE", applicationPath(namespace, name), {
@@ -188,12 +278,17 @@ export async function submitAndWait({
     await delay(pollIntervalMs);
     observed = await getApplication(requestJson, namespace, name);
     if (!observed) throw new Error(`SparkApplication ${name} disappeared before reaching a terminal state`);
+    await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered));
   }
 
   const state = applicationState(observed);
   const podName = String(observed?.status?.driverInfo?.podName || "");
-  const logs = await driverLogs(requestJson, namespace, podName);
-  const report = reportFromLogs(logs) || {
+  const pod = await driverPod(requestJson, namespace, podName);
+  const logs = await driverLogs(requestJson, namespace, podName, {
+    allowMissing: state !== SUCCESS_STATE,
+  });
+  const reportedResult = reportFromLogs(logs);
+  const report = reportedResult || {
     endedAt: new Date().toISOString(),
     error: state === SUCCESS_STATE
       ? "Spark driver completed without an AskLake result marker"
@@ -206,14 +301,11 @@ export async function submitAndWait({
     startedAt: new Date(startedAt).toISOString(),
     status: "failed",
   };
-  const kubernetesExecution = {
-    applicationName: name,
-    applicationUid: String(observed?.metadata?.uid || created.application?.metadata?.uid || ""),
-    driverPodName: podName,
-    imageDigest: application.metadata.annotations["asklake.io/image-digest"],
-    recovered: created.recovered,
-    state,
-  };
+  const kubernetesExecution = kubernetesExecutionIdentity(application, observed, created.recovered, {
+    ...driverPodExecution(pod),
+    resultMarkerFound: reportedResult !== null,
+  });
+  await publishProgress(kubernetesExecution);
   return {
     logs,
     report: {
@@ -230,9 +322,13 @@ async function main() {
   const input = JSON.parse(readFileSync(0, "utf8") || "{}");
   const result = await submitAndWait({
     application: input.application,
+    expectedKubernetesExecution: input.expectedKubernetesExecution,
     requestJson: createKubernetesRequest(process.env),
     timeoutMs: Number(input.timeoutMs || 7_200_000),
     pollIntervalMs: Number(input.pollIntervalMs || 2_000),
+    onProgress: input.progressFile
+      ? (execution) => writeProgressFile(input.progressFile, execution)
+      : undefined,
   });
   console.log(`ASKLAKE_SPARK_KUBERNETES_RESULT=${JSON.stringify(result)}`);
 }

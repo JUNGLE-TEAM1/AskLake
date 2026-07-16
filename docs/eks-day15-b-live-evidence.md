@@ -59,11 +59,18 @@ FastAPI Service health를 1초마다 호출하면서 replica 하나를 삭제했
 
 `docs/eks-phase-3-data-plane.md`가 요구한 별도 승인 admin bootstrap은 exact temporary permission, 1 partition, MSK Serverless 기본 replication/retention으로 수행했다. 두 완료 Job은 1시간 TTL로 자동 정리되며 test topic은 목요일 bounded fixture 입력에 사용한다.
 
-## B 검증 당시 남았던 수요일 통합 gate
+## Backend S3 Pod Identity positive smoke
 
-- Backend Pod가 EKS Pod Identity로 `asklake-dev-backend` role을 획득하는 것은 확인했다. 첫 Raw S3 목록 검증은 요청에 `Prefix`가 없어 IAM `s3:prefix` 조건과 맞지 않아 `AccessDenied`였으며 object 생성 전 실패했다. S3 positive smoke는 완료하지 않았다.
+첫 Raw S3 목록 검증은 요청에 `Prefix`가 없어 IAM `s3:prefix` 조건과 맞지 않아 `AccessDenied`였으며 object 생성 전 실패했다. 2026-07-16에는 허용된 exact Raw object key를 `Prefix`로 지정해 실제 FastAPI Pod에서 positive smoke를 다시 수행했다.
 
-그러므로 이 기록 자체는 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계, 외부 ALB web/API route와 EKS→MSK network/IAM·test topic metadata의 완료 증거다. 이 기록을 작성한 시점에는 S3 positive smoke를 완료로 선언하지 않았다.
+- Pod는 `asklake-backend` ServiceAccount의 EKS Pod Identity로 `asklake-dev-backend` role을 획득했다. static AWS access key, secret key와 session token 환경변수는 없었고 Pod Identity credential endpoint와 projected token만 주입됐다.
+- Raw bucket에서 exact key를 지정한 `ListObjectsV2`가 객체를 찾았고 `GetObject` range read로 32 bytes를 읽었다. 데이터 내용은 출력하지 않고 byte 수와 SHA-256만 확인했다.
+- Output bucket의 `evidence/s3-smoke/` 아래에 매번 새 UUID test key를 생성했다. `PutObject` HTTP 200, `HeadObject` content length와 `GetObject` body SHA-256 일치를 확인했다.
+- 같은 Pod가 test object를 삭제했고 후속 `HeadObject`가 404를 반환해 cleanup을 확인했다. 성공·실패 경로 모두 삭제를 시도하도록 실행했으며 임시 객체는 남지 않았다.
+
+## 수요일 Pair B 통합 gate 완료
+
+이 기록은 B web workload, RDS health, Pod 자동복구, 두 replica 안전성, Continuous 경계, 외부 ALB web/API route, EKS→MSK network/IAM·test topic metadata와 Backend S3 read/write/cleanup의 완료 증거다. 따라서 이 문서가 다루는 `eks-roadmap.md` 수요일 Pair B 통합 gate는 모두 통과했다. Airflow·Spark·Trino bounded E2E는 목요일 범위다.
 
 후속 Issue #794에서 A runner가 Raw/Output/Warehouse 읽기, Query Result/Evidence 쓰기와 계약 밖 Get/List·bucket metadata 거절을 실제 Backend Pod Identity로 반복 검증했고 version/DeleteMarker까지 정리했다. 따라서 현재 수요일 S3 gate의 기준은 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)이며, 위 최초 실패는 당시 이력으로만 남긴다. PR #774는 `pair1`에 머지됐고 Phase 3.5에서 Backend source commit `059d8eaa`, immutable ECR digest와 현재 FastAPI 두 Pod imageID의 일치도 재확인했다.
 

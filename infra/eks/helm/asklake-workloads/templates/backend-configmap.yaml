@@ -1,3 +1,4 @@
+{{- if .Values.backend.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -34,11 +35,17 @@ data:
   ASKLAKE_SPARK_KUBERNETES_MAIN_APPLICATION_FILE: {{ .Values.sparkApplication.mainApplicationFile | quote }}
   ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: {{ .Values.sparkApplication.timeoutSeconds | quote }}
   ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES: {{ .Values.sparkApplication.driver.cores | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_REQUEST: {{ .Values.sparkApplication.driver.resources.requests.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_LIMIT: {{ .Values.sparkApplication.driver.resources.limits.cpu | quote }}
   ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY: {{ .Values.sparkApplication.driver.memory | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY_OVERHEAD: {{ .Values.sparkApplication.driver.memoryOverhead | quote }}
   ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: {{ .Values.sparkApplication.executor.instances | quote }}
   ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES: {{ .Values.sparkApplication.executor.cores | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: {{ .Values.sparkApplication.executor.resources.requests.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: {{ .Values.sparkApplication.executor.resources.limits.cpu | quote }}
   ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY: {{ .Values.sparkApplication.executor.memory | quote }}
-  ASKLAKE_SPARK_MSK_IAM_AUTH_PACKAGE: {{ .Values.sparkApplication.kafka.iamAuthPackage | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY_OVERHEAD: {{ .Values.sparkApplication.executor.memoryOverhead | quote }}
+  ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: {{ .Values.sparkApplication.kafka.iamAuthJar | quote }}
   ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"
   AIRFLOW_API_BASE_URL: {{ .Values.backend.config.airflowApiBaseUrl | quote }}
   AIRFLOW_DAG_ID: {{ .Values.backend.config.airflowDagId | quote }}
@@ -52,3 +59,4 @@ data:
   TRINO_RESULT_STORAGE_BUCKET: {{ .Values.backend.config.trinoResultStorageBucket | quote }}
   TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: "false"
   TRINO_TLS_CA_FILE: "/var/run/asklake/secrets/trino-ca.pem"
+{{- end }}

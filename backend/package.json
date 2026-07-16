@@ -85,6 +85,7 @@
     "verify:kafka-continuous-soak": "node scripts/verify-kafka-continuous-soak.mjs",
     "verify:msk-iam-metadata": "node scripts/verify-msk-iam-metadata.mjs",
     "test:spark-kubernetes": "node --test scripts/spark-kubernetes-client.test.mjs",
+    "test:kafka-fixture-boundary": "python3 -m unittest tests.test_kafka_fixture_boundary",
     "sources:rest-fixture": "node scripts/source-rest-fixture-server.mjs",
     "sources:fixtures": "node scripts/setup-source-fixtures.mjs",
     "spark:start": "node scripts/start-spark-server.mjs",

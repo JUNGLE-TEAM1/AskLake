@@ -4,15 +4,15 @@
 
 Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
 
-ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차 Phase 2에서는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 staged hash 검증 뒤 적용했다. 현재 네 workload 이름의 source와 target은 존재하지만 Backend의 Trino client patch와 전체 AI 계약, Airflow extra key 정합성, 실제 Spark/Trino workload 주입은 별도 통합 gate다.
+ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차 Phase 2에서는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 staged hash 검증 뒤 적용했다. 현재 네 workload 이름의 source와 target은 존재하지만 live Backend `ExternalSecret`에는 아직 Trino 인증/CA mapping이 없어 controller가 target의 수동 추가 key를 원복한다. Issue #828 검증에서는 AWS Backend source에서 필요한 Trino 여섯 key와 CA만 복사한 임시 별도 target `asklake-backend-trino-runtime`을 사용한다. 저장소의 정식 mapping을 권한 있는 배포 주체가 적용한 뒤 이 임시 target을 제거해야 전체 네 workload 전달 완료다. 전체 AI 계약과 Airflow extra key 정합성도 별도 통합 gate다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
 ## 2. 고정된 workload 계약
 
-FastAPI는 `asklake-backend-runtime`을 사용한다. 이 Secret은 application DB URL, bootstrap administrator password, AI gateway/MCP 공유 token과 context signing secret, Airflow 공유 token 두 개, Trino query/materializer 인증 정보, query result cursor 서명 key, destructive query confirmation 서명 key와 Trino CA 파일을 제공해야 한다. B의 Phase 1 최소 계약에 없던 bootstrap/AI key와 `TRINO_RESULT_CURSOR_SECRET`, `TRINO_QUERY_CONFIRMATION_SECRET`은 현재 production Backend startup이 실제로 요구하므로 누락 방지를 위해 추가했다. 관리자 email, AI gateway URL과 mode는 비밀값이 아니므로 ConfigMap 계약에서 전달한다.
+FastAPI는 정식 상태에서 `asklake-backend-runtime` 하나를 사용한다. 이 Secret은 application DB URL, bootstrap administrator password, AI gateway/MCP 공유 token과 context signing secret, Airflow 공유 token 두 개, Trino query/materializer 인증 정보, query result cursor 서명 key, destructive query confirmation 서명 key와 Trino CA 파일을 제공해야 한다. B의 Phase 1 최소 계약에 없던 bootstrap/AI key와 `TRINO_RESULT_CURSOR_SECRET`, `TRINO_QUERY_CONFIRMATION_SECRET`은 현재 production Backend startup이 실제로 요구하므로 누락 방지를 위해 추가했다. 관리자 email, AI gateway URL과 mode는 비밀값이 아니므로 ConfigMap 계약에서 전달한다. staged migration 중에는 web chart의 `backend.trinoRuntimeSecretName`으로 Trino key/CA만 가진 별도 Secret을 추가 참조할 수 있지만 기본값은 main Secret과 같으며 장기 이중 소유 모델이 아니다.
 
-Airflow API server, scheduler, DAG processor와 DB migration은 `asklake-airflow-runtime`을 사용한다. Airflow DB connection, Backend와 동일한 execution/internal token, Fernet key와 API auth JWT secret이 필요하다. 공유 token은 이름만 같은 별도 값이 아니라 Backend와 Airflow에 동일한 논리값이 전달되어야 한다.
+Airflow API server, scheduler, DAG processor와 DB migration은 `asklake-airflow-runtime`을 사용한다. Airflow DB connection, FAB API password, Backend와 동일한 execution/internal token, Fernet key와 API auth JWT secret이 필요하다. API password도 FastAPI가 `/auth/token`을 요청할 때 사용하므로 Backend와 Airflow에 동일한 논리값이 전달되어야 한다. 공유값은 이름만 같은 별도 생성물이 아니며 실제 target의 encoded payload 동일성을 값 노출 없이 검증한다.
 
 Spark driver와 executor는 `asklake-spark-runtime`을 사용하고 Iceberg JDBC Catalog URL, user, password를 받는다. Trino coordinator는 `asklake-trino-runtime`을 사용하고 같은 Iceberg JDBC 논리값, TLS keystore password, internal shared secret, keystore 파일과 password database 파일을 받는다. Spark와 Trino의 JDBC URL/user/password도 계약의 `sharedBindings`에 따라 동일한 논리값을 사용한다.
 
@@ -40,7 +40,7 @@ IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리�
 
 `workflow_sync`와 Secrets Store CSI Driver는 현재 dev 적용 경로가 아니다. Terraform의 `workflow_sync` 입력은 계약 호환과 비교 검증을 위해 남지만, dev에서 병행 운영하지 않는다. 전달 방식을 변경하려면 controller·rotation·rollback 소유권과 기존 `ExternalSecret` 정리 순서를 별도 변경으로 검토한다.
 
-Airflow API 인증도 실제 배포 전에 별도로 선택해야 한다. 현재 Backend는 API token 또는 username/password를 지원하지만 B의 최소 계약은 어느 방식을 운영 표준으로 쓸지 확정하지 않았다. 두 방식의 key와 injection 계약은 준비하되 `runtimeDecisions.airflowApiAuth`는 `learning-required`로 유지한다. 이번 단계에서 둘 중 하나를 임의로 고르지 않는다.
+dev Airflow API 인증은 FAB username/password를 선택했다. username은 비밀이 아닌 ConfigMap 값 `airflow`, password는 `AIRFLOW_PASSWORD` Secret key로 전달한다. migration hook이 FAB AuthManager를 명시하고 사용자를 멱등 생성한 뒤 password를 reset하므로 Secret rotation 후 같은 hook으로 동기화할 수 있다. Airflow API는 ClusterIP로만 제공하며 public Ingress를 만들지 않는다. Backend의 고정 API token 지원은 호환 경로로 남지만 dev에는 별도 `AIRFLOW_API_TOKEN` 값을 만들지 않는다.
 
 또한 이 계약은 현재 foundation에 포함된 네 core workload의 Secret 계약이다. `runtimeDecisions.aiRuntime`은 gateway/direct 선택을, gateway 선택 시 `aiProviderWorkload`는 별도 provider image·ServiceAccount·network·provider-key 계약 승인을 나타낸다. 이를 임의로 선택하지 않는다.
 
@@ -74,7 +74,7 @@ node scripts/verify-eks-deploy-readiness.mjs \
 
 그 다음 배포 주체가 Kubernetes API에서 Secret 이름과 필요한 key 존재 여부만 확인한다. base64 data와 decoded value를 stdout, CI log 또는 artifact에 출력하지 않는다. workload manifest의 `secretKeyRef`와 volume item은 이 문서의 이름/key/path를 그대로 참조해야 한다.
 
-완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store와 네 workload 이름의 source/target 생성을 완료했다. 다만 Backend와 Airflow는 각각 현재 실행에 필요한 부분 계약이고 Spark/Trino는 아직 consumer workload가 없다. 실제 workload 주입은 startup과 env/file reference 검증 완료를 뜻한다. 그 뒤 application health·rotation rollout·rollback evidence까지 있어야 운영 Secret 전달이 완료된다. 전체 서비스 production-ready는 image, network, database migration과 workload rollout까지 별도 gate를 모두 통과해야 한다.
+완료 상태는 단계별로 구분한다. dev는 정적 계약, ESO 설치, Pod Identity, namespaced store, 임시 rotation smoke, Backend/Airflow 실제 source·mapping·workload 주입과 Spark/Trino target 생성을 완료했다. Backend/Airflow 공유 세 값의 동일성, FastAPI rolling restart, Airflow RDS TLS/API smoke, Trino TLS/auth query도 확인했다. Backend의 Trino mapping은 저장소에는 준비됐지만 live `ExternalSecret` 적용 권한이 없어 임시 별도 target을 사용 중이다. 따라서 정식 Backend target의 단일 Secret 수렴과 임시 target 삭제가 남았으며 전체 서비스 production-ready는 별도 bounded E2E와 rollout gate를 모두 통과해야 한다.
 
 ## 6. A/B 인수 기준
 

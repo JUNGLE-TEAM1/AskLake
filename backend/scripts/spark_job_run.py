@@ -20,6 +20,10 @@ from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
 )
+from kafka_fixture_boundary import (
+    validate_kafka_fixture_boundary,
+    validate_kafka_fixture_row_count,
+)
 
 
 REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
@@ -93,6 +97,12 @@ def main():
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         source_collection = manifest.get("sourceCollection") or {}
         source_boundary = manifest.get("sourceBoundary") or source_collection
+        kafka_fixture_boundary = validate_kafka_fixture_boundary(
+            environment=os.environ,
+            source_boundary=source_boundary,
+            source_format=source_format,
+            source_path=source_path,
+        )
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
@@ -128,6 +138,7 @@ def main():
             schema_columns,
             transform_steps,
         )
+        validate_kafka_fixture_row_count(kafka_fixture_boundary, input_rows)
         review_analysis_preflight = plan_review_row_analysis_checks(transform_steps)
         blocking_text_model_checks = [
             check
@@ -643,8 +654,7 @@ def commit_iceberg_table(
     if effective_write_mode == "append" and bool((source_boundary or {}).get("rebaseline")):
         effective_write_mode = "replace"
     if (
-        effective_write_mode == "append"
-        and existed_before
+        existed_before
         and iceberg_source_boundary_exists(spark, target, source_boundary)
     ):
         snapshot = latest_iceberg_snapshot(spark, target)

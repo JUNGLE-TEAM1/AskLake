@@ -20,7 +20,9 @@ Frontend image는 `VITE_API_BASE_URL`을 지정하지 않은 동일-origin 빌�
 
 이미지는 ECR의 `@sha256:` digest만 허용한다. 두 replica 이상과 CPU/memory request·limit를 명시해야 하며 chart가 임의의 production 용량을 고르지 않는다. 저장소의 test values는 schema 검증용 fixture일 뿐 운영 권장치가 아니다. HPA, topology spread, PDB와 세부 autoscaling 수치는 실제 부하·가용성 요구를 학습하고 선택하는 후속 단계다.
 
-FastAPI는 `asklake-runtime` ConfigMap과 `asklake-backend-runtime` Secret을 `envFrom`으로 받는다. Secret 값 자체는 values, Terraform state, manifest, log에 들어가면 안 된다. `asklake-runtime-boundary` 이름은 Pod annotation으로 추적하지만 애플리케이션이 이 annotation을 읽는다고 간주하지 않는다.
+FastAPI는 `asklake-runtime` ConfigMap과 `asklake-backend-runtime` Secret을 `envFrom`으로 받으며 Trino CA를 `/var/run/asklake/secrets/trino-ca.pem`에 읽기 전용 mount한다. 기본 `backend.trinoRuntimeSecretName`은 main runtime Secret과 같다. ESO mapping을 단계적으로 전환하는 동안에만 Trino 인증/CA 전용 Secret을 추가 `envFrom`/volume source로 지정할 수 있고, 정식 mapping 적용 뒤 다시 main Secret 하나로 수렴한다. Secret 값 자체는 values, Terraform state, manifest, log에 들어가면 안 된다. `asklake-runtime-boundary` 이름은 Pod annotation으로 추적하지만 애플리케이션이 이 annotation을 읽는다고 간주하지 않는다.
+
+`asklake-runtime`은 `asklake-web`이나 foundation Helm release가 소유하지 않는 Pair B runtime object다. 실제 endpoint·bucket·digest가 든 전체 manifest는 저장소 밖에 두고 `asklake-pair-b-runtime` field manager의 server-side dry-run/apply로 관리한다. `envFrom` ConfigMap 변경은 실행 중 process에 자동 반영되지 않으므로 적용 뒤 `fastapi` Deployment를 명시적으로 rolling restart하고 두 새 Pod의 환경, Ready/RDS health와 ConfigMap의 non-Helm ownership을 다시 확인한다.
 
 ## 실행 순서
 

@@ -36,6 +36,14 @@ spec:
                 name: {{ .Values.backend.runtimeConfigMapName }}
             - secretRef:
                 name: {{ .Values.backend.runtimeSecretName }}
+            {{- if ne .Values.backend.trinoRuntimeSecretName .Values.backend.runtimeSecretName }}
+            - secretRef:
+                name: {{ .Values.backend.trinoRuntimeSecretName }}
+            {{- end }}
+          volumeMounts:
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
+              readOnly: true
           ports:
             - name: http
               containerPort: 8080
@@ -53,6 +61,13 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: backend-runtime-files
+          secret:
+            secretName: {{ .Values.backend.trinoRuntimeSecretName }}
+            items:
+              - key: {{ .Values.backend.runtimeSecretTrinoCaKey }}
+                path: trino-ca.pem
 ---
 apiVersion: v1
 kind: Service

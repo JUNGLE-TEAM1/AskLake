@@ -10,7 +10,7 @@
 - MSK는 Serverless + IAM, private `9098`을 사용한다.
 - RDS database는 `asklake_app`, `airflow_metadata`, `iceberg_catalog`로 분리한다.
 - AWS workload identity는 dev에 적용된 EKS Pod Identity를 기준으로 한다.
-- External Secrets Operator controller와 namespaced `SecretStore` 기반이 준비됐고 web 배포에 필요한 `asklake-backend-runtime`은 적용됐다. Airflow/Spark/Trino runtime Secret은 후속 workload gate로 남는다.
+- External Secrets Operator controller와 namespaced `SecretStore` 기반이 준비됐다. `asklake-backend-runtime`과 `asklake-airflow-runtime`은 실제 AWS source와 `ExternalSecret` mapping까지 적용됐고 Spark/Trino runtime Secret은 후속 workload gate로 남는다.
 - Spark Operator는 2.5.1, SparkApplication API는 `sparkoperator.k8s.io/v1beta2`다.
 - `asklake-ingress`가 Frontend `/`와 Backend `/api` Ingress를 단일 internet-facing ALB에 연결했고 외부 HTTP smoke를 통과했다. DNS/ACM/HTTPS는 후속 범위다.
 - 기존 EC2는 rollback 원본이며 Kafka Continuous control-plane을 계속 소유한다.
@@ -77,12 +77,13 @@ TRINO_QUERY_CONFIRMATION_SECRET
 | Secret key | Airflow env | B consumer |
 | --- | --- | --- |
 | `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` | 같은 이름 | API server, scheduler, DAG processor, migration |
+| `AIRFLOW_PASSWORD` | `AIRFLOW_API_PASSWORD` | migration; 같은 logical value를 Backend의 `AIRFLOW_PASSWORD`에도 전달 |
 | `AIRFLOW_EXECUTION_API_TOKEN` | `ASKLAKE_EXECUTION_API_TOKEN` | API server, scheduler, DAG processor |
 | `AIRFLOW_INTERNAL_TOKEN` | 같은 이름 | API server, scheduler, DAG processor |
 | `AIRFLOW__CORE__FERNET_KEY` | 같은 이름 | API server, scheduler, DAG processor, migration |
 | `AIRFLOW__API_AUTH__JWT_SECRET` | 같은 이름 | API server, scheduler, DAG processor, migration |
 
-A의 정적 JSON은 migration에 execution/internal token을 주입하고 JWT는 주입하지 않는 것으로 적혀 있어 B manifest와 다르다. DB migration은 Backend 호출을 하지 않으므로 최소 권한 기준으로 B의 execution/internal token 미주입을 유지한다. JWT가 `airflow db migrate`에 실제로 불필요하다는 import/migration 검증을 추가한 뒤 B에서 JWT도 제거하고, A의 consumer 목록을 `DB URL + Fernet`만 남도록 정정하는 것이 목표 계약이다.
+DB migration은 Backend 호출을 하지 않으므로 execution/internal token은 주입하지 않는다. DB URL, FAB API password, Fernet/JWT secret과 명시적인 FAB AuthManager만 사용한다. migration hook은 `airflow db migrate` 뒤 API 사용자를 생성하고 항상 password reset을 실행해 재설치와 rotation에 같은 경로를 사용한다. RDS connection은 `asklake-rds-ca` ConfigMap을 read-only mount하고 `sslmode=verify-full`을 강제한다.
 
 ### `asklake-spark-runtime`
 
@@ -108,7 +109,7 @@ TRINO_INTERNAL_SHARED_SECRET
 
 `trino-keystore.jks`는 `/etc/trino/tls/keystore.jks`, `trino-password.db`는 `/etc/trino/auth/password.db`에 read-only mount한다.
 
-Backend/Airflow의 execution/internal token과 Spark/Trino의 Iceberg JDBC URL/user/password는 각각 같은 논리값을 공유해야 한다. A 계약의 `airflowApiAuth`와 `aiRuntime` 결정은 아직 `learning-required`이므로 네 runtime Secret의 실제 동기화와 전체 workload enablement는 아직 완료 상태가 아니다.
+Backend/Airflow의 API password·execution/internal token과 Spark/Trino의 Iceberg JDBC URL/user/password는 각각 같은 논리값을 공유해야 한다. dev의 Airflow API 인증은 ClusterIP 내부 FAB username/password로 선택해 실제 양방향 smoke를 통과했다. AI runtime과 Spark/Trino JDBC/TLS 선택은 별도 gate이므로 네 workload 전체 Secret 동기화 완료로 확대하지 않는다.
 
 ## 4. SparkApplication 계약
 

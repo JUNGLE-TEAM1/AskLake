@@ -31,6 +31,9 @@ for contract in \
   'kubernetes.io/arch: amd64' \
   'name: asklake-runtime' \
   'name: asklake-backend-runtime' \
+  'mountPath: /var/run/asklake/secrets' \
+  'key: trino-ca.pem' \
+  'path: trino-ca.pem' \
   'path: /api/health' \
   'containerPort: 80' \
   'containerPort: 8080'; do
@@ -39,6 +42,11 @@ for contract in \
     exit 1
   fi
 done
+
+helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.trinoRuntimeSecretName=asklake-backend-trino-runtime >"$RENDERED_FILE"
+grep -Fq 'name: asklake-backend-trino-runtime' "$RENDERED_FILE"
+grep -Fq 'secretName: asklake-backend-trino-runtime' "$RENDERED_FILE"
 
 if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 2 ]]; then
   echo "web workloads must use exactly two digest-pinned images" >&2

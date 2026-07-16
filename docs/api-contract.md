@@ -633,6 +633,45 @@ type KafkaSnapshot = {
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
+EKS MVP bounded fixture routing은 기존 Snapshot direct target의 예외이며 다음 저장 필드를 사용한다.
+
+```ts
+type EksMvpFixtureSourceConfig = [
+  ["Broker / Endpoint", `${string}:9098`],
+  ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
+  ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+  ["__EKS MVP Fixture Batch ID", string],
+  ["__EKS MVP Expected Count", string],
+];
+```
+
+Snapshot Kafka Job에서 exact fixture topic/group 또는 두 내부 receipt field 중 하나가 보이면 backend는 fixture 실행 의도로 분류한다. 네 값, positive expected count(최대 100,000), IAM `9098` endpoint와 Kubernetes Spark runner가 모두 유효하면 기존 Kafka bridge 대신 Airflow Run을 예약하고 `AirflowDagRun.dagRunId=JobRunSummary.runId`를 유지한다. fixture 의도는 있지만 계약이 틀리면 executor를 하나도 호출하지 않고 fail-closed한다. fixture 표시가 없는 Kafka Snapshot은 기존 direct bridge, `executionMode=continuous`는 기존 Continuous control-plane 계약을 그대로 사용한다.
+
+Airflow 호출 전 같은 transaction에 다음 immutable Run state를 저장한다.
+
+```ts
+type EksMvpFixtureRunState = {
+  capturedAt: string;
+  contractVersion: 1;
+  runId: string;
+  sourceBoundary: {
+    broker: `${string}:9098`;
+    checkpointPath: `s3a://${string}/eks-mvp/checkpoints/${string}`;
+    consumerGroup: "asklake-eks-mvp-spark-v1";
+    expectedCount: number;
+    fixtureBatchId: string;
+    kind: "kafka_snapshot";
+    outputPath: `s3a://${string}/eks-mvp/output/${string}`;
+    snapshotId: string;
+    topic: "asklake.eks-mvp.fixture.v1";
+  };
+};
+```
+
+`taskStates.eksMvpFixture.runId`, `sourceBoundary.snapshotId`, Airflow `dagRunId`는 모두 `JobRunSummary.runId`와 같다. Airflow conf와 internal Spark execute body는 RDS의 `sourceBoundary`를 그대로 운반하며 FastAPI는 exact match 후에만 Spark lease/submission을 시작한다. Spark payload와 동적 SparkApplication manifest/env는 mutable Job source field가 아니라 이 persisted boundary를 사용한다. 실행 target은 `iceberg.asklake.eks_mvp_fixture`, write mode는 `replace`로 고정한다. Spark는 batch filter 후 실제 count가 `expectedCount`와 다르면 commit 전에 실패한다. FastAPI는 성공 result의 `sourceBoundary`, `inputRows`, `outputRows`, `icebergCommit.target/sourceBoundary/jobId/runId/snapshotId`를 RDS boundary와 재검증하며 불일치는 `EKS_MVP_FIXTURE_RESULT_INVALID`다.
+
+같은 fixture Run 재호출의 멱등 기준은 RDS다. `sparkResult.status=success`면 새 lease나 외부 실행 없이 같은 result를 반환한다. 미완료 상태에서 `sparkExecution.kubernetesExecution`의 namespace/name/UID가 있으면 Node provider에 expected identity로 전달하고, provider는 create 전에 결정적 이름의 SparkApplication을 조회해 UID와 run/job/image annotation을 모두 대조한다. object가 없거나 UID가 바뀌면 replacement를 만들지 않는다. Spark driver가 동일 persisted `kafka_snapshot` boundary를 다시 처리하는 최악의 복구 경로에서도 target table의 boundary marker를 먼저 조회하며, 이미 존재하면 `replace` target도 writer를 호출하지 않고 기존 snapshot ID를 `operation: "reuse"`로 반환한다. 성공 재호출은 동일 `runId`, 동일 SparkApplication UID, 동일 Iceberg snapshot ID를 유지해야 한다.
+
 ### Kafka Continuous Runtime
 
 Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, Rule identity, last error) to `JobRowData`.
@@ -1567,6 +1606,7 @@ type AirflowCatalogReconciliationResponse = {
 - Job에 저장된 `datasetId`와 변경 불가능한 target identity
 - Spark `icebergCommit`의 Job/Run/target/snapshot/schema/rule identity
 - Trino `DESCRIBE`, `$refs`, `$snapshots`와 snapshot summary로 확인한 같은 Iceberg table과 물리 data file
+- EKS bounded fixture에서는 RDS Run에 저장된 `expectedCount`와 exact snapshot의 `_asklake_run_id=runId` 행 수
 
 Catalog mapping:
 
@@ -1583,7 +1623,7 @@ Catalog mapping:
 | `quality` | `sparkResult.quality` |
 | `lineageGraph` | source -> Spark Job -> target dataset |
 
-일반 Spark batch는 logical `outputPath=iceberg://catalog/namespace/table`을 사용한다. backend는 reported snapshot ID를 Trino `$refs`의 `main` current snapshot과 대조하고, 해당 snapshot의 `$snapshots.summary`에 기록된 `total-data-files`와 `total-files-size`를 저장한다. `$files`는 current table의 보조 물리 확인에만 사용하며 rollback 이후 abandoned history의 newest snapshot을 current로 오인하지 않는다. `outputRows>0`인데 data file 또는 byte 증거가 0이면 reconciliation을 실패시킨다. 기존 non-Iceberg 호환 결과만 S3A/local path의 Parquet object를 직접 검사한다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
+일반 Spark batch는 logical `outputPath=iceberg://catalog/namespace/table`을 사용한다. backend는 reported snapshot ID를 Trino `$refs`의 `main` current snapshot과 대조하고, 해당 snapshot의 `$snapshots.summary`에 기록된 `total-data-files`와 `total-files-size`를 저장한다. EKS bounded fixture도 이 Iceberg 분기를 사용하며, exact snapshot에서 `_asklake_run_id=runId`인 행 수가 persisted `expectedCount`와 정확히 같아야 한다. `$files`는 current table의 보조 물리 확인에만 사용하며 rollback 이후 abandoned history의 newest snapshot을 current로 오인하지 않는다. `outputRows>0`인데 data file 또는 byte 증거가 0이면 reconciliation을 실패시킨다. 기존 non-Iceberg 호환 결과만 S3A/local path의 Parquet object를 직접 검사한다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
 
 Catalog dataset upsert와 `taskStates.catalogResult` 성공 기록은 같은 PostgreSQL transaction으로 확정한다. `catalogResult`는 최소한 `status`, `runId`, `datasetId`, `reconciledAt`을 포함한다. 같은 `runId`가 다시 들어오면 기존 materialization을 교체해 하나만 유지하고, 다른 Run은 같은 dataset row에 append한다. append read-modify-write 동안 target dataset row를 lock해 동시 실행의 history 손실을 막는다. dataset이 아직 없을 때의 동시 create는 id/name unique constraint로 한 row만 허용하고, 충돌한 호출은 그 row를 다시 읽어 같은 run-keyed update를 적용한다. Airflow state sync가 Task Instance snapshot을 다시 만들 때도 `sparkResult`와 `catalogResult`를 모두 보존해야 한다.
 

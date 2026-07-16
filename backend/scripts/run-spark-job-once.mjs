@@ -8,6 +8,8 @@ const runId = payload.runId;
 
 try {
   const result = runSparkPipeline(job, command, runId, {
+    expectedKubernetesExecution: payload.expectedKubernetesExecution,
+    sparkKubernetesProgressFile: payload.sparkKubernetesProgressFile,
     sparkRestStateFile: payload.sparkRestStateFile,
     sparkRestTimeoutMs: payload.sparkRestTimeoutMs,
   });
