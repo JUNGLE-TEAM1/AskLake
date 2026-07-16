@@ -160,3 +160,11 @@ Phase 0~5의 개별 성공 기록이 현재 runtime과 계속 일치하는지 �
 로컬에는 Terraform CLI가 없어 foundation verifier의 Terraform 단계는 문서화된 Docker 검증 대상으로 skip됐으며, live runtime 감사와 Issue #798 acceptance에는 새 Terraform apply가 필요하지 않았다. 이번 단계에서는 image build/push, Helm upgrade, Kubernetes workload 생성·삭제, Terraform apply와 traffic 전환을 수행하지 않았다. 실제 account, endpoint, digest, Dataset·S3 URI, Pod·EC2 식별자와 Secret value는 기록하지 않았다.
 
 따라서 Issue #798의 source regression, immutable Backend rollout, sanitized runtime error와 강화된 bounded physical read cleanup acceptance는 모두 완료됐다. Trino snapshot-aware HTTP 200, Airflow/Spark/Trino runtime Secret 전체 연결, Kafka→Iceberg→Trino E2E와 production cutover는 이 이슈의 실패나 미완료가 아니라 명시된 후속 범위다.
+
+## Phase 7: 전달 준비와 문서 drift 정리
+
+통합 없이 `fix-#798` 전체 변경을 기준 브랜치 `origin/feat-#797`과 대조했다. 기준 브랜치는 현재 branch의 ancestor이고 base-only commit은 없으며, Issue #798 구현·검증 commit만 후속으로 쌓여 있다. 기존 Pull Request는 없고 이 단계에서도 PR 생성, base merge/rebase와 pair branch 통합을 수행하지 않았다.
+
+최종 문서 감사에서 초기 발견 시점의 “Backend image 미배포” 문장이 현재 상태처럼 남은 네 곳을 확인했다. 단계별 과거 증거는 유지하면서 Backend readiness, image handoff, 데이터 복사 receipt와 개발 가이드의 현재 상태를 최종 immutable image rollout·sanitized live 502 결과에 맞췄다. 후속 Trino snapshot HTTP 200과 Kafka 전체 E2E는 계속 별도 범위로 남겼다.
+
+변경 파일 목록, diff whitespace와 credential/private URI pattern을 다시 검사했고 Git 제외 receipt·physical read input은 추적 대상에 들어오지 않았다. 따라서 `fix-#798`은 기준 브랜치에 대한 리뷰 전달 준비가 끝났지만, 실제 PR 생성·승인·merge 여부는 별도 통합 단계에서 결정한다.

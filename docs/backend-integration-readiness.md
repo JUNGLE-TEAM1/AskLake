@@ -24,13 +24,13 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Production은 bootstrap admin, Secure cookie, header fallback/public signup 차단을 사용하고 legacy demo 계정을 기본 비활성화한다. 명시적 backend/frontend demo opt-in은 기존 status/session을 재시작 후 보존하며 로그인 안내와 backend 허용 상태를 맞춘다 | 운영 IdP/SSO, Alembic migration, demo opt-in 제거 가능한 정식 계정 provisioning |
 | Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그 | audit export/retention 정책 |
 
-15.5 물리 조회 점검은 Iceberg Dataset rows의 Trino 오류 처리 경로에서 누락된 `ApiError` import를 수정했다. service 회귀 test와 실제 FastAPI TestClient endpoint test는 내부 Trino endpoint/query/token marker를 노출하지 않고 HTTP 502 `SQL_STORAGE_ERROR`와 `TRINO_UNAVAILABLE` reason을 유지하는지 확인한다. 현재 EKS Backend image는 이 source 수정보다 이전 artifact이므로 새 AMD64 immutable image receipt와 Backend-only rollout 전에는 runtime 반영 완료가 아니다. 세부 인수 기준은 [EKS 15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
+15.5 물리 조회 점검은 Iceberg Dataset rows의 Trino 오류 처리 경로에서 누락된 `ApiError` import와 enum reason 직렬화 drift를 수정했다. service 회귀 test와 실제 FastAPI TestClient endpoint test는 내부 Trino endpoint/query/token marker를 노출하지 않고 HTTP 502 `SQL_STORAGE_ERROR`와 normalized `BACKEND_TIMEOUT` reason을 유지하는지 확인한다. Issue #798에서 수정 exact revision의 AMD64 immutable image를 Backend-only rollout하고 같은 계약을 live 검증했다. 재배포 인수 기준은 [EKS 15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
 
 Issue #798 Phase 0은 현재 receipt·Deployment·두 Pod digest 일치, FastAPI 2/2, ALB/RDS·ExternalSecret·Continuous 경계와 직전 Helm/ECR rollback artifact를 읽기 전용으로 확인했다. 이 기준점은 [15.5 runtime 보완 실행 기록](eks-15-5-runtime-remediation-evidence.md)에 남기며, 새 image 배포 전 상태가 정상이라는 뜻이지 source 수정이 runtime에 반영됐다는 뜻은 아니다.
 
-Issue #798 Phase 1은 source fix와 HTTP 회귀 test를 포함한 exact revision으로 Backend focused test 8개와 수동 OIDC image delivery를 통과했다. 새 formal receipt의 Backend digest는 immutable `linux/amd64`이고 현재 배포 image와 다르며 ECR에 존재한다. EKS Deployment는 아직 기존 digest이므로 Phase 2 render/server dry-run과 Phase 3 Backend-only rollout 전에는 runtime 반영 완료가 아니다.
+Issue #798 Phase 1 당시 source fix와 HTTP 회귀 test를 포함한 exact revision으로 Backend focused test 8개와 수동 OIDC image delivery를 통과했다. 그 시점의 새 formal receipt는 immutable `linux/amd64`이고 당시 배포 image와 달랐으며, 이후 단계에서 추가 enum 수정 receipt로 교체·배포됐다.
 
-Issue #798 Phase 2는 현재 Helm values에서 `backend.image`만 새 receipt digest로 바꾼 candidate의 lint/render와 API server dry-run을 통과했다. dry-run 전후 Helm revision, Backend Deployment generation/image와 Pod UID는 변하지 않았고 ALB·RDS·ExternalSecret·Continuous·보존 EC2 gate도 정상이다. 승인된 concurrent Secret 확장은 source/target 전체 hash로 검증했으며 기존 digest의 외부 Pod restart를 덮어쓰지 않았다. 실제 EKS는 여전히 기존 Backend image이므로 Phase 3 atomic rollout과 runtime HTTP 회귀 검증 전에는 수정 반영 완료가 아니다.
+Issue #798 Phase 2는 당시 Helm values에서 `backend.image`만 새 receipt digest로 바꾼 candidate의 lint/render와 API server dry-run을 통과했다. dry-run 전후 Helm revision, Backend Deployment generation/image와 Pod UID는 변하지 않았고 ALB·RDS·ExternalSecret·Continuous·보존 EC2 gate도 정상이었다. 승인된 concurrent Secret 확장은 source/target 전체 hash로 검증했으며 기존 digest의 외부 Pod restart를 덮어쓰지 않았다. 실제 반영과 runtime HTTP 회귀는 후속 Phase 3~4에서 완료됐다.
 
 Issue #798 Phase 3은 첫 새-image rollout에서 Kubernetes Ready와 ALB Healthy 사이의 간격으로 외부 502를 발견해 두 차례 rollback했다. EKS Auto Mode managed webhook의 exact namespace selector인 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`를 Foundation에 반영했고 현재 새 Backend image는 `2/2`, ALB steady로 실행된다. 다만 해당 배포의 zero-failure 표본과 새 Pod readiness gate 증거는 남지 않아 다음 image rollout에서 다시 검증한다.
 
@@ -41,6 +41,8 @@ Issue #798 Phase 4 보완은 enum 수정 exact revision의 새 immutable AMD64 B
 Issue #798 Phase 5는 현재 Catalog metadata에서 선택한 root 아래 non-empty exact Parquet object를 강화된 Spark runner로 다시 읽었다. `COMPLETED`, 22 columns, bounded 5 rows, width 일치와 임시 resource 잔여 0이 확인됐다. 실제 `kubectl auth can-i`의 deny exit code 1도 정상 거부로 검증하고 allow/API-error regression을 추가했다. 이 결과는 bounded object read 증거이며 Trino snapshot-aware table read나 Kafka→Iceberg 전체 E2E 증거는 아니다.
 
 Issue #798 Phase 6 최종 감사는 현재 formal receipt와 Backend Deployment·두 Ready Pod digest, target-health gate, ALB/RDS, sanitized rows 502, `external_ec2` Continuous process 0, 보존 EC2 status와 physical read 잔여 0을 다시 대조했다. Issue #798 acceptance는 완료됐으며 Trino snapshot HTTP 200과 Kafka 전체 E2E는 후속 배포 gate로 유지한다.
+
+Issue #798 Phase 7은 `origin/feat-#797` 대비 전체 전달 diff를 감사하고 과거 “미배포” 문구가 현재 상태처럼 남은 문서를 최종 runtime 결과에 맞췄다. branch 통합과 PR 생성은 수행하지 않았으며 현재 branch는 독립 리뷰 가능한 handoff 상태다.
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.

@@ -6,9 +6,9 @@
 
 ## 현재 상태
 
-EKS에 배포된 Backend image의 Iceberg Dataset rows 경로는 Trino client 오류를 처리하면서 `ApiError` import 누락으로 `NameError`를 발생시킬 수 있다. `backend/app/services/dataset_rows_service.py`에는 import 수정이 반영됐고 `backend/tests/test_catalog_dataset_rows.py`는 service 경로와 실제 FastAPI TestClient endpoint에서 원래 `TRINO_UNAVAILABLE` cause가 HTTP 502 `SQL_STORAGE_ERROR`로 변환되며 내부 endpoint/query/token marker를 외부 error envelope에 노출하지 않는지 확인한다.
+Issue #798에서 `ApiError` import 누락과 enum reason 직렬화 drift를 수정한 exact revision의 Backend image를 EKS에 배포했다. `backend/tests/test_catalog_dataset_rows.py`는 service 경로와 실제 FastAPI TestClient endpoint에서 Trino timeout이 HTTP 502 `SQL_STORAGE_ERROR`, reason `BACKEND_TIMEOUT`으로 변환되며 내부 endpoint/query/token marker를 외부 error envelope에 노출하지 않는지 확인한다. 같은 계약은 Trino 미배포 dev runtime에서도 live 검증됐다.
 
-이 source 수정의 최소 선행 commit은 `f556e95e`다. 다음 formal image receipt의 `gitRevision`은 실제 build source의 full revision이어야 하고 이 commit을 포함해야 한다. 현재 Deployment와 Pod imageID는 이 수정의 반영 증거가 아니므로 새 receipt와 rollout 전에는 runtime 수정 완료로 기록하지 않는다.
+이 source 수정의 최소 선행 commit은 `f556e95e`다. 이후 재배포에서도 formal image receipt의 `gitRevision`은 실제 build source의 full revision이어야 하고 이 commit과 현재 회귀 test를 포함해야 한다. Deployment와 Pod imageID만으로 provenance를 추정하지 않고 receipt revision·ECR digest와 함께 대조한다.
 
 ## image owner가 전달할 것
 
