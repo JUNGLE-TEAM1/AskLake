@@ -25,7 +25,7 @@
 
 초기 ECR digest는 `apache/airflow:3.3.0` base image를 그대로 mirror한 것이어서 `/opt/airflow/dags`가 비어 있었다. 과거 RDS metadata 때문에 CLI 목록에는 `asklake_etl_job`이 보였지만 DAG Processor는 파일 0개를 보고했고 DAG Run 생성 API는 404를 반환했다.
 
-`.github/workflows/eks-image-delivery.yml`을 수정해 `airflow/Dockerfile`을 실제 `linux/amd64` image로 build/push하고 네 build 모두 `--provenance=false`를 사용하게 했다. 최종 dev image는 tag `git-e53f031-amd64`, digest `sha256:c7893838f01478c8284324c9c87327da3725ea6f000e17040faa90791ff604fa`다. 먼저 push한 `git-e53f031` provenance index tag는 ECR tag immutability 때문에 덮어쓰지 않았고 어떤 workload도 사용하지 않는다. 삭제/retention은 별도 ECR lifecycle 판단으로 남긴다. revision 2의 세 Pod가 모두 최종 digest를 실행하며 DAG Processor에서 다음을 확인했다.
+`.github/workflows/eks-image-delivery.yml`을 수정해 `airflow/Dockerfile`을 실제 `linux/amd64` image로 build/push하고 네 build 모두 `--provenance=false`를 사용하게 했다. 최종 dev image는 tag `git-e53f031-amd64`, digest `sha256:<redacted>`다. 먼저 push한 `git-e53f031` provenance index tag는 ECR tag immutability 때문에 덮어쓰지 않았고 어떤 workload도 사용하지 않는다. 삭제/retention은 별도 ECR lifecycle 판단으로 남긴다. revision 2의 세 Pod가 모두 최종 digest를 실행하며 DAG Processor에서 다음을 확인했다.
 
 - `/opt/airflow/dags/asklake_etl_job.py` 존재
 - DAG bundle에서 파일 1개 발견

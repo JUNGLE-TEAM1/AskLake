@@ -42,12 +42,12 @@ driver Ivy resolution과 공식 POM을 대조한 결과 `hadoop-aws:3.4.1`은 AW
 
 ## Issue #828 live 완료 증거
 
-- 검토한 immutable Backend/Spark image digest를 dev에 배포했고 Run `run_cccd77cef912`의 driver image ID가 배포한 Spark digest와 일치했다. 실제 digest와 Pod UID는 저장소 밖 배포 evidence에 둔다.
+- 검토한 immutable Backend/Spark image digest를 dev에 배포했고 Run `<run-redacted>`의 driver image ID가 배포한 Spark digest와 일치했다. 실제 digest와 Pod UID는 저장소 밖 배포 evidence에 둔다.
 - S3 source Ivy resolution에는 `hadoop-aws:3.4.1`, AWS SDK bundle `2.24.6`, Iceberg와 PostgreSQL만 있었고 MSK IAM package는 없었다.
-- 해당 SparkApplication driver가 exit code 0으로 `Succeeded`했다. Spark 결과는 input/output 3,112,448행, data file 8개, snapshot `3643594365567232461`과 같은 `runId`를 기록했다.
+- 해당 SparkApplication driver가 exit code 0으로 `Succeeded`했다. Spark 결과는 input/output 3,112,448행, data file 8개, snapshot `<snapshot-redacted>`과 같은 `runId`를 기록했다.
 - Trino coordinator를 EKS에 단일 replica로 배포하고 FastAPI에서 CA 검증과 Basic 인증을 사용한 `SELECT 1`을 통과했다. `iceberg.asklake.click_events_1gb_hg_3065f2af5f92531f`의 물리 행 수는 3,112,448, 현재 data file은 8개다.
-- Trino `$snapshots` history에서 `3643594365567232461`가 2026-07-16 10:58:09 UTC의 3,112,448행 overwrite로 확인됐다. 4분 뒤 정기 Run `run_daef0546a20f`가 같은 table에 새 snapshot `4171358761748327678`을 commit했으므로 원래 snapshot은 history evidence로 대조하고 최신 snapshot이라고 주장하지 않는다. 이 정기 Run도 기존 Spark task를 다시 실행하지 않고 Catalog/publish만 복구해 snapshot `4171358761748327678`, 3,112,448행으로 최종 성공했다.
-- 실패했던 `publish_run_result`만 Airflow v2 clear API의 dry-run으로 선택한 뒤 재실행했다. 기존 Spark task를 다시 실행하지 않았고, Catalog reconciliation은 같은 `runId`, dataset `ds_click_events_1gb_hg_1b0a6e6f2044`, snapshot `3643594365567232461`, 3,112,448행으로 멱등 확정됐다. 최종 Airflow 네 task, DAG Run과 AskLake Run 상태는 모두 `success`다.
+- Trino `$snapshots` history에서 `<snapshot-redacted>`가 2026-07-16 10:58:09 UTC의 3,112,448행 overwrite로 확인됐다. 4분 뒤 정기 Run `<run-redacted>`가 같은 table에 새 snapshot `<snapshot-redacted>`을 commit했으므로 원래 snapshot은 history evidence로 대조하고 최신 snapshot이라고 주장하지 않는다. 이 정기 Run도 기존 Spark task를 다시 실행하지 않고 Catalog/publish만 복구해 snapshot `<snapshot-redacted>`, 3,112,448행으로 최종 성공했다.
+- 실패했던 `publish_run_result`만 Airflow v2 clear API의 dry-run으로 선택한 뒤 재실행했다. 기존 Spark task를 다시 실행하지 않았고, Catalog reconciliation은 같은 `runId`, dataset `ds_click_events_1gb_hg_1b0a6e6f2044`, snapshot `<snapshot-redacted>`, 3,112,448행으로 멱등 확정됐다. 최종 Airflow 네 task, DAG Run과 AskLake Run 상태는 모두 `success`다.
 - `/jobs`를 새로고침해 최신 정기 Run이 5/5 성공, input/output 3,112,448행, `Spark 실행 결과 확정 success`로 표시되는 것을 확인했다.
 - live ExternalSecret에 Trino key mapping을 적용할 cluster-wide 권한은 사용하지 않았다. AWS Secrets Manager 원본에서 필요한 Trino 인증 여섯 key와 CA만 복사한 임시 `asklake-backend-trino-runtime` Secret을 FastAPI가 추가 참조한다. 저장소의 정식 ExternalSecret mapping을 권한 있는 배포 주체가 적용하면 이 임시 Secret을 제거하고 기본 단일 `asklake-backend-runtime` 참조로 되돌린다.
 

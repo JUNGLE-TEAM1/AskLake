@@ -10,7 +10,7 @@
 
 - topic: `asklake.eks-mvp.fixture.v1`
 - consumer group: `asklake-eks-mvp-spark-v1`
-- fixture batch: `eks-mvp-20260716091439-13055a77`
+- fixture batch: `<fixture-batch-redacted>`
 - producer expected count: `100`
 - output: `s3a://<output-bucket>/eks-mvp/output/<runId>`
 - checkpoint: `s3a://<output-bucket>/eks-mvp/checkpoints/<runId>`
@@ -34,11 +34,11 @@ CP3 관련 로컬 검증은 Python 40개(1 skip), Kafka fixture boundary 8개, S
 
 ## 배포 증거
 
-- CP3 Backend: `sha256:e0a6649b6e23cad7c8c735734afb53d92b420b2900e15dee5ed889bab2fbfc14`
-- CP4 Backend: `sha256:e1600c0db9408b3805f58cc5a870bbf82711174d61cccaf45200e1498cecdd10`
-- Airflow: `sha256:5b86e7f9dde8452f27d2a664d11b9f23e0f45d25c3e01bca7848476573838a67`
-- CP3 Spark runtime: `sha256:a037b3cc4b8b6934ed4ba73ac4a59b26cdd16f9ef85e93a55c6df8a5e3cd0074`
-- CP4 Spark runtime: `sha256:bc78d9f15604a51c57bc4fd5c0c74ed77c17ed673b544305195ef272464cb3c4`
+- CP3 Backend: `sha256:<redacted>`
+- CP4 Backend: `sha256:<redacted>`
+- Airflow: `sha256:<redacted>`
+- CP3 Spark runtime: `sha256:<redacted>`
+- CP4 Spark runtime: `sha256:<redacted>`
 - FastAPI 2/2, Airflow API Server/Scheduler/DAG Processor 각 1/1 Ready
 - 새 FastAPI에서 CP1/CP2/CP3 marker와 `/api/health`의 RDS `ok=true` 확인
 - CP4 Backend는 기존 `asklake-web` release revision 21로 rolling update했고 Spark digest는 Pair B 소유 `asklake-runtime` ConfigMap에 반영했다. FastAPI 2/2와 DB-aware health를 확인했다.
@@ -46,18 +46,18 @@ CP3 관련 로컬 검증은 Python 40개(1 skip), Kafka fixture boundary 8개, S
 ## 단일 Run 연결표
 
 ```text
-fixtureBatchId  eks-mvp-20260716091439-13055a77 / expected 100
-→ jobId         JOB-8B46EEE8
-→ runId         run_1bedd9db9eae
-→ Airflow       asklake_etl_job / run_1bedd9db9eae
-→ SparkApplication asklake-run-run-1bedd9db9eae-cdf6acf8f0
-→ UID           9dabfd9c-cc22-4ad8-97c0-e5951aa89c62
-→ driver        asklake-run-run-1bedd9db9eae-cdf6acf8f0-driver / Succeeded / exit 0
+fixtureBatchId  <fixture-batch-redacted> / expected 100
+→ jobId         <job-redacted>
+→ runId         <run-redacted>
+→ Airflow       asklake_etl_job / <run-redacted>
+→ SparkApplication <spark-application-redacted>
+→ UID           <uid-redacted>
+→ driver        <driver-pod-redacted> / Succeeded / exit 0
 → input/output  100 / 100
 → target        iceberg://iceberg/asklake/eks_mvp_fixture
-→ snapshot      676467971672461132
+→ snapshot      <snapshot-redacted>
 → Trino         exact Run 100 rows / data file 1 / 5,505 bytes / metadata present
-→ Catalog       ds_eks_mvp_fixture_cp3_20260716_204449 / materialization 1
+→ Catalog       <dataset-redacted> / materialization 1
 → final status  Airflow success / AskLake Run success
 ```
 
@@ -77,14 +77,14 @@ Airflow `receive_asklake_run`, `validate_spark_request`, `spark_process_write`�
 
 Node provider 13개와 Python RDS/fixture boundary 64개, Airflow wiring 검증을 통과했다. 테스트에는 persisted UID의 GET-only 복구, object 부재/UID drift에서 POST 0회, FastAPI interruption 뒤 같은 UID 전달, terminal success short-circuit, replace target의 기존 snapshot reuse가 포함된다.
 
-dev에서는 Airflow에 저장된 같은 boundary로 `run_1bedd9db9eae` internal execute API를 다시 호출했다. 재호출 전후 결과는 다음과 같다.
+dev에서는 Airflow에 저장된 같은 boundary로 `<run-redacted>` internal execute API를 다시 호출했다. 재호출 전후 결과는 다음과 같다.
 
 ```text
 RDS execution_generation  4 → 4
 SparkApplication count    1 → 1
-SparkApplication UID      9dabfd9c-cc22-4ad8-97c0-e5951aa89c62 → 동일
-Iceberg main snapshot     676467971672461132 → 동일
-returned runId/status     run_1bedd9db9eae / success
+SparkApplication UID      <uid-redacted> → 동일
+Iceberg main snapshot     <snapshot-redacted> → 동일
+returned runId/status     <run-redacted> / success
 ```
 
 따라서 이 비파괴 live retry에서는 새 `runId`, 새 SparkApplication, 새 Iceberg snapshot이 생기지 않았다. 실행 중 FastAPI 강제 종료 직후 takeover를 일으키는 파괴적 fault injection은 수행하지 않았으며, 그 중간 상태 복구 경계는 위 interruption/UID/reuse 단위 테스트로 검증했다.
@@ -99,18 +99,18 @@ Spark와 FastAPI의 CP3 결과 확정 뒤 Airflow `publish_run_result`는 `Catal
 
 기존 실패는 fixture Job이 `icebergTarget`을 가지고도 Kafka라는 이유로 legacy S3 output path 검증에 들어간 것이 원인이었다. EKS bounded fixture만 일반 Iceberg reconciliation 분기로 보내고, RDS Run에 고정한 `expectedCount`를 exact snapshot의 `_asklake_run_id=runId` 행 수와 비교하도록 수정했다. 기존 Kafka Snapshot/Continuous 경로와 Spark 실행 경로는 변경하지 않았다.
 
-Backend image `sha256:6d662aa2b5975bc94a7f3a3dcb6939eee6cef66166a37bb3504b3279bd0636af`를 `asklake-web` revision 22에 배포했고 FastAPI 2/2 Ready를 확인했다. Spark를 다시 실행하지 않고 기존 Run의 Catalog endpoint를 호출한 결과는 다음과 같다.
+Backend image `sha256:<redacted>`를 `asklake-web` revision 22에 배포했고 FastAPI 2/2 Ready를 확인했다. Spark를 다시 실행하지 않고 기존 Run의 Catalog endpoint를 호출한 결과는 다음과 같다.
 
 ```text
-jobId                 JOB-8B46EEE8
-runId                 run_1bedd9db9eae
+jobId                 <job-redacted>
+runId                 <run-redacted>
 Iceberg table         iceberg.asklake.eks_mvp_fixture
-snapshotId            676467971672461132
+snapshotId            <snapshot-redacted>
 exact Run row count   100
 data file count       1
 storage size          5,505 bytes
 metadata file         present, s3a scheme
-Catalog datasetId     ds_eks_mvp_fixture_cp3_20260716_204449
+Catalog datasetId     <dataset-redacted>
 materialization count 1 for the same runId
 ```
 
@@ -124,12 +124,12 @@ Trino `eks_mvp_fixture$metadata_log_entries`에서도 같은 snapshot의 metadat
 
 `eks-roadmap.md`의 목요일 Merge 조건은 FastAPI가 재시작되거나 replica가 바뀐 뒤에도 같은 실행을 계속 조회할 수 있는 것이다. 실행 중 Pod를 강제로 죽여 자동 retry를 검증하는 전체 장애 시나리오는 토요일 범위다.
 
-목요일에는 `run_1bedd9db9eae`의 Spark 성공 증거를 RDS에 둔 상태에서 CP4 Backend rolling update와 CP8 `asklake-web` revision 22 rolling update로 FastAPI Pod가 교체됐다. 교체 뒤에도 다음 식별자는 그대로 조회됐고 최종 Catalog/Run 성공까지 이어졌다.
+목요일에는 `<run-redacted>`의 Spark 성공 증거를 RDS에 둔 상태에서 CP4 Backend rolling update와 CP8 `asklake-web` revision 22 rolling update로 FastAPI Pod가 교체됐다. 교체 뒤에도 다음 식별자는 그대로 조회됐고 최종 Catalog/Run 성공까지 이어졌다.
 
 ```text
-runId                 run_1bedd9db9eae
-SparkApplication UID  9dabfd9c-cc22-4ad8-97c0-e5951aa89c62
-Iceberg snapshot      676467971672461132
+runId                 <run-redacted>
+SparkApplication UID  <uid-redacted>
+Iceberg snapshot      <snapshot-redacted>
 Catalog materialization for runId  1
 final Run status      success
 ```
@@ -168,6 +168,6 @@ EKS runtime의 `ASKLAKE_CONTINUOUS_CONTROL_PLANE`은 `external_ec2`이고 FastAP
 ### 정리와 rollback
 
 - CP8/CP9는 새 임시 Kubernetes Job, test object 또는 새 SparkApplication을 만들지 않았고 기존 성공 Run만 사용했다.
-- Backend rollback 기준은 이전 CP4 digest `sha256:e1600c0db9408b3805f58cc5a870bbf82711174d61cccaf45200e1498cecdd10`와 `asklake-web` revision 21이다.
+- Backend rollback 기준은 이전 CP4 digest `sha256:<redacted>`와 `asklake-web` revision 21이다.
 - Catalog reconciliation은 같은 `runId` materialization을 하나로 유지한다. rollback 시 검증된 Iceberg snapshot과 RDS Spark evidence를 삭제하지 않고 Backend image만 이전 digest로 되돌린다.
 - Secret 값, token, database URL, private key와 static AWS credential은 이 문서와 PR에 넣지 않는다.
