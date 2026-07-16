@@ -78,6 +78,18 @@ PYTHONPATH=. .venv/bin/python -m unittest \
   tests.test_kafka_continuous_dashboard_sync -v
 ```
 
+Continuous output·manifest·Catalog·Dashboard 발행을 변경할 때는 단계별 transaction과 재시도 테스트를 먼저 실행한다. Catalog와 Dashboard를 하나의 transaction으로 합치거나, Dashboard 실패 때문에 기존 Iceberg/Catalog 성공을 실패 처리하거나, 같은 batch retry에서 Spark output을 다시 만드는 변경을 금지한다. 상세 멱등 키와 복구 표는 [Continuous Materialization·Catalog·Dashboard 발행 계약](./refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_continuous_publication_workflow \
+  tests.test_kafka_continuous_dashboard_sync \
+  tests.test_dashboard_live_repository -v
+npm run verify:continuous-runtime-contract
+npm run verify:kafka-continuous-contract
+```
+
 `npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
 
 ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.

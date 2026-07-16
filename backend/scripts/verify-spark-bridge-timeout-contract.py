@@ -10,13 +10,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.errors import ApiError
+from app.infrastructure.runtime_io import SubprocessNodeBridge
 from app.services import etl_service
 
 
 original_environment = dict(os.environ)
 original_job_payload = etl_service.job_payload_for_spark
 original_run_node_bridge = etl_service.run_node_bridge
-original_subprocess_run = etl_service.subprocess.run
 
 try:
     os.environ["ASKLAKE_SPARK_RUNNER"] = "rest"
@@ -52,7 +52,11 @@ try:
         raise subprocess.TimeoutExpired(cmd=["node"], timeout=1)
 
     etl_service.run_node_bridge = original_run_node_bridge
-    etl_service.subprocess.run = raise_timeout
+    timeout_bridge = SubprocessNodeBridge(
+        backend_dir=BACKEND_DIR,
+        scripts_dir=BACKEND_DIR / "scripts",
+        runner=raise_timeout,
+    )
     try:
         etl_service.run_node_bridge(
             "run-spark-job-once.mjs",
@@ -61,6 +65,7 @@ try:
             error_marker="ASKLAKE_SPARK_RUN_ERROR",
             timeout_seconds=1,
             timeout_recovery=lambda: recovery_calls.append("kill") or {"killed": True},
+            bridge=timeout_bridge,
         )
         raise AssertionError("A timed out bridge must raise ApiError.")
     except ApiError as error:
@@ -75,4 +80,3 @@ finally:
     os.environ.update(original_environment)
     etl_service.job_payload_for_spark = original_job_payload
     etl_service.run_node_bridge = original_run_node_bridge
-    etl_service.subprocess.run = original_subprocess_run

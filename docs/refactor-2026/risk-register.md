@@ -4,8 +4,8 @@
 |---|---|---|---|---:|---|
 | R-001 | P0 | 재부팅 후 Spark ivy/report 경로가 없거나 UID 185가 쓸 수 없음 | restart-safe guard, worker/backend probe와 실제 container smoke | 02 | CLOSED |
 | R-002 | P0 | runtime report 유실 시 실제 실패 원인이 generic failed로 축약됨 | report/storage/submission/execution 오류를 단계·code·retry 가능 여부로 보존 | 02~03 | CLOSED |
-| R-003 | P1 | `etl_service.py` 9,088 LOC God Service | 외부 I/O Port·Adapter와 command/reconciliation application use case를 분리; publication 추출은 06에서 계속 | 04~06 | PARTIAL |
-| R-004 | P1 | Continuous 상태 권위가 DB, container, report, checkpoint, manifest, Catalog에 분산 | desired/observed/public 상태, fencing, immutable evidence와 pure reconciliation decision 확정; publication은 06에서 계속 | 03~06 | PARTIAL |
+| R-003 | P1 | `etl_service.py` 9,088 LOC God Service | 외부 I/O Port·Adapter, command/reconciliation, staged publication application use case를 분리; Pipeline·Snapshot·SQL 경계는 07에서 계속 | 04~07 | PARTIAL |
+| R-004 | P1 | Continuous 상태 권위가 DB, container, report, checkpoint, manifest, Catalog에 분산 | desired/observed/public 상태, fencing, immutable evidence와 output/manifest/Catalog/Dashboard별 canonical owner·복구 경계 확정 | 03~06 | CLOSED |
 | R-005 | P1 | `EtlPages.tsx` 7,111 LOC God Page | wizard·connector·draft·validation 결합 | 09 | OPEN |
 | R-006 | P1 | `JobsPages.tsx` 3,582 LOC | list/detail/runtime/history/DAG 결합 | 10 | OPEN |
 | R-007 | P1 | `useAskLakeData.ts` 1,502 LOC | server state와 optimistic UI 결합 | 09~10 | OPEN |
