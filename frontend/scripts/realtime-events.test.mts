@@ -212,3 +212,68 @@ test("missed heartbeat closes the stale stream and retries from the last cursor"
     }
   }
 });
+
+test("a dashboard or actor switch closes the previous stream and ignores stale callbacks", () => {
+  const sources: FakeEventSource[] = [];
+  const firstEvents: number[] = [];
+  const firstStates: RealtimeConnectionState[] = [];
+  const secondEvents: number[] = [];
+  const client = new RealtimeEventClient(() => {
+    const source = new FakeEventSource();
+    sources.push(source);
+    return source;
+  });
+
+  client.connect({
+    cursor: 4,
+    dashboardId: "dashboard-a",
+    datasetIds: ["dataset-a"],
+    onEvent: (event) => firstEvents.push(event.eventId),
+    onResyncRequired: () => undefined,
+    onStateChange: (state) => firstStates.push(state),
+  });
+  client.connect({
+    cursor: 8,
+    dashboardId: "dashboard-b",
+    datasetIds: ["dataset-b"],
+    onEvent: (event) => secondEvents.push(event.eventId),
+    onResyncRequired: () => undefined,
+    onStateChange: () => undefined,
+  });
+
+  assert.equal(sources[0].closed, true);
+  assert.equal(firstStates.at(-1), "closed");
+  sources[0].emit("dataset.revision.committed", JSON.stringify(realtimeEvent(5, 5, "dataset-a")));
+  sources[1].emit("dataset.revision.committed", JSON.stringify(realtimeEvent(9, 9, "dataset-b")));
+  assert.deepEqual(firstEvents, []);
+  assert.deepEqual(secondEvents, [9]);
+  client.close();
+});
+
+test("invalid event injection is reported without advancing the reconnect cursor", () => {
+  const sources: FakeEventSource[] = [];
+  const urls: string[] = [];
+  const invalidEvents: string[] = [];
+  const client = new RealtimeEventClient((url) => {
+    urls.push(url);
+    const source = new FakeEventSource();
+    sources.push(source);
+    return source;
+  });
+
+  const connection = client.connect({
+    cursor: 12,
+    dashboardId: "dashboard-live",
+    datasetIds: ["dataset-live"],
+    onEvent: () => undefined,
+    onInvalidEvent: (raw) => invalidEvents.push(raw),
+    onResyncRequired: () => undefined,
+    onStateChange: () => undefined,
+  });
+  sources[0].emit("dataset.revision.committed", "{injected");
+  connection.restart(0);
+
+  assert.deepEqual(invalidEvents, ["{injected"]);
+  assert.match(urls[1], /cursor=12/);
+  connection.close();
+});

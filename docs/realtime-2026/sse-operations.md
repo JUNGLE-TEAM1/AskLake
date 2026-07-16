@@ -97,3 +97,5 @@ event table은 additive이므로 rollback 때 삭제하지 않는다. flag off �
 cd backend
 .\.venv\Scripts\python.exe scripts\verify-realtime-proxy-contract.py
 ```
+
+PR smoke, actual proxy/canary, incident와 rollback 절차는 `docs/realtime-2026/handover.md`, `docs/realtime-2026/production-runbook.md`, `docs/realtime-2026/runbooks/`를 따른다.

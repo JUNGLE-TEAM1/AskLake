@@ -23,7 +23,8 @@
     "backward-compatibility": {
       "minimumProfile": "pr",
       "cwd": "backend",
-      "command": ["npm", "run", "verify:backward-compatibility"],
+      "command": ["{python}", "scripts/verify-backward-compatibility.py"],
+      "environment": {"PYTHONPATH": "."},
       "timeoutSeconds": 180
     },
     "spark-rest-process-boundary": {

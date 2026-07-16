@@ -7,9 +7,17 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.api.realtime import ReplaySnapshot, StreamIdentity, _domain_event, _event_stream
+from app.api.realtime import (
+    ReplaySnapshot,
+    StreamIdentity,
+    _domain_event,
+    _event_stream,
+    _parse_dataset_ids,
+    _parse_reconnect_cursor,
+)
 from app.core.auth_context import ActorContext
 from app.core.config import settings
+from app.core.errors import ApiError
 from app.repositories.dashboard_live_repository import DashboardLiveRepository
 from app.repositories.realtime_event_repository import RealtimeEventRepository
 from app.schemas.realtime import RealtimeEventEnvelope
@@ -216,6 +224,50 @@ class RealtimeEventContractTests(unittest.TestCase):
                 **common,
             )
 
+    def test_payload_allowlist_and_size_limit_reject_event_injection(self) -> None:
+        common = {
+            "event_type": "dataset.revision.committed",
+            "resource_type": "dataset",
+            "resource_id": "dataset-live",
+            "aggregate_revision": 1,
+            "correlation_id": "run-1",
+            "invalidations": ["dataset:dataset-live:freshness"],
+        }
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            validate_realtime_event(
+                payload={"runId": "run-1", "commitKind": "stream", "html": "<script>"},
+                **common,
+            )
+        with (
+            patch.object(settings, "realtime_event_payload_max_bytes", 64),
+            self.assertRaisesRegex(ValueError, "size limit"),
+        ):
+            validate_realtime_event(
+                payload={"runId": "r" * 256, "commitKind": "stream"},
+                **common,
+            )
+
+
+class RealtimeRequestGuardTests(unittest.TestCase):
+    def test_dataset_scope_is_bounded_and_deduplicated(self) -> None:
+        self.assertEqual(_parse_dataset_ids("dataset-b,dataset-a,dataset-a"), {
+            "dataset-a",
+            "dataset-b",
+        })
+        for value in ("", ",".join(f"dataset-{index}" for index in range(101)), "x" * 121):
+            with self.subTest(value_length=len(value)), self.assertRaises(ApiError) as raised:
+                _parse_dataset_ids(value)
+            self.assertEqual(raised.exception.status_code, 422)
+
+    def test_last_event_id_is_non_negative_and_cannot_move_cursor_backwards(self) -> None:
+        request = SimpleNamespace(headers={"Last-Event-ID": "17"})
+        self.assertEqual(_parse_reconnect_cursor(request, 12), 17)
+        self.assertEqual(_parse_reconnect_cursor(request, 21), 21)
+        for value in ("-1", "not-an-integer"):
+            with self.subTest(value=value), self.assertRaises(ApiError) as raised:
+                _parse_reconnect_cursor(SimpleNamespace(headers={"Last-Event-ID": value}), 0)
+            self.assertEqual(raised.exception.status_code, 422)
+
 
 class RealtimeEventHubTests(unittest.IsolatedAsyncioTestCase):
     async def test_resource_filter_and_connection_limit(self) -> None:
@@ -292,6 +344,90 @@ class RealtimeEventHubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([frame["event"] for frame in frames], [
             "stream.ready",
             "system.resync_required",
+        ])
+        self.assertTrue(subscription.closed)
+
+    async def test_replay_page_limit_emits_resync_instead_of_unbounded_delivery(self) -> None:
+        hub = RealtimeEventHub()
+        subscription = hub.subscribe(
+            actor_key="actor-a",
+            resources={("dataset", "dataset-live")},
+        )
+        identity = StreamIdentity(
+            actor=ActorContext(name="actor-a"),
+            actor_key="actor-a",
+            session_token=None,
+            actor_name_header="actor-a",
+            actor_role_header="viewer",
+            actor_groups_header=None,
+        )
+        request = SimpleNamespace(is_disconnected=lambda: asyncio.sleep(0, result=False))
+        snapshot = ReplaySnapshot(
+            min_cursor=1,
+            max_cursor=2,
+            events=[event_envelope(1), event_envelope(2)],
+        )
+
+        with (
+            patch.object(settings, "realtime_replay_limit", 1),
+            patch("app.api.realtime._load_replay_snapshot", return_value=snapshot),
+        ):
+            frames = [
+                frame
+                async for frame in _event_stream(
+                    request=request,
+                    subscription=subscription,
+                    identity=identity,
+                    dashboard_id="dashboard-live",
+                    dataset_ids={"dataset-live"},
+                    initial_cursor=0,
+                )
+            ]
+
+        self.assertEqual([frame["event"] for frame in frames], [
+            "stream.ready",
+            "system.resync_required",
+        ])
+        self.assertIn("replay_limit_exceeded", frames[1]["data"])
+        self.assertTrue(subscription.closed)
+
+    async def test_heartbeat_rechecks_identity_and_closes_after_permission_change(self) -> None:
+        hub = RealtimeEventHub()
+        subscription = hub.subscribe(
+            actor_key="actor-a",
+            resources={("dataset", "dataset-live")},
+        )
+        identity = StreamIdentity(
+            actor=ActorContext(name="actor-a"),
+            actor_key="actor-a",
+            session_token="session-a",
+            actor_name_header="actor-a",
+            actor_role_header="viewer",
+            actor_groups_header=None,
+        )
+        request = SimpleNamespace(is_disconnected=lambda: asyncio.sleep(0, result=False))
+        snapshot = ReplaySnapshot(min_cursor=0, max_cursor=0, events=[])
+
+        with (
+            patch("app.api.realtime._load_replay_snapshot", return_value=snapshot),
+            patch("app.api.realtime._stream_identity_is_authorized", return_value=False),
+            patch.object(subscription, "get", new=AsyncMock(side_effect=TimeoutError)),
+        ):
+            frames = [
+                frame
+                async for frame in _event_stream(
+                    request=request,
+                    subscription=subscription,
+                    identity=identity,
+                    dashboard_id="dashboard-live",
+                    dataset_ids={"dataset-live"},
+                    initial_cursor=0,
+                )
+            ]
+
+        self.assertEqual([frame["event"] for frame in frames], [
+            "stream.ready",
+            "system.authorization_changed",
         ])
         self.assertTrue(subscription.closed)
 

@@ -574,10 +574,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] bounded static snapshot cache·유일키 검증 재사용·신규 output Run partition 지연 경로
 - [x] exact Iceberg snapshot 검증 후 Catalog revision/durable Dashboard event publication
 - [x] `npm run verify:continuous-sql-contract` focused contract gate
+- [x] realtime recovery/security focused suite와 polling/direct-publish/God-file 정적 quality gate
+- [x] PR용 disposable PostgreSQL event log/NOTIFY·publication concurrency와 Caddy/NGINX parser workflow
+- [x] scheduled/manual Kafka/Spark/Iceberg fault·restart workflow tier
 - [ ] 실제 Kafka/MinIO/Spark/Iceberg/Trino Continuous SQL E2E와 fault/restart 검증
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
-현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다.
+현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다. 자동화가 추가됐더라도 새 workflow의 성공 run과 production-like operator evidence 전에는 realtime flag 활성화가 No-Go다. 상세 판정은 `docs/realtime-2026/final-audit.md`를 따른다.
 
 ## Full-stack E2E·recovery readiness
 
