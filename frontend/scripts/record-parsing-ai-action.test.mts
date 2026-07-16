@@ -25,3 +25,15 @@ test("record parsing keeps content focused and makes large previews collapsible"
   assert.match(etlPagesSource, /aria-expanded=\{rawSampleExpanded\}/);
   assert.match(etlPagesSource, /aria-expanded=\{resultPreviewExpanded\}/);
 });
+
+test("ETL section headers share one typography and icon treatment", () => {
+  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const schemaSummarySource = readFileSync(new URL("../src/pages/etl/SchemaRuleSummary.tsx", import.meta.url), "utf8");
+  const sectionHeaderSource = readFileSync(new URL("../src/components/etl/EtlSectionHeader.tsx", import.meta.url), "utf8");
+
+  assert.match(etlPagesSource, /<EtlSectionHeader[\s\S]*title=\{connectionStatusCopy\[connectionStatus\]\.title\}/);
+  assert.match(etlPagesSource, /<EtlSectionHeader[\s\S]*title="원본 샘플"/);
+  assert.match(schemaSummarySource, /<EtlSectionHeader[\s\S]*title="적용 내용 확인"/);
+  assert.match(sectionHeaderSource, /min-h-\[68px\] px-5 py-3\.5/);
+  assert.match(sectionHeaderSource, /bg-blue-100 text-blue-600/);
+});

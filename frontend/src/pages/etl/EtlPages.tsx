@@ -75,6 +75,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
@@ -2441,15 +2442,12 @@ export function SourceConnectionPage({
               </section>
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
-                <div className="hegun-status-head">
-                  <div className="hegun-status-copy single-line">
-                    {sourceStatusIcon(connectionStatus)}
-                    <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-                  </div>
-                  <div className="hegun-status-actions">
-                    {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
-                  </div>
-                </div>
+                <EtlSectionHeader
+                  actions={isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : null}
+                  icon={sourceStatusIcon(connectionStatus)}
+                  title={connectionStatusCopy[connectionStatus].title}
+                  tone={connectionStatus === "success" ? "success" : connectionStatus === "failed" ? "danger" : "default"}
+                />
                 <div className="hegun-test-strip">
                   {displayTestItems.map(([label, value], index) => (
                     <span className={sourceCheckState(value)} key={`${activeSourceType}-${label}-${index}`}>
@@ -2757,19 +2755,22 @@ export function RecordParsingPage({
 
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><FileText aria-hidden="true" />원본 샘플</h2>
-            <button
-              aria-controls="record-parsing-raw-sample"
-              aria-expanded={rawSampleExpanded}
-              aria-label={rawSampleExpanded ? "원본 샘플 접기" : "원본 샘플 펼치기"}
-              className="record-parsing-collapse-button"
-              type="button"
-              onClick={() => setRawSampleExpanded((expanded) => !expanded)}
-            >
-              {rawSampleExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-            </button>
-          </div>
+          <EtlSectionHeader
+            actions={(
+              <button
+                aria-controls="record-parsing-raw-sample"
+                aria-expanded={rawSampleExpanded}
+                aria-label={rawSampleExpanded ? "원본 샘플 접기" : "원본 샘플 펼치기"}
+                className="record-parsing-collapse-button"
+                type="button"
+                onClick={() => setRawSampleExpanded((expanded) => !expanded)}
+              >
+                {rawSampleExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+              </button>
+            )}
+            icon={<FileText />}
+            title="원본 샘플"
+          />
           {rawSampleExpanded ? (
             <div className="record-parsing-panel-body" id="record-parsing-raw-sample">
               <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
@@ -2778,9 +2779,8 @@ export function RecordParsingPage({
         </section>
 
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><SlidersHorizontal aria-hidden="true" />필드 추론</h2>
-            <div className="record-parsing-panel-actions">
+          <EtlSectionHeader
+            actions={(
               <Button
                 className="record-parsing-ai-button"
                 data-testid="record-parsing-ai-button"
@@ -2791,8 +2791,10 @@ export function RecordParsingPage({
                 <Sparkles aria-hidden="true" />
                 AI 필드 자동 추론
               </Button>
-            </div>
-          </div>
+            )}
+            icon={<SlidersHorizontal />}
+            title="필드 추론"
+          />
           <div className="record-parsing-panel-body record-parsing-settings-body">
             <div className="record-parsing-controls">
               <FormFieldGroup className="field" label="필드 구분자">
@@ -2832,7 +2834,7 @@ export function RecordParsingPage({
 
       {preview?.invalidRows.length ? (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header record-parsing-panel-header-warning"><h2><Info aria-hidden="true" />필드 개수 불일치</h2></div>
+          <EtlSectionHeader icon={<Info />} title="필드 개수 불일치" tone="warning" />
           <div className="record-parsing-panel-body">
             <table className="schema-table record-parsing-invalid-table">
               <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
@@ -2842,19 +2844,22 @@ export function RecordParsingPage({
         </section>
       ) : preview && (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
-            <button
-              aria-controls="record-parsing-result-preview"
-              aria-expanded={resultPreviewExpanded}
-              aria-label={resultPreviewExpanded ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
-              className="record-parsing-collapse-button"
-              type="button"
-              onClick={() => setResultPreviewExpanded((expanded) => !expanded)}
-            >
-              {resultPreviewExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-            </button>
-          </div>
+          <EtlSectionHeader
+            actions={(
+              <button
+                aria-controls="record-parsing-result-preview"
+                aria-expanded={resultPreviewExpanded}
+                aria-label={resultPreviewExpanded ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
+                className="record-parsing-collapse-button"
+                type="button"
+                onClick={() => setResultPreviewExpanded((expanded) => !expanded)}
+              >
+                {resultPreviewExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+              </button>
+            )}
+            icon={<Table2 />}
+            title="결과 미리보기"
+          />
           {resultPreviewExpanded ? (
             <div className="record-parsing-panel-body record-parsing-preview-body" id="record-parsing-result-preview">
               <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
