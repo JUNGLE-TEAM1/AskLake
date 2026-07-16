@@ -649,10 +649,19 @@ class RagService:
                 raise ApiError("rag_validation_failed", "OpenSearch document is missing source field provenance", status.HTTP_409_CONFLICT)
             if not isinstance(sample_source.get("parent_source_fields"), list):
                 raise ApiError("rag_validation_failed", "OpenSearch document is missing parent source field provenance", status.HTTP_409_CONFLICT)
-            body_text = str(sample_source.get("body") or sample_source.get("title") or sample_source.get("embedding_text") or "")
-            tokens = [token for token in re.findall(r"[A-Za-z0-9_]+|[가-힣]+", body_text) if token]
-            bm25_query_text = body_text[:500] if body_text else (max(tokens, key=len) if tokens else "rag")
-            bm25_query = {"size": 10, "query": {"multi_match": {"query": bm25_query_text, "fields": ["title^2", "body", "embedding_text"], "type": "phrase"}}}
+            title_text = str(sample_source.get("title") or "").strip()
+            body_text = str(sample_source.get("body") or "").strip()
+            embedding_text = str(sample_source.get("embedding_text") or "").strip()
+            if title_text:
+                bm25_field = "title"
+                bm25_query_text = title_text[:500]
+            elif body_text:
+                bm25_field = "body"
+                bm25_query_text = body_text[:500]
+            else:
+                bm25_field = "embedding_text"
+                bm25_query_text = embedding_text[:500] or "rag"
+            bm25_query = {"size": 10, "query": {"match_phrase": {bm25_field: bm25_query_text}}}
             bm25_result = client.search_raw(job.target_index, bm25_query)
             bm25_ids = [str(item.get("_id") or (item.get("_source") or {}).get("document_id") or "") for item in (bm25_result.get("hits", {}).get("hits", []) if isinstance(bm25_result, dict) else []) if isinstance(item, dict)]
             if not bm25_ids or (sample_id and sample_id not in bm25_ids):

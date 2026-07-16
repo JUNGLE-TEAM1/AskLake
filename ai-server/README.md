@@ -59,8 +59,10 @@ truth.
 
 ## Provider configuration
 
-The default `PROVIDER=mock` is deterministic and makes local development and
-tests network-free. For an OpenAI-compatible chat-completions provider set:
+The live default is `PROVIDER=openai_compatible`; the application must be
+given a provider key and will not silently return mock SQL. Tests and explicit
+offline fixtures may opt into `PROVIDER=mock`. For an OpenAI-compatible
+chat-completions provider set:
 
 ```text
 PROVIDER=openai_compatible

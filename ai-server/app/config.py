@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     app_env: str = "local"
     internal_auth_token: SecretStr | None = None
 
-    provider: ProviderName = "mock"
+    # Live traffic must use a configured provider. Tests and deterministic local
+    # fixtures opt into ``provider="mock"`` explicitly.
+    provider: ProviderName = "openai_compatible"
     provider_base_url: str = "https://api.openai.com/v1"
     provider_api_key: SecretStr | None = None
     provider_model: str = "gpt-4.1-mini"
