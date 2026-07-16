@@ -21,21 +21,18 @@
 ## local 검증 결과
 
 - `npm run verify:realtime-stack`: PASS, 69 tests + proxy/architecture gate
-- frontend `npm run verify:ui-regressions`: PASS, 132 checks
+- frontend `npm run verify:ui-regressions`: PASS, 136 checks
 - frontend realtime transport: PASS, 7 tests
 - frontend Dashboard live refresh: PASS, 6 tests
 - frontend production build: PASS, 기존 large chunk warning만 존재
-- `npm run verify:continuous-sql-contract`: PASS, 17 tests
+- `npm run verify:continuous-sql-contract`: PASS, 23 tests
 - `npm run verify:kafka-continuous-contract`: PASS
 - `node scripts/verify-kafka-continuous-rest.mjs`: PASS
 - production Docker Compose config render: PASS
 - Python compile와 workflow YAML parse: PASS
 - `git diff --check`: PASS, Windows line-ending 안내만 존재
 
-전체 backend discovery는 398 tests 중 394 PASS, 1 SKIP, 기존 3 FAIL을 재현했다. STACK-03과 동일하며 이번 branch가 새 실패를 만들지 않았다.
-
-- `test_etl_data_lake_source` 2개: 현재 구현의 Review label `소스 데이터`와 테스트 기대 `소스 연결` drift
-- `test_spark_source_identity` 1개: 변경하지 않은 `spark_job_run.py`의 post-read identity call 기대 drift
+전체 backend discovery는 최신 refactor prerequisite 반영 후 471 tests 중 470 PASS, 1 SKIP, FAIL 0으로 통과했다.
 
 ## 실행하지 못한 검증
 

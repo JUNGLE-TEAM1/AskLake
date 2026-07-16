@@ -11,6 +11,8 @@ next_ready_pr: null
 last_result: DONE
 updated_at: 2026-07-16
 base_branch: dev
+synced_dev: ef385bb9
+refactor_prerequisite: "#843 (refactor-#842)"
 merge_order:
   - STACK-01
   - STACK-02
@@ -22,7 +24,7 @@ merge_order:
 
 | Stack PR | 상태 | 포함 원본 단계 | 목표 | Issue / branch / PR |
 |---|---|---|---|---|
-| STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
+| STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 Draft |
 | STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
 | STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / #822 Draft |
 | STACK-04 | DONE | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | #823 / `feat-#823` / #826 Draft |
@@ -81,10 +83,11 @@ merge_order:
 ### STACK-04
 
 - 시작 기준: `feat-#816`의 `243b70a5`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
+- 최신 동기화 기준: `origin/dev@ef385bb9`와 refactor prerequisite `refactor-#842` / #843을 4개 branch에 순서대로 반영했다.
 - Issue/branch: #823 / `feat-#823`.
 - Draft PR: #826 (`feat-#823 -> dev`), 선행 #822 merge 후 review-ready 전환.
-- backend recovery/security/Continuous SQL focused 69 tests, frontend UI 132 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
-- production Compose render, proxy/architecture static gate, Continuous SQL 17 tests와 Kafka contract/REST가 통과했다.
+- backend recovery/security/Continuous SQL focused 69 tests, frontend UI 136 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
+- production Compose render, proxy/architecture static gate, Continuous SQL 23 tests와 Kafka contract/REST가 통과했다.
 - PR용 disposable PostgreSQL·Caddy/NGINX parser gate와 scheduled/manual Kafka/Spark/Iceberg fault harness를 추가했다.
 - canary/rollback/production runbook, handover와 항목별 final audit를 작성했다.
 - Docker client는 설치되어 있으나 Docker Desktop daemon이 꺼져 실제 container/proxy/Spark E2E는 local에서 실행하지 못했다. production 활성화는 CI와 operator evidence 전까지 No-Go다.

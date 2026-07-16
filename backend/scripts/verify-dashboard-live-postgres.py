@@ -27,7 +27,6 @@ def main() -> None:
         raise RuntimeError(
             "Set ASKLAKE_VERIFY_DASHBOARD_POSTGRES=true with DATABASE_URL pointing to a disposable AskLake PostgreSQL database."
         )
-
     suffix = uuid4().hex[:12]
     dataset_id = f"verify_live_{suffix}"
     concurrent_dataset_id = f"verify_live_concurrent_{suffix}"

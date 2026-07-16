@@ -25,7 +25,7 @@ def forbid(relative_path: str, *fragments: str) -> None:
         raise AssertionError(f"{relative_path}: forbidden realtime coupling found: {found}")
 
 
-def main() -> None:
+def verify_dashboard_realtime_contract() -> None:
     runtime_directory = ROOT / "frontend" / "src" / "pages" / "dashboard" / "runtime"
     timer_violations: list[str] = []
     for path in sorted(runtime_directory.glob("*.ts*")):
@@ -63,14 +63,18 @@ def main() -> None:
         "self.hub.publish(event)",
     )
     require(
-        "backend/app/repositories/dashboard_live_repository.py",
-        "RealtimeEventRepository(self.db).append",
+        "backend/app/services/dashboard_realtime_bridge.py",
+        "RealtimeEventRepository(db).append",
         'event_type="dataset.revision.committed"',
+        'event_type="dashboard.published"',
+    )
+    require(
+        "backend/app/repositories/dashboard_live_repository.py",
+        "append_dataset_revision_event",
     )
     require(
         "backend/app/services/dashboard_runtime_service.py",
-        "RealtimeEventRepository(self.repository.db).append",
-        'event_type="dashboard.published"',
+        "append_dashboard_published_event",
     )
     require(
         "backend/app/services/continuous_sql_planner.py",
@@ -83,6 +87,8 @@ def main() -> None:
         "test_only_inner_left_and_equality_predicates_are_supported",
     )
 
+
+def verify_architecture_boundaries() -> None:
     production_python = [
         path
         for path in (ROOT / "backend" / "app").rglob("*.py")
@@ -124,6 +130,10 @@ def main() -> None:
             "dashboardRealtimeEventClient",
         )
 
+
+def main() -> None:
+    verify_dashboard_realtime_contract()
+    verify_architecture_boundaries()
     print(
         "Realtime quality gates passed: no silent polling interval, durable event path retained, "
         "SQL validation matrix present, and God-file size/symbol budgets retained."
