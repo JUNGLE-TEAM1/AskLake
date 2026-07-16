@@ -832,6 +832,24 @@ const checks = [
     ],
   },
   {
+    name: "ETL source selection and connection settings share the common bordered panel",
+    file: "src/pages/etl/EtlPages.tsx",
+    patterns: [
+      /<Panel className="source-step-section active source-choice-panel">[\s\S]{0,180}<EtlSectionHeader icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
+      /<Panel className="source-step-section active">[\s\S]{0,220}<EtlSectionHeader/,
+    ],
+    forbiddenPatterns: [
+      /<EtlSectionHeader bordered=\{false\} icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
+    ],
+  },
+  {
+    name: "ETL source selection panel contains the connector grid inside its body",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.source-choice-panel > \.source-choice-grid \{[\s\S]*?padding: 18px;/,
+    ],
+  },
+  {
     name: "ETL target form typography stays readable under shared headers",
     file: "src/styles/etl.css",
     patterns: [

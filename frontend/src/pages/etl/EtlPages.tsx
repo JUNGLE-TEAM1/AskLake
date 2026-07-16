@@ -53,6 +53,7 @@ import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Panel } from "@/components/ui/panel";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import {
   Select,
@@ -2314,37 +2315,39 @@ export function SourceConnectionPage({
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
-              <EtlSectionHeader bordered={false} icon={<Database />} title="데이터 소스 선택" />
-              <div className="source-choice-grid">
-                {sourceChoiceConnectors.map((connector) => {
-                  const meta = connectorMeta[connector];
-                  return (
-                    <Button
-                      aria-label={`${meta.label} 소스 선택`}
-                      aria-pressed={sourceType === connector}
-                      className="source-choice-button relative grid h-auto min-h-36 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-8 text-left"
-                      key={connector}
-                      type="button"
-                      variant={sourceType === connector ? "subtle" : "outline"}
-                      onClick={() => selectSource(connector)}
-                    >
-                      {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
-                      <span className="inline-flex size-16 items-center justify-center">{meta.icon}</span>
-                      <span className="grid min-w-0 gap-1.5">
-                        <span className="text-lg font-bold text-slate-950">{meta.label}</span>
-                        <span className="text-[13px] font-medium leading-5 text-slate-500">{meta.description}</span>
-                      </span>
-                    </Button>
-                  );
-                })}
-              </div>
+              <Panel className="source-step-section active source-choice-panel">
+                <EtlSectionHeader icon={<Database />} title="데이터 소스 선택" />
+                <div className="source-choice-grid">
+                  {sourceChoiceConnectors.map((connector) => {
+                    const meta = connectorMeta[connector];
+                    return (
+                      <Button
+                        aria-label={`${meta.label} 소스 선택`}
+                        aria-pressed={sourceType === connector}
+                        className="source-choice-button relative grid h-auto min-h-36 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-8 text-left"
+                        key={connector}
+                        type="button"
+                        variant={sourceType === connector ? "subtle" : "outline"}
+                        onClick={() => selectSource(connector)}
+                      >
+                        {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
+                        <span className="inline-flex size-16 items-center justify-center">{meta.icon}</span>
+                        <span className="grid min-w-0 gap-1.5">
+                          <span className="text-lg font-bold text-slate-950">{meta.label}</span>
+                          <span className="text-[13px] font-medium leading-5 text-slate-500">{meta.description}</span>
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              </Panel>
             </div>
           )}
 
           {sourceStage === "connect" && hasSelectedSource && !isInternalDataLake && (
             <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
               <div className="source-stage-screen">
-              <section className="source-step-section active">
+              <Panel className="source-step-section active">
                 <EtlSectionHeader
                   actions={(
                     <div className="hegun-status-actions">
@@ -2427,7 +2430,7 @@ export function SourceConnectionPage({
                   </section>
                 )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
-              </section>
+              </Panel>
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <EtlSectionHeader

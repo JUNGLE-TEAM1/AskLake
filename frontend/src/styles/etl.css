@@ -462,6 +462,10 @@
   align-items: stretch;
 }
 
+.source-choice-panel > .source-choice-grid {
+  padding: 18px;
+}
+
 .source-choice-button .source-brand-icon {
   width: 64px;
   height: 64px;
