@@ -432,7 +432,7 @@ function ContinuousRuntimeErrorFields({ runtime }: { runtime: JobRowData["contin
         <div className="grid content-start gap-1 text-sm">
           <span className="font-semibold text-slate-500">진단 ID</span>
           <div className="flex min-w-0 items-center gap-2">
-            <code className="min-w-0 truncate text-slate-700">{diagnosticId}</code>
+            <code className="min-w-0 truncate text-slate-700" data-testid="continuous-diagnostic-id">{diagnosticId}</code>
             <Button aria-label="진단 ID 복사" size="content" type="button" variant="ghost" onClick={() => void copyDiagnostic()}>
               <Copy aria-hidden="true" className="size-3.5" />
               {copied ? "복사됨" : "복사"}
@@ -504,7 +504,7 @@ export function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
     }
   };
   return (
-    <div className="job-continuous-runtime">
+    <div className="job-continuous-runtime" data-testid="continuous-runtime-card">
       <Panel>
         <PanelHeader icon={<Activity aria-hidden="true" size={18} />} title="연속 수집 런타임" />
         <div className="job-runtime-panel-body">

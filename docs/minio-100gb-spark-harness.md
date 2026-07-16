@@ -390,3 +390,22 @@ npm run dev
 ```
 
 The browser calls backend endpoints for source tests and create flow.
+
+## 10. 통합 E2E·장애 복구 프로필
+
+개별 Kafka E2E/soak 명령은 `backend/scripts/etl-e2e-recovery-scenarios.json`에서 full-stack 복구 시나리오로 묶는다. PR은 Spark 없는 application/ephemeral 계약, release는 fake Spark REST actual process와 Docker UID 185 mount, nightly는 격리 Kafka/Spark/object storage와 headless browser를 실행한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery:release
+
+# isolated self-hosted stack only
+ASKLAKE_E2E_ISOLATED_ENV=true \
+ASKLAKE_CONTINUOUS_E2E_BASE_URL=http://127.0.0.1:8080 \
+ASKLAKE_E2E_FRONTEND_URL=http://127.0.0.1:5174 \
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+npm run verify:etl-e2e-recovery:nightly
+```
+
+nightly는 worker/backend/Kafka/MinIO pause·restart와 publication fault를 기존 opt-in script로 주입하고, 각 scenario가 `missingCount=0`, `duplicateCount=0`, monotonic checkpoint/cursor와 idempotent Catalog/Dashboard identity를 증명해야 한다. production URL, static AWS/MinIO credential과 공유 topic/table에는 실행하지 않는다. 상세 결과 형식과 Go/No-Go는 [ETL E2E·복구 하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)을 따른다.
