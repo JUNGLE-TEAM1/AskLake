@@ -58,6 +58,8 @@ EKS Spark Pod Identity로 다음 368개 참조를 검증했다.
 
 RDS Catalog API에서 복원된 Dataset의 최신 성공 materialization을 선택하고, 해당 S3 prefix 안의 실제 Parquet object 하나를 exact path로 고정했다. Git 제외 image receipt의 Spark runtime과 `asklake-spark` Pod Identity를 사용한 임시 `SparkApplication`으로 해당 object를 읽었다.
 
+이 선택은 당시 운영자가 Catalog API 결과를 확인해 수행했다. 이후 추가한 재사용 실행기는 private 입력의 `datasetId`를 Catalog API와 다시 대조하지 않으므로, 재실행 결과만으로 Catalog provenance가 자동 증명되지는 않는다. 실행기가 독립적으로 보장하는 범위는 `bounded-s3-parquet-object`이며 Catalog provenance 자동 검증은 후속 gate다.
+
 - SparkApplication terminal state: `COMPLETED`
 - 물리 schema: 22 columns
 - 제한 샘플: 5 rows, non-empty

@@ -9,7 +9,7 @@ source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 MODE="${1:---live}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
-RECEIPT_PATH="${ASKLAKE_EKS_IMAGE_RECEIPT:-}"
+RECEIPT_PATH="${ASKLAKE_IMAGE_RECEIPT:-}"
 INPUT_PATH="${ASKLAKE_PHYSICAL_READ_INPUT:-}"
 TIMEOUT_SECONDS="${ASKLAKE_PHYSICAL_READ_TIMEOUT_SECONDS:-900}"
 POLL_SECONDS="${ASKLAKE_PHYSICAL_READ_POLL_SECONDS:-2}"
@@ -19,6 +19,7 @@ RUN_LABEL="physical-read-${RUN_SUFFIX}"
 APP_NAME="asklake-physical-read-${RUN_SUFFIX}"
 MANIFEST_FILE="$(mktemp)"
 DRIVER_LOG_FILE="$(mktemp)"
+KUBECTL_ERROR_FILE="$(mktemp)"
 RESOURCES_CREATED=false
 CLEANUP_COMPLETE=false
 
@@ -39,6 +40,21 @@ cleanup_resources() {
       --ignore-not-found --wait=true --timeout=120s >/dev/null 2>&1 || cleanup_failed=1
   done
 
+  local prefix_resources
+  for resource in sparkapplications.sparkoperator.k8s.io pods services configmaps persistentvolumeclaims; do
+    if ! prefix_resources="$(kubectl get "$resource" -n "$NAMESPACE" -o name 2>"$KUBECTL_ERROR_FILE")"; then
+      cleanup_failed=1
+      continue
+    fi
+    while IFS= read -r resource_name; do
+      [[ -n "$resource_name" ]] || continue
+      if ! kubectl delete "$resource_name" -n "$NAMESPACE" \
+        --ignore-not-found --wait=true --timeout=120s >/dev/null 2>"$KUBECTL_ERROR_FILE"; then
+        cleanup_failed=1
+      fi
+    done < <(awk -F/ -v prefix="$APP_NAME" '$2 == prefix || index($2, prefix "-") == 1' <<<"$prefix_resources")
+  done
+
   [[ "$cleanup_failed" -eq 0 ]] || return 1
   CLEANUP_COMPLETE=true
 }
@@ -50,7 +66,7 @@ on_exit() {
     echo "physical read cleanup failed" >&2
     [[ "$exit_code" -ne 0 ]] || exit_code=1
   fi
-  rm -f "$MANIFEST_FILE" "$DRIVER_LOG_FILE"
+  rm -f "$MANIFEST_FILE" "$DRIVER_LOG_FILE" "$KUBECTL_ERROR_FILE"
   exit "$exit_code"
 }
 trap on_exit EXIT
@@ -63,7 +79,7 @@ for command in git jq node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 
-[[ -n "$RECEIPT_PATH" && -f "$RECEIPT_PATH" ]] || fail "ASKLAKE_EKS_IMAGE_RECEIPT must reference a private receipt file"
+[[ -n "$RECEIPT_PATH" && -f "$RECEIPT_PATH" ]] || fail "ASKLAKE_IMAGE_RECEIPT must reference a private receipt file"
 [[ -n "$INPUT_PATH" && -f "$INPUT_PATH" ]] || fail "ASKLAKE_PHYSICAL_READ_INPUT must reference a private input file"
 
 for private_file in "$RECEIPT_PATH" "$INPUT_PATH"; do
@@ -80,9 +96,9 @@ node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT_PATH" >/dev/null
 jq -e '
   type == "object"
   and (keys | sort) == ["datasetId", "materializationRoot", "objectUri"]
-  and (.datasetId | type == "string" and length > 0)
-  and (.materializationRoot | type == "string" and length > 0 and (explode | all(. >= 32)))
-  and (.objectUri | type == "string" and length > 0 and (explode | all(. >= 32)))
+  and (.datasetId | type == "string" and length > 0 and length <= 256 and (explode | all(. >= 32)))
+  and (.materializationRoot | type == "string" and length > 0 and length <= 2048 and (explode | all(. >= 32)))
+  and (.objectUri | type == "string" and length > 0 and length <= 2048 and (explode | all(. >= 32)))
 ' "$INPUT_PATH" >/dev/null || fail "physical read input contract is invalid"
 
 materialization_root="$(jq -r '.materializationRoot' "$INPUT_PATH")"
@@ -90,11 +106,25 @@ object_uri="$(jq -r '.objectUri' "$INPUT_PATH")"
 spark_image="$(jq -r '.images.sparkRuntime' "$RECEIPT_PATH")"
 normalized_root="${materialization_root%/}"
 
-[[ "$normalized_root" == s3a://* ]] || fail "materialization root must use s3a"
-[[ "$object_uri" == s3a://*.parquet ]] || fail "physical read object must be one exact s3a Parquet object"
+[[ "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || fail "EKS namespace is invalid"
+[[ "$REGION" =~ ^[a-z]{2}(-[a-z0-9]+)+-[0-9]+$ ]] || fail "AWS region is invalid"
+[[ "$normalized_root" =~ ^s3a://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^[:space:]?#\\]+$ ]] || \
+  fail "materialization root must be an exact s3a prefix"
+[[ "$object_uri" =~ ^s3a://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^[:space:]?#\\]+[.]parquet$ ]] || \
+  fail "physical read object must be one exact s3a Parquet object"
+root_path="${normalized_root#s3a://}"
+object_path="${object_uri#s3a://}"
+[[ "$root_path" != *"//"* && "$root_path" != *"/../"* && "$root_path" != *"/./"* && \
+   "$root_path" != *"/.." && "$root_path" != *"/." ]] || \
+  fail "materialization root contains a non-canonical path"
+[[ "$object_path" != *"//"* && "$object_path" != *"/../"* && "$object_path" != *"/./"* ]] || \
+  fail "physical read object contains a non-canonical path"
 [[ "$object_uri" == "$normalized_root/"* ]] || fail "physical read object is outside the materialization root"
-[[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || fail "physical read timeout must be a positive integer"
-[[ "$POLL_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "physical read poll interval must be non-negative"
+[[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ && "$TIMEOUT_SECONDS" -le 3600 ]] || \
+  fail "physical read timeout must be between 1 and 3600 seconds"
+[[ "$POLL_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "physical read poll interval is invalid"
+awk -v value="$POLL_SECONDS" 'BEGIN { exit !(value >= 0.1 && value <= 30) }' || \
+  fail "physical read poll interval must be between 0.1 and 30 seconds"
 [[ "$ROW_LIMIT" =~ ^[1-9][0-9]*$ && "$ROW_LIMIT" -le 100 ]] || fail "physical read row limit must be between 1 and 100"
 
 spark_image_json="$(jq -Rn --arg value "$spark_image" '$value')"
@@ -224,7 +254,7 @@ grep -q 'asklake.io/workload-class: spark' "$MANIFEST_FILE"
 grep -q 'readOnly: true' "$MANIFEST_FILE"
 
 if [[ "$MODE" == "--validate-only" ]]; then
-  jq -n '{manifestValidated: true, mode: "validate-only"}'
+  jq -n '{manifestValidated: true, mode: "validate-only", evidenceScope: "bounded-s3-parquet-object"}'
   exit 0
 fi
 
@@ -235,11 +265,45 @@ done
   fail "ASKLAKE_PHYSICAL_READ_CONFIRM is required for live execution"
 
 verify_asklake_eks_context
-kubectl get crd sparkapplications.sparkoperator.k8s.io >/dev/null 2>&1 || \
-  fail "SparkApplication CRD is unavailable"
+crd_json="$(kubectl get crd sparkapplications.sparkoperator.k8s.io -o json 2>"$KUBECTL_ERROR_FILE")" || \
+  fail "SparkApplication CRD preflight failed"
+jq -e 'any(.status.conditions[]?; .type == "Established" and .status == "True")' <<<"$crd_json" >/dev/null || \
+  fail "SparkApplication CRD is not Established"
+
+for component in controller webhook; do
+  deployment_json="$(kubectl get deployments -n spark-operator \
+    -l "app.kubernetes.io/component=$component" -o json 2>"$KUBECTL_ERROR_FILE")" || \
+    fail "Spark Operator readiness preflight failed"
+  jq -e '.items | length == 1 and .[0].status.availableReplicas >= 1 and .[0].status.unavailableReplicas == null' \
+    <<<"$deployment_json" >/dev/null || fail "Spark Operator component is not Ready"
+done
+
+kubectl get serviceaccount asklake-spark -n "$NAMESPACE" >/dev/null 2>"$KUBECTL_ERROR_FILE" || \
+  fail "Spark ServiceAccount preflight failed"
+for resource in nodepool/asklake-spark nodeclass/asklake-spark; do
+  resource_json="$(kubectl get "$resource" -o json 2>"$KUBECTL_ERROR_FILE")" || \
+    fail "Spark Auto Mode capacity preflight failed"
+  jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' <<<"$resource_json" >/dev/null || \
+    fail "Spark Auto Mode capacity is not Ready"
+  if [[ "$resource" == nodepool/* ]]; then
+    jq -e 'any(.spec.template.spec.requirements[]?; .key == "kubernetes.io/arch" and (.values | index("amd64")))' \
+      <<<"$resource_json" >/dev/null || fail "Spark NodePool does not require amd64"
+  fi
+done
+
+association_json="$(aws eks list-pod-identity-associations \
+  --cluster-name "$ASKLAKE_EKS_CLUSTER_NAME" --namespace "$NAMESPACE" \
+  --service-account asklake-spark --region "$REGION" --output json 2>"$KUBECTL_ERROR_FILE")" || \
+  fail "Spark Pod Identity preflight failed"
+jq -e '.associations | length == 1' <<<"$association_json" >/dev/null || \
+  fail "Spark Pod Identity association is missing or ambiguous"
+
+kubectl apply --dry-run=server -f "$MANIFEST_FILE" >/dev/null 2>"$KUBECTL_ERROR_FILE" || \
+  fail "physical read server-side admission failed"
 
 RESOURCES_CREATED=true
-kubectl apply -f "$MANIFEST_FILE" >/dev/null
+kubectl apply -f "$MANIFEST_FILE" >/dev/null 2>"$KUBECTL_ERROR_FILE" || \
+  fail "physical read resource creation failed"
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 terminal_state=""
@@ -273,9 +337,11 @@ jq -e '
 cleanup_resources || fail "physical read cleanup failed"
 
 label_residue="$(kubectl get sparkapplications.sparkoperator.k8s.io,pods,services,configmaps,persistentvolumeclaims \
-  -n "$NAMESPACE" -l "asklake.io/physical-read-run=$RUN_LABEL" -o name 2>/dev/null || true)"
+  -n "$NAMESPACE" -l "asklake.io/physical-read-run=$RUN_LABEL" -o name 2>"$KUBECTL_ERROR_FILE")" || \
+  fail "physical read label residue audit failed"
 prefix_residue="$(kubectl get sparkapplications.sparkoperator.k8s.io,pods,services,configmaps,persistentvolumeclaims \
-  -n "$NAMESPACE" -o name 2>/dev/null | awk -v prefix="$APP_NAME" 'index($0, prefix) > 0' || true)"
+  -n "$NAMESPACE" -o name 2>"$KUBECTL_ERROR_FILE")" || fail "physical read prefix residue audit failed"
+prefix_residue="$(awk -F/ -v prefix="$APP_NAME" '$2 == prefix || index($2, prefix "-") == 1' <<<"$prefix_residue")"
 [[ -z "$label_residue" && -z "$prefix_residue" ]] || fail "physical read resource residue remains"
 
 secret_access="$(kubectl auth can-i get secrets -n "$NAMESPACE" \
@@ -288,6 +354,7 @@ jq -n \
   --argjson returnedRows "$(jq '.returnedRows' <<<"$result_json")" \
   --argjson rowWidthMatched "$(jq '.rowWidthMatched' <<<"$result_json")" \
   '{
+    evidenceScope: "bounded-s3-parquet-object",
     terminalState: $terminalState,
     columnCount: $columnCount,
     returnedRows: $returnedRows,

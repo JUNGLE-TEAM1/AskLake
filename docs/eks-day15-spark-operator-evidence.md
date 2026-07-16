@@ -48,7 +48,7 @@ resource 값은 이번 MVP controller용 시작값이다. 실제 동시 제출 �
 - `asklake-backend`가 SparkApplication을 생성할 RBAC를 가진다.
 - B PR #774의 실제 SparkApplication template이 server-side dry-run을 통과했다.
 - 설치 과정에서 SparkApplication은 생성하지 않았고 적용 후 개수도 0개다.
-- 후속 15.5 검증에서는 Git 제외 receipt의 Spark runtime으로 대표 S3 Parquet object를 읽는 임시 SparkApplication이 `COMPLETED`됐고 정리 후 관련 resource 잔여가 0개였다.
+- 후속 15.5 검증에서는 운영자가 Catalog API에서 선별한 Git 제외 입력과 receipt의 Spark runtime으로 대표 S3 Parquet object를 읽는 임시 SparkApplication이 `COMPLETED`됐고 정리 후 관련 resource 잔여가 0개였다. 재사용 실행기 자체의 증거 범위는 Catalog provenance가 아니라 bounded exact S3 Parquet object read다.
 - controller 최근 로그에서 error/fatal/panic은 확인되지 않았다.
 - destroy preflight가 exact release/version, 다른 Spark Operator release 부재, operator namespace 단독 사용, 세 workload kind 0개와 namespace ownership을 확인했고 아무것도 삭제하지 않은 채 통과했다.
 - Foundation verifier와 Terraform 1.15.8 validate 및 mock-provider test 44개가 통과했다.
@@ -68,7 +68,7 @@ Foundation revision 3의 driver Role은 현재 다음 권한만 허용한다.
 - 다른 namespace의 Pod 생성: 거부
 - PVC 생성: 거부
 
-초기 설치 시에는 B manifest가 PVC를 생성하지 않는다는 이유로 PVC 권한을 두지 않았다. 후속 Spark 4.0.1 대표 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 시도해 403을 남기는 것을 확인했고, 실제 동작에 필요한 cleanup verb만 별도 foundation upgrade로 추가했다. PVC `create/update/patch`, Service·ConfigMap `update/patch`와 Secret read는 계속 거부한다. 15.5 verifier는 revision 3의 전체 positive/negative matrix로 동기화됐고 실제 `kubectl auth can-i` 검증을 통과했다. Foundation 정적 검증도 렌더된 Role의 정확한 세 rule을 확인한다.
+초기 설치 시에는 B manifest가 PVC를 생성하지 않는다는 이유로 PVC 권한을 두지 않았다. 후속 Spark 4.0.1 대표 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 시도해 403을 남기는 것을 확인했고, 실제 동작에 필요한 cleanup verb만 별도 foundation upgrade로 추가했다. PVC `create/update/patch`, Service·ConfigMap `update/patch`와 Secret read는 계속 거부한다. 15.5 verifier는 revision 3의 positive/negative matrix와 wildcard·cluster-wide deny를 검사한다. Foundation 정적 검증은 정확한 세 rule을 검사하며 mutation test가 Secret, wildcard, verb/API group drift를 거부한다.
 
 Kubernetes RBAC은 `deletecollection` 요청의 label selector까지 제한하지 못하므로 이 권한은 같은 namespace resource에 대한 잔여 blast radius를 가진다. 현재 MVP는 공유 `asklake-dev` namespace를 유지하지만 Airflow PVC나 다른 stateful workload를 추가하기 전에는 Spark 전용 namespace 분리, 공유 namespace 위험 수용, 별도 cleanup 구조 중 하나를 결정해야 한다.
 

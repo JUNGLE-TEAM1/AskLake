@@ -5,9 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import duckdb
+from fastapi.testclient import TestClient
 
-from app.core.auth_context import ActorContext
+from app.api.catalog import get_catalog_service
+from app.core.auth_context import ActorContext, get_actor_context
 from app.core.errors import ApiError
+from app.main import create_app
 from app.schemas.catalog import (
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
@@ -258,6 +261,68 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertNotIn(sensitive_message, str(raised.exception.details))
         self.assertIsInstance(raised.exception.__cause__, ApiError)
         self.assertEqual(raised.exception.__cause__.code, "TRINO_UNAVAILABLE")
+
+    def test_rows_endpoint_returns_sanitized_http_502_envelope(self) -> None:
+        sensitive_message = (
+            "Trino at https://private-query.example.internal failed; "
+            "token=do-not-expose; query=SELECT * FROM private_table"
+        )
+
+        dataset = self.dataset.model_copy(update={
+            "query_engine_status": "available",
+            "query_engine_table": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_rows_fixture",
+                "format": "iceberg",
+            },
+            "storage_format": "iceberg",
+            "storage_location": "s3://warehouse/asklake/catalog_rows_fixture",
+        })
+        client = SimpleNamespace(
+            submit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                ApiError("TRINO_UNAVAILABLE", sensitive_message, 503)
+            )
+        )
+
+        class FailingCatalogService:
+            def get_dataset_rows(self, dataset_id, _actor, *, limit, offset):
+                self_dataset = dataset.model_copy(update={"id": dataset_id})
+                return read_dataset_rows(
+                    self_dataset,
+                    limit=limit,
+                    offset=offset,
+                    trino_client=client,  # type: ignore[arg-type]
+                )
+
+        app = create_app()
+        app.dependency_overrides[get_catalog_service] = FailingCatalogService
+        app.dependency_overrides[get_actor_context] = lambda: ActorContext(
+            name="catalog-reader",
+            role="viewer",
+        )
+
+        response = TestClient(app).get(
+            "/api/catalog/datasets/catalog_rows_fixture/rows?limit=1&offset=0"
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": {
+                    "code": "SQL_STORAGE_ERROR",
+                    "message": "Catalog Iceberg dataset rows could not be read",
+                    "details": {
+                        "datasetId": "catalog_rows_fixture",
+                        "reason": "TRINO_UNAVAILABLE",
+                    },
+                }
+            },
+        )
+        self.assertNotIn(sensitive_message, response.text)
+        self.assertNotIn("private-query.example.internal", response.text)
+        self.assertNotIn("do-not-expose", response.text)
 
 
 if __name__ == "__main__":

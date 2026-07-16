@@ -49,9 +49,14 @@ expect_allowed delete sparkapplications.sparkoperator.k8s.io "$BACKEND_USER" "$J
 for verb in get list watch; do
   expect_denied "$verb" secrets "$SPARK_USER" "$JOB_NAMESPACE"
 done
-for resource in nodes namespaces clusterroles.rbac.authorization.k8s.io; do
-  expect_denied get "$resource" "$SPARK_USER" ""
+for verb in get list watch; do
+  for resource in nodes namespaces clusterroles.rbac.authorization.k8s.io; do
+    expect_denied "$verb" "$resource" "$SPARK_USER" ""
+  done
 done
+expect_denied '*' '*' "$SPARK_USER" "$JOB_NAMESPACE"
+expect_denied '*' '*' "$SPARK_USER" ""
+expect_denied get '*' "$SPARK_USER" "$JOB_NAMESPACE"
 expect_denied create pods "$SPARK_USER" default
 for verb in create update patch; do
   expect_denied "$verb" persistentvolumeclaims "$SPARK_USER" "$JOB_NAMESPACE"
