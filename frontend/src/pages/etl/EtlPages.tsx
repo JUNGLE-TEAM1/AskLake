@@ -92,7 +92,6 @@ import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, tes
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionGrant, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
-import { applyClickEventRecordSchemaPreset, CLICK_EVENT_RECORD_SCHEMA_PRESET, isClickEventLogSource } from "./recordParsingPreset";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
@@ -2647,7 +2646,6 @@ export function RecordParsingPage({
   const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const hasClickEventPreset = isClickEventLogSource(draft.source.sourceLabel, draft.source.sourceConfig);
 
   const loadPreview = async (nextParsing: RecordParsingDraft) => {
     setLoading(true);
@@ -2701,28 +2699,6 @@ export function RecordParsingPage({
       } : column),
       recordParsing: nextParsing,
     } : current);
-  };
-
-  const applyRecommendedSchema = () => {
-    const nextParsing = applyClickEventRecordSchemaPreset(parsing);
-    if (!nextParsing) {
-      onNotify("10개 필드가 감지된 클릭 이벤트 로그에서만 추천 스키마를 적용할 수 있습니다.");
-      return;
-    }
-
-    setParsing(nextParsing);
-    setPreview((current) => current ? {
-      ...current,
-      columns: current.columns.map((column, index) => ({
-        ...column,
-        sourceName: nextParsing.columns[index].name,
-        targetName: nextParsing.columns[index].name,
-        type: nextParsing.columns[index].inferredType,
-      })),
-      recordParsing: nextParsing,
-    } : current);
-    onAction("etl.record_parsing.recommended_schema_applied", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "click-events.log");
-    onNotify("추천 스키마 10개 필드를 적용했습니다.");
   };
 
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
@@ -2791,19 +2767,16 @@ export function RecordParsingPage({
           <div className="record-parsing-panel-header">
             <h2><SlidersHorizontal aria-hidden="true" />필드 추론</h2>
             <div className="record-parsing-panel-actions">
-              {hasClickEventPreset ? (
-                <Button
-                  className="record-parsing-preset-button"
-                  disabled={loading || parsing.expectedFieldCount !== CLICK_EVENT_RECORD_SCHEMA_PRESET.length}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  onClick={applyRecommendedSchema}
-                >
-                  <Sparkles aria-hidden="true" />
-                  추천 스키마 적용
-                </Button>
-              ) : null}
+              <Button
+                className="record-parsing-ai-button"
+                data-testid="record-parsing-ai-button"
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <Sparkles aria-hidden="true" />
+                AI 필드 자동 추론
+              </Button>
               <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
                 {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
                 {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
