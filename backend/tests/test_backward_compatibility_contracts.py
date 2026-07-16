@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.main import app
 from app.core.compatibility import (
     CompatibilityPath,
     compatibility_path_counts,
@@ -35,6 +36,12 @@ class BackwardCompatibilityContractTests(unittest.TestCase):
         self.assertEqual(job.rule_contract_version, "1.0")
         self.assertEqual(job.rules, [])
         self.assertEqual(job.permission_grants, [])
+
+    def test_iceberg_target_keeps_legacy_openapi_component_name(self) -> None:
+        schemas = app.openapi()["components"]["schemas"]
+        self.assertIn("IcebergWriterTarget", schemas)
+        self.assertNotIn("IcebergWriterTarget-Input", schemas)
+        self.assertNotIn("IcebergWriterTarget-Output", schemas)
 
     def test_old_continuous_session_payload_hydrates_with_additive_defaults(self) -> None:
         session = KafkaContinuousSession.model_validate({

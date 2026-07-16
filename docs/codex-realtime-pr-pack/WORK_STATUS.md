@@ -5,9 +5,9 @@
 ## 현재 제어값
 
 ```yaml
-current_pr: STACK-02
-last_completed_pr: STACK-02
-next_ready_pr: STACK-03
+current_pr: null
+last_completed_pr: STACK-03
+next_ready_pr: STACK-04
 last_result: DONE
 updated_at: 2026-07-16
 base_branch: dev
@@ -24,8 +24,8 @@ merge_order:
 |---|---|---|---|---|
 | STACK-01 | DONE | PR-00, PR-01 | 계약·ADR·baseline test·feature flag | #803 / `feat-#803` / #808 |
 | STACK-02 | DONE | PR-02, PR-03, PR-04 | durable SSE backend·frontend·infra | #811 / `feat-#811` / #815 Draft |
-| STACK-03 | READY | PR-05, PR-06 | continuous SQL planner·runtime·publication | 생성 예정 |
-| STACK-04 | LOCKED | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | 생성 예정 |
+| STACK-03 | DONE | PR-05, PR-06 | continuous SQL planner·runtime·publication | #816 / `feat-#816` / #822 Draft |
+| STACK-04 | READY | PR-07, PR-08 | E2E·복구·보안·CI·rollout·최종 감사 | 생성 예정 |
 
 ## 상태 변경 규칙
 
@@ -63,3 +63,17 @@ merge_order:
 - Caddy/NGINX streaming 설정, readiness/status, env·capacity guardrail과 contract 검증 스크립트를 추가했다.
 - backend 80 tests, frontend UI 132 checks, realtime transport 5 tests, production build, Python compile, Compose config와 diff check가 통과했다.
 - Docker daemon이 꺼져 Caddy container validate와 NGINX `-t`는 실행하지 못했으며 STACK-04 실제 proxy 통합 검증에 남겼다.
+
+### STACK-03
+
+- 시작 기준: `feat-#811`의 `72a4dffe`, `origin/dev`의 `b93ae273`이 조상임을 확인했다.
+- 기준선: SQL route/auth 및 Kafka Continuous runtime/publication 회귀 39개 테스트가 통과했다.
+- Issue/branch: #816 / `feat-#816`.
+- Draft PR: #822 (`feat-#816 -> dev`), 선행 #815 merge 후 review-ready 전환.
+- SQL AST planner, persisted Job/Run/Batch/command, generation/fencing lifecycle을 구현했다.
+- PINNED/LATEST batch-local static binding과 Spark JOIN adapter, exact Iceberg 검증 및 3단계 publication을 구현했다.
+- 새 Continuous SQL 5초 기본 trigger, bounded static snapshot cache, snapshot별 유일키 검증 재사용과 신규 output `_asklake_run_id` partition을 추가했다.
+- API는 fencing token 원문을 숨기고 start/resume/recover 때 입력 권한·governance를 다시 검사한다.
+- Continuous SQL contract 23개와 기존 경로를 포함한 focused 56개 테스트, exact Iceberg writer 12개, Kafka contract/REST manager, compile/Compose 검증이 통과했다.
+- 전체 backend discovery의 기존 3개 drift는 결과 문서에 별도로 기록했고 이번 branch에서 범위를 넓혀 수정하지 않았다.
+- 실제 Spark/Iceberg/Trino fault·restart·soak는 STACK-04 opt-in gate로 이관했다.

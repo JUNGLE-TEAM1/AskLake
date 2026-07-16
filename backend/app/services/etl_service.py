@@ -77,6 +77,7 @@ from app.domain.continuous_runtime import (
     record_runtime_observation,
     runtime_contract_projection,
 )
+from app.domain.dataset_identity import catalog_relation_metadata
 from app.domain.pipeline_contract import (
     create_request_violations,
     permission_grant_violations,
@@ -178,7 +179,6 @@ from app.schemas.etl import (
 )
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionGrant
-
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
 from app.services.governance_enforcement import require_governed_access
@@ -4736,7 +4736,7 @@ def dataset_payload_from_spark_result(
         "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
-        "rows": format_rows(aggregate["rowCount"]),
+        **catalog_relation_metadata(aggregate["rowCount"], format_rows(aggregate["rowCount"]), job.execution_mode == "continuous" and is_kafka_job(job), job.schema_fingerprint),
         "sampleRows": sample_rows,
         "schema": schema_json,
         "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,

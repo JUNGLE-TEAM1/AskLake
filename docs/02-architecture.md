@@ -516,8 +516,15 @@ Spark/Iceberg commit
 - DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
+- 새 Continuous SQL request의 `triggerIntervalSeconds` 기본값은 5초다. 이는 micro-batch 시작 주기이며, 실제 end-to-end 반영 시간은 Spark JOIN, Iceberg commit, exact Trino 검증, Catalog/Dashboard publication 시간을 더한 값이다. 기존 Job은 DB에 저장된 주기를 유지하고 일반 Kafka Continuous Job의 기본값은 바꾸지 않는다.
+- Catalog `estimatedRowCount`가 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 이하인 static relation만 exact snapshot·schema identity로 Spark cache를 재사용한다. 유일키 scan은 같은 snapshot·JOIN key에서 한 번만 수행하고, snapshot이 바뀌면 기존 frame과 검증 identity를 폐기한다. 통계가 없거나 한도를 넘는 relation은 cache하지 않으며 0은 cache 비활성이다.
+- 새로 생성하는 Continuous SQL Iceberg output은 `_asklake_run_id` identity partition을 추가해 publication exact-count와 Dashboard revision delta가 해당 batch file만 가지치기하도록 한다. 이 marker는 사용자 schema에 노출하지 않고, 이미 생성된 table은 자동 partition evolution 없이 기존 spec을 유지하므로 exact 검증은 그대로 동작하지만 가지치기 이득은 새 table에만 적용된다.
+- `continuous_sql_jobs/runs/batches/commands`가 SQL·plan·desired/observed state·generation/fence·batch lineage를 보관한다. API application service는 Node worker gateway만 호출하며 SQL planner, Spark batch adapter, publication reconciler를 분리한다.
+- Run 시작은 static snapshot set을 DB에 먼저 저장한 뒤 worker를 시작한다. 각 batch는 generation별 durable binding manifest를 먼저 만들고, Spark/Iceberg commit 후 `output_committed -> catalog_ready -> dashboard_ready`로 전진한다.
+- Catalog Dataset revision과 durable event는 exact Iceberg snapshot 및 `_asklake_run_id` 행 수 검증 뒤 같은 transaction에 기록한다. worker ACK는 이 transaction 이후이며 ACK 실패는 publication을 되돌리지 않고 retry한다.
+- stale worker/report/publication은 plan hash, Run generation과 fencing hash가 하나라도 다르면 거절한다. fencing token 원문은 worker bridge에만 전달하고 public API에는 hash만 노출한다.
 
-결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
 
 ## 15) Pipeline·Snapshot·SQL·Catalog application 경계
 

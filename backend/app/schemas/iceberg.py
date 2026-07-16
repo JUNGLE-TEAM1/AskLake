@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import ConfigDict, Field, computed_field, field_validator
 
 from app.schemas.catalog import QueryEngineTableRef
 from app.schemas.common import CamelModel
@@ -9,6 +9,8 @@ IcebergWriteMode = Literal["append", "replace"]
 
 
 class IcebergWriterTarget(CamelModel):
+    model_config = ConfigDict(json_schema_mode_override="serialization")
+
     catalog: str
     namespace: str
     table: str

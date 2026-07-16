@@ -14,6 +14,8 @@ from pyspark.sql.functions import array, array_except, array_union, col, concat,
 from pyspark.sql.types import BooleanType, DoubleType, LongType, MapType, StringType, StructField, StructType, TimestampType
 
 from kafka_schema_paths import build_nested_schema_tree, expected_object_keys, json_path, split_source_path
+import continuous_sql_runtime as continuous_sql
+from continuous_sql_runtime import continuous_output_partition_columns
 from object_storage_runtime import configure_spark_hadoop
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules, supports_snapshot_rules
 from spark_job_run import (
@@ -58,6 +60,7 @@ RULES = [rule for rule in json_array_env("ASKLAKE_CONTINUOUS_RULES") if isinstan
 RECORD_PARSING = json_object_env("ASKLAKE_CONTINUOUS_RECORD_PARSING")
 RECORD_PARSING_ENABLED = RECORD_PARSING.get("enabled") is True
 RULE_OUTPUT_SCHEMA = [item for item in json_array_env("ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA") if isinstance(item, (list, tuple)) and len(item) >= 2]
+CONTINUOUS_SQL_PLAN = continuous_sql.load_continuous_sql_plan()
 RULE_FINGERPRINT = canonical_hash({"contractVersion": RULE_CONTRACT_VERSION, "rules": RULES})
 EXPECTED_RULE_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_RULE_FINGERPRINT", "")
 EXPECTED_SCHEMA_FINGERPRINT = os.environ.get("ASKLAKE_CONTINUOUS_EXPECTED_SCHEMA_FINGERPRINT", "")
@@ -489,6 +492,7 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "ruleMetrics": RULE_METRICS,
         "lastRuleResult": LAST_RULE_RESULT,
         "lastBatchEvidence": LAST_BATCH_EVIDENCE,
+        **continuous_sql.report_metadata(CONTINUOUS_SQL_PLAN),
         "lastError": error,
     }
     atomic_write_json(
@@ -753,6 +757,7 @@ def continuous_runtime_contract(output_path: str, iceberg_target: dict[str, Any]
         "persistedSchemaFingerprint": EXPECTED_SCHEMA_FINGERPRINT or None,
         "schemaFingerprint": SCHEMA_STATE.get("schemaFingerprint"),
         "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
+        **continuous_sql.contract_metadata(CONTINUOUS_SQL_PLAN),
     }
     return {**contract, "runtimeFingerprint": canonical_hash(contract)}
 
@@ -1241,25 +1246,6 @@ def normalized_source_ranges(value: Any) -> list[dict[str, Any]]:
     ], key=lambda item: (item["topic"], item["partition"]))
 
 
-def continuous_batch_source_boundary(
-    batch_id: int,
-    source_ranges: list[dict[str, Any]],
-    checkpoint_path: str,
-) -> dict[str, Any]:
-    identity = {
-        "batchId": int(batch_id),
-        "checkpointPath": checkpoint_path.rstrip("/"),
-        "consumerGroupId": os.environ["ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID"],
-        "jobId": JOB_ID,
-        "kind": "kafka_continuous_batch",
-        "sourceRanges": normalized_source_ranges(source_ranges),
-        "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
-    }
-    boundary_id = canonical_hash(identity)
-    run_id = f"continuous:{JOB_ID}:batch:{int(batch_id)}:{boundary_id[:16]}"
-    return {**identity, "boundaryId": boundary_id, "runId": run_id}
-
-
 def validate_manifest_retry(
     manifest: dict[str, Any],
     source_ranges: list[dict[str, Any]],
@@ -1426,10 +1412,9 @@ def main() -> None:
             return
         batch_id = next_publication_batch_id()
         source_ranges = batch_source_ranges(batch)
-        source_boundary = continuous_batch_source_boundary(
-            batch_id,
-            source_ranges,
-            checkpoint_path,
+        static_snapshots, source_boundary = continuous_sql.prepare_batch_identity(
+            spark, CONTINUOUS_SQL_PLAN, output_path, batch_id,
+            normalized_source_ranges(source_ranges), checkpoint_path, config, JOB_ID,
         )
         run_id = str(source_boundary["runId"])
         stage_durations = {
@@ -1446,8 +1431,7 @@ def main() -> None:
             "schema_accepted_count": 0,
             "schema_quarantined_count": 0,
             "source_ranges": source_ranges,
-            "source_boundary": source_boundary,
-            "run_id": run_id,
+            **continuous_sql.batch_context_metadata(source_boundary, static_snapshots),
             "stored_count": 0,
         }
         for item in source_ranges:
@@ -1559,6 +1543,7 @@ def main() -> None:
             col("raw_payload"),
             current_timestamp().alias("ingested_at"),
         )
+        projected = continuous_sql.execute_continuous_sql_batch(spark, projected, CONTINUOUS_SQL_PLAN, static_snapshots)
         stage_durations["schemaDurationMs"] = max(0, round((time.monotonic() - schema_started_at) * 1000))
         CURRENT_BATCH_CONTEXT.update({
             "current_stage": "transform",
@@ -1596,7 +1581,7 @@ def main() -> None:
         })
         transformed = rule_execution["frame"].persist()
         target_frame = select_continuous_target(transformed).persist()
-        stored_count = target_frame.count()
+        stored_count = continuous_sql.validated_output_count(target_frame, CONTINUOUS_SQL_PLAN, total)
         rule_quarantine = rule_execution["quarantine"]
         rule_quarantine_count = rule_quarantine.count() if rule_quarantine is not None else 0
         quarantined_count = schema_invalid_count + rule_quarantine_count
@@ -1625,7 +1610,7 @@ def main() -> None:
                 iceberg_target,
                 job_id=JOB_ID,
                 run_id=run_id,
-                partition_columns=iceberg_target["partitionColumns"],
+                partition_columns=continuous_output_partition_columns(iceberg_target["partitionColumns"], CONTINUOUS_SQL_PLAN),
                 schema_fingerprint=EXPECTED_SCHEMA_FINGERPRINT or SCHEMA_STATE.get("schemaFingerprint"),
                 rule_fingerprint=RULE_FINGERPRINT,
                 source_boundary=source_boundary,
@@ -1722,6 +1707,7 @@ def main() -> None:
             "topic": os.environ["ASKLAKE_CONTINUOUS_TOPIC"],
             "sourceRanges": source_ranges,
             "sourceBoundary": source_boundary,
+            **continuous_sql.publication_metadata(CONTINUOUS_SQL_PLAN, static_snapshots),
             "consumedCount": total,
             "storedCount": stored_count,
             "quarantinedCount": quarantined_count,
