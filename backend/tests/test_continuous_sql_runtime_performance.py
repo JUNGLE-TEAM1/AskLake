@@ -180,7 +180,9 @@ class ContinuousSqlRuntimePerformanceTests(unittest.TestCase):
             runtime.continuous_output_partition_columns(["event_date"], {}),
             ["event_date"],
         )
-        worker_source = (SCRIPTS_DIR / "kafka_continuous_stream.py").read_text(encoding="utf-8")
+        worker_source = (
+            SCRIPTS_DIR / "runtime" / "kafka_continuous_runtime.py"
+        ).read_text(encoding="utf-8")
         self.assertIn(
             "partition_columns=continuous_output_partition_columns(",
             worker_source,

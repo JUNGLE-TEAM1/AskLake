@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
@@ -1135,6 +1136,11 @@ class DashboardRuntimeService:
 
         color = normalized.get("color")
         if isinstance(color, str):
+            record_compatibility_path(
+                CompatibilityPath.DASHBOARD_LEGACY_COLOR,
+                reason="legacy scalar widget color is being normalized",
+                context={"color": color},
+            )
             normalized["color"] = {
                 "colors": [
                     DashboardRuntimeService._legacy_color_map.get(
