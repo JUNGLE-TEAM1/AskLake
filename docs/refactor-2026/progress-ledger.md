@@ -6,12 +6,12 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `5/5`
-- 현재 PR 단위: `15 구현·검증 완료, PR 생성 대기`
-- 상태: `IN_PROGRESS`
+- 현재 PR 단위: `15 완료`
+- 상태: `COMPLETE`
 - 시작 기준: `PR 12 branch@60ec0910`
-- 최근 이슈/PR: `#847` / `생성 대기`
+- 최근 이슈/PR: `#847` / `#848`
 - 현재 브랜치: `refactor-#847`
-- 다음 사용자 확인 지점: PR 15 생성과 전체 스택 점검 후
+- 다음 사용자 확인 지점: 순차 merge와 수동 production gate는 사용자 승인 후
 
 ## 15개 PR 원장
 
@@ -115,7 +115,7 @@
 ## PR 15 작업 기록
 
 - 시작 HEAD: `cbb5a624` (PR 14 branch HEAD)
-- branch/issue/PR: `refactor-#847`, `#847`, `생성 대기`
+- branch/issue/PR: `refactor-#847`, `#847`, `#848`
 - 변경 commit: `d21c2986` (final audit/readiness gate), `bce18f37` (rollout/rollback runbook와 nested Python contract)
 - 포함: 정량 최종 재감사와 전후 점수, END_STATE evidence, 잔여 P1 owner/date, guarded Go/No-Go, release gate JSON, read-only plan/production preflight, canary·backup·관찰·bounded rollback runbook
 - 감사 결과: 위험도 7.8→4.6, 5,000줄 이상 3→1, 2,000줄 이상 6→4, import cycle 0. `etl_service.py` 8,822줄 때문에 전체 리팩토링 완료 선언은 No-Go다.
@@ -125,7 +125,16 @@
 - 수동 gate: 격리 nightly fault, production canary clean reboot, backup/restore drill. `verify:refactor-release-execution`은 이 증거 전까지 exit 2로 정상 차단된다.
 - 제외: production 배포·EC2 reboot·traffic 전환, DB 수동 편집/chown, compatibility adapter 즉시 제거
 - rollback: PR 15의 audit/readiness script와 문서, frontend cycle 경계만 되돌린다. persisted API/DB/runtime data migration은 없다.
-- 머지 순서: `#846` 다음 PR 15. production 실행은 별도 명시 승인 전 금지한다.
+- 머지 순서: `#846` → `#848`. production 실행은 별도 명시 승인 전 금지한다.
+
+## 최종 handoff
+
+- 상태: 15개 순차 PR 구현·검증·원격 PR 생성 완료
+- 마지막 PR: `#848` (`refactor-#847 -> dev`, ready)
+- 최종 머지 꼬리: `#841` → `#843` → `#846` → `#848`
+- 감사 판정: deterministic CI와 canary 준비는 GO, production 실행은 manual gate 3건 전까지 NO-GO
+- 남은 기술 작업: R-003, R-008, R-016, R-017과 P2 bundle/dependency cleanup
+- 금지: 명시적 승인 없는 merge, production deploy, EC2 reboot, traffic 전환
 
 ## PR 04 작업 기록
 
