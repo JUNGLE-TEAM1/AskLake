@@ -387,6 +387,21 @@ function sparkRuntimeSecretEnvironment(environment) {
   }));
 }
 
+function sparkKubernetesPodPlacement() {
+  return {
+    nodeSelector: {
+      "asklake.io/workload-class": "spark",
+      "kubernetes.io/arch": "amd64",
+    },
+    tolerations: [{
+      effect: "NoSchedule",
+      key: "asklake.io/workload-class",
+      operator: "Equal",
+      value: "spark",
+    }],
+  };
+}
+
 export function createSparkKubernetesApplication({
   appName,
   environmentVariables = {},
@@ -447,6 +462,7 @@ export function createSparkKubernetesApplication({
         memory: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY || "2g"),
         memoryOverhead: String(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY_OVERHEAD || "512m"),
         serviceAccount,
+        ...sparkKubernetesPodPlacement(),
       },
       executor: {
         coreLimit: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES || "2"),
@@ -457,6 +473,7 @@ export function createSparkKubernetesApplication({
         memory: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY || "4g"),
         memoryOverhead: String(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY_OVERHEAD || "1g"),
         serviceAccount,
+        ...sparkKubernetesPodPlacement(),
       },
       hadoopConf: {
         "fs.s3a.aws.credentials.provider": "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider",

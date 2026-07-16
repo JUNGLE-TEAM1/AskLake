@@ -49,6 +49,22 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.equal(first.spec.image, IMAGE);
   assert.equal(first.spec.driver.serviceAccount, "asklake-spark");
   assert.equal(first.spec.executor.serviceAccount, "asklake-spark");
+  const expectedPlacement = {
+    nodeSelector: {
+      "asklake.io/workload-class": "spark",
+      "kubernetes.io/arch": "amd64",
+    },
+    tolerations: [{
+      effect: "NoSchedule",
+      key: "asklake.io/workload-class",
+      operator: "Equal",
+      value: "spark",
+    }],
+  };
+  assert.deepEqual(first.spec.driver.nodeSelector, expectedPlacement.nodeSelector);
+  assert.deepEqual(first.spec.driver.tolerations, expectedPlacement.tolerations);
+  assert.deepEqual(first.spec.executor.nodeSelector, expectedPlacement.nodeSelector);
+  assert.deepEqual(first.spec.executor.tolerations, expectedPlacement.tolerations);
   const jdbcPassword = first.spec.driver.env.find((item) => item.name === "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD");
   assert.deepEqual(jdbcPassword.valueFrom.secretKeyRef, {
     key: "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD",
