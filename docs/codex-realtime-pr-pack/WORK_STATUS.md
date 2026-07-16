@@ -88,6 +88,7 @@ merge_order:
 - Draft PR: #826 (`feat-#823 -> dev`), 선행 #822 merge 후 review-ready 전환.
 - backend recovery/security/Continuous SQL focused 69 tests, frontend UI 136 checks, realtime transport 7 tests, Dashboard refresh 6 tests와 production build가 통과했다.
 - production Compose render, proxy/architecture static gate, Continuous SQL 23 tests와 Kafka contract/REST가 통과했다.
+- refactor #846의 E2E recovery PR profile 4 checks를 통합했고 Windows launcher·UTF-8 artifact·PYTHONPATH 경로도 검증했다.
 - PR용 disposable PostgreSQL·Caddy/NGINX parser gate와 scheduled/manual Kafka/Spark/Iceberg fault harness를 추가했다.
 - canary/rollback/production runbook, handover와 항목별 final audit를 작성했다.
 - Docker client는 설치되어 있으나 Docker Desktop daemon이 꺼져 실제 container/proxy/Spark E2E는 local에서 실행하지 못했다. production 활성화는 CI와 operator evidence 전까지 No-Go다.

@@ -54,10 +54,10 @@ ETL draft/source
 cd backend
 
 # PR 계약: 외부 stack 불필요
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery
+npm run verify:etl-e2e-recovery
 
 # 실제 Node/Spark REST process와 Docker UID 185 경계
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery:release
+npm run verify:etl-e2e-recovery:release
 
 # 사전에 격리 stack을 시작한 self-hosted runner 전용
 ASKLAKE_E2E_ISOLATED_ENV=true \

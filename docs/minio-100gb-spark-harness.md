@@ -397,8 +397,8 @@ The browser calls backend endpoints for source tests and create flow.
 
 ```bash
 cd backend
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery
-ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-e2e-recovery:release
+npm run verify:etl-e2e-recovery
+npm run verify:etl-e2e-recovery:release
 
 # isolated self-hosted stack only
 ASKLAKE_E2E_ISOLATED_ENV=true \

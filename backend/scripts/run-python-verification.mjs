@@ -7,7 +7,7 @@ const backendDir = fileURLToPath(new URL("..", import.meta.url));
 const requestedScript = process.argv[2];
 
 if (!requestedScript) {
-  console.error("Usage: node scripts/run-python-verification.mjs <script.py>");
+  console.error("Usage: node scripts/run-python-verification.mjs <script.py> [...args]");
   process.exit(2);
 }
 
@@ -25,7 +25,7 @@ if (!scriptPath.startsWith(`${path.resolve(backendDir, "scripts")}${path.sep}`))
   process.exit(2);
 }
 
-const result = spawnSync(pythonBin, [scriptPath], {
+const result = spawnSync(pythonBin, [scriptPath, ...process.argv.slice(3)], {
   cwd: backendDir,
   env: {
     ...process.env,

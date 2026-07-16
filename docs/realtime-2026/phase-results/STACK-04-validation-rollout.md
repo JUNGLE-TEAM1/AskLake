@@ -21,6 +21,7 @@
 ## local 검증 결과
 
 - `npm run verify:realtime-stack`: PASS, 69 tests + proxy/architecture gate
+- `npm run verify:etl-e2e-recovery`: PASS, PR profile 4 checks와 cross-platform artifact 생성
 - frontend `npm run verify:ui-regressions`: PASS, 136 checks
 - frontend realtime transport: PASS, 7 tests
 - frontend Dashboard live refresh: PASS, 6 tests
@@ -32,7 +33,7 @@
 - Python compile와 workflow YAML parse: PASS
 - `git diff --check`: PASS, Windows line-ending 안내만 존재
 
-전체 backend discovery는 최신 refactor prerequisite 반영 후 471 tests 중 470 PASS, 1 SKIP, FAIL 0으로 통과했다.
+전체 backend discovery는 최신 refactor prerequisite 반영 후 482 tests 중 481 PASS, 1 SKIP, FAIL 0으로 통과했다.
 
 ## 실행하지 못한 검증
 
