@@ -993,6 +993,19 @@ npm run build
 
 Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage`, `useAskLakeData` import를 제거하려면 별도 deprecation PR이 필요하다.
 
+## 17) Frontend CSS·Catalog 경계 변경 검증
+
+ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
+
+```bash
+cd frontend
+npm run test:css-catalog-boundary
+npm run verify:ui-regressions
+npm run build
+```
+
+Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다.
+
 ### ETL Permission create-flow 검증
 
 ```powershell

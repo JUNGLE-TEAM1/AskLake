@@ -76,6 +76,15 @@ const askLakeDataFiles = [
   "src/state/asklake/useWorkspaceHydration.ts",
 ];
 
+const catalogPageFiles = [
+  "src/pages/catalog/CatalogPage.tsx",
+  "src/pages/catalog/CatalogExplorerPage.tsx",
+  "src/pages/catalog/CatalogDetailPage.tsx",
+  "src/pages/catalog/CatalogLineage.tsx",
+  "src/pages/catalog/catalogModel.ts",
+  "src/pages/catalog/useCatalogExplorerState.ts",
+];
+
 const checks = [
   {
     name: "ETL target storage path uses the deployed Spark output bucket",
@@ -683,17 +692,17 @@ const checks = [
   },
   {
     name: "Catalog preview restores SQL navigation for the selected dataset",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /onOpenSql:\s*\(dataset: CatalogDataset\) => void;/,
-      /const openSelectedSqlDataset = \(\) =>/,
+      /const openSelectedSqlDataset = useCallback\(\(\) =>/,
       /onOpenSql\(previewDataset\);/,
       /SQL 분석에서 열기/,
     ],
   },
   {
     name: "Catalog metadata uses live detail values and schema samples",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /getCatalogDataset\(datasetId\)/,
       /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
@@ -705,7 +714,7 @@ const checks = [
   },
   {
     name: "Catalog schema modal excludes the duplicate sample-data viewer",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
       /function CatalogDatasetViewer\([\s\S]*<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<\/div>/,
@@ -797,7 +806,7 @@ const checks = [
   },
   {
     name: "Catalog dataset status uses the Jobs StatusBadge primitive",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
       /<StatusBadge shape=\{shape\} size="sm" tone=\{statusTone\}>\{statusMeta\.label\}<\/StatusBadge>/,
@@ -1068,7 +1077,7 @@ const checks = [
   },
   {
     name: "Catalog requires explicit dataset selection before SQL analysis",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /setSelectedSqlDatasetId\(dataset\.id\);/,
       /selectedSqlDatasetId !== previewDataset\.id \|\| !canQueryCurrentDataset\(previewDataset\)/,
