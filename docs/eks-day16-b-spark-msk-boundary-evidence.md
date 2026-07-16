@@ -4,7 +4,7 @@
 
 `eks-roadmap.md` 목요일 Pair B의 `Spark driver/executor resource와 MSK source boundary 연결`, 단일 bounded Job의 **MSK → Spark → Iceberg commit**, 같은 `runId` 재시도 중복 방지 구간을 검증한다.
 
-2026-07-16 dev 판정은 **CP3 성공, CP4 구현과 비파괴 live retry 검증 성공**이다. 외부 producer가 넣은 한 fixture batch 100건을 하나의 AskLake `runId`로 Airflow와 동적 SparkApplication에 전달했고, Spark가 exact batch 100건만 읽어 Iceberg snapshot을 commit했다. 같은 성공 Run 재호출은 새 lease, SparkApplication, Iceberg snapshot을 만들지 않았다. Trino 물리 검증과 Catalog materialization은 다음 체크포인트이며 이 문서에서 완료로 주장하지 않는다.
+2026-07-16 dev 최종 판정은 **CP3·CP4·CP8·CP9 성공**이다. 외부 producer가 넣은 한 fixture batch 100건을 하나의 AskLake `runId`로 Airflow와 동적 SparkApplication에 전달했고, Spark가 exact batch 100건만 읽어 Iceberg snapshot을 commit했다. 같은 성공 Run 재호출은 새 lease, SparkApplication, Iceberg snapshot을 만들지 않았다. 이후 같은 snapshot을 Trino에서 exact 100행으로 검증하고 Catalog materialization과 AskLake Run 5/5 성공까지 확정했으며, FastAPI rolling update 뒤에도 동일한 실행 식별자와 결과를 복구했다. 실행 중 강제 Pod 삭제와 반복 장애 주입은 아래에 명시한 토요일 작업으로 이관한다.
 
 ## 고정한 경계
 
