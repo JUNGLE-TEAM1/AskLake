@@ -17,6 +17,8 @@
 | R-013 | P2 | production fallback/legacy/mock 경로 도달 가능성 불명확 | semantic 15경로 등록, 운영 10경로 warning+counter, production mock fail-closed | 12 | CLOSED |
 | R-014 | P2 | 프런트 번들 chunk 2.6 MB warning | Vite build baseline | 09~11 | OPEN |
 | R-015 | P2 | frontend npm audit 2건 | 1 moderate, 1 high | 13 또는 별도 보안 이슈 | OPEN |
+| R-016 | P1 | production compatibility 경로가 10개 남음 | 15경로 등록·계측 완료, 30일 0-call 후 제거 필요 | 12·15 + cleanup | OPEN |
+| R-017 | P1 | `connectors.mjs` 2,319 LOC와 Node/Python 중복 authority | versioned bridge와 authority matrix는 있으나 Python-owned 경로 이동 필요 | 08·15 + cleanup | OPEN |
 
 ## 위험 처리 규칙
 

@@ -27,6 +27,9 @@ import { cn } from "@/lib/utils";
 import type { JobRowData, JobStats } from "../../../types";
 import { jobStatusMeta } from "../../../utils/statusMeta";
 import { formatCompactDateTime, getJobStatusTone, getLatestProblemRun, getLatestRunOutcome, isContinuousKafkaJob, isRealtimeJob } from "./jobShared";
+import { normalizeWhitespace } from "./jobText";
+
+export { normalizeWhitespace } from "./jobText";
 
 export type JobExecutionDisplay = {
   raw: string;
@@ -66,10 +69,6 @@ export function hasLatestSuccessfulRun(job: JobRowData) {
 export function normalizeShortText(value?: string) {
   if (!value) return "";
   return value.trim();
-}
-
-export function normalizeWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
 }
 
 export function isVerboseLogText(value: string) {

@@ -90,6 +90,7 @@ class EtlE2eRecoveryHarnessTests(unittest.TestCase):
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", environment)
         self.assertNotIn("MINIO_SECRET_KEY", environment)
         self.assertEqual(environment["SAFE_VALUE"], "kept")
+        self.assertEqual(environment["ASKLAKE_FASTAPI_PYTHON"], sys.executable)
         self.assertEqual(environment["ASKLAKE_CORRELATION_ID"], "e2e-test")
 
     def test_dry_run_writes_json_junit_and_human_summary(self) -> None:

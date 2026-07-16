@@ -1,0 +1,930 @@
+{
+  "audit_commit": "06fbe213eaa56506fd7bebf26c6c5739004d03aa",
+  "by_scope": {
+    "backend/app": {
+      "files": 133,
+      "loc": 39642
+    },
+    "backend/scripts": {
+      "files": 137,
+      "loc": 36011
+    },
+    "backend/src": {
+      "files": 16,
+      "loc": 8871
+    },
+    "deploy": {
+      "files": 6,
+      "loc": 905
+    },
+    "frontend/src": {
+      "files": 316,
+      "loc": 73009
+    }
+  },
+  "frontend": {
+    "file_count": 271,
+    "function_like_definition_count": 1552,
+    "hook_call_count": 567,
+    "import_count": 1390,
+    "largest_by_function_definitions": [
+      {
+        "file": "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+        "function_like_definitions": 57,
+        "hook_calls": 16,
+        "imports": 14
+      },
+      {
+        "file": "frontend/src/pages/etl/ruleModel.tsx",
+        "function_like_definitions": 50,
+        "hook_calls": 0,
+        "imports": 6
+      },
+      {
+        "file": "frontend/src/services/mockApi.ts",
+        "function_like_definitions": 41,
+        "hook_calls": 0,
+        "imports": 5
+      },
+      {
+        "file": "frontend/src/pages/dashboard/DashboardPage.tsx",
+        "function_like_definitions": 39,
+        "hook_calls": 30,
+        "imports": 21
+      },
+      {
+        "file": "frontend/src/data/transformQualityPreview.ts",
+        "function_like_definitions": 35,
+        "hook_calls": 0,
+        "imports": 0
+      },
+      {
+        "file": "frontend/src/pages/etl/sourceModel.tsx",
+        "function_like_definitions": 35,
+        "hook_calls": 0,
+        "imports": 4
+      },
+      {
+        "file": "frontend/src/pages/ingest/jobs/jobShared.tsx",
+        "function_like_definitions": 35,
+        "hook_calls": 0,
+        "imports": 6
+      },
+      {
+        "file": "frontend/src/pages/etl/targetModel.ts",
+        "function_like_definitions": 33,
+        "hook_calls": 0,
+        "imports": 2
+      },
+      {
+        "file": "frontend/src/pages/admin/AdminConsolePage.tsx",
+        "function_like_definitions": 32,
+        "hook_calls": 12,
+        "imports": 7
+      },
+      {
+        "file": "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+        "function_like_definitions": 30,
+        "hook_calls": 42,
+        "imports": 21
+      },
+      {
+        "file": "frontend/src/App.tsx",
+        "function_like_definitions": 29,
+        "hook_calls": 21,
+        "imports": 32
+      },
+      {
+        "file": "frontend/src/components/etl/SchemaTransformEditor.jsx",
+        "function_like_definitions": 29,
+        "hook_calls": 31,
+        "imports": 16
+      },
+      {
+        "file": "frontend/src/pages/etl/SchedulePage.tsx",
+        "function_like_definitions": 28,
+        "hook_calls": 5,
+        "imports": 20
+      },
+      {
+        "file": "frontend/src/pages/catalog/CatalogLineage.tsx",
+        "function_like_definitions": 26,
+        "hook_calls": 3,
+        "imports": 16
+      },
+      {
+        "file": "frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+        "function_like_definitions": 25,
+        "hook_calls": 12,
+        "imports": 18
+      },
+      {
+        "file": "frontend/src/pages/ingest/jobs/jobDetailModel.tsx",
+        "function_like_definitions": 25,
+        "hook_calls": 0,
+        "imports": 20
+      },
+      {
+        "file": "frontend/src/services/sourceConnectorService.ts",
+        "function_like_definitions": 25,
+        "hook_calls": 0,
+        "imports": 4
+      },
+      {
+        "file": "frontend/src/pages/etl/schemaModel.ts",
+        "function_like_definitions": 24,
+        "hook_calls": 0,
+        "imports": 1
+      },
+      {
+        "file": "frontend/src/services/pipelineApi.ts",
+        "function_like_definitions": 23,
+        "hook_calls": 0,
+        "imports": 3
+      },
+      {
+        "file": "frontend/src/pages/etl/RuleApplicationPage.tsx",
+        "function_like_definitions": 20,
+        "hook_calls": 20,
+        "imports": 6
+      }
+    ],
+    "largest_by_hook_calls": [
+      {
+        "file": "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+        "function_like_definitions": 30,
+        "hook_calls": 42,
+        "imports": 21
+      },
+      {
+        "file": "frontend/src/components/etl/SchemaTransformEditor.jsx",
+        "function_like_definitions": 29,
+        "hook_calls": 31,
+        "imports": 16
+      },
+      {
+        "file": "frontend/src/pages/dashboard/DashboardPage.tsx",
+        "function_like_definitions": 39,
+        "hook_calls": 30,
+        "imports": 21
+      },
+      {
+        "file": "frontend/src/pages/catalog/useCatalogExplorerState.ts",
+        "function_like_definitions": 1,
+        "hook_calls": 24,
+        "imports": 6
+      },
+      {
+        "file": "frontend/src/App.tsx",
+        "function_like_definitions": 29,
+        "hook_calls": 21,
+        "imports": 32
+      },
+      {
+        "file": "frontend/src/pages/etl/RuleApplicationPage.tsx",
+        "function_like_definitions": 20,
+        "hook_calls": 20,
+        "imports": 6
+      },
+      {
+        "file": "frontend/src/pages/etl/SourceConnectionPage.tsx",
+        "function_like_definitions": 14,
+        "hook_calls": 18,
+        "imports": 20
+      },
+      {
+        "file": "frontend/src/pages/etl/TargetPage.tsx",
+        "function_like_definitions": 10,
+        "hook_calls": 17,
+        "imports": 17
+      },
+      {
+        "file": "frontend/src/components/kibo-ui/tree/index.tsx",
+        "function_like_definitions": 12,
+        "hook_calls": 16,
+        "imports": 4
+      },
+      {
+        "file": "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+        "function_like_definitions": 57,
+        "hook_calls": 16,
+        "imports": 14
+      },
+      {
+        "file": "frontend/src/pages/etl/RuleEditorPanels.tsx",
+        "function_like_definitions": 17,
+        "hook_calls": 15,
+        "imports": 12
+      },
+      {
+        "file": "frontend/src/components/reui/timeline.tsx",
+        "function_like_definitions": 9,
+        "hook_calls": 12,
+        "imports": 4
+      },
+      {
+        "file": "frontend/src/components/s3/S3PathField.tsx",
+        "function_like_definitions": 10,
+        "hook_calls": 12,
+        "imports": 12
+      },
+      {
+        "file": "frontend/src/pages/admin/AdminConsolePage.tsx",
+        "function_like_definitions": 32,
+        "hook_calls": 12,
+        "imports": 7
+      },
+      {
+        "file": "frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+        "function_like_definitions": 25,
+        "hook_calls": 12,
+        "imports": 18
+      },
+      {
+        "file": "frontend/src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
+        "function_like_definitions": 14,
+        "hook_calls": 11,
+        "imports": 25
+      },
+      {
+        "file": "frontend/src/pages/sql/useSqlContextPanel.ts",
+        "function_like_definitions": 5,
+        "hook_calls": 11,
+        "imports": 3
+      },
+      {
+        "file": "frontend/src/components/etl/TransformFunctionModal.jsx",
+        "function_like_definitions": 14,
+        "hook_calls": 10,
+        "imports": 13
+      },
+      {
+        "file": "frontend/src/pages/catalog/CatalogDetailPage.tsx",
+        "function_like_definitions": 13,
+        "hook_calls": 10,
+        "imports": 27
+      },
+      {
+        "file": "frontend/src/pages/dashboard/useDashboardLandingList.ts",
+        "function_like_definitions": 9,
+        "hook_calls": 9,
+        "imports": 5
+      }
+    ]
+  },
+  "head": "bce18f37ceb2923531cabd8948dc27b6caacdf7d",
+  "import_graph": {
+    "backend_js_cycles": [],
+    "backend_js_edges": 65,
+    "backend_js_modules": 80,
+    "frontend_cycles": [],
+    "frontend_edges": 586,
+    "frontend_modules": 271,
+    "python_cycles": [],
+    "python_edges": 137,
+    "python_modules": 205
+  },
+  "largest_files": [
+    {
+      "file": "backend/app/services/etl_service.py",
+      "loc": 8822
+    },
+    {
+      "file": "frontend/src/styles/etl/02-schema.css",
+      "loc": 2806
+    },
+    {
+      "file": "frontend/src/styles/etl/01-source-shared.css",
+      "loc": 2471
+    },
+    {
+      "file": "backend/src/connectors.mjs",
+      "loc": 2319
+    },
+    {
+      "file": "backend/scripts/runtime/spark_text_analysis.py",
+      "loc": 1859
+    },
+    {
+      "file": "backend/scripts/runtime/kafka_continuous_runtime.py",
+      "loc": 1792
+    },
+    {
+      "file": "backend/app/services/sql_service.py",
+      "loc": 1762
+    },
+    {
+      "file": "frontend/src/styles/etl/07-schema-target-overrides.css",
+      "loc": 1603
+    },
+    {
+      "file": "backend/app/services/trino_query_run_service.py",
+      "loc": 1566
+    },
+    {
+      "file": "frontend/src/styles/landing.css",
+      "loc": 1528
+    },
+    {
+      "file": "backend/src/createPipeline.mjs",
+      "loc": 1487
+    },
+    {
+      "file": "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+      "loc": 1453
+    },
+    {
+      "file": "backend/scripts/runtime/spark_job_runtime.py",
+      "loc": 1369
+    },
+    {
+      "file": "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+      "loc": 1334
+    },
+    {
+      "file": "frontend/src/data/mockData.ts",
+      "loc": 1300
+    },
+    {
+      "file": "frontend/src/components/etl/SchemaTransformEditor.jsx",
+      "loc": 1265
+    },
+    {
+      "file": "backend/app/services/dashboard_runtime_service.py",
+      "loc": 1221
+    },
+    {
+      "file": "backend/src/sparkRunner.mjs",
+      "loc": 1215
+    },
+    {
+      "file": "frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+      "loc": 1172
+    },
+    {
+      "file": "frontend/src/styles/ingest.css",
+      "loc": 1169
+    },
+    {
+      "file": "frontend/src/pages/admin/AdminConsolePage.tsx",
+      "loc": 1132
+    },
+    {
+      "file": "backend/app/services/dashboard_physical_data.py",
+      "loc": 1055
+    },
+    {
+      "file": "backend/scripts/verify-kafka-continuous-contract.py",
+      "loc": 1033
+    },
+    {
+      "file": "backend/app/services/catalog_service.py",
+      "loc": 1028
+    },
+    {
+      "file": "frontend/src/pages/dashboard/DashboardPage.tsx",
+      "loc": 1007
+    },
+    {
+      "file": "backend/app/schemas/etl.py",
+      "loc": 999
+    },
+    {
+      "file": "frontend/src/services/mockApi.ts",
+      "loc": 996
+    },
+    {
+      "file": "backend/src/reviewRowAnalysis.mjs",
+      "loc": 995
+    },
+    {
+      "file": "frontend/src/styles/etl/06-target-shared.css",
+      "loc": 994
+    },
+    {
+      "file": "frontend/src/styles/etl/03-rules.css",
+      "loc": 981
+    },
+    {
+      "file": "frontend/src/pages/etl/SourceConnectionPage.tsx",
+      "loc": 978
+    },
+    {
+      "file": "backend/scripts/synthetic-commerce/convert_click_events_to_log.py",
+      "loc": 975
+    },
+    {
+      "file": "backend/app/repositories/etl_repository.py",
+      "loc": 955
+    },
+    {
+      "file": "backend/scripts/synthetic-commerce/generate.py",
+      "loc": 905
+    },
+    {
+      "file": "backend/app/application/continuous_publication.py",
+      "loc": 840
+    },
+    {
+      "file": "frontend/src/styles/layout/03-admin.css",
+      "loc": 802
+    },
+    {
+      "file": "backend/scripts/ingest-kafka-reviews.mjs",
+      "loc": 775
+    },
+    {
+      "file": "backend/app/services/dashboard_assistant_service.py",
+      "loc": 771
+    },
+    {
+      "file": "backend/scripts/verify-kafka-review-scheduled-ingest.mjs",
+      "loc": 762
+    },
+    {
+      "file": "frontend/src/styles/catalog.css",
+      "loc": 754
+    },
+    {
+      "file": "frontend/src/types/etl.ts",
+      "loc": 742
+    },
+    {
+      "file": "backend/scripts/validate_review_template_model_reuse.py",
+      "loc": 727
+    },
+    {
+      "file": "backend/app/repositories/dashboard_live_repository.py",
+      "loc": 724
+    },
+    {
+      "file": "deploy/docker-compose.prod.yml",
+      "loc": 694
+    },
+    {
+      "file": "frontend/src/pages/ingest/jobs/jobDetailModel.tsx",
+      "loc": 692
+    },
+    {
+      "file": "backend/scripts/manage-kafka-continuous.mjs",
+      "loc": 686
+    },
+    {
+      "file": "backend/app/services/rule_compiler.py",
+      "loc": 682
+    },
+    {
+      "file": "frontend/src/pages/ingest/jobs/JobsLandingPage.tsx",
+      "loc": 682
+    },
+    {
+      "file": "backend/scripts/verify-prefix-spark-e2e.mjs",
+      "loc": 673
+    },
+    {
+      "file": "backend/scripts/kafka_continuous_maintenance.py",
+      "loc": 665
+    }
+  ],
+  "python": {
+    "file_count": 205,
+    "function_count": 2513,
+    "functions_over_100_lines": 48,
+    "largest_functions": [
+      {
+        "file": "backend/scripts/verify-kafka-continuous-contract.py",
+        "lines": 929,
+        "name": "main",
+        "start": 101
+      },
+      {
+        "file": "backend/scripts/verify-trino-query-run-foundation.py",
+        "lines": 531,
+        "name": "verify",
+        "start": 106
+      },
+      {
+        "file": "backend/scripts/runtime/kafka_continuous_runtime.py",
+        "lines": 469,
+        "name": "main",
+        "start": 1310
+      },
+      {
+        "file": "backend/scripts/runtime/spark_job_runtime.py",
+        "lines": 362,
+        "name": "main",
+        "start": 35
+      },
+      {
+        "file": "backend/scripts/runtime/kafka_continuous_runtime.py",
+        "lines": 357,
+        "name": "write_batch",
+        "start": 1407
+      },
+      {
+        "file": "backend/scripts/verify-rule-compiler-contract.py",
+        "lines": 350,
+        "name": "main",
+        "start": 48
+      },
+      {
+        "file": "backend/scripts/verify_kafka_continuous_rule_runtime.py",
+        "lines": 295,
+        "name": "main",
+        "start": 92
+      },
+      {
+        "file": "backend/scripts/verify-trino-collector-resilience.py",
+        "lines": 284,
+        "name": "verify",
+        "start": 214
+      },
+      {
+        "file": "backend/scripts/verify-dashboard-live-postgres.py",
+        "lines": 281,
+        "name": "main",
+        "start": 24
+      },
+      {
+        "file": "backend/scripts/verify-trino-sql-job-e2e.py",
+        "lines": 231,
+        "name": "main",
+        "start": 65
+      },
+      {
+        "file": "backend/app/services/etl_service.py",
+        "lines": 224,
+        "name": "command_job",
+        "start": 1200
+      },
+      {
+        "file": "backend/app/services/etl_service.py",
+        "lines": 221,
+        "name": "create_trino_sql_job",
+        "start": 465
+      },
+      {
+        "file": "backend/app/services/dashboard_runtime_service.py",
+        "lines": 210,
+        "name": "_live_widget_to_schema",
+        "start": 687
+      },
+      {
+        "file": "backend/scripts/verify-permission-create-flow-contract.py",
+        "lines": 198,
+        "name": "main",
+        "start": 72
+      },
+      {
+        "file": "backend/app/services/rule_compiler.py",
+        "lines": 195,
+        "name": "compile_rule_set",
+        "start": 84
+      },
+      {
+        "file": "backend/scripts/verify-kafka-continuous-iceberg.py",
+        "lines": 193,
+        "name": "main",
+        "start": 27
+      },
+      {
+        "file": "backend/app/repositories/etl_repository.py",
+        "lines": 178,
+        "name": "ensure_schema",
+        "start": 35
+      },
+      {
+        "file": "backend/app/services/etl_service.py",
+        "lines": 178,
+        "name": "_apply_continuous_runtime_report",
+        "start": 6769
+      },
+      {
+        "file": "backend/scripts/runtime/spark_text_analysis.py",
+        "lines": 176,
+        "name": "evaluate_review_row_analysis_checks",
+        "start": 1273
+      },
+      {
+        "file": "backend/scripts/snapshot_rule_runtime.py",
+        "lines": 173,
+        "name": "apply_snapshot_rules",
+        "start": 47
+      },
+      {
+        "file": "backend/scripts/verify-airflow-catalog-reconciliation.py",
+        "lines": 161,
+        "name": "main",
+        "start": 25
+      },
+      {
+        "file": "backend/scripts/verify-target-metadata-contract.py",
+        "lines": 157,
+        "name": "main",
+        "start": 18
+      },
+      {
+        "file": "backend/scripts/verify-query-engine-registration.py",
+        "lines": 155,
+        "name": "verify",
+        "start": 209
+      },
+      {
+        "file": "backend/scripts/synthetic-commerce/generate.py",
+        "lines": 149,
+        "name": "generate_dataset",
+        "start": 733
+      },
+      {
+        "file": "backend/app/services/etl_service.py",
+        "lines": 147,
+        "name": "verify_spark_iceberg_result",
+        "start": 2752
+      },
+      {
+        "file": "backend/scripts/synthetic-commerce/generate.py",
+        "lines": 140,
+        "name": "generate_events",
+        "start": 547
+      },
+      {
+        "file": "backend/app/services/etl_service.py",
+        "lines": 133,
+        "name": "execute_kafka_continuous_maintenance",
+        "start": 5862
+      },
+      {
+        "file": "backend/scripts/kafka_continuous_maintenance.py",
+        "lines": 130,
+        "name": "replay_quarantine",
+        "start": 348
+      },
+      {
+        "file": "backend/app/application/continuous_reconciliation.py",
+        "lines": 127,
+        "name": "reconcile_continuous_runtime",
+        "start": 175
+      },
+      {
+        "file": "backend/app/services/dashboard_runtime_service.py",
+        "lines": 127,
+        "name": "_widget_to_schema",
+        "start": 550
+      }
+    ],
+    "syntax_errors": [],
+    "top_level_definition_count": 2347
+  },
+  "schema_version": 1,
+  "scope": [
+    "frontend/src",
+    "backend/app",
+    "backend/src",
+    "backend/scripts",
+    "deploy"
+  ],
+  "summary": {
+    "files": 608,
+    "files_over_1000_lines": 25,
+    "files_over_2000_lines": 4,
+    "files_over_5000_lines": 1,
+    "files_over_500_lines": 79,
+    "loc": 158438
+  },
+  "term_inventory": {
+    "compatibility": {
+      "file_count": 30,
+      "files": [
+        "backend/app/api/sql.py",
+        "backend/app/application/continuous_commands.py",
+        "backend/app/application/continuous_reconciliation.py",
+        "backend/app/core/compatibility.py",
+        "backend/app/domain/continuous_runtime.py",
+        "backend/app/repositories/etl_repository.py",
+        "backend/app/services/catalog_service.py",
+        "backend/app/services/dashboard_assistant_service.py",
+        "backend/app/services/dashboard_runtime_service.py",
+        "backend/app/services/etl_service.py",
+        "backend/app/services/rule_compiler.py",
+        "backend/app/services/sql_service.py",
+        "backend/scripts/runtime/__init__.py",
+        "backend/scripts/runtime/contracts.py",
+        "backend/scripts/runtime/spark_job_runtime.py",
+        "backend/scripts/runtime/spark_text_analysis.py",
+        "backend/scripts/synthetic-commerce/analyze.py",
+        "backend/scripts/synthetic-commerce/generate.py",
+        "backend/scripts/verify-auth-password-compat.mjs",
+        "backend/scripts/verify-legacy-path-register.py",
+        "backend/src/connectors.mjs",
+        "backend/src/reviewRowAnalysis.mjs",
+        "frontend/src/hooks/useAskLakeData.ts",
+        "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+        "frontend/src/pages/sql/SqlJobTargetSettings.tsx",
+        "frontend/src/pages/sql/SqlJobWizardDialog.tsx",
+        "frontend/src/pages/sql/SqlJobWizardSteps.tsx",
+        "frontend/src/services/compatibilityTelemetry.ts",
+        "frontend/src/state/asklake/initialRead.ts",
+        "frontend/src/state/etlDraftState.ts"
+      ]
+    },
+    "fallback": {
+      "file_count": 94,
+      "files": [
+        "backend/app/api/auth.py",
+        "backend/app/api/demo_hydration.py",
+        "backend/app/api/harness.py",
+        "backend/app/application/continuous_publication.py",
+        "backend/app/core/auth_context.py",
+        "backend/app/core/compatibility.py",
+        "backend/app/core/config.py",
+        "backend/app/domain/continuous_runtime.py",
+        "backend/app/main.py",
+        "backend/app/services/auth_service.py",
+        "backend/app/services/catalog_service.py",
+        "backend/app/services/dashboard_assistant_context.py",
+        "backend/app/services/dashboard_assistant_service.py",
+        "backend/app/services/dashboard_physical_data.py",
+        "backend/app/services/demo_catalog.py",
+        "backend/app/services/etl_service.py",
+        "backend/app/services/identity_service.py",
+        "backend/app/services/object_storage.py",
+        "backend/app/services/resource_permission_service.py",
+        "backend/app/services/sql_service.py",
+        "backend/app/services/trino_materialization_service.py",
+        "backend/scripts/export-postgres-execution-source.mjs",
+        "backend/scripts/ingest-kafka-reviews.mjs",
+        "backend/scripts/manage-kafka-continuous-maintenance.mjs",
+        "backend/scripts/manage-kafka-continuous.mjs",
+        "backend/scripts/query-duckdb-preview.py",
+        "backend/scripts/runtime/contracts.py",
+        "backend/scripts/runtime/spark_text_analysis.py",
+        "backend/scripts/seed-kafka-review-fixture.mjs",
+        "backend/scripts/seed-minio-click-log.mjs",
+        "backend/scripts/spark-rest-client.mjs",
+        "backend/scripts/spark_snapshot_rules.py",
+        "backend/scripts/upload-synthetic-commerce.mjs",
+        "backend/scripts/verify-airflow-smoke.mjs",
+        "backend/scripts/verify-auth-password-compat.mjs",
+        "backend/scripts/verify-dashboard-assistant-guard.py",
+        "backend/scripts/verify-fastapi-etl-catalog.mjs",
+        "backend/scripts/verify-kafka-continuous-soak.mjs",
+        "backend/scripts/verify-legacy-path-register.py",
+        "backend/scripts/verify-prefix-spark-e2e.mjs",
+        "backend/scripts/verify-production-spark-contract.mjs",
+        "backend/scripts/verify-record-parsing-e2e.mjs",
+        "backend/scripts/verify-schema-type-contract.mjs",
+        "backend/scripts/verify-trino-query-run-foundation.py",
+        "backend/scripts/verify-trino-query-run-history.py",
+        "backend/src/authService.mjs",
+        "backend/src/connectors.mjs",
+        "backend/src/createPipeline.mjs",
+        "backend/src/metadataStore.mjs",
+        "backend/src/objectStorageConfig.mjs",
+        "backend/src/reviewRowAnalysis.mjs",
+        "backend/src/sparkRunner.mjs",
+        "deploy/docker-compose.prod.yml",
+        "frontend/src/components/common/index.tsx",
+        "frontend/src/components/etl/SchemaTransformEditor.jsx",
+        "frontend/src/components/target/DatabaseField.tsx",
+        "frontend/src/components/ui/avatar.tsx",
+        "frontend/src/components/ui/user-identity.tsx",
+        "frontend/src/data/transformQualityPreview.ts",
+        "frontend/src/main.tsx",
+        "frontend/src/pages/catalog/CatalogDetailPage.tsx",
+        "frontend/src/pages/catalog/catalogModel.ts",
+        "frontend/src/pages/dashboard/components/DashboardTable.tsx",
+        "frontend/src/pages/dashboard/dashboardListUtils.ts",
+        "frontend/src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+        "frontend/src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+        "frontend/src/pages/dashboard/runtime/EmptyDashboardCanvas.tsx",
+        "frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+        "frontend/src/pages/dashboard/runtime/WidgetFrame.tsx",
+        "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+        "frontend/src/pages/dashboard/runtime/useDashboardRuntimeResources.ts",
+        "frontend/src/pages/etl/PermissionPage.tsx",
+        "frontend/src/pages/etl/RuleEditorPanels.tsx",
+        "frontend/src/pages/etl/SchedulePage.tsx",
+        "frontend/src/pages/etl/SourceConnectionPage.tsx",
+        "frontend/src/pages/etl/ruleModel.tsx",
+        "frontend/src/pages/etl/sourceModel.tsx",
+        "frontend/src/pages/etl/targetModel.ts",
+        "frontend/src/pages/ingest/jobs/JobDetailPage.tsx",
+        "frontend/src/pages/ingest/jobs/JobsLandingPage.tsx",
+        "frontend/src/pages/ingest/jobs/jobDetailModel.tsx",
+        "frontend/src/pages/ingest/jobs/jobShared.tsx",
+        "frontend/src/services/apiClient.ts",
+        "frontend/src/services/draftPipelineContract.ts",
+        "frontend/src/services/mockApi.ts",
+        "frontend/src/services/sourceConnectorService.ts",
+        "frontend/src/state/asklake/etlDraftState.ts",
+        "frontend/src/state/asklake/initialRead.ts",
+        "frontend/src/state/asklake/sqlJobDraft.ts",
+        "frontend/src/state/asklake/useJobController.ts",
+        "frontend/src/state/etlDraftState.ts",
+        "frontend/src/types/catalog.ts",
+        "frontend/src/types/etl.ts",
+        "frontend/src/utils/permissions.ts"
+      ]
+    },
+    "legacy": {
+      "file_count": 58,
+      "files": [
+        "backend/app/application/continuous_reconciliation.py",
+        "backend/app/core/compatibility.py",
+        "backend/app/core/config.py",
+        "backend/app/domain/continuous_runtime.py",
+        "backend/app/models/dashboard_live.py",
+        "backend/app/repositories/dashboard_live_repository.py",
+        "backend/app/repositories/etl_repository.py",
+        "backend/app/repositories/permission_repository.py",
+        "backend/app/schemas/dashboard.py",
+        "backend/app/seed/seed_pair2_demo.py",
+        "backend/app/services/auth_service.py",
+        "backend/app/services/catalog_service.py",
+        "backend/app/services/dashboard_runtime_service.py",
+        "backend/app/services/etl_service.py",
+        "backend/app/services/pair2_demo_data.py",
+        "backend/app/services/query_ai_service.py",
+        "backend/app/services/rule_compiler.py",
+        "backend/scripts/ingest-kafka-reviews.mjs",
+        "backend/scripts/kafka_continuous_maintenance.py",
+        "backend/scripts/manage-kafka-continuous-maintenance.mjs",
+        "backend/scripts/runtime/contracts.py",
+        "backend/scripts/seed-kafka-review-fixture.mjs",
+        "backend/scripts/synthetic-commerce/analyze.py",
+        "backend/scripts/verify-auth-password-compat.mjs",
+        "backend/scripts/verify-data-lake-iceberg-source.mjs",
+        "backend/scripts/verify-etl-job-hydrate-contract.py",
+        "backend/scripts/verify-fastapi-etl-catalog.mjs",
+        "backend/scripts/verify-kafka-continuous-contract.py",
+        "backend/scripts/verify-kafka-review-scheduled-ingest.mjs",
+        "backend/scripts/verify-kafka-target-projection.mjs",
+        "backend/scripts/verify-legacy-path-register.py",
+        "backend/scripts/verify-permission-create-flow-contract.py",
+        "backend/scripts/verify-rule-compiler-contract.mjs",
+        "backend/scripts/verify-rule-compiler-contract.py",
+        "backend/scripts/verify-rule-persistence-contract.py",
+        "backend/scripts/verify-schema-type-contract.mjs",
+        "backend/scripts/verify-trino-query-run-history.py",
+        "backend/src/authService.mjs",
+        "backend/src/kafkaTargetProjection.mjs",
+        "backend/src/ruleCompiler.mjs",
+        "deploy/docker-compose.prod.yml",
+        "deploy/postgres/init/03-dashboard-live-refresh.sql",
+        "frontend/src/data/transformQualityPreview.ts",
+        "frontend/src/pages/auth/AuthPage.tsx",
+        "frontend/src/pages/dashboard/DashboardPage.tsx",
+        "frontend/src/pages/dashboard/legacy/DashboardLegacyBuilderView.tsx",
+        "frontend/src/pages/dashboard/legacy/DashboardLegacyChart.tsx",
+        "frontend/src/pages/dashboard/legacy/DashboardLegacyDetailView.tsx",
+        "frontend/src/pages/dashboard/legacy/dashboardLegacyModel.ts",
+        "frontend/src/pages/etl/SchemaTransformWorkbench.tsx",
+        "frontend/src/pages/etl/targetModel.ts",
+        "frontend/src/pages/sql/useSqlContextPanel.ts",
+        "frontend/src/services/draftPipelineContract.ts",
+        "frontend/src/services/ruleContract.ts",
+        "frontend/src/state/asklake/catalogState.ts",
+        "frontend/src/styles/etl/01-source-shared.css",
+        "frontend/src/styles/ingest.css",
+        "frontend/src/vite-env.d.ts"
+      ]
+    },
+    "mock": {
+      "file_count": 32,
+      "files": [
+        "backend/app/schemas/dashboard.py",
+        "backend/app/services/dashboard_assistant_service.py",
+        "backend/scripts/verify-airflow-catalog-reconciliation.py",
+        "backend/scripts/verify-airflow-dag-catalog-wiring.py",
+        "backend/scripts/verify-fastapi-etl-catalog.mjs",
+        "backend/scripts/verify-kafka-replay-producer.py",
+        "backend/scripts/verify-legacy-path-register.py",
+        "deploy/docker-compose.prod.yml",
+        "frontend/src/components/etl/SchemaTransformEditor.jsx",
+        "frontend/src/data/mockData.ts",
+        "frontend/src/pages/catalog/CatalogLineage.tsx",
+        "frontend/src/pages/catalog/useCatalogExplorerState.ts",
+        "frontend/src/pages/dashboard/DashboardPage.tsx",
+        "frontend/src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+        "frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx",
+        "frontend/src/pages/etl/SourceConnectionPage.tsx",
+        "frontend/src/pages/sql/SqlAnalysisPage.tsx",
+        "frontend/src/pages/sql/trinoExecutionTimeline.ts",
+        "frontend/src/services/apiClient.ts",
+        "frontend/src/services/apiRuntimeMode.ts",
+        "frontend/src/services/mockApi.ts",
+        "frontend/src/services/permissionApi.ts",
+        "frontend/src/services/reviewApi.ts",
+        "frontend/src/services/sourceConnectorService.ts",
+        "frontend/src/state/asklake/catalogState.ts",
+        "frontend/src/state/asklake/etlDraftState.ts",
+        "frontend/src/state/asklake/jobState.ts",
+        "frontend/src/state/asklake/useCatalogController.ts",
+        "frontend/src/state/asklake/useJobController.ts",
+        "frontend/src/state/asklake/usePipelineMutations.ts",
+        "frontend/src/state/asklake/useWorkspaceHydration.ts",
+        "frontend/src/vite-env.d.ts"
+      ]
+    }
+  }
+}
