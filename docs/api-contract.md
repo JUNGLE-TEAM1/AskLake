@@ -23,8 +23,9 @@ Catalog terminal publication은 `datasetId`, materialization version, storage lo
 | 1b | P0 | `POST /api/etl/record-parsing/preview` | 이름 없는 TXT 레코드의 구조화 Preview와 필드 개수 검증 |
 | 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
-| 3 | P0 | `POST /api/query/runs` | Trino read-only Query Run 접수 또는 DuckDB compatibility 실행 |
+| 3 | P0 | `POST /api/query/runs` | Trino 최대 100행 preview Query Run 접수 또는 DuckDB compatibility 실행 |
 | 3b | P0 | `GET /api/query/runs/{runId}` | Query Run lifecycle 또는 compatibility snapshot 조회 |
+| 3c | P0 | `POST /api/query/runs/{previewRunId}/full-results` | 전체 보기/CSV용 원본 SQL 전체 결과 run 시작 또는 재사용 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
@@ -81,7 +82,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
 - EC2 production은 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용합니다. custom endpoint와 장기 AWS access key/secret은 설정하지 않고 EC2 instance profile IAM Role/default credential chain으로 인증합니다.
-- `TRINO_ENABLED=true`이면 production은 사전 생성한 Warehouse와 Query Result S3 bucket도 같은 default credential chain으로 사용합니다. Query Result page는 canonical `storage="s3"`로 응답하며 local MinIO와 legacy PostgreSQL page는 read compatibility로만 구분합니다.
+- `TRINO_ENABLED=true`이면 production은 사전 생성한 Warehouse와 Query Result S3 bucket도 같은 default credential chain으로 사용합니다. 최대 100행 preview page는 canonical `storage="postgres"`, on-demand full result page는 `storage="s3"`로 응답합니다. Browser에는 두 storage의 내부 위치나 credential을 노출하지 않습니다.
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
@@ -182,6 +183,7 @@ Resource/action 기준:
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `POST /api/query/runs/{runId}/full-results` | `query` | 성공한 preview submitter/admin과 현재 base/reference dataset 권한 재검사 |
 | `GET /api/query/runs/{runId}` | `query` | 저장된 run의 base/reference dataset 모두 다시 검사 |
 | `GET /api/query/runs/{runId}/results` | `query` | submitter/admin과 base/reference dataset 권한·governance 재검사 |
 | `GET /api/query/runs/{runId}/exports/csv` | `query` | result page와 같은 ownership·retention·권한 검사 |
@@ -1756,11 +1758,14 @@ type SubmitQueryRunRequest = {
   resultPageSize?: number;
   clientRequestId?: string;
   confirmationToken?: string;
+  mode?: "preview"; // public SQL 분석 기본값
+  limit?: number; // Trino preview는 최대 100
 };
 
 type SubmitQueryRunResponse = {
   runId: string;
   engine: "trino";
+  mode: "preview";
   status: "queued" | "running" | "succeeded" | "failed";
   submittedAt: string;
   estimate?: QueryRunEstimateSnapshot;
@@ -1780,16 +1785,16 @@ type QueryRunEstimateSnapshot = {
 };
 ```
 
-- `202 Accepted`를 반환하고 결과 행은 반환하지 않습니다.
+- `202 Accepted`를 반환하고 결과 행은 반환하지 않습니다. public SQL 분석 요청은 `mode=preview`로 정규화하며 backend가 compiled SQL을 `SELECT * FROM (...) LIMIT 100`으로 감싼다. 원본 `query` field는 변경하지 않는다.
 - backend는 read-only SQL, selected Dataset context, `query` 권한, user/group block, resource lock을 확인한 뒤에만 Trino에 제출합니다.
 - 모든 참조 Dataset은 `catalog/schema/table` physical mapping이 있어야 합니다.
-- `clientRequestId`는 현재 actor 범위의 idempotency key입니다. 동일 key와 동일한 base/reference/query/resultPageSize fingerprint는 최초 run을 반환하고 Trino에 다시 제출하지 않습니다. 동일 key를 다른 요청에 사용하면 `409 CONFLICT`입니다.
+- `clientRequestId`는 현재 actor 범위의 idempotency key입니다. 동일 key와 동일한 base/reference/query/mode/previewLimit/sourceRunId/resultPageSize fingerprint는 최초 run을 반환하고 Trino에 다시 제출하지 않습니다. 동일 key를 다른 요청에 사용하면 `409 CONFLICT`입니다.
 - actor별 active slot은 PostgreSQL advisory lock 안에서 reservation row를 먼저 저장해 원자적으로 계산합니다. 제한을 넘으면 Trino 제출 전에 `429`를 반환합니다.
 - frontend는 같은 실행 시도의 confirmation/network retry에서 key를 재사용하고, SQL 또는 Dataset context가 바뀌면 새 key를 생성합니다.
 
 Catalog Dataset response는 Phase 1부터 아래 optional mapping을 저장하고 응답할 수 있습니다. 이 field가 없는 기존 Dataset은 현재 DuckDB compatibility runtime과 호환되며, Phase 2 Trino Query Run service는 mapping 없는 Dataset을 실행 대상으로 허용하지 않습니다. compiler는 AST 기준으로 selected Dataset display name/ID만 `catalog.schema.table`로 치환하고 직접 physical reference와 table function을 차단합니다. Phase 3부터 `TRINO_ENABLED=true`인 backend는 `/api/query/runs` routing을 이 service로 전환합니다.
 
-Trino run은 legacy `POST /api/catalog/derived-datasets` JSONL materialization input이 아니다. succeeded run의 persisted `compiledQuery`로 Iceberg CTAS를 실행한 뒤 Catalog Dataset과 lineage를 등록하는 별도 materialization lifecycle을 사용한다.
+Trino preview run은 legacy `POST /api/catalog/derived-datasets` JSONL materialization input이 아니다. 반복 SQL Job 생성은 preview page나 full result page를 복사하지 않고 원본 SQL recipe와 출력 컬럼을 저장하며, 실제 Job Run에서 원본 SQL을 다시 compile해 Iceberg CTAS를 수행한다.
 
 ```ts
 type QueryEngineTableRef = {
@@ -1844,11 +1849,11 @@ Validation:
 - `storageLocation`이 `s3://` 또는 `s3a://`인 Parquet dataset은 backend가 `S3_ENDPOINT`/`MINIO_ENDPOINT`, server-side credential, path-style 설정으로 object 목록을 검사한 뒤 query-scoped 임시 디렉터리에 내려받고 DuckDB `read_parquet` view로 등록합니다. 임시 파일은 Preview 응답 또는 실패 직후 삭제하며 원격 object는 읽기만 합니다.
 - 한 Preview의 원격 Parquet 합계가 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES`(기본 512 MiB)를 넘으면 다운로드 전에 `422 VALIDATION_ERROR`로 차단합니다. 원격 인증·연결 실패 또는 Parquet object 부재는 `502 SQL_STORAGE_ERROR`로 반환하며 빈 `sampleRows` table로 조용히 fallback하지 않습니다.
 - 한국어, 공백, 특수문자가 포함된 dataset/column 표시명은 금지하지 않습니다. frontend가 기본 쿼리, 자동완성, 컬럼 삽입, JOIN 초안을 만들 때 SQL text에는 double-quoted identifier(`"월별 매출 데이터"`, `"주문 ID"`)를 사용해야 합니다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력한 경우 frontend preflight는 실행 전에 감지하고 quoted identifier 자동 보정을 제안합니다.
-- DuckDB compatibility run과 Trino full run 모두 같은 quoted identifier 정책을 따릅니다. 실행 context 검증은 quoted 표시명만이 아니라 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 기준으로 재검증합니다.
+- DuckDB compatibility run과 Trino preview/full run 모두 같은 quoted identifier 정책을 따릅니다. 실행 context 검증은 quoted 표시명만이 아니라 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 기준으로 재검증합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
-- DuckDB compatibility 결과는 최대 500행 이하를 권장하고, Trino 전체 결과는 cursor page storage 계약을 사용합니다.
+- DuckDB compatibility 결과는 최대 500행 이하를 권장한다. Trino preview는 최대 100행 inline page이고, on-demand 전체 결과는 cursor object-page storage 계약을 사용한다.
 
 프론트 기대 동작:
 
@@ -1860,12 +1865,14 @@ Validation:
 
 `GET /api/query/runs/{runId}`
 
-`result.storage*`와 page count field는 Query Result Phase 1 구현 계약이다. 새 Trino run은 private S3-compatible page storage를 사용하며 기존 PostgreSQL row page만 migration compatibility read에서 이 field를 생략할 수 있다.
+`result.storage*`와 page count field는 Query Result 계약이다. `mode=preview`는 최대 100행을 PostgreSQL page(`storage=postgres`)에 저장하고, `mode=run`은 private S3-compatible page storage(`storage=s3`)를 사용한다.
 
 ```ts
 type GetQueryRunResponse = {
   runId: string;
   engine: "trino";
+  mode: "preview" | "run";
+  sourceRunId?: string; // run mode가 파생된 preview run
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   trinoQueryId?: string;
   query: string;
@@ -1896,7 +1903,7 @@ type GetQueryRunResponse = {
     outputBytes?: number;
   };
   result?: {
-    storage: "s3";
+    storage: "postgres" | "s3";
     storageStatus: "collecting" | "available" | "expired" | "unavailable";
     columns: string[];
     pageCount: number;
@@ -1919,6 +1926,21 @@ type GetQueryRunResponse = {
 ```
 
 `queryCompletedAt`, `collectionStartedAt`, `firstPageAvailableAt`, `collectionCompletedAt`은 UTC ISO 8601 optional timestamp다. 최초 관측값을 유지하므로 collector retry, 프로세스 재시작, lease takeover가 기존 시각을 덮어쓰지 않는다. `firstPageElapsedMs`는 `submittedAt -> firstPageAvailableAt`, `collectionElapsedMs`는 `collectionStartedAt -> 현재/collectionCompletedAt`, `totalReadyMs`는 `submittedAt -> collectionCompletedAt`의 서버 측 경과다. 기존 payload에 이 field가 없으면 frontend는 사용 가능한 timestamp로 보완 계산하거나 값을 생략해야 한다.
+
+`POST /api/query/runs/{previewRunId}/full-results`
+
+```ts
+type CreateFullResultRequest = {
+  clientRequestId?: string;
+};
+```
+
+- source는 `mode=preview`, `status=succeeded`, `storageStatus=available`이어야 한다.
+- 성공하면 원본 SQL 전체를 실행하는 `mode=run`, `sourceRunId=previewRunId` Query Run을 `202`로 반환한다.
+- 같은 preview source의 active run 또는 retention 안의 성공·available run이 있으면 새 Trino query를 만들지 않고 재사용한다.
+- 이 endpoint 호출 자체가 전체 결과 생성에 대한 명시적 사용자 action이다. estimate hard limit과 현재 권한은 다시 검사한다.
+- 전체 보기 UI는 준비된 첫 cursor page부터 열 수 있고, 아직 없는 다음 page는 collector가 저장한 뒤 lazy 조회한다.
+- CSV UI는 같은 full run을 재사용하고 `storageStatus=available` 뒤 export endpoint를 호출한다.
 
 `GET /api/query/runs?limit=10`
 
@@ -1960,10 +1982,12 @@ type QueryRunResultPage = {
 - `nextCursor`는 storage page index와 그 안의 row offset을 노출하지 않는 signed opaque token이다. token은 해당 `runId`와 `retentionExpiresAt`에만 유효하며 변조, 다른 run 재사용, 만료 후 사용은 거절한다.
 - submit 시 정한 `resultPageSize`는 results endpoint에서 바꿀 수 없습니다. Trino가 더 큰 storage page를 반환해도 backend가 고정 크기 API page로 나누며 마지막 page만 작을 수 있습니다.
 - frontend는 현재 page row와 이전/다음 cursor history만 유지하고 전체 결과를 memory에 적재하거나 offset SQL을 생성하지 않습니다.
-- result page는 private S3-compatible object에서 backend가 읽어 반환하며, browser에 storage URL 또는 credential을 노출하지 않습니다.
+- preview result page는 PostgreSQL inline row에서, full result page는 private S3-compatible object에서 backend가 읽어 반환한다. 어느 경우에도 browser에 storage URL 또는 credential을 노출하지 않는다.
 - requested page가 아직 수집되지 않았으면 `409 RESULT_PAGE_NOT_READY`, retention 만료면 `410 RESULT_EXPIRED`, storage 장애면 `503 RESULT_STORAGE_UNAVAILABLE`을 반환합니다.
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 - cleanup worker는 terminal run을 keyset batch로 끝까지 순회하므로 최근 N건만 정리하지 않습니다. 실행 중 run과 durable materialized Dataset은 cleanup 대상이 아닙니다.
+
+`GET /api/query/runs/{runId}/exports/csv`는 `mode=run`, `status=succeeded`, `storageStatus=available`인 전체 결과만 stream한다. preview run에 직접 요청하면 `409 RESULT_PAGE_NOT_READY`다.
 
 `POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Iceberg 참조 컬럼의 물리 스캔량과 최근 실행 기반 예상 시간을 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다. 제출 시점에 계산한 예상값은 run response에 snapshot으로 남겨 실행 이력을 다시 열어도 비교할 수 있지만, 재실행 승인용 `confirmationToken`은 persistence와 Query Run response에 포함하지 않습니다.
 
@@ -2003,13 +2027,13 @@ type QueryEstimateResponse = {
 
 프론트 기대 동작:
 
-- `실행` 클릭은 Trino 전체 실행을 제출하고 status polling을 시작합니다.
+- `실행` 클릭은 최대 100행 Trino preview를 제출하고 status polling을 시작한다. preview가 성공하면 표·차트와 처리 Job 생성 action을 즉시 사용할 수 있다.
 - SQL 분석 화면은 유효한 SQL을 자동 평가하되 editor 높이·toolbar·textarea scroll을 바꾸지 않습니다. 현재 Query Run의 평가와 timeline은 결과 panel의 `실행 정보` view에서 표시합니다. `GET /api/query/runs`의 사용자별 실행 이력 조회·재열기 계약은 유지하지만, 이번 화면에는 별도 최근 실행 선택 목록을 노출하지 않습니다.
-- 결과 table은 server cursor page를 요청해 렌더링합니다.
-- 결과 panel의 세 번째 `실행 정보` view는 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집`을 순서대로 렌더링한다. 요청 접수와 Trino 대기는 첫 단계의 phase label로 표현한다. 시작한 단계만 추가하고, 완료 단계는 실제 시간·처리량·행 수 요약으로 압축하며 현재 단계만 세부 지표를 펼친다. 이 view는 `차트 보기`/`데이터 미리보기`와 같은 bounded 높이 안에서 scroll하며 editor 아래 sibling block을 만들지 않는다.
+- preview 결과 table은 inline page를 요청해 렌더링한다. `전체 보기`는 별도 full run의 server cursor page를 100행씩 lazy 조회한다.
+- 결과 panel의 세 번째 `실행 정보` view는 preview의 `쿼리 실행 -> 첫 결과 준비`를 순서대로 렌더링한다. 요청 접수와 Trino 대기는 첫 단계의 phase label로 표현하고, full run의 준비 상태를 preview 진행률과 합치지 않는다.
 - 쿼리 진행 bar는 active 상태가 2초 이상이고 Trino `progressPercentage` 또는 완료 driver/split 비율이 있을 때만 표시한다. 둘 다 없으면 숫자/bar를 생략한다. Dataset 물리 크기나 frontend timer로 중간 퍼센트를 만들지 않으며 estimate risk는 `대용량 처리 예상` 안내에만 사용한다.
-- `첫 결과 준비`는 서버의 첫 durable page 준비 시간과 브라우저의 첫 page 요청·렌더링 시간을 보여 주되 퍼센트를 표시하지 않는다. 조회 가능한 최초 page 자동 조회는 현재 page가 없을 때 한 번만 수행한다. 조회 실패는 단계 실패와 재시도 action으로 표시하며, 재시도 성공 시 화면 표시 시간을 다시 측정한다. `expired`/`unavailable` 이력은 page를 자동 재요청하지 않고 저장된 첫 결과 milestone을 유지한다. `전체 결과 수집`은 2초 이상 active이고 `collectedRowCount`와 `expectedRowCount`가 모두 있을 때만 두 값의 비율을 표시한다. 행 비율이 100%여도 manifest가 `collecting`이면 `마무리 중`으로 유지한다. backend percentage 단독값, Query 예상 남은 시간, Dataset 크기를 수집 퍼센트로 재사용하거나 서로 다른 단계를 하나의 가중 퍼센트로 합치지 않는다.
-- 완료 시 가능한 경우 `Trino 실행 · 첫 결과 · 전체 준비` 시간을 상단에 요약한다. API timing field가 없는 legacy run은 가능한 timestamp 차이만 사용하고 알 수 없는 시간은 만들지 않는다.
+- `첫 결과 준비`는 서버의 preview page 준비 시간과 브라우저의 첫 page 요청·렌더링 시간을 보여 주되 퍼센트를 표시하지 않는다. 조회 가능한 최초 page 자동 조회는 현재 page가 없을 때 한 번만 수행한다. 조회 실패는 단계 실패와 재시도 action으로 표시하며, 재시도 성공 시 화면 표시 시간을 다시 측정한다. `expired`/`unavailable` 이력은 page를 자동 재요청하지 않고 저장된 첫 결과 milestone을 유지한다.
+- Preview 완료 시 가능한 경우 `Trino 실행 · 첫 결과` 시간을 상단에 요약한다. Full run의 전체 저장 진행은 전체 보기/CSV 준비 상태로 별도 표시하고 preview timeline과 합치지 않는다. API timing field가 없는 legacy run은 가능한 timestamp 차이만 사용하고 알 수 없는 시간은 만들지 않는다.
 - Trino 원격 결과 현재 page는 SQL 화면의 임시 차트 source로만 사용할 수 있고 persistent Dashboard source로 저장하지 않습니다. publish 또는 반복 사용은 materialized Dataset을 source로 사용합니다.
 - 실패·취소·권한 차단은 Query Run 상태와 admin audit log에 기록합니다.
 

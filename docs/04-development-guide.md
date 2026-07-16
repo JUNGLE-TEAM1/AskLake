@@ -37,7 +37,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 단계의 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
+`npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 
 ### 단계적 리팩토링 기준선
 
@@ -638,7 +638,14 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. Query AI gateway mode는 `AI_PROVIDER_API_KEY`를 `ai-server` 환경에만 두고, backend는 service token과 signed context secret만 사용한다. `AI_QUERY_PROVIDER=direct` 롤백 모드의 `OPENAI_API_KEY`와 Dashboard Assistant 설정은 별도 호환 경로다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 실행 정보는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집`의 실제 가능한 지표만 표시하고 다른 분모를 하나의 진행률로 합치지 않는다. Trino 결과는 현재 cursor page와 전체 보기, server CSV, 반복 Job 생성을 확인하고 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino page 차트는 현재 표시 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+
+Preview/full-result 저장 경계는 아래 격리 검증으로 확인한다. Preview page가 object storage를 호출하지 않고 PostgreSQL inline manifest를 만들며, full-result 요청이 `mode=run`과 source preview ID를 보존하는지 검사한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-preview-full-flow
+```
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose

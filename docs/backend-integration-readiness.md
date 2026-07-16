@@ -330,15 +330,16 @@ Live Airflow verification through 2026-07-11:
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | SQL 점검 | frontend parser는 빠른 오타/식별자 안내를 담당하고, Trino Dataset은 debounced `POST /api/query/validate` 성공 전 실행을 비활성화한다. Trino 확장 문법은 backend parser/compiler가 최종 판정한다. | `POST /api/query/validate` |
-| SQL 실행 | `TRINO_ENABLED=true`이면 idempotent full Query Run을 접수하고 durable collector 상태를 polling한다. `false`/mock만 DuckDB compatibility result를 사용한다. | `POST /api/query/runs`, `GET /api/query/runs/{runId}` |
-| 실행 정보 | SQL editor는 기존 높이와 단일 scroll을 유지한다. 평가와 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` timeline을 결과 panel의 세 번째 view에서 표시한다. 실제 분자/분모가 없으면 progress를 만들지 않는다. | `POST /api/query/estimates`, Query Run response |
+| SQL 실행 | `TRINO_ENABLED=true`이면 최대 100행 preview Query Run을 접수하고 durable 상태를 polling한다. `false`/mock만 DuckDB compatibility result를 사용한다. | `POST /api/query/runs`, `GET /api/query/runs/{runId}` |
+| 실행 정보 | SQL editor는 기존 높이와 단일 scroll을 유지한다. 평가와 preview의 `쿼리 실행`, `첫 결과 준비` timeline을 결과 panel의 세 번째 view에서 표시한다. 실제 분자/분모가 없으면 progress를 만들지 않는다. | `POST /api/query/estimates`, Query Run response |
 | Query AI 생성 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. frontend는 체크된 모든 dataset metadata를 전달하며, live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, 선택 reference JOIN 누락 시 프론트 로컬 JOIN SQL fallback 사용 | `POST /api/query/ai-suggestions` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
-| 결과 Lake 저장 | DuckDB compatibility는 기존 ETL Job handoff를 유지한다. Trino 결과 화면은 반복 full-refresh SQL Job만 노출하며 1회성 Iceberg CTAS API는 별도 운영 경로로 유지한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs`, `POST /api/catalog/trino-runs/{runId}/materializations` |
-| CSV 다운로드 | 완료된 private object page를 backend가 읽어 SQL 재실행 없이 stream한다. | `GET /api/query/runs/{runId}/exports/csv` |
+| 전체 보기 | 성공한 preview에서 full run을 시작하거나 재사용하고, 준비된 page부터 cursor로 100행씩 조회한다. | `POST /api/query/runs/{previewRunId}/full-results`, `GET /api/query/runs/{runId}/results` |
+| 결과 Lake 저장 | DuckDB compatibility는 기존 ETL Job handoff를 유지한다. Trino 결과 화면은 preview에서 SQL recipe만 저장하는 반복 full-refresh SQL Job을 노출하며 full result 저장을 요구하지 않는다. 1회성 Iceberg CTAS API는 별도 운영 경로로 유지한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs`, `POST /api/catalog/trino-runs/{runId}/materializations` |
+| CSV 다운로드 | 필요하면 full run을 먼저 시작하고, 완료된 private object page를 backend가 SQL 재실행 없이 stream한다. | `POST /api/query/runs/{previewRunId}/full-results`, `GET /api/query/runs/{runId}/exports/csv` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | compatibility 결과만 Preview row 기반 기존 경로를 유지한다. Trino 결과는 page row를 복사하지 않고 반복 `trino_sql_materialization` Job으로 분리한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs` |
 
@@ -352,7 +353,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. frontend 
 
 `TRINO_ENABLED=false` DuckDB compatibility mode는 전체 결과를 `backend/tmp/spark-output/sql-runs/{runId}.parquet`(또는 `LOCAL_LAKE_STORAGE_DIR` 하위)에 저장하고 기존 `offset`/`limit` pagination을 유지한다. 이 snapshot은 Trino full Query Run이나 S3 cursor storage로 해석하지 않는다.
 
-Trino Query Run의 일반 result page는 private S3-compatible gzip object로 저장하고 PostgreSQL에는 metadata/checksum/manifest만 둔다. 로컬은 MinIO, production은 사전 생성한 AWS S3 Query Result bucket과 EC2 instance profile을 사용한다. collector는 API request와 분리된 lease/generation worker이며 cancel/takeover 뒤 stale worker가 page나 run state를 덮어쓰지 못한다. frontend는 현재 page와 cursor history만 유지한다.
+Trino 기본 preview result는 최대 100행을 PostgreSQL inline page로 저장해 S3 업로드를 기다리지 않는다. `전체 보기` 또는 `CSV 다운로드`로 생성한 full run만 private S3-compatible gzip object에 저장하고 PostgreSQL에는 metadata/checksum/manifest를 둔다. 로컬은 MinIO, production은 사전 생성한 AWS S3 Query Result bucket과 EC2 instance profile을 사용한다. collector는 API request와 분리된 lease/generation worker이며 cancel/takeover 뒤 stale worker가 page나 run state를 덮어쓰지 못한다. frontend는 preview page와 full run의 현재 page/cursor history만 유지한다.
 
 Catalog row viewer는 `GET /api/catalog/datasets/{datasetId}/rows?offset=&limit=`로 최신 성공 materialization의 물리 dataset을 DuckDB `COUNT(*)`/`LIMIT`/`OFFSET`로 읽는다. 한 page는 최대 500행이고, dataset `view`와 `query` 권한을 모두 검사한다. Catalog 상세와 스키마 상세 modal은 같은 page viewer를 사용한다.
 
@@ -365,11 +366,11 @@ Pair2 FastAPI 5단계 완료 기준:
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - Catalog 상세와 스키마 상세 modal에서 `GET /api/catalog/datasets/{datasetId}/rows`로 최신 성공 materialization의 첫/중간/마지막 page를 탐색한다.
 - DuckDB compatibility 실행은 기존 `POST /api/query/runs` snapshot/offset pagination 회귀를 유지한다.
-- Trino 실행은 `POST /api/query/validate` 성공 뒤 `202` Query Run을 접수하고 durable 상태를 polling한다.
-- Trino 결과는 `GET /api/query/runs/{runId}/results` signed cursor로 현재 page만 반환하며 server CSV는 저장 page를 stream한다.
-- 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 세 단계 timeline을 포함한다.
+- Trino 실행은 `POST /api/query/validate` 성공 뒤 최대 100행 preview Query Run을 `202`로 접수하고 durable 상태를 polling한다.
+- Preview 결과는 PostgreSQL inline page로 반환한다. 전체 보기/CSV는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 full run을 시작하고 signed cursor 또는 server CSV로 읽는다.
+- 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 preview의 두 단계 timeline을 포함한다.
 - Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 선택 dataset metadata 전체를 request에 포함하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
-- DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino 결과는 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
+- DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino preview는 full result를 기다리지 않고 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
 
