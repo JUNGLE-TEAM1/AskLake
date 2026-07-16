@@ -115,7 +115,13 @@ Kafka Snapshot Job은 기본적으로 Airflow를 거치지 않고 `FastAPI -> du
 
 EKS MVP fixture Run은 Airflow 외부 호출 전에 `etl_runs.task_states.eksMvpFixture`에 `runId`, producer `fixtureBatchId`/`expectedCount`, exact broker/topic/group, Run 전용 output/checkpoint path를 함께 저장한다. 이 RDS row가 boundary의 source of truth다. Airflow DAG Run conf와 내부 Spark 실행 요청은 같은 `sourceBoundary`를 운반하지만 값을 새로 계산하지 않으며, FastAPI는 요청 boundary가 RDS와 정확히 같을 때만 lease를 획득하고 Spark payload를 만든다. SparkApplication은 RDS boundary에서 만든 manifest와 driver env, `asklake.io/fixture-batch-id` annotation을 받는다. Job 설정이 나중에 바뀌거나 Airflow 요청이 달라지면 SparkApplication 제출 전에 `AIRFLOW_SOURCE_BOUNDARY_MISMATCH`로 실패한다.
 
+`asklake-runtime` ConfigMap은 workload chart와 분리된 `asklake-runtime-config` Helm release가 단독 소유한다. 전환은 기존 live data와 새 render의 canonical hash가 정확히 같은 경우에만 Helm ownership annotation을 인수하며, workload release가 같은 ConfigMap을 다시 렌더하거나 별도 field manager가 수정하는 것을 금지한다. 이 분리는 이미지·endpoint 같은 공용 non-secret runtime 값의 변경 수명주기를 Frontend/FastAPI/Airflow/Trino release와 분리한다.
+
+EKS MVP의 AI runtime 선택은 `direct`다. FastAPI가 기존 Query AI 호환 경로에서 `OPENAI_API_KEY`를 직접 소비하며, 이는 private AI Gateway를 구축하기 전까지의 MVP 경로다. 실제 key가 Secrets Manager source에 없으면 빈 값이나 placeholder를 만들지 않고 full-service Secret 전달과 Backend rollout을 차단한다. Gateway/MCP는 별도 후속 아키텍처 변경으로 다룬다.
+
 EKS MVP fixture의 동적 Spark 실행은 다른 Kafka Job과 달리 전용 `iceberg.asklake.eks_mvp_fixture` target을 `replace` mode로 고정한다. Spark는 Kafka를 읽은 뒤 `raw.fixture_batch_id`가 RDS boundary의 값인 행만 남기고, 그 행 수가 `expectedCount`와 다르면 Iceberg commit 전에 실패한다. 성공 report를 받은 FastAPI도 `sourceBoundary`, input/output count, Job/Run identity, target, snapshot ID와 commit boundary를 다시 대조한 뒤에만 `sparkResult` 성공을 RDS에 저장한다. 따라서 driver Pod의 `Succeeded`만으로 데이터 처리 성공을 인정하지 않는다.
+
+일반 SparkApplication의 성공 후 TTL은 1시간이다. promotion 증거용으로 명시적으로 실행한 bounded E2E만 완료 상태, persisted identity와 현재 image가 모두 일치할 때 TTL을 7일로 늘리고 evidence label을 붙인다. 검증 Job과 fixture host는 삭제하지만 이 완료 SparkApplication은 해당 기간 동안 live identity 대조 대상으로 보존한다.
 
 기존 Kafka Snapshot의 `sourceBoundary`는 snapshot ID와 partition별 exclusive offset range를 Iceberg commit evidence에 결합한다. Iceberg/Catalog 뒤 offset 확정이 실패하면 같은 durable snapshot을 retry하며, table의 snapshot marker와 Catalog의 `kafkaSnapshot.snapshotId`로 물리 append와 materialization을 각각 deduplicate한다. 따라서 retry가 새 Kafka 메시지를 현재 범위에 섞거나 이미 commit된 행을 다시 append하지 않는다. Job의 최종 data file은 warehouse Parquet이고, snapshot별 JSON metadata와 quarantine JSONL은 진단/오류 보존용 보조 object일 뿐 target Dataset data가 아니다.
 

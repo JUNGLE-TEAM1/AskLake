@@ -1,0 +1,6 @@
+namespace: asklake-dev
+configMap:
+  name: asklake-runtime
+  data:
+    ASKLAKE_CONTINUOUS_CONTROL_PLANE: external_ec2
+    ASKLAKE_SPARK_KUBERNETES_IMAGE: example.invalid/asklake/spark-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000

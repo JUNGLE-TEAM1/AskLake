@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-runtime-config
+description: Single-owner non-secret runtime ConfigMap for AskLake EKS
+type: application
+version: 0.1.0
+appVersion: "day16-phase6"
