@@ -6,11 +6,11 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `1/5`
-- 현재 PR 단위: `02 — Spark 재부팅·경로·권한 복구`
+- 현재 PR 단위: `03 — Characterization Test·Continuous 상태 계약`
 - 상태: `READY`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 현재 이슈: PR 02 시작 시 생성
-- 현재 브랜치: PR 02 시작 시 `docs-#804`에서 분기
+- 현재 이슈: PR 03 시작 시 생성
+- 현재 브랜치: PR 03 시작 시 `fix-#810`에서 분기
 - 다음 사용자 확인 지점: PR 01~03 생성 후
 
 ## 15개 PR 원장
@@ -18,8 +18,8 @@
 | PR 단위 | 원본 Stage | 결과 | 선행 PR | 상태 |
 |---:|---|---|---|---|
 | 01 | 00~01 | 현황·drift·기준선·작업 원장 | 없음 | DONE |
-| 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | READY |
-| 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | WAITING |
+| 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | DONE |
+| 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | READY |
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | WAITING |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | WAITING |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | WAITING |
@@ -52,13 +52,25 @@
 - 제외: 제품 동작, API/DB shape, 배포와 운영 데이터 변경
 - rollback: `docs/refactor-2026/`와 `scripts/refactor_audit/` 및 Development Guide 안내만 되돌린다.
 
+## PR 02 완료 기록
+
+- 시작 HEAD: `efb145fa` (PR 01 branch HEAD)
+- branch/issue/PR: `fix-#810`, `#810`, `#813`
+- 변경 commit: `50328b4f` (`fix(deploy): make Spark runtime paths reboot-safe`)
+- 포함: restart-safe Spark runtime guard, UID/GID 185 쓰기 계약, backend 읽기 계약, Compose startup gate, clean/reboot container regression
+- 제외: Continuous 상태 모델 분리, ETL application service 분해, 제품 API/DB shape 변경
+- 검증: 실제 `apache/spark:4.0.1` container, production Spark contract, Kafka Continuous contract, deploy regression 32/32, 전체 dependency image build
+- 기준선 재확인: backend unit 기존 실패 3건과 skip 1건은 동일하며 신규 실패는 없다.
+- rollback: `spark-runtime-guard`와 exec gate를 되돌리고 이전 one-shot init으로 복귀하되, 기존 runtime data는 삭제하지 않는다.
+- 머지 순서: `#809` 다음 `#813`; PR 03은 `#813` 다음이다.
+
 ## Latest handoff
 
-- 상태: PR 01 구현·로컬 검증 완료
-- 변경 commit: `4eacff60` (`docs(refactor): 최신 코드 기준선과 작업 원장 고정`)
-- 실제 변경: deterministic 정량/계약/OpenAPI 수집기, drift·위험·결정·진행 원장, 테스트 명령과 기존 실패 분리
-- 통과: 수집기 재현성, OpenAPI export, frontend regression/build, backend compile, Kafka Continuous contract, Compose render, Markdown link, secret pattern, whitespace
-- 기준선 실패: backend unit 3건, production Spark verifier signature drift, deploy regression 18건
-- rollback: `docs/refactor-2026/`, `scripts/refactor_audit/`, Development Guide 기준선 안내만 되돌린다.
-- 차단 사항: 없음. 기준선 실패는 [baseline/pre-existing-failures.md](./baseline/pre-existing-failures.md)에 분리했다.
-- 다음 단위: PR 02 — Spark 재부팅·경로·권한 복구
+- 상태: PR 02 구현·원격 PR 생성 완료
+- 변경 commit: `50328b4f` (`fix(deploy): make Spark runtime paths reboot-safe`)
+- 실제 변경: reboot-safe runtime guard, Spark writer/backend reader probe, 구조화된 storage 오류, production Compose와 운영 문서 정합화
+- 통과: clean path·권한 drift·기존 data 보존, 실제 Spark container, production Spark/Kafka contract, deploy regression, 전체 dependency build
+- 기준선 실패: backend unit 3건과 skip 1건만 동일하게 남아 있다.
+- rollback: [operations/spark-runtime-reboot-recovery.md](./operations/spark-runtime-reboot-recovery.md)의 rollback 절차를 따른다.
+- 차단 사항: 없음. GitHub CI는 PR #813에서 추적한다.
+- 다음 단위: PR 03 — Characterization Test·Continuous 상태 계약
