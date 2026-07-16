@@ -66,9 +66,15 @@ class DashboardAssistantService:
             return _build_low_signal_prompt_response()
 
         if not self.settings.openai_assistant_enabled:
-            return self._mock_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다.")
+            return self._attach_rag(
+                self._mock_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다."),
+                rag_context,
+            )
         if not self.settings.openai_api_key:
-            return self._mock_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다.")
+            return self._attach_rag(
+                self._mock_fallback_response(request, context, "mock fallback: OPENAI_API_KEY가 설정되지 않았습니다."),
+                rag_context,
+            )
 
         try:
             raw_payload = self._request_openai(request, context, rag_context) if rag_context else self._request_openai(request, context)
@@ -79,10 +85,13 @@ class DashboardAssistantService:
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
             return self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
-            return self._mock_fallback_response(
-                request,
-                context,
-                f"mock fallback: OpenAI 호출에 실패해 mock 응답을 사용했습니다. ({exc.__class__.__name__})",
+            return self._attach_rag(
+                self._mock_fallback_response(
+                    request,
+                    context,
+                    f"mock fallback: OpenAI 호출에 실패해 mock 응답을 사용했습니다. ({exc.__class__.__name__})",
+                ),
+                rag_context,
             )
 
     def _request_openai(

@@ -20,7 +20,12 @@ def post_json(url: str, payload: dict[str, Any], token: str) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_TIMEOUT_SECONDS", "1800"))) as response:
             body = json.loads(response.read().decode("utf-8") or "{}")
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(
+            f"RAG internal API request failed with HTTP {exc.code}: {body[:2000]}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError(f"RAG internal API request failed: {exc}") from exc
     if not isinstance(body, dict):
         raise RuntimeError("RAG internal API returned an invalid payload")
@@ -29,8 +34,16 @@ def post_json(url: str, payload: dict[str, Any], token: str) -> dict[str, Any]:
 
 def get_json(url: str) -> dict[str, Any]:
     request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_SPARK_HTTP_TIMEOUT_SECONDS", "30"))) as response:
-        body = json.loads(response.read().decode("utf-8") or "{}")
+    try:
+        with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_SPARK_HTTP_TIMEOUT_SECONDS", "30"))) as response:
+            body = json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(
+            f"Spark REST GET {url} failed with HTTP {exc.code}: {detail[:2000]}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Spark REST GET {url} failed: {exc}") from exc
     if not isinstance(body, dict):
         raise RuntimeError("Spark REST returned an invalid payload")
     return body
@@ -86,6 +99,8 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
         "ASKLAKE_SPARK_APP_NAME": f"asklake-rag-parent-{conf['jobId']}",
         "ASKLAKE_OBJECT_STORAGE_PROVIDER": os.environ.get("ASKLAKE_OBJECT_STORAGE_PROVIDER", "aws"),
         "AWS_REGION": os.environ.get("AWS_REGION", "ap-northeast-2"),
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
         "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""),
         "S3_FORCE_PATH_STYLE": os.environ.get("S3_FORCE_PATH_STYLE", "false"),
         "ASKLAKE_SPARK_ICEBERG_CATALOG_NAME": parts[0],
@@ -93,9 +108,10 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
         "ASKLAKE_SPARK_ICEBERG_JDBC_USER": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_USER", ""),
         "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD", ""),
         "ASKLAKE_SPARK_ICEBERG_WAREHOUSE": os.environ.get("ASKLAKE_SPARK_ICEBERG_WAREHOUSE", ""),
+        "PYTHONPATH": "/opt/asklake/scripts",
     }
     script = os.environ.get("ASKLAKE_RAG_PARENT_SCRIPT", "/opt/asklake/scripts/rag_parent_staging.py")
-    submission = {"action": "CreateSubmissionRequest", "appResource": "", "mainClass": "org.apache.spark.deploy.SparkSubmit", "appArgs": [script], "clientSparkVersion": os.environ.get("ASKLAKE_SPARK_VERSION", "4.0.1"), "environmentVariables": environment, "sparkProperties": {"spark.master": os.environ.get("ASKLAKE_SPARK_MASTER_URL", "spark://spark-master:7077"), "spark.submit.deployMode": "cluster", "spark.cores.max": os.environ.get("ASKLAKE_SPARK_CORES_MAX", "2"), "spark.driver.memory": os.environ.get("ASKLAKE_SPARK_DRIVER_MEMORY", "1g"), "spark.executor.memory": os.environ.get("ASKLAKE_SPARK_EXECUTOR_MEMORY", "4g"), "spark.executor.cores": os.environ.get("ASKLAKE_SPARK_EXECUTOR_CORES", "2"), "spark.sql.shuffle.partitions": os.environ.get("ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS", "32"), "spark.jars.ivy": os.environ.get("ASKLAKE_SPARK_IVY_RUNTIME_DIR", "/var/lib/asklake/spark-ivy"), "spark.jars.packages": ",".join(item for item in (os.environ.get("ASKLAKE_SPARK_HADOOP_AWS_PACKAGE"), os.environ.get("ASKLAKE_SPARK_ICEBERG_PACKAGE"), os.environ.get("ASKLAKE_SPARK_POSTGRES_PACKAGE")) if item)}}
+    submission = {"action": "CreateSubmissionRequest", "appResource": "", "mainClass": "org.apache.spark.deploy.SparkSubmit", "appArgs": [script], "clientSparkVersion": os.environ.get("ASKLAKE_SPARK_VERSION", "4.0.1"), "environmentVariables": environment, "sparkProperties": {"spark.master": os.environ.get("ASKLAKE_SPARK_MASTER_URL", "spark://spark-master:7077"), "spark.submit.deployMode": "cluster", "spark.cores.max": os.environ.get("ASKLAKE_SPARK_CORES_MAX", "2"), "spark.driver.memory": os.environ.get("ASKLAKE_SPARK_DRIVER_MEMORY", "1g"), "spark.executor.memory": os.environ.get("ASKLAKE_SPARK_EXECUTOR_MEMORY", "4g"), "spark.executor.cores": os.environ.get("ASKLAKE_SPARK_EXECUTOR_CORES", "2"), "spark.executorEnv.PYTHONPATH": "/opt/asklake/scripts", "spark.sql.shuffle.partitions": os.environ.get("ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS", "32"), "spark.jars.ivy": os.environ.get("ASKLAKE_SPARK_IVY_RUNTIME_DIR", "/var/lib/asklake/spark-ivy"), "spark.jars.packages": ",".join(item for item in (os.environ.get("ASKLAKE_SPARK_HADOOP_AWS_PACKAGE"), os.environ.get("ASKLAKE_SPARK_ICEBERG_PACKAGE"), os.environ.get("ASKLAKE_SPARK_POSTGRES_PACKAGE")) if item)}}
     rest_url = (os.environ.get("ASKLAKE_RAG_SPARK_REST_URL") or "http://spark-master:6066").rstrip("/")
     created = post_json(f"{rest_url}/v1/submissions/create", submission, "")
     submission_id = str(created.get("submissionId") or "")
@@ -104,7 +120,7 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
     deadline = time.time() + int(os.environ.get("ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS", "7200"))
     terminal = {"FINISHED", "FAILED", "ERROR", "KILLED", "UNKNOWN"}
     while time.time() < deadline:
-        state_payload = get_json(f"{rest_url}/v1/submissions/{submission_id}/status")
+        state_payload = get_json(f"{rest_url}/v1/submissions/status/{submission_id}")
         state = str(state_payload.get("driverState") or "UNKNOWN").upper()
         if state in terminal:
             if state != "FINISHED":
@@ -128,8 +144,8 @@ def submit_rag_spark_stage(conf: dict[str, Any], *, kind: str) -> dict[str, Any]
     }
     script = "/opt/asklake/scripts/rag_chunk_staging.py" if kind == "chunk" else "/opt/asklake/scripts/rag_index_dispatch.py"
     env_key = "ASKLAKE_RAG_CHUNK_MANIFEST_JSON" if kind == "chunk" else "ASKLAKE_RAG_INDEX_MANIFEST_JSON"
-    environment = {env_key: json.dumps(common, ensure_ascii=False, separators=(",", ":")), "ASKLAKE_OBJECT_STORAGE_PROVIDER": os.environ.get("ASKLAKE_OBJECT_STORAGE_PROVIDER", "aws"), "AWS_REGION": os.environ.get("AWS_REGION", "ap-northeast-2"), "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""), "S3_FORCE_PATH_STYLE": os.environ.get("S3_FORCE_PATH_STYLE", "false"), "ASKLAKE_SPARK_ICEBERG_CATALOG_NAME": str(conf.get("parentTable") or conf.get("chunkTable")).split(".")[0], "ASKLAKE_SPARK_ICEBERG_JDBC_URL": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_URL", ""), "ASKLAKE_SPARK_ICEBERG_JDBC_USER": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_USER", ""), "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD", ""), "ASKLAKE_SPARK_ICEBERG_WAREHOUSE": os.environ.get("ASKLAKE_SPARK_ICEBERG_WAREHOUSE", "")}
-    submission = {"action": "CreateSubmissionRequest", "appResource": "", "mainClass": "org.apache.spark.deploy.SparkSubmit", "appArgs": [script], "clientSparkVersion": os.environ.get("ASKLAKE_SPARK_VERSION", "4.0.1"), "environmentVariables": environment, "sparkProperties": {"spark.master": os.environ.get("ASKLAKE_SPARK_MASTER_URL", "spark://spark-master:7077"), "spark.submit.deployMode": "cluster", "spark.cores.max": os.environ.get("ASKLAKE_SPARK_CORES_MAX", "2"), "spark.driver.memory": os.environ.get("ASKLAKE_SPARK_DRIVER_MEMORY", "1g"), "spark.executor.memory": os.environ.get("ASKLAKE_SPARK_EXECUTOR_MEMORY", "4g"), "spark.executor.cores": os.environ.get("ASKLAKE_SPARK_EXECUTOR_CORES", "2"), "spark.sql.shuffle.partitions": os.environ.get("ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS", "32"), "spark.jars.ivy": os.environ.get("ASKLAKE_SPARK_IVY_RUNTIME_DIR", "/var/lib/asklake/spark-ivy"), "spark.jars.packages": ",".join(item for item in (os.environ.get("ASKLAKE_SPARK_HADOOP_AWS_PACKAGE"), os.environ.get("ASKLAKE_SPARK_ICEBERG_PACKAGE"), os.environ.get("ASKLAKE_SPARK_POSTGRES_PACKAGE")) if item)}}
+    environment = {env_key: json.dumps(common, ensure_ascii=False, separators=(",", ":")), "ASKLAKE_OBJECT_STORAGE_PROVIDER": os.environ.get("ASKLAKE_OBJECT_STORAGE_PROVIDER", "aws"), "AWS_REGION": os.environ.get("AWS_REGION", "ap-northeast-2"), "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""), "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""), "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", ""), "S3_FORCE_PATH_STYLE": os.environ.get("S3_FORCE_PATH_STYLE", "false"), "PYTHONPATH": "/opt/asklake/scripts", "ASKLAKE_SPARK_ICEBERG_CATALOG_NAME": str(conf.get("parentTable") or conf.get("chunkTable")).split(".")[0], "ASKLAKE_SPARK_ICEBERG_JDBC_URL": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_URL", ""), "ASKLAKE_SPARK_ICEBERG_JDBC_USER": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_USER", ""), "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD": os.environ.get("ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD", ""), "ASKLAKE_SPARK_ICEBERG_WAREHOUSE": os.environ.get("ASKLAKE_SPARK_ICEBERG_WAREHOUSE", "")}
+    submission = {"action": "CreateSubmissionRequest", "appResource": "", "mainClass": "org.apache.spark.deploy.SparkSubmit", "appArgs": [script], "clientSparkVersion": os.environ.get("ASKLAKE_SPARK_VERSION", "4.0.1"), "environmentVariables": environment, "sparkProperties": {"spark.master": os.environ.get("ASKLAKE_SPARK_MASTER_URL", "spark://spark-master:7077"), "spark.submit.deployMode": "cluster", "spark.cores.max": os.environ.get("ASKLAKE_SPARK_CORES_MAX", "2"), "spark.driver.memory": os.environ.get("ASKLAKE_SPARK_DRIVER_MEMORY", "1g"), "spark.executor.memory": os.environ.get("ASKLAKE_SPARK_EXECUTOR_MEMORY", "4g"), "spark.executor.cores": os.environ.get("ASKLAKE_SPARK_EXECUTOR_CORES", "2"), "spark.executorEnv.PYTHONPATH": "/opt/asklake/scripts", "spark.sql.shuffle.partitions": os.environ.get("ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS", "32"), "spark.jars.ivy": os.environ.get("ASKLAKE_SPARK_IVY_RUNTIME_DIR", "/var/lib/asklake/spark-ivy"), "spark.jars.packages": ",".join(item for item in (os.environ.get("ASKLAKE_SPARK_HADOOP_AWS_PACKAGE"), os.environ.get("ASKLAKE_SPARK_ICEBERG_PACKAGE"), os.environ.get("ASKLAKE_SPARK_POSTGRES_PACKAGE")) if item)}}
     created = post_json(f"{rest_url}/v1/submissions/create", submission, "")
     submission_id = str(created.get("submissionId") or "")
     if not submission_id:
@@ -137,7 +153,7 @@ def submit_rag_spark_stage(conf: dict[str, Any], *, kind: str) -> dict[str, Any]
     terminal = {"FINISHED", "FAILED", "ERROR", "KILLED", "UNKNOWN"}
     deadline = time.time() + int(os.environ.get("ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS", "7200"))
     while time.time() < deadline:
-        state = str(get_json(f"{rest_url}/v1/submissions/{submission_id}/status").get("driverState") or "UNKNOWN").upper()
+        state = str(get_json(f"{rest_url}/v1/submissions/status/{submission_id}").get("driverState") or "UNKNOWN").upper()
         if state in terminal:
             if state != "FINISHED":
                 raise RuntimeError(f"RAG {kind} Spark stage failed: {state}")

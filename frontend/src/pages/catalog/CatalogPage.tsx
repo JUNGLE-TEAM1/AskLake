@@ -415,6 +415,14 @@ export function CatalogPage({
 
     let cancelled = false;
     const datasetId = previewDataset.id;
+    if (!datasetId || datasetId === "dataset_not_selected") {
+      setPreviewDetailError(null);
+      setPreviewDetailLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setPreviewDetailError(null);
     setPreviewDetailLoading(true);
 

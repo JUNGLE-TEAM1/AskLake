@@ -17,6 +17,7 @@ export type DashboardAssistantWidgetContext = {
 
 export type DashboardAssistantRequest = {
   dashboardId?: string;
+  currentDatasetId?: string | null;
   mode: DashboardAssistantMode;
   pageId?: string | null;
   prompt: string;
@@ -62,6 +63,19 @@ export type DashboardAssistantResponse = {
   actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
   message: string;
+  retrieval?: {
+    aliases?: string[];
+    resultCount?: number;
+    status?: string;
+  };
+  sources?: Array<{
+    body?: string;
+    chunkIndex?: number;
+    datasetId?: string;
+    metadata?: Record<string, unknown>;
+    parentDocumentId?: string;
+    title?: string;
+  }>;
   warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
 };

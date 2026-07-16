@@ -476,6 +476,7 @@ export function DashboardRuntimeView({
         inspector={isAssistantInspectorOpen ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
+              currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
               pageId={selectedPageId}

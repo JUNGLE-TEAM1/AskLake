@@ -18,6 +18,7 @@ import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWid
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
+  currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
@@ -39,6 +40,19 @@ type AssistantMessage = {
   text: string;
 };
 
+function retrievalSummary(response: DashboardAssistantResponse) {
+  const retrieval = response.retrieval;
+  if (!retrieval) return "";
+
+  const resultCount = retrieval.resultCount ?? response.sources?.length ?? 0;
+  const sourceTitles = (response.sources ?? [])
+    .map((source) => source.title?.split("\\n").find((line) => line.includes(":")) ?? source.title)
+    .filter((title): title is string => Boolean(title))
+    .slice(0, 3);
+  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(", ")}` : "";
+  return `RAG 검색 ${retrieval.status ?? "unknown"} · ${resultCount}건${evidence}`;
+}
+
 function AskLakeAssistantMark() {
   return <img alt="" aria-hidden="true" className="asklake-assistant-mark" src={askLakeNessiIconUrl} />;
 }
@@ -52,6 +66,7 @@ function appendPromptText(currentPrompt: string, nextText: string) {
 }
 
 export function DashboardAssistantPanel({
+  currentDatasetId,
   dashboardId,
   datasets,
   onCreateWidget,
@@ -100,6 +115,7 @@ export function DashboardAssistantPanel({
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
+        currentDatasetId,
         mode: "dashboard_question",
         pageId,
         prompt: nextPrompt,
@@ -116,6 +132,7 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
+      const retrievalMessage = retrievalSummary(response);
       const warningMessage = response.warnings.length > 0
         ? `경고: ${response.warnings.join(" / ")}`
         : "";
@@ -127,6 +144,7 @@ export function DashboardAssistantPanel({
           text: [
             reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
             ...actionMessages,
+            retrievalMessage,
             warningMessage,
           ].filter(Boolean).join("\n\n"),
         },

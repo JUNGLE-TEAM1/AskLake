@@ -30,7 +30,9 @@ FILTER_CONTRACT_VERSION = "typed-filter-v1"
 
 
 def safe_identifier(value: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z_-]+", "_", str(value or "")).strip("_")
+    # Iceberg/Spark SQL identifiers are unquoted here, so hyphens are not
+    # valid even though they are valid in Dataset and job IDs.
+    normalized = re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "")).strip("_")
     return normalized[:200] or "dataset"
 
 
@@ -51,9 +53,11 @@ class RagService:
 
     def profile(self, dataset_id: str, actor: ActorContext) -> RagProfileResponse:
         dataset = self._dataset(dataset_id, actor, "view")
-        row = self.db.get(RagDatasetProfileModel, dataset_id)
-        if row is None:
-            row = RagDatasetProfileModel(dataset_id=dataset_id, target_alias=f"{settings.rag_index_prefix}-ds-{dataset_id}")
+        # Use the same initializer as classify/approve/index.  Constructing a
+        # model directly here leaves SQLAlchemy client-side defaults as None
+        # until flush, which made a first profile GET fail Pydantic validation
+        # for all status fields.
+        row = self._profile_row(dataset_id)
         active_manifest = self.db.scalar(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active").order_by(RagIndexManifestModel.activated_at.desc()))
         recommendations = self.db.scalars(select(RagColumnRecommendationModel).where(RagColumnRecommendationModel.dataset_id == dataset_id).order_by(RagColumnRecommendationModel.column_name.asc())).all()
         current_source = dataset.get("sourceManifest") or dataset.get("source_manifest") or {}
@@ -886,10 +890,11 @@ class RagService:
         )
 
     def _trigger_airflow(self, job: RagIndexJobModel, dataset: dict[str, Any], profile: RagDatasetProfileModel) -> None:
-        if not settings.airflow_api_base_url or not settings.airflow_api_token:
+        airflow_token = settings.airflow_api_token or self._airflow_login_token()
+        if not settings.airflow_api_base_url or not airflow_token:
             job.status = "failed"
             job.stage = "failed"
-            job.error = "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and AIRFLOW_API_TOKEN are required"
+            job.error = "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and Airflow credentials are required"
             profile.last_error = job.error
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
@@ -905,15 +910,50 @@ class RagService:
             return
         import httpx
         dag_run_id = f"rag_{job.id}"
-        payload = {"dag_run_id": dag_run_id, "conf": {"jobId": job.id, "datasetId": job.dataset_id, "targetIndex": job.target_index, "sourceManifest": source_manifest, "sourcePath": source_manifest["sparkPath"], "sourceFormat": source_manifest.get("format"), "sourceFingerprint": job.source_fingerprint, "datasetName": dataset.get("name"), "schema": dataset_schema(dataset), "bodyColumns": profile.body_columns, "titleColumns": profile.title_columns, "metadataColumns": profile.metadata_columns, "metadataTypes": job.metadata_types or {}, "filterContractVersion": job.filter_contract_version, "identifierColumns": profile.identifier_columns, "semanticBindings": profile.semantic_bindings, "physicalColumnMapping": job.physical_column_mapping or profile.physical_column_mapping or {}, "policyFingerprint": job.policy_fingerprint, "embeddingModel": job.embedding_model, "embeddingDimensions": job.embedding_dimensions, "parentSchemaVersion": RAG_PARENT_SCHEMA_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "chunkingVersion": CHUNKING_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "failedRowRateThreshold": job.failed_row_rate_threshold, "stagingBasePath": settings.rag_staging_base_path, "parentTable": job.parent_table, "chunkTable": job.chunk_table, "chunkTargetTokens": settings.rag_chunk_target_tokens, "chunkOverlapTokens": settings.rag_chunk_overlap_tokens, "chunkMaxTokens": settings.rag_chunk_max_tokens}}
-        response = httpx.post(f"{settings.airflow_api_base_url.rstrip('/')}/api/v2/dags/{settings.rag_airflow_dag_id}/dagRuns", json=payload, headers={"Authorization": f"Bearer {settings.airflow_api_token}", "Content-Type": "application/json"}, timeout=settings.airflow_request_timeout_seconds)
+        payload = {"dag_run_id": dag_run_id, "logical_date": None, "conf": {"jobId": job.id, "datasetId": job.dataset_id, "targetIndex": job.target_index, "sourceManifest": source_manifest, "sourcePath": source_manifest["sparkPath"], "sourceFormat": source_manifest.get("format"), "sourceFingerprint": job.source_fingerprint, "datasetName": dataset.get("name"), "schema": dataset_schema(dataset), "bodyColumns": profile.body_columns, "titleColumns": profile.title_columns, "metadataColumns": profile.metadata_columns, "metadataTypes": job.metadata_types or {}, "filterContractVersion": job.filter_contract_version, "identifierColumns": profile.identifier_columns, "semanticBindings": profile.semantic_bindings, "physicalColumnMapping": job.physical_column_mapping or profile.physical_column_mapping or {}, "policyFingerprint": job.policy_fingerprint, "embeddingModel": job.embedding_model, "embeddingDimensions": job.embedding_dimensions, "parentSchemaVersion": RAG_PARENT_SCHEMA_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "chunkingVersion": CHUNKING_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "failedRowRateThreshold": job.failed_row_rate_threshold, "stagingBasePath": settings.rag_staging_base_path, "parentTable": job.parent_table, "chunkTable": job.chunk_table, "chunkTargetTokens": settings.rag_chunk_target_tokens, "chunkOverlapTokens": settings.rag_chunk_overlap_tokens, "chunkMaxTokens": settings.rag_chunk_max_tokens}}
+        response = httpx.post(f"{settings.airflow_api_base_url.rstrip('/')}/api/v2/dags/{settings.rag_airflow_dag_id}/dagRuns", json=payload, headers={"Authorization": f"Bearer {airflow_token}", "Content-Type": "application/json"}, timeout=settings.airflow_request_timeout_seconds)
         if response.status_code >= 400:
             job.status = "failed"
             job.stage = "failed"
-            job.error = "Airflow rejected the RAG index request"
+            job.error = f"Airflow rejected the RAG index request ({response.status_code}): {response.text[:500]}"
             profile.last_error = job.error
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             return
         job.airflow_run_id = dag_run_id
         self.db.commit()
+
+    @staticmethod
+    def _airflow_login_token() -> str | None:
+        """Authenticate against Airflow FAB when no static API JWT is configured.
+
+        Airflow 3 with the FAB auth manager exposes the browser login flow and
+        stores the API JWT in the ``_token`` cookie.  The RAG endpoint used to
+        require AIRFLOW_API_TOKEN unconditionally, even though the Compose
+        contract already supplies AIRFLOW_USERNAME/PASSWORD.  Reusing that
+        contract keeps local and production deployments consistent while still
+        preferring a static service token when one is explicitly configured.
+        """
+        if not settings.airflow_api_base_url or not settings.airflow_username or not settings.airflow_password:
+            return None
+        import httpx
+
+        base_url = settings.airflow_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=settings.airflow_request_timeout_seconds, follow_redirects=True) as client:
+                login_page = client.get(f"{base_url}/auth/login/")
+                if login_page.status_code >= 400:
+                    return None
+                csrf_match = re.search(r'name=["\']csrf_token["\'][^>]*value=["\']([^"\']+)', login_page.text)
+                if not csrf_match:
+                    return None
+                login_response = client.post(
+                    f"{base_url}/auth/login/",
+                    data={"csrf_token": csrf_match.group(1), "username": settings.airflow_username, "password": settings.airflow_password},
+                )
+                if login_response.status_code >= 400:
+                    return None
+                token = client.cookies.get("_token")
+                return str(token) if token else None
+        except httpx.HTTPError:
+            return None

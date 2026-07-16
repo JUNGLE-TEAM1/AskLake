@@ -743,6 +743,7 @@ function VisualizationRequestWidget({
       const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
+        currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
         mode: "visualization_request",
         pageId: assistantContext?.pageId ?? widget.pageId,
         prompt: nextPrompt,
