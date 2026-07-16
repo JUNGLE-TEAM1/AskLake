@@ -6,11 +6,11 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `3/5`
-- 현재 PR 단위: `07 진행 중`
+- 현재 PR 단위: `08 진행 중`
 - 상태: `IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#829` / `생성 예정`
-- 현재 브랜치: `refactor-#829`
+- 최근 이슈/PR: `#831` / `생성 예정`
+- 현재 브랜치: `refactor-#831`
 - 다음 사용자 확인 지점: PR 07~09 생성 후
 
 ## 15개 PR 원장
@@ -23,8 +23,8 @@
 | 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | DONE |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | DONE |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | DONE |
-| 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | IN_PROGRESS |
-| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | WAITING |
+| 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | DONE |
+| 08 | 11~12 | Spark/Kafka script·Python/Node 경계 | 07 | IN_PROGRESS |
 | 09 | 13~14 | frontend 상태 소유권·ETL Wizard 분해 | 08 | WAITING |
 | 10 | 15~16 | Jobs 화면·데이터 hook 분해 | 09 | WAITING |
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | WAITING |
@@ -127,10 +127,21 @@
 ## PR 07 작업 기록
 
 - 시작 HEAD: `beeb5580` (PR 06 branch HEAD)
-- branch/issue/PR: `refactor-#829`, `#829`, 생성 예정
+- branch/issue/PR: `refactor-#829`, `#829`, `#830`
 - 포함: Pipeline create/update validation과 persisted mapper, finite Snapshot command planner, SQL/ETL 공용 Catalog payload port, dataset materialization identity와 멱등 publication
 - 하위 호환: 기존 public API/status/error, DB schema, Job/Run/Catalog payload, `etl_service` facade, Snapshot·Continuous command 구분을 유지한다.
 - 검증: backend unit 402건(1 opt-in skip), Pipeline/Snapshot/Catalog 경계 9건, Job update·dataset identity·Rule persistence·permission create-flow, target mode, Kafka Continuous, Airflow Catalog wiring 계약, Python app compile
 - 제외: Continuous lifecycle 재설계, SQL engine 교체, destructive migration, frontend redesign, live Kafka/S3/Trino fault injection, production 배포
 - rollback: application/domain/port 모듈과 facade wiring을 함께 되돌린다. persisted data migration은 없다.
-- 머지 순서: `#827` 다음 PR 07; PR 08은 PR 07 다음이다.
+- 머지 순서: `#827` 다음 `#830`; PR 08은 `#830` 다음이다.
+
+## PR 08 작업 기록
+
+- 시작 HEAD: `e3309d35` (PR 07 branch HEAD)
+- branch/issue/PR: `refactor-#831`, `#831`, `#832`
+- 포함: 기존 Spark/Kafka entrypoint compatibility façade, typed runtime config, atomic/versioned report·checkpoint·manifest 계약, Spark text-analysis 모듈, Kafka cursor state, Python/Node authority matrix, allow-list versioned review-analysis bridge
+- 하위 호환: 기존 script 경로, Spark/Kafka environment·exit 의미, public API, DB schema, 기존 field-less report/checkpoint/manifest와 marker bridge를 유지한다.
+- 검증: backend unit 414건(1 opt-in skip), runtime·bridge·Spark identity 집중 Python 39건, Node bridge 3건, production Spark, Spark schema, Kafka Continuous, Continuous runtime 39건 계약 통과
+- 제외: Node 전체 삭제, connector/Spark launcher 즉시 Python 전환, processing semantics 변경, destructive migration, live cluster soak, production 배포
+- rollback: entrypoint façade를 이전 구현으로 되돌리고 ReviewAnalysis adapter를 교체한다. additive version field는 이전 consumer가 무시하며 runtime data/checkpoint를 삭제하지 않는다.
+- 머지 순서: `#830` 다음 PR 08; PR 09는 PR 08 다음이다.

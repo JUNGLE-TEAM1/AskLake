@@ -404,7 +404,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertLessEqual(max_active, 3)
 
     def test_spark_job_invokes_identity_guard_before_and_after_all_actions(self) -> None:
-        source = (Path(__file__).parents[1] / "scripts" / "spark_job_run.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__).parents[1] / "scripts" / "runtime" / "spark_job_runtime.py"
+        ).read_text(encoding="utf-8")
         before = source.index('phase="before_read"')
         read = source.index("source_df = read_source")
         last_action = source.index("sample_rows = collect_sample_rows")

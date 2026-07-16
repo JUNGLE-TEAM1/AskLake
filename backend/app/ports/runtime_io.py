@@ -53,6 +53,18 @@ class NodeBridgePort(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class VersionedNodeBridgePort(Protocol):
+    def execute_operation(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: int,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class RuntimeDocumentStore(Protocol):
     def read_json(self, path: Path) -> JsonDocument: ...
 
