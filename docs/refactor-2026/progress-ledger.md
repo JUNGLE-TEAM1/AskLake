@@ -138,7 +138,7 @@
 ## PR 08 작업 기록
 
 - 시작 HEAD: `e3309d35` (PR 07 branch HEAD)
-- branch/issue/PR: `refactor-#831`, `#831`, 생성 예정
+- branch/issue/PR: `refactor-#831`, `#831`, `#832`
 - 포함: 기존 Spark/Kafka entrypoint compatibility façade, typed runtime config, atomic/versioned report·checkpoint·manifest 계약, Spark text-analysis 모듈, Kafka cursor state, Python/Node authority matrix, allow-list versioned review-analysis bridge
 - 하위 호환: 기존 script 경로, Spark/Kafka environment·exit 의미, public API, DB schema, 기존 field-less report/checkpoint/manifest와 marker bridge를 유지한다.
 - 검증: backend unit 414건(1 opt-in skip), runtime·bridge·Spark identity 집중 Python 39건, Node bridge 3건, production Spark, Spark schema, Kafka Continuous, Continuous runtime 39건 계약 통과
