@@ -583,7 +583,7 @@ bash scripts/destroy-eks-spark-operator.sh
 
 Spark 4.0.1 대표 application 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 호출하는 것을 확인했다. 따라서 driver Role에는 Pod `create/get/list/watch/delete/deletecollection`, Service·ConfigMap `create/get/list/delete/deletecollection`, PVC cleanup-only `get/list/delete/deletecollection`을 둔다. B manifest는 PVC를 생성하지 않으므로 PVC `create/update/patch`는 계속 금지하고 Service·ConfigMap `update/patch`도 추가하지 않는다. `deletecollection`은 selector를 RBAC로 제한할 수 없어 같은 namespace의 다른 resource에 영향을 줄 수 있으므로 Airflow PVC 같은 stateful workload를 추가하기 전에 Spark 전용 namespace 여부를 다시 결정한다. 상세 증거는 [7월 15일 Spark Operator 적용 기록](eks-day15-spark-operator-evidence.md)을 따른다.
 
-현재 `scripts/verify-eks-spark-rbac.sh`는 revision 3의 전체 `deletecollection`·PVC cleanup matrix를 아직 검사하지 않는다. 이 verifier와 foundation render assertion을 현재 Role에 맞추기 전에는 15.5 RBAC guardrail 동기화가 완료됐다고 표시하지 않는다.
+`scripts/verify-eks-spark-rbac.sh`는 revision 3의 전체 `deletecollection`·PVC cleanup 허용과 PVC create/update/patch, Secret read, update/patch, 다른 namespace·cluster resource 거부를 실제 API authorization으로 검사한다. `scripts/verify-eks-foundation.sh`도 렌더된 Spark Role의 세 resource/verb rule을 정확히 확인하고 추가 rule이나 과권한을 거절한다.
 
 Phase 2 AWS inventory는 resource name, ARN, endpoint, public IP와 account ID를 출력하지 않는 아래 스크립트로 확인한다. `AccessDenied`는 빈 inventory로 해석하지 않으며 [Phase 2 AWS Inventory](eks-phase-2-inventory.md)의 read-only 권한과 생성 gate를 따른다.
 
@@ -1081,6 +1081,20 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 A가 계약한 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. External Secrets Operator controller/store와 Backend runtime Secret 동기화는 준비됐지만 Airflow/Spark/Trino runtime Secret은 아직 동기화되지 않았으므로 사전 생성됐다고 가정하지 않는다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
+
+15.5 대표 물리 조회는 `scripts/run-eks-catalog-physical-read-smoke.sh`를 사용한다. Git 제외 Phase 6 image receipt와 `datasetId`, `materializationRoot`, `objectUri`만 가진 Git 제외 `*.physical-read-input.json`을 명시하며 exact object가 materialization root 아래인지 먼저 확인한다. `--validate-only`는 AWS/Kubernetes mutation 없이 receipt·입력·AMD64 image와 임시 SparkApplication manifest를 검사한다. `--live`는 별도 confirmation과 검증된 EKS context가 있을 때만 `asklake-spark` Pod Identity로 최대 100행을 제한 조회하고 실제 row나 URI 대신 column/row count와 폭 일치만 출력한다. 성공·실패·timeout·signal 모두 현재 run label의 SparkApplication·Pod·Service·ConfigMap·PVC를 정리하고 label/name prefix 잔여 0과 Spark Secret read 거부를 확인한다.
+
+```bash
+export ASKLAKE_EKS_IMAGE_RECEIPT='<private *.image-receipt.json>'
+export ASKLAKE_PHYSICAL_READ_INPUT='<private *.physical-read-input.json>'
+bash scripts/run-eks-catalog-physical-read-smoke.sh --validate-only
+bash scripts/test-eks-catalog-physical-read-smoke.sh
+
+# private input과 context gate를 검토한 실제 실행에서만 추가한다.
+export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
+export ASKLAKE_PHYSICAL_READ_CONFIRM='run-bounded-physical-read'
+bash scripts/run-eks-catalog-physical-read-smoke.sh --live
+```
 
 ```bash
 # Helm 3이 PATH에 있는 경우

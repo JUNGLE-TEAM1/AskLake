@@ -71,6 +71,8 @@ required_files=(
   "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
   "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh"
   "$ROOT_DIR/scripts/test-eks-day15-validation-hardening.sh"
+  "$ROOT_DIR/scripts/run-eks-catalog-physical-read-smoke.sh"
+  "$ROOT_DIR/scripts/test-eks-catalog-physical-read-smoke.sh"
   "$ROOT_DIR/scripts/lib/audit-eks-s3-smoke-residue.sh"
   "$ROOT_DIR/scripts/lib/eks-backend-secret-rollback.sh"
   "$ROOT_DIR/scripts/deploy-eks-spark-operator.sh"
@@ -146,9 +148,43 @@ for service_account in \
   fi
 done
 
-grep -q 'resources: \["pods"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
-grep -q 'resources: \["persistentvolumeclaims"\]' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml"
-test "$(grep -c 'deletecollection' "$ROOT_DIR/infra/eks/helm/asklake-foundation/templates/spark-driver-rbac.yaml")" -eq 3
+spark_driver_role="$({
+  awk '
+    /^kind: Role$/ { block = $0 ORS; capture = 1; next }
+    capture { block = block $0 ORS }
+    capture && /^---$/ {
+      if (block ~ /name: asklake-spark-driver/) {
+        printf "%s", block
+        capture = 0
+        block = ""
+        exit
+      }
+      capture = 0
+      block = ""
+    }
+    END {
+      if (capture && block ~ /name: asklake-spark-driver/) printf "%s", block
+    }
+  ' "$RENDERED_FILE"
+} || true)"
+
+[[ -n "$spark_driver_role" ]] || {
+  echo "rendered Foundation is missing the Spark driver Role" >&2
+  exit 1
+}
+grep -Fq 'resources: ["pods"]' <<<"$spark_driver_role"
+grep -Fq 'verbs: ["create", "get", "list", "watch", "delete", "deletecollection"]' <<<"$spark_driver_role"
+grep -Fq 'resources: ["services", "configmaps"]' <<<"$spark_driver_role"
+grep -Fq 'verbs: ["create", "get", "list", "delete", "deletecollection"]' <<<"$spark_driver_role"
+grep -Fq 'resources: ["persistentvolumeclaims"]' <<<"$spark_driver_role"
+grep -Fq 'verbs: ["get", "list", "delete", "deletecollection"]' <<<"$spark_driver_role"
+test "$(grep -c '^[[:space:]]*resources:' <<<"$spark_driver_role")" -eq 3
+test "$(grep -c '^[[:space:]]*verbs:' <<<"$spark_driver_role")" -eq 3
+test "$(grep -c 'deletecollection' <<<"$spark_driver_role")" -eq 3
+if grep -Eq 'resources:.*("secrets"|"nodes"|"namespaces")|verbs:.*("update"|"patch"|"\\*")' <<<"$spark_driver_role"; then
+  echo "rendered Spark driver Role contains out-of-contract permissions" >&2
+  exit 1
+fi
 
 backend_service_account="$({
   awk '

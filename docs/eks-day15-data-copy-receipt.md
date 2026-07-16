@@ -73,8 +73,8 @@ RDS Catalog API에서 복원된 Dataset의 최신 성공 materialization을 선�
 15.5 트랙의 현재 완료 경계는 다음과 같다.
 
 - 실제 적용·검증: foundation revision 3 cleanup RBAC, 대표 Parquet 물리 읽기, 임시 resource 잔여 0, 기존 ALB·RDS health 유지
-- source만 준비: Backend `ApiError` 수정과 정보 노출 회귀 test, 새 Backend image 인수·rollback 계약
-- 아직 미완료: revision 3 전체 RBAC verifier 동기화, 재현 가능한 물리 읽기 smoke script, 새 Backend receipt·rollout, Airflow/Spark/Trino runtime Secret, Trino snapshot 조회, Kafka→Iceberg bounded E2E와 production cutover
+- source·정적 검증 준비: Backend `ApiError` 수정과 정보 노출 회귀 test, 새 Backend image 인수·rollback 계약, revision 3 전체 RBAC verifier, 재현 가능한 물리 읽기 smoke와 success/failure/timeout/signal/cleanup 회귀 test
+- 아직 미완료: 새 smoke runner를 사용한 live 재실행, 새 Backend receipt·rollout, Airflow/Spark/Trino runtime Secret, Trino snapshot 조회, Kafka→Iceberg bounded E2E와 production cutover
 
 ## 민감 artifact 정리
 

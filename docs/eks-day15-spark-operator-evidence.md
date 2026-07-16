@@ -68,7 +68,7 @@ Foundation revision 3의 driver Role은 현재 다음 권한만 허용한다.
 - 다른 namespace의 Pod 생성: 거부
 - PVC 생성: 거부
 
-초기 설치 시에는 B manifest가 PVC를 생성하지 않는다는 이유로 PVC 권한을 두지 않았다. 후속 Spark 4.0.1 대표 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 시도해 403을 남기는 것을 확인했고, 실제 동작에 필요한 cleanup verb만 별도 foundation upgrade로 추가했다. PVC `create/update/patch`, Service·ConfigMap `update/patch`와 Secret read는 계속 거부한다. 현재 `scripts/verify-eks-spark-rbac.sh`는 초기 matrix만 검사하므로 revision 3의 positive/negative matrix와 일치하도록 보완하기 전에는 repository RBAC guardrail 완료로 간주하지 않는다.
+초기 설치 시에는 B manifest가 PVC를 생성하지 않는다는 이유로 PVC 권한을 두지 않았다. 후속 Spark 4.0.1 대표 실행에서 shutdown client가 label selector로 Pod·Service·ConfigMap·PVC collection cleanup을 시도해 403을 남기는 것을 확인했고, 실제 동작에 필요한 cleanup verb만 별도 foundation upgrade로 추가했다. PVC `create/update/patch`, Service·ConfigMap `update/patch`와 Secret read는 계속 거부한다. 15.5 verifier는 revision 3의 전체 positive/negative matrix로 동기화됐고 실제 `kubectl auth can-i` 검증을 통과했다. Foundation 정적 검증도 렌더된 Role의 정확한 세 rule을 확인한다.
 
 Kubernetes RBAC은 `deletecollection` 요청의 label selector까지 제한하지 못하므로 이 권한은 같은 namespace resource에 대한 잔여 blast radius를 가진다. 현재 MVP는 공유 `asklake-dev` namespace를 유지하지만 Airflow PVC나 다른 stateful workload를 추가하기 전에는 Spark 전용 namespace 분리, 공유 namespace 위험 수용, 별도 cleanup 구조 중 하나를 결정해야 한다.
 
