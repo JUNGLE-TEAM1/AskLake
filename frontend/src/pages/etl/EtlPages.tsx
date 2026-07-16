@@ -2769,12 +2769,13 @@ export function RecordParsingPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
+      actions={<CreationTopActions nextDisabled={!canApply || loading} split onPrev={onPrev} onNext={applyAndContinue} />}
     >
-      <header className="record-parsing-page-header">
-        <span className="record-parsing-page-icon" aria-hidden="true"><SlidersHorizontal /></span>
-        <h2>레코드 구조화</h2>
-      </header>
+      <EtlStepHeader
+        className="etl-step-standalone-header"
+        icon={<SlidersHorizontal />}
+        title="레코드 구조화"
+      />
 
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
@@ -2788,7 +2789,7 @@ export function RecordParsingPage({
 
         <section className="panel record-parsing-panel">
           <div className="record-parsing-panel-header">
-            <h2><SlidersHorizontal aria-hidden="true" />컬럼 설정</h2>
+            <h2><SlidersHorizontal aria-hidden="true" />필드 추론</h2>
             <div className="record-parsing-panel-actions">
               {hasClickEventPreset ? (
                 <Button

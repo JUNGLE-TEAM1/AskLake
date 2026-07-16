@@ -9543,24 +9543,6 @@ input.schema-checkbox:checked {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.record-parsing-page-header {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  min-height: 60px;
-  padding: 0 4px;
-}
-
-.record-parsing-page-header h2 {
-  color: var(--foreground);
-  font-family: var(--jobs-font-family);
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -.02em;
-  margin: 0;
-}
-
-.record-parsing-page-icon,
 .record-parsing-source-icon {
   align-items: center;
   background: #fff;
@@ -9573,15 +9555,71 @@ input.schema-checkbox:checked {
   justify-content: center;
 }
 
-.record-parsing-page-icon {
-  height: 42px;
-  width: 42px;
+.record-parsing-source-strip {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dce4ef;
+  border-radius: 12px;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px 16px;
 }
 
-.record-parsing-page-icon svg {
-  height: 20px;
-  stroke-width: 2.2;
-  width: 20px;
+.record-parsing-source-icon {
+  background: #edf5ff;
+  border-color: #cfe2ff;
+  box-shadow: none;
+  height: 40px;
+  width: 40px;
+}
+
+.record-parsing-source-icon svg {
+  height: 19px;
+  width: 19px;
+}
+
+.record-parsing-source-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.record-parsing-source-name em {
+  color: #64748b;
+  font-family: var(--jobs-font-family);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.record-parsing-source-name strong {
+  color: #172033;
+  font-family: var(--jobs-font-family);
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-parsing-source-meta {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.record-parsing-source-meta strong {
+  background: #f7f9fc;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  color: #475569;
+  font-family: var(--jobs-font-family);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 9px;
+  white-space: nowrap;
 }
 
 .record-parsing-workspace {
@@ -9608,8 +9646,8 @@ input.schema-checkbox:checked {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  min-height: 52px;
-  padding: 0 16px;
+  min-height: 60px;
+  padding: 0 20px;
 }
 
 .record-parsing-panel-header h2 {
@@ -9617,7 +9655,7 @@ input.schema-checkbox:checked {
   color: #263a67;
   display: inline-flex;
   font-family: var(--jobs-font-family);
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 800;
   gap: 8px;
   letter-spacing: .01em;
@@ -9626,9 +9664,9 @@ input.schema-checkbox:checked {
 
 .record-parsing-panel-header h2 svg {
   color: #1769ff;
-  height: 17px;
+  height: 20px;
   stroke-width: 2.3;
-  width: 17px;
+  width: 20px;
 }
 
 .record-parsing-panel-actions {
@@ -9668,7 +9706,7 @@ input.schema-checkbox:checked {
 
 .record-parsing-panel-body {
   min-width: 0;
-  padding: 16px;
+  padding: 20px;
 }
 
 .record-parsing-status {
@@ -9676,16 +9714,16 @@ input.schema-checkbox:checked {
   color: #1769ff;
   display: inline-flex;
   font-family: var(--jobs-font-family);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   gap: 5px;
   white-space: nowrap;
 }
 
 .record-parsing-status svg {
-  height: 14px;
+  height: 16px;
   stroke-width: 2.6;
-  width: 14px;
+  width: 16px;
 }
 
 .record-parsing-status.is-warning {
@@ -9696,7 +9734,7 @@ input.schema-checkbox:checked {
   box-sizing: border-box;
   display: block;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
   min-height: 236px;
   resize: vertical;
@@ -9720,6 +9758,11 @@ input.schema-checkbox:checked {
 .record-parsing-table input,
 .record-parsing-table select {
   font-family: var(--jobs-font-family);
+  font-size: 14px;
+}
+
+.record-parsing-controls .field > span {
+  font-size: 14px;
 }
 
 .record-parsing-table-scroll {
@@ -9738,7 +9781,7 @@ input.schema-checkbox:checked {
 .record-parsing-invalid-table thead th {
   background: #f8fafc;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -9746,12 +9789,12 @@ input.schema-checkbox:checked {
 .record-parsing-preview-table tbody td,
 .record-parsing-invalid-table tbody td {
   color: #172033;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .record-parsing-table code,
 .record-parsing-invalid-table code {
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -9761,7 +9804,7 @@ input.schema-checkbox:checked {
 
 .record-parsing-error {
   color: var(--destructive);
-  font-size: 13px;
+  font-size: 14px;
   margin: 0;
 }
 
@@ -9772,12 +9815,19 @@ input.schema-checkbox:checked {
 }
 
 @media (max-width: 640px) {
-  .record-parsing-page-header {
-    min-height: 52px;
+  .record-parsing-source-strip {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
-  .record-parsing-page-header h2 {
-    font-size: 18px;
+  .record-parsing-source-name {
+    max-width: calc(100% - 58px);
+  }
+
+  .record-parsing-source-meta {
+    flex-wrap: wrap;
+    margin-left: 54px;
+    margin-top: -4px;
   }
 
   .record-parsing-controls {
