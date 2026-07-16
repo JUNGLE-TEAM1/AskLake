@@ -555,3 +555,14 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] owner 이름 일치 fallback을 안정적인 principal id 기반 정책으로 교체
 - [ ] deny/조건부 정책과 공개 범위 정책 고도화
 - [ ] 민감 데이터 판정이 필요하면 frontend 컬럼명 정규식이 아닌 별도 backend 분류 결과 계약 추가
+
+## Full-stack E2E·recovery readiness
+
+- [x] PR/release/nightly 누적 profile과 선언형 fault matrix
+- [x] source→Job→Continuous publication→Catalog→Dashboard application/API evidence 재사용
+- [x] duplicate start, submission response loss, stale report/worker, maintenance race, partial publication 계약
+- [x] 실제 Node Spark REST process와 Docker UID 185 runtime path release check
+- [x] JSON/JUnit/Markdown artifact와 correlation ID, bounded secret-redacted output
+- [x] frontend reversed polling과 stable browser selector 계약
+- [x] nightly의 isolated loopback·credential fail-closed guard
+- [ ] 실제 Kafka/Spark/object storage/browser nightly는 `self-hosted + asklake-e2e` runner에서 배포 후보마다 실행
