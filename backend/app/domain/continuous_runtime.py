@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
 
+from app.core.observability import current_correlation_id, increment_metric, new_correlation_id
+
 RUNTIME_CONTRACT_VERSION = "1.0"
 RUNTIME_CONTRACT_KEY = "runtimeContract"
 
@@ -81,6 +83,9 @@ class ContinuousRuntimeError:
     message: str
     retryable: bool
     context: dict[str, Any] | None = None
+    operator_message: str | None = None
+    user_message: str | None = None
+    diagnostic_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -91,6 +96,12 @@ class ContinuousRuntimeError:
         }
         if self.context:
             payload["context"] = dict(self.context)
+        if self.operator_message:
+            payload["operatorMessage"] = self.operator_message
+        if self.user_message:
+            payload["userMessage"] = self.user_message
+        if self.diagnostic_id:
+            payload["diagnosticId"] = self.diagnostic_id
         return payload
 
 
@@ -285,6 +296,9 @@ def record_runtime_error(
     message: str,
     retryable: bool,
     context: Mapping[str, Any] | None = None,
+    operator_message: str | None = None,
+    user_message: str | None = None,
+    diagnostic_id: str | None = None,
 ) -> dict[str, Any]:
     next_metrics = dict(metrics or {})
     previous = _contract(metrics)
@@ -294,7 +308,11 @@ def record_runtime_error(
         message=str(message),
         retryable=bool(retryable),
         context=dict(context) if context else None,
+        operator_message=operator_message or str(message),
+        user_message=user_message or str(message),
+        diagnostic_id=diagnostic_id or current_correlation_id() or new_correlation_id(),
     )
+    increment_metric("continuous_runtime_error_total", code=str(code), stage=str(stage))
     next_metrics[RUNTIME_CONTRACT_KEY] = {
         **previous,
         "version": RUNTIME_CONTRACT_VERSION,
@@ -408,6 +426,9 @@ def _structured_error(value: object) -> dict[str, Any] | None:
     }
     if isinstance(value.get("context"), Mapping):
         payload["context"] = dict(value["context"])
+    for key in ("operatorMessage", "userMessage", "diagnosticId"):
+        if str(value.get(key) or "").strip():
+            payload[key] = str(value[key])
     return payload
 
 

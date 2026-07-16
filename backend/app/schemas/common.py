@@ -43,15 +43,23 @@ class ErrorCode(str, Enum):
     NO_DRAFT_REVISION = "NO_DRAFT_REVISION"
 
 
+class DiagnosticFields(CamelModel):
+    operator_message: str | None = None
+    user_message: str | None = None
+    diagnostic_id: str | None = None
+
+
 class SortDirection(str, Enum):
     ASC = "asc"
     DESC = "desc"
 
 
-class ErrorDetail(CamelModel):
+class ErrorDetail(DiagnosticFields):
     code: ErrorCode | str
     message: str
     details: dict[str, Any] | None = None
+    stage: str = "api"
+    retryable: bool = False
 
 
 class ErrorResponse(CamelModel):
