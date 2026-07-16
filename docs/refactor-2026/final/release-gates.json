@@ -21,6 +21,12 @@
       "owner": "data-platform",
       "mitigation": "등록된 production compatibility 경로를 30일 0-call metric 후 별도 contract PR에서 제거한다.",
       "dueDate": "2026-10-31"
+    },
+    {
+      "id": "R-017",
+      "owner": "data-platform",
+      "mitigation": "authority matrix의 Python-owned connector use case를 versioned adapter 뒤로 이동하고 Node 경로를 제거한다.",
+      "dueDate": "2026-09-30"
     }
   ],
   "gates": [
