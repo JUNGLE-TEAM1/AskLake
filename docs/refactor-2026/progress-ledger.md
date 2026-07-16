@@ -6,11 +6,11 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `5/5`
-- 현재 PR 단위: `13 완료`
+- 현재 PR 단위: `14 완료`
 - 상태: `IN_PROGRESS`
 - 시작 기준: `PR 12 branch@60ec0910`
-- 최근 이슈/PR: `#842` / `#843`
-- 현재 브랜치: `refactor-#842`
+- 최근 이슈/PR: `#844` / `#846`
+- 현재 브랜치: `refactor-#844`
 - 다음 사용자 확인 지점: PR 13~15 생성 후
 
 ## 15개 PR 원장
@@ -30,7 +30,7 @@
 | 11 | 17 | CSS·Catalog·Layout 경계 | 10 | DONE |
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | DONE |
 | 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | DONE |
-| 14 | 22~23 | Full-stack E2E·재부팅·장애 복구 | 13 | WAITING |
+| 14 | 22~23 | Full-stack E2E·재부팅·장애 복구 | 13 | DONE |
 | 15 | 24~25 | 최종 감사·배포·rollback 준비 | 14 | WAITING |
 
 ## 배치 계획
@@ -79,13 +79,14 @@
 
 ## Latest handoff
 
-- 상태: 배치 5 PR 13 완료, PR 14 착수 전
-- 원격 PR: `#837`, `#839`, `#841` 모두 `dev` 대상 ready PR
-- 실제 변경: Jobs·전역 data hook 분해, CSS·Catalog 경계 분리, API·DB persisted 하위 호환 gate와 legacy 경로 가시화
-- 통과: backend unit 419건(1 opt-in skip), API breaking 0건, legacy registry 15건, frontend UI regression 132 checks, TypeScript/Vite production build, diff check
-- 남은 경고: frontend App chunk 약 2.6 MB warning은 R-014 및 후속 bundle/quality gate 범위로 유지한다.
-- 차단 사항: 기술적 blocker 없음. `#837` → `#839` → `#841` 순서 머지가 필요하다.
-- 다음 단위: PR 13 완료 후 PR 14 — full-stack E2E와 reboot/fault recovery
+- 상태: 배치 5 PR 14 완료, PR 15 착수 전
+- 원격 PR: `#843`, `#846` 모두 `dev` 대상 ready PR이며 순차 스택이다.
+- 실제 변경: 요청 추적·품질 ratchet, 27개 E2E/recovery 시나리오, PR/release/nightly 실행기, 실제 Spark REST process·Docker UID 185·browser 경계와 CI artifact를 추가했다.
+- 통과: backend unit 432건(1 opt-in skip), PR profile 4 checks, release profile 7 checks, actual headless Chrome, frontend UI regression 136 checks, TypeScript/Vite production build, structural ratchet.
+- 미실행: 실제 Kafka/Spark/object storage fault nightly는 격리된 `self-hosted + asklake-e2e` runner에서만 실행한다.
+- 남은 경고: frontend App chunk 약 2.6 MB warning은 R-014에 유지한다.
+- 차단 사항: 기술적 blocker 없음. `#843` → `#846` 순서 머지가 필요하다.
+- 다음 단위: PR 15 — 최종 재감사, Go/No-Go, rollout·rollback 준비와 15개 PR 스택 검증
 
 ## PR 13 작업 기록
 
@@ -97,6 +98,19 @@
 - 검증: structural quality ratchet, backend unit 425건(1 opt-in skip), observability/runtime 집중 20건, API breaking 0건(95→98 operations additive), legacy registry 15건, frontend UI regression 136 checks, TypeScript/Vite production build, Python compile·diff check 통과
 - rollback: observability middleware/error additive field/UI와 quality workflow/baseline을 함께 되돌린다. persisted data migration은 없다.
 - 머지 순서: `#841` → `#843`; PR 14는 `#843` 다음이다.
+
+## PR 14 작업 기록
+
+- 시작 HEAD: `a5730f57` (PR 13 branch HEAD)
+- branch/issue/PR: `refactor-#844`, `#844`, `#846`
+- 변경 commit: `1b82da19` (`test(e2e): add full-stack recovery profiles`)
+- 포함: 27개 선언형 정상·fault·reboot·partial failure 시나리오, PR/release/nightly 누적 runner, correlation JSON/JUnit/Markdown artifact, actual Spark REST process·Docker UID 185·browser 경계, isolated nightly guard와 live fixture cleanup
+- 하위 호환: 제품 API/DB/runtime/checkpoint/report/manifest 계약은 변경하지 않고 기존 verifier와 additive `data-testid`만 사용한다.
+- 검증: backend unit 432건(1 opt-in skip), PR profile 4 checks, release profile 7 checks, recovery harness 7건, actual headless Chrome, frontend E2E contract 6건, UI regression 136 checks, TypeScript/Vite production build, structural quality ratchet, Python/Node syntax와 diff check 통과
+- 미실행: 실제 Kafka/Spark/object storage/browser nightly fault는 production/shared 환경을 금지하고 격리된 `self-hosted + asklake-e2e` runner로 제한한다.
+- 제외: production 배포와 fault injection, public API/DB migration, 새 browser framework 전면 도입
+- rollback: workflow/registry/runner와 stable selector를 함께 되돌린다. 제품 persisted data migration은 없고 생성된 nightly fixture는 격리 stack 폐기로 정리한다.
+- 머지 순서: `#843` → `#846`; PR 15는 `#846` 다음이다.
 
 ## PR 04 작업 기록
 
