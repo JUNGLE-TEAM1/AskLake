@@ -67,6 +67,8 @@ REALTIME_EVENTS_ENABLED=false
 CONTINUOUS_SQL_JOIN_ENABLED=false
 LATEST_STATIC_PER_BATCH_ENABLED=false
 STATIC_CHANGE_BACKFILL_ENABLED=false
+CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS=100000
+CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT=10
 REALTIME_EVENT_RETENTION_SECONDS=86400
 REALTIME_EVENT_PAYLOAD_MAX_BYTES=8192
 REALTIME_REPLAY_LIMIT=500
@@ -89,6 +91,8 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
 - `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
+- `CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS`: Catalog row 통계가 이 값 이하인 static relation만 broadcast 후보가 된다. 통계가 없으면 broadcast하지 않는다.
+- `CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT`: micro-batch JOIN output 증폭 hard limit이다.
 - `REALTIME_EVENT_*`, `REALTIME_REPLAY_LIMIT`: durable event retention, payload byte limit, replay page의 안전 경계다.
 - `REALTIME_SUBSCRIBER_QUEUE_SIZE`, `REALTIME_CONNECTION_LIMIT_PER_ACTOR`: process memory와 actor별 multi-tab 연결을 제한한다.
 - `REALTIME_HEARTBEAT_SECONDS`, `REALTIME_DISPATCH_POLL_SECONDS`, `REALTIME_CLEANUP_INTERVAL_SECONDS`, `REALTIME_SSE_SEND_TIMEOUT_SECONDS`: heartbeat, NOTIFY 유실 catch-up, retention cleanup, slow-send 종료 경계다.
@@ -161,6 +165,23 @@ Domain event는 `id`, `event`, JSON `data`를 가지며 `dataset.revision.commit
 Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 snapshot 작성 시작 시점의 `eventCursor`가 포함된다. frontend는 이 cursor 이후를 구독하므로 snapshot fetch와 EventSource 연결 사이의 event도 replay된다.
 
 상세 envelope, replay, proxy, rollback 계약은 `docs/realtime-2026/contracts/realtime-event-v1.md`와 `docs/realtime-2026/sse-operations.md`를 따른다.
+
+### Continuous SQL Job
+
+`CONTINUOUS_SQL_JOIN_ENABLED=true`일 때 다음 API를 사용한다. 모든 JSON field는 camelCase다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| POST | `/api/query/continuous-jobs/validate` | SQL·relation·권한·schema·key를 검증하고 versioned plan 반환 |
+| POST | `/api/query/continuous-jobs` | stopped Job 생성. `clientRequestId` idempotency 지원 |
+| GET | `/api/query/continuous-jobs` | admin은 전체, 일반 actor는 소유 Job 목록 |
+| GET | `/api/query/continuous-jobs/{jobId}` | 상태 조회 및 active worker reconcile |
+| POST | `/api/query/continuous-jobs/{jobId}/commands` | `start|pause|resume|stop|recover`, `commandId` 필수 |
+| GET | `/api/query/continuous-jobs/{jobId}/batches?limit=100` | generation/batch 내림차순 publication lineage |
+
+validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. create는 `name`, optional `checkpointPath`, `clientRequestId`와 append-only Iceberg `output`을 추가한다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
+
+지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
 Canonical status values:
 

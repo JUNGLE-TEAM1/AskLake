@@ -4812,6 +4812,7 @@ def dataset_payload_from_spark_result(
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),
+        "estimatedRowCount": aggregate["rowCount"],
         "sampleRows": sample_rows,
         "schema": schema_json,
         "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
@@ -4825,6 +4826,8 @@ def dataset_payload_from_spark_result(
         "partition": partition,
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
+        "relationMode": "streaming" if job.execution_mode == "continuous" and is_kafka_job(job) else "static",
+        **({"schemaFingerprint": str(job.schema_fingerprint)} if job.schema_fingerprint else {}),
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
         **(

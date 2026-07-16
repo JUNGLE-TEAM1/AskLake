@@ -145,6 +145,15 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
 
+### Flow D. Continuous SQL stream-static JOIN
+
+1. 사용자는 query 가능한 Catalog Dataset 중 Kafka Continuous streaming relation 1개와 static Iceberg relation 1개 이상을 선택한다.
+2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key type과 static unique-key evidence를 실행 전에 검사한다.
+3. 생성된 Job은 기본적으로 stopped 상태이며 명시적 start command에서 Run generation, fencing, checkpoint와 static snapshot set을 고정한다.
+4. 각 Kafka micro-batch는 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 경우에만 다음 batch부터 새 snapshot을 사용한다.
+5. exact Iceberg snapshot과 행 수가 검증된 뒤에만 Catalog revision과 Dashboard change event가 공개된다. publication 재시도는 이미 처리한 Kafka input을 다시 쓰지 않는다.
+6. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다.
+
 ## 7) 성공 기준
 
 - `npm run build`가 통과한다.

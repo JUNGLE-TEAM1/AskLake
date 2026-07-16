@@ -546,7 +546,11 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] Dashboard/Dataset ACL을 적용한 SSE replay/heartbeat/resync/overflow endpoint
 - [x] Dashboard hybrid/SSE typed client, targeted REST refetch, bounded coalescing과 polling fallback
 - [x] Caddy/NGINX streaming 설정, realtime status/readiness와 proxy contract verification
-- [ ] Continuous SQL planner/runtime/publication
+- [x] Continuous SQL AST planner, persisted Job/Run/Batch/command와 owner/idempotency contract
+- [x] PINNED_AT_START/LATEST_PER_BATCH durable static binding, generation/fencing과 Spark adapter
+- [x] exact Iceberg snapshot 검증 후 Catalog revision/durable Dashboard event publication
+- [x] `npm run verify:continuous-sql-contract` focused contract gate
+- [ ] 실제 Kafka/MinIO/Spark/Iceberg/Trino Continuous SQL E2E와 fault/restart 검증
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다.

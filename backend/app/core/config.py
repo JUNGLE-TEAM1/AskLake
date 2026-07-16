@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     continuous_sql_join_enabled: bool = False
     latest_static_per_batch_enabled: bool = False
     static_change_backfill_enabled: bool = False
+    continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
+    continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
     realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)

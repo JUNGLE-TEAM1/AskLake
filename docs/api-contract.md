@@ -3871,4 +3871,14 @@ type PermissionGrant = {
 
 `GET /api/dashboards/{dashboardId}/published`의 `DashboardRuntimeResponse`에 non-negative `eventCursor`가 추가된다. 값은 snapshot 계산 전에 읽은 durable event high watermark다. 기존 `revision`, `pages`, `widgetsByPageId`, `filters` 의미는 바뀌지 않는다.
 
-SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/sse-operations.md에 있고 Continuous SQL 계약은 docs/realtime-2026/adr/002-continuous-stream-static-join.md에 고정한다.
+SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/sse-operations.md에 있고 Continuous SQL 계약은 docs/realtime-2026/adr/002-continuous-stream-static-join.md와 docs/realtime-2026/contracts/continuous-sql-v1.md에 고정한다.
+
+### Continuous SQL Job API
+
+- `POST /api/query/continuous-jobs/validate`: `query`, `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 받아 `normalizedSql`, `runtimeSql`, `planVersion`, `planHash`, relation/JOIN/output schema와 compiled plan을 반환한다.
+- `POST /api/query/continuous-jobs`: validate request에 `name`, append Iceberg `output`, optional `checkpointPath`, `clientRequestId`를 추가해 stopped Job을 생성한다. 동일 owner의 같은 idempotency key와 fingerprint는 같은 Job을 반환하고 다른 payload는 `409`다.
+- `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{jobId}`: owner/admin 범위 Job과 active Run을 반환한다. Run은 fencing token 원문 대신 `fencingTokenHash`를 반환한다.
+- `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
+- `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
+
+기존 `/api/query/runs` 및 Kafka Continuous ETL API는 변경하지 않는다. Continuous SQL feature flag가 꺼져 있으면 validate/create/start/resume/recover는 `409 CONTINUOUS_SQL_DISABLED`로 fail closed한다.

@@ -40,7 +40,8 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Production legacy demo auth | backend startup + `scripts/verify-deploy-env.sh` | `enabled` | legacy demo users are disabled by default; an explicit demo deployment must set matching backend/frontend opt-in flags | maintainer | `AUTH_LEGACY_DEMO_USERS_ENABLED`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 모두 `true`일 때만 재시작 시 기존 status/session을 보존한다. Bootstrap admin과 production header-auth 차단은 유지한다. |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 | Realtime SSE proxy contract | `backend/scripts/verify-realtime-proxy-contract.py` + Compose config + backend/frontend focused tests | `manual` | Caddy/NGINX buffering·compression·timeout 또는 env 전달 drift를 배포 전 차단 | maintainer | production PostgreSQL/ALB/rolling restart는 STACK-04에서 CI·smoke gate로 승격 |
-| Realtime feature rollback | `DASHBOARD_SYNC_MODE`, `REALTIME_EVENTS_ENABLED`, `CONTINUOUS_SQL_JOIN_ENABLED` plus config contract tests | `partial` | invalid/disabled 조합은 polling과 기존 runtime으로 fail closed; rollout 중 오류 시 env 변경 후 재배포 | maintainer | SSE kill switch와 polling fallback은 구현됨. Continuous SQL은 STACK-03 전까지 기본 false |
+| Realtime feature rollback | `DASHBOARD_SYNC_MODE`, `REALTIME_EVENTS_ENABLED`, `CONTINUOUS_SQL_JOIN_ENABLED` plus config contract tests | `enabled` | invalid/disabled 조합은 polling과 기존 runtime으로 fail closed; rollout 중 오류 시 env 변경 후 재배포 | maintainer | SSE polling fallback과 Continuous SQL create/start kill switch 구현. 기본값은 계속 polling/false |
+| Continuous SQL contract | `backend npm run verify:continuous-sql-contract` | `manual` | unsupported SQL, unsafe static key, stale generation/fence, invalid lifecycle/publication identity를 merge 전에 차단 | maintainer | 실제 Kafka/Spark/Iceberg/Trino fault·restart는 STACK-04에서 CI/opt-in smoke로 승격 |
 
 ## 3) Team Guide
 

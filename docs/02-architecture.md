@@ -500,5 +500,9 @@ Spark/Iceberg commit
 - DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
+- `continuous_sql_jobs/runs/batches/commands`가 SQL·plan·desired/observed state·generation/fence·batch lineage를 보관한다. API application service는 Node worker gateway만 호출하며 SQL planner, Spark batch adapter, publication reconciler를 분리한다.
+- Run 시작은 static snapshot set을 DB에 먼저 저장한 뒤 worker를 시작한다. 각 batch는 generation별 durable binding manifest를 먼저 만들고, Spark/Iceberg commit 후 `output_committed -> catalog_ready -> dashboard_ready`로 전진한다.
+- Catalog Dataset revision과 durable event는 exact Iceberg snapshot 및 `_asklake_run_id` 행 수 검증 뒤 같은 transaction에 기록한다. worker ACK는 이 transaction 이후이며 ACK 실패는 publication을 되돌리지 않고 retry한다.
+- stale worker/report/publication은 plan hash, Run generation과 fencing hash가 하나라도 다르면 거절한다. fencing token 원문은 worker bridge에만 전달하고 public API에는 hash만 노출한다.
 
-결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.

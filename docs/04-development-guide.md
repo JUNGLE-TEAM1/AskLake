@@ -921,6 +921,23 @@ docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml 
 git diff --check
 ```
 
+STACK-03 focused validation:
+
+```powershell
+cd backend
+npm run verify:continuous-sql-contract
+npm run verify:kafka-continuous-contract
+.\.venv\Scripts\python.exe -m unittest tests.test_query_route_compatibility tests.test_sql_run_authorization tests.test_continuous_runtime_sync_config tests.test_kafka_continuous_dashboard_sync tests.test_kafka_continuous_replay_publication
+.\.venv\Scripts\python.exe -m compileall -q app scripts\continuous_sql_runtime.py scripts\kafka_continuous_stream.py
+node --check scripts\manage-kafka-continuous.mjs
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+git diff --check
+```
+
+static Dataset JOIN key는 Catalog `uniqueKeySets` 또는 `uniqueKeyColumns`로 명시한다. 기존 `indexColumns`가 실제 unique index임을 보장하는 경우에만 `indexColumnsUnique=true`를 함께 저장한다. `CONTINUOUS_SQL_JOIN_ENABLED=false`가 기본이며 실제 Spark/Iceberg end-to-end, fault/restart와 soak는 STACK-04 gate다.
+
 실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 통합 환경에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다.
 
 기능을 즉시 되돌릴 때는 DASHBOARD_SYNC_MODE=polling, REALTIME_EVENTS_ENABLED=false, CONTINUOUS_SQL_JOIN_ENABLED=false로 재배포한다.
