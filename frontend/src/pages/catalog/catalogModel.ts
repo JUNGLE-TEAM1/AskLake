@@ -1,6 +1,5 @@
 import "@xyflow/react/dist/style.css";
 import type { CatalogDataset, DatasetMaterializationRun, LineageGraphDataset } from "../../types";
-import { LineageTableNode } from "./CatalogLineage";
 export type LineageColumn = {
   baseId: string;
   id: string;
@@ -19,10 +18,6 @@ export type LineageTableNodeData = Record<string, unknown> & {
   onColumnSelect: (columnKey: string | null) => void;
   relatedColumnKeys: string[] | null;
   selected: boolean;
-};
-
-export const lineageNodeTypes = {
-  lineageTable: LineageTableNode,
 };
 
 export const lineageFitViewOptions = { maxZoom: 1.08, padding: 0.08 };

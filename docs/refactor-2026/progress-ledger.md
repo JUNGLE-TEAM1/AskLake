@@ -6,12 +6,12 @@
 
 - 계획 버전: `2026-07-16-15-pr`
 - 작업 배치: `5/5`
-- 현재 PR 단위: `14 완료`
-- 상태: `IN_PROGRESS`
+- 현재 PR 단위: `15 완료`
+- 상태: `COMPLETE`
 - 시작 기준: `PR 12 branch@60ec0910`
-- 최근 이슈/PR: `#844` / `#846`
-- 현재 브랜치: `refactor-#844`
-- 다음 사용자 확인 지점: PR 13~15 생성 후
+- 최근 이슈/PR: `#847` / `#848`
+- 현재 브랜치: `refactor-#847`
+- 다음 사용자 확인 지점: 순차 merge와 수동 production gate는 사용자 승인 후
 
 ## 15개 PR 원장
 
@@ -31,7 +31,7 @@
 | 12 | 18~19 | API·DB 호환·Legacy/Fallback 정리 | 11 | DONE |
 | 13 | 20~21 | 관측성·오류 모델·CI gate | 12 | DONE |
 | 14 | 22~23 | Full-stack E2E·재부팅·장애 복구 | 13 | DONE |
-| 15 | 24~25 | 최종 감사·배포·rollback 준비 | 14 | WAITING |
+| 15 | 24~25 | 최종 감사·배포·rollback 준비 | 14 | DONE |
 
 ## 배치 계획
 
@@ -111,6 +111,30 @@
 - 제외: production 배포와 fault injection, public API/DB migration, 새 browser framework 전면 도입
 - rollback: workflow/registry/runner와 stable selector를 함께 되돌린다. 제품 persisted data migration은 없고 생성된 nightly fixture는 격리 stack 폐기로 정리한다.
 - 머지 순서: `#843` → `#846`; PR 15는 `#846` 다음이다.
+
+## PR 15 작업 기록
+
+- 시작 HEAD: `cbb5a624` (PR 14 branch HEAD)
+- branch/issue/PR: `refactor-#847`, `#847`, `#848`
+- 변경 commit: `d21c2986` (final audit/readiness gate), `bce18f37` (rollout/rollback runbook와 nested Python contract)
+- 포함: 정량 최종 재감사와 전후 점수, END_STATE evidence, 잔여 P1 owner/date, guarded Go/No-Go, release gate JSON, read-only plan/production preflight, canary·backup·관찰·bounded rollback runbook
+- 감사 결과: 위험도 7.8→4.6, 5,000줄 이상 3→1, 2,000줄 이상 6→4, import cycle 0. `etl_service.py` 8,822줄 때문에 전체 리팩토링 완료 선언은 No-Go다.
+- PR 15 보정: 재감사에서 발견한 frontend runtime import cycle 3건을 0으로 제거했다. release profile의 nested Node check가 host Python 3.9로 떨어지는 문제를 harness Python 전파와 회귀 test로 고정했다.
+- 하위 호환: static API/frontend/persisted removal 0, full OpenAPI breaking 0, table 23개 유지, legacy register 15개/production 10개 telemetry 완비
+- 검증: backend unit 432건(1 opt-in skip), frontend UI 136 checks, TypeScript/Vite production build, final audit unit 2건, PR profile 4 checks, release profile 7 checks, backward compatibility, legacy register, structural quality ratchet, Markdown link/JSON/diff check 통과
+- 수동 gate: 격리 nightly fault, production canary clean reboot, backup/restore drill. `verify:refactor-release-execution`은 이 증거 전까지 exit 2로 정상 차단된다.
+- 제외: production 배포·EC2 reboot·traffic 전환, DB 수동 편집/chown, compatibility adapter 즉시 제거
+- rollback: PR 15의 audit/readiness script와 문서, frontend cycle 경계만 되돌린다. persisted API/DB/runtime data migration은 없다.
+- 머지 순서: `#846` → `#848`. production 실행은 별도 명시 승인 전 금지한다.
+
+## 최종 handoff
+
+- 상태: 15개 순차 PR 구현·검증·원격 PR 생성 완료
+- 마지막 PR: `#848` (`refactor-#847 -> dev`, ready)
+- 최종 머지 꼬리: `#841` → `#843` → `#846` → `#848`
+- 감사 판정: deterministic CI와 canary 준비는 GO, production 실행은 manual gate 3건 전까지 NO-GO
+- 남은 기술 작업: R-003, R-008, R-016, R-017과 P2 bundle/dependency cleanup
+- 금지: 명시적 승인 없는 merge, production deploy, EC2 reboot, traffic 전환
 
 ## PR 04 작업 기록
 

@@ -63,3 +63,16 @@
 - 결정: 기존 Job·session·checkpoint·draft reader는 migration window 동안 유지하되 production 도달 시 안정적인 path ID의 구조화 warning과 counter를 남긴다.
 - 이유: 문자열 검색 결과를 일괄 삭제하면 운영 데이터를 깨뜨리고, 무음 fallback을 유지하면 실제 경로와 제거 시점을 판단할 수 없기 때문이다.
 - 제약: 운영 빌드에서 `VITE_USE_MOCK_API=true`는 fail closed 한다. adapter 제거는 등록부의 owner·제거 조건과 30일 0-call 근거를 충족한 별도 PR에서 수행한다.
+
+## D-011 — 최종 판정은 guarded GO, production은 fail-closed
+
+- 상태: Accepted
+- 결정: deterministic CI와 canary 준비는 허용하되 격리 nightly fault, production clean reboot, backup/restore drill이 없으면 production 실행 사전점검을 exit 2로 차단한다.
+- 이유: P0는 해소됐지만 `etl_service.py`, global CSS, Node connector, compatibility cleanup P1이 남았고 production host 증거를 로컬 contract test로 대체할 수 없기 때문이다.
+- 제약: production 배포, EC2 reboot, traffic 전환은 별도 명시적 승인 없이 실행하지 않는다.
+
+## D-012 — 리팩토링 완료 선언과 release readiness를 분리
+
+- 상태: Accepted
+- 결정: 현재 release는 하위 호환 구조 개선 release로 취급하고 “전체 아키텍처 리팩토링 완료”로 선언하지 않는다.
+- 이유: 5,000줄 이상 파일은 3→1로 줄었지만 `etl_service.py`가 8,822줄이며 END_STATE 1,200줄 목표와 얇은 façade 조건을 충족하지 못한다.

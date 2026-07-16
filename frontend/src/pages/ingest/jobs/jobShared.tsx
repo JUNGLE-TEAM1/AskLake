@@ -8,7 +8,7 @@ import { type StatusBadgeTone } from "@/components/ui/status-badge";
 
 import type { JobCommand, JobDagStepStatus, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStatus, RealtimeOperationalHealth } from "../../../types";
 import { jobStatusMeta } from "../../../utils/statusMeta";
-import { normalizeWhitespace } from "./jobDetailModel";
+import { normalizeWhitespace } from "./jobText";
 
 export const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
   queued: { className: "scheduled", label: "실행 대기" },
