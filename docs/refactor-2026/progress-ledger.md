@@ -5,13 +5,13 @@
 ## 현재 상태
 
 - 계획 버전: `2026-07-16-15-pr`
-- 작업 배치: `1/5`
-- 현재 PR 단위: `배치 1 완료 · 다음 작업 승인 대기`
-- 상태: `PAUSED_AT_APPROVAL_GATE`
+- 작업 배치: `2/5`
+- 현재 PR 단위: `04 완료 · 05 준비`
+- 상태: `BATCH_IN_PROGRESS`
 - 시작 기준: `origin/dev@b93ae27370fdfa50ce949bcabb9ff7fe37ca1098`
-- 최근 이슈/PR: `#814` / `#818`
-- 현재 브랜치: `refactor-#814`
-- 다음 사용자 확인 지점: PR 01~03 생성 후
+- 최근 이슈/PR: `#819` / `#820`
+- 현재 브랜치: `refactor-#819`
+- 다음 사용자 확인 지점: PR 04~06 생성 후
 
 ## 15개 PR 원장
 
@@ -20,7 +20,7 @@
 | 01 | 00~01 | 현황·drift·기준선·작업 원장 | 없음 | DONE |
 | 02 | 02 | Spark 재부팅·경로·권한 복구 | 01 | DONE |
 | 03 | 03~04 | Characterization Test·Continuous 상태 계약 | 02 | DONE |
-| 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | WAITING |
+| 04 | 05 | 외부 I/O Port·Adapter 분리 | 03 | DONE |
 | 05 | 06~07 | Continuous 명령·Reconciliation 분리 | 04 | WAITING |
 | 06 | 08 | Materialization·Catalog·Dashboard 발행 분리 | 05 | WAITING |
 | 07 | 09~10 | Pipeline·Snapshot·SQL·Catalog 경계 | 06 | WAITING |
@@ -86,3 +86,15 @@
 - 남은 경고: frontend 2.6 MB chunk warning은 R-014로 유지한다.
 - 차단 사항: 기술적 blocker 없음. `#809` → `#813` → `#818` 순서 머지가 필요하다.
 - 다음 단위: 사용자 승인 후 PR 04 — 외부 I/O Port·Adapter 경계 추출
+
+## PR 04 작업 기록
+
+- 시작 HEAD: `e8687def` (PR 03 branch HEAD)
+- branch/issue/PR: `refactor-#819`, `#819`, `#820`
+- 변경 commit: `a0f1fee3` (`refactor(infra): introduce runtime ports and adapters`)
+- 포함: Node subprocess, runtime JSON report/result/ACK, Continuous object manifest의 Port·production adapter·fake test
+- 하위 호환: 기존 facade signature, API/DB schema, Job/checkpoint/report/manifest 형식을 유지한다.
+- 직접 접근 감소: `etl_service.py` subprocess 2→0, runtime JSON raw read/write 5→0, Continuous manifest boto3 직접 구간 4→0
+- 검증: backend unit 374건(1 opt-in skip), Continuous runtime contract 39건, Kafka Continuous contract, Python compile, diff check
+- 제외: Continuous command/reconciliation/publication use case 이동, 새 DI framework, public API 변경, production 배포
+- rollback: facade wiring을 이전 내부 구현으로 되돌린다. persisted data migration은 없다.

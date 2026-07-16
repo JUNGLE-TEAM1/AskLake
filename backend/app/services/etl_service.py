@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import subprocess
 from types import SimpleNamespace
 from typing import Any, Callable
 import unicodedata
@@ -60,6 +59,19 @@ from app.models import (
 )
 from app.models.base import Base
 from app.models.identity import AuthUserModel
+from app.infrastructure.runtime_io import (
+    Boto3ObjectManifestAdapter,
+    JsonFileRuntimeDocumentStore,
+    SubprocessNodeBridge,
+)
+from app.ports.runtime_io import (
+    JsonDocument,
+    JsonDocumentState,
+    AirflowGateway,
+    NodeBridgePort,
+    ObjectManifestPort,
+    RuntimeDocumentStore,
+)
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
@@ -754,14 +766,14 @@ def sync_active_kafka_continuous_runtimes() -> None:
 def continuous_report_has_unacknowledged_publication(
     job_id: str,
     runtime: KafkaContinuousRuntimeModel,
+    *,
+    document_store: RuntimeDocumentStore | None = None,
 ) -> bool:
     report_path = continuous_runtime_report_path(job_id)
-    if not report_path.is_file():
+    document = read_runtime_json(report_path, document_store=document_store)
+    if not document.found:
         return False
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return False
+    report = document.value or {}
     publications = report.get("publishedBatches")
     cursor = nonnegative_int((runtime.metrics or {}).get("catalogBatchCursor"), -1)
     if not isinstance(publications, list) or not publications:
@@ -3329,7 +3341,11 @@ def airflow_execution_response_from_persisted(
     )
 
 
-def airflow_run_reservation(job: ETLJobModel, command: str, airflow_client: Any) -> ETLRunModel:
+def airflow_run_reservation(
+    job: ETLJobModel,
+    command: str,
+    airflow_client: AirflowGateway,
+) -> ETLRunModel:
     submitted_at = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
     reserved_dag_run = AirflowDagRun(
@@ -3363,7 +3379,7 @@ def submit_airflow_job_run(
     *,
     run_id: str | None = None,
     submitted_at: str | None = None,
-    airflow_client: Any | None = None,
+    airflow_client: AirflowGateway | None = None,
 ) -> ETLRunModel:
     submitted_at = submitted_at or iso_now()
     run_id = run_id or stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
@@ -5498,76 +5514,42 @@ def run_node_bridge(
     error_marker: str,
     timeout_seconds: int,
     timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+    bridge: NodeBridgePort | None = None,
 ) -> dict[str, Any]:
-    script_path = SCRIPTS_DIR / script_name
-    try:
-        result = subprocess.run(
-            ["node", str(script_path)],
-            cwd=str(BACKEND_DIR),
-            input=json.dumps(payload, ensure_ascii=False),
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
-        if timeout_recovery is not None:
-            try:
-                recovery.update({"result": timeout_recovery(), "succeeded": True})
-            except Exception as recovery_error:
-                recovery.update({"error": str(recovery_error), "succeeded": False})
-        raise ApiError(
-            "BACKEND_BRIDGE_TIMEOUT",
-            f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
-            status.HTTP_504_GATEWAY_TIMEOUT,
-            {"recovery": recovery, "timeoutSeconds": timeout_seconds},
-        ) from exc
-    stdout = result.stdout or ""
-    stderr = result.stderr or ""
-    if result.returncode != 0:
-        error_payload = marker_payload(stdout, error_marker) or {}
-        raise ApiError(
-            error_payload.get("code") or "BACKEND_BRIDGE_FAILED",
-            error_payload.get("message") or (stderr.strip() or f"{script_name} failed."),
-            int(error_payload.get("status") or status.HTTP_502_BAD_GATEWAY),
-            {"bridge": error_payload, "stderr": stderr[-4000:], "stdout": stdout[-4000:]},
-        )
-    payload_result = marker_payload(stdout, success_marker)
-    if payload_result is None:
-        raise ApiError(
-            "BACKEND_BRIDGE_BAD_RESPONSE",
-            f"{script_name} did not return {success_marker}.",
-            status.HTTP_502_BAD_GATEWAY,
-            {"stderr": stderr[-4000:], "stdout": stdout[-4000:]},
-        )
-    if isinstance(payload_result, dict):
-        payload_result.setdefault("stdout", stdout)
-        payload_result.setdefault("stderr", stderr)
-    return payload_result
-
-
-def recover_spark_rest_submission(state_file: Path) -> dict[str, Any]:
-    result = subprocess.run(
-        ["node", str(SCRIPTS_DIR / "spark-rest-client.mjs")],
-        cwd=str(BACKEND_DIR),
-        input=json.dumps({
-            "operation": "kill-state",
-            "restUrl": os.environ.get("ASKLAKE_SPARK_REST_URL") or "http://spark-master:6066",
-            "stateFile": str(state_file),
-        }),
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
+    runtime_bridge = bridge or SubprocessNodeBridge(
+        backend_dir=BACKEND_DIR,
+        scripts_dir=SCRIPTS_DIR,
     )
-    recovered = marker_payload(result.stdout or "", "ASKLAKE_SPARK_REST_RECOVERY")
-    if result.returncode != 0 or recovered is None:
-        message = (result.stderr or "").strip() or "Spark REST submission recovery failed."
-        raise RuntimeError(message)
-    return recovered
+    return runtime_bridge.execute(
+        script_name,
+        success_marker,
+        payload,
+        error_marker=error_marker,
+        timeout_seconds=timeout_seconds,
+        timeout_recovery=timeout_recovery,
+    )
+
+
+def recover_spark_rest_submission(
+    state_file: Path,
+    *,
+    bridge: NodeBridgePort | None = None,
+) -> dict[str, Any]:
+    try:
+        return run_node_bridge(
+            "spark-rest-client.mjs",
+            "ASKLAKE_SPARK_REST_RECOVERY",
+            {
+                "operation": "kill-state",
+                "restUrl": os.environ.get("ASKLAKE_SPARK_REST_URL") or "http://spark-master:6066",
+                "stateFile": str(state_file),
+            },
+            error_marker="ASKLAKE_SPARK_REST_ERROR",
+            timeout_seconds=10,
+            bridge=bridge,
+        )
+    except ApiError as exc:
+        raise RuntimeError(exc.message) from exc
 
 
 def spark_rest_mode_enabled() -> bool:
@@ -5636,15 +5618,8 @@ def read_continuous_maintenance_result(run_id: str) -> dict[str, Any] | None:
 
 def read_continuous_maintenance_result_candidate(run_id: str) -> dict[str, Any] | None:
     result_path = continuous_maintenance_result_file(run_id)
-    if not result_path.is_file():
-        return None
-    try:
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return None
-    if not isinstance(result, dict):
-        return None
-    return result
+    document = read_runtime_json(result_path)
+    return dict(document.value) if document.found and document.value is not None else None
 
 
 def continuous_replay_result_is_durable(result: dict[str, Any]) -> bool:
@@ -5673,6 +5648,8 @@ def s3_object_is_confirmed_missing(exc: Exception) -> bool:
 def read_continuous_replay_manifest(
     job: ETLJobModel,
     run_id: str,
+    *,
+    manifest_port: ObjectManifestPort | None = None,
 ) -> tuple[str, dict[str, Any] | None, str | None]:
     """Read exact replay evidence from S3.
 
@@ -5691,30 +5668,23 @@ def read_continuous_replay_manifest(
     manifest_path = f"s3a://{bucket}/{manifest_key}"
     try:
         iceberg_target = IcebergWriterTarget.model_validate(job.iceberg_target)
-        client = build_catalog_s3_client()
+        store = manifest_port or object_manifest_port()
         try:
-            client.head_object(Bucket=bucket, Key=f"{manifest_key}/_SUCCESS")
+            store.ensure_exists(bucket, f"{manifest_key}/_SUCCESS")
         except Exception as exc:
             if s3_object_is_confirmed_missing(exc):
                 return "missing", None, None
             raise
-        response = client.list_objects_v2(Bucket=bucket, Prefix=f"{manifest_key}/")
         candidate_keys = sorted(
-            str(item.get("Key") or "")
-            for item in response.get("Contents") or []
-            if str(item.get("Key") or "").rsplit("/", 1)[-1].startswith("part-")
+            item.key
+            for item in store.list_entries(bucket, f"{manifest_key}/")
+            if item.key.rsplit("/", 1)[-1].startswith("part-")
         )
         if not candidate_keys:
             raise ValueError("Replay manifest completion marker has no payload.")
         manifest_line = ""
         for candidate_key in candidate_keys:
-            body = client.get_object(Bucket=bucket, Key=candidate_key).get("Body")
-            raw_content = body.read() if body is not None and hasattr(body, "read") else body
-            text_content = (
-                raw_content.decode("utf-8")
-                if isinstance(raw_content, bytes)
-                else str(raw_content or "")
-            )
+            text_content = store.read_text(bucket, candidate_key)
             manifest_line = next((line for line in text_content.splitlines() if line.strip()), "")
             if manifest_line:
                 break
@@ -5816,6 +5786,29 @@ def bounded_environment_integer(name: str, *, default: int, minimum: int, maximu
     except (TypeError, ValueError):
         return default
     return value if minimum <= value <= maximum else default
+
+
+def read_runtime_json(
+    path: Path,
+    *,
+    document_store: RuntimeDocumentStore | None = None,
+) -> JsonDocument:
+    store = document_store or JsonFileRuntimeDocumentStore()
+    return store.read_json(path)
+
+
+def write_runtime_json_atomic(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    document_store: RuntimeDocumentStore | None = None,
+) -> None:
+    store = document_store or JsonFileRuntimeDocumentStore()
+    store.write_json_atomic(path, payload)
+
+
+def object_manifest_port(client: Any | None = None) -> ObjectManifestPort:
+    return Boto3ObjectManifestAdapter(client or build_catalog_s3_client())
 
 
 def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
@@ -6443,10 +6436,10 @@ def continuous_maintenance_runner_stale_seconds() -> int:
 
 def continuous_maintenance_runner_observation(run_id: str) -> dict[str, Any] | None:
     state_file = continuous_maintenance_state_file(run_id)
-    try:
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError, TypeError):
+    document = read_runtime_json(state_file)
+    if not document.found or document.value is None:
         return None
+    state = document.value
     if (
         not isinstance(state, dict)
         or state.get("runner") != "rest"
@@ -6977,6 +6970,7 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     if runtime is None:
         return
     report_path = continuous_runtime_report_path(job.id)
+    report_document = read_runtime_json(report_path)
     worker_status = continuous_worker_status(job, runtime)
     container_state = str(worker_status.get("containerState") or "unknown")
     contract_was_initialized = runtime_contract_initialized(runtime.metrics)
@@ -6988,7 +6982,7 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
         # checkpoint. Reconcile a final report when one exists, but keep the
         # requested terminal transition authoritative over its stale status.
         forced_terminal_status = requested_terminal_status or ("paused" if runtime.status == "pausing" else "stopped")
-    if not report_path.exists():
+    if report_document.state is JsonDocumentState.MISSING:
         runtime_state_changed = False
         if forced_terminal_status:
             runtime.status = forced_terminal_status
@@ -7037,32 +7031,38 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
             if catalog_ack_cursor is not None and db is not None:
                 write_continuous_catalog_ack(job.id, catalog_ack_cursor)
         return
-    try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    if report_document.state is JsonDocumentState.UNREADABLE:
         runtime.metrics = record_runtime_error(
             runtime.metrics,
             stage=ContinuousErrorStage.REPORT,
             code="runtime_report_unreadable",
-            message=f"Continuous runtime report could not be read: {compact_storage_text(str(exc), limit=500)}",
+            message=(
+                "Continuous runtime report could not be read: "
+                f"{compact_storage_text(report_document.error or 'unknown read error', limit=500)}"
+            ),
             retryable=True,
             context={"jobId": job.id},
         )
         if db is not None:
             etl_repository.save_kafka_continuous_command(db, job, runtime)
         return
-    except json.JSONDecodeError as exc:
+    if report_document.state is JsonDocumentState.INVALID:
         runtime.metrics = record_runtime_error(
             runtime.metrics,
             stage=ContinuousErrorStage.REPORT,
             code="runtime_report_invalid",
             message="Continuous runtime report is not valid JSON.",
             retryable=True,
-            context={"jobId": job.id, "line": exc.lineno, "column": exc.colno},
+            context={
+                "jobId": job.id,
+                **({"line": report_document.line} if report_document.line is not None else {}),
+                **({"column": report_document.column} if report_document.column is not None else {}),
+            },
         )
         if db is not None:
             etl_repository.save_kafka_continuous_command(db, job, runtime)
         return
+    payload = report_document.value or {}
     previous_metrics = runtime.metrics or {}
     worker_attempt_id = optional_string(payload.get("workerAttemptId"))
     if worker_attempt_id and not observation_is_current(previous_metrics, worker_attempt_id):
@@ -7489,13 +7489,19 @@ def materialize_continuous_batch(
     return cursor
 
 
-def write_continuous_catalog_ack(job_id: str, batch_id: int) -> None:
+def write_continuous_catalog_ack(
+    job_id: str,
+    batch_id: int,
+    *,
+    document_store: RuntimeDocumentStore | None = None,
+) -> None:
     ack_path = continuous_runtime_report_path(job_id).with_suffix(".catalog-ack.json")
     try:
-        ack_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = ack_path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps({"batchId": batch_id, "acknowledgedAt": iso_now()}), encoding="utf-8")
-        temp_path.replace(ack_path)
+        write_runtime_json_atomic(
+            ack_path,
+            {"batchId": batch_id, "acknowledgedAt": iso_now()},
+            document_store=document_store,
+        )
     except OSError:
         # Catalog remains the authority; a missed ack only makes the next
         # report include already-idempotent publications again.
@@ -7507,22 +7513,23 @@ def verify_continuous_publication_storage(
     manifest_path_value: str,
     *,
     require_data_marker: bool = True,
+    manifest_port: ObjectManifestPort | None = None,
 ) -> None:
     paths = [("manifest", manifest_path_value)]
     if require_data_marker and data_path:
         paths.insert(0, ("data", data_path))
-    s3_client: Any | None = None
+    object_store: ObjectManifestPort | None = manifest_port
     if any(re.match(r"^s3a?://", path, re.IGNORECASE) for _label, path in paths):
-        s3_client = build_catalog_s3_client()
+        object_store = object_store or object_manifest_port()
     for label, path in paths:
         try:
             if re.match(r"^s3a?://", path, re.IGNORECASE):
                 parsed = urlparse(re.sub(r"^s3a://", "s3://", path, flags=re.IGNORECASE))
                 bucket = parsed.netloc.strip()
                 key = parsed.path.lstrip("/").rstrip("/")
-                if not bucket or not key or s3_client is None:
+                if not bucket or not key or object_store is None:
                     raise ValueError(f"Kafka publication {label} path is invalid")
-                s3_client.head_object(Bucket=bucket, Key=f"{key}/_SUCCESS")
+                object_store.ensure_exists(bucket, f"{key}/_SUCCESS")
             elif not (Path(path) / "_SUCCESS").is_file():
                 raise ValueError(f"Kafka publication {label} completion marker is missing")
         except ValueError:
@@ -7539,6 +7546,7 @@ def list_continuous_stream_manifest_batch_ids(
     *,
     after_batch_id: int,
     through_batch_id: int | None,
+    manifest_port: ObjectManifestPort | None = None,
 ) -> list[int] | None:
     """List completed stream manifests after the cursor, optionally through an upper bound."""
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
@@ -7546,36 +7554,21 @@ def list_continuous_stream_manifest_batch_ids(
     target_prefix = target["prefix"].strip("/")
     manifest_prefix = f"{target_prefix}/_batch-manifests/"
     try:
-        client = build_catalog_s3_client()
-        continuation_token: str | None = None
+        store = manifest_port or object_manifest_port()
         batch_ids: set[int] = set()
-        while True:
-            request: dict[str, Any] = {
-                "Bucket": bucket,
-                "Prefix": manifest_prefix,
-            }
-            if continuation_token:
-                request["ContinuationToken"] = continuation_token
-            response = client.list_objects_v2(**request)
-            for item in response.get("Contents") or []:
-                key = str(item.get("Key") or "")
-                match = re.search(
-                    r"(?:^|/)_batch-manifests/batch_id=(\d+)/_SUCCESS$",
-                    key,
-                )
-                if not match:
-                    continue
-                batch_id = int(match.group(1))
-                if after_batch_id < batch_id and (
-                    through_batch_id is None
-                    or batch_id <= through_batch_id
-                ):
-                    batch_ids.add(batch_id)
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = optional_string(response.get("NextContinuationToken"))
-            if continuation_token is None:
-                return None
+        for item in store.list_entries(bucket, manifest_prefix):
+            match = re.search(
+                r"(?:^|/)_batch-manifests/batch_id=(\d+)/_SUCCESS$",
+                item.key,
+            )
+            if not match:
+                continue
+            batch_id = int(match.group(1))
+            if after_batch_id < batch_id and (
+                through_batch_id is None
+                or batch_id <= through_batch_id
+            ):
+                batch_ids.add(batch_id)
         return sorted(batch_ids)
     except Exception:
         return None
@@ -7584,6 +7577,8 @@ def list_continuous_stream_manifest_batch_ids(
 def read_continuous_stream_manifest(
     job: ETLJobModel,
     batch_id: str,
+    *,
+    manifest_port: ObjectManifestPort | None = None,
 ) -> dict[str, Any] | None:
     """Recover a committed publication when the local worker report is incomplete."""
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
@@ -7591,16 +7586,15 @@ def read_continuous_stream_manifest(
     target_prefix = target["prefix"].strip("/")
     manifest_key = f"{target_prefix}/_batch-manifests/batch_id={batch_id}"
     try:
-        client = build_catalog_s3_client()
-        client.head_object(Bucket=bucket, Key=f"{manifest_key}/_SUCCESS")
-        response = client.list_objects_v2(Bucket=bucket, Prefix=f"{manifest_key}/")
+        store = manifest_port or object_manifest_port()
+        store.ensure_exists(bucket, f"{manifest_key}/_SUCCESS")
         candidate_keys = sorted(
             (
-                str(item.get("Key") or ""),
-                optional_int(item.get("Size")),
+                item.key,
+                item.size,
             )
-            for item in response.get("Contents") or []
-            if str(item.get("Key") or "").rsplit("/", 1)[-1].startswith("part-")
+            for item in store.list_entries(bucket, f"{manifest_key}/")
+            if item.key.rsplit("/", 1)[-1].startswith("part-")
         )
         if not candidate_keys:
             return None
@@ -7610,13 +7604,7 @@ def read_continuous_stream_manifest(
             # lexicographic part strands a durable batch outside Catalog.
             if candidate_size == 0:
                 continue
-            body = client.get_object(Bucket=bucket, Key=candidate_key).get("Body")
-            raw_content = body.read() if body is not None and hasattr(body, "read") else body
-            text_content = (
-                raw_content.decode("utf-8")
-                if isinstance(raw_content, bytes)
-                else str(raw_content or "")
-            )
+            text_content = store.read_text(bucket, candidate_key)
             manifest_line = next((line for line in text_content.splitlines() if line.strip()), "")
             if not manifest_line:
                 continue
