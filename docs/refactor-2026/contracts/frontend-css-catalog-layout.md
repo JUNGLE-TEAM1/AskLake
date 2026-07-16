@@ -25,12 +25,12 @@
 
 분할 시 selector나 declaration을 재작성하지 않았다. import 순서로 재조합한 내용의 SHA-256은 분할 전과 동일하다.
 
-- ETL: `07c8257b9ac5e496ad8173148941c3f32ff4141e82e312ae705f44df7c871771`
+- ETL: `4e1ae14712e513b30bbc3511c440cf13cb97433c512ff024323e148136dc6942`
 - Layout: `c427c6371a8a2703fdb8711fc8e90d542d7e9a5b092b560d04979735cf5e921b`
-- ETL selector inventory: 1,313 definitions, 1,241 unique, 기존 중복 정의 72개
+- ETL selector inventory: 1,250 definitions, 1,183 unique, 기존 중복 정의 67개
 - Layout selector inventory: 246 definitions, 246 unique, 중복 정의 0개
 
-기존 중복 selector 72개는 cascade 호환을 위해 이 PR에서 의미를 바꾸거나 제거하지 않는다. 후속 정리는 시각 회귀 근거와 별도 PR이 필요하다.
+기존 중복 selector 67개는 cascade 호환을 위해 이 PR에서 의미를 바꾸거나 제거하지 않는다. 후속 정리는 시각 회귀 근거와 별도 PR이 필요하다.
 
 ## Catalog 소유권
 

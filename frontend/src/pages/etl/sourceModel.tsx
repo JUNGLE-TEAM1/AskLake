@@ -381,15 +381,6 @@ export function normalizeFolderPrefix(path: string) {
   return cleanPath ? `${cleanPath}/` : "";
 }
 
-export function formatSourceBytes(totalBytes: number) {
-  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const unitIndex = Math.min(Math.floor(Math.log(totalBytes) / Math.log(1024)), units.length - 1);
-  const value = totalBytes / (1024 ** unitIndex);
-  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[unitIndex]}`;
-}
-
 export function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {
   const nextFields = [...fields];
   patches.forEach(([label, value]) => {

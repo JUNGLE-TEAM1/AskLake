@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import type { DraftPipeline, DraftPipelinePatch, PermissionAction, PermissionGrant, PermissionOptionsResponse } from "../../types";
@@ -92,16 +93,16 @@ export function PermissionPage({
         const savedRoles = new Map((draft.permission.roles ?? []).map((role) => [role.name, role.checked]));
         const nextGrants = hasSavedGrants
           ? (draft.permission.grants ?? [])
-            .filter((grant) => grant.principalType !== "public")
-            .map((grant) => ({ ...grant, actions: normalizePermissionActions(grant.actions) }))
+              .filter((grant) => grant.principalType !== "public")
+              .map((grant) => ({ ...grant, actions: normalizePermissionActions(grant.actions) }))
           : options.groups
-            .filter((group, index) => savedRoles.get(group.name) ?? index === 0)
-            .map((group) => ({
-              actions: normalizePermissionActions(group.actions),
-              principalId: group.id,
-              principalType: "group" as const,
-              source: "permission_ui",
-            }));
+              .filter((group, index) => savedRoles.get(group.name) ?? index === 0)
+              .map((group) => ({
+                actions: normalizePermissionActions(group.actions),
+                principalId: group.id,
+                principalType: "group" as const,
+                source: "permission_ui",
+              }));
         const nextPublicView = hasSavedGrants
           ? Boolean(draft.permission.grants?.some((grant) => grant.principalType === "public" && grant.actions.includes("view")))
           : initialPermission.visibility === "외부 공유";
@@ -203,11 +204,11 @@ export function PermissionPage({
     const nextGrants = selected
       ? selectedGrants.filter((grant) => permissionGrantKey(grant) !== targetKey)
       : [...selectedGrants, {
-        actions: permissionPreset === "custom" ? normalizePermissionActions(actions) : permissionPresetActions(permissionPreset),
-        principalId,
-        principalType,
-        source: "permission_ui",
-      }];
+          actions: permissionPreset === "custom" ? normalizePermissionActions(actions) : permissionPresetActions(permissionPreset),
+          principalId,
+          principalType,
+          source: "permission_ui",
+        }];
     const nextPreset = permissionPreset === "custom" || nextGrants.length === 0
       ? permissionPreset
       : inferPermissionPreset(nextGrants);
@@ -282,10 +283,7 @@ export function PermissionPage({
         ) : permissionOptions ? (
           <>
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
-                <CardTitle>빠른 권한 설정</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<SlidersHorizontal />} title="빠른 권한 설정" />
               <CardContent className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
                 {PERMISSION_PRESETS.map((preset) => {
                   const selected = permissionPreset === preset.id;
@@ -309,11 +307,11 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-                <CardTitle>권한 대상</CardTitle>
-                <span className="text-sm font-semibold text-slate-500">{selectedGrants.length}개 선택</span>
-              </CardHeader>
+              <EtlSectionHeader
+                actions={<span className="text-sm font-semibold text-slate-500">{selectedGrants.length}개 선택</span>}
+                icon={<CircleUser />}
+                title="권한 대상"
+              />
               <CardContent className="p-5">
                 <Tabs
                   className="grid min-w-0 gap-4"
@@ -418,10 +416,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
-                <CardTitle>허용 작업</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<ShieldCheck />} title="허용 작업" />
               <CardContent className="grid gap-3 p-5">
                 {selectedGrants.length > 0 ? selectedGrants.map((grant) => {
                   const target = targetDisplay(grant);
@@ -474,10 +469,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon schema"><CircleUser size={17} /></span>
-                <CardTitle>담당자와 전체 조회</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<CircleUser />} title="담당자와 전체 조회" />
               <CardContent className="grid gap-5 p-5 md:grid-cols-2">
                 <ShadcnField>
                   <FieldLabel htmlFor="permission-owner">작업 담당자</FieldLabel>
@@ -509,10 +501,7 @@ export function PermissionPage({
             </Card>
 
             <Card className="min-w-0 overflow-hidden" size="none">
-              <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-slate-200 px-5 py-4">
-                <span className="etl-review-icon permission"><Check size={17} /></span>
-                <CardTitle>저장될 권한</CardTitle>
-              </CardHeader>
+              <EtlSectionHeader icon={<Check />} title="저장될 권한" tone="success" />
               <CardContent className="grid gap-2 p-5">
                 <div className="flex min-w-0 flex-col gap-2 rounded-md border border-blue-300 bg-blue-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="grid min-w-0 gap-1">

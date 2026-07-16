@@ -14,62 +14,6 @@
   overflow: hidden;
 }
 
-.etl-review-card-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid #eef0f4;
-  padding: 18px 20px;
-}
-
-.etl-review-card-header h2 {
-  margin: 0;
-  color: #111827;
-  font-size: 18px;
-  font-weight: 850;
-  line-height: 1.35;
-}
-
-.etl-review-card-header p {
-  margin: 4px 0 0;
-  color: #64748b;
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.45;
-}
-
-.etl-review-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.etl-review-icon.schema {
-  background: #eef2ff;
-  color: #4f46e5;
-}
-
-.etl-review-icon.destination {
-  background: #ecfdf5;
-  color: #16a34a;
-}
-
-.etl-review-icon.permission {
-  background: #fff7ed;
-  color: #ea580c;
-}
-
-.etl-review-icon.readiness {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
 .etl-review-edit {
   white-space: nowrap;
 }

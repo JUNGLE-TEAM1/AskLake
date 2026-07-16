@@ -1,28 +1,44 @@
+import type { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
 import {
-  Check,
+  ChevronDown,
+  ChevronUp,
   FileText,
   Info,
   SlidersHorizontal,
   Sparkles,
-  Table2
+  Table2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
+import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { previewRecordParsing } from "../../services/sourceConnectorService";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft } from "../../types";
-import { applyClickEventRecordSchemaPreset, CLICK_EVENT_RECORD_SCHEMA_PRESET, isClickEventLogSource } from "./recordParsingPreset";
-
+import type {
+  AuditResult,
+  DraftPipeline,
+  DraftPipelinePatch,
+  RecordParsingDraft,
+  RecordParsingInvalidRow,
+  RecordParsingPreviewResponse,
+  SchemaColumnDraft,
+} from "../../types";
 import {
   buildSchemaFingerprint,
   normalizeTargetColumnName,
-  schemaTypeOptions
+  schemaTypeOptions,
 } from "./schemaModel";
+
+type RecordParsingResultRow = {
+  id: string;
+  values: string[];
+};
+
+type RecordParsingColumnDraft = RecordParsingDraft["columns"][number];
 
 export function RecordParsingPage({
   draft,
@@ -44,7 +60,8 @@ export function RecordParsingPage({
   const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const hasClickEventPreset = isClickEventLogSource(draft.source.sourceLabel, draft.source.sourceConfig);
+  const [rawSampleExpanded, setRawSampleExpanded] = useState(true);
+  const [resultPreviewExpanded, setResultPreviewExpanded] = useState(true);
 
   const loadPreview = async (nextParsing: RecordParsingDraft) => {
     setLoading(true);
@@ -100,31 +117,79 @@ export function RecordParsingPage({
     } : current);
   };
 
-  const applyRecommendedSchema = () => {
-    const nextParsing = applyClickEventRecordSchemaPreset(parsing);
-    if (!nextParsing) {
-      onNotify("10개 필드가 감지된 클릭 이벤트 로그에서만 추천 스키마를 적용할 수 있습니다.");
-      return;
-    }
-
-    setParsing(nextParsing);
-    setPreview((current) => current ? {
-      ...current,
-      columns: current.columns.map((column, index) => ({
-        ...column,
-        sourceName: nextParsing.columns[index].name,
-        targetName: nextParsing.columns[index].name,
-        type: nextParsing.columns[index].inferredType,
-      })),
-      recordParsing: nextParsing,
-    } : current);
-    onAction("etl.record_parsing.recommended_schema_applied", "/api/etl/record-parsing/preview", draft.source.sourceLabel || "click-events.log");
-    onNotify("추천 스키마 10개 필드를 적용했습니다.");
-  };
-
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
   const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
   const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
+  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = [
+    {
+      cell: ({ row }) => row.original.position + 1,
+      header: "순서",
+      id: "position",
+      meta: { widthClassName: "w-20" },
+    },
+    {
+      cell: ({ row }) => (
+        <code className="record-parsing-code-cell">
+          {preview?.sampleRows[0]?.[row.original.position] || "-"}
+        </code>
+      ),
+      header: "샘플 값",
+      id: "sample-value",
+      meta: { widthClassName: "min-w-56" },
+    },
+    {
+      cell: ({ row }) => (
+        <Input
+          aria-label={`${row.original.position + 1}번째 출력 컬럼명`}
+          value={row.original.name}
+          onChange={(event) => updateColumn(row.original.position, { name: event.target.value })}
+        />
+      ),
+      header: "출력 컬럼명",
+      id: "output-column-name",
+      meta: { widthClassName: "min-w-52" },
+    },
+    {
+      cell: ({ row }) => (
+        <NativeSelect
+          value={row.original.inferredType}
+          onChange={(event) => updateColumn(row.original.position, {
+            inferredType: event.target.value as RecordParsingColumnDraft["inferredType"],
+          })}
+        >
+          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
+        </NativeSelect>
+      ),
+      header: "추론 타입",
+      id: "inferred-type",
+      meta: { widthClassName: "min-w-44" },
+    },
+  ];
+  const invalidRowColumns: ColumnDef<RecordParsingInvalidRow>[] = [
+    { accessorKey: "lineNumber", header: "원본 행", meta: { widthClassName: "w-28" } },
+    { accessorKey: "expectedFieldCount", header: "예상", meta: { widthClassName: "w-24" } },
+    { accessorKey: "actualFieldCount", header: "실제", meta: { widthClassName: "w-24" } },
+    {
+      cell: ({ row }) => <code className="record-parsing-code-cell">{row.original.rawPreview}</code>,
+      header: "원문",
+      id: "raw-preview",
+      meta: { widthClassName: "min-w-[32rem]" },
+    },
+  ];
+  const resultRows: RecordParsingResultRow[] = (preview?.sampleRows ?? []).slice(0, 5).map((values, index) => ({
+    id: `record-parsing-result-${index}`,
+    values,
+  }));
+  const resultColumns: ColumnDef<RecordParsingResultRow>[] = parsing.columns.map((column) => ({
+    cell: ({ row }) => {
+      const value = row.original.values[column.position] ?? "-";
+      return <span className="record-parsing-result-cell" title={value}>{value}</span>;
+    },
+    enableSorting: false,
+    header: column.name,
+    id: `record-parsing-result-${column.position}`,
+    meta: { widthClassName: "min-w-40" },
+  }));
 
   const applyAndContinue = () => {
     if (!preview || !canApply) {
@@ -166,46 +231,56 @@ export function RecordParsingPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={!canApply || loading} useShadcnStyles onPrev={onPrev} onNext={applyAndContinue} />}
+      actions={<CreationTopActions nextDisabled={!canApply || loading} split onPrev={onPrev} onNext={applyAndContinue} />}
     >
-      <header className="record-parsing-page-header">
-        <span className="record-parsing-page-icon" aria-hidden="true"><SlidersHorizontal /></span>
-        <h2>레코드 구조화</h2>
-      </header>
+      <EtlStepHeader
+        className="etl-step-standalone-header"
+        icon={<SlidersHorizontal />}
+        title="레코드 구조화"
+      />
 
       <div className="record-parsing-workspace">
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><FileText aria-hidden="true" />원본 샘플</h2>
-          </div>
-          <div className="record-parsing-panel-body">
-            <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
-          </div>
+          <EtlSectionHeader
+            actions={(
+              <button
+                aria-controls="record-parsing-raw-sample"
+                aria-expanded={rawSampleExpanded}
+                aria-label={rawSampleExpanded ? "원본 샘플 접기" : "원본 샘플 펼치기"}
+                className="record-parsing-collapse-button"
+                type="button"
+                onClick={() => setRawSampleExpanded((expanded) => !expanded)}
+              >
+                {rawSampleExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+              </button>
+            )}
+            icon={<FileText />}
+            title="원본 샘플"
+          />
+          {rawSampleExpanded ? (
+            <div className="record-parsing-panel-body" id="record-parsing-raw-sample">
+              <textarea className="input record-parsing-raw" readOnly aria-label="원본 TXT 샘플" value={rawLines.join("\n")} />
+            </div>
+          ) : null}
         </section>
 
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><SlidersHorizontal aria-hidden="true" />컬럼 설정</h2>
-            <div className="record-parsing-panel-actions">
-              {hasClickEventPreset ? (
-                <Button
-                  className="record-parsing-preset-button"
-                  disabled={loading || parsing.expectedFieldCount !== CLICK_EVENT_RECORD_SCHEMA_PRESET.length}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  onClick={applyRecommendedSchema}
-                >
-                  <Sparkles aria-hidden="true" />
-                  추천 스키마 적용
-                </Button>
-              ) : null}
-              <span className={cn("record-parsing-status", preview?.invalidRows.length && "is-warning")}>
-                {!loading && preview && !preview.invalidRows.length ? <Check aria-hidden="true" /> : null}
-                {loading ? "검증 중" : preview ? `${preview.validRows}/${preview.totalRows} 정상` : "검증 대기"}
-              </span>
-            </div>
-          </div>
+          <EtlSectionHeader
+            actions={(
+              <Button
+                className="record-parsing-ai-button"
+                data-testid="record-parsing-ai-button"
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <Sparkles aria-hidden="true" />
+                AI 필드 자동 추론
+              </Button>
+            )}
+            icon={<SlidersHorizontal />}
+            title="필드 추론"
+          />
           <div className="record-parsing-panel-body record-parsing-settings-body">
             <div className="record-parsing-controls">
               <FormFieldGroup className="field" label="필드 구분자">
@@ -219,25 +294,17 @@ export function RecordParsingPage({
               </FormFieldGroup>
             </div>
             {error && <p className="record-parsing-error">{error}</p>}
-            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-              <table className="schema-table record-parsing-table">
-                <thead><tr><th>순서</th><th>샘플 값</th><th>출력 컬럼명</th><th>추론 타입</th></tr></thead>
-                <tbody>
-                  {parsing.columns.map((column) => (
-                    <tr key={column.position}>
-                      <td>{column.position + 1}</td>
-                      <td><code>{preview?.sampleRows[0]?.[column.position] || "-"}</code></td>
-                      <td><Input aria-label={`${column.position + 1}번째 출력 컬럼명`} value={column.name} onChange={(event) => updateColumn(column.position, { name: event.target.value })} /></td>
-                      <td>
-                        <NativeSelect value={column.inferredType} onChange={(event) => updateColumn(column.position, { inferredType: event.target.value as RecordParsingDraft["columns"][number]["inferredType"] })}>
-                          {schemaTypeOptions.filter((type) => type !== "JSON").map((type) => <option key={type} value={type}>{type}</option>)}
-                        </NativeSelect>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollArea>
+            <DataTable
+              aria-label="필드 추론 표"
+              cellClassName="text-sm text-slate-800"
+              columns={fieldInferenceColumns}
+              data={parsing.columns}
+              enableSorting={false}
+              getRowId={(row) => String(row.position)}
+              pagination={false}
+              tableClassName="record-parsing-data-table min-w-[720px]"
+              viewportClassName="record-parsing-data-table-viewport"
+            />
             {!columnNamesValid && <p className="record-parsing-error">컬럼명은 비어 있거나 중복될 수 없습니다.</p>}
           </div>
         </section>
@@ -245,27 +312,54 @@ export function RecordParsingPage({
 
       {preview?.invalidRows.length ? (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header record-parsing-panel-header-warning"><h2><Info aria-hidden="true" />필드 개수 불일치</h2></div>
+          <EtlSectionHeader icon={<Info />} title="필드 개수 불일치" tone="warning" />
           <div className="record-parsing-panel-body">
-            <table className="schema-table record-parsing-invalid-table">
-              <thead><tr><th>원본 행</th><th>예상</th><th>실제</th><th>원문</th></tr></thead>
-              <tbody>{preview.invalidRows.map((row) => <tr key={row.lineNumber}><td>{row.lineNumber}</td><td>{row.expectedFieldCount}</td><td>{row.actualFieldCount}</td><td><code>{row.rawPreview}</code></td></tr>)}</tbody>
-            </table>
+            <DataTable
+              aria-label="필드 개수 불일치 표"
+              cellClassName="text-sm text-slate-800"
+              columns={invalidRowColumns}
+              data={preview.invalidRows}
+              enableSorting={false}
+              getRowId={(row) => String(row.lineNumber)}
+              pagination={false}
+              tableClassName="record-parsing-data-table min-w-[720px]"
+              viewportClassName="record-parsing-data-table-viewport"
+            />
           </div>
         </section>
       ) : preview && (
         <section className="panel record-parsing-panel">
-          <div className="record-parsing-panel-header">
-            <h2><Table2 aria-hidden="true" />결과 미리보기</h2>
-          </div>
-          <div className="record-parsing-panel-body record-parsing-preview-body">
-            <ScrollArea type="always" scrollbars="horizontal" className="record-parsing-table-scroll">
-              <table className="schema-table record-parsing-preview-table">
-                <thead><tr>{parsing.columns.map((column) => <th key={column.position}>{column.name}</th>)}</tr></thead>
-                <tbody>{preview.sampleRows.slice(0, 5).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
-              </table>
-            </ScrollArea>
-          </div>
+          <EtlSectionHeader
+            actions={(
+              <button
+                aria-controls="record-parsing-result-preview"
+                aria-expanded={resultPreviewExpanded}
+                aria-label={resultPreviewExpanded ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
+                className="record-parsing-collapse-button"
+                type="button"
+                onClick={() => setResultPreviewExpanded((expanded) => !expanded)}
+              >
+                {resultPreviewExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+              </button>
+            )}
+            icon={<Table2 />}
+            title="결과 미리보기"
+          />
+          {resultPreviewExpanded ? (
+            <div className="record-parsing-panel-body record-parsing-preview-body" id="record-parsing-result-preview">
+              <DataTable
+                aria-label="레코드 구조화 결과 미리보기 표"
+                cellClassName="text-sm text-slate-800"
+                columns={resultColumns}
+                data={resultRows}
+                enableSorting={false}
+                getRowId={(row) => row.id}
+                pagination={false}
+                tableClassName="record-parsing-data-table min-w-max"
+                viewportClassName="record-parsing-data-table-viewport"
+              />
+            </div>
+          ) : null}
         </section>
       )}
     </CreationFlowLayout>

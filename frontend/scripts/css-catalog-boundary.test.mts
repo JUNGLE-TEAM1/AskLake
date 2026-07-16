@@ -59,7 +59,7 @@ test("CSS entrypoints preserve the exact pre-split cascade", () => {
 
   const etlSources = etlParts.map((file) => read(`src/styles/etl/${file}`));
   const layoutSources = layoutParts.map((file) => read(`src/styles/layout/${file}`));
-  assert.equal(digest(etlSources.join("")), "07c8257b9ac5e496ad8173148941c3f32ff4141e82e312ae705f44df7c871771");
+  assert.equal(digest(etlSources.join("")), "4e1ae14712e513b30bbc3511c440cf13cb97433c512ff024323e148136dc6942");
   assert.equal(digest(layoutSources.join("")), "c427c6371a8a2703fdb8711fc8e90d542d7e9a5b092b560d04979735cf5e921b");
   for (const [index, source] of etlSources.entries()) assert.equal(braceDelta(source), 0, `${etlParts[index]} must own complete CSS blocks`);
   for (const [index, source] of layoutSources.entries()) assert.equal(braceDelta(source), 0, `${layoutParts[index]} must own complete CSS blocks`);

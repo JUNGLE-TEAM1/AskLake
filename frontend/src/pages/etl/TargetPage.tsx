@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { listS3Buckets } from "../../services/s3PathApi";
@@ -313,12 +314,7 @@ export function TargetPage({
       ) : null}
       <div className="etl-review-stack target-config-stack">
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon"><FileText size={17} /></span>
-            <div>
-              <h2>기본 정보</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<FileText />} title="기본 정보" />
           <div className="target-config-form-grid basic">
             <FormFieldGroup className="field" label="출력 데이터셋 이름">
               <Input className="input control-input" value={targetDataset} onChange={(event) => changeTargetDataset(event.target.value)} />
@@ -353,12 +349,7 @@ export function TargetPage({
         </section>
 
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon destination"><HardDrive size={17} /></span>
-            <div>
-              <h2>저장 위치 설정</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<HardDrive />} title="저장 위치 설정" />
           <div className="target-config-form-grid destination">
             <FormFieldGroup className="field target-format-field" label="파일 형식">
               <Select value={targetFormat} onValueChange={(value) => setTargetFormat(normalizeTargetFileFormat(value))}>
@@ -379,12 +370,7 @@ export function TargetPage({
           </div>
         </section>
         <section className="etl-review-card target-config-card">
-          <div className="etl-review-card-header">
-            <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
-            <div>
-              <h2>파티션 설정</h2>
-            </div>
-          </div>
+          <EtlSectionHeader icon={<SlidersHorizontal />} title="파티션 설정" />
           <div className="target-partition-settings">
             <div className="target-partition-table">
               <div className="target-partition-header" aria-hidden="true">

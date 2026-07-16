@@ -26,7 +26,6 @@ import { SourceChoiceStage, SourceConnectStage } from "./SourceConnectionStages"
 import { buildSourceConnectionDefinitions } from "./sourceDefinitions";
 import {
   FALLBACK_SOURCE_DEFAULTS,
-  formatSourceBytes,
   getInitialSourceStage,
   hasSqlResultPreviewConfig,
   isInternalSourceField,
@@ -141,7 +140,6 @@ export function SourceConnectionPage({
   const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
   const hasSelectedSource = activeSourceType.length > 0;
   const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
-  const activeSourceMeta = connectorMeta[activeSourceType] ?? connectorMeta["File / S3"];
   const isInternalDataLake = activeSourceType === "Data Lake";
   const editableFields = sourceFields[activeSourceType] ?? (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
@@ -867,7 +865,6 @@ export function SourceConnectionPage({
 
             {sourceStage === "connect" && hasSelectedSource && !isInternalDataLake && (
               <SourceConnectStage
-                activeSourceMeta={activeSourceMeta}
                 activeSourceType={activeSourceType}
                 connectionStatus={connectionStatus}
                 connectionStatusCopy={SOURCE_CONNECTION_STATUS_COPY}
@@ -914,11 +911,6 @@ export function SourceConnectionPage({
                           rows={selectedCatalogDataset?.sampleRows ?? []}
                         />
                       )}
-                      previewMeta={selectedCatalogDataset ? (
-                        <div className="source-explorer-preview-meta">
-                          <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
-                        </div>
-                      ) : undefined}
                       previewTitle="데이터 미리보기"
                       queryPlaceholder="데이터셋 이름, 설명, 소유자 검색"
                       queryValue={assetSearchQuery}
@@ -963,19 +955,7 @@ export function SourceConnectionPage({
                       )}
                       previewIcon={previewShowsRawText ? <FileText /> : undefined}
                       previewMeta={previewShowsRawText && activeSourceType === "Stream / Kafka" ? undefined : (
-                        <div className="source-explorer-preview-meta">
-                          <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
-                          {previewShowsRawText ? (
-                            <span>{rawTextPreviewLines.length}행</span>
-                          ) : selectedDatasetSummary ? (
-                            <span>
-                              전체 {selectedDatasetSummary.fileCount.toLocaleString()}개 · {formatSourceBytes(selectedDatasetSummary.totalBytes)} · 스키마 {selectedDatasetSummary.schemaCompatible ? "호환" : "불일치"}
-                              {selectedDatasetSummary.excludedFileCount > 0 ? ` · 제외 ${selectedDatasetSummary.excludedFileCount.toLocaleString()}개` : ""}
-                            </span>
-                          ) : (
-                            <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
-                          )}
-                        </div>
+                        <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
                       )}
                       previewTitle={previewShowsRawText
                         ? (activeSourceType === "Stream / Kafka" ? "원본 로그 샘플" : "원본 샘플")
