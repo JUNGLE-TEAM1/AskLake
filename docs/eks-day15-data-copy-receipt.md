@@ -66,7 +66,7 @@ RDS Catalog API에서 복원된 Dataset의 최신 성공 materialization을 선�
 
 첫 실행에서 Spark Operator package resolver의 Ivy cache가 쓸 수 없는 home을 선택하는 문제와 Spark 4 shutdown의 label-selector cleanup에 필요한 `deletecollection` RBAC 누락을 확인했다. `spark.jars.ivy=/tmp/.ivy2`와 namespace 범위 cleanup 권한을 보완한 후 성공했고, Spark ServiceAccount의 Secret read는 계속 거절된다.
 
-같은 점검에서 현재 배포된 Backend의 Iceberg rows 오류 처리 경로가 `ApiError` import 누락 때문에 원래 Trino 오류를 `NameError`로 가리는 문제도 확인했다. 이 브랜치의 source와 회귀 test는 수정했지만 immutable Backend image를 다시 만들거나 배포하지 않았으므로, 현재 EKS Backend runtime에는 아직 반영되지 않았다. 다음 Backend image receipt와 rollout에서 반영 여부를 다시 검증해야 한다.
+같은 점검에서 현재 배포된 Backend의 Iceberg rows 오류 처리 경로가 `ApiError` import 누락 때문에 원래 Trino 오류를 `NameError`로 가리는 문제도 확인했다. 이 브랜치의 source와 회귀 test는 수정했지만 immutable Backend image를 다시 만들거나 배포하지 않았으므로, 현재 EKS Backend runtime에는 아직 반영되지 않았다. 다음 Backend image receipt와 rollout에서 반영 여부를 다시 검증해야 하며 상세 인수 조건은 [15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
 
 이 검증은 RDS의 Catalog row가 가리킨 S3 materialization을 EKS Spark가 실제로 열어 row를 수집했다는 증거다. Trino coordinator와 runtime Secret은 아직 배포되지 않았으므로 Iceberg table 전체의 snapshot-aware Trino 조회까지 완료했다고 간주하지 않는다.
 

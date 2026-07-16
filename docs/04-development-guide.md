@@ -715,6 +715,8 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Phase 6의 Git 제외 image receipt와 full Git SHA, Deployment/Pod imageID, ECR immutable digest를 대조한다. `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 지정한 정확한 rollback EC2가 running이고 instance/system status가 모두 `ok`인지 확인하며, 다른 실행 중 instance의 존재로 대신 통과하지 않는다. 이는 EC2 instance 보존 증거이고 Continuous 서비스 자체 health 증거는 아니다. rollout 동안 외부 `/api/health`를 1초 간격으로 측정하고 30초마다 식별자 없는 진행 건수를 출력한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 worker·maintenance Continuous process 0개를 다시 확인한다. 실제 receipt, commit과 instance ID는 저장소 밖에서 전달하고 전체 digest·repository·endpoint·instance ID는 출력하거나 Git에 기록하지 않는다.
 
+15.5 물리 조회에서 발견한 Iceberg rows `ApiError` import 수정은 source와 회귀 test에만 있고 현재 배포 Backend image에는 없다. image owner가 이 수정 commit을 포함한 새 `linux/amd64` immutable digest와 formal receipt를 전달하기 전에는 runtime 수정 완료로 표시하지 않는다. 새 receipt가 준비되면 기존 same-digest restart가 아니라 Backend-only atomic image upgrade로 처리하고, receipt revision/digest와 Deployment/Pod imageID를 대조한다. Trino 미배포 상태에서는 rows API가 HTTP 200이 아니라 sanitized HTTP 502 `SQL_STORAGE_ERROR`를 반환하고 `NameError`/generic 500을 만들지 않는지를 검증한다. Trino snapshot HTTP 200은 별도 후속 gate다. 세부 handoff와 rollback 기준은 [15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md)를 따른다.
+
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
 export ASKLAKE_IMAGE_RECEIPT='<private *.image-receipt.json>'
