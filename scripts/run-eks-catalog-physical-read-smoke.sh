@@ -344,9 +344,12 @@ prefix_residue="$(kubectl get sparkapplications.sparkoperator.k8s.io,pods,servic
 prefix_residue="$(awk -F/ -v prefix="$APP_NAME" '$2 == prefix || index($2, prefix "-") == 1' <<<"$prefix_residue")"
 [[ -z "$label_residue" && -z "$prefix_residue" ]] || fail "physical read resource residue remains"
 
+secret_access_status=0
 secret_access="$(kubectl auth can-i get secrets -n "$NAMESPACE" \
-  --as="system:serviceaccount:$NAMESPACE:asklake-spark")"
-[[ "$secret_access" == "no" ]] || fail "Spark ServiceAccount unexpectedly reads Secrets"
+  --as="system:serviceaccount:$NAMESPACE:asklake-spark" 2>"$KUBECTL_ERROR_FILE")" || \
+  secret_access_status=$?
+[[ "$secret_access_status" -eq 1 && "$secret_access" == "no" ]] || \
+  fail "Spark ServiceAccount Secret access check failed or unexpectedly allowed access"
 
 jq -n \
   --arg terminalState "$terminal_state" \

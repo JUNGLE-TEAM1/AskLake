@@ -126,3 +126,20 @@ enum 정규화 수정의 exact revision으로 공식 OIDC image delivery를 다�
 - `NameError`, Python enum 표현, traceback, endpoint, query, password/token marker 없음
 
 따라서 Trino 미배포 상태의 Phase 4 오류 계약 검증은 완료됐다. Trino coordinator 배포 뒤 snapshot-aware HTTP 200 rows 검증은 별도 후속 gate다.
+
+## Phase 5: 강화된 bounded S3 Parquet live 재실행
+
+현재 Catalog API에서 queryable Iceberg Dataset을 선택하고 해당 `storageLocation` root 아래 실제 non-empty Parquet object를 S3 `HeadObject`로 확인해 Git 제외 private input을 생성했다. 준비 단계는 Dataset ID, root와 object URI를 출력하지 않았고 exact root 경계와 Git ignore를 확인했다. 실행 증거의 범위는 계속 `bounded-s3-parquet-object`이며 Catalog snapshot 전체 provenance나 Trino table 조회로 확대하지 않는다.
+
+최신 formal receipt의 Spark runtime으로 정적/fake regression과 `--validate-only`를 통과한 뒤 confirmation-gated `--live`를 실행했다. 첫 live 작업의 Spark driver와 executor는 Completed됐고 cleanup 잔여도 0이었지만, 마지막 `kubectl auth can-i get secrets`가 거부 시 `no`와 exit code 1을 함께 반환하는 실제 CLI 의미를 실행기가 실패로 오해했다. runner가 exit code 1과 exact `no`를 정상 거부 증거로 요구하도록 수정하고, 권한 허용과 API 오류를 각각 실패시키는 fake regression을 추가했다.
+
+보완 후 live 재실행 결과는 다음과 같다.
+
+- SparkApplication terminal state `COMPLETED`
+- physical schema 22 columns
+- bounded returned rows 5
+- 모든 row width와 physical schema column count 일치
+- Spark ServiceAccount의 Secret read 거부 확인
+- SparkApplication·Pod·Service·ConfigMap·PVC label/exact-prefix 잔여 0
+
+실제 row, Dataset ID, S3 bucket/object URI, image digest와 Pod 식별자는 출력하거나 Git에 기록하지 않았다. Issue #798의 강화된 physical read acceptance 항목은 완료됐다.

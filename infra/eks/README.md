@@ -102,6 +102,8 @@ dev SparkApplication CRD와 controller/webhook은 공식 Kubeflow Spark Operator
 
 운영자가 Catalog에서 선별한 exact Parquet object를 다시 확인할 때는 `scripts/run-eks-catalog-physical-read-smoke.sh --validate-only`와 `scripts/test-eks-catalog-physical-read-smoke.sh`를 먼저 통과한다. 실제 URI와 Dataset 문맥은 Git 제외 `infra/eks/delivery/*.physical-read-input.json`, image는 canonical `ASKLAKE_IMAGE_RECEIPT`의 Git 제외 formal receipt로만 전달한다. 실행기 자체는 Catalog API provenance를 재검증하지 않고 bounded exact S3 Parquet read만 증명한다. `--live`는 context, CRD/operator/capacity/Pod Identity/server dry-run과 confirmation을 추가로 요구하고 실제 row를 출력하지 않으며 fail-closed cleanup과 잔여 0을 강제한다.
 
+private input을 새로 만들 때는 `scripts/prepare-eks-physical-read-input.sh`가 현재 Catalog의 queryable Iceberg root와 그 아래 non-empty exact Parquet object를 대조한다. helper와 runner 모두 Dataset ID, bucket/object URI와 row를 출력하지 않는다.
+
 IRSA와 Pod Identity render 계약은 실제 ARN이 없는 fixture로 각각 확인할 수 있다. IRSA는 Backend/Trino/MSK smoke/Spark 네 ServiceAccount annotation을 만들고 Pod Identity는 annotation 없이 association output을 사용한다.
 
 ```bash
