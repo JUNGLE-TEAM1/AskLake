@@ -118,8 +118,42 @@ export function defaultRawBucket() {
   return process.env.ASKLAKE_RAW_BUCKET || process.env.MINIO_BUCKET || "m3-raw";
 }
 
+export function validateConfiguredBucket(bucketValue, settingName) {
+  const bucket = String(bucketValue || "").trim();
+  if (
+    bucket.toLowerCase().includes("replace-with-")
+    || bucket.length < 3
+    || bucket.length > 63
+    || !/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(bucket)
+    || bucket.includes("..")
+  ) {
+    throw new Error(`${settingName} is invalid or still contains a deployment placeholder`);
+  }
+  return bucket;
+}
+
 export function defaultOutputBucket() {
-  return process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output";
+  return validateConfiguredBucket(
+    process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output",
+    "ASKLAKE_SPARK_OUTPUT_BUCKET",
+  );
+}
+
+export function defaultWarehouseBucket() {
+  return validateConfiguredBucket(
+    process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "",
+    "TRINO_ICEBERG_WAREHOUSE_BUCKET",
+  );
+}
+
+export function validateConfiguredS3Location(locationValue, settingName) {
+  const location = String(locationValue || "").trim().replace(/\/+$/, "");
+  const match = /^s3a?:\/\/([^/]+)(?:\/.*)?$/i.exec(location);
+  if (!match) {
+    throw new Error(`${settingName} must be an s3:// or s3a:// location`);
+  }
+  validateConfiguredBucket(match[1], settingName);
+  return location;
 }
 
 export function isMinioProvider(fields = []) {

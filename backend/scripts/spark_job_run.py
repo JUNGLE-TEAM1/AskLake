@@ -95,7 +95,12 @@ def main():
         canonical_rules = manifest.get("rules") if "rules" in manifest else None
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
-        final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
+        rule_output_schema = manifest.get("ruleOutputSchema") or []
+        final_schema_columns = (
+            schema_columns_from_rule_output(rule_output_schema)
+            if full_select_sql_transform(transform_steps) and rule_output_schema
+            else merge_rule_output_schema(schema_columns, rule_output_schema)
+        )
         spark = make_spark(source_collection, iceberg_target)
         verify_spark_source_inventory(
             spark,
@@ -539,6 +544,18 @@ def iceberg_table_exists(spark, target):
         raise
 
 
+def spark_schema_signature(schema):
+    return tuple(
+        (str(field.name), str(field.dataType.simpleString()))
+        for field in schema.fields
+    )
+
+
+def iceberg_table_schema_matches_frame(spark, target, frame):
+    existing_schema = spark.table(spark_iceberg_table_identifier(target)).schema
+    return spark_schema_signature(existing_schema) == spark_schema_signature(frame.schema)
+
+
 def iceberg_snapshot(spark, target, snapshot_id):
     table_identifier = spark_iceberg_table_identifier(target)
     rows = spark.sql(
@@ -630,10 +647,15 @@ def commit_iceberg_table(
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": None,
         }
+    replace_table_definition = (
+        effective_write_mode == "replace"
+        and existed_before
+        and not iceberg_table_schema_matches_frame(spark, target, frame)
+    )
     committed = False
     try:
         writer = frame.writeTo(table_identifier)
-        if not existed_before:
+        if not existed_before or replace_table_definition:
             writer = (
                 writer
                 .using("iceberg")
@@ -646,6 +668,8 @@ def commit_iceberg_table(
             writer.append()
         elif effective_write_mode == "append":
             writer.create()
+        elif replace_table_definition:
+            writer.replace()
         elif existed_before:
             writer.overwrite(F.lit(True))
         else:
@@ -667,6 +691,7 @@ def commit_iceberg_table(
             "warehouseLocation": snapshot["warehouseLocation"],
             "schemaFingerprint": schema_fingerprint,
             "ruleFingerprint": rule_fingerprint,
+            "schemaReplaced": replace_table_definition,
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": previous_snapshot,
         }
@@ -763,6 +788,30 @@ def merge_rule_output_schema(schema_columns, rule_output_schema):
             "type": logical_type,
         })
     return merged
+
+
+def schema_columns_from_rule_output(rule_output_schema):
+    return [
+        {
+            "included": True,
+            "nullable": True,
+            "sourceName": str(item[0]).strip(),
+            "targetName": str(item[0]).strip(),
+            "type": str(item[1] or "String"),
+        }
+        for item in (rule_output_schema or [])
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0] or "").strip()
+    ]
+
+
+def full_select_sql_transform(transform_steps):
+    return any(
+        step
+        and step.get("enabled") is not False
+        and "sql expression" in str(step.get("operation") or "").strip().lower()
+        and str(step.get("params") or "").lstrip().lower().startswith(("select", "with"))
+        for step in (transform_steps or [])
+    )
 
 
 def snapshot_quality_report(quality):
@@ -1447,7 +1496,7 @@ def apply_transform_steps(spark, frame, steps):
         elif "sql expression" in operation and params.strip():
             expression = F.expr(params)
         elif is_row_analysis_operation(operation):
-            if review_row_analysis_uses_local_llm():
+            if review_row_analysis_uses_gateway():
                 group = contiguous_review_row_analysis_group(steps, index)
                 current = apply_review_row_analysis_group(current, group)
                 index += len(group)
@@ -1491,7 +1540,7 @@ def apply_review_row_analysis_group(frame, group):
     config = parse_review_row_analysis_config(str(first.get("params") or ""))
     columns = review_row_analysis_group_columns(group, config)
     payload_column = unique_temp_column(frame, "__asklake_review_analysis_payload")
-    current = frame.withColumn(payload_column, local_llm_review_row_analysis_payload_expression(frame, config, columns))
+    current = frame.withColumn(payload_column, gateway_review_row_analysis_payload_expression(frame, config, columns))
     for step in group:
         output_column = normalize_column_name(step.get("output") or "")
         if not output_column:
@@ -1554,8 +1603,8 @@ def review_row_analysis_expression(frame, output_column, params):
     column_config = review_row_analysis_column_config(config, target)
     method = review_row_analysis_method(column_config, config)
     source_field = column_config.get("sourceField") or config.get("sourceField") or "text"
-    if review_row_analysis_uses_local_llm():
-        return local_llm_review_row_analysis_expression(frame, target, config, column_config, source_field, method)
+    if review_row_analysis_uses_gateway():
+        return gateway_review_row_analysis_expression(frame, target, config, column_config, source_field, method)
     rating = try_cast_double(frame, config.get("ratingField") or "rating")
     asin = safe_col(frame, config.get("asinField") or "asin").cast("string")
     parent_asin = safe_col(frame, config.get("parentAsinField") or "parent_asin").cast("string")
@@ -1665,26 +1714,27 @@ def review_instruction_expression(target, column_config, title, text):
     return F.substring(combined, 1, 240)
 
 
-def review_row_analysis_uses_local_llm():
-    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "scalable").strip().lower() in {
-        "local_llm",
+def review_row_analysis_uses_gateway():
+    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "gateway").strip().lower() in {
+        "gateway",
+        "ai_gateway",
         "llm",
         "row_llm",
     }
 
 
-def local_llm_review_row_analysis_expression(frame, target, config, column_config, source_field, method):
+def gateway_review_row_analysis_expression(frame, target, config, column_config, source_field, method):
     columns = normalize_review_analysis_llm_columns(config, target, column_config, method)
     schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
     row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
 
     def analyze_target(raw_row_json):
-        return local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
+        return gateway_review_row_target(raw_row_json, target, schema_json, source_field)
 
     return F.udf(analyze_target, T.StringType())(row_json)
 
 
-def local_llm_review_row_analysis_payload_expression(frame, config, columns):
+def gateway_review_row_analysis_payload_expression(frame, config, columns):
     schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
     row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
 
@@ -1692,7 +1742,7 @@ def local_llm_review_row_analysis_payload_expression(frame, config, columns):
         row = parse_json_object(raw_row_json)
         cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
         if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(
+            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_review_ai_gateway(
                 row,
                 parse_json_array(schema_json),
                 config.get("sourceField") or "text",
@@ -1750,12 +1800,12 @@ def normalize_review_analysis_llm_columns(config, target, column_config, method)
     return columns
 
 
-def local_llm_review_row_target(raw_row_json, target, schema_json, source_field):
+def gateway_review_row_target(raw_row_json, target, schema_json, source_field):
     row = parse_json_object(raw_row_json)
     columns = parse_json_array(schema_json)
     cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
     if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, columns, source_field)
+        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_review_ai_gateway(row, columns, source_field)
     analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
     column = next((item for item in columns if item.get("targetName") == target), {})
     value = analyzed.get(target)
@@ -1771,49 +1821,53 @@ def local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
     return str(value)
 
 
-def call_local_review_llm(row, columns, source_field="text"):
-    endpoint = os.environ.get("ASKLAKE_LOCAL_LLM_ENDPOINT") or "http://host.docker.internal:1234/v1/chat/completions"
-    model = os.environ.get("ASKLAKE_LOCAL_LLM_MODEL") or "local-review-analyzer"
-    timeout_seconds = int(os.environ.get("ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS", "120") or "120")
-    max_chars = int(os.environ.get("ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS", "9000") or "9000")
-    prompt = "\n".join([
-        "Analyze this one source row into one structured CSV output row.",
-        "Use the configured text/source field when present, but you may inspect the full row for copied identifiers and context.",
-        "Return one minified JSON object only. No markdown, comments, or prose.",
-        "Keys must exactly match requestedColumns.targetName.",
-        "For columns with allowedValues, choose exactly one value from allowedValues.",
-        "For classification/category fields, use concise snake_case labels.",
-        "For summary, evidence, and extraction fields, use only facts present in the row.",
-        f"sourceField: {source_field}",
-        f"sourceText: {truncate_text(local_copy_or_extract_value(row, source_field, source_field), max_chars)}",
-        f"requestedColumns: {json.dumps(columns, ensure_ascii=False)}",
-        f"sourceRow: {truncate_text(json.dumps(row, ensure_ascii=False), max_chars)}",
-    ])
+def call_review_ai_gateway(row, columns, source_field="text"):
+    base_url = (os.environ.get("AI_GATEWAY_BASE_URL") or "http://ai-server:8090").rstrip("/")
+    token = os.environ.get("AI_GATEWAY_SERVICE_TOKEN") or ""
+    timeout_seconds = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "120") or "120")
+    max_chars = int(os.environ.get("ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS", "9000") or "9000")
+    if not token:
+        raise RuntimeError("AI Gateway service token is not configured for review analysis.")
+    request_id = hashlib.sha256(
+        f"{source_field}\n{json.dumps(columns, sort_keys=True)}\n{json.dumps(row, sort_keys=True)}".encode("utf-8", "ignore")
+    ).hexdigest()
     payload = {
-        "messages": [
-            {"role": "system", "content": "You are a strict JSON text-row structuring analyzer for Spark ETL."},
-            {"role": "user", "content": prompt},
-        ],
-        "model": model,
-        "temperature": 0,
+        "context": {
+            "requestedColumns": columns,
+            "sourceField": source_field,
+            "sourceRow": truncate_text(json.dumps(row, ensure_ascii=False), max_chars),
+            "sourceText": truncate_text(local_copy_or_extract_value(row, source_field, source_field), max_chars),
+        },
+        "mode": "review_row",
+        "prompt": "Analyze one source review row into the requested structured columns.",
+        "request_id": request_id,
+        "selected_dataset_ids": [],
     }
     request = urllib.request.Request(
-        endpoint,
+        f"{base_url}/v1/generate",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-Request-ID": request_id,
+        },
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8", "replace")
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Local LLM text row analysis failed: {exc}") from exc
+        raise RuntimeError(f"AI Gateway review analysis failed: {exc}") from exc
     parsed = parse_json_object(body)
-    content = (((parsed.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
-    output = parse_json_object(content)
-    if not output:
-        raise RuntimeError("Local LLM text row analysis returned no JSON object.")
-    return output
+    output = parsed.get("output") if isinstance(parsed, dict) else None
+    values = output.get("values") if isinstance(output, dict) else None
+    if parsed.get("mode") != "review_row" or not isinstance(values, list):
+        raise RuntimeError("AI Gateway review analysis returned an invalid response.")
+    return {
+        str(item.get("targetName") or ""): item.get("value")
+        for item in values
+        if isinstance(item, dict) and str(item.get("targetName") or "")
+    }
 
 
 def parse_json_object(value):

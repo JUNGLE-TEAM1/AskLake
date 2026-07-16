@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import hashlib
 import json
 import logging
 import time
@@ -179,7 +178,23 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
         )
         ready = bool(app_settings.internal_auth_token and app_settings.internal_auth_token.get_secret_value()) and provider_ready and mcp_ready
         response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "ok" if ready else "unavailable", "service": "ai-gateway"}
+        return {
+            "status": "ok" if ready else "unavailable",
+            "service": "ai-gateway",
+            "provider": app_settings.provider,
+            "model": app_settings.provider_model,
+            "mcp": "ready" if mcp_ready and app_settings.mcp_enabled else "disabled" if not app_settings.mcp_enabled else "unavailable",
+            "capabilities": [
+                "query_sql",
+                "classify_dataset",
+                "segment_document",
+                "etl_transform",
+                "dashboard_assistant",
+                "review_schema",
+                "review_row",
+                "embeddings",
+            ],
+        }
 
     @app.post("/v1/generate", response_model=GenerateResponse, dependencies=[Depends(require_internal_bearer)])
     async def generate(request: GenerateRequest, response: Response, request_context: Request) -> GenerateResponse:
@@ -189,7 +204,11 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
         request_started = time.perf_counter()
         mcp_duration_ms = 0.0
         context_token = request_context.headers.get("X-AskLake-AI-Context", "")
-        requires_catalog_context = app_settings.mcp_enabled and request.mode == "query_sql"
+        requires_catalog_context = (
+            app_settings.mcp_enabled
+            and request.mode in {"query_sql", "dashboard_assistant"}
+            and bool(request.selected_dataset_ids)
+        )
         if requires_catalog_context and not context_token:
             raise HTTPException(status_code=401, detail="AI context is required")
         if requires_catalog_context:
@@ -212,7 +231,16 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
             except McpContextError as exc:
                 raise HTTPException(status_code=502, detail="MCP catalog context request failed") from exc
             mcp_duration_ms = (time.perf_counter() - mcp_started) * 1000
-            request = request.model_copy(update={"context": {**catalog_context, "ragContext": request.rag_context}})
+            resolved_context = (
+                {**catalog_context, "ragContext": request.rag_context}
+                if request.mode == "query_sql"
+                else {
+                    **request.context,
+                    "catalogContext": catalog_context,
+                    "ragContext": request.rag_context,
+                }
+            )
+            request = request.model_copy(update={"context": resolved_context})
             validate_request_limits(request, app_settings)
         elif request.rag_context:
             request = request.model_copy(update={"context": {**request.context, "ragContext": request.rag_context}})

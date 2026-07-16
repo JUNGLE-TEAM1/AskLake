@@ -5,11 +5,13 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import status
 
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
+from app.services.ai_gateway_client import AiGatewayClient
 
 
 class ReviewAnalysisService:
@@ -34,10 +36,29 @@ class ReviewAnalysisService:
         }
 
     def suggest_schema(self, request: dict[str, Any]) -> dict[str, Any]:
-        return self._call_node("suggestReviewAnalysisSchema", request)
+        source_columns = request.get("sourceColumns") or request.get("source_columns") or []
+        sample_rows = request.get("sampleRows") or request.get("sample_rows") or []
+        return AiGatewayClient().suggest_review_schema(
+            request_id=str(uuid4()),
+            source_columns=source_columns if isinstance(source_columns, list) else [],
+            sample_rows=sample_rows if isinstance(sample_rows, list) else [],
+        )
 
     def run(self, request: dict[str, Any]) -> dict[str, Any]:
-        return self._call_node("runCellphonesReviewAnalysis", request)
+        payload = dict(request)
+        runtime = str(payload.get("runtime") or os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME") or "gateway").strip().lower()
+        payload["runtime"] = "gateway" if runtime in {"gateway", "ai_gateway", "llm", "row_llm"} else "scalable"
+        if payload["runtime"] == "gateway":
+            max_rows = _bounded_int(os.environ.get("ASKLAKE_REVIEW_AI_MAX_ROWS"), default=100, minimum=1, maximum=1000)
+            requested_limit = _bounded_int(payload.get("limit"), default=25, minimum=0, maximum=1_000_000)
+            if bool(payload.get("full")) or requested_limit == 0 or requested_limit > max_rows:
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    f"AI Gateway review analysis is limited to {max_rows} rows; use the scalable runtime for bulk processing",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"maxRows": max_rows, "runtime": "gateway"},
+                )
+        return self._call_node("runCellphonesReviewAnalysis", payload)
 
     def _call_node(self, function_name: str, request: dict[str, Any]) -> dict[str, Any]:
         module_uri = (Path(__file__).resolve().parents[2] / "src" / "reviewRowAnalysis.mjs").as_uri()
@@ -100,3 +121,11 @@ class ReviewAnalysisService:
             "object": f"s3://{bucket}/{key}",
             "runtime": os.environ.get("ASKLAKE_OBJECT_STORAGE_PROVIDER", "minio"),
         }
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)

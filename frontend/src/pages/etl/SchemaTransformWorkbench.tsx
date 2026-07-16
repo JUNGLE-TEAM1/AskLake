@@ -32,11 +32,17 @@ type SchemaTransformColumn = {
   type: string;
 };
 
+type SqlTransformPreviewResult = {
+  schema?: Array<{ name?: string; type?: string }>;
+  sql: string;
+};
+
 type SchemaTransformWorkbenchProps = {
   columns: SchemaColumnDraft[];
   executionMode?: KafkaExecutionMode;
   sampleRows: string[][];
   selectedIndex: number;
+  sourceDatasetId?: string;
   sourceFormat: string;
   sourceType: string;
   qualityRules?: QualityRuleDraft[];
@@ -56,6 +62,7 @@ export function SchemaTransformWorkbench({
   executionMode = "snapshot",
   sampleRows,
   selectedIndex,
+  sourceDatasetId,
   sourceFormat,
   sourceType,
   qualityRules = [],
@@ -70,6 +77,7 @@ export function SchemaTransformWorkbench({
   const [previewPending, setPreviewPending] = useState(false);
   const isKafka = sourceType.toLowerCase().includes("kafka");
   const continuous = executionMode === "continuous";
+  const effectiveSourceDatasetId = sourceDatasetId?.trim() || SCHEMA_TRANSFORM_DATASET_ID;
 
   const sourceSchema = useMemo(() => columns.map((column) => ({
     field: column.sourceName,
@@ -91,12 +99,12 @@ export function SchemaTransformWorkbench({
   );
 
   const allSources = useMemo(() => [{
-    datasetId: SCHEMA_TRANSFORM_DATASET_ID,
+    datasetId: effectiveSourceDatasetId,
     id: SCHEMA_TRANSFORM_SOURCE_ID,
     name: sourceFormat || "Source",
     schema: sourceSchema,
     sourceType: sourceFormat?.toLowerCase?.() ?? "source",
-  }], [sourceFormat, sourceSchema]);
+  }], [effectiveSourceDatasetId, sourceFormat, sourceSchema]);
 
   const previewSignature = JSON.stringify({ columns, executionMode, qualityRules, sampleRows, transformSteps });
   useEffect(() => {
@@ -117,12 +125,11 @@ export function SchemaTransformWorkbench({
     onTransformStepsChange?.(nextSteps, outputColumnsFromTargetSchema(nextTargetSchema));
   };
 
-  const handleSqlChange = (sql: string, mode?: string) => {
-    if (mode !== "sql" || !sql.trim() || continuous || isKafka) return;
+  const sqlTransformSteps = (sql: string) => {
     const firstColumn = columns.find((column) => column.included !== false);
-    if (!firstColumn) return;
+    if (!firstColumn) return [];
     const output = firstColumn.targetName || firstColumn.sourceName;
-    onTransformStepsChange?.(ensureRequiredFieldTransformSteps(targetSchema, [
+    return ensureRequiredFieldTransformSteps(targetSchema, [
       {
         canonicalParameters: { expression: sql },
         enabled: true,
@@ -135,7 +142,24 @@ export function SchemaTransformWorkbench({
         output,
         params: sql,
       },
-    ]), outputColumnsFromTargetSchema(targetSchema));
+    ]);
+  };
+
+  const handleSqlChange = (sql: string, mode?: string) => {
+    if (mode !== "sql" || !sql.trim() || continuous || isKafka) return;
+    const steps = sqlTransformSteps(sql);
+    if (steps.length === 0) return;
+    onTransformStepsChange?.(steps, outputColumnsFromTargetSchema(targetSchema));
+  };
+
+  const handleSqlPreview = (result: SqlTransformPreviewResult) => {
+    if (!result.sql.trim() || continuous || isKafka) return;
+    const outputColumns = (result.schema ?? [])
+      .map((column) => [String(column.name ?? "").trim(), canonicalType(String(column.type ?? "String"))] as [string, string])
+      .filter(([name]) => Boolean(name));
+    const steps = sqlTransformSteps(result.sql);
+    if (steps.length === 0 || outputColumns.length === 0) return;
+    onTransformStepsChange?.(steps, outputColumns);
   };
 
   const runPreview = async () => {
@@ -189,9 +213,10 @@ export function SchemaTransformWorkbench({
           onSchemaChange={handleSchemaChange}
           onQualityRulesChange={onQualityRulesChange}
           onSqlChange={handleSqlChange}
+          onSqlPreview={handleSqlPreview}
           onTestStatusChange={() => undefined}
           portableTransforms={continuous || isKafka}
-          sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
+          sourceDatasetId={effectiveSourceDatasetId}
           sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
           sourceSampleRows={sampleRows}

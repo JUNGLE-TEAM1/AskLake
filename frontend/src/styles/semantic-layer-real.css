@@ -84,3 +84,27 @@
 .semantic-real-rag-serving-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; color: #475467; font-size: 12px; }
 .semantic-real-rag-serving-status strong { color: #101828; }
 .semantic-real-rag-serving-live { color: #027a48; font-weight: 700; }
+.semantic-real-rag-search-card { display: grid; gap: 16px; padding: 18px; border-color: #bfd7ff; background: linear-gradient(180deg, #f8fbff 0%, #fff 100%); }
+.semantic-real-rag-search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.semantic-real-rag-search-guidance { margin: 0; color: #667085; font-size: 13px; }
+.semantic-real-rag-search-error { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 8px; background: #fef3f2; color: #b42318; font-size: 13px; }
+.semantic-real-rag-search-error svg { width: 17px; flex: 0 0 auto; }
+.semantic-real-rag-search-results { display: grid; gap: 12px; padding-top: 2px; }
+.semantic-real-rag-retrieval-summary { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 11px 12px; border: 1px solid #dbe4f0; border-radius: 9px; background: #fff; color: #667085; font-size: 12px; }
+.semantic-real-rag-retrieval-summary strong { color: #101828; font-size: 14px; }
+.semantic-real-rag-retrieval-summary code { padding: 3px 6px; border-radius: 5px; background: #f2f4f7; color: #344054; overflow-wrap: anywhere; }
+.semantic-real-rag-search-sources { display: grid; gap: 10px; }
+.semantic-real-rag-search-sources article { display: grid; gap: 11px; padding: 15px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fff; }
+.semantic-real-rag-source-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.semantic-real-rag-source-head > div { display: grid; gap: 3px; }
+.semantic-real-rag-source-head span { color: #175cd3; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.semantic-real-rag-source-head h4 { margin: 0; color: #101828; font-size: 15px; }
+.semantic-real-rag-search-sources p { margin: 0; color: #344054; line-height: 1.65; white-space: pre-wrap; }
+.semantic-real-rag-search-sources dl { display: flex; gap: 7px; flex-wrap: wrap; margin: 0; }
+.semantic-real-rag-search-sources dl > div { display: inline-flex; gap: 4px; padding: 5px 8px; border-radius: 6px; background: #eff6ff; font-size: 12px; }
+.semantic-real-rag-search-sources dt { color: #175cd3; font-weight: 700; }
+.semantic-real-rag-search-sources dd { margin: 0; color: #344054; }
+.semantic-real-rag-search-sources footer { display: flex; gap: 8px 14px; flex-wrap: wrap; color: #98a2b3; font-size: 11px; }
+.semantic-real-rag-search-sources footer code { color: #667085; overflow-wrap: anywhere; }
+.semantic-real-rag-search-empty { padding: 24px; border: 1px dashed #d0d5dd; border-radius: 9px; background: #fff; color: #667085; text-align: center; }
+@media (max-width: 720px) { .semantic-real-rag-search-form { grid-template-columns: 1fr; } .semantic-real-rag-source-head { flex-direction: column; } }

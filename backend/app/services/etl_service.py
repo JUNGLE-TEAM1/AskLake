@@ -2303,7 +2303,7 @@ def kafka_offset_policy(value: str) -> str:
 
 def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
     default_prefix = f"{dataset_storage_key(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
-    default_bucket = os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output"
+    default_bucket = configured_spark_output_bucket()
     if storage_path:
         match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
         if match:
@@ -2362,22 +2362,28 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
         if is_internal_data_lake_source(job.source_type)
         else None
     )
+    bridge_payload = {
+        "command": command,
+        "job": job_payload_for_spark(
+            job,
+            incremental_since,
+            incremental_before,
+            source_object_keys,
+            source_object_inventory,
+            source_window_rebaseline=source_window_rebaseline,
+            source_iceberg_table=source_iceberg_table,
+        ),
+        "runId": run_id,
+    }
+    if rest_mode:
+        bridge_payload.update({
+            "sparkRestStateFile": str(state_file),
+            "sparkRestTimeoutMs": poll_timeout_ms,
+        })
     result = run_node_bridge(
         "run-spark-job-once.mjs",
         "ASKLAKE_SPARK_RUN_RESULT",
-        {
-            "command": command,
-            "job": job_payload_for_spark(
-                job,
-                incremental_since,
-                incremental_before,
-                source_object_keys,
-                source_object_inventory,
-                source_window_rebaseline=source_window_rebaseline,
-                source_iceberg_table=source_iceberg_table,
-            ),
-            "runId": run_id,
-        },
+        bridge_payload,
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
         timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
@@ -2923,7 +2929,7 @@ def normalize_spark_output_storage_path(value: str | None) -> str:
     configured_root = str(value or "").strip()
     if not re.match(r"^s3a?://", configured_root, re.IGNORECASE):
         return configured_root
-    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    configured_bucket = configured_spark_output_bucket()
     if not configured_bucket or configured_bucket.lower() == "asklake-output":
         return configured_root
     parsed = urlparse(re.sub(r"^s3a://", "s3://", configured_root, flags=re.IGNORECASE))
@@ -2931,6 +2937,17 @@ def normalize_spark_output_storage_path(value: str | None) -> str:
         return configured_root
     suffix = f"/{parsed.path.lstrip('/')}" if parsed.path else ""
     return f"s3a://{configured_bucket}{suffix}"
+
+
+def configured_spark_output_bucket() -> str:
+    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    if (
+        "replace-with-" in configured_bucket.casefold()
+        or re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", configured_bucket) is None
+        or ".." in configured_bucket
+    ):
+        raise ValueError("ASKLAKE_SPARK_OUTPUT_BUCKET is invalid or still contains a deployment placeholder")
+    return configured_bucket
 
 
 def canonical_storage_path(value: str) -> str:

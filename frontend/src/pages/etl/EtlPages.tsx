@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import type React from "react";
+import { useRef } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -76,6 +77,7 @@ import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
+import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { getDatasets } from "../../services/mockApi";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
@@ -96,10 +98,23 @@ import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/Sou
 const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
 const OBJECT_STORAGE_PROVIDER_LABEL = OBJECT_STORAGE_IS_AWS ? "Amazon S3" : "MinIO";
 const OBJECT_STORAGE_REGION = String(import.meta.env.VITE_S3_REGION ?? (OBJECT_STORAGE_IS_AWS ? "ap-northeast-2" : "us-east-1"));
-const SPARK_OUTPUT_BUCKET = String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
+const SPARK_OUTPUT_BUCKET = requireConfiguredOutputBucket(String(import.meta.env.VITE_SPARK_OUTPUT_BUCKET ?? "asklake-output")
   .trim()
   .replace(/^s3a?:\/\//i, "")
-  .replace(/\/+.*$/, "") || "asklake-output";
+  .replace(/\/+.*$/, "") || "asklake-output");
+
+function requireConfiguredOutputBucket(bucket: string) {
+  if (
+    bucket.toLowerCase().includes("replace-with-")
+    || bucket.length < 3
+    || bucket.length > 63
+    || !/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(bucket)
+    || bucket.includes("..")
+  ) {
+    throw new Error("VITE_SPARK_OUTPUT_BUCKET must be a real S3/MinIO bucket name");
+  }
+  return bucket;
+}
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -1164,6 +1179,16 @@ export function SourceConnectionPage({
   const [catalogDatasets, setCatalogDatasets] = useState<CatalogDataset[]>([]);
   const [catalogError, setCatalogError] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogPreviewColumns, setCatalogPreviewColumns] = useState(
+    draft.source.sourceType === "Data Lake" ? draft.schema.columns.map((column) => column.sourceName) : [],
+  );
+  const [catalogPreviewRows, setCatalogPreviewRows] = useState(
+    draft.source.sourceType === "Data Lake" ? draft.schema.sampleRows : [],
+  );
+  const [catalogPreviewRowCount, setCatalogPreviewRowCount] = useState(0);
+  const [catalogPreviewError, setCatalogPreviewError] = useState("");
+  const [catalogPreviewLoading, setCatalogPreviewLoading] = useState(false);
+  const catalogSelectionRequest = useRef(0);
   const [selectedCatalogDatasetId, setSelectedCatalogDatasetId] = useState(
     draft.source.sourceType === "Data Lake" ? sourceConfigValue(draft.source.sourceConfig, "Source Dataset ID") : "",
   );
@@ -1544,23 +1569,45 @@ export function SourceConnectionPage({
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
-  const selectCatalogDataset = (dataset: CatalogDataset) => {
+  const selectCatalogDataset = async (dataset: CatalogDataset) => {
+    const requestId = catalogSelectionRequest.current + 1;
+    catalogSelectionRequest.current = requestId;
+    setCatalogPreviewError("");
+    setCatalogPreviewLoading(true);
+
+    let preview: Awaited<ReturnType<typeof getCatalogDatasetRows>>;
+    try {
+      preview = await getCatalogDatasetRows(dataset.id, { limit: 25, offset: 0 });
+    } catch (error: unknown) {
+      if (catalogSelectionRequest.current !== requestId) return;
+      const message = error instanceof Error ? error.message : "데이터셋 샘플 행을 불러오지 못했습니다.";
+      setCatalogPreviewError(message);
+      onNotify(message);
+      return;
+    } finally {
+      if (catalogSelectionRequest.current === requestId) setCatalogPreviewLoading(false);
+    }
+
+    if (catalogSelectionRequest.current !== requestId) return;
+    const previewColumns = preview.columns.length > 0 ? preview.columns : dataset.schema.map(([name]) => name);
+    const typeByColumn = new Map(dataset.schema.map(([name, type]) => [name.toLowerCase(), type]));
     const nextFields: Array<[string, string]> = [
       ["Source Dataset", dataset.name],
       ["Source Dataset ID", dataset.id],
     ];
-    const schemaColumns: SchemaColumnDraft[] = dataset.schema.map(([name, type]) => ({
+    const schemaColumns: SchemaColumnDraft[] = previewColumns.map((name) => ({
       nullable: true,
       sourceName: name,
       targetName: name,
-      type,
+      type: typeByColumn.get(name.toLowerCase()) ?? "STRING",
     }));
-    const message = `${dataset.name} 데이터셋을 소스로 선택했습니다.`;
-    const schemaSummary = `${dataset.name} · ${schemaColumns.length}개 필드 · Catalog 권한 확인`;
+    const sampleRows = preview.rows.map((row) => row.map((value) => String(value ?? "")));
+    const message = `${dataset.name} 데이터셋의 실제 행 ${preview.returnedRows.toLocaleString()}개를 확인해 소스로 선택했습니다.`;
+    const schemaSummary = `${dataset.name} · ${schemaColumns.length}개 필드 · 전체 ${preview.rowCount.toLocaleString()}행 · Catalog 권한 확인`;
     const draftPatch: DraftPipelinePatch = {
       schema: {
         columns: schemaColumns,
-        sampleRows: dataset.sampleRows,
+        sampleRows,
         summary: schemaSummary,
       },
       source: {
@@ -1573,23 +1620,26 @@ export function SourceConnectionPage({
       },
     };
     setSelectedCatalogDatasetId(dataset.id);
+    setCatalogPreviewColumns(previewColumns);
+    setCatalogPreviewRows(sampleRows);
+    setCatalogPreviewRowCount(preview.rowCount);
     setSourceFields((fields) => ({ ...fields, "Data Lake": nextFields }));
     setConnectionStatus("success");
     setConnectionMessage(message);
     setSourceRuntime({
-      actionPath: `/api/catalog/datasets/${encodeURIComponent(dataset.id)}`,
+      actionPath: `/api/catalog/datasets/${encodeURIComponent(dataset.id)}/rows?limit=25&offset=0`,
       assets: [],
       draftPatch,
       logs: [message],
       message,
-      previewColumns: dataset.schema.map(([name]) => name),
-      previewNote: `${dataset.name}의 Catalog 샘플 행입니다.`,
-      previewRows: dataset.sampleRows,
+      previewColumns,
+      previewNote: `${dataset.name}의 실제 Catalog 행 ${sampleRows.length.toLocaleString()}개를 미리 봅니다.`,
+      previewRows: sampleRows,
       status: "success",
       testItems: [],
     });
     onDraftChange(draftPatch);
-    onAction("etl.source.catalog_dataset_selected", `/api/catalog/datasets/${encodeURIComponent(dataset.id)}`, dataset.id);
+    onAction("etl.source.catalog_dataset_selected", `/api/catalog/datasets/${encodeURIComponent(dataset.id)}/rows?limit=25&offset=0`, dataset.id);
     onNotify(message);
   };
 
@@ -2105,7 +2155,7 @@ export function SourceConnectionPage({
                         error={catalogError}
                         loading={catalogLoading}
                         selectedDatasetId={selectedCatalogDatasetId}
-                        onSelect={selectCatalogDataset}
+                        onSelect={(dataset) => { void selectCatalogDataset(dataset); }}
                       />
                     )}
                     explorerTitle="접근 가능한 데이터셋"
@@ -2115,15 +2165,19 @@ export function SourceConnectionPage({
                     onPathChange={setAssetPathQuery}
                     onQueryChange={setAssetSearchQuery}
                     pathValue={assetPathQuery}
-                    preview={(
+                    preview={catalogPreviewLoading ? (
+                      <EmptyState description="권한이 적용된 Catalog 행을 조회하고 있습니다." icon={<RefreshCw className="animate-spin" />} size="sm" title="실제 데이터 불러오는 중" variant="plain" />
+                    ) : catalogPreviewError ? (
+                      <EmptyState description={catalogPreviewError} icon={<Info />} size="sm" title="샘플 행을 불러오지 못했습니다." variant="plain" />
+                    ) : (
                       <SourcePreviewDataTable
-                        columnLabels={selectedCatalogDataset?.schema.map(([name]) => name) ?? []}
-                        rows={selectedCatalogDataset?.sampleRows ?? []}
+                        columnLabels={catalogPreviewColumns}
+                        rows={catalogPreviewRows}
                       />
                     )}
                     previewMeta={selectedCatalogDataset ? (
                       <div className="source-explorer-preview-meta">
-                        <span>{selectedCatalogDataset.sampleRows.length}행 · {selectedCatalogDataset.schema.length}필드</span>
+                        <span>{catalogPreviewRows.length.toLocaleString()}행 미리보기 · 전체 {catalogPreviewRowCount.toLocaleString()}행 · {catalogPreviewColumns.length}필드</span>
                       </div>
                     ) : undefined}
                     previewTitle="데이터 미리보기"
@@ -2194,7 +2248,7 @@ function DataLakeDatasetList({
   datasets: CatalogDataset[];
   error: string;
   loading: boolean;
-  onSelect: (dataset: CatalogDataset) => void;
+  onSelect: (dataset: CatalogDataset) => void | Promise<void>;
   selectedDatasetId: string;
 }) {
   if (loading) {
@@ -3239,6 +3293,7 @@ export function SchemaInferencePage({
           executionMode={draft.source.executionMode}
           sampleRows={schemaSampleRows}
           selectedIndex={selectedIndex}
+          sourceDatasetId={sourceConfigValue(draft.source.sourceConfig, "Source Dataset ID")}
           sourceFormat={sourceFormat}
           sourceType={draft.source.sourceType}
           qualityRules={draft.quality.rules}
@@ -5547,9 +5602,45 @@ export function TargetPage({
     && initialTarget.storagePath === buildTargetStoragePath(initialTarget.targetDataset, initialTarget.targetLayer)
     ? buildTargetStoragePath(initialTarget.targetDataset, initialTargetLayer)
     : initialTarget.storagePath;
+  const fullSqlTransform = draft.transform.steps.some((step) => (
+    step.enabled !== false
+    && step.operation.trim().toLowerCase().includes("sql expression")
+    && ["select", "with"].some((keyword) => step.params.trim().toLowerCase().startsWith(keyword))
+  ));
+  const targetSchemaInput = useMemo(() => {
+    if (!fullSqlTransform || draft.transform.outputColumns.length === 0) {
+      return { columns: draft.schema.columns, rows: draft.schema.sampleRows };
+    }
+    const sourceIndex = new Map<string, number>();
+    draft.schema.columns.forEach((column, index) => {
+      sourceIndex.set(column.sourceName.toLowerCase(), index);
+      sourceIndex.set(column.targetName.toLowerCase(), index);
+    });
+    const columns = draft.transform.outputColumns.map(([name, type], targetOrder) => {
+      const existing = draft.schema.columns.find((column) => (
+        column.sourceName.toLowerCase() === name.toLowerCase()
+        || column.targetName.toLowerCase() === name.toLowerCase()
+      ));
+      return {
+        ...(existing ?? {}),
+        included: true,
+        nullable: existing?.nullable ?? true,
+        sourceName: name,
+        sourceType: type,
+        targetName: name,
+        targetOrder,
+        type,
+      } satisfies SchemaColumnDraft;
+    });
+    const rows = draft.schema.sampleRows.map((row) => draft.transform.outputColumns.map(([name]) => {
+      const index = sourceIndex.get(name.toLowerCase());
+      return index === undefined ? "" : row[index] ?? "";
+    }));
+    return { columns, rows };
+  }, [draft.schema.columns, draft.schema.sampleRows, draft.transform.outputColumns, fullSqlTransform]);
   const inferredTarget = useMemo(
-    () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
-    [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
+    () => inferTargetSchema(targetSchemaInput.columns, targetSchemaInput.rows, draftTarget?.schemaRules),
+    [draftTarget?.schemaRules, targetSchemaInput],
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);

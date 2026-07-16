@@ -136,6 +136,36 @@ export type RagPreview = {
   documents: RagDocument[];
 };
 
+export type RagSearchSource = {
+  documentId: string;
+  chunkDocumentId?: string | null;
+  parentDocumentId?: string | null;
+  datasetId?: string | null;
+  sourceRowId?: string | null;
+  title?: string | null;
+  body?: string | null;
+  metadata: Record<string, unknown>;
+  sourceFields: Array<string | { logicalField?: string; physicalField?: string; role?: string }>;
+  chunkIndex?: number | null;
+  chunkCount?: number | null;
+  retrievalAlias?: string | null;
+  score?: number | null;
+};
+
+export type RagSearchResponse = {
+  sources: RagSearchSource[];
+  retrieval: {
+    mode?: string;
+    status?: string;
+    aliases?: string[];
+    resultCount?: number;
+    buildStatus?: string;
+    servingStatus?: string;
+    servingIndex?: string | null;
+    [key: string]: unknown;
+  };
+};
+
 export async function listSemanticModels(): Promise<SemanticModel[]> {
   return apiClient.get<SemanticModel[]>("/api/semantic-models");
 }
@@ -186,4 +216,11 @@ export async function previewRagDocuments(datasetId: string): Promise<RagPreview
 
 export async function indexRagDataset(datasetId: string, mode: "index" | "reindex" = "index"): Promise<{ jobId: string; datasetId: string; status: string; targetIndex?: string | null }> {
   return apiClient.post(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/rag/${mode}`, { idempotencyKey: `${datasetId}-${Date.now()}` });
+}
+
+export async function searchRagDataset(datasetId: string, query: string, filters: Record<string, unknown> = {}): Promise<RagSearchResponse> {
+  return apiClient.post<RagSearchResponse>(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/rag/search`, {
+    query,
+    filters,
+  });
 }

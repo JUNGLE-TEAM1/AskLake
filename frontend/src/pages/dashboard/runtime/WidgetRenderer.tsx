@@ -753,14 +753,14 @@ function VisualizationRequestWidget({
       });
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
       const configPatch = widgetPatch?.config ?? response.configPatch;
-      const isMockFallback = responseUsesMockFallback(response);
+      const isSafeFallback = responseUsesSafeFallback(response);
       if (widgetPatch && onApplyWidgetPatch) {
         if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
           await onPatchConfig({ prompt: nextPrompt, ...(widgetPatch.config ?? {}) });
-          setRequestTone(isMockFallback ? "info" : "success");
+          setRequestTone(isSafeFallback ? "info" : "success");
           setMessage(
-            isMockFallback
-              ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
+            isSafeFallback
+              ? "AI Gateway를 사용할 수 없어 검증된 로컬 차트 구성을 적용했습니다."
               : response.message?.trim() || "요청 내용을 저장했습니다.",
           );
           setIsPromptEditing(false);
@@ -783,10 +783,10 @@ function VisualizationRequestWidget({
       } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
       }
-      setRequestTone(isMockFallback ? "info" : "success");
+      setRequestTone(isSafeFallback ? "info" : "success");
       setMessage(
-        isMockFallback
-          ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
+        isSafeFallback
+          ? "AI Gateway를 사용할 수 없어 검증된 로컬 차트 구성을 적용했습니다."
           : response.message?.trim() || "Assistant 요청을 보냈습니다.",
       );
       setIsPromptEditing(false);
@@ -869,9 +869,9 @@ function patchConvertsVisualizationRequest(widget: DashboardRuntimeWidget, patch
   return Boolean(patch.type || patch.datasetId);
 }
 
-function responseUsesMockFallback(response: DashboardAssistantResponse) {
-  return response.warnings.some((warning) => warning.toLowerCase().includes("mock fallback"))
-    || response.message.toLowerCase().includes("mock fallback");
+function responseUsesSafeFallback(response: DashboardAssistantResponse) {
+  return response.warnings.some((warning) => warning.includes("로컬 안전 대체"))
+    || response.message.includes("로컬 안전 대체");
 }
 
 function TextPlaceholderWidget({

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, Database, FileText, Loader2, Plus, RefreshCw, Save, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, Database, FileText, Loader2, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 import type { AuditResult } from "../../types/audit";
 import { apiClient } from "../../services/apiClient";
@@ -15,10 +15,12 @@ import {
   replaceSemanticDimensions,
   replaceSemanticMetrics,
   replaceSemanticDatasets,
+  searchRagDataset,
   updateSemanticModel,
   validateSemanticModel,
   type RagDocument,
   type RagProfile,
+  type RagSearchResponse,
   type SemanticDataset,
   type SemanticDimension,
   type SemanticMetric,
@@ -70,9 +72,18 @@ function statusLabel(status: string) {
     queued: "색인 대기",
     indexing: "색인 중",
     ready: "검색 가능",
+    serving: "검색 가능",
+    stale: "재색인 필요",
+    not_serving: "검색 불가",
     failed: "실패",
   };
   return labels[status] ?? status;
+}
+
+function semanticModelDisplayVersion(model: SemanticModel) {
+  return model.status === "published" && model.publishedVersion != null
+    ? model.publishedVersion
+    : model.version;
 }
 
 function roleLabel(role: string) {
@@ -224,7 +235,13 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   const index = async () => {
     if (!ragDatasetId) return;
     await run("index", async () => {
-      const accepted = await indexRagDataset(ragDatasetId, ragProfile?.indexStatus === "ready" ? "reindex" : "index");
+      const hasServingIndex = ragProfile?.servingStatus === "serving" || ragProfile?.servingStatus === "stale";
+      const accepted = await indexRagDataset(ragDatasetId, hasServingIndex ? "reindex" : "index");
+      if (accepted.status === "ready") {
+        await refreshProfile(ragDatasetId);
+        setNotice({ tone: "success", message: "현재 Dataset과 RAG 정의에 맞는 활성 색인을 확인했습니다. 실제 근거 검색을 바로 사용할 수 있습니다." });
+        return;
+      }
       let latest: RagProfile | null = null;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         await delay(1000);
@@ -233,9 +250,13 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
         if (latest.indexStatus === "failed" || latest.buildStatus === "failed") {
           throw new Error(latest.lastError || `RAG 색인 작업 ${accepted.jobId}가 실패했습니다.`);
         }
-        if (latest.servingStatus === "serving" && latest.indexStatus === "ready") break;
+        const requestedIndexIsServing = latest.servingStatus === "serving"
+          && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
+        if (requestedIndexIsServing) break;
       }
-      if (!latest || latest.servingStatus !== "serving" || latest.indexStatus !== "ready") {
+      const requestedIndexIsServing = latest?.servingStatus === "serving"
+        && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
+      if (!latest || !requestedIndexIsServing) {
         setNotice({ tone: "info", message: `RAG 색인 작업 ${accepted.jobId}를 접수했습니다. 백그라운드 작업이 끝나면 근거 검색이 활성화됩니다.` });
         return;
       }
@@ -260,11 +281,11 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
         <div className="semantic-real-model-layout">
           <aside className="semantic-real-model-list" aria-label="업무 모델 목록">
             <div className="semantic-real-list-heading"><strong>업무 모델</strong><span>{models.length}개</span></div>
-            {models.map((model) => <button type="button" key={model.id} className={model.id === selected.id ? "active" : ""} onClick={() => setSelectedModelId(model.id)}><span className="semantic-real-model-dot" /><span><strong>{model.name}</strong><small>{statusLabel(model.status)} · v{model.version}</small></span></button>)}
+            {models.map((model) => <button type="button" key={model.id} className={model.id === selected.id ? "active" : ""} onClick={() => setSelectedModelId(model.id)}><span className="semantic-real-model-dot" /><span><strong>{model.name}</strong><small>{statusLabel(model.status)} · v{semanticModelDisplayVersion(model)}</small></span></button>)}
           </aside>
           <main className="semantic-real-editor">
             <ModelHeader model={selected} busy={busy === "model"} onSave={saveModelInfo} onValidate={() => void run("validate", async () => { const result = await validateSemanticModel(selected.id); setNotice({ tone: result.valid ? "success" : "error", message: result.valid ? "게시 검증을 통과했습니다." : result.errors.join(" / ") }); })} onPublish={() => void run("publish", async () => { const result = await publishSemanticModel(selected.id); setModels((current) => current.map((model) => model.id === result.model.id ? result.model : model)); setNotice({ tone: "success", message: `업무 모델 v${result.publishedVersion}를 게시했습니다.` }); })} />
-            <nav className="semantic-real-tabs" aria-label="업무 모델 편집 탭">{([ ["datasets", "데이터 연결"], ["metrics", "지표"], ["dimensions", "분석 기준"], ["rag", "RAG 검색"], ["access", "접근 권한"]] as Array<[Tab, string]>).map(([id, label]) => <button type="button" key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}{id === "datasets" && <em>{selected.datasets.length}</em>}{id === "metrics" && <em>{selected.metrics.length}</em>}{id === "dimensions" && <em>{selected.dimensions.length}</em>}{id === "rag" && <em>{Object.values(profiles).filter((profile) => profile.indexStatus === "ready").length}</em>}</button>)}</nav>
+            <nav className="semantic-real-tabs" aria-label="업무 모델 편집 탭">{([ ["datasets", "데이터 연결"], ["metrics", "지표"], ["dimensions", "분석 기준"], ["rag", "RAG 검색"], ["access", "접근 권한"]] as Array<[Tab, string]>).map(([id, label]) => <button type="button" key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}{id === "datasets" && <em>{selected.datasets.length}</em>}{id === "metrics" && <em>{selected.metrics.length}</em>}{id === "dimensions" && <em>{selected.dimensions.length}</em>}{id === "rag" && <em>{Object.values(profiles).filter((profile) => profile.servingStatus === "serving").length}</em>}</button>)}</nav>
             {activeTab === "datasets" && <DatasetsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDatasets} />}
             {activeTab === "metrics" && <MetricsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveMetrics} />}
             {activeTab === "dimensions" && <DimensionsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDimensions} />}
@@ -281,7 +302,7 @@ function ModelHeader({ model, busy, onSave, onValidate, onPublish }: { model: Se
   const [name, setName] = useState(model.name);
   const [description, setDescription] = useState(model.description);
   useEffect(() => { setName(model.name); setDescription(model.description); }, [model.id, model.name, model.description]);
-  return <div className="semantic-real-model-header"><div><span className="semantic-real-eyebrow">{statusLabel(model.status)} · v{model.version} · 소유자 {model.owner}</span><Input value={name} onChange={(event) => setName(event.target.value)} aria-label="업무 모델 이름" /><Textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} aria-label="업무 모델 설명" /></div><div className="semantic-real-header-actions"><span className="semantic-real-save-state">실제 DB 저장</span><Button variant="outline" disabled={busy} type="button" onClick={() => void onSave(name.trim(), description)}><Save /> 저장</Button><Button variant="outline" type="button" onClick={onValidate}><ShieldCheck /> 검증</Button><Button type="button" onClick={onPublish}><Check /> 게시</Button></div></div>;
+  return <div className="semantic-real-model-header"><div><span className="semantic-real-eyebrow">{statusLabel(model.status)} · v{semanticModelDisplayVersion(model)} · 소유자 {model.owner}</span><Input value={name} onChange={(event) => setName(event.target.value)} aria-label="업무 모델 이름" /><Textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} aria-label="업무 모델 설명" /></div><div className="semantic-real-header-actions"><span className="semantic-real-save-state">실제 DB 저장</span><Button variant="outline" disabled={busy} type="button" onClick={() => void onSave(name.trim(), description)}><Save /> 저장</Button><Button variant="outline" type="button" onClick={onValidate}><ShieldCheck /> 검증</Button><Button type="button" onClick={onPublish}><Check /> 게시</Button></div></div>;
 }
 
 function DatasetsTab({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (datasets: SemanticDataset[]) => Promise<void> }) {
@@ -341,11 +362,122 @@ function RagTab({ model, selectedDatasetId, profile, previewDocuments, onDataset
       excludedColumns: schema.filter((column) => roles[column.name] === "excluded").map((column) => column.name),
     });
   };
-  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 적재 문서" description="선택한 Semantic Model의 실제 schema·지표·분석 기준을 함께 사용해 컬럼 역할을 분석합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 지표·분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{statusLabel(profile.indexStatus)}</strong></span><Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>역할을 선택하면 아래 문서 미리보기에 실제 반영됩니다.</p></div><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge></div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>RAG 역할</span></div>{schema.map((column) => { const recommendation = profile.recommendations.find((item) => item.columnName === column.name); return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={roles[column.name] ?? "excluded"} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select></div>; })}</div><div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !profile.bodyColumns.length && !Object.values(roles).includes("body")} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{profile.indexStatus === "ready" ? <RefreshCw /> : <Check />} {profile.indexStatus === "ready" ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
+  const hasServingIndex = profile?.servingStatus === "serving" || profile?.servingStatus === "stale";
+  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 근거 검색" description="선택한 Semantic Model의 실제 schema·지표·분석 기준으로 문서를 만들고, 색인된 원문 근거를 직접 검색합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 지표·분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{hasServingIndex ? statusLabel(profile.servingStatus ?? "serving") : statusLabel(profile.indexStatus)}</strong></span><Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>역할을 선택하면 아래 문서 미리보기에 실제 반영됩니다.</p></div><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge></div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>RAG 역할</span></div>{schema.map((column) => { const recommendation = profile.recommendations.find((item) => item.columnName === column.name); return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={roles[column.name] ?? "excluded"} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select></div>; })}</div><div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !profile.bodyColumns.length && !Object.values(roles).includes("body")} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{hasServingIndex ? <RefreshCw /> : <Check />} {hasServingIndex ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><RagSearchPanel datasetId={selectedDatasetId} profile={profile} /><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
+}
+
+function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: RagProfile }) {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState<RagSearchResponse | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const searchReady = Boolean(profile.targetAlias && profile.activeIndex)
+    && (profile.servingStatus === "serving" || profile.servingStatus === "stale" || (!profile.servingStatus && profile.indexStatus === "ready"));
+
+  useEffect(() => {
+    setQuery("");
+    setResult(null);
+    setSearchError(null);
+  }, [datasetId]);
+
+  const submit = async () => {
+    const normalizedQuery = query.trim();
+    if (!searchReady || !normalizedQuery) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      setResult(await searchRagDataset(datasetId, normalizedQuery));
+    } catch (searchFailure) {
+      setResult(null);
+      setSearchError(searchFailure instanceof Error ? searchFailure.message : "RAG 근거 검색에 실패했습니다.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <Card size="none" className="semantic-real-rag-search-card">
+      <div className="semantic-real-card-heading">
+        <div>
+          <span className="semantic-real-eyebrow">LIVE HYBRID RETRIEVAL</span>
+          <h3>실제 VectorDB 근거 검색</h3>
+          <p>AI Gateway 임베딩과 OpenSearch 하이브리드 검색 결과를 원문 근거 그대로 표시합니다.</p>
+        </div>
+        <Badge variant={searchReady ? "success" : "warning"}>{searchReady ? "검색 가능" : "색인 필요"}</Badge>
+      </div>
+      <form className="semantic-real-rag-search-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+        <Input
+          aria-label="RAG 검색 질문"
+          disabled={!searchReady || searching}
+          placeholder={searchReady ? "예: 배송이 늦고 배터리가 오래가는 무선 이어폰 리뷰" : "역할 승인과 VectorDB 색인을 먼저 완료하세요."}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <Button type="submit" disabled={!searchReady || searching || !query.trim()}>
+          {searching ? <Loader2 className="semantic-spin" /> : <Search />} 실제 근거 검색
+        </Button>
+      </form>
+      {!searchReady && <p className="semantic-real-rag-search-guidance">현재 색인의 serving 상태가 아닙니다. 역할을 승인하고 VectorDB 색인을 완료하면 검색할 수 있습니다.</p>}
+      {searchError && <div className="semantic-real-rag-search-error" role="alert"><AlertTriangle />{searchError}</div>}
+      {result && <RagSearchResults result={result} />}
+    </Card>
+  );
+}
+
+function RagSearchResults({ result }: { result: RagSearchResponse }) {
+  const resultCount = typeof result.retrieval.resultCount === "number" ? result.retrieval.resultCount : result.sources.length;
+  const aliases = Array.isArray(result.retrieval.aliases) ? result.retrieval.aliases.join(", ") : "";
+  return (
+    <div className="semantic-real-rag-search-results" aria-live="polite">
+      <div className="semantic-real-rag-retrieval-summary">
+        <strong>{resultCount}개 실제 근거</strong>
+        <span>{result.retrieval.mode ?? "hybrid"} · {result.retrieval.status ?? "complete"}</span>
+        {aliases && <code>{aliases}</code>}
+        {result.retrieval.servingIndex && <code>{String(result.retrieval.servingIndex)}</code>}
+      </div>
+      {result.sources.length === 0 ? <div className="semantic-real-rag-search-empty">검색어와 일치하는 실제 근거가 없습니다.</div> : <div className="semantic-real-rag-search-sources">
+        {result.sources.map((source, index) => (
+          <article key={`${source.documentId}-${index}`}>
+            <div className="semantic-real-rag-source-head">
+              <div><span>근거 {index + 1}</span><h4>{ragEvidenceTitle(source.title, source.body)}</h4></div>
+              {typeof source.score === "number" && <Badge variant="secondary">점수 {source.score.toFixed(4)}</Badge>}
+            </div>
+            <p>{source.body || "본문이 비어 있습니다."}</p>
+            {Object.keys(source.metadata ?? {}).length > 0 && <dl>{Object.entries(source.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}
+            <footer><code>{source.documentId}</code>{source.sourceRowId && <span>원본 행 {source.sourceRowId}</span>}{source.sourceFields?.length > 0 && <span>필드 {source.sourceFields.map(ragSourceFieldLabel).join(", ")}</span>}</footer>
+          </article>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
+function ragEvidenceTitle(value: string | null | undefined, body?: string | null) {
+  const title = String(value ?? "")
+    .replace(/\[\/?TITLE\]/gi, "")
+    .trim()
+    .replace(/^[^:\n]+:\s*/, "")
+    .trim();
+  if (title) return title;
+
+  const bodyTitle = String(body ?? "")
+    .replace(/\[\/?BODY\]/gi, "")
+    .match(/(?:^|\n)\s*title:\s*([^\r\n]+)/i)?.[1]
+    ?.trim();
+  return bodyTitle || "제목 없는 문서";
+}
+
+function ragSourceFieldLabel(field: string | { logicalField?: string; physicalField?: string; role?: string }) {
+  if (typeof field === "string") return field;
+  const logical = String(field.logicalField ?? field.physicalField ?? "unknown");
+  const physical = field.physicalField && field.physicalField !== logical ? ` (${field.physicalField})` : "";
+  const role = field.role ? ` · ${roleLabel(field.role)}` : "";
+  return `${logical}${physical}${role}`;
 }
 
 function DocumentPreview({ profile, documents }: { profile: RagProfile; documents: RagDocument[] }) {
-  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어갈 실제 문서</h3><p>임베딩 숫자 배열은 숨기고, 검색 본문·메타데이터·원본 schema만 표시합니다.</p></div><Badge variant={profile.embeddingStatus === "ready" ? "success" : "muted"}>{statusLabel(profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div><small>{document.sourceDataset} · {document.sourceColumns.join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
+  const servingReady = profile.servingStatus === "serving" || profile.servingStatus === "stale";
+  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어간 실제 문서</h3><p>임베딩 숫자 배열은 숨기고, 검색 본문·메타데이터·원본 schema만 표시합니다.</p></div><Badge variant={servingReady ? "success" : "muted"}>{statusLabel(servingReady ? profile.servingStatus ?? "serving" : profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div><small>{document.sourceDataset} · {document.sourceColumns.join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
 }
 
 function AccessTab({ model }: { model: SemanticModel }) {

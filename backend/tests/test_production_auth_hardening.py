@@ -126,6 +126,7 @@ class SessionCookieHardeningTests(unittest.TestCase):
         for app_env in ("production", "staging"):
             with self.subTest(app_env=app_env):
                 configured = Settings(
+                    ai_assistant_enabled=False,
                     app_env=app_env,
                     bootstrap_admin_email="owner@example.com",
                     bootstrap_admin_password="strong-bootstrap-password",
@@ -201,11 +202,12 @@ class AuthStartupTests(unittest.TestCase):
 class BootstrapAdminTests(unittest.TestCase):
     def test_secure_environment_requires_bootstrap_admin(self) -> None:
         with self.assertRaises(ValueError):
-            Settings(app_env="production")
+            Settings(ai_assistant_enabled=False, app_env="production")
 
     def test_secure_environment_rejects_bootstrap_placeholders(self) -> None:
         with self.assertRaises(ValueError):
             Settings(
+                ai_assistant_enabled=False,
                 app_env="production",
                 bootstrap_admin_email="replace-with-admin-email@example.invalid",
                 bootstrap_admin_password="replace-with-a-unique-bootstrap-password",

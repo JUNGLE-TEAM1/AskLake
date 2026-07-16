@@ -280,12 +280,14 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 class ProductionConfigurationHardeningTests(unittest.TestCase):
     def test_production_legacy_demo_users_require_an_explicit_opt_in(self) -> None:
         default_settings = Settings(
+            ai_assistant_enabled=False,
             app_env="production",
             bootstrap_admin_email="owner@example.com",
             bootstrap_admin_password="strong-bootstrap-password",
             backend_cors_origins=[],
         )
         opted_in_settings = Settings(
+            ai_assistant_enabled=False,
             app_env="production",
             auth_legacy_demo_users_enabled=True,
             bootstrap_admin_email="owner@example.com",
@@ -301,6 +303,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
             with self.subTest(origins=origins):
                 with self.assertRaises(ValueError):
                     Settings(
+                        ai_assistant_enabled=False,
                         app_env="production",
                         bootstrap_admin_email="owner@example.com",
                         bootstrap_admin_password="strong-bootstrap-password",
@@ -310,6 +313,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
     def test_production_rejects_known_demo_bootstrap_credentials(self) -> None:
         with self.assertRaises(ValueError):
             Settings(
+                ai_assistant_enabled=False,
                 app_env="production",
                 bootstrap_admin_email="admin.user@asklake.local",
                 bootstrap_admin_password="asklake-admin",
@@ -324,6 +328,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
             with self.subTest(email=email):
                 with self.assertRaises(ValueError):
                     Settings(
+                        ai_assistant_enabled=False,
                         app_env="production",
                         bootstrap_admin_email=email,
                         bootstrap_admin_password=password,
@@ -332,6 +337,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
 
     def test_cors_origin_trailing_slash_is_normalized(self) -> None:
         configured = Settings(
+            ai_assistant_enabled=False,
             app_env="production",
             bootstrap_admin_email="owner@example.com",
             bootstrap_admin_password="strong-bootstrap-password",

@@ -8,7 +8,6 @@ interface ImportMetaEnv {
   readonly VITE_OBJECT_STORAGE_PROVIDER?: string;
   readonly VITE_S3_REGION?: string;
   readonly VITE_SPARK_OUTPUT_BUCKET?: string;
-  readonly VITE_USE_MOCK_API?: string;
 }
 
 declare module "*.jsx" {

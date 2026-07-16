@@ -1,4 +1,5 @@
 import json
+import re
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
@@ -14,14 +15,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
     database_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     local_lake_storage_dir: str | None = None
-    openai_api_key: str | None = None
-    openai_assistant_enabled: bool = True
-    openai_assistant_model: str = "gpt-4o-mini"
-    openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
-    openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
-    openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
-    openai_query_ai_model: str = "gpt-4.1-mini"
-    ai_query_provider: Literal["direct", "gateway"] = "direct"
+    ai_assistant_enabled: bool = True
+    ai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
+    ai_query_provider: Literal["gateway"] = "gateway"
     ai_gateway_base_url: str | None = None
     ai_gateway_generate_path: str = "/v1/generate"
     ai_gateway_service_token: str | None = None
@@ -71,6 +67,7 @@ class Settings(BaseSettings):
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"
+    asklake_spark_output_bucket: str = "asklake-output"
     s3_endpoint: str | None = None
     s3_force_path_style: bool = False
     aws_region: str = "ap-northeast-2"
@@ -159,6 +156,32 @@ class Settings(BaseSettings):
             return "minio"
         raise ValueError("ASKLAKE_OBJECT_STORAGE_PROVIDER must be minio or aws")
 
+    @field_validator("asklake_spark_output_bucket", mode="before")
+    @classmethod
+    def validate_spark_output_bucket(cls, value: object) -> str:
+        normalized = str(value or "asklake-output").strip()
+        if (
+            "replace-with-" in normalized.casefold()
+            or not 3 <= len(normalized) <= 63
+            or re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", normalized) is None
+            or ".." in normalized
+        ):
+            raise ValueError("ASKLAKE_SPARK_OUTPUT_BUCKET must be a real S3/MinIO bucket name, not a placeholder")
+        return normalized
+
+    @field_validator("trino_result_storage_bucket", mode="before")
+    @classmethod
+    def validate_trino_result_storage_bucket(cls, value: object) -> str:
+        normalized = str(value or "asklake-query-results").strip()
+        if (
+            "replace-with-" in normalized.casefold()
+            or not 3 <= len(normalized) <= 63
+            or re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", normalized) is None
+            or ".." in normalized
+        ):
+            raise ValueError("TRINO_RESULT_STORAGE_BUCKET must be a real S3/MinIO bucket name, not a placeholder")
+        return normalized
+
     @field_validator("ai_gateway_base_url")
     @classmethod
     def validate_ai_gateway_base_url(cls, value: str | None) -> str | None:
@@ -243,8 +266,30 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
                     )
-        if not self.allows_header_auth_fallback and self.trino_enabled:
+        if self.trino_enabled:
             parsed_trino_url = urlparse(self.trino_base_url)
+            for username_key, username, password_key, password in (
+                (
+                    "TRINO_AUTH_USERNAME",
+                    self.trino_auth_username,
+                    "TRINO_AUTH_PASSWORD",
+                    self.trino_auth_password,
+                ),
+                (
+                    "TRINO_MATERIALIZER_USERNAME",
+                    self.trino_materializer_username,
+                    "TRINO_MATERIALIZER_PASSWORD",
+                    self.trino_materializer_password,
+                ),
+            ):
+                if bool(str(username or "").strip()) != bool(str(password or "").strip()):
+                    raise ValueError(f"{username_key} and {password_key} must be configured together")
+            if parsed_trino_url.scheme == "http" and (
+                self.trino_auth_password or self.trino_materializer_password
+            ):
+                raise ValueError("Trino Basic authentication requires an https TRINO_BASE_URL")
+
+        if not self.allows_header_auth_fallback and self.trino_enabled:
             if parsed_trino_url.scheme != "https" or not parsed_trino_url.netloc:
                 raise ValueError("TRINO_BASE_URL must be an explicit https URL when Trino is enabled")
 
@@ -279,7 +324,11 @@ class Settings(BaseSettings):
             }.items():
                 if len(str(secret or "")) < 32:
                     raise ValueError(f"{key} must contain at least 32 characters")
-        if not self.allows_header_auth_fallback and self.ai_query_provider == "gateway":
+        if (
+            not self.allows_header_auth_fallback
+            and self.ai_assistant_enabled
+            and self.ai_query_provider == "gateway"
+        ):
             required_ai_values = {
                 "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
                 "AI_GATEWAY_SERVICE_TOKEN": self.ai_gateway_service_token,

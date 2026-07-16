@@ -45,7 +45,7 @@ class Settings(BaseSettings):
         ge=16 * 1024,
         le=8 * 1024 * 1024,
     )
-    max_output_tokens: int = Field(default=800, ge=64, le=4_096)
+    max_output_tokens: int = Field(default=1800, ge=64, le=4_096)
     embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
     embedding_batch_size: int = Field(default=64, ge=1, le=256)
 
@@ -96,10 +96,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_tls_for_remote_provider(self) -> "Settings":
+        normalized_env = self.app_env.strip().casefold()
+        if self.provider == "mock" and normalized_env not in {"test", "testing"}:
+            raise ValueError("PROVIDER=mock is restricted to test environments")
         local_envs = {"local", "development", "dev", "test", "testing"}
         if (
             self.provider == "openai_compatible"
-            and self.app_env.strip().casefold() not in local_envs
+            and normalized_env not in local_envs
             and urlparse(self.provider_base_url).scheme != "https"
         ):
             raise ValueError("PROVIDER_BASE_URL must use https outside local development")

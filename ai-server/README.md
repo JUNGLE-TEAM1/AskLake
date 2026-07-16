@@ -1,9 +1,11 @@
 # AskLake AI Gateway
 
-Small, internal-only FastAPI service for bounded SQL-draft generation. It is
-deliberately isolated from the public backend API and frontend. When enabled,
-it uses one fixed AskLake Catalog MCP tool to resolve permission-scoped schema
-context; it never executes provider-supplied tools or SQL.
+Internal-only FastAPI AI Gateway for SQL drafting, ETL transforms, dashboard
+actions, Semantic RAG classification/chunking, embeddings, and review
+analysis. It is deliberately isolated from the public backend API and
+frontend. It uses the fixed AskLake Catalog MCP tool to resolve
+permission-scoped schema context; it never executes provider-supplied tools or
+SQL.
 
 ## Run locally
 
@@ -14,7 +16,11 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 $env:INTERNAL_AUTH_TOKEN = "local-test-token"
-$env:PROVIDER = "mock"
+$env:APP_ENV = "local"
+$env:PROVIDER = "openai_compatible"
+$env:PROVIDER_BASE_URL = "https://api.openai.com/v1"
+$env:PROVIDER_API_KEY = "<secret>"
+$env:PROVIDER_MODEL = "gpt-4.1-mini"
 python -m uvicorn app.main:app --reload --port 8090
 ```
 
@@ -42,12 +48,12 @@ Response:
   "request_id": "uuid",
   "mode": "query_sql",
   "output": {
-    "query_sql": "SELECT 1 AS mock_result;",
-    "explanation": "...",
+    "query_sql": "SELECT order_id FROM orders ORDER BY created_at DESC LIMIT 5;",
+    "explanation": "Reads the five latest permitted orders.",
     "warnings": []
   },
-  "provider": "mock",
-  "model": "mock-query-sql"
+  "provider": "openai_compatible",
+  "model": "gpt-4.1-mini"
 }
 ```
 
@@ -60,9 +66,10 @@ truth.
 ## Provider configuration
 
 The live default is `PROVIDER=openai_compatible`; the application must be
-given a provider key and will not silently return mock SQL. Tests and explicit
-offline fixtures may opt into `PROVIDER=mock`. For an OpenAI-compatible
-chat-completions provider set:
+given a provider key and will not silently return mock output. `PROVIDER=mock`
+is rejected unless `APP_ENV=test` or `APP_ENV=testing`, so it cannot be used by
+the local or production runtime. The mock implementation exists only for the
+isolated test suite. For an OpenAI-compatible provider set:
 
 ```text
 PROVIDER=openai_compatible

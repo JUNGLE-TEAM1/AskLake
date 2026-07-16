@@ -520,6 +520,7 @@ export function JobsLandingPage({
           isLoading={jobsLoading}
           title="작업 목록"
         />
+        <ReviewAnalysisPanel onAction={onAction} />
       </div>
       {latestRunModal && (
         <RunDagModal
@@ -530,6 +531,126 @@ export function JobsLandingPage({
         />
       )}
     </div>
+  );
+}
+
+function ReviewAnalysisPanel({
+  onAction,
+}: {
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+}) {
+  const [summary, setSummary] = useState<ReviewAnalysisSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getCellphonesReviewAnalysis()
+      .then((result) => {
+        if (active) setSummary(result);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "리뷰 분석 상태를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const runAnalysis = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await runCellphonesReviewAnalysis(5, undefined, "gateway");
+      setSummary(result);
+      onAction("review.analysis.completed", "/api/review-analysis/cellphones/run", result.runId ?? "cellphones", "success");
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Amazon 리뷰 AI 분석에 실패했습니다.");
+      onAction("review.analysis.failed", "/api/review-analysis/cellphones/run", "cellphones", "failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const metrics = summary?.metrics;
+  const rows = summary?.rows?.slice(0, 3) ?? [];
+
+  return (
+    <Panel aria-label="Amazon 리뷰 AI 분석">
+      <PanelHeader
+        actions={(
+          <Button aria-label="실제 Amazon 리뷰 5건 AI 분석" disabled={running} type="button" onClick={() => void runAnalysis()}>
+            <RefreshCw className={running ? "animate-spin" : undefined} size={16} />
+            {running ? "AI Gateway 분석 중" : "실제 리뷰 5건 분석"}
+          </Button>
+        )}
+        description="MinIO의 실제 Amazon Cell Phones 리뷰 원문을 AI Gateway가 감성·문제 유형·심각도·근거로 구조화합니다."
+        icon={<Bot size={18} />}
+        iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
+        size="section"
+        title="Amazon 리뷰 AI 분석"
+      />
+      <div className="grid gap-4 p-5">
+        {loading && <div className="flex items-center gap-2 text-sm text-slate-600"><Spinner />분석 상태를 불러오는 중...</div>}
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>리뷰 분석 오류</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {!loading && summary && (
+          <>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <Badge variant={summary.status === "success" ? "success" : "secondary"}>{summary.status === "success" ? "실제 분석 완료" : "실행 전"}</Badge>
+              {summary.runId && <code>{summary.runId}</code>}
+              {summary.processedRows !== undefined && <span>{summary.processedRows}건 처리 · 오류 {summary.invalidRows ?? 0}건</span>}
+              {summary.source?.object && <code>{summary.source.object}</code>}
+            </div>
+            {metrics && (
+              <dl className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+                {[
+                  ["처리", summary.processedRows ?? 0],
+                  ["긍정", metrics.positiveRows],
+                  ["부정", metrics.negativeRows],
+                  ["문제 감지", metrics.issueRows],
+                  ["고심각도", metrics.highSeverityRows],
+                  ["평균 평점", metrics.averageRating],
+                ].map(([label, value]) => (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3" key={label}>
+                    <dt className="text-xs font-semibold text-slate-500">{label}</dt>
+                    <dd className="mt-1 text-xl font-bold text-slate-950">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {rows.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr><th className="px-3 py-2">리뷰</th><th className="px-3 py-2">감성</th><th className="px-3 py-2">문제 유형</th><th className="px-3 py-2">심각도</th><th className="px-3 py-2">AI 근거</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {rows.map((row) => (
+                      <tr key={row.review_id}>
+                        <td className="px-3 py-3 font-mono text-xs">{row.review_id}</td>
+                        <td className="px-3 py-3">{row.sentiment}</td>
+                        <td className="px-3 py-3">{row.issue_category}</td>
+                        <td className="px-3 py-3">{row.severity}</td>
+                        <td className="max-w-xl px-3 py-3 text-slate-600">{row.evidence}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {summary.method?.note && <p className="text-xs text-slate-500">{summary.method.note}</p>}
+          </>
+        )}
+      </div>
+    </Panel>
   );
 }
 

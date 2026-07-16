@@ -1,5 +1,7 @@
 from typing import Any, Literal
 
+from pydantic import Field
+
 from app.schemas.common import CamelModel
 
 
@@ -59,7 +61,7 @@ class ReviewAnalysisSchemaSuggestionRequest(CamelModel):
 
 
 class ReviewAnalysisRunRequest(CamelModel):
-    limit: int = 50000
+    limit: int = Field(default=25, ge=0, le=1_000_000)
     schema_columns: list[dict[str, Any]] | None = None
     full: bool = False
-    runtime: str | None = None
+    runtime: Literal["gateway", "scalable"] | None = None

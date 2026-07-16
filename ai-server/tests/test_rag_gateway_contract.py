@@ -6,7 +6,7 @@ from app.main import create_app
 
 
 def test_gateway_classifies_dataset_columns_and_generates_embeddings() -> None:
-    settings = Settings(internal_auth_token=SecretStr("test-token"), provider="mock")
+    settings = Settings(app_env="testing", internal_auth_token=SecretStr("test-token"), provider="mock")
     client = TestClient(create_app(settings=settings))
     headers = {"Authorization": "Bearer test-token"}
     classification = client.post("/v1/generate", headers=headers, json={"mode": "classify_dataset", "request_id": "run-1", "prompt": "classify", "context": {"schema": [{"name": "review_text"}, {"name": "rating"}]}})
@@ -21,7 +21,7 @@ def test_gateway_classifies_dataset_columns_and_generates_embeddings() -> None:
 
 
 def test_gateway_returns_boundary_only_document_segmentation() -> None:
-    settings = Settings(internal_auth_token=SecretStr("test-token"), provider="mock")
+    settings = Settings(app_env="testing", internal_auth_token=SecretStr("test-token"), provider="mock")
     client = TestClient(create_app(settings=settings))
     response = client.post(
         "/v1/generate",

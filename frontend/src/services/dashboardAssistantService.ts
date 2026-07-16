@@ -63,6 +63,8 @@ export type DashboardAssistantResponse = {
   actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
   message: string;
+  model?: string | null;
+  provider?: "ai-gateway" | "local-input-guard" | "unavailable" | null;
   retrieval?: {
     aliases?: string[];
     datasetIds?: string[];

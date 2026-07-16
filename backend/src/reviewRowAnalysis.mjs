@@ -1,5 +1,4 @@
-﻿import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+﻿import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,12 +13,18 @@ const latestSummaryPath = path.join(outputRoot, "cellphones-latest-summary.json"
 
 const sourceBucket = process.env.ASKLAKE_CELLPHONES_REVIEW_BUCKET || defaultRawBucket();
 const sourceKey = process.env.ASKLAKE_CELLPHONES_REVIEW_KEY || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
-const defaultLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_DEFAULT_LIMIT, 50000, 1, 500000);
+const defaultLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_DEFAULT_LIMIT, 25, 1, 500000);
 const maxInteractiveLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_MAX_LIMIT, 200000, 1000, 1000000);
-const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT || "http://127.0.0.1:1234/v1/chat/completions";
-const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
-const localLlmTimeoutMs = boundedPositiveInt(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS, 120000, 1000, 600000);
-const localLlmMaxInputChars = boundedPositiveInt(process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS, 9000, 1000, 50000);
+const reviewAiMaxRows = boundedPositiveInt(process.env.ASKLAKE_REVIEW_AI_MAX_ROWS, 100, 1, 1000);
+const aiGatewayBaseUrl = String(process.env.AI_GATEWAY_BASE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");
+const aiGatewayToken = String(process.env.AI_GATEWAY_SERVICE_TOKEN || "");
+const aiGatewayTimeoutMs = boundedPositiveInt(
+  process.env.AI_GATEWAY_TIMEOUT_MS,
+  boundedPositiveInt(process.env.AI_GATEWAY_TIMEOUT_SECONDS, 120, 1, 600) * 1000,
+  1000,
+  600000,
+);
+const reviewAiMaxInputChars = boundedPositiveInt(process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS, 9000, 1000, 50000);
 
 const categoryRules = [
   {
@@ -116,68 +121,24 @@ export async function getCellphonesReviewAnalysisStatus() {
 }
 
 export async function suggestReviewAnalysisSchema(request = {}) {
-  const endpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT || "http://127.0.0.1:1234/v1/chat/completions";
-  const model = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-issue-labeler";
   const sourceColumns = Array.isArray(request.sourceColumns) ? request.sourceColumns.slice(0, 40) : [];
   const sampleRows = Array.isArray(request.sampleRows) ? request.sampleRows.slice(0, 3) : [];
-  const prompt = [
-    "You design a structured output schema for source rows that contain free text.",
-    "Return one minified valid JSON object only. No markdown. No comments. No prose.",
-    "The user wants a draft schema only; humans will edit it later.",
-    "Recommend columns that can be produced per source row for classification, extraction, copied fields, and summarization.",
-    "Prefer concise snake_case targetName values.",
-    "Each column must have: targetName, label, type, nullable.",
-    `Each column must include method. Supported methods: ${supportedReviewAnalysisMethods.join(", ")}.`,
-    "Use method copy for copied fields.",
-    "Use method one_of_values only when the output must be selected from allowedValues.",
-    "Use method instruction for summary, evidence, reason, or other free-form extraction/generation.",
-    "Use allowedValues only for method one_of_values.",
-    "Allowed types: String, Integer, Long, Double, Boolean, Timestamp.",
-    "Use English label values to avoid escaping problems.",
-    "Do not put quotes inside string values.",
-    "Include columns for copied identifiers when present, sentiment when useful, issue/category when useful, severity/risk when useful, short summary, and evidence/reason.",
-    "Do not include confidence, score, accuracy, or quality columns in the suggested output schema.",
-    "",
-    `Source columns: ${JSON.stringify(sourceColumns)}`,
-    `Sample rows: ${JSON.stringify(sampleRows).slice(0, 6000)}`,
-    "",
-    "JSON shape: {\"columns\":[{\"targetName\":\"sentiment\",\"label\":\"sentiment\",\"type\":\"String\",\"nullable\":false,\"method\":\"one_of_values\",\"allowedValues\":[\"positive\",\"mixed\",\"negative\"]}]}",
-  ].join("\n");
-
-  const response = await fetch(endpoint, {
-    body: JSON.stringify({
-      messages: [
-        { role: "system", content: "You return strict JSON for data engineering schema suggestions." },
-        { role: "user", content: prompt },
-      ],
-      model,
-      temperature: 0.1,
-    }),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-    signal: AbortSignal.timeout(120000),
-  });
-  if (!response.ok) {
-    throw Object.assign(new Error(`Local LLM schema suggestion failed: HTTP ${response.status}`), {
-      code: "REVIEW_SCHEMA_SUGGESTION_FAILED",
-      status: 502,
-    });
-  }
-
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content ?? "";
-  const parsed = parseLlmJson(content);
-  const columns = normalizeSuggestedColumns(parsed?.columns);
+  const payload = await callAiGateway(
+    "review_schema",
+    "Suggest an editable structured review-analysis schema.",
+    { sourceColumns, sampleRows },
+  );
+  const columns = normalizeSuggestedColumns(payload.output?.columns);
   if (columns.length === 0) {
-    throw Object.assign(new Error("Local LLM returned no usable schema columns."), {
+    throw Object.assign(new Error("AI Gateway returned no usable schema columns."), {
       code: "REVIEW_SCHEMA_SUGGESTION_EMPTY",
       status: 502,
     });
   }
   return {
     columns,
-    model,
-    source: "local-llm",
+    model: payload.model,
+    source: "ai-gateway",
     status: "success",
   };
 }
@@ -188,6 +149,12 @@ export async function runCellphonesReviewAnalysis(request = {}) {
   const limit = full ? 0 : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
   const outputSchema = normalizeOutputSchema(request.schemaColumns ?? request.columns);
   const runtime = normalizeReviewAnalysisRuntime(request.runtime);
+  if (runtime === "gateway" && (full || limit > reviewAiMaxRows)) {
+    throw Object.assign(
+      new Error(`AI Gateway review analysis is limited to ${reviewAiMaxRows} rows per interactive run. Use runtime=scalable for bulk processing.`),
+      { code: "REVIEW_AI_ROW_LIMIT_EXCEEDED", status: 422 },
+    );
+  }
   const startedAt = new Date();
   const runId = `cellphones_${startedAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
   const runDir = path.join(outputRoot, runId);
@@ -228,8 +195,8 @@ export async function runCellphonesReviewAnalysis(request = {}) {
       if (!line.trim()) continue;
       const row = parseJsonLine(line, result);
       if (!row) continue;
-      const analyzed = runtime === "local_llm"
-        ? await analyzeReviewRowWithLocalLlm(row, outputSchema, result.processedRows + 1)
+      const analyzed = runtime === "gateway"
+        ? await analyzeReviewRowWithGateway(row, outputSchema, result.processedRows + 1)
         : analyzeReviewRowScalable(row, outputSchema, result.processedRows + 1);
       const projected = analyzed.projected;
       recordClassifiedRow(result, analyzed.metricsRow, projected);
@@ -262,18 +229,18 @@ export async function runCellphonesReviewAnalysis(request = {}) {
 }
 
 function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, runtime, startedAt, summaryPath }) {
-  const usesLocalLlm = runtime === "local_llm";
+  const usesGateway = runtime === "gateway";
   const storageLabel = objectStorageProvider() === "aws" ? "AWS S3" : "MinIO";
   return {
     analysis: {
       engine: "text-row-to-structured-csv",
       fallbackUsed: false,
-      mode: usesLocalLlm ? "local_llm_explicit" : "scalable_text_signal",
-      modelArtifact: usesLocalLlm ? localLlmModel : "spark-compatible text signal pipeline",
-      rowRuntime: usesLocalLlm
+      mode: usesGateway ? "ai_gateway" : "scalable_text_signal",
+      modelArtifact: usesGateway ? "AskLake AI Gateway" : "spark-compatible text signal pipeline",
+      rowRuntime: usesGateway
         ? {
-          endpoint: redactEndpoint(localLlmEndpoint),
-          timeoutMs: localLlmTimeoutMs,
+          endpoint: redactEndpoint(aiGatewayBaseUrl),
+          timeoutMs: aiGatewayTimeoutMs,
         }
         : {
           endpoint: "",
@@ -300,8 +267,8 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
     },
     method: {
       name: "text-row-structuring",
-      note: usesLocalLlm
-        ? `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema. Local LLM row calls are explicit opt-in.`
+      note: usesGateway
+        ? `Streams the real ${storageLabel} JSONL source through the AskLake AI Gateway and writes the user-defined final CSV schema.`
         : `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema with scalable text-signal transforms.`,
       schema: outputSchema.map((column) => column.targetName),
     },
@@ -329,13 +296,22 @@ function sourceDescriptor() {
     key: sourceKey,
     object: `s3://${sourceBucket}/${sourceKey}`,
     provider,
-    runtime: provider === "minio" ? "docker exec m3-minio mc cat" : "AWS SDK default credential chain",
+    runtime: provider === "minio" ? "S3-compatible streaming client" : "AWS SDK default credential chain",
   };
 }
 
+function redactEndpoint(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.origin;
+  } catch {
+    return "internal-ai-gateway";
+  }
+}
+
 function normalizeReviewAnalysisRuntime(value) {
-  const runtime = String(value || process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable").trim().toLowerCase();
-  return ["local_llm", "llm", "row_llm"].includes(runtime) ? "local_llm" : "scalable";
+  const runtime = String(value || process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "gateway").trim().toLowerCase();
+  return ["gateway", "ai_gateway", "llm", "row_llm"].includes(runtime) ? "gateway" : "scalable";
 }
 
 function analyzeReviewRowScalable(rawRow, outputSchema, ordinal) {
@@ -346,51 +322,24 @@ function analyzeReviewRowScalable(rawRow, outputSchema, ordinal) {
   };
 }
 
-async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
-  const requestBody = {
-    model: localLlmModel,
-    temperature: 0,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You analyze source rows that may contain free text and return strict JSON only.",
-          "Do not return markdown, comments, prose, or nested objects.",
-          "Use only the requested output keys.",
-          "For enum-like methods, choose one allowed value exactly.",
-          "For classification/category fields, use concise snake_case labels.",
-          "For summary and evidence, quote or summarize only facts present in the row.",
-        ].join(" "),
-      },
-      {
-        role: "user",
-        content: buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal),
-      },
-    ],
-  };
-
-  const response = await fetch(localLlmEndpoint, {
-    body: JSON.stringify(requestBody),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-    signal: AbortSignal.timeout(localLlmTimeoutMs),
-  });
-  if (!response.ok) {
-    throw Object.assign(new Error(`Local LLM text row analysis failed: HTTP ${response.status}`), {
-      code: "REVIEW_ROW_LOCAL_LLM_FAILED",
-      status: 502,
-    });
-  }
-
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content ?? "";
-  const parsed = parseLlmJson(content);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw Object.assign(new Error("Local LLM text row analysis did not return a JSON object."), {
-      code: "REVIEW_ROW_LOCAL_LLM_BAD_JSON",
-      status: 502,
-    });
-  }
+async function analyzeReviewRowWithGateway(rawRow, outputSchema, ordinal) {
+  const requestedColumns = outputSchema.map((column) => ({
+    allowedValues: allowedValuesForMethod(column),
+    method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
+    targetName: column.targetName,
+    type: normalizeSchemaType(column.type),
+  }));
+  const payload = await callAiGateway(
+    "review_row",
+    `Analyze source review row ${ordinal}.`,
+    {
+      requestedColumns,
+      rowOrdinal: ordinal,
+      sourceRow: truncate(JSON.stringify(rawRow ?? {}), reviewAiMaxInputChars),
+    },
+  );
+  const values = Array.isArray(payload.output?.values) ? payload.output.values : [];
+  const parsed = Object.fromEntries(values.map((item) => [item?.targetName, item?.value]));
   const projected = coerceLlmProjectedRow(parsed, outputSchema, rawRow, ordinal);
   return {
     metricsRow: metricsRowFromProjected(projected, outputSchema, rawRow, ordinal),
@@ -398,24 +347,38 @@ async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
   };
 }
 
-function buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal) {
-  const columns = outputSchema.map((column) => ({
-    allowedValues: allowedValuesForMethod(column),
-    method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
-    targetName: column.targetName,
-    type: normalizeSchemaType(column.type),
-  }));
-  const rowText = JSON.stringify(rawRow ?? {});
-  return [
-    "Analyze this one source row into one final structured CSV output row.",
-    "Return one minified JSON object whose keys exactly match the requested columns.",
-    "If the source row contains a copied identifier or numeric field, preserve it exactly where possible.",
-    "Use null only when the requested value cannot be inferred from the row.",
-    "",
-    `rowOrdinal: ${ordinal}`,
-    `requestedColumns: ${JSON.stringify(columns)}`,
-    `sourceRow: ${truncate(rowText, localLlmMaxInputChars)}`,
-  ].join("\n");
+async function callAiGateway(mode, prompt, context) {
+  if (!aiGatewayToken) {
+    throw Object.assign(new Error("AI Gateway service token is not configured."), {
+      code: "AI_GATEWAY_UNCONFIGURED",
+      status: 503,
+    });
+  }
+  const requestId = randomUUID();
+  const response = await fetch(`${aiGatewayBaseUrl}/v1/generate`, {
+    body: JSON.stringify({ context, mode, prompt, request_id: requestId, selected_dataset_ids: [] }),
+    headers: {
+      Authorization: `Bearer ${aiGatewayToken}`,
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+    },
+    method: "POST",
+    signal: AbortSignal.timeout(aiGatewayTimeoutMs),
+  });
+  if (!response.ok) {
+    throw Object.assign(new Error(`AI Gateway review analysis failed: HTTP ${response.status}`), {
+      code: "REVIEW_AI_GATEWAY_FAILED",
+      status: response.status >= 500 ? 502 : response.status,
+    });
+  }
+  const payload = await response.json();
+  if (payload?.mode !== mode || !payload?.output || typeof payload.output !== "object") {
+    throw Object.assign(new Error("AI Gateway returned an invalid review-analysis response."), {
+      code: "REVIEW_AI_GATEWAY_INVALID_RESPONSE",
+      status: 502,
+    });
+  }
+  return payload;
 }
 
 function allowedValuesForMethod(column) {
@@ -482,21 +445,6 @@ function metricsRowFromProjected(projected, outputSchema, rawRow, ordinal) {
     user_id: stringValue(projected.user_id ?? rawRow.user_id),
     verified_purchase: Boolean(projected.verified_purchase ?? rawRow.verified_purchase),
   };
-}
-
-function parseLlmJson(content) {
-  if (typeof content !== "string") return null;
-  try {
-    return JSON.parse(content);
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
 }
 
 function normalizeSuggestedColumns(columns) {
@@ -707,35 +655,7 @@ function safeColumnName(value) {
     .slice(0, 80);
 }
 
-function spawnMinioCat(limit) {
-  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
-  const endpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://127.0.0.1:9000";
-  const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
-  const secretKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
-  const target = `local/${sourceBucket}/${sourceKey}`;
-  const readCommand = limit > 0
-    ? `mc cat ${shellQuote(target)} | head -n ${limit}`
-    : `mc cat ${shellQuote(target)}`;
-  const script = [
-    `mc alias set local ${shellQuote(endpoint)} ${shellQuote(accessKey)} ${shellQuote(secretKey)} >/dev/null`,
-    readCommand,
-  ].join(" && ");
-  return spawn("docker", ["exec", "-i", container, "sh", "-lc", script], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-async function openReviewSource(limit) {
-  if (objectStorageProvider() === "minio") {
-    const child = spawnMinioCat(limit);
-    return {
-      input: child.stdout,
-      stderr: child.stderr,
-      stop: () => child.stdout.destroy(),
-      wait: waitForProcess(child),
-    };
-  }
-
+async function openReviewSource(_limit) {
   const config = resolveObjectStorageConfig();
   const client = new S3Client(s3ClientOptions(config));
   const response = await client.send(new GetObjectCommand({
@@ -981,15 +901,4 @@ function closeWritable(stream) {
     stream.end(resolve);
     stream.on("error", reject);
   });
-}
-
-function waitForProcess(child) {
-  return new Promise((resolve) => {
-    child.on("close", (code) => resolve(code ?? 0));
-    child.on("error", () => resolve(1));
-  });
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }

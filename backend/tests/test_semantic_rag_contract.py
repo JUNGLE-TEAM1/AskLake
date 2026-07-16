@@ -1,7 +1,9 @@
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, permissions_for_actor
+from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
 from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel, RagIndexManifestModel
@@ -10,6 +12,40 @@ from app.services.rag_document_service import build_documents
 from app.services.rag_search_service import RagSearchService, build_metadata_filter_clauses, hybrid_rrf
 from app.services.rag_service import FILTER_CONTRACT_VERSION, RAG_TABLES, RagService
 from app.services.semantic_model_service import SEMANTIC_TABLES, SemanticModelService
+
+
+def test_rag_classification_fails_closed_when_gateway_is_unavailable(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    dataset = {
+        "id": "reviews",
+        "name": "Reviews",
+        "description": "Customer reviews",
+        "owner": "admin",
+        "schema": [{"name": "review_id", "dataType": "string"}, {"name": "review_text", "dataType": "string"}],
+        "sampleRows": [{"review_id": "r-1", "review_text": "Great product"}],
+    }
+
+    class FailingGateway:
+        def classify_dataset(self, *_args, **_kwargs):
+            raise RuntimeError("gateway unavailable")
+
+    with Session(engine) as db:
+        service = RagService(db)
+        monkeypatch.setattr(service, "_dataset", lambda *_args, **_kwargs: dataset)
+        monkeypatch.setattr(service, "_semantic_bindings", lambda *_args, **_kwargs: {})
+        monkeypatch.setattr("app.services.rag_service.AiGatewayClient", lambda: FailingGateway())
+
+        with pytest.raises(ApiError, match="AI gateway classification failed"):
+            service.classify("reviews", ActorContext(name="admin", role="admin"))
+
+        run = db.query(RagClassificationRunModel).one()
+        profile = db.get(RagDatasetProfileModel, "reviews")
+        assert run.status == "failed"
+        assert "deterministic" not in str(run.error).lower()
+        assert profile is not None
+        assert profile.review_state == "failed"
+        assert db.query(RagColumnRecommendationModel).count() == 0
 
 
 def test_document_preview_contains_vector_db_payload_and_is_deterministic() -> None:

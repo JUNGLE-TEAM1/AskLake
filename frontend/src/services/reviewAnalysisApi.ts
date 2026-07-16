@@ -98,7 +98,7 @@ export function suggestReviewAnalysisSchema(request: {
 }
 
 export function runCellphonesReviewAnalysis(
-  limit = 50000,
+  limit = 25,
   schemaColumns?: Array<{
     allowedValues?: string[];
     instruction?: string;
@@ -110,6 +110,7 @@ export function runCellphonesReviewAnalysis(
     targetName: string;
     type?: string;
   }>,
+  runtime: "gateway" | "scalable" = "gateway",
 ) {
-  return apiClient.post<ReviewAnalysisSummary>("/api/review-analysis/cellphones/run", { limit, schemaColumns });
+  return apiClient.post<ReviewAnalysisSummary>("/api/review-analysis/cellphones/run", { limit, runtime, schemaColumns });
 }

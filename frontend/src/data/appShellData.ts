@@ -36,7 +36,7 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   semantic: [
     ["담당 영역", "Semantic Layer"],
     ["핵심 기능", "지표 / 분석 기준 / 관계 관리"],
-    ["상태", "Mock 관리 화면"],
+    ["상태", "Catalog 연동 관리 화면"],
     ["입력", "Catalog Dataset"],
     ["권한", "Publish된 정의만 챗봇 기준으로 사용"],
   ],
@@ -157,17 +157,10 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["입력", "SQL 결과"],
     ["출력", "Published Dashboard"],
   ],
-  ai: [
-    ["해당 영역", "AI 활용"],
-    ["표시 기능", "RAG / AI 질의"],
-    ["상태", "아직 연결 없음"],
-    ["입력", "Lake 데이터셋"],
-    ["권한", "사용자별 접근 제어"],
-  ],
   admin: [
     ["해당 영역", "관리"],
     ["표시 기능", "권한 / 감사 로그"],
-    ["상태", "아직 연결 없음"],
+    ["상태", "권한 API 연결"],
     ["대상", "사용자 / 그룹 / API"],
     ["로그", "Audit Log"],
   ],

@@ -5,8 +5,17 @@ from typing import Any, Protocol
 import httpx
 
 from .config import Settings
-from .schemas import DatasetClassificationOutput, DocumentSegmentationOutput, GenerateRequest, GenerationOutput, QuerySqlOutput
-from .mcp_client import McpContextClient
+from .schemas import (
+    DashboardAssistantOutput,
+    DatasetClassificationOutput,
+    DocumentSegmentationOutput,
+    EtlTransformOutput,
+    GenerateRequest,
+    GenerationOutput,
+    QuerySqlOutput,
+    ReviewRowOutput,
+    ReviewSchemaOutput,
+)
 
 
 def quote_sql_identifier(value: str) -> str:
@@ -49,9 +58,41 @@ class LLMClient(Protocol):
 
 class MockLLMClient:
     provider_name = "mock"
-    model_name = "mock-query-sql"
+    model_name = "deterministic-test-fixture"
 
     async def generate(self, request: GenerateRequest) -> GenerationOutput:
+        if request.mode == "etl_transform":
+            prompt_type = str(request.context.get("promptType") or "field_transform")
+            sql = "SELECT * FROM input" if prompt_type == "sql_transform" else "upper(value)"
+            return EtlTransformOutput(sql=sql, schemaContext="Deterministic test fixture")
+        if request.mode == "dashboard_assistant":
+            return DashboardAssistantOutput(
+                message="Deterministic dashboard test fixture.",
+                actions=[],
+                warnings=["The explicit test provider is enabled."],
+            )
+        if request.mode == "review_schema":
+            return ReviewSchemaOutput.model_validate({
+                "columns": [{
+                    "targetName": "sentiment",
+                    "label": "sentiment",
+                    "type": "String",
+                    "nullable": False,
+                    "method": "one_of_values",
+                    "allowedValues": ["positive", "mixed", "negative"],
+                    "instruction": None,
+                }],
+            })
+        if request.mode == "review_row":
+            requested_columns = request.context.get("requestedColumns") if isinstance(request.context, dict) else []
+            values = []
+            for column in requested_columns if isinstance(requested_columns, list) else []:
+                if not isinstance(column, dict):
+                    continue
+                target_name = str(column.get("targetName") or "").strip()
+                if target_name:
+                    values.append({"targetName": target_name, "value": None})
+            return ReviewRowOutput.model_validate({"values": values or [{"targetName": "value", "value": None}]})
         if request.mode == "classify_dataset":
             schema = request.context.get("schema") if isinstance(request.context, dict) else []
             roles = []
@@ -80,7 +121,7 @@ class MockLLMClient:
                 segments.append({"startSentence": start, "endSentence": sentence_count - 1})
             if not segments and sentence_count:
                 segments = [{"startSentence": 0, "endSentence": sentence_count - 1}]
-            return DocumentSegmentationOutput(segments=segments, confidence=0.6)
+            return DocumentSegmentationOutput(segments=segments, confidence=0.6, strategy="llm_refined")
         datasets = request.context.get("datasets") if isinstance(request.context, dict) else None
         table_name = None
         if isinstance(datasets, list) and datasets:
@@ -90,8 +131,8 @@ class MockLLMClient:
         query_sql = f"SELECT * FROM {quote_sql_identifier(str(table_name))} LIMIT 100;" if table_name else "SELECT 1 AS mock_result;"
         return QuerySqlOutput(
             query_sql=query_sql,
-            explanation="Deterministic mock provider output for local development and tests.",
-            warnings=["Mock provider is enabled; this SQL is not model-generated."],
+            explanation="Deterministic test fixture output.",
+            warnings=["The explicit test provider is enabled; this SQL is not model-generated."],
         )
 
     async def close(self) -> None:
@@ -110,7 +151,7 @@ class OpenAICompatibleClient:
             follow_redirects=False,
         )
 
-    async def generate(self, request: GenerateRequest) -> QuerySqlOutput:
+    async def generate(self, request: GenerateRequest) -> GenerationOutput:
         api_key = self.settings.provider_api_key
         if api_key is None or not api_key.get_secret_value():
             raise ProviderConfigurationError("Provider API key is not configured")
@@ -169,23 +210,26 @@ def build_chat_completion_request(settings: Settings, request: GenerateRequest) 
         "query_sql": QuerySqlOutput,
         "classify_dataset": DatasetClassificationOutput,
         "segment_document": DocumentSegmentationOutput,
+        "etl_transform": EtlTransformOutput,
+        "dashboard_assistant": DashboardAssistantOutput,
+        "review_schema": ReviewSchemaOutput,
+        "review_row": ReviewRowOutput,
     }[request.mode]
     output_name = {
         "query_sql": "query_sql_output",
         "classify_dataset": "dataset_classification_output",
         "segment_document": "document_segmentation_output",
+        "etl_transform": "etl_transform_output",
+        "dashboard_assistant": "dashboard_assistant_output",
+        "review_schema": "review_schema_output",
+        "review_row": "review_row_output",
     }[request.mode]
     return {
         "model": settings.provider_model,
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "Return only a JSON object matching the supplied output schema. "
-                    "For query_sql mode, produce a read-only SQL draft; do not execute SQL or tools. When context.ragContext.provenance is semantic_layer_rag, use its source chunks as evidence. "
-                    "For classify_dataset mode, assign one role to each supplied schema column. "
-                    "For segment_document mode, return only contiguous inclusive sentence ranges; never rewrite or omit text."
-                ),
+                "content": system_prompt_for_mode(request.mode),
             },
             {
                 "role": "user",
@@ -221,6 +265,10 @@ def parse_chat_completion(payload: Any, mode: str = "query_sql") -> GenerationOu
             "query_sql": QuerySqlOutput,
             "classify_dataset": DatasetClassificationOutput,
             "segment_document": DocumentSegmentationOutput,
+            "etl_transform": EtlTransformOutput,
+            "dashboard_assistant": DashboardAssistantOutput,
+            "review_schema": ReviewSchemaOutput,
+            "review_row": ReviewRowOutput,
         }.get(mode)
         if output_schema is None:
             raise ProviderResponseError("Provider output mode is unsupported")
@@ -246,6 +294,41 @@ def strip_json_fence(value: str) -> str:
         if first_line.strip().casefold() in {"```", "```json"}:
             return remainder[:-3].strip()
     return text
+
+
+def system_prompt_for_mode(mode: str) -> str:
+    common = "Return only a JSON object matching the supplied output schema."
+    instructions = {
+        "query_sql": (
+            "Produce one read-only SQL draft and never execute SQL or tools. Use only datasets in context. "
+            "When context.ragContext.provenance is semantic_layer_rag, use its source chunks as evidence."
+        ),
+        "classify_dataset": "Assign exactly one supported document role to every supplied schema column.",
+        "segment_document": "Return only contiguous inclusive sentence ranges; never rewrite or omit text.",
+        "etl_transform": (
+            "Generate a safe Spark SQL transform using only metadata columns. For promptType field_transform return a scalar expression; "
+            "for promptType sql_transform return a read-only SELECT whose input relation is input. Never emit DDL, DML, or external tables."
+        ),
+        "dashboard_assistant": (
+            "Create only dashboard actions allowed by context.dashboard.widgetOptions. Use only catalogContext datasets, "
+            "context.dashboard.availableDatasets, and existing context.dashboard.widgets. Never invent IDs or columns. "
+            "For visualization requests create_widget unless selectedWidgetId/widgetId names an existing widget, then update_widget. "
+            "Put update fields under patch and create fields under widget. Always provide a concise natural Korean chart title and a fully renderable config. "
+            "If a requested field is unavailable, explain the limitation without an action. For questions prefer a Korean markdown report."
+        ),
+        "review_schema": (
+            "Design an editable per-row review analysis schema. Use only copy, one_of_values, or instruction methods; "
+            "include allowedValues only for one_of_values and provide concise snake_case targetName values."
+        ),
+        "review_row": (
+            "Analyze exactly one source row. Return one value for every context.requestedColumns targetName, in the same order. "
+            "Choose only configured allowedValues and use only facts found in context.sourceRow."
+        ),
+    }
+    instruction = instructions.get(mode)
+    if instruction is None:
+        raise ProviderResponseError("Provider output mode is unsupported")
+    return f"{common} {instruction}"
 
 
 def create_llm_client(settings: Settings) -> LLMClient:

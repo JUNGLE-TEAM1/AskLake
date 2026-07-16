@@ -1,151 +1,132 @@
-import json
-import urllib.error
-import urllib.request
-from typing import Any
+from uuid import uuid4
 
 from fastapi import status
+from sqlglot import exp, parse_one
+from sqlglot.errors import ParseError
 
-from app.core.config import settings
 from app.core.errors import ApiError
 from app.schemas.ai_generation import AiSqlGenerationRequest, AiSqlGenerationResponse
 from app.schemas.common import ErrorCode
-
-
-OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+from app.services.ai_gateway_client import AiGatewayClient
+from app.services.sql_service import validate_read_only_query
 
 
 class AiGenerationService:
     def generate_sql(self, request: AiSqlGenerationRequest) -> AiSqlGenerationResponse:
-        if not settings.openai_api_key:
-            raise ApiError(
-                ErrorCode.SERVICE_UNAVAILABLE,
-                "OPENAI_API_KEY is not configured",
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        payload = {
-            "input": [
-                {"role": "system", "content": self._system_prompt(request)},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "question": request.question.strip(),
-                            "promptType": request.prompt_type,
-                            "metadata": request.metadata,
-                            "context": request.context or "",
-                            "engine": request.engine,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            "max_output_tokens": 500,
-            "model": settings.openai_query_ai_model,
-            "store": False,
-            "temperature": 0.1,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "asklake_sql_generation",
-                    "description": "A safe SQL expression or SELECT transformation for AskLake ETL.",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "sql": {"type": "string"},
-                            "schema_context": {"type": "string"},
-                        },
-                        "required": ["sql", "schema_context"],
-                    },
-                },
-            },
-        }
-        http_request = urllib.request.Request(
-            OPENAI_RESPONSES_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        result = AiGatewayClient().generate_etl_transform(
+            request_id=str(uuid4()),
+            question=request.question.strip(),
+            prompt_type=request.prompt_type,
+            metadata=request.metadata,
+            context=request.context or "",
+            engine=request.engine,
         )
-        try:
-            with urllib.request.urlopen(
-                http_request,
-                timeout=settings.openai_assistant_timeout_seconds,
-            ) as response:
-                raw_payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI SQL generation request failed",
-                status.HTTP_502_BAD_GATEWAY,
-                {"status": exc.code},
-            ) from exc
-        except (TimeoutError, urllib.error.URLError) as exc:
-            raise ApiError(
-                ErrorCode.BACKEND_TIMEOUT,
-                "OpenAI SQL generation request timed out",
-                status.HTTP_504_GATEWAY_TIMEOUT,
-            ) from exc
-
-        result = self._extract_result(raw_payload)
         sql = str(result.get("sql") or "").strip()
         if not sql:
             raise ApiError(
                 ErrorCode.SQL_SYNTAX_ERROR,
-                "OpenAI did not return a SQL suggestion",
+                "AI gateway did not return a SQL suggestion",
                 status.HTTP_502_BAD_GATEWAY,
             )
+        sql = _validate_generated_transform(sql, request)
         return AiSqlGenerationResponse(
             sql=sql,
-            schema_context=str(result.get("schema_context") or ""),
-            model=settings.openai_query_ai_model,
+            schema_context=str(result.get("schemaContext") or result.get("schema_context") or ""),
+            model=str(result.get("model") or "") or None,
         )
 
-    @staticmethod
-    def _system_prompt(request: AiSqlGenerationRequest) -> str:
-        if request.prompt_type == "sql_transform":
-            output_shape = "Return a read-only Spark SQL SELECT statement whose input relation is named input."
-        elif request.prompt_type == "field_transform":
-            output_shape = "Return only a scalar SQL expression for the original column; do not return SELECT or a code fence."
-        else:
-            output_shape = "Return the smallest safe SQL expression or SELECT statement that satisfies the request."
-        return "\n".join(
-            [
-                "You are Nessie, AskLake's ETL SQL transformation assistant.",
-                output_shape,
-                "Use only columns present in metadata. Never mutate data, use DDL, or invent external tables.",
-                "Preserve the requested engine's syntax and return JSON only.",
-            ]
+
+def _validate_generated_transform(sql: str, request: AiSqlGenerationRequest) -> str:
+    normalized_sql = sql.strip().removesuffix(";").strip()
+    dialect = "spark" if request.engine.strip().lower() in {"spark", "spark_sql", "pyspark"} else "trino"
+    is_select = normalized_sql.lower().startswith(("select", "with"))
+
+    if request.prompt_type == "sql_transform" or is_select:
+        statement = validate_read_only_query(normalized_sql)
+        expression = _parse_generated_sql(statement, dialect)
+        if not isinstance(expression, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
+            _invalid_gateway_sql("AI gateway must return one read-only SELECT transform")
+        _validate_transform_relations(expression)
+        _validate_transform_columns(expression, _metadata_columns(request.metadata))
+        return statement
+
+    wrapped = f"SELECT {normalized_sql} FROM input"
+    expression = _parse_generated_sql(wrapped, dialect)
+    if not isinstance(expression, exp.Select) or len(expression.expressions) != 1:
+        _invalid_gateway_sql("AI gateway must return one scalar SQL expression")
+    _validate_transform_relations(expression)
+    _validate_transform_columns(expression, _metadata_columns(request.metadata))
+    return normalized_sql
+
+
+def _parse_generated_sql(sql: str, dialect: str) -> exp.Expression:
+    try:
+        expression = parse_one(sql, read=dialect)
+    except ParseError as exc:
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "AI gateway returned invalid transform SQL",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
+    if expression is None:
+        _invalid_gateway_sql("AI gateway returned invalid transform SQL")
+    return expression
+
+
+def _validate_transform_relations(expression: exp.Expression) -> None:
+    cte_names = {str(cte.alias_or_name).casefold() for cte in expression.find_all(exp.CTE)}
+    allowed_relations = {"input", *cte_names}
+    for table in expression.find_all(exp.Table):
+        if table.catalog or table.db or table.name.casefold() not in allowed_relations:
+            _invalid_gateway_sql("AI gateway referenced a relation outside the ETL input")
+
+
+def _validate_transform_columns(expression: exp.Expression, allowed_columns: set[str]) -> None:
+    if not allowed_columns:
+        return
+    aliases = {
+        str(alias.alias).casefold()
+        for alias in expression.find_all(exp.Alias)
+        if alias.alias
+    }
+    unknown_columns = sorted({
+        column.name
+        for column in expression.find_all(exp.Column)
+        if column.name != "*"
+        and column.name.casefold() not in allowed_columns
+        and column.name.casefold() not in aliases
+    })
+    if unknown_columns:
+        _invalid_gateway_sql(
+            "AI gateway referenced columns outside the supplied ETL metadata",
+            {"columns": unknown_columns[:20]},
         )
 
-    @staticmethod
-    def _extract_result(payload: dict[str, Any]) -> dict[str, Any]:
-        output_text = payload.get("output_text")
-        if not isinstance(output_text, str) or not output_text.strip():
-            parts: list[str] = []
-            for output_item in payload.get("output", []):
-                if not isinstance(output_item, dict):
-                    continue
-                for content_item in output_item.get("content", []):
-                    if isinstance(content_item, dict) and isinstance(content_item.get("text"), str):
-                        parts.append(content_item["text"])
-            output_text = "\n".join(parts).strip()
-        try:
-            result = json.loads(output_text)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI response was not valid SQL JSON",
-                status.HTTP_502_BAD_GATEWAY,
-            ) from exc
-        if not isinstance(result, dict):
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI SQL response must be an object",
-                status.HTTP_502_BAD_GATEWAY,
-            )
-        return result
+
+def _metadata_columns(metadata: dict[str, object]) -> set[str]:
+    names: set[str] = set()
+    for key in ("column", "column_name", "columnName", "field", "field_name", "fieldName"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            names.add(value.strip().casefold())
+    for key in ("columns", "fields", "schema"):
+        values = metadata.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip().casefold())
+            elif isinstance(value, dict):
+                name = value.get("name") or value.get("field") or value.get("column")
+                if isinstance(name, str) and name.strip():
+                    names.add(name.strip().casefold())
+    return names
+
+
+def _invalid_gateway_sql(message: str, details: dict[str, object] | None = None) -> None:
+    raise ApiError(
+        ErrorCode.SQL_SYNTAX_ERROR,
+        message,
+        status.HTTP_502_BAD_GATEWAY,
+        details,
+    )

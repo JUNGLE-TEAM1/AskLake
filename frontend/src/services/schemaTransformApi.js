@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../config/api';
+import { apiClient } from './apiClient';
 
 /**
  * Schema Transform API
@@ -14,34 +14,10 @@ export const schemaTransformApi = {
      * @returns {Promise} Test result with before/after samples
      */
     async testSqlTransform(sources, sql, timeoutMs = 20000) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-        let response;
-        try {
-            response = await fetch(`${API_BASE_URL}/api/sql/test`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sources: sources,
-                    sql: sql
-                }),
-                signal: controller.signal,
-            });
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                throw new Error('Preview timed out. Please try again.');
-            }
-            throw err;
-        } finally {
-            clearTimeout(timer);
-        }
-
-        if (!response.ok) {
-            const result = await response.json();
-            throw new Error(result.detail || 'Test failed');
-        }
-
-        return response.json();
+        return apiClient.post('/api/sql/test', {
+            sources,
+            sql,
+            limit: 10,
+        }, { timeoutMs });
     }
 };

@@ -22,6 +22,56 @@ const read = (path) => {
 
 const checks = [
   {
+    name: "Semantic RAG client calls the live dataset search endpoint",
+    file: "src/services/semanticApi.ts",
+    patterns: [
+      /export async function searchRagDataset/,
+      /apiClient\.post<RagSearchResponse>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/search`/,
+      /query,\s*filters,/,
+    ],
+    forbiddenPatterns: [
+      /mockRagSearch/,
+      /deterministic.*Rag/i,
+    ],
+  },
+  {
+    name: "Semantic RAG tab exposes live retrieval and renders source evidence",
+    file: "src/pages/semantic/SemanticLayerPage.tsx",
+    patterns: [
+      /<RagSearchPanel datasetId=\{selectedDatasetId\} profile=\{profile\} \/>/,
+      /aria-label="RAG 검색 질문"/,
+      /실제 근거 검색/,
+      /setResult\(await searchRagDataset\(datasetId, normalizedQuery\)\)/,
+      /source\.documentId/,
+      /source\.body/,
+      /ragEvidenceTitle\(source\.title, source\.body\)/,
+      /match\(\/\(\?:\^\|\\n\)\\s\*title:/,
+      /source\.metadata/,
+      /source\.sourceFields\.map\(ragSourceFieldLabel\)/,
+      /result\.retrieval\.servingIndex/,
+    ],
+    forbiddenPatterns: [
+      /mockRagSearch/,
+      /가짜 근거/,
+    ],
+  },
+  {
+    name: "Review analysis is available in the ingest workflow through the AI Gateway",
+    file: "src/pages/ingest/JobsPages.tsx",
+    patterns: [
+      /<ReviewAnalysisPanel onAction=\{onAction\} \/>/,
+      /runCellphonesReviewAnalysis\(5, undefined, "gateway"\)/,
+      /aria-label="실제 Amazon 리뷰 5건 AI 분석"/,
+      /감성·문제 유형·심각도·근거/,
+      /row\.issue_category/,
+      /row\.evidence/,
+    ],
+    forbiddenPatterns: [
+      /mockReviewAnalysis/,
+      /리뷰 AI 채팅/,
+    ],
+  },
+  {
     name: "ETL target storage path uses the deployed Spark output bucket",
     file: "src/pages/etl/EtlPages.tsx",
     patterns: [
@@ -375,22 +425,32 @@ const checks = [
     ],
   },
   {
-    name: "AI workspace submits through the governed SQL suggestion contract",
-    file: "src/pages/ai/AiChatPage.tsx",
+    name: "Standalone AI workspace navigation stays removed",
+    file: "src/App.tsx",
     patterns: [
-      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
-      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
-      /previousRequest\?\.controller\.abort\(\);/,
-      /const suggestion = await generateQueryAiSuggestion\(/,
-      /signal: controller\.signal,/,
-      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
-      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
-      /content: getQueryAiErrorMessage\(error\)/,
-      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
-      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
-      /message\.sql \? <pre className="ai-chat-sql">/,
+      /if \(area === "sql"\) return \{ dashboardRoute: null, flow: "sql" \};/,
+      /activeFlow === "sql" && <SqlAnalysisPage/,
+      /activeFlow === "dashboard" && <DashboardPage/,
     ],
-    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+    forbiddenPatterns: [
+      /AiChatPage/,
+      /area === "ai"/,
+      /flow === "ai"/,
+      /activeFlow === "ai"/,
+    ],
+  },
+  {
+    name: "Live sidebar keeps AI inside task-specific surfaces",
+    file: "src/data/appShellData.ts",
+    patterns: [
+      /\{ id: "sql", label: "SQL 분석", icon: TerminalSquare, flow: "sql" \}/,
+      /\{ id: "dashboard", label: "대시보드", icon: BarChart3, flow: "dashboard" \}/,
+    ],
+    forbiddenPatterns: [
+      /id: "ai"/,
+      /flow: "ai"/,
+      /AI 활용/,
+    ],
   },
   {
     name: "AI suggestions preserve only the backend-validated response",
@@ -1287,11 +1347,12 @@ const checks = [
     ],
   },
   {
-    name: "Frontend defaults to live API mode",
+    name: "Frontend runtime mock mode stays disabled",
     file: "src/services/apiClient.ts",
     patterns: [
-      /VITE_USE_MOCK_API \?\? "false"/,
+      /useMock: false/,
     ],
+    forbiddenPatterns: [/VITE_USE_MOCK_API/],
   },
   {
     name: "Dashboard status labels stay Korean",
@@ -1597,8 +1658,10 @@ const checks = [
       /updateSemanticModel\(/,
       /validateSemanticModel\(/,
       /publishSemanticModel\(/,
+      /model\.publishedVersion != null/,
+      /semanticModelDisplayVersion\(model\)/,
       /<RagTab/,
-      /VectorDB에 들어갈 실제 문서/,
+      /VectorDB에 들어간 실제 문서/,
       /title="접근 권한"/,
       /approveRagDataset\(/,
       /previewRagDocuments\(/,

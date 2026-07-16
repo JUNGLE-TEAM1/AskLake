@@ -18,6 +18,7 @@ class TrinoProductionHardeningTests(unittest.TestCase):
             backend_cors_origins=["https://asklake.test"],
             bootstrap_admin_email="admin@asklake.test",
             bootstrap_admin_password="a-production-password",
+            ai_assistant_enabled=False,
             trino_enabled=False,
         )
 
@@ -27,6 +28,7 @@ class TrinoProductionHardeningTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Settings(
                 _env_file=None,
+                ai_assistant_enabled=False,
                 app_env="production",
                 backend_cors_origins=["https://asklake.test"],
                 bootstrap_admin_email="admin@asklake.test",
@@ -42,6 +44,7 @@ class TrinoProductionHardeningTests(unittest.TestCase):
             backend_cors_origins=["https://asklake.test"],
             bootstrap_admin_email="admin@asklake.test",
             bootstrap_admin_password="a-production-password",
+            ai_assistant_enabled=False,
             trino_enabled=True,
             trino_base_url="https://trino:8443",
             trino_auth_username="asklake-api",

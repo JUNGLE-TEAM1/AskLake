@@ -67,6 +67,10 @@ write_valid_env() {
       'AIRFLOW_INTERNAL_TOKEN=AirflowInternalToken_123' \
       'AIRFLOW_METADATA_DB_PASSWORD=AirflowMetadataDbPassword_123' \
       'AIRFLOW_PASSWORD=AirflowLoginPassword_123' \
+      'AI_CONTEXT_SIGNING_SECRET=AiContextSigningSecret_12345678901234567890' \
+      'AI_GATEWAY_SERVICE_TOKEN=AiGatewayServiceToken_12345678901234567890' \
+      'AI_MCP_SERVICE_TOKEN=AiMcpServiceToken_12345678901234567890123' \
+      'AI_PROVIDER_API_KEY=ProviderApiKey_TestOnly_12345678901234567890' \
       'BOOTSTRAP_ADMIN_EMAIL=admin@asklake.test' \
       'BOOTSTRAP_ADMIN_PASSWORD=BootstrapPassword_123' \
       'MINIO_ROOT_USER=MinioRootUser_123' \
@@ -75,9 +79,12 @@ write_valid_env() {
       "MINIO_SECRET_KEY=$SECRET_SENTINEL" \
       'MONGO_INITDB_ROOT_PASSWORD=MongoPassword_123' \
       'MONGO_INITDB_ROOT_USERNAME=MongoRootUser_123' \
+      'OPENSEARCH_INITIAL_ADMIN_PASSWORD=OpenSearchPassword_123!' \
+      'OPENSEARCH_PASSWORD=OpenSearchPassword_123!' \
       'POSTGRES_DB=asklake_metadata' \
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
+      'RAG_WORKER_TOKEN=RagWorkerToken_123456789012345678901234' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -216,6 +223,9 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
   fi
 else
   record_fail 'actual production Compose passes preflight (unexpected failure)'
+  if [[ "$output" != *"$SECRET_SENTINEL"* ]]; then
+    printf '%s\n' "$output" >&2
+  fi
 fi
 
 write_valid_trino_aws_env "$ENV_FILE"
@@ -223,6 +233,9 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
   record_pass 'Trino-enabled production Compose passes strict preflight'
 else
   record_fail 'Trino-enabled production Compose passes strict preflight (unexpected failure)'
+  if [[ "$output" != *"$SECRET_SENTINEL"* ]]; then
+    printf '%s\n' "$output" >&2
+  fi
 fi
 
 write_valid_trino_aws_env "$ENV_FILE"

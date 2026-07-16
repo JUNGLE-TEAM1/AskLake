@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { steps, wizardFlows } from "./data/appShellData";
-import { mockAuthUser } from "./data/mockAuthUser";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
@@ -57,7 +56,6 @@ type FlowPathContext = {
 };
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
-const frontendMockMode = import.meta.env.DEV && String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -138,7 +136,7 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
     return { catalogView: parseCatalogView(search), dashboardRoute: null, flow: "catalog" };
   }
   if (area === "sql") return { dashboardRoute: null, flow: "sql" };
-  if (area === "ai" || area === "semantic-layer") return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
+  if (area === "semantic-layer") return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
@@ -343,11 +341,6 @@ export function App() {
   }, [activeFlow, selectedJob?.id]);
 
   useEffect(() => {
-    if (frontendMockMode) {
-      setCurrentUser(mockAuthUser);
-      setAuthChecked(true);
-      return undefined;
-    }
     let active = true;
     fetchAuthSession()
       .then((session) => {

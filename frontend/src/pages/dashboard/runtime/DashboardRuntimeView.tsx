@@ -253,10 +253,10 @@ export function DashboardRuntimeView({
 
     if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
-      if (typeof nextConfig.description === "string" && nextConfig.description.includes("mock fallback")) {
+      if (typeof nextConfig.description === "string" && nextConfig.description.includes("로컬 안전 대체")) {
         delete nextConfig.description;
       }
-      if (typeof nextConfig.body === "string" && nextConfig.body.includes("mock fallback")) {
+      if (typeof nextConfig.body === "string" && nextConfig.body.includes("로컬 안전 대체")) {
         delete nextConfig.body;
       }
     }

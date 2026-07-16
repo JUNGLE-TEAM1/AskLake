@@ -4,7 +4,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-GenerationMode = Literal["query_sql", "classify_dataset", "segment_document"]
+GenerationMode = Literal[
+    "query_sql",
+    "classify_dataset",
+    "segment_document",
+    "etl_transform",
+    "dashboard_assistant",
+    "review_schema",
+    "review_row",
+]
 
 
 class QuerySqlOutput(BaseModel):
@@ -72,11 +80,141 @@ class DocumentSegmentationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     segments: list[DocumentSegment] = Field(min_length=1, max_length=256)
-    confidence: float = Field(default=0.0, ge=0, le=1)
-    strategy: Literal["llm_refined"] = "llm_refined"
+    confidence: float = Field(ge=0, le=1)
+    strategy: Literal["llm_refined"]
 
 
-GenerationOutput = QuerySqlOutput | DatasetClassificationOutput | DocumentSegmentationOutput
+class EtlTransformOutput(BaseModel):
+    """Safe SQL expression or SELECT transform generated for the ETL editor."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    sql: str = Field(min_length=1, max_length=20_000)
+    schema_context: str = Field(max_length=4_000, alias="schemaContext")
+
+
+class DashboardColorOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    colors: list[str] | None
+    palette_id: str | None = Field(alias="paletteId")
+    custom_colors: list[str] | None = Field(alias="customColors")
+
+
+class DashboardWidgetConfigOutput(BaseModel):
+    """Bounded dashboard widget config accepted by the backend action guard."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    aggregation: Literal["sum", "avg", "count", "min", "max"] | None
+    body: str | None
+    center_label: str | None = Field(alias="centerLabel")
+    color: DashboardColorOutput | None
+    columns: list[str] | None
+    curve: Literal["smooth", "straight", "stepline"] | None
+    date_unit: Literal["day", "month", "year"] | None = Field(alias="dateUnit")
+    description: str | None
+    error: str | None
+    error_message: str | None = Field(alias="errorMessage")
+    format: Literal["number", "currency", "percent"] | None
+    group_key: str | None = Field(alias="groupKey")
+    label_key: str | None = Field(alias="labelKey")
+    limit: int | None
+    max: float | None
+    min: float | None
+    orientation: Literal["vertical", "horizontal"] | None
+    placeholder_kind: str | None = Field(alias="placeholderKind")
+    prompt: str | None
+    series_key: str | None = Field(alias="seriesKey")
+    sort_direction: Literal["asc", "desc"] | None = Field(alias="sortDirection")
+    sort_key: str | None = Field(alias="sortKey")
+    stacked: bool | None
+    value_key: str | None = Field(alias="valueKey")
+    x_key: str | None = Field(alias="xKey")
+    y_key: str | None = Field(alias="yKey")
+
+
+DashboardWidgetType = Literal[
+    "metric",
+    "table",
+    "bar_chart",
+    "line_chart",
+    "area_chart",
+    "donut_chart",
+    "pie_chart",
+    "radial_bar_chart",
+    "heatmap_chart",
+    "treemap_chart",
+]
+
+
+class DashboardWidgetOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    title: str | None
+    type: DashboardWidgetType | None
+    dataset_id: str | None = Field(alias="datasetId")
+    config: DashboardWidgetConfigOutput | None
+
+
+class DashboardActionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["create_widget", "update_widget", "report"]
+    widget_id: str | None = Field(alias="widgetId")
+    markdown: str | None
+    widget: DashboardWidgetOutput | None
+    patch: DashboardWidgetOutput | None
+
+
+class DashboardAssistantOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    message: str = Field(max_length=8_000)
+    actions: list[DashboardActionOutput] = Field(max_length=8)
+    warnings: list[str] = Field(max_length=16)
+
+
+class ReviewSchemaColumnOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
+
+    target_name: str = Field(min_length=1, max_length=255, alias="targetName")
+    label: str = Field(min_length=1, max_length=255)
+    type: Literal["String", "Integer", "Long", "Double", "Boolean", "Timestamp"]
+    nullable: bool
+    method: Literal["copy", "one_of_values", "instruction"]
+    allowed_values: list[str] | None = Field(alias="allowedValues")
+    instruction: str | None
+
+
+class ReviewSchemaOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    columns: list[ReviewSchemaColumnOutput] = Field(min_length=1, max_length=64)
+
+
+class ReviewRowValueOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
+
+    target_name: str = Field(min_length=1, max_length=255, alias="targetName")
+    value: str | int | float | bool | None
+
+
+class ReviewRowOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    values: list[ReviewRowValueOutput] = Field(min_length=1, max_length=64)
+
+
+GenerationOutput = (
+    QuerySqlOutput
+    | DatasetClassificationOutput
+    | DocumentSegmentationOutput
+    | EtlTransformOutput
+    | DashboardAssistantOutput
+    | ReviewSchemaOutput
+    | ReviewRowOutput
+)
 
 
 class GenerateRequest(BaseModel):

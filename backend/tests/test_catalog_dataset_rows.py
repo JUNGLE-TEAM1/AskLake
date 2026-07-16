@@ -214,5 +214,27 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         )
         self.assertTrue(all("_asklake_" not in query for query in client.queries))
 
+    def test_iceberg_reader_translates_trino_api_errors_to_storage_errors(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "query_engine_status": "available",
+            "query_engine_table": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_rows_fixture",
+                "format": "iceberg",
+            },
+            "storage_format": "iceberg",
+            "storage_location": "s3://warehouse/asklake/catalog_rows_fixture",
+        })
+        client = FakeCatalogRowsTrinoClient()
+        with patch.object(
+            client,
+            "submit",
+            side_effect=ApiError("BACKEND_TIMEOUT", "Trino unavailable", 503),
+        ), self.assertRaises(ApiError) as raised:
+            read_dataset_rows(dataset, limit=1, offset=0, trino_client=client)  # type: ignore[arg-type]
+
+        self.assertEqual(raised.exception.code, "SQL_STORAGE_ERROR")
+
 if __name__ == "__main__":
     unittest.main()

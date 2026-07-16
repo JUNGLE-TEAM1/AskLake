@@ -426,6 +426,54 @@ class AiGatewayClientTests(unittest.TestCase):
         self.assertEqual(result["notices"], ["Review before execution."])
         self.assertEqual(result["model"], "mock-query-sql")
 
+    def test_etl_transform_uses_the_unified_generation_contract(self) -> None:
+        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        response = httpx.Response(200, request=request, json={
+            "request_id": "request-etl",
+            "mode": "etl_transform",
+            "output": {"sql": "upper(product_name)", "schemaContext": "product_name string"},
+            "provider": "openai_compatible",
+            "model": "gpt-test",
+        })
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=response) as post:
+            result = self.client.generate_etl_transform(
+                request_id="request-etl",
+                question="대문자로",
+                prompt_type="field_transform",
+                metadata={"column": "product_name"},
+                context="",
+                engine="spark",
+            )
+
+        self.assertEqual(result["sql"], "upper(product_name)")
+        self.assertEqual(result["model"], "gpt-test")
+        self.assertEqual(post.call_args.kwargs["json"]["mode"], "etl_transform")
+        self.assertNotIn("X-AskLake-AI-Context", post.call_args.kwargs["headers"])
+
+    def test_dashboard_generation_forwards_signed_mcp_scope(self) -> None:
+        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        response = httpx.Response(200, request=request, json={
+            "request_id": "request-dashboard",
+            "mode": "dashboard_assistant",
+            "output": {"message": "차트를 만들었습니다.", "actions": [], "warnings": []},
+            "provider": "openai_compatible",
+            "model": "gpt-test",
+        })
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=response) as post:
+            result = self.client.generate_dashboard_response(
+                request_id="request-dashboard",
+                prompt="지역별 막대 차트",
+                dashboard_context={"availableDatasets": [{"id": "sales"}]},
+                selected_dataset_ids=["sales"],
+                context_token="signed-dashboard-context",
+            )
+
+        self.assertEqual(result["message"], "차트를 만들었습니다.")
+        self.assertEqual(result["model"], "gpt-test")
+        self.assertEqual(result["provider"], "ai-gateway")
+        self.assertEqual(post.call_args.kwargs["headers"]["X-AskLake-AI-Context"], "signed-dashboard-context")
+        self.assertEqual(post.call_args.kwargs["json"]["selected_dataset_ids"], ["sales"])
+
 
 class AiGatewaySettingsTests(unittest.TestCase):
     def test_gateway_base_url_rejects_credentials_and_query_parameters(self) -> None:

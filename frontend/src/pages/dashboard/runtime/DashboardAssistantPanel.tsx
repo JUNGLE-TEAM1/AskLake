@@ -143,6 +143,9 @@ export function DashboardAssistantPanel({
         widgets,
       });
       const retrievalMessage = semanticRetrievalSummary(response);
+      const provenanceMessage = response.provider === "ai-gateway"
+        ? `AI Gateway · ${response.model || "configured model"}`
+        : "";
       const warningMessage = response.warnings.length > 0
         ? `경고: ${response.warnings.join(" / ")}`
         : "";
@@ -154,6 +157,7 @@ export function DashboardAssistantPanel({
           text: [
             reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
             ...actionMessages,
+            provenanceMessage,
             retrievalMessage,
             warningMessage,
           ].filter(Boolean).join("\n\n"),

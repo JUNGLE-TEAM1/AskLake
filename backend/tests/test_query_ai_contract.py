@@ -8,11 +8,7 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.sql import QueryAiSuggestionRequest
-from app.services.query_ai_service import (
-    OpenAiResponsesClient,
-    QueryAiService,
-    validate_selected_dataset_scope,
-)
+from app.services.query_ai_service import QueryAiService, validate_selected_dataset_scope
 
 
 def catalog_dataset(dataset_id: str = "reviews") -> CatalogDatasetResponse:
@@ -47,15 +43,6 @@ class QueryAiContractTests(unittest.TestCase):
                 selected_dataset_ids=[f"dataset-{index}" for index in range(101)],
             )
 
-    def test_missing_provider_configuration_is_reported_as_unavailable(self) -> None:
-        client = OpenAiResponsesClient(api_key=None, model="gpt-test")
-
-        with self.assertRaises(ApiError) as raised:
-            client.create_json_response(system_prompt="system", user_payload={"prompt": "count"})
-
-        self.assertEqual(raised.exception.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
-        self.assertIn("OPENAI_API_KEY", raised.exception.message)
-
     def test_service_uses_catalog_database_and_route_for_governance_audit(self) -> None:
         repository = type("Repository", (), {"db": object()})()
         service = QueryAiService(repository)
@@ -71,10 +58,13 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access") as governed,
             patch("app.services.query_ai_service.require_permission"),
-            patch(
-                "app.services.query_ai_service.OpenAiResponsesClient.create_json_response",
-                return_value='{"title":"Counts","body":"Draft","sql":"SELECT review_id FROM review_gold LIMIT 10","notices":[]}',
-            ),
+            patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql", return_value={
+                "title": "Counts",
+                "body": "Draft",
+                "sql": "SELECT review_id FROM review_gold LIMIT 10",
+                "notices": [],
+                "model": "gateway-test-model",
+            }),
         ):
             response = service.create_suggestion(request, actor)
 
@@ -106,10 +96,13 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
-            patch(
-                "app.services.query_ai_service.OpenAiResponsesClient.create_json_response",
-                return_value='{"title":"Unsafe","body":"Draft","sql":"DELETE FROM review_gold","notices":[]}',
-            ),
+            patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql", return_value={
+                "title": "Unsafe",
+                "body": "Draft",
+                "sql": "DELETE FROM review_gold",
+                "notices": [],
+                "model": "gateway-test-model",
+            }),
         ):
             with self.assertRaises(ApiError) as raised:
                 service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
@@ -130,7 +123,6 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
-            patch("app.services.query_ai_service.settings.ai_query_provider", "gateway"),
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
         ):
             generate.return_value = {
@@ -174,16 +166,19 @@ class QueryAiContractTests(unittest.TestCase):
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
             patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
-            patch(
-                "app.services.query_ai_service.OpenAiResponsesClient.create_json_response",
-                return_value='{"title":"Counts","body":"Draft","sql":"SELECT count(*) FROM review_gold LIMIT 10","notices":[]}',
-            ) as generate,
+            patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql", return_value={
+                "title": "Counts",
+                "body": "Draft",
+                "sql": "SELECT count(*) FROM review_gold LIMIT 10",
+                "notices": [],
+                "model": "gateway-test-model",
+            }) as generate,
         ):
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
         self.assertEqual(response.retrieval["provenance"], "semantic_layer_rag")
         self.assertEqual(response.sources[0]["parentDocumentId"], "parent-1")
-        self.assertEqual(generate.call_args.kwargs["user_payload"]["ragContext"], rag_context)
+        self.assertEqual(generate.call_args.kwargs["rag_context"], rag_context)
 
     def test_gateway_receives_semantic_layer_rag_context(self) -> None:
         repository = type("Repository", (), {"db": object()})()
@@ -200,7 +195,6 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
-            patch("app.services.query_ai_service.settings.ai_query_provider", "gateway"),
             patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
         ):

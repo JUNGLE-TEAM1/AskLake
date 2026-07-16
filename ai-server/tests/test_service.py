@@ -13,6 +13,15 @@ from app.llm_client import (
 )
 from app.main import create_app
 from app.mcp_client import McpContextError, _decode_batch_tool_result
+from app.schemas import (
+    DashboardAssistantOutput,
+    DatasetClassificationOutput,
+    DocumentSegmentationOutput,
+    EtlTransformOutput,
+    QuerySqlOutput,
+    ReviewRowOutput,
+    ReviewSchemaOutput,
+)
 
 
 AUTH = {"Authorization": "Bearer test-token"}
@@ -20,6 +29,7 @@ AUTH = {"Authorization": "Bearer test-token"}
 
 def make_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
+        "app_env": "testing",
         "internal_auth_token": "test-token",
         "provider": "mock",
     }
@@ -30,7 +40,11 @@ def make_settings(**overrides: object) -> Settings:
 def test_health_is_public_and_generate_requires_bearer_auth() -> None:
     client = TestClient(create_app(make_settings()))
 
-    assert client.get("/health").json() == {"status": "ok", "service": "ai-gateway"}
+    health = client.get("/health").json()
+    assert health["status"] == "ok"
+    assert health["service"] == "ai-gateway"
+    assert health["mcp"] == "disabled"
+    assert {"query_sql", "etl_transform", "dashboard_assistant", "review_schema", "review_row", "embeddings"}.issubset(health["capabilities"])
     response = client.post("/v1/generate", json={"prompt": "count rows"})
 
     assert response.status_code == 401
@@ -77,6 +91,58 @@ def test_mock_generate_uses_mcp_camel_case_dataset_name() -> None:
 
     assert response.status_code == 200
     assert response.json()["output"]["query_sql"] == "SELECT * FROM review_gold LIMIT 100;"
+
+
+@pytest.mark.parametrize(
+    ("mode", "context", "output_key"),
+    [
+        ("etl_transform", {"promptType": "sql_transform"}, "sql"),
+        ("dashboard_assistant", {}, "actions"),
+        ("review_schema", {}, "columns"),
+        ("review_row", {"requestedColumns": [{"targetName": "sentiment"}]}, "values"),
+    ],
+)
+def test_mock_gateway_supports_every_unified_generation_mode(
+    mode: str,
+    context: dict[str, object],
+    output_key: str,
+) -> None:
+    client = TestClient(create_app(make_settings()))
+
+    response = client.post(
+        "/v1/generate",
+        headers=AUTH,
+        json={"mode": mode, "prompt": "test request", "context": context},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == mode
+    assert output_key in response.json()["output"]
+
+
+def test_provider_output_schemas_require_every_declared_object_property() -> None:
+    def assert_strict_objects(value: object) -> None:
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict):
+                assert value.get("additionalProperties") is False
+                assert set(value.get("required") or []) == set(properties)
+            for child in value.values():
+                assert_strict_objects(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_strict_objects(child)
+
+    for output_model in (
+        QuerySqlOutput,
+        DatasetClassificationOutput,
+        DocumentSegmentationOutput,
+        EtlTransformOutput,
+        DashboardAssistantOutput,
+        ReviewSchemaOutput,
+        ReviewRowOutput,
+    ):
+        assert_strict_objects(output_model.model_json_schema())
 
 
 def test_request_limits_reject_large_context_and_body() -> None:
@@ -153,7 +219,7 @@ def test_unconfigured_real_provider_fails_closed() -> None:
 
 
 def test_health_reports_unready_when_internal_auth_is_missing() -> None:
-    client = TestClient(create_app(Settings(provider="mock")))
+    client = TestClient(create_app(Settings(app_env="testing", provider="mock")))
 
     response = client.get("/health")
 
@@ -190,6 +256,11 @@ def test_production_remote_provider_requires_tls() -> None:
             provider_base_url="http://llm.example.test/v1",
             provider_api_key="provider-secret",
         )
+
+
+def test_mock_provider_is_rejected_outside_tests() -> None:
+    with pytest.raises(ValueError, match="test environments"):
+        Settings(app_env="local", internal_auth_token="test-token", provider="mock")
 
 
 def test_mcp_server_url_rejects_credentials_and_query_parameters() -> None:

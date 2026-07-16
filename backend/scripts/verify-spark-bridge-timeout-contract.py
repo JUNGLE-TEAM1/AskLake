@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -13,8 +14,13 @@ from app.services import etl_service
 
 
 original_environment = dict(os.environ)
+original_ensure_batch_iceberg_target = etl_service.ensure_batch_iceberg_target
+original_incremental_source_object_inventory = etl_service.incremental_source_object_inventory
+original_is_internal_data_lake_source = etl_service.is_internal_data_lake_source
 original_job_payload = etl_service.job_payload_for_spark
 original_run_node_bridge = etl_service.run_node_bridge
+original_source_incremental_window = etl_service.source_incremental_window
+original_source_uses_incremental_folder_window = etl_service.source_uses_incremental_folder_window
 original_subprocess_run = etl_service.subprocess.run
 
 try:
@@ -35,9 +41,19 @@ try:
         })
         return {"status": "success"}
 
-    etl_service.job_payload_for_spark = lambda _job: {"id": "timeout-contract"}
+    etl_service.ensure_batch_iceberg_target = lambda _db, _job: None
+    etl_service.incremental_source_object_inventory = lambda *_args, **_kwargs: None
+    etl_service.is_internal_data_lake_source = lambda _source_type: False
+    etl_service.job_payload_for_spark = lambda _job, *_args, **_kwargs: {"id": "timeout-contract"}
     etl_service.run_node_bridge = capture_bridge
-    etl_service.run_spark_job(object(), "run", "run-timeout-contract")
+    etl_service.source_incremental_window = lambda *_args, **_kwargs: (None, None)
+    etl_service.source_uses_incremental_folder_window = lambda _job: False
+    etl_service.run_spark_job(
+        object(),
+        SimpleNamespace(source_config=[], source_type=""),
+        "run",
+        "run-timeout-contract",
+    )
 
     assert captured["payload"]["sparkRestTimeoutMs"] == 1000
     assert captured["options"]["timeout_seconds"] == 61
@@ -72,6 +88,11 @@ try:
 finally:
     os.environ.clear()
     os.environ.update(original_environment)
+    etl_service.ensure_batch_iceberg_target = original_ensure_batch_iceberg_target
+    etl_service.incremental_source_object_inventory = original_incremental_source_object_inventory
+    etl_service.is_internal_data_lake_source = original_is_internal_data_lake_source
     etl_service.job_payload_for_spark = original_job_payload
     etl_service.run_node_bridge = original_run_node_bridge
+    etl_service.source_incremental_window = original_source_incremental_window
+    etl_service.source_uses_incremental_folder_window = original_source_uses_incremental_folder_window
     etl_service.subprocess.run = original_subprocess_run

@@ -14,9 +14,10 @@ from app.core.config import settings
 from app.core.errors import ApiError
 from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel, RagIndexManifestModel
 from app.repositories.catalog_repository import CatalogRepository
+from app.schemas.common import ErrorCode
 from app.schemas.semantic import RagApproveRequest, RagClassifyResponse, RagDocumentPreviewResponse, RagIndexResponse, RagJobResponse, RagProfileResponse
 from app.services.ai_gateway_client import AiGatewayClient
-from app.services.catalog_schema import dataset_schema, schema_fingerprint, schema_names
+from app.services.catalog_schema import dataset_schema, schema_fingerprint
 from app.services.rag_document_service import build_documents, dataset_columns
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
@@ -84,8 +85,19 @@ class RagService:
         try:
             output = AiGatewayClient().classify_dataset(run.id, classification_input)
         except Exception as exc:
-            output = self._fallback_classification(dataset, semantic_bindings)
-            run.error = f"AI gateway unavailable; deterministic fallback used: {exc.__class__.__name__}"
+            run.status = "failed"
+            run.error = f"AI gateway classification unavailable ({exc.__class__.__name__})"
+            run.completed_at = datetime.now(timezone.utc)
+            row.review_state = "failed"
+            row.last_error = "AI Gateway classification failed; no local classification was substituted."
+            self.db.commit()
+            if isinstance(exc, ApiError):
+                raise
+            raise ApiError(
+                ErrorCode.SERVICE_UNAVAILABLE,
+                "AI gateway classification failed",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ) from exc
         self._apply_classification(run, row, output)
         self.db.commit()
         return RagClassifyResponse(run_id=run.id, dataset_id=dataset_id, status=run.status)
@@ -760,27 +772,6 @@ class RagService:
     @staticmethod
     def _classification_input(dataset: dict[str, Any], semantic_bindings: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
         return {"datasetId": dataset.get("id"), "datasetName": dataset.get("name"), "description": str(dataset.get("description") or "")[:2_000], "schema": dataset_schema(dataset)[:256], "sampleRows": (dataset.get("sampleRows") or [])[:settings.rag_classification_sample_rows], "rowCount": dataset.get("rows"), "semanticBindings": semantic_bindings or {}}
-
-    @staticmethod
-    def _fallback_classification(dataset: dict[str, Any], semantic_bindings: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
-        columns = schema_names(dataset)
-        bindings = semantic_bindings or {}
-        semantic_columns = {
-            str(column)
-            for metric in bindings.get("metrics", [])
-            if isinstance(metric, dict)
-            for column in metric.get("sourceColumns", [])
-        }
-        semantic_columns.update(
-            str(item.get("columnName"))
-            for item in bindings.get("dimensions", [])
-            if isinstance(item, dict) and item.get("columnName")
-        )
-        body = [column for column in columns if any(token in column.casefold() for token in ("review", "comment", "text", "content", "message", "description", "body"))]
-        title = [column for column in columns if column not in body and any(token in column.casefold() for token in ("title", "subject", "headline", "name"))]
-        identifiers = [column for column in columns if column not in body and column not in title and column.casefold().endswith("_id")]
-        metadata = [column for column in columns if column not in body and column not in title and column not in identifiers and (column in semantic_columns or any(token in column.casefold() for token in ("rating", "score", "sentiment", "category", "status", "date", "region", "product")))]
-        return {"classification": "review" if body else "generic_text", "confidence": 0.55, "roles": [{"columnName": column, "role": "body" if column in body else "title" if column in title else "identifier" if column in identifiers else "metadata" if column in metadata else "excluded", "confidence": 0.55, "reason": "Local deterministic classifier; Semantic binding matched" if column in semantic_columns else "Local deterministic classifier by column name"} for column in columns]}
 
     def _apply_classification(self, run: RagClassificationRunModel, profile: RagDatasetProfileModel, output: dict[str, Any]) -> None:
         run.status = "completed"

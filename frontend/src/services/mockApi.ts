@@ -390,7 +390,7 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
       : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
-    downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
+    downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "시맨틱 RAG" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
     layer: draftPipeline.target.layer,

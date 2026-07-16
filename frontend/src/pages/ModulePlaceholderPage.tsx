@@ -3,7 +3,7 @@ import { CreationSummaryPanel } from "../components/creation/CreationFlow";
 import { InfoBox, PageTitle } from "../components/common";
 import type { FlowId } from "../types";
 
-type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
+type PlaceholderFlow = Extract<FlowId, "admin">;
 
 export function ModulePlaceholderPage({
   description,
@@ -23,11 +23,6 @@ export function ModulePlaceholderPage({
   title: string;
 }) {
   const roadmapByFlow: Record<PlaceholderFlow, Array<[string, string]>> = {
-    ai: [
-      ["입력", "RAG 대상 Lake 데이터셋"],
-      ["작업", "Chunk Rule, Embedding, Vector DB"],
-      ["연결 액션", "권한 기반 AI 질의"],
-    ],
     admin: [
       ["대상", "사용자, 그룹, API Client"],
       ["작업", "권한 정책, 감사 로그 조회"],

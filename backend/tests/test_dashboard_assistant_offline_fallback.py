@@ -11,7 +11,7 @@ from app.services.dashboard_assistant_context import (
 from app.services.dashboard_assistant_service import DashboardAssistantService
 
 
-def test_visualization_request_applies_deterministic_action_without_openai_key() -> None:
+def test_visualization_request_fails_closed_without_gateway_configuration() -> None:
     context = AssistantDashboardContext(
         id="dashboard-1",
         datasets=[
@@ -33,9 +33,10 @@ def test_visualization_request_applies_deterministic_action_without_openai_key()
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(
-            openai_api_key=None,
-            openai_assistant_enabled=True,
-            openai_assistant_max_sample_rows=5,
+            ai_assistant_enabled=True,
+            ai_assistant_max_sample_rows=5,
+            ai_gateway_base_url=None,
+            ai_gateway_service_token=None,
         ),
     )
     request = DashboardAssistantRequest.model_validate({
@@ -46,11 +47,10 @@ def test_visualization_request_applies_deterministic_action_without_openai_key()
     with patch("app.services.dashboard_assistant_service.build_assistant_context", return_value=context):
         response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
 
-    assert response.actions
-    assert response.actions[0].type == "create_widget"
-    assert response.actions[0].widget.dataset_id == "sales"
-    assert response.actions[0].widget.config["yKey"] == "revenue"
-    assert any("OPENAI_API_KEY" in warning for warning in response.warnings)
+    assert response.actions == []
+    assert response.provider == "unavailable"
+    assert "요청을 실행하지 않았습니다" in response.message
+    assert any("AI Gateway" in warning for warning in response.warnings)
 
 
 def test_non_visualization_request_stays_report_only_without_openai_key() -> None:
@@ -59,9 +59,10 @@ def test_non_visualization_request_stays_report_only_without_openai_key() -> Non
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(
-            openai_api_key=None,
-            openai_assistant_enabled=True,
-            openai_assistant_max_sample_rows=5,
+            ai_assistant_enabled=True,
+            ai_assistant_max_sample_rows=5,
+            ai_gateway_base_url=None,
+            ai_gateway_service_token=None,
         ),
     )
     request = DashboardAssistantRequest.model_validate({
@@ -73,4 +74,58 @@ def test_non_visualization_request_stays_report_only_without_openai_key() -> Non
         response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
 
     assert response.actions == []
-    assert "AI Assistant를 사용할 수 없어" in response.message
+    assert "AI Gateway를 사용할 수 없어" in response.message
+
+
+def test_visualization_request_does_not_synthesize_a_local_chart() -> None:
+    context = AssistantDashboardContext(
+        id="dashboard-1",
+        datasets=[
+            AssistantDatasetContext(
+                id="sales",
+                name="Sales",
+                layer="gold",
+                description="Monthly sales",
+                columns=[
+                    AssistantColumnContext(name="month", type="date"),
+                    AssistantColumnContext(name="revenue", type="decimal"),
+                ],
+                sample_rows=[{"month": "2026-01", "revenue": 100}],
+                tags=[],
+            ),
+        ],
+    )
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(
+            ai_assistant_enabled=True,
+            ai_assistant_max_sample_rows=5,
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "mode": "visualization_request",
+        "prompt": "Create a monthly revenue chart",
+    })
+
+    with (
+        patch("app.services.dashboard_assistant_service.build_assistant_context", return_value=context),
+        patch.object(
+            service,
+            "_request_gateway",
+            return_value={
+                "actions": [],
+                "message": "The model returned no valid chart action.",
+                "model": "gpt-test",
+                "provider": "ai-gateway",
+                "warnings": [],
+            },
+        ),
+    ):
+        response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
+
+    assert response.actions == []
+    assert response.provider == "ai-gateway"
+    assert "기본 차트" not in response.message

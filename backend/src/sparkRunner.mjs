@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  defaultOutputBucket,
   defaultRawBucket,
+  defaultWarehouseBucket,
   isMinioProvider,
   objectStorageDockerEnv,
   resolveObjectStorageConfig,
   toDockerEnvArgs,
+  validateConfiguredS3Location,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
@@ -57,13 +60,12 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packages = sparkPackages(job, source, output);
   const packageArgs = sparkPackageArgs(packages);
-  const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
-    || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
-    || "http://host.docker.internal:1234/v1/chat/completions";
-  const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
-  const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
-    || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
-  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const aiGatewayBaseUrl = process.env.AI_GATEWAY_BASE_URL_IN_DOCKER
+    || process.env.AI_GATEWAY_BASE_URL
+    || "http://ai-server:8090";
+  const aiGatewayServiceToken = process.env.AI_GATEWAY_SERVICE_TOKEN || "";
+  const aiGatewayTimeoutSeconds = process.env.AI_GATEWAY_TIMEOUT_SECONDS || "120";
+  const reviewAnalysisRuntime = process.env.ASKLAKE_SPARK_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
@@ -98,10 +100,10 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
     ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
     ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
-    ASKLAKE_LOCAL_LLM_ENDPOINT: localLlmEndpoint,
-    ASKLAKE_LOCAL_LLM_MODEL: localLlmModel,
-    ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS: localLlmTimeoutSeconds,
-    ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000",
+    AI_GATEWAY_BASE_URL: aiGatewayBaseUrl,
+    AI_GATEWAY_TIMEOUT_SECONDS: aiGatewayTimeoutSeconds,
+    ...(executionMode === "docker" ? { AI_GATEWAY_SERVICE_TOKEN: aiGatewayServiceToken } : {}),
+    ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS: process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000",
     ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
     ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
     ...icebergEnvironment,
@@ -109,10 +111,10 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   };
   const sparkExecutorProperties = Object.fromEntries(
     [
-      "ASKLAKE_LOCAL_LLM_ENDPOINT",
-      "ASKLAKE_LOCAL_LLM_MODEL",
-      "ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS",
-      "ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS",
+      "AI_GATEWAY_BASE_URL",
+      "AI_GATEWAY_TIMEOUT_SECONDS",
+      ...(executionMode === "docker" ? ["AI_GATEWAY_SERVICE_TOKEN"] : []),
+      "ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS",
       "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
       "ASKLAKE_REVIEW_TEXT_MODEL_ROOT",
     ].map((name) => [`spark.executorEnv.${name}`, sparkEnvironment[name]]),
@@ -156,13 +158,13 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
     "-e",
-    `ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
+    `AI_GATEWAY_BASE_URL=${aiGatewayBaseUrl}`,
     "-e",
-    `ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
+    `AI_GATEWAY_SERVICE_TOKEN=${aiGatewayServiceToken}`,
     "-e",
-    `ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
+    `AI_GATEWAY_TIMEOUT_SECONDS=${aiGatewayTimeoutSeconds}`,
     "-e",
-    `ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
+    `ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS=${process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000"}`,
     "-e",
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "-e",
@@ -188,13 +190,13 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "--conf",
     `spark.sql.shuffle.partitions=${process.env.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"}`,
     "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
+    `spark.executorEnv.AI_GATEWAY_BASE_URL=${aiGatewayBaseUrl}`,
     "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
+    `spark.executorEnv.AI_GATEWAY_SERVICE_TOKEN=${aiGatewayServiceToken}`,
     "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
+    `spark.executorEnv.AI_GATEWAY_TIMEOUT_SECONDS=${aiGatewayTimeoutSeconds}`,
     "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
+    `spark.executorEnv.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS=${process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000"}`,
     "--conf",
     `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "--conf",
@@ -551,12 +553,11 @@ export function sparkPackages(job, source, output) {
 export function sparkIcebergEnvironment(job) {
   if (!job?.icebergTarget) return {};
   const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
-  const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
   const warehousePrefix = normalizePrefix(process.env.TRINO_ICEBERG_WAREHOUSE_PREFIX || "warehouse");
-  const warehouse = String(
-    process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE
-      || (warehouseBucket ? `s3a://${warehouseBucket}/${warehousePrefix}` : ""),
-  ).replace(/\/+$/, "");
+  const configuredWarehouse = String(process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE || "").trim();
+  const warehouse = configuredWarehouse
+    ? validateConfiguredS3Location(configuredWarehouse, "ASKLAKE_SPARK_ICEBERG_WAREHOUSE")
+    : `s3a://${defaultWarehouseBucket()}/${warehousePrefix}`;
   const jdbcUrl = String(
     process.env.ASKLAKE_SPARK_ICEBERG_JDBC_URL
       || `jdbc:postgresql://postgres:5432/${database}`,
@@ -836,7 +837,7 @@ function sparkOutputPath(job, runId) {
     const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
-      : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
+      : `s3a://${defaultOutputBucket()}/${prefix}${layer}/${dataset}`;
     const sparkPath = targetBase.endsWith(`/${runId}`) ? targetBase : `${targetBase}/${runId}`;
     return { displayPath: sparkPath, sparkPath };
   }
@@ -854,7 +855,7 @@ export function normalizeSparkOutputTargetPath(value) {
   const configuredTarget = String(value || "").trim();
   if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
   const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
-  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  const configuredBucket = normalizeBucketName(defaultOutputBucket());
   if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
   return normalizedTarget.replace(
     /^s3a:\/\/asklake-output(?=\/|$)/i,

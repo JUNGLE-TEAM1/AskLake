@@ -16,7 +16,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-환경 변수는 `.env.example`을 참고한다. 실제 OpenAI 키는 git에 올리지 않는 `.env.local`의 `OPENAI_API_KEY`에 둔다.
+환경 변수는 `.env.example`을 참고한다. Backend는 OpenAI에 직접 연결하지 않고
+`AI_GATEWAY_BASE_URL`과 `AI_GATEWAY_SERVICE_TOKEN`으로 private AI Gateway만
+호출한다. Provider API key는 Backend가 아니라 AI Gateway의 비공개 환경 변수로만
+주입하며 git에는 올리지 않는다.
 
 ## Smoke Check
 

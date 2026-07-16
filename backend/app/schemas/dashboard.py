@@ -495,6 +495,8 @@ class DashboardAssistantResponse(CamelModel):
     message: str
     actions: list[DashboardAssistantAction] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    model: str | None = None
+    provider: Literal["ai-gateway", "local-input-guard", "unavailable"] | None = None
     # Backward-compatible fields used by the current visualization request widget.
     config_patch: dict[str, Any] | None = None
     widget_patch: DashboardAssistantWidgetPatch | None = None
