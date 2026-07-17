@@ -153,3 +153,10 @@
 - 결정: schedule 계산, Job/Run projection·정규화, whitespace record preview를 세 application module로 옮기고 `app.services.etl_service`는 동일 함수 객체를 기존 이름으로 re-export한다.
 - 이유: Router, 검증 script와 테스트의 공개 import를 한 번에 바꾸지 않으면서 단일 서비스 파일의 변경 집중도를 낮출 수 있다. 모듈별 LOC budget과 역방향 façade import 금지를 자동 검사해 단순 파일 이동이 순환 의존성으로 퇴행하는 것도 막는다.
 - 제약: API path·schema, DB와 persisted payload, runtime side effect·transaction 순서, legacy/mock 활성 상태를 바꾸지 않는다. façade 1,200줄 목표는 아직 미달이므로 남은 SQL Job·snapshot/continuous composition은 독립 PR에서 계속 추출한다.
+
+## D-024 — ETL runtime projection·policy를 추가 책임 모듈로 분리
+
+- 상태: Accepted
+- 결정: 증분 source identity, Airflow·Spark·Kafka Run projection, Catalog·lineage projection, Pipeline policy와 공통 runtime helper 93개 함수를 다섯 application module로 추가 분리한다.
+- 이유: `etl_service.py`를 5,895줄의 compatibility façade·transaction 조립 경계로 줄이면서 API, DB schema, persisted payload와 기존 import 경로를 그대로 유지하기 위해서다.
+- 제약: 새 모듈은 façade를 역참조하지 않고 800줄 이하 budget을 갖는다. 추출 함수의 AST digest와 re-export identity를 구조 테스트로 고정한다.

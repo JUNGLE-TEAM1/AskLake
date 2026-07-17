@@ -2,7 +2,7 @@
 
 ## 목적
 
-최신 `dev`의 `backend/app/services/etl_service.py` 8,389줄을 공개 API와 저장 계약 변경 없이 작은 책임 모듈로 분리한다. Router와 기존 test/script가 import하는 `app.services.etl_service`는 compatibility façade로 유지한다.
+최신 `dev`의 `backend/app/services/etl_service.py` 8,389줄을 공개 API와 저장 계약 변경 없이 작은 책임 모듈로 분리한다. 현재 façade는 5,895줄까지 줄였으며 Router와 기존 test/script가 import하는 `app.services.etl_service` 경로를 유지한다.
 
 ## 책임 분리
 
@@ -11,18 +11,28 @@
 | `app.application.etl_schedule` | ETL·SQL Job schedule label, cron, timezone, next-run policy | 없음 |
 | `app.application.etl_job_projection` | Job/Run 상태 projection, ID·문자열 정규화, 초기 통계·DAG·Continuous 기본 runtime 생성 | 환경 기본값 조회 외 repository write 없음 |
 | `app.application.etl_record_parsing` | whitespace record preview, field-count·type·column 추론 | 없음 |
+| `app.application.etl_runtime_support` | Kafka 판별, writer mode, 로그 축약, DAG step 생성 공통 helper | 없음 |
+| `app.application.etl_source_window` | 증분 S3 object identity·timestamp·ETag·size 정규화와 client 구성 | S3 client 구성만 수행, repository write 없음 |
+| `app.application.etl_run_projection` | Airflow·Spark·Kafka Run 상태, task state, DAG projection | repository write 없음 |
+| `app.application.etl_catalog_projection` | materialization, Catalog payload, lineage, schema·quality projection | 파일 크기 조회 외 repository write 없음 |
+| `app.application.etl_pipeline_policy` | Rule compile, create/update validation, target·schedule·actor 정책 | 일부 façade transaction이 호출, 직접 외부 runtime 실행 없음 |
 | `app.services.etl_service` | 기존 공개 함수 façade, repository transaction, runtime adapter 조립 | 기존 계약 유지 |
 
 추출 모듈은 `app.services.etl_service`를 역으로 import하지 않는다. façade는 옮긴 함수 객체를 같은 이름으로 다시 export하므로 API router, verification script와 테스트 import 경로는 바뀌지 않는다.
 
 ## 구조 ratchet
 
-- `etl_service.py`: 최대 7,600줄
+- `etl_service.py`: 최대 6,000줄
 - `etl_schedule.py`: 최대 320줄
 - `etl_job_projection.py`: 최대 480줄
 - `etl_record_parsing.py`: 최대 170줄
+- `etl_runtime_support.py`: 최대 120줄
+- `etl_source_window.py`: 최대 270줄
+- `etl_run_projection.py`: 최대 620줄
+- `etl_catalog_projection.py`: 최대 800줄
+- `etl_pipeline_policy.py`: 최대 460줄
 - 추출한 함수는 `etl_service.py`에 다시 정의하지 않는다.
-- 추출 시 `origin/dev`와 동일했던 54개 함수 AST digest를 모듈별 reviewed contract로 고정한다.
+- 추출 시 `origin/dev`와 동일했던 147개 함수 AST digest를 모듈별 reviewed contract로 고정한다.
 - API path, request/response schema, DB schema, persisted Job/Run/Dataset payload를 변경하지 않는다.
 - legacy/mock 경로를 활성화하거나 새 fallback을 추가하지 않는다.
 
@@ -40,4 +50,4 @@ $env:PYTHONPATH = "."
 
 ## Rollback
 
-세 application 모듈의 함수 본문을 façade로 되돌리고 import·구조 ratchet 테스트를 함께 제거한다. 데이터 migration과 배포 설정 변경은 없으므로 DB rollback은 필요하지 않다.
+여덟 application 모듈의 함수 본문을 façade로 되돌리고 import·구조 ratchet 테스트를 함께 제거한다. 데이터 migration과 배포 설정 변경은 없으므로 DB rollback은 필요하지 않다.

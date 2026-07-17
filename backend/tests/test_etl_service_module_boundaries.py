@@ -3,7 +3,16 @@ import hashlib
 from pathlib import Path
 import unittest
 
-from app.application import etl_job_projection, etl_record_parsing, etl_schedule
+from app.application import (
+    etl_catalog_projection,
+    etl_job_projection,
+    etl_pipeline_policy,
+    etl_record_parsing,
+    etl_run_projection,
+    etl_runtime_support,
+    etl_schedule,
+    etl_source_window,
+)
 from app.services import etl_service
 
 
@@ -71,19 +80,127 @@ EXTRACTED_EXPORTS = {
         "record_parsing_column_names",
         "record_parsing_timestamp",
     },
+    etl_runtime_support: {
+        "compact_storage_text",
+        "dag_step",
+        "is_kafka_job",
+        "writer_mode_for_pipeline",
+    },
+    etl_source_window: {
+        "build_source_s3_client",
+        "head_s3_object_identity",
+        "incremental_object_key_limit",
+        "listed_s3_object_identity",
+        "normalize_s3_etag",
+        "normalize_s3_version_id",
+        "object_last_modified",
+        "object_last_modified_iso",
+        "parse_incremental_timestamp",
+        "pin_listed_s3_object_identity",
+        "s3_object_size",
+        "source_identity_worker_count",
+        "source_object_identity_changed_error",
+        "source_object_identity_mismatch_fields",
+        "source_uses_incremental_folder_window",
+    },
+    etl_run_projection: {
+        "airflow_run_has_materialization",
+        "airflow_submission_error_is_definitive",
+        "apply_airflow_result_to_reserved_run",
+        "apply_airflow_submit_job_state",
+        "apply_job_state_from_latest_run",
+        "apply_kafka_result_to_reserved_run",
+        "apply_kafka_run_reservation_job_state",
+        "bind_kafka_result_to_reservation",
+        "dag_steps_from_airflow_submit",
+        "dag_steps_from_airflow_sync",
+        "finalize_job_from_kafka_result",
+        "finalize_job_from_spark_result",
+        "first_problem_task",
+        "kafka_run_reservation",
+        "mark_airflow_catalog_reconciliation_failure",
+        "mark_airflow_submission_unknown",
+        "mark_airflow_success_without_catalog_reconciliation",
+        "record_airflow_sync_error",
+        "repair_incomplete_airflow_successes",
+        "run_from_airflow_submit",
+        "run_from_kafka_result",
+        "run_from_spark_result",
+        "spark_error_summary",
+        "spark_failed_stage",
+        "task_state_snapshot",
+        "task_title",
+    },
+    etl_catalog_projection: {
+        "append_materialization_run",
+        "append_unique",
+        "append_unique_pair",
+        "compact_spark_logs",
+        "dag_steps_from_kafka_result",
+        "dag_steps_from_spark_result",
+        "dataset_from_spark_result",
+        "dataset_payload_from_spark_result",
+        "dataset_storage_size_bytes",
+        "etl_dataset_lineage_graph",
+        "format_storage_size",
+        "identity_name",
+        "identity_profile",
+        "lineage_columns_by_name",
+        "lineage_edge",
+        "lineage_edges_between",
+        "lineage_edges_from_job_inputs",
+        "lineage_source_engine",
+        "lineage_target_engine",
+        "normalize_source_object_inventory",
+        "parse_count_value",
+        "parse_optional_integer",
+        "quality_summary_from_spark_result",
+        "schema_column_included",
+        "schema_from_job",
+        "source_lineage_schema",
+        "spark_materialization_mode",
+        "spark_output_sample_rows",
+        "spark_result_schema",
+        "spark_source_window_metadata",
+    },
+    etl_pipeline_policy: {
+        "apply_compiled_rules",
+        "apply_update_request",
+        "canonical_rule_fingerprint",
+        "compile_job_rules",
+        "compile_pipeline_rules",
+        "continuous_checkpoint_initialized",
+        "continuous_processing_contract_changed",
+        "next_scheduled_run_utc",
+        "require_compiled_rules",
+        "should_run_scheduled_job",
+        "target_contract_issue",
+        "target_identity_changed",
+        "trino_query_run_belongs_to_actor",
+        "trino_sql_job_permission_roles",
+        "validate_create_request",
+        "validate_requested_permission_grants",
+        "validate_target_contract",
+        "validate_update_request",
+    },
 }
 
 REVIEWED_FUNCTION_DIGESTS = {
     etl_schedule: "26c08d45a62467ca65e335f5fb96ceb2d013409d27036f506b08e504def07265",
     etl_job_projection: "bc2e0c68fdd9c06207e4e926c4dd325c4fb69c99adc4ebeea9205ea59a990a02",
     etl_record_parsing: "77381844dca157f2f2ac362bd993944e5ce44d5e395ed8d228d45bb75c463400",
+    etl_runtime_support: "d410df2ce0f73d32ababf30b0aeeaac09d091bd2f99f0ef0df373468492e7eeb",
+    etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
+    etl_run_projection: "009ba2344a14edc775694a32163b3819a5b61eed6fd55e825aa603a6703bfbdd",
+    etl_catalog_projection: "b363d72ed63532bc7636c213a27a3a447b0a93fc711ad11edb622db34dda07fe",
+    etl_pipeline_policy: "5134f1bc5d77d794671f55e2b3412df311980d3506314ce99c2cd6665c2cd510",
 }
 
 
 class EtlServiceModuleBoundaryTests(unittest.TestCase):
     def test_etl_service_remains_a_bounded_compatibility_facade(self) -> None:
         source = ETL_SERVICE_PATH.read_text(encoding="utf-8")
-        self.assertLessEqual(len(source.splitlines()), 7_600)
+        self.assertLessEqual(len(source.splitlines()), 6_000)
 
         service_definitions = {
             node.name
@@ -100,6 +217,11 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
             etl_schedule: 320,
             etl_job_projection: 480,
             etl_record_parsing: 170,
+            etl_runtime_support: 120,
+            etl_source_window: 270,
+            etl_run_projection: 620,
+            etl_catalog_projection: 800,
+            etl_pipeline_policy: 460,
         }
         for module, line_budget in budgets.items():
             module_path = Path(module.__file__).resolve()

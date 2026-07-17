@@ -4,7 +4,7 @@
 |---|---|---|---|---:|---|
 | R-001 | P0 | 재부팅 후 Spark ivy/report 경로가 없거나 UID 185가 쓸 수 없음 | restart-safe guard, worker/backend probe와 실제 container smoke | 02 | CLOSED |
 | R-002 | P0 | runtime report 유실 시 실제 실패 원인이 generic failed로 축약됨 | report/storage/submission/execution 오류를 단계·code·retry 가능 여부로 보존 | 02~03 | CLOSED |
-| R-003 | P1 | `etl_service.py` God Service | 8,822→8,389→7,576 LOC. 외부 I/O·Continuous publication, Job query/write, Airflow 실행·Catalog 발행, Source connector에 이어 schedule·Job projection·record parsing을 application module로 분리; SQL Job 생성·snapshot command composition은 후속 | 04~07, #864, #866, #868, #871, #873, #884+ | PARTIAL |
+| R-003 | P1 | `etl_service.py` God Service | 8,822→8,389→7,576→5,895 LOC. 외부 I/O·Continuous publication, Job query/write, Airflow 실행·Catalog 발행, Source connector에 이어 schedule·Job/Run/Catalog projection·record parsing·source window·pipeline policy·runtime helper를 application module로 분리; SQL Job 생성·snapshot command composition은 후속 | 04~07, #864, #866, #868, #871, #873, #884+ | PARTIAL |
 | R-004 | P1 | Continuous 상태 권위가 DB, container, report, checkpoint, manifest, Catalog에 분산 | desired/observed/public 상태, fencing, immutable evidence와 output/manifest/Catalog/Dashboard별 canonical owner·복구 경계 확정 | 03~06 | CLOSED |
 | R-005 | P1 | `EtlPages.tsx` 7,111 LOC God Page | 단계 page/model/panel과 registry 분리, 기존 파일은 compatibility façade | 09 | CLOSED |
 | R-006 | P1 | `JobsPages.tsx` 3,582 LOC | list/detail/runtime/history/DAG feature module 분리, 기존 파일은 façade | 10 | CLOSED |
