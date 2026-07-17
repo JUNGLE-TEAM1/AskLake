@@ -2,11 +2,13 @@ from fastapi import APIRouter, Response, status
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.clients.opensearch_client import OpenSearchClient
 from app.core.database import SessionLocal
 from app.schemas.common import HealthResponse
 from app.core.config import settings
 from app.repositories.realtime_event_repository import RealtimeEventRepository
 from app.services.ai_gateway_client import AiGatewayClient
+from app.services.catalog_model_service import list_catalog_model_artifacts
 from app.services.realtime_event_service import realtime_event_dispatcher, realtime_event_hub
 from app.services.realtime_feature_flags import resolve_realtime_feature_state
 from app.services.realtime_metrics import realtime_metrics
@@ -90,7 +92,15 @@ def ai_health_check(response: Response) -> dict[str, object]:
         "artifactCount": len(ml_artifacts),
     })
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}
+    return {
+        "ok": ready,
+        "status": "ready" if ready else "unavailable",
+        "provider": str(gateway.get("provider") or "gateway"),
+        "model": gateway.get("model"),
+        "mcp": gateway.get("mcp"),
+        "routing": gateway.get("routing") if isinstance(gateway.get("routing"), dict) else {},
+        "capabilities": capabilities,
+    }
 
 
 @router.get("/health/realtime")
