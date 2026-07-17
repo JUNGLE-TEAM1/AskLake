@@ -24,6 +24,7 @@
 18. [contracts/etl-job-write-boundary.md](./contracts/etl-job-write-boundary.md): 일반 Pipeline create/update validation, identity, mapping, permission과 repository write 경계
 19. [contracts/airflow-execution-publication-boundary.md](./contracts/airflow-execution-publication-boundary.md): Snapshot Airflow Spark 실행 lease·finalize와 Catalog reconciliation transaction 경계
 20. [contracts/source-connector-authority-boundary.md](./contracts/source-connector-authority-boundary.md): Source connector Python use case와 Node runtime adapter 권위 경계
+21. [contracts/control-plane-deployment-ownership.md](./contracts/control-plane-deployment-ownership.md): EKS·EC2 Continuous deployment cell의 단일-owner 선언과 정적 검증 계약
 
 ## 기준선 재생성
 

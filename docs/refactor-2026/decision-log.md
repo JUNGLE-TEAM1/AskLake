@@ -118,3 +118,10 @@
 - 결정: connector request/response schema는 Python application이 소유하고 기존 Node connector 실행은 `SourceConnectorGateway` port 뒤 adapter로 격리한다.
 - 이유: 지금 Python으로 connector를 재구현하면 S3/PostgreSQL/MongoDB/Kafka/Data Lake parity와 credential masking을 동시에 바꿀 위험이 있으므로, 먼저 dependency direction과 operation mapping을 고정해야 한다.
 - 제약: 기존 script·marker·payload·timeout·bridge 오류와 `connectors.mjs` 구현은 유지한다. Node dev server나 과거 fallback을 활성화하지 않고 Python 재구현·Node 기능 분해는 live parity evidence가 있는 별도 PR로 제한한다.
+
+## D-019 — EKS·EC2 제어권은 runtime 이동 전에 단일-owner manifest로 고정
+
+- 상태: Accepted
+- 결정: Kafka Continuous와 Continuous SQL reconciliation은 현재 EC2 Continuous deployment cell만 claim하고 EKS 웹·유한 배치 cell은 claim하지 않는 topology를 versioned manifest로 기록한다.
+- 이유: 배포 권한과 live cluster evidence 없이 runtime loop를 끄거나 옮기면 현재 서비스 동작을 바꾼다. 먼저 exactly-one 정적 gate로 의도하지 않은 이중 claim과 근거 drift를 차단해야 한다.
+- 제약: 이 결정은 leader election이나 실행 중 replica discovery를 대신하지 않는다. FastAPI lifespan, Compose environment, EKS workload와 traffic은 변경하지 않으며 실제 owner 이전은 양쪽 deployment evidence와 rollback 승인이 있는 별도 PR로 수행한다.

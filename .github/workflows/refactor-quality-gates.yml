@@ -25,7 +25,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check structural debt and documentation ratchets
-        run: python3 scripts/refactor_audit/quality_gate.py --base origin/${{ github.base_ref || 'dev' }}
+        run: |
+          python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
+          python3 scripts/refactor_audit/control_plane_ownership.py
+          python3 scripts/refactor_audit/quality_gate.py --base origin/${{ github.base_ref || 'dev' }}
 
   backend-contracts:
     runs-on: ubuntu-latest

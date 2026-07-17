@@ -1219,6 +1219,20 @@ node --check scripts/test-source-connector.mjs
 node --check scripts/list-source-assets.mjs
 ```
 
+### EKS·EC2 Continuous control-plane owner 검증
+
+Production workload 역할이나 FastAPI background loop entrypoint를 변경하는 PR은 단일-owner manifest unit과 현재 topology 검증을 함께 실행한다. EKS/EC2 역할 이동은 manifest만 수정하지 말고 양쪽 workload spec, 실제 replica/process 증거와 rollback 승인을 포함해야 한다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
+python3 scripts/refactor_audit/control_plane_ownership.py
+
+cd backend
+npm run verify:control-plane-ownership
+```
+
+이 검증은 배포를 실행하지 않으며 `backend/app/main.py`의 lifespan이나 Compose environment를 변경하지 않는다. 현재 owner 선언과 repository entrypoint marker가 어긋나거나 required control plane을 둘 이상의 workload가 claim하면 merge 전에 실패한다.
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

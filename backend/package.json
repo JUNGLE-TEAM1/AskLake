@@ -14,6 +14,7 @@
     "verify:refactor-final-audit": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/final_audit.py",
     "verify:refactor-release-plan": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py",
     "verify:refactor-release-execution": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py --execution",
+    "verify:control-plane-ownership": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/control_plane_ownership.py",
     "start": "npm run start:fastapi",
     "start:fastapi": "npm run verify:node-dependencies && python -m uvicorn app.main:app --host 0.0.0.0 --port 8080",
     "start:node-compat": "npm run verify:node-dependencies && node src/server.mjs",
