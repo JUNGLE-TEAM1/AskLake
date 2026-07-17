@@ -230,6 +230,29 @@ test("builds a passed integrated receipt with two linked timelines", () => {
   );
 });
 
+test("accepts an explicitly clean campaign without prior submission receipts", () => {
+  const input = fixture();
+  input.priorReceipts = [];
+
+  const receipt = buildFinalReceipt(input);
+
+  assert.equal(receipt.status, "passed");
+  assert.equal(receipt.checks.priorFailuresNotSubstituted, true);
+  assert.deepEqual(receipt.executionHistory.priorSubmissionReceipts, []);
+});
+
+test("fails closed when a supplied prior history omits partial failures", () => {
+  const input = fixture();
+  input.priorReceipts = [
+    { status: "submitted", counts: { submittedRuns: 3, failedSubmissions: 0 } },
+  ];
+
+  const receipt = buildFinalReceipt(input);
+
+  assert.equal(receipt.status, "failed");
+  assert.equal(receipt.checks.priorFailuresNotSubstituted, false);
+});
+
 test("fails when pending to running evidence is incomplete", () => {
   const input = fixture();
   input.multiRecords = input.multiRecords.filter(
@@ -240,6 +263,19 @@ test("fails when pending to running evidence is incomplete", () => {
 
   assert.equal(receipt.status, "failed");
   assert.equal(receipt.checks.pendingToRunning, false);
+});
+
+test("accepts pending peak and node peak captured in the same polling sample", () => {
+  const input = fixture();
+  input.multiRecords = input.multiRecords.filter(
+    (item) => item.pods.totals.executor.Pending !== 1,
+  );
+
+  const receipt = buildFinalReceipt(input);
+
+  assert.equal(receipt.status, "passed");
+  assert.equal(receipt.checks.pendingToRunning, true);
+  assert.equal(receipt.checks.sparkNodeScaleOut, true);
 });
 
 test("fails closed instead of throwing when Pending was never observed", () => {

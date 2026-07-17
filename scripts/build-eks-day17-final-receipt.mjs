@@ -54,15 +54,26 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
 
 function parseArguments(argv) {
   const options = { ...DEFAULTS, prior: [...DEFAULTS.prior] };
-  let priorProvided = false;
+  let priorMode = "default";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (argument === "--no-prior") {
+      if (priorMode !== "default") {
+        throw new Error("--no-prior cannot be combined with --prior");
+      }
+      options.prior = [];
+      priorMode = "none";
+      continue;
+    }
     if (argument === "--prior") {
       const value = argv[index + 1];
       if (!value) throw new Error("--prior requires a path");
-      if (!priorProvided) {
+      if (priorMode === "none") {
+        throw new Error("--prior cannot be combined with --no-prior");
+      }
+      if (priorMode === "default") {
         options.prior = [];
-        priorProvided = true;
+        priorMode = "paths";
       }
       options.prior.push(value);
       index += 1;
@@ -352,9 +363,9 @@ export function buildFinalReceipt({
       executorPendingStart !== null &&
       executorPendingPeak !== null &&
       executorRunning !== null &&
-      driverPendingStart.observedAt < driverPendingPeak.observedAt &&
+      driverPendingStart.observedAt <= driverPendingPeak.observedAt &&
       driverPendingPeak.observedAt < driverRunning.observedAt &&
-      executorPendingStart.observedAt < executorPendingPeak.observedAt &&
+      executorPendingStart.observedAt <= executorPendingPeak.observedAt &&
       executorPendingPeak.observedAt < executorRunning.observedAt,
     sparkNodeScaleOut:
       nodeIncrease !== null &&
@@ -366,7 +377,7 @@ export function buildFinalReceipt({
       peakSparkNodes >= 2 &&
       driverPendingStart.observedAt < nodeIncrease.observedAt &&
       nodeIncrease.observedAt < driverRunning.observedAt &&
-      executorPendingStart.observedAt < nodePeak.observedAt &&
+      executorPendingStart.observedAt <= nodePeak.observedAt &&
       nodePeak.observedAt < executorRunning.observedAt &&
       removalSignals > 0,
     multiRunDataExact:
@@ -397,8 +408,9 @@ export function buildFinalReceipt({
       race.counts?.continuousSessionsStarted === 0 &&
       (latestCampaignRecord?.runs?.continuousSessionsStarted ?? 0) === 0,
     priorFailuresNotSubstituted:
-      priorReceipts.length >= 3 &&
-      priorReceipts.some((receipt) => receipt.status === "partial") &&
+      (priorReceipts.length === 0 ||
+        (priorReceipts.length >= 3 &&
+          priorReceipts.some((receipt) => receipt.status === "partial"))) &&
       multiResults.checks?.noResultSubstitution === true,
     identityLinksComplete: identitiesComplete,
     evidenceSanitized: false,
@@ -539,7 +551,7 @@ export function buildFinalReceipt({
         submittedRuns: Number(prior.counts?.submittedRuns ?? 0),
         failedSubmissions: Number(prior.counts?.failedSubmissions ?? 0),
       })),
-      finalCampaign: "baked-runtime-clean-campaign",
+      finalCampaign: "isolated-three-run-campaign",
       automaticPartialFillRetry: false,
       failedRunResultsUsedAsSubstitution: false,
       sameRunRecoveryCreatedNewSparkResult: false,
@@ -559,7 +571,7 @@ export function buildFinalReceipt({
       "CloudWatch integration or EC2 rollback cutover",
     ],
     references: {
-      integratedEvidence: "docs/eks-day17-final-integrated-evidence.md",
+      integratedEvidence: "docs/eks-day17-final-integration-evidence-assembly.md",
       nodePoolContract: "docs/eks-phase-12-auto-mode-node-pools.md",
       nodePoolRuntimeEvidence: "docs/eks-day14-runtime-evidence.md",
       sameRunRaceEvidence: "docs/eks-day17-b-same-run-race-live-evidence.md",

@@ -948,8 +948,12 @@ cleanup 전에는 completed Run, SparkApplication, RDS/Catalog/Iceberg object를
 삭제하지 않는다.
 
 10번 audit까지 통과하면 11번의 통합 receipt를 아래 fail-closed generator로
-만든다. generator는 HPA race/load/scale observer, baked multi-Spark campaign,
-multi-Spark observer/result, cleanup audit와 이전 제출 receipt를 함께 읽는다.
+만든다. generator는 HPA race/load/scale observer, multi-Spark campaign,
+multi-Spark observer/result와 cleanup audit을 함께 읽는다. 이전 제출 receipt가
+있는 캠페인은 모든 이력을 `--prior`로 전달해야 한다. 이번 Issue처럼 최초 제출
+3개가 모두 성공해 이전 제출 이력이 없는 독립 캠페인은 `--no-prior`를 명시한다.
+`--no-prior`와 `--prior`는 함께 사용할 수 없으며, 이전 이력이 있는데
+`--no-prior`로 숨기는 것은 금지한다.
 API `2 → 6 → 2`, 동일 Run exact-one, driver/executor
 `Pending → Node 증가 → Running`, Run별 데이터/격리, Spark Node baseline 복귀와
 임시 리소스 `0`이 모두 참일 때만 출력한다.
@@ -957,6 +961,17 @@ API `2 → 6 → 2`, 동일 Run exact-one, driver/executor
 ```bash
 node --test scripts/test-eks-day17-final-receipt.mjs
 node scripts/build-eks-day17-final-receipt.mjs
+
+# 과거 제출 이력이 없는 새 독립 캠페인
+node scripts/build-eks-day17-final-receipt.mjs --no-prior \
+  --race /private/tmp/asklake-day17-issue909-phase4-race-receipt.json \
+  --load /private/tmp/asklake-day17-issue909-phase4-load-200.json \
+  --scale-observer /private/tmp/asklake-day17-issue909-phase4-scale-observer.jsonl \
+  --campaign /private/tmp/asklake-day17-issue909-phase5-multi-spark-receipt.json \
+  --multi-observer /private/tmp/asklake-day17-issue909-phase5-multi-spark-observer.jsonl \
+  --multi-results /private/tmp/asklake-day17-issue909-phase5-multi-spark-results.json \
+  --cleanup /private/tmp/asklake-day17-issue909-phase6-cleanup-audit.json \
+  --output /private/tmp/asklake-day17-issue909-phase7-final-receipt.json
 ```
 
 기본 출력은 저장소 밖
