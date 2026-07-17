@@ -502,6 +502,15 @@ const checks = [
     ],
   },
   {
+    name: "SQL editor exposes the governed ClickHouse continuous JOIN action before existing actions",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /data-testid="continuous-sql-join-button"/,
+      /실시간 JOIN 만들기/,
+      /<SqlAiWriterDialog/,
+    ],
+  },
+  {
     name: "SQL result chart keeps its heading compact and fits inside the result panel",
     file: "src/pages/sql/SqlResultChart.tsx",
     patterns: [
