@@ -1,0 +1,134 @@
+.semantic-real-page { display: grid; gap: 20px; }
+.semantic-real-toolbar, .semantic-real-model-header, .semantic-real-section-title, .semantic-real-card-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.semantic-real-toolbar h1, .semantic-real-model-header h1, .semantic-real-section-title h2, .semantic-real-card-heading h3 { margin: 4px 0; color: #101828; }
+.semantic-real-toolbar p, .semantic-real-model-header p, .semantic-real-section-title p, .semantic-real-card-heading p { margin: 6px 0 0; color: #667085; }
+.semantic-real-eyebrow { color: #667085; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.semantic-real-toolbar-actions, .semantic-real-header-actions, .semantic-real-rag-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.semantic-real-model-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 18px; align-items: start; }
+.semantic-real-model-list { border: 1px solid #e4e7ec; border-radius: 14px; background: #fff; padding: 10px; }
+.semantic-real-list-heading { display: flex; justify-content: space-between; padding: 10px; color: #344054; }
+.semantic-real-model-list button { display: flex; width: 100%; gap: 10px; padding: 12px 10px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
+.semantic-real-model-list button:hover, .semantic-real-model-list button.active { background: #eff6ff; color: #175cd3; }
+.semantic-real-model-list button span:nth-child(2) { display: grid; gap: 3px; }
+.semantic-real-model-list small, .semantic-real-dataset-picker small, .semantic-real-rag-dataset-switcher small, .semantic-real-create-datasets small { display: block; color: #98a2b3; font-size: 11px; }
+.semantic-real-model-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: #98a2b3; }
+.active .semantic-real-model-dot { background: #2e90fa; }
+.semantic-real-editor { min-width: 0; display: grid; gap: 16px; }
+.semantic-real-model-header { padding: 20px; border: 1px solid #e4e7ec; border-radius: 14px; background: #fff; }
+.semantic-real-model-header > div:first-child { display: grid; gap: 8px; min-width: 0; flex: 1; }
+.semantic-real-model-header input { max-width: 560px; font-size: 24px; font-weight: 700; }
+.semantic-real-model-header textarea { max-width: 760px; }
+.semantic-real-save-state { color: #667085; font-size: 12px; }
+.semantic-real-tabs { display: flex; gap: 4px; border-bottom: 1px solid #e4e7ec; overflow-x: auto; }
+.semantic-real-tabs button { display: inline-flex; gap: 6px; align-items: center; padding: 12px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #667085; white-space: nowrap; cursor: pointer; }
+.semantic-real-tabs button.active { border-color: #2e90fa; color: #175cd3; font-weight: 700; }
+.semantic-real-tabs em { display: inline-flex; min-width: 20px; justify-content: center; border-radius: 999px; background: #f2f4f7; color: #667085; font-size: 11px; font-style: normal; }
+.semantic-real-tab-content { display: grid; gap: 16px; }
+.semantic-real-analysis-guide { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 20px; border-color: #b2ccff; background: linear-gradient(135deg, #eff6ff 0%, #fff 72%); }
+.semantic-real-analysis-guide h2 { margin: 4px 0 8px; color: #101828; font-size: 20px; }
+.semantic-real-analysis-guide p { max-width: 780px; margin: 0; color: #475467; line-height: 1.6; }
+.semantic-real-analysis-counts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.semantic-real-analysis-counts span { min-width: 112px; padding: 12px 14px; border: 1px solid #d1e0ff; border-radius: 10px; background: rgb(255 255 255 / 82%); color: #475467; font-size: 12px; text-align: center; }
+.semantic-real-analysis-counts strong { display: block; color: #175cd3; font-size: 20px; }
+.semantic-real-dataset-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.semantic-real-dataset-picker label, .semantic-real-create-datasets label { display: flex; gap: 10px; align-items: flex-start; padding: 13px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fff; cursor: pointer; }
+.semantic-real-dataset-picker label.selected { border-color: #84adff; background: #eff6ff; }
+.semantic-real-dataset-picker label span, .semantic-real-create-datasets label span { display: grid; gap: 3px; }
+.semantic-real-schema-grid { display: grid; gap: 14px; }
+.semantic-real-schema-card, .semantic-real-definition-card, .semantic-real-role-card, .semantic-real-document-card, .semantic-real-access-card { padding: 18px; }
+.semantic-real-card-heading code { color: #667085; font-size: 11px; }
+.semantic-real-schema-table, .semantic-real-role-table { margin-top: 15px; overflow: auto; border: 1px solid #eaecf0; border-radius: 10px; }
+.semantic-real-schema-table > div, .semantic-real-role-table > div { display: grid; grid-template-columns: minmax(160px, 1fr) 140px minmax(160px, 1.2fr); gap: 12px; align-items: center; min-width: 620px; padding: 10px 12px; border-bottom: 1px solid #f2f4f7; font-size: 13px; }
+.semantic-real-schema-table > div:last-child, .semantic-real-role-table > div:last-child { border-bottom: 0; }
+.semantic-real-schema-table .header, .semantic-real-role-table .header { background: #f9fafb; color: #667085; font-size: 11px; font-weight: 700; }
+.semantic-real-schema-table small, .semantic-real-role-table small { color: #667085; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.semantic-real-definition-section { display: grid; gap: 14px; padding: 20px; border: 1px solid #e4e7ec; border-radius: 14px; background: #fff; }
+.semantic-real-definition-actions, .semantic-real-definition-card-header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.semantic-real-definition-list { display: grid; gap: 12px; }
+.semantic-real-definition-card-header { justify-content: space-between; margin-bottom: 14px; }
+.semantic-real-definition-card-header strong { color: #101828; }
+.semantic-real-definition-card-header button { color: #667085; }
+.semantic-real-definition-main { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(160px, .8fr) minmax(220px, 1.4fr); gap: 10px; align-items: end; }
+.semantic-real-definition-main label { display: grid; gap: 6px; color: #667085; font-size: 12px; }
+.semantic-real-definition-main code { color: #667085; font-size: 12px; }
+.semantic-real-definition-empty { display: grid; justify-items: center; gap: 8px; padding: 32px 20px; border-style: dashed; background: #fcfcfd; color: #667085; text-align: center; }
+.semantic-real-definition-empty strong { color: #344054; }
+.semantic-real-definition-empty p { margin: 0 0 4px; }
+.semantic-real-binding { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #eaecf0; }
+.semantic-real-binding label { display: grid; gap: 6px; color: #667085; font-size: 12px; }
+.semantic-real-binding select, .semantic-real-role-table select { min-height: 36px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; padding: 0 10px; color: #344054; }
+.semantic-real-column-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.semantic-real-column-options label { display: inline-flex; grid-template-columns: auto; gap: 6px; align-items: center; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 999px; color: #344054; cursor: pointer; }
+.semantic-real-column-options label:has(input:checked) { border-color: #84adff; background: #eff6ff; color: #175cd3; }
+.semantic-real-rag-dataset-switcher { display: flex; gap: 8px; overflow-x: auto; }
+.semantic-real-rag-dataset-switcher button { display: flex; gap: 8px; align-items: center; min-width: 210px; padding: 12px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fff; text-align: left; cursor: pointer; }
+.semantic-real-rag-dataset-switcher button.active { border-color: #84adff; background: #eff6ff; color: #175cd3; }
+.semantic-real-rag-dataset-switcher button span { display: grid; gap: 3px; }
+.semantic-real-rag-summary { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 13px 15px; border: 1px solid #e4e7ec; border-radius: 10px; background: #f9fafb; color: #667085; }
+.semantic-real-rag-summary span { display: grid; gap: 2px; min-width: 100px; }
+.semantic-real-rag-summary strong { color: #101828; font-size: 16px; }
+.semantic-real-rag-summary button { margin-left: auto; }
+.semantic-real-role-table > div { grid-template-columns: minmax(150px, .8fr) 110px minmax(180px, 1.2fr) 150px 150px; min-width: 920px; }
+.semantic-real-role-table code { color: #175cd3; font-weight: 600; }
+.semantic-real-role-heading-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.semantic-real-embedding-guide { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding: 11px 13px; border: 1px solid #d1e0ff; border-radius: 9px; background: #eff6ff; color: #475467; font-size: 12px; }
+.semantic-real-embedding-guide strong { color: #175cd3; }
+.semantic-real-embedding-guide .is-warning { width: 100%; color: #b54708; font-weight: 700; }
+.semantic-real-embedding-toggle { display: inline-flex; gap: 7px; align-items: center; color: #344054; font-size: 12px; cursor: pointer; }
+.semantic-real-embedding-toggle:has(input:disabled) { color: #667085; cursor: default; }
+.semantic-real-rag-actions { justify-content: flex-end; margin-top: 16px; }
+.semantic-real-document-card { display: grid; gap: 14px; }
+.semantic-real-documents { display: grid; gap: 10px; }
+.semantic-real-documents article { padding: 14px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fcfcfd; }
+.semantic-real-document-head { display: flex; justify-content: space-between; gap: 10px; }
+.semantic-real-documents p { margin: 10px 0; color: #344054; line-height: 1.5; }
+.semantic-real-documents article > div:not(.semantic-real-document-head) { display: flex; gap: 7px; flex-wrap: wrap; }
+.semantic-real-documents article > div:not(.semantic-real-document-head) span { padding: 5px 8px; border-radius: 6px; background: #eff6ff; color: #175cd3; font-size: 12px; }
+.semantic-real-documents article small { display: block; margin-top: 10px; color: #98a2b3; }
+.semantic-real-embedding-preview { margin-top: 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.semantic-real-embedding-preview summary { padding: 9px 11px; color: #175cd3; font-size: 12px; font-weight: 700; cursor: pointer; }
+.semantic-real-embedding-preview pre { max-height: 260px; margin: 0; overflow: auto; border-top: 1px solid #eaecf0; padding: 12px; background: #101828; color: #e4e7ec; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.semantic-real-document-empty, .semantic-real-rag-empty, .semantic-real-empty-model, .semantic-real-loading, .semantic-real-error { display: grid; place-items: center; gap: 10px; padding: 50px 20px; text-align: center; color: #667085; }
+.semantic-real-rag-empty strong, .semantic-real-empty-model h2, .semantic-real-error strong { color: #101828; }
+.semantic-real-access-card { display: grid; gap: 0; }
+.semantic-real-access-card > div { display: grid; grid-template-columns: 24px 1fr 100px minmax(200px, 1fr); gap: 10px; align-items: center; padding: 14px 0; border-bottom: 1px solid #eaecf0; }
+.semantic-real-access-card > div:last-child { border-bottom: 0; }
+.semantic-real-access-card > div > div { display: flex; gap: 5px; flex-wrap: wrap; }
+.semantic-real-notice { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 8px; font-size: 13px; }
+.semantic-real-notice.success { background: #ecfdf3; color: #027a48; }
+.semantic-real-notice.error { background: #fef3f2; color: #b42318; }
+.semantic-real-notice.info { background: #eff8ff; color: #175cd3; }
+.semantic-real-notice button { border: 0; background: transparent; color: currentColor; cursor: pointer; }
+.semantic-real-create { display: grid; gap: 12px; padding: 18px; }
+.semantic-real-create-datasets { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; max-height: 220px; overflow: auto; }
+.semantic-real-create > div:last-child { display: flex; justify-content: flex-end; gap: 8px; }
+.semantic-spin { animation: semantic-real-spin 1s linear infinite; }
+@keyframes semantic-real-spin { to { transform: rotate(360deg); } }
+@media (max-width: 960px) { .semantic-real-model-layout { grid-template-columns: 1fr; } .semantic-real-model-list { display: flex; gap: 6px; overflow-x: auto; } .semantic-real-list-heading { display: none; } .semantic-real-model-list button { min-width: 180px; } .semantic-real-model-header, .semantic-real-toolbar, .semantic-real-section-title, .semantic-real-analysis-guide { flex-direction: column; } .semantic-real-analysis-counts { width: 100%; justify-content: flex-start; } .semantic-real-definition-main { grid-template-columns: 1fr; } }
+.semantic-real-rag-serving-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; color: #475467; font-size: 12px; }
+.semantic-real-rag-serving-status strong { color: #101828; }
+.semantic-real-rag-serving-live { color: #027a48; font-weight: 700; }
+.semantic-real-rag-search-card { display: grid; gap: 16px; padding: 18px; border-color: #bfd7ff; background: linear-gradient(180deg, #f8fbff 0%, #fff 100%); }
+.semantic-real-rag-search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.semantic-real-rag-search-guidance { margin: 0; color: #667085; font-size: 13px; }
+.semantic-real-rag-search-error { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 8px; background: #fef3f2; color: #b42318; font-size: 13px; }
+.semantic-real-rag-search-error svg { width: 17px; flex: 0 0 auto; }
+.semantic-real-rag-search-results { display: grid; gap: 12px; padding-top: 2px; }
+.semantic-real-rag-retrieval-summary { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 11px 12px; border: 1px solid #dbe4f0; border-radius: 9px; background: #fff; color: #667085; font-size: 12px; }
+.semantic-real-rag-retrieval-summary strong { color: #101828; font-size: 14px; }
+.semantic-real-rag-retrieval-summary code { padding: 3px 6px; border-radius: 5px; background: #f2f4f7; color: #344054; overflow-wrap: anywhere; }
+.semantic-real-rag-search-sources { display: grid; gap: 10px; }
+.semantic-real-rag-search-sources article { display: grid; gap: 11px; padding: 15px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fff; }
+.semantic-real-rag-source-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.semantic-real-rag-source-head > div { display: grid; gap: 3px; }
+.semantic-real-rag-source-head span { color: #175cd3; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.semantic-real-rag-source-head h4 { margin: 0; color: #101828; font-size: 15px; }
+.semantic-real-rag-search-sources p { margin: 0; color: #344054; line-height: 1.65; white-space: pre-wrap; }
+.semantic-real-rag-search-sources dl { display: flex; gap: 7px; flex-wrap: wrap; margin: 0; }
+.semantic-real-rag-search-sources dl > div { display: inline-flex; gap: 4px; padding: 5px 8px; border-radius: 6px; background: #eff6ff; font-size: 12px; }
+.semantic-real-rag-search-sources dt { color: #175cd3; font-weight: 700; }
+.semantic-real-rag-search-sources dd { margin: 0; color: #344054; }
+.semantic-real-rag-search-sources footer { display: flex; gap: 8px 14px; flex-wrap: wrap; color: #98a2b3; font-size: 11px; }
+.semantic-real-rag-search-sources footer code { color: #667085; overflow-wrap: anywhere; }
+.semantic-real-rag-search-empty { padding: 24px; border: 1px dashed #d0d5dd; border-radius: 9px; background: #fff; color: #667085; text-align: center; }
+@media (max-width: 720px) { .semantic-real-rag-search-form { grid-template-columns: 1fr; } .semantic-real-rag-source-head { flex-direction: column; } }
