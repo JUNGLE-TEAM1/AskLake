@@ -28,6 +28,7 @@ VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 AUTH_LEGACY_DEMO_USERS_ENABLED=false
+AUTH_SESSION_COOKIE_SECURE=true
 ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
@@ -86,6 +87,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - `VITE_USE_MOCK_API=true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
+- `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
