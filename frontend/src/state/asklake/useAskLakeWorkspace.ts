@@ -27,7 +27,7 @@ export function useAskLakeWorkspace({
   const catalogHydration = useCatalogHydration({ enabled: enabled && dataRequirements.catalog, showToast, state });
   const pipeline = usePipelineMutations({ onFlowChange, showToast, state, writeAuditLog });
   const catalog = useCatalogController({ onFlowChange, showToast, state, writeAuditLog });
-  const jobs = useJobController({ enabled, onFlowChange, showToast, state, writeAuditLog });
+  const jobs = useJobController({ enabled: enabled && dataRequirements.jobs, onFlowChange, showToast, state, writeAuditLog });
   const refreshData = async () => {
     if (dataRequirements.jobs) return jobsHydration.refreshJobs();
     if (dataRequirements.catalog) return catalogHydration.refreshCatalog();
