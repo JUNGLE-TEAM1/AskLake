@@ -15,7 +15,14 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
+import {
+  commandContinuousSqlJob,
+  createClickHouseContinuousSqlJob,
+  type ContinuousSqlJob,
+  validateContinuousSqlPlan,
+} from "../../services/continuousSqlApi";
 import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
+import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
 import {
   estimateSqlQueryRun,
   isTrinoQueryRun,
@@ -24,6 +31,7 @@ import {
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
+import { ContinuousSqlJoinDialog } from "./ContinuousSqlJoinDialog";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
 import { SqlExecutionInfo } from "./SqlExecutionInfo";
 import { SqlJobWizardDialog } from "./SqlJobWizardDialog";
@@ -33,6 +41,11 @@ import {
 } from "./SqlResultChart";
 import { SqlQueryEditorPanel } from "./SqlQueryEditorPanel";
 import { SqlResultsPanel, type SqlResultView } from "./SqlResultsPanel";
+import {
+  buildClickHouseOutputIdentity,
+  buildContinuousSqlOutputName,
+  getContinuousSqlRelationMix,
+} from "./continuousSqlUi";
 import {
   PREVIEW_ROW_LIMIT,
   buildAutocompleteCandidates,
@@ -108,6 +121,13 @@ export function SqlAnalysisPage({
   const [resultView, setResultView] = useState<SqlResultView>("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
+  const [continuousDialogOpen, setContinuousDialogOpen] = useState(false);
+  const [continuousFeatureConfig, setContinuousFeatureConfig] = useState<RealtimeFeatureConfig | null>(null);
+  const [continuousOutputName, setContinuousOutputName] = useState("");
+  const [continuousTriggerSeconds, setContinuousTriggerSeconds] = useState(1);
+  const [continuousPending, setContinuousPending] = useState(false);
+  const [continuousError, setContinuousError] = useState<string | null>(null);
+  const [continuousResult, setContinuousResult] = useState<ContinuousSqlJob | null>(null);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -158,6 +178,14 @@ export function SqlAnalysisPage({
         ]
       : [],
     [baseDataset, datasetById, referenceDatasetIds],
+  );
+  const continuousRelationMix = useMemo(
+    () => getContinuousSqlRelationMix(selectedContextDatasets),
+    [selectedContextDatasets],
+  );
+  const continuousFeatureEnabled = Boolean(
+    continuousFeatureConfig?.continuousSqlJoinEnabled
+      && continuousFeatureConfig.clickhouseContinuousJoinEnabled,
   );
   const visibleResultCandidate = resultDraft ?? trinoDisplayResult;
   const visibleResult = hasSqlResultDataShape(visibleResultCandidate) ? visibleResultCandidate : null;
@@ -254,6 +282,21 @@ export function SqlAnalysisPage({
     queryClientRequestRef.current = null;
     fullResult.reset();
   };
+
+  useEffect(() => {
+    if (apiConfig.useMock) return;
+    let active = true;
+    void getRealtimeFeatureConfig()
+      .then((config) => {
+        if (active) setContinuousFeatureConfig(config);
+      })
+      .catch(() => {
+        if (active) setContinuousFeatureConfig(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     queryOperationGenerationRef.current += 1;
@@ -604,6 +647,74 @@ export function SqlAnalysisPage({
     onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
   };
 
+  const openContinuousJoinDialog = () => {
+    if (!continuousRelationMix) return;
+    setContinuousOutputName(buildContinuousSqlOutputName(continuousRelationMix.streamingDataset));
+    setContinuousTriggerSeconds(1);
+    setContinuousError(null);
+    setContinuousResult(null);
+    setContinuousDialogOpen(true);
+    onAction(
+      "analysis.continuous_sql.opened",
+      "/api/query/continuous-jobs/validate",
+      continuousRelationMix.streamingDataset.id,
+    );
+  };
+
+  const createContinuousJoin = async () => {
+    if (!continuousRelationMix || !continuousFeatureEnabled || continuousPending) return;
+    const outputName = continuousOutputName.trim();
+    if (!outputName) return;
+    const triggerIntervalSeconds = Math.max(1, Math.min(3600, Math.trunc(continuousTriggerSeconds)));
+    const relationDatasetIds = selectedContextDatasets.map((item) => item.id);
+    const planRequest = {
+      query,
+      relationDatasetIds,
+      staticBindingPolicy: "PINNED_AT_START" as const,
+      triggerIntervalSeconds,
+    };
+    const outputIdentity = buildClickHouseOutputIdentity();
+    setContinuousPending(true);
+    setContinuousError(null);
+    try {
+      await validateContinuousSqlPlan(planRequest);
+      const job = await createClickHouseContinuousSqlJob({
+        ...planRequest,
+        clientRequestId: createClientRequestId(),
+        name: `${outputName} Continuous SQL`,
+        output: {
+          clickhouseTarget: {
+            database: "asklake",
+            engine: "clickhouse",
+            table: outputIdentity.table,
+          },
+          datasetId: outputIdentity.datasetId,
+          datasetName: outputName,
+          layer: "GOLD",
+          servingMode: "clickhouse",
+        },
+      });
+      const started = await commandContinuousSqlJob(job.id, "start", createClientRequestId());
+      setContinuousResult(started.job);
+      onAction(
+        "analysis.continuous_sql.started",
+        `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
+        started.job.outputDatasetId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실시간 JOIN Job을 만들지 못했습니다.";
+      setContinuousError(message);
+      onAction(
+        "analysis.continuous_sql.failed",
+        "/api/query/continuous-jobs",
+        continuousRelationMix.streamingDataset.id,
+        "failed",
+      );
+    } finally {
+      setContinuousPending(false);
+    }
+  };
+
   const changeResultDialogOpen = (open: boolean) => {
     setResultDialogOpen(open);
     setResultPageError(null);
@@ -816,6 +927,10 @@ export function SqlAnalysisPage({
           autocompleteCandidates={autocompleteCandidates}
           autocompleteIndex={autocompleteIndex}
           canExecute={canRunPreview}
+          continuousJoinAction={continuousRelationMix ? {
+            onClick: openContinuousJoinDialog,
+            pending: continuousPending,
+          } : undefined}
           disabled={!baseDataset}
           lineNumberRef={lineNumberRef}
           lineNumbers={lineNumbers}
@@ -919,6 +1034,23 @@ export function SqlAnalysisPage({
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      )}
+      {continuousRelationMix && (
+        <ContinuousSqlJoinDialog
+          error={continuousError}
+          featureEnabled={continuousFeatureEnabled}
+          onCreate={() => void createContinuousJoin()}
+          onOpenChange={setContinuousDialogOpen}
+          onOutputNameChange={setContinuousOutputName}
+          onTriggerIntervalChange={setContinuousTriggerSeconds}
+          open={continuousDialogOpen}
+          outputName={continuousOutputName}
+          pending={continuousPending}
+          result={continuousResult}
+          staticDatasets={continuousRelationMix.staticDatasets}
+          streamingDataset={continuousRelationMix.streamingDataset}
+          triggerIntervalSeconds={continuousTriggerSeconds}
+        />
       )}
       {materializationResult && baseDataset && materializeDialogOpen && (
         <SqlJobWizardDialog
