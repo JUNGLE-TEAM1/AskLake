@@ -269,6 +269,7 @@ export function DashboardPage({
 
   const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
     dashboardId: runtimeSelection.dashboardId,
+    draftRuntime,
     onAction,
     selectedPageId: selectedRuntimePageId,
     setDraftError,
