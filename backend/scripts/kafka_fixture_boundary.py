@@ -1,12 +1,22 @@
 import re
 
+try:
+    from kafka_fixture_slots import (
+        EksFixtureSlotConfigurationError,
+        fixture_slot_for_consumer_group,
+    )
+except ModuleNotFoundError:
+    from scripts.kafka_fixture_slots import (
+        EksFixtureSlotConfigurationError,
+        fixture_slot_for_consumer_group,
+    )
+
 
 class KafkaFixtureBoundaryError(ValueError):
     pass
 
 
 EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1"
-EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1"
 EKS_MVP_OUTPUT_PREFIX = "eks-mvp/output"
 EKS_MVP_CHECKPOINT_PREFIX = "eks-mvp/checkpoints"
 
@@ -17,6 +27,7 @@ def validate_kafka_fixture_boundary(
     source_boundary,
     source_format,
     source_path,
+    iceberg_target=None,
 ):
     if str(source_format or "").strip().lower() != "kafka":
         return None
@@ -96,10 +107,26 @@ def validate_kafka_fixture_boundary(
         raise KafkaFixtureBoundaryError(
             "KAFKA_FIXTURE_BOUNDARY_INVALID topic is outside the EKS MVP fixture boundary"
         )
-    if consumer_group != EKS_MVP_FIXTURE_CONSUMER_GROUP:
+    try:
+        fixture_slot = fixture_slot_for_consumer_group(consumer_group, environment)
+    except EksFixtureSlotConfigurationError as exc:
         raise KafkaFixtureBoundaryError(
-            "KAFKA_FIXTURE_BOUNDARY_INVALID consumer group is outside the EKS MVP fixture boundary"
+            "KAFKA_FIXTURE_BOUNDARY_INVALID fixture slot configuration is invalid"
+        ) from exc
+    if fixture_slot is None:
+        raise KafkaFixtureBoundaryError(
+            "KAFKA_FIXTURE_BOUNDARY_INVALID consumer group is not an approved EKS fixture slot"
         )
+    if iceberg_target is not None:
+        target_table = (
+            str(iceberg_target.get("table") or "").strip()
+            if isinstance(iceberg_target, dict)
+            else ""
+        )
+        if target_table != fixture_slot.iceberg_table:
+            raise KafkaFixtureBoundaryError(
+                "KAFKA_FIXTURE_BOUNDARY_INVALID Iceberg target does not match the approved fixture slot"
+            )
 
     _require_equal(boundary, "topic", topic)
     _require_equal(boundary, "consumerGroup", consumer_group)
@@ -140,6 +167,7 @@ def validate_kafka_fixture_boundary(
         "consumerGroup": consumer_group,
         "expectedCount": expected_count,
         "fixtureBatchId": fixture_batch_id,
+        "icebergTable": fixture_slot.iceberg_table,
         "outputPath": output_path,
         "topic": topic,
     }

@@ -74,6 +74,7 @@ def main():
         source_boundary = manifest.get("sourceBoundary") or source_collection
         kafka_fixture_boundary = validate_kafka_fixture_boundary(
             environment=os.environ,
+            iceberg_target=iceberg_target,
             source_boundary=source_boundary,
             source_format=source_format,
             source_path=source_path,

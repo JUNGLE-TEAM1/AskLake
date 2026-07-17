@@ -99,7 +99,7 @@
     "verify:kafka-continuous-soak": "node scripts/verify-kafka-continuous-soak.mjs",
     "verify:msk-iam-metadata": "node scripts/verify-msk-iam-metadata.mjs",
     "test:spark-kubernetes": "node --test scripts/spark-kubernetes-client.test.mjs",
-    "test:kafka-fixture-boundary": "python3 -m unittest tests.test_kafka_fixture_boundary",
+    "test:kafka-fixture-boundary": "python3 -m unittest tests.test_eks_fixture_slots tests.test_kafka_fixture_boundary",
     "verify:etl-e2e-recovery": "node scripts/run-python-verification.mjs scripts/verify-etl-e2e-recovery.py --profile pr",
     "verify:etl-e2e-recovery:release": "node scripts/run-python-verification.mjs scripts/verify-etl-e2e-recovery.py --profile release",
     "verify:etl-e2e-recovery:nightly": "node scripts/run-python-verification.mjs scripts/verify-etl-e2e-recovery.py --profile nightly",

@@ -35,6 +35,66 @@ export const SPARK_MSK_IAM_SHADED_JAR = "local:///opt/asklake/jars/aws-msk-iam-a
 export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
 export const EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1";
 export const EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1";
+export const EKS_MVP_FIXTURE_SLOTS_ENV = "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON";
+const EKS_MVP_FIXTURE_ICEBERG_TABLE = "eks_mvp_fixture";
+const EKS_MVP_FIXTURE_MAX_SLOTS = 5;
+
+export function eksMvpFixtureSlots(environment = process.env) {
+  const defaultSlot = {
+    consumerGroup: EKS_MVP_FIXTURE_CONSUMER_GROUP,
+    table: EKS_MVP_FIXTURE_ICEBERG_TABLE,
+  };
+  const raw = String(environment[EKS_MVP_FIXTURE_SLOTS_ENV] || "").trim();
+  if (!raw) return [defaultSlot];
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw sparkConfigurationError(`${EKS_MVP_FIXTURE_SLOTS_ENV} must be valid JSON.`);
+  }
+  if (!Array.isArray(payload) || payload.length < 1 || payload.length > EKS_MVP_FIXTURE_MAX_SLOTS) {
+    throw sparkConfigurationError(
+      `${EKS_MVP_FIXTURE_SLOTS_ENV} must contain between 1 and ${EKS_MVP_FIXTURE_MAX_SLOTS} slots.`,
+    );
+  }
+  const consumerGroups = new Set();
+  const tables = new Set();
+  const slots = payload.map((item, index) => {
+    if (
+      !item
+      || typeof item !== "object"
+      || Array.isArray(item)
+      || Object.keys(item).sort().join(",") !== "consumerGroup,table"
+    ) {
+      throw sparkConfigurationError(
+        `${EKS_MVP_FIXTURE_SLOTS_ENV}[${index}] must contain only consumerGroup and table.`,
+      );
+    }
+    const consumerGroup = String(item.consumerGroup || "").trim();
+    const table = String(item.table || "").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(consumerGroup)) {
+      throw sparkConfigurationError(`${EKS_MVP_FIXTURE_SLOTS_ENV}[${index}].consumerGroup is invalid.`);
+    }
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(table)) {
+      throw sparkConfigurationError(`${EKS_MVP_FIXTURE_SLOTS_ENV}[${index}].table is invalid.`);
+    }
+    if (consumerGroups.has(consumerGroup) || tables.has(table)) {
+      throw sparkConfigurationError(
+        `${EKS_MVP_FIXTURE_SLOTS_ENV} consumerGroup and table values must be unique.`,
+      );
+    }
+    consumerGroups.add(consumerGroup);
+    tables.add(table);
+    return { consumerGroup, table };
+  });
+  if (!slots.some((slot) => (
+    slot.consumerGroup === defaultSlot.consumerGroup && slot.table === defaultSlot.table
+  ))) {
+    throw sparkConfigurationError(`${EKS_MVP_FIXTURE_SLOTS_ENV} must preserve the default fixture slot.`);
+  }
+  return slots;
+}
 
 export function runSparkPipeline(job, command, runId, options = {}) {
   const executionMode = sparkExecutionMode();
@@ -875,11 +935,15 @@ export function sparkKafkaFixtureEnvironment(job, source, runId, executionMode) 
   const expectedCount = Number(boundary.expectedCount);
   const outputPath = String(boundary.outputPath || "").replace(/\/+$/g, "");
   const checkpointPath = String(boundary.checkpointPath || "").replace(/\/+$/g, "");
+  const consumerGroup = String(boundary.consumerGroup || "").trim();
+  const slots = eksMvpFixtureSlots(process.env);
+  const fixtureSlot = slots.find((slot) => slot.consumerGroup === consumerGroup);
   if (
     boundary.kind !== "kafka_snapshot"
     || String(boundary.snapshotId || "") !== String(runId)
     || String(boundary.topic || "") !== EKS_MVP_FIXTURE_TOPIC
-    || String(boundary.consumerGroup || "") !== EKS_MVP_FIXTURE_CONSUMER_GROUP
+    || !fixtureSlot
+    || String(job?.icebergTarget?.table || "") !== fixtureSlot.table
     || !fixtureBatchId
     || !Number.isInteger(expectedCount)
     || expectedCount <= 0
@@ -893,9 +957,10 @@ export function sparkKafkaFixtureEnvironment(job, source, runId, executionMode) 
     throw sparkConfigurationError("Persisted EKS MVP Kafka fixture boundary is invalid.");
   }
   return {
+    [EKS_MVP_FIXTURE_SLOTS_ENV]: JSON.stringify(slots),
     ASKLAKE_KAFKA_AUTH_MODE: "iam",
     ASKLAKE_KAFKA_BROKER: brokers.join(","),
-    ASKLAKE_KAFKA_CONSUMER_GROUP: EKS_MVP_FIXTURE_CONSUMER_GROUP,
+    ASKLAKE_KAFKA_CONSUMER_GROUP: consumerGroup,
     ASKLAKE_KAFKA_EXPECTED_COUNT: String(expectedCount),
     ASKLAKE_KAFKA_FIXTURE_BATCH_ID: fixtureBatchId,
     ASKLAKE_KAFKA_TOPIC: EKS_MVP_FIXTURE_TOPIC,

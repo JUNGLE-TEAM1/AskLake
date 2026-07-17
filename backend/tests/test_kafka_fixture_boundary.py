@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from scripts.kafka_fixture_boundary import (
     KafkaFixtureBoundaryError,
@@ -28,9 +29,10 @@ class KafkaFixtureBoundaryTests(unittest.TestCase):
             "topic": "asklake.eks-mvp.fixture.v1",
         }
 
-    def validate(self, *, environment=None, boundary=None):
+    def validate(self, *, environment=None, boundary=None, iceberg_target=None):
         return validate_kafka_fixture_boundary(
             environment=self.environment if environment is None else environment,
+            iceberg_target=iceberg_target,
             source_boundary=self.boundary if boundary is None else boundary,
             source_format="kafka",
             source_path="asklake.eks-mvp.fixture.v1",
@@ -41,6 +43,43 @@ class KafkaFixtureBoundaryTests(unittest.TestCase):
         validate_kafka_fixture_row_count(validated, 100)
         self.assertEqual(validated["fixtureBatchId"], "fixture-batch-001")
         self.assertEqual(validated["expectedCount"], 100)
+        self.assertEqual(validated["icebergTable"], "eks_mvp_fixture")
+
+    def test_accepts_only_the_configured_group_to_table_mapping(self):
+        scale_group = "approved-scale-17-01"
+        slots = json.dumps([
+            {
+                "consumerGroup": "asklake-eks-mvp-spark-v1",
+                "table": "eks_mvp_fixture",
+            },
+            {
+                "consumerGroup": scale_group,
+                "table": "eks_mvp_scale_17_01",
+            },
+        ])
+        environment = {
+            **self.environment,
+            "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON": slots,
+            "ASKLAKE_KAFKA_CONSUMER_GROUP": scale_group,
+        }
+        boundary = {**self.boundary, "consumerGroup": scale_group}
+
+        validated = self.validate(
+            environment=environment,
+            boundary=boundary,
+            iceberg_target={"table": "eks_mvp_scale_17_01"},
+        )
+        self.assertEqual(validated["icebergTable"], "eks_mvp_scale_17_01")
+
+        with self.assertRaisesRegex(
+            KafkaFixtureBoundaryError,
+            "Iceberg target does not match",
+        ):
+            self.validate(
+                environment=environment,
+                boundary=boundary,
+                iceberg_target={"table": "eks_mvp_fixture"},
+            )
 
     def test_rejects_wrong_port_auth_and_static_credentials(self):
         cases = (
