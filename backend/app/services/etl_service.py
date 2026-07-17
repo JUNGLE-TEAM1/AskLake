@@ -16,7 +16,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
@@ -43,6 +42,16 @@ from app.application.continuous_publication import (
     PublicationOutputEvidence,
     execute_continuous_publication,
     reconcile_continuous_publications,
+)
+from app.application.airflow_execution import (
+    AirflowCatalogReconciliationHooks,
+    AirflowSparkExecutionHooks,
+    airflow_catalog_identity as resolve_airflow_catalog_identity,
+    commit_airflow_catalog_reconciliation as execute_airflow_catalog_commit,
+    execute_airflow_spark_run as execute_airflow_spark_command,
+    finalize_spark_execution_attempt as finalize_airflow_spark_attempt,
+    persist_catalog_reconciliation_failure as record_airflow_catalog_failure,
+    reconcile_airflow_catalog as execute_airflow_catalog_reconciliation,
 )
 from app.application.etl_job_commands import (
     EtlJobDeleteHooks,
@@ -2166,95 +2175,31 @@ def execute_airflow_spark_run(
     run_id: str,
     command: str,
 ) -> dict[str, Any]:
-    job = etl_repository.get_job_for_update(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
-        raise ApiError(
-            "AIRFLOW_RUN_MISMATCH",
-            "Airflow Spark execution does not match a persisted AskLake Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    etl_repository.refresh_run_for_update(db, run)
+    return execute_airflow_spark_command(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        command=command,
+        hooks=airflow_spark_execution_hooks(),
+    )
 
-    existing_result = (run.task_states or {}).get("sparkResult")
-    if isinstance(existing_result, dict) and existing_result.get("status") == "success":
-        db.rollback()
-        return existing_result
 
-    execution = (run.task_states or {}).get("sparkExecution")
-    if spark_execution_lease_is_active(execution):
-        db.rollback()
-        raise ApiError(
-            "SPARK_RUN_ALREADY_EXECUTING",
-            "Spark execution is already active for this Airflow Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-
-    attempt_id = stable_id("spark-attempt", f"{run_id}:{iso_now()}:{secrets.token_hex(8)}")
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            "attemptId": attempt_id,
-            "startedAt": iso_now(),
-            "status": "running",
-        },
-    }
-    db.commit()
-    job = etl_repository.get_job(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark claim: {job_id}", status.HTTP_404_NOT_FOUND)
-
-    try:
-        result = run_spark_job(db, job, command, run_id)
-    except Exception as exc:
-        finalize_spark_execution_attempt(
-            db,
-            job_id=job_id,
-            run_id=run_id,
-            attempt_id=attempt_id,
-            error=compact_storage_text(exc, limit=1000),
-        )
-        raise
-    manifest = spark_result_manifest(result, run_id)
-    job = etl_repository.get_job_for_update(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Spark execution: {job_id}", status.HTTP_404_NOT_FOUND)
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id:
-        raise ApiError(ErrorCode.INVALID_JOB_STATE, "Spark Run disappeared during finalization", status.HTTP_409_CONFLICT)
-    etl_repository.refresh_run_for_update(db, run)
-    execution = (run.task_states or {}).get("sparkExecution")
-    if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
-        raise ApiError(
-            ErrorCode.INVALID_JOB_STATE,
-            "Spark execution lease changed before finalization",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id, "attemptId": attempt_id},
-        )
-    run.input_rows = format_rows(manifest.get("inputRows"))
-    run.output_rows = format_rows(manifest.get("outputRows"))
-    run.output_path = manifest.get("outputPath") or run.output_path
-    run.duration = format_duration_ms(manifest.get("durationMs"))
-    run.ended_at = str(manifest.get("endedAt") or run.ended_at)
-    run.failed_stage = "-" if manifest.get("status") == "success" else spark_failed_stage(manifest)
-    run.error_summary = "-" if manifest.get("status") == "success" else spark_error_summary(manifest)
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            **execution,
-            "endedAt": str(manifest.get("endedAt") or iso_now()),
-            "status": "success" if manifest.get("status") == "success" else "failed",
-        },
-        "sparkResult": manifest,
-    }
-    if manifest.get("status") == "success" and manifest.get("outputPath"):
-        job.target_path = str(manifest["outputPath"])
-    db.commit()
-    return manifest
+def airflow_spark_execution_hooks() -> AirflowSparkExecutionHooks:
+    return AirflowSparkExecutionHooks(
+        compact_storage_text=compact_storage_text,
+        format_duration_ms=format_duration_ms,
+        format_rows=format_rows,
+        iso_now=iso_now,
+        make_attempt_id=lambda run_id: stable_id(
+            "spark-attempt",
+            f"{run_id}:{iso_now()}:{secrets.token_hex(8)}",
+        ),
+        run_spark_job=run_spark_job,
+        spark_error_summary=spark_error_summary,
+        spark_execution_lease_is_active=spark_execution_lease_is_active,
+        spark_failed_stage=spark_failed_stage,
+        spark_result_manifest=spark_result_manifest,
+    )
 
 
 def spark_execution_lease_is_active(value: Any) -> bool:
@@ -2292,29 +2237,14 @@ def finalize_spark_execution_attempt(
     attempt_id: str,
     error: str,
 ) -> None:
-    job = etl_repository.get_job_for_update(db, job_id)
-    if job is None:
-        db.rollback()
-        return
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id:
-        db.rollback()
-        return
-    etl_repository.refresh_run_for_update(db, run)
-    execution = (run.task_states or {}).get("sparkExecution")
-    if not isinstance(execution, dict) or execution.get("attemptId") != attempt_id:
-        db.rollback()
-        return
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            **execution,
-            "endedAt": iso_now(),
-            "error": error,
-            "status": "failed",
-        },
-    }
-    db.commit()
+    finalize_airflow_spark_attempt(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        error=error,
+        hooks=airflow_spark_execution_hooks(),
+    )
 
 
 def reconcile_airflow_catalog(
@@ -2323,93 +2253,31 @@ def reconcile_airflow_catalog(
     job_id: str,
     run_id: str,
 ) -> AirflowCatalogReconciliationResponse:
-    job, run = airflow_catalog_identity(db, job_id, run_id)
-    dataset_id = str(job.dataset_id or "").strip()
-    if not dataset_id:
-        error = catalog_reconciliation_error(
-            "Persisted Job does not have a target dataset id.",
-            {"jobId": job_id, "runId": run_id},
-        )
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, error.message)
-        raise error
+    return execute_airflow_catalog_reconciliation(
+        db,
+        job_id=job_id,
+        run_id=run_id,
+        hooks=airflow_catalog_reconciliation_hooks(),
+    )
 
-    task_states = dict(run.task_states or {})
-    catalog_result = task_states.get("catalogResult")
-    if (
-        isinstance(catalog_result, dict)
-        and catalog_result.get("status") == "success"
-        and str(catalog_result.get("runId") or "") == run_id
-        and str(catalog_result.get("datasetId") or "") == dataset_id
-    ):
-        dataset = etl_repository.get_dataset_schema_by_id(db, dataset_id)
-        if dataset is not None:
-            return AirflowCatalogReconciliationResponse(
-                dataset=dataset,
-                reconciled_at=str(catalog_result.get("reconciledAt") or iso_now()),
-                run_id=run_id,
-            )
 
-    spark_result = task_states.get("sparkResult")
-    if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
-        raise ApiError(
-            "SPARK_RESULT_NOT_READY",
-            "A persisted successful Spark result is required before Catalog reconciliation.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    if str(spark_result.get("runId") or run_id) != run_id:
-        raise ApiError(
-            "AIRFLOW_RUN_MISMATCH",
-            "Persisted Spark result does not match the requested Airflow Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id, "sparkRunId": spark_result.get("runId")},
-        )
-
-    output_path = str(spark_result.get("outputPath") or "").strip()
-    try:
-        if job.iceberg_target and not is_kafka_job(job):
-            enriched_result = verify_spark_iceberg_result(job, run_id, spark_result)
-        else:
-            validate_catalog_output_identity(job, run_id, output_path)
-            physical = inspect_spark_output(output_path)
-            enriched_result = {
-                **spark_result,
-                "parquetObjectCount": physical["parquetObjectCount"],
-                "storageSizeBytes": physical["storageSizeBytes"],
-            }
-        return commit_airflow_catalog_reconciliation(
-            db,
-            job_id=job_id,
-            run_id=run_id,
-            result=enriched_result,
-            retry_on_create_conflict=True,
-        )
-    except ApiError as exc:
-        if str(exc.code) == "CATALOG_RECONCILIATION_FAILED":
-            persist_catalog_reconciliation_failure(db, run_id, dataset_id, exc.message)
-        raise
-    except Exception as exc:
-        message = compact_storage_text(exc, limit=1800)
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, message)
-        raise catalog_reconciliation_error(
-            "Catalog reconciliation failed.",
-            {"jobId": job_id, "runId": run_id, "reason": message},
-        ) from exc
+def airflow_catalog_reconciliation_hooks() -> AirflowCatalogReconciliationHooks:
+    return AirflowCatalogReconciliationHooks(
+        catalog_reconciliation_error=catalog_reconciliation_error,
+        compact_storage_text=compact_storage_text,
+        dataset_from_spark_result=dataset_from_spark_result,
+        inspect_spark_output=inspect_spark_output,
+        is_kafka_job=is_kafka_job,
+        iso_now=iso_now,
+        optional_string=optional_string,
+        parse_count_value=parse_count_value,
+        validate_catalog_output_identity=validate_catalog_output_identity,
+        verify_spark_iceberg_result=verify_spark_iceberg_result,
+    )
 
 
 def airflow_catalog_identity(db: Session, job_id: str, run_id: str) -> tuple[ETLJobModel, ETLRunModel]:
-    job = etl_repository.get_job(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    run = etl_repository.get_run_model(db, run_id)
-    if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
-        raise ApiError(
-            "AIRFLOW_RUN_MISMATCH",
-            "Catalog reconciliation does not match a persisted AskLake Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    return job, run
+    return resolve_airflow_catalog_identity(db, job_id, run_id)
 
 
 def commit_airflow_catalog_reconciliation(
@@ -2420,83 +2288,24 @@ def commit_airflow_catalog_reconciliation(
     result: dict[str, Any],
     retry_on_create_conflict: bool,
 ) -> AirflowCatalogReconciliationResponse:
-    job, run = airflow_catalog_identity(db, job_id, run_id)
-    dataset_id = str(job.dataset_id or "").strip()
-    existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
-    name_match = etl_repository.get_dataset_by_name(db, job.target)
-    if name_match is not None and name_match.id != dataset_id:
-        raise catalog_reconciliation_error(
-            "Target dataset name is already owned by another dataset id.",
-            {"datasetId": dataset_id, "existingDatasetId": name_match.id, "runId": run_id},
-        )
-
-    reconciled_at = iso_now()
-    dataset_model = dataset_from_spark_result(job, result, existing_dataset)
-    iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
-    catalog_result = {
-        "dataFileCount": parse_count_value(result.get("dataFileCount")),
-        "datasetId": dataset_id,
-        "icebergSnapshotId": optional_string(iceberg_commit.get("snapshotId")),
-        "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
-        "reconciledAt": reconciled_at,
-        "runId": run_id,
-        "status": "success",
-        "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
-        "storageSizeBytes": parse_count_value(result.get("storageSizeBytes")),
-    }
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkResult": result,
-        "catalogResult": catalog_result,
-    }
-
-    try:
-        _, _, dataset = etl_repository.save_command_result(db, job, run, dataset_model)
-    except IntegrityError:
-        db.rollback()
-        if retry_on_create_conflict:
-            return commit_airflow_catalog_reconciliation(
-                db,
-                job_id=job_id,
-                run_id=run_id,
-                result=result,
-                retry_on_create_conflict=False,
-            )
-        raise
-
-    if dataset is None:
-        raise RuntimeError("Catalog reconciliation committed without a dataset response.")
-    return AirflowCatalogReconciliationResponse(
-        dataset=dataset,
-        reconciled_at=reconciled_at,
+    return execute_airflow_catalog_commit(
+        db,
+        job_id=job_id,
         run_id=run_id,
+        result=result,
+        retry_on_create_conflict=retry_on_create_conflict,
+        hooks=airflow_catalog_reconciliation_hooks(),
     )
 
 
 def persist_catalog_reconciliation_failure(db: Session, run_id: str, dataset_id: str, message: str) -> None:
-    try:
-        db.rollback()
-        run = etl_repository.get_run_model(db, run_id)
-        if run is None:
-            return
-        failed_at = iso_now()
-        compact_message = compact_storage_text(message, limit=1800)
-        run.task_states = {
-            **(run.task_states or {}),
-            "catalogResult": {
-                "datasetId": dataset_id,
-                "error": compact_message,
-                "failedAt": failed_at,
-                "runId": run_id,
-                "status": "failed",
-            },
-        }
-        run.failed_stage = "Catalog reconciliation"
-        run.error_summary = compact_message
-        db.add(run)
-        db.commit()
-    except Exception:
-        db.rollback()
+    record_airflow_catalog_failure(
+        db,
+        run_id,
+        dataset_id,
+        message,
+        hooks=airflow_catalog_reconciliation_hooks(),
+    )
 
 
 def validate_catalog_output_identity(job: ETLJobModel, run_id: str, output_path: str) -> None:

@@ -1194,6 +1194,18 @@ PYTHONPATH=. .venv/bin/python scripts/verify-dataset-identity-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
 ```
 
+### Airflow Spark 실행·Catalog 발행 경계 검증
+
+Snapshot Airflow Run identity, Spark execution lease, runner 결과 finalize, physical output 검증 또는 Catalog transaction을 변경할 때는 application unit과 기존 concurrency·Iceberg·PostgreSQL reconciliation 검증을 함께 실행한다. `etl_service.execute_airflow_spark_run/reconcile_airflow_catalog` façade에 실행·발행 순서를 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_delete tests.test_spark_iceberg_reconciliation -v
+PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+```
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

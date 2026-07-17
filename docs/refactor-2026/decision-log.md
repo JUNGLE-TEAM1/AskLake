@@ -104,3 +104,10 @@
 - 결정: 일반 Pipeline `create_pipeline/update_pipeline`만 `etl_job_commands`로 이동하고 `create_trino_sql_job`, 실행·발행·Catalog publication은 다음 PR에 남긴다.
 - 이유: request mutation, identity, mapping, permission과 repository write는 기존 verifier로 독립 검증할 수 있지만 SQL/runner side effect까지 합치면 rollback 단위가 커진다.
 - 제약: service façade와 public helper는 기존 import reader를 위해 유지하고 DB schema·commit 의미, UI·API shape와 legacy 활성 상태를 바꾸지 않는다.
+
+## D-017 — Snapshot 실행 claim과 Catalog 발행 transaction은 하나의 유한 application 경계로 고정
+
+- 상태: Accepted
+- 결정: Airflow Spark의 persisted Run identity·lease claim/finalize와 후속 Catalog reconciliation을 `airflow_execution` application module로 이동한다.
+- 이유: 외부 runner 전후의 durable claim과 성공 manifest 이후의 발행은 같은 Run evidence chain이지만 Continuous·SQL Job과는 독립적으로 검증할 수 있어, 배포 동작을 유지하면서 `etl_service.py`의 실행·발행 책임을 줄일 수 있다.
+- 제약: runner·physical verifier·payload builder는 기존 service hook을 사용하고 공개 signature, error/status, DB/API shape, Airflow DAG, frontend와 fallback 활성 상태를 바꾸지 않는다. Node/Python connector 권한은 다음 PR로 분리한다.
