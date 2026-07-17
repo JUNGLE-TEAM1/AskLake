@@ -237,6 +237,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
 PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v
 PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v
 npm run verify:sources
 npm run verify:spark-run
 npm run verify:record-parsing
@@ -270,6 +271,7 @@ FastAPI Pair2 smoke:
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
 - `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v`는 Job 삭제의 권한 선행, active Run·Continuous 보호, 종속 레코드 삭제 순서, audit·commit/rollback과 Airflow/Kafka reservation 동시성을 검증한다. application 경계는 `docs/refactor-2026/contracts/etl-job-command-boundary.md`에 고정한다.
 - `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v`는 일반 Pipeline create의 new/append/continuous 분기와 update의 governance·permission·validation·immutability·projection 순서를 검증한다. 실제 Rule·permission·identity persistence는 인접한 update/create verifier와 함께 확인하며 상세 경계는 `docs/refactor-2026/contracts/etl-job-write-boundary.md`를 따른다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v`는 성공 Spark 결과 재사용, active execution lease, runner 실패/finalize, Catalog 멱등성, physical evidence 이후 단일 transaction과 실패 evidence 보존을 외부 runtime 없이 검증한다. 공개 façade와 실제 PostgreSQL reconciliation은 `docs/refactor-2026/contracts/airflow-execution-publication-boundary.md`를 따른다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
 - `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 
