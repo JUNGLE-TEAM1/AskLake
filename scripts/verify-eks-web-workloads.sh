@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-web"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/web.test.example.yaml"
 RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE"' EXIT
+HPA_DISABLED_RENDERED="$(mktemp)"
+trap 'rm -f "$RENDERED_FILE" "$HPA_DISABLED_RENDERED"' EXIT
 
 helm lint "$CHART_DIR"
 if [[ -n "$(helm template asklake-web "$CHART_DIR")" ]]; then
@@ -17,8 +18,9 @@ helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 
 if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 3 ]] || \
-   [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 2 ]]; then
-  echo "web chart must render Frontend, FastAPI, Collector Deployments and two Services" >&2
+   [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 2 ]] || \
+   [[ "$(grep -c '^kind: HorizontalPodAutoscaler$' "$RENDERED_FILE")" -ne 1 ]]; then
+  echo "web chart must render Frontend, FastAPI, Collector Deployments, two Services, and one FastAPI HPA" >&2
   exit 1
 fi
 
@@ -26,6 +28,7 @@ for contract in \
   'name: frontend' \
   'name: fastapi' \
   'name: trino-result-collector' \
+  'apiVersion: autoscaling/v2' \
   'serviceAccountName: asklake-frontend' \
   'serviceAccountName: asklake-backend' \
   'asklake.io/workload-class: general' \
@@ -82,6 +85,43 @@ if [[ "$(grep -c 'terminationGracePeriodSeconds: 360' "$RENDERED_FILE")" -ne 1 ]
   exit 1
 fi
 
+if [[ "$(grep -c '^  replicas:' "$RENDERED_FILE")" -ne 2 ]]; then
+  echo "HPA-enabled render must leave FastAPI replicas to the autoscaling controller" >&2
+  exit 1
+fi
+
+hpa_block="$(awk '
+  /^kind: HorizontalPodAutoscaler$/ { in_hpa = 1 }
+  in_hpa { print }
+' "$RENDERED_FILE")"
+for hpa_contract in \
+  'name: fastapi' \
+  'kind: Deployment' \
+  'minReplicas: 2' \
+  'maxReplicas: 6' \
+  'averageUtilization: 60' \
+  'stabilizationWindowSeconds: 300'; do
+  if ! grep -Fq "$hpa_contract" <<<"$hpa_block"; then
+    echo "FastAPI HPA is missing contract: $hpa_contract" >&2
+    exit 1
+  fi
+done
+
+helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.autoscaling.enabled=false >"$HPA_DISABLED_RENDERED"
+if grep -q '^kind: HorizontalPodAutoscaler$' "$HPA_DISABLED_RENDERED" || \
+   [[ "$(grep -c '^  replicas:' "$HPA_DISABLED_RENDERED")" -ne 3 ]]; then
+  echo "HPA-disabled render must keep three statically sized Deployments and no HPA" >&2
+  exit 1
+fi
+
+runtime_revision_rendered="$(helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.runtimeConfigRevision=runtime-revision-test)"
+if [[ "$(grep -c 'asklake.io/runtime-config-revision: \"runtime-revision-test\"' <<<"$runtime_revision_rendered")" -ne 2 ]]; then
+  echo "runtime ConfigMap revision must roll FastAPI and Collector together" >&2
+  exit 1
+fi
+
 negative_cases=(
   'readiness.backendRuntimeBoundaryReady=false'
   'readiness.runtimeSecretReady=false'
@@ -90,6 +130,11 @@ negative_cases=(
   'backend.replicaCount=1'
   'backend.terminationGracePeriodSeconds=120'
   'backend.preStopDelaySeconds=0'
+  'backend.replicaCount=3'
+  'backend.autoscaling.minReplicas=1'
+  'backend.autoscaling.maxReplicas=7'
+  'backend.autoscaling.targetCPUUtilizationPercentage=0'
+  'backend.autoscaling.behavior.scaleDown.stabilizationWindowSeconds=0'
   'collector.enabled=false'
   'collector.replicaCount=0'
   'collector.replicaCount=2'
@@ -107,7 +152,7 @@ for override in "${negative_cases[@]}"; do
   fi
 done
 
-if grep -Eq '^kind: (Ingress|HorizontalPodAutoscaler|Secret|ConfigMap)$' "$RENDERED_FILE"; then
+if grep -Eq '^kind: (Ingress|Secret|ConfigMap)$' "$RENDERED_FILE"; then
   echo "Phase 14 web chart crossed the workload-only ownership boundary" >&2
   exit 1
 fi

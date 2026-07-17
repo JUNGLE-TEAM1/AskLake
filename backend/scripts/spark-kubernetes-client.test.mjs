@@ -4,6 +4,8 @@ import test from "node:test";
 import { kafkaSecurityOptions } from "../src/kafka-codecs.mjs";
 import {
   createSparkKubernetesApplication,
+  EKS_MVP_FIXTURE_SLOTS_ENV,
+  eksMvpFixtureSlots,
   SPARK_MSK_IAM_SHADED_JAR,
   sparkDependencyJars,
   sparkExecutionMode,
@@ -132,6 +134,14 @@ test("persisted fixture boundary is copied into the dynamic SparkApplication", (
   };
   const job = {
     id: JOB_ID,
+    icebergTarget: {
+      catalog: "iceberg",
+      namespace: "asklake",
+      table: "eks_mvp_fixture",
+      tableUri: "iceberg://iceberg/asklake/eks_mvp_fixture",
+      writeMode: "replace",
+      partitionColumns: [],
+    },
     sourceBoundary: boundary,
     sourceConfig: [["__EKS MVP Fixture Batch ID", "fixture-batch-drifted"]],
     sourceType: "Stream / Kafka",
@@ -142,6 +152,10 @@ test("persisted fixture boundary is copied into the dynamic SparkApplication", (
   assert.equal(fixtureEnvironment.ASKLAKE_KAFKA_FIXTURE_BATCH_ID, "fixture-batch-001");
   assert.equal(fixtureEnvironment.ASKLAKE_KAFKA_EXPECTED_COUNT, "100");
   assert.equal(fixtureEnvironment.ASKLAKE_SPARK_CHECKPOINT_PATH, boundary.checkpointPath);
+  assert.deepEqual(JSON.parse(fixtureEnvironment[EKS_MVP_FIXTURE_SLOTS_ENV]), [{
+    consumerGroup: "asklake-eks-mvp-spark-v1",
+    table: "eks_mvp_fixture",
+  }]);
 
   const packages = sparkPackages(job, source, { sparkPath: boundary.outputPath });
   assert.ok(packages.includes("org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1"));
@@ -178,6 +192,91 @@ test("persisted fixture boundary is copied into the dynamic SparkApplication", (
     JSON.parse(driverEnvironment.ASKLAKE_SPARK_JOB_MANIFEST_JSON).sourceBoundary,
     boundary,
   );
+
+  const previousPackages = {
+    kafka: process.env.ASKLAKE_SPARK_KAFKA_PACKAGE,
+    hadoop: process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE,
+    iceberg: process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE,
+    postgres: process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE,
+  };
+  try {
+    process.env.ASKLAKE_SPARK_KAFKA_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE = "none";
+    assert.deepEqual(
+      sparkPackages(job, source, { sparkPath: boundary.outputPath }),
+      [],
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      ASKLAKE_SPARK_KAFKA_PACKAGE: previousPackages.kafka,
+      ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: previousPackages.hadoop,
+      ASKLAKE_SPARK_ICEBERG_PACKAGE: previousPackages.iceberg,
+      ASKLAKE_SPARK_POSTGRES_PACKAGE: previousPackages.postgres,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("configured fixture slots map each exact consumer group to one Iceberg table", { concurrency: false }, () => {
+  const slots = [
+    {
+      consumerGroup: "asklake-eks-mvp-spark-v1",
+      table: "eks_mvp_fixture",
+    },
+    {
+      consumerGroup: "approved-scale-17-01",
+      table: "eks_mvp_scale_17_01",
+    },
+  ];
+  const original = process.env[EKS_MVP_FIXTURE_SLOTS_ENV];
+  process.env[EKS_MVP_FIXTURE_SLOTS_ENV] = JSON.stringify(slots);
+  try {
+    assert.deepEqual(eksMvpFixtureSlots(process.env), slots);
+    const runId = "run-fixture-scale-001";
+    const boundary = {
+      broker: "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098",
+      checkpointPath: `s3a://asklake-dev-output/eks-mvp/checkpoints/${runId}`,
+      consumerGroup: "approved-scale-17-01",
+      expectedCount: 100,
+      fixtureBatchId: "fixture-batch-scale-001",
+      kind: "kafka_snapshot",
+      outputPath: `s3a://asklake-dev-output/eks-mvp/output/${runId}`,
+      snapshotId: runId,
+      topic: "asklake.eks-mvp.fixture.v1",
+    };
+    const job = {
+      id: "job-scale-001",
+      icebergTarget: { table: "eks_mvp_scale_17_01" },
+      sourceBoundary: boundary,
+    };
+    const environment = sparkKafkaFixtureEnvironment(
+      job,
+      { format: "kafka", path: boundary.topic },
+      runId,
+      "kubernetes",
+    );
+    assert.equal(environment.ASKLAKE_KAFKA_CONSUMER_GROUP, "approved-scale-17-01");
+    assert.deepEqual(JSON.parse(environment[EKS_MVP_FIXTURE_SLOTS_ENV]), slots);
+    assert.throws(
+      () => sparkKafkaFixtureEnvironment(
+        { ...job, icebergTarget: { table: "eks_mvp_fixture" } },
+        { format: "kafka", path: boundary.topic },
+        runId,
+        "kubernetes",
+      ),
+      /boundary is invalid/,
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env[EKS_MVP_FIXTURE_SLOTS_ENV];
+    } else {
+      process.env[EKS_MVP_FIXTURE_SLOTS_ENV] = original;
+    }
+  }
 });
 
 test("MSK IAM jar rejects remote or arbitrary image paths", () => {

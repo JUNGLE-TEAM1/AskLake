@@ -655,25 +655,26 @@ EKS MVP bounded fixture routing은 기존 Snapshot direct target의 예외이며
 type EksMvpFixtureSourceConfig = [
   ["Broker / Endpoint", `${string}:9098`],
   ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
-  ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+  ["CONSUMER GROUP ID", string], // exact configured slot; default is asklake-eks-mvp-spark-v1
   ["__EKS MVP Fixture Batch ID", string],
   ["__EKS MVP Expected Count", string],
 ];
 ```
 
-Snapshot Kafka Job에서 exact fixture topic/group 또는 두 내부 receipt field 중 하나가 보이면 backend는 fixture 실행 의도로 분류한다. 네 값, positive expected count(최대 100,000), IAM `9098` endpoint와 Kubernetes Spark runner가 모두 유효하면 기존 Kafka bridge 대신 Airflow Run을 예약하고 `AirflowDagRun.dagRunId=JobRunSummary.runId`를 유지한다. fixture 의도는 있지만 계약이 틀리면 executor를 하나도 호출하지 않고 fail-closed한다. fixture 표시가 없는 Kafka Snapshot은 기존 direct bridge, `executionMode=continuous`는 기존 Continuous control-plane 계약을 그대로 사용한다.
+Snapshot Kafka Job에서 exact fixture topic/default group 또는 두 내부 receipt field 중 하나가 보이면 backend는 fixture 실행 의도로 분류한다. consumer group은 `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`에 등록된 exact slot이어야 하며 설정이 없으면 기존 default group/table 한 쌍만 허용한다. 네 값, positive expected count(최대 100,000), IAM `9098` endpoint와 Kubernetes Spark runner가 모두 유효하면 기존 Kafka bridge 대신 Airflow Run을 예약하고 `AirflowDagRun.dagRunId=JobRunSummary.runId`를 유지한다. fixture 의도는 있지만 계약이 틀리면 executor를 하나도 호출하지 않고 fail-closed한다. fixture 표시가 없는 Kafka Snapshot은 기존 direct bridge, `executionMode=continuous`는 기존 Continuous control-plane 계약을 그대로 사용한다.
 
 Airflow 호출 전 같은 transaction에 다음 immutable Run state를 저장한다.
 
 ```ts
 type EksMvpFixtureRunState = {
   capturedAt: string;
-  contractVersion: 1;
+  contractVersion: 2;
+  icebergTable: string;
   runId: string;
   sourceBoundary: {
     broker: `${string}:9098`;
     checkpointPath: `s3a://${string}/eks-mvp/checkpoints/${string}`;
-    consumerGroup: "asklake-eks-mvp-spark-v1";
+    consumerGroup: string;
     expectedCount: number;
     fixtureBatchId: string;
     kind: "kafka_snapshot";
@@ -684,7 +685,9 @@ type EksMvpFixtureRunState = {
 };
 ```
 
-`taskStates.eksMvpFixture.runId`, `sourceBoundary.snapshotId`, Airflow `dagRunId`는 모두 `JobRunSummary.runId`와 같다. Airflow conf와 internal Spark execute body는 RDS의 `sourceBoundary`를 그대로 운반하며 FastAPI는 exact match 후에만 Spark lease/submission을 시작한다. Spark payload와 동적 SparkApplication manifest/env는 mutable Job source field가 아니라 이 persisted boundary를 사용한다. 실행 target은 `iceberg.asklake.eks_mvp_fixture`, write mode는 `replace`로 고정한다. Spark는 batch filter 후 실제 count가 `expectedCount`와 다르면 commit 전에 실패한다. FastAPI는 성공 result의 `sourceBoundary`, `inputRows`, `outputRows`, `icebergCommit.target/sourceBoundary/jobId/runId/snapshotId`를 RDS boundary와 재검증하며 불일치는 `EKS_MVP_FIXTURE_RESULT_INVALID`다.
+`taskStates.eksMvpFixture.runId`, `sourceBoundary.snapshotId`, Airflow `dagRunId`는 모두 `JobRunSummary.runId`와 같다. Airflow conf와 internal Spark execute body는 RDS의 `sourceBoundary`를 그대로 운반하며 FastAPI는 exact match 후에만 Spark lease/submission을 시작한다. Spark payload와 동적 SparkApplication manifest/env는 mutable Job source field가 아니라 이 persisted boundary를 사용한다. 실행 target은 consumer group에 대응하는 승인된 slot table이고 write mode는 `replace`로 고정한다. slot 목록은 기본 쌍을 반드시 포함하고 최대 5개이며 group/table 각각 유일해야 한다. PostgreSQL에서는 group별 advisory transaction lock으로 active Run 예약을 직렬화한다. 같은 slot의 두 번째 active Run은 `EKS_MVP_FIXTURE_SLOT_ACTIVE`, 잘못된 runtime slot 설정은 `EKS_MVP_FIXTURE_SLOTS_INVALID`다. Spark는 batch filter 후 실제 count가 `expectedCount`와 다르면 commit 전에 실패한다. FastAPI는 성공 result의 `sourceBoundary`, `inputRows`, `outputRows`, `icebergCommit.target/sourceBoundary/jobId/runId/snapshotId`를 RDS boundary와 mapped target에 재검증하며 불일치는 `EKS_MVP_FIXTURE_RESULT_INVALID`다.
+
+contract version 2는 예약 시 선택된 `icebergTable`을 RDS state에 함께 고정하므로 예약 뒤 runtime slot mapping이 바뀌면 Spark 제출 전에 `EKS_MVP_FIXTURE_RUN_BOUNDARY_INVALID`로 실패한다. 기존 version 1 state는 목요일 default group/table 한 쌍에 한해서만 읽기 호환한다.
 
 같은 fixture Run 재호출의 멱등 기준은 RDS다. `sparkResult.status=success`면 새 lease나 외부 실행 없이 같은 result를 반환한다. 미완료 상태에서 `sparkExecution.kubernetesExecution`의 namespace/name/UID가 있으면 Node provider에 expected identity로 전달하고, provider는 create 전에 결정적 이름의 SparkApplication을 조회해 UID와 run/job/image annotation을 모두 대조한다. object가 없거나 UID가 바뀌면 replacement를 만들지 않는다. Spark driver가 동일 persisted `kafka_snapshot` boundary를 다시 처리하는 최악의 복구 경로에서도 target table의 boundary marker를 먼저 조회하며, 이미 존재하면 `replace` target도 writer를 호출하지 않고 기존 snapshot ID를 `operation: "reuse"`로 반환한다. 성공 재호출은 동일 `runId`, 동일 SparkApplication UID, 동일 Iceberg snapshot ID를 유지해야 한다.
 

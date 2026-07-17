@@ -128,6 +128,7 @@ from app.services.eks_execution_contract import (
     spark_execution_lease_seconds,
     spark_execution_identity_mismatch,
 )
+from app.services.eks_fixture_slots import configured_eks_fixture_slot
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_live_repository import (
     REPLAY_COMMIT_KIND,
@@ -214,6 +215,7 @@ from app.services.materialization_projection import (
 )
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
 from app.services.resource_permission_service import permission_grants_for_resource, permissions_for_actor_with_governance
+from scripts.kafka_fixture_slots import EKS_MVP_FIXTURE_CONSUMER_GROUP, EKS_MVP_FIXTURE_ICEBERG_TABLE
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -244,14 +246,13 @@ MAX_SOURCE_IDENTITY_WORKERS = 64
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1"
-EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1"
 EKS_MVP_FIXTURE_BATCH_ID_FIELD = "__EKS MVP Fixture Batch ID"
 EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD = "__EKS MVP Expected Count"
 EKS_MVP_FIXTURE_MAX_COUNT = 100_000
-EKS_MVP_FIXTURE_CONTRACT_VERSION = 1
+EKS_MVP_FIXTURE_CONTRACT_VERSION = 2
+EKS_MVP_FIXTURE_LEGACY_CONTRACT_VERSION = 1
 EKS_MVP_FIXTURE_OUTPUT_PREFIX = "eks-mvp/output"
 EKS_MVP_FIXTURE_CHECKPOINT_PREFIX = "eks-mvp/checkpoints"
-EKS_MVP_FIXTURE_ICEBERG_TABLE = "eks_mvp_fixture"
 DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
 SCHEDULE_WEEKDAY_VALUES = {
     "월": 0,
@@ -1414,6 +1415,7 @@ def command_job(
             job.dag_steps = dag_steps_from_kafka_result(job, command, run_schema.model_dump(by_alias=True), result)
         else:
             validate_eks_mvp_bounded_fixture_job(job)
+            require_eks_mvp_fixture_slot_available(db, job)
             airflow_client = build_airflow_client()
             run_model = airflow_run_reservation(job, command, airflow_client)
             run_schema = etl_repository.run_to_schema(run_model)
@@ -2392,6 +2394,15 @@ def is_eks_mvp_bounded_fixture_job(job: ETLJobModel) -> bool:
     )
 
 
+def eks_mvp_fixture_consumer_group(job: ETLJobModel) -> str:
+    fields = job.source_config or []
+    return str(
+        field_value(fields, "CONSUMER GROUP ID")
+        or field_value(fields, "Consumer Group ID")
+        or ""
+    ).strip()
+
+
 def validate_eks_mvp_bounded_fixture_job(job: ETLJobModel) -> None:
     if not is_eks_mvp_bounded_fixture_job(job):
         return
@@ -2422,18 +2433,18 @@ def validate_eks_mvp_bounded_fixture_job(job: ETLJobModel) -> None:
         or field_value(fields, "Topic")
         or field_value(fields, "topic")
     )
-    consumer_group = (
-        field_value(fields, "CONSUMER GROUP ID")
-        or field_value(fields, "Consumer Group ID")
-    )
+    consumer_group = eks_mvp_fixture_consumer_group(job)
     fixture_batch_id = field_value(fields, EKS_MVP_FIXTURE_BATCH_ID_FIELD)
     expected_count = parse_positive_integer(
         field_value(fields, EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD),
     )
     if topic != EKS_MVP_FIXTURE_TOPIC:
         raise eks_mvp_fixture_contract_error(job, "The fixture topic is outside the EKS MVP boundary.")
-    if consumer_group != EKS_MVP_FIXTURE_CONSUMER_GROUP:
-        raise eks_mvp_fixture_contract_error(job, "The fixture consumer group is outside the EKS MVP boundary.")
+    if configured_eks_fixture_slot(consumer_group, job_id=job.id) is None:
+        raise eks_mvp_fixture_contract_error(
+            job,
+            "The fixture consumer group is not an approved EKS fixture slot.",
+        )
     if not fixture_batch_id:
         raise eks_mvp_fixture_contract_error(job, "The producer fixture batch id is required.")
     if expected_count is None or expected_count > EKS_MVP_FIXTURE_MAX_COUNT:
@@ -2449,6 +2460,28 @@ def eks_mvp_fixture_contract_error(job: ETLJobModel, message: str) -> ApiError:
         message,
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         {"jobId": job.id},
+    )
+
+
+def require_eks_mvp_fixture_slot_available(
+    db: Session,
+    job: ETLJobModel,
+) -> None:
+    if not is_eks_mvp_bounded_fixture_job(job):
+        return
+    consumer_group = eks_mvp_fixture_consumer_group(job)
+    active_run = etl_repository.find_active_eks_fixture_slot_run(db, consumer_group)
+    if active_run is None:
+        return
+    raise ApiError(
+        "EKS_MVP_FIXTURE_SLOT_ACTIVE",
+        "Another EKS fixture Run is already using this approved consumer group and Iceberg table slot.",
+        status.HTTP_409_CONFLICT,
+        {
+            "activeJobId": active_run.job_id,
+            "activeRunId": active_run.run_id,
+            "jobId": job.id,
+        },
     )
 
 
@@ -2470,13 +2503,20 @@ def eks_mvp_fixture_run_state(
     normalized_broker = ",".join(item.strip() for item in broker.split(",") if item.strip())
     fixture_batch_id = field_value(fields, EKS_MVP_FIXTURE_BATCH_ID_FIELD)
     expected_count = parse_positive_integer(field_value(fields, EKS_MVP_FIXTURE_EXPECTED_COUNT_FIELD))
+    consumer_group = eks_mvp_fixture_consumer_group(job)
+    fixture_slot = configured_eks_fixture_slot(consumer_group, job_id=job.id)
+    if fixture_slot is None:
+        raise eks_mvp_fixture_contract_error(
+            job,
+            "The fixture consumer group is not an approved EKS fixture slot.",
+        )
     output_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
     if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", output_bucket) is None:
         raise eks_mvp_fixture_contract_error(job, "ASKLAKE_SPARK_OUTPUT_BUCKET is not a valid S3 bucket name.")
     source_boundary = {
         "broker": normalized_broker,
         "checkpointPath": f"s3a://{output_bucket}/{EKS_MVP_FIXTURE_CHECKPOINT_PREFIX}/{run_id}",
-        "consumerGroup": EKS_MVP_FIXTURE_CONSUMER_GROUP,
+        "consumerGroup": consumer_group,
         "expectedCount": expected_count,
         "fixtureBatchId": fixture_batch_id,
         "kind": "kafka_snapshot",
@@ -2487,6 +2527,7 @@ def eks_mvp_fixture_run_state(
     return {
         "capturedAt": captured_at,
         "contractVersion": EKS_MVP_FIXTURE_CONTRACT_VERSION,
+        "icebergTable": fixture_slot.iceberg_table,
         "runId": run_id,
         "sourceBoundary": source_boundary,
     }
@@ -2500,18 +2541,32 @@ def persisted_eks_mvp_fixture_source_boundary(run: ETLRunModel) -> dict[str, Any
     broker = str(boundary.get("broker") or "") if isinstance(boundary, dict) else ""
     brokers = [item.strip() for item in broker.split(",") if item.strip()]
     expected_count = boundary.get("expectedCount") if isinstance(boundary, dict) else None
+    consumer_group = str(boundary.get("consumerGroup") or "") if isinstance(boundary, dict) else ""
+    configured_slot = configured_eks_fixture_slot(consumer_group)
+    contract_version = state.get("contractVersion") if isinstance(state, dict) else None
     output_path = str(boundary.get("outputPath") or "") if isinstance(boundary, dict) else ""
     checkpoint_path = str(boundary.get("checkpointPath") or "") if isinstance(boundary, dict) else ""
     if (
         not isinstance(state, dict)
-        or state.get("contractVersion") != EKS_MVP_FIXTURE_CONTRACT_VERSION
+        or contract_version not in (EKS_MVP_FIXTURE_LEGACY_CONTRACT_VERSION, EKS_MVP_FIXTURE_CONTRACT_VERSION)
         or state.get("runId") != run.run_id
         or not str(state.get("capturedAt") or "").strip()
         or not isinstance(boundary, dict)
         or boundary.get("kind") != "kafka_snapshot"
         or boundary.get("snapshotId") != run.run_id
         or boundary.get("topic") != EKS_MVP_FIXTURE_TOPIC
-        or boundary.get("consumerGroup") != EKS_MVP_FIXTURE_CONSUMER_GROUP
+        or configured_slot is None
+        or (
+            contract_version == EKS_MVP_FIXTURE_LEGACY_CONTRACT_VERSION
+            and (
+                consumer_group != EKS_MVP_FIXTURE_CONSUMER_GROUP
+                or configured_slot.iceberg_table != EKS_MVP_FIXTURE_ICEBERG_TABLE
+            )
+        )
+        or (
+            contract_version == EKS_MVP_FIXTURE_CONTRACT_VERSION
+            and state.get("icebergTable") != configured_slot.iceberg_table
+        )
         or not str(boundary.get("fixtureBatchId") or "").strip()
         or isinstance(expected_count, bool)
         or not isinstance(expected_count, int)
@@ -2646,11 +2701,18 @@ def run_spark_job(
     return result
 
 
-def eks_mvp_fixture_iceberg_target() -> IcebergWriterTarget:
+def eks_mvp_fixture_iceberg_target(job: ETLJobModel) -> IcebergWriterTarget:
+    consumer_group = eks_mvp_fixture_consumer_group(job)
+    slot = configured_eks_fixture_slot(consumer_group, job_id=job.id)
+    if slot is None:
+        raise eks_mvp_fixture_contract_error(
+            job,
+            "The fixture consumer group is not an approved EKS fixture slot.",
+        )
     return IcebergWriterTarget(
         catalog=settings.trino_catalog,
         namespace=settings.trino_schema,
-        table=EKS_MVP_FIXTURE_ICEBERG_TABLE,
+        table=slot.iceberg_table,
         write_mode="replace",
         partition_columns=[],
     )
@@ -2660,7 +2722,7 @@ def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
     if is_kafka_job(job):
         if not is_eks_mvp_bounded_fixture_job(job):
             return
-        expected_target = eks_mvp_fixture_iceberg_target()
+        expected_target = eks_mvp_fixture_iceberg_target(job)
         if job.iceberg_target:
             try:
                 if IcebergWriterTarget.model_validate(job.iceberg_target) == expected_target:
@@ -2699,7 +2761,7 @@ def validate_eks_mvp_fixture_spark_result(
         return
 
     expected_count = source_boundary["expectedCount"]
-    expected_target = eks_mvp_fixture_iceberg_target()
+    expected_target = eks_mvp_fixture_iceberg_target(job)
     commit = manifest.get("icebergCommit")
     try:
         persisted_target = IcebergWriterTarget.model_validate(job.iceberg_target)

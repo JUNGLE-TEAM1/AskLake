@@ -21,6 +21,8 @@ spec:
     spec:
       serviceAccountName: {{ .Values.airflow.serviceAccountName }}
       automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.airflow.nodeSelector | nindent 8 }}
       restartPolicy: Never
       containers:
         - name: airflow-db-migrate

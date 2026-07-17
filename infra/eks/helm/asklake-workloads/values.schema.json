@@ -67,6 +67,15 @@
         "kubernetes.io/arch": {"type": "string", "const": "amd64"}
       }
     },
+    "generalNodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asklake.io/workload-class", "kubernetes.io/arch"],
+      "properties": {
+        "asklake.io/workload-class": {"type": "string", "const": "general"},
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
     "sparkNodeSelector": {
       "type": "object",
       "additionalProperties": false,
@@ -176,9 +185,10 @@
     "airflow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["enabled", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-airflow"},
         "service": {"$ref": "#/$defs/service"},
@@ -332,10 +342,11 @@
     "trino": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
         "replicas": {"type": "integer", "const": 1},
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-trino"},
         "service": {"$ref": "#/$defs/service"},

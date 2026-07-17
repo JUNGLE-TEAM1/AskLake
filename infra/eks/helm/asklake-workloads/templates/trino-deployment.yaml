@@ -22,6 +22,8 @@ spec:
     spec:
       serviceAccountName: {{ .Values.trino.serviceAccountName }}
       automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.trino.nodeSelector | nindent 8 }}
       securityContext:
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch

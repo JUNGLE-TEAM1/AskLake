@@ -22,6 +22,9 @@ spec:
         app.kubernetes.io/component: trino-result-collector
       annotations:
         asklake.io/runtime-boundary-configmap: {{ .Values.backend.runtimeBoundaryConfigMapName | quote }}
+        {{- with .Values.backend.runtimeConfigRevision }}
+        asklake.io/runtime-config-revision: {{ . | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.collector.serviceAccountName }}
       automountServiceAccountToken: false

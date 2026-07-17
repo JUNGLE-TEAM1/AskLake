@@ -666,6 +666,38 @@ def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
     return db.get(ETLRunModel, run_id)
 
 
+def find_active_eks_fixture_slot_run(
+    db: Session,
+    consumer_group: str,
+) -> ETLRunModel | None:
+    """Serialize and find an active EKS fixture Run using one approved slot."""
+    ensure_schema(db)
+    normalized_group = str(consumer_group or "").strip()
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended(:lock_key, 0)"
+                ")"
+            ),
+            {"lock_key": f"asklake:eks-fixture-slot:{normalized_group}"},
+        )
+    runs = db.scalars(
+        select(ETLRunModel)
+        .where(ETLRunModel.status.in_(["queued", "running"]))
+        .order_by(ETLRunModel.created_at.asc())
+    ).all()
+    for run in runs:
+        state = (run.task_states or {}).get("eksMvpFixture")
+        boundary = state.get("sourceBoundary") if isinstance(state, dict) else None
+        if (
+            isinstance(boundary, dict)
+            and str(boundary.get("consumerGroup") or "").strip() == normalized_group
+        ):
+            return run
+    return None
+
+
 def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
     ensure_schema(db)
     db.refresh(run, with_for_update=True)

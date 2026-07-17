@@ -92,6 +92,9 @@ backend:
 
 airflow:
   enabled: true
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""
@@ -213,6 +216,9 @@ sparkApplication:
 trino:
   enabled: true
   replicas: 1
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
   image:
     repository: ""
     digest: ""

@@ -69,7 +69,7 @@ locals {
           "kafka-cluster:DescribeGroup",
           "kafka-cluster:AlterGroup",
         ]
-        Resource = [var.msk_group_arn]
+        Resource = var.msk_group_arns
       },
       {
         Sid      = "ListSparkRawBucket"

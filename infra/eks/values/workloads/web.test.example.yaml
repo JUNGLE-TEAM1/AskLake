@@ -23,6 +23,22 @@ frontend:
 backend:
   image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000
   replicaCount: 2
+  terminationGracePeriodSeconds: 360
+  preStopDelaySeconds: 310
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 60
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        pods: 2
+        periodSeconds: 30
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        pods: 1
+        periodSeconds: 60
   serviceAccountName: asklake-backend
   service: { name: fastapi, type: ClusterIP, port: 8080 }
   runtimeConfigMapName: asklake-runtime

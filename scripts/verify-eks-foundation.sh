@@ -127,6 +127,8 @@ required_files=(
   "$ROOT_DIR/scripts/destroy-eks-spark-operator.sh"
   "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh"
   "$ROOT_DIR/scripts/verify-eks-node-scale-in.sh"
+  "$ROOT_DIR/scripts/watch-eks-day17-scale.mjs"
+  "$ROOT_DIR/scripts/test-eks-day17-scale-observer.mjs"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -140,11 +142,13 @@ bash "$ROOT_DIR/scripts/test-eks-spark-rbac-contract.sh"
 bash "$ROOT_DIR/scripts/test-eks-image-receipt-input.sh"
 node "$ROOT_DIR/scripts/test-eks-runtime-config-contract.mjs"
 node "$ROOT_DIR/scripts/test-eks-backend-runtime-profile.mjs"
+node --test "$ROOT_DIR/scripts/test-eks-day17-scale-observer.mjs"
 bash "$ROOT_DIR/scripts/test-tracked-evidence-redaction.sh"
 bash "$ROOT_DIR/scripts/verify-tracked-evidence-redaction.sh"
 node --check "$ROOT_DIR/scripts/resolve-eks-backend-runtime-profile.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-config-contract.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs"
+node --check "$ROOT_DIR/scripts/watch-eks-day17-scale.mjs"
 python3 -m py_compile "$ROOT_DIR/backend/scripts/verify_eks_phase5_bounded_evidence.py"
 python3 -m py_compile "$ROOT_DIR/backend/scripts/run_eks_phase6_bounded_e2e.py"
 bash -n "$ROOT_DIR/scripts/lib/require-eks-image-receipt.sh"
@@ -169,6 +173,7 @@ helm template asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-c
 }
 grep -q '^  name: asklake-runtime$' "$runtime_config_render"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: external_ec2' "$runtime_config_render"
+grep -q 'ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON:' "$runtime_config_render"
 rm -f "$runtime_config_render"
 
 helm lint "$CHART_DIR" -f "$VALUES_FILE"

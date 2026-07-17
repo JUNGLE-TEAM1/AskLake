@@ -27,6 +27,8 @@ spec:
     spec:
       serviceAccountName: {{ $root.Values.airflow.serviceAccountName }}
       automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml $root.Values.airflow.nodeSelector | nindent 8 }}
       terminationGracePeriodSeconds: 30
       containers:
         - name: airflow-{{ $component }}

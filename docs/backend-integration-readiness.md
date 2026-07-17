@@ -596,6 +596,10 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] create 응답 유실/중복 create의 runId identity 복구와 mismatch fencing test
 - [x] MSK IAM KafkaJS adapter와 metadata-only smoke Job
 - [x] bounded Kafka fixture → RDS JDBC catalog/S3 warehouse Iceberg commit `SparkApplication` smoke manifest
+- [x] 설정 부재 시 기존 단일 fixture slot만 허용하고, 설정 시 기본 slot + 최대 4개 exact group/table mapping만 허용하는 fail-closed parser
+- [x] PostgreSQL group별 advisory transaction lock으로 같은 fixture slot의 두 번째 active Run을 Airflow 호출 전에 차단
+- [x] 서로 다른 세 fixture group의 Run 예약, Run별 boundary와 고유 Iceberg target 정적 회귀 테스트
+- [x] Node runner와 Spark driver가 canonical slot JSON, persisted group과 manifest target mapping을 각각 재검증
 - [x] FastAPI와 Spark driver least-privilege Kubernetes RBAC 계약 소비(리소스 소유자는 EKS foundation chart)
 - [x] `scripts/verify-eks-workloads.sh` Helm schema/lint/render 계약 검증
 - [x] PR에서 B-owned Frontend/Backend/Spark/Airflow image `linux/amd64` build와 focused runtime test workflow
@@ -605,6 +609,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] Airflow migration과 Spark executor의 최소 runtime Secret consumer 범위 검증 후 A/B 정적 계약 정렬
 - [ ] 운영 전 Spark driver/executor ServiceAccount와 Kubernetes API token/RBAC 분리
 - [ ] 통합 환경에서 MSK metadata → bounded Spark output → Trino query live smoke
+- [ ] A가 승인한 3~4개 MSK group을 private runtime-config values에 반영하고 동시 MSK → Iceberg → Trino → Catalog 결과의 pairwise isolation 검증
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
 - [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
 ## Realtime 2026 foundation readiness

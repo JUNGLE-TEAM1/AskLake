@@ -1,6 +1,7 @@
 from pathlib import Path
 from queue import Queue
 from tempfile import TemporaryDirectory
+import json
 import os
 import threading
 import time
@@ -94,14 +95,17 @@ def kafka_fixture_job(job_id: str) -> ETLJobModel:
     return job
 
 
-def eks_mvp_bounded_fixture_job(job_id: str) -> ETLJobModel:
+def eks_mvp_bounded_fixture_job(
+    job_id: str,
+    consumer_group: str = "asklake-eks-mvp-spark-v1",
+) -> ETLJobModel:
     job = kafka_fixture_job(job_id)
     job.source = "Kafka / asklake.eks-mvp.fixture.v1"
     job.source_label = "asklake.eks-mvp.fixture.v1"
     job.source_config = [
         ["Broker / Endpoint", "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098"],
         ["TOPIC / QUEUE NAME", "asklake.eks-mvp.fixture.v1"],
-        ["CONSUMER GROUP ID", "asklake-eks-mvp-spark-v1"],
+        ["CONSUMER GROUP ID", consumer_group],
         ["__EKS MVP Fixture Batch ID", "fixture-batch-001"],
         ["__EKS MVP Expected Count", "100"],
     ]
@@ -140,13 +144,13 @@ def spark_terminal_result(job_id: str, run_id: str, execution: dict) -> dict:
     }
 
 
-def eks_mvp_iceberg_target() -> dict:
+def eks_mvp_iceberg_target(table: str = "eks_mvp_fixture") -> dict:
     return {
         "catalog": "iceberg",
         "namespace": "asklake",
         "partitionColumns": [],
-        "table": "eks_mvp_fixture",
-        "tableUri": "iceberg://iceberg/asklake/eks_mvp_fixture",
+        "table": table,
+        "tableUri": f"iceberg://iceberg/asklake/{table}",
         "writeMode": "replace",
     }
 
@@ -288,6 +292,26 @@ class EtlJobDeleteTests(unittest.TestCase):
         self.assertIn("FOR UPDATE", compiled_sql.upper())
         self.assertIn("etl_jobs.id", compiled_sql)
         self.assertTrue(statement.get_execution_options()["populate_existing"])
+
+    def test_postgres_fixture_slot_reservation_uses_an_advisory_transaction_lock(self) -> None:
+        db = Mock()
+        db.get_bind.return_value.dialect.name = "postgresql"
+        db.scalars.return_value.all.return_value = []
+
+        with patch("app.repositories.etl_repository.ensure_schema"):
+            self.assertIsNone(
+                etl_repository.find_active_eks_fixture_slot_run(
+                    db,
+                    "approved-scale-17-01",
+                )
+            )
+
+        lock_statement, lock_parameters = db.execute.call_args.args
+        self.assertIn("pg_advisory_xact_lock", str(lock_statement))
+        self.assertEqual(
+            lock_parameters["lock_key"],
+            "asklake:eks-fixture-slot:approved-scale-17-01",
+        )
 
 
 class BlockingAirflowClient:
@@ -448,9 +472,13 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             db.add(kafka_fixture_job(job_id))
             db.commit()
 
-    def insert_eks_mvp_fixture_job(self, job_id: str) -> None:
+    def insert_eks_mvp_fixture_job(
+        self,
+        job_id: str,
+        consumer_group: str = "asklake-eks-mvp-spark-v1",
+    ) -> None:
         with self.session_factory() as db:
-            db.add(eks_mvp_bounded_fixture_job(job_id))
+            db.add(eks_mvp_bounded_fixture_job(job_id, consumer_group))
             db.commit()
 
     def test_eks_mvp_fixture_routes_through_airflow(self) -> None:
@@ -481,6 +509,8 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             fixture_state = run.task_states["eksMvpFixture"]
             boundary = fixture_state["sourceBoundary"]
             self.assertEqual(fixture_state["runId"], run.run_id)
+            self.assertEqual(fixture_state["contractVersion"], 2)
+            self.assertEqual(fixture_state["icebergTable"], "eks_mvp_fixture")
             self.assertEqual(boundary["snapshotId"], run.run_id)
             self.assertEqual(boundary["fixtureBatchId"], "fixture-batch-001")
             self.assertEqual(boundary["expectedCount"], 100)
@@ -508,6 +538,14 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         source_boundary = dict(airflow.last_conf["sourceBoundary"])
         with self.session_factory() as db:
             job = db.get(ETLJobModel, job_id)
+            run = db.get(ETLRunModel, response.run.run_id)
+            fixture_state = dict(run.task_states["eksMvpFixture"])
+            fixture_state.pop("icebergTable")
+            fixture_state["contractVersion"] = 1
+            run.task_states = {
+                **run.task_states,
+                "eksMvpFixture": fixture_state,
+            }
             job.source_config = [
                 [label, "fixture-batch-drifted" if label == "__EKS MVP Fixture Batch ID" else value]
                 for label, value in job.source_config
@@ -567,6 +605,91 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             job = db.get(ETLJobModel, job_id)
             self.assertEqual(job.iceberg_target, eks_mvp_iceberg_target())
             self.assertTrue(job.dataset_id)
+
+    def test_three_approved_fixture_slots_reserve_unique_groups_and_tables(self) -> None:
+        slots = [
+            {
+                "consumerGroup": "asklake-eks-mvp-spark-v1",
+                "table": "eks_mvp_fixture",
+            },
+            *[
+                {
+                    "consumerGroup": f"approved-scale-17-{index:02d}",
+                    "table": f"eks_mvp_scale_17_{index:02d}",
+                }
+                for index in range(1, 4)
+            ],
+        ]
+        job_groups = {
+            f"JOB-SQLITE-EKS-SCALE-{index:02d}": f"approved-scale-17-{index:02d}"
+            for index in range(1, 4)
+        }
+        duplicate_job_id = "JOB-SQLITE-EKS-SCALE-DUPLICATE"
+        for job_id, consumer_group in job_groups.items():
+            self.insert_eks_mvp_fixture_job(job_id, consumer_group)
+        self.insert_eks_mvp_fixture_job(
+            duplicate_job_id,
+            "approved-scale-17-01",
+        )
+        airflow = BlockingAirflowClient()
+        environment = {
+            "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON": json.dumps(slots),
+            "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+            "ASKLAKE_SPARK_RUNNER": "kubernetes",
+        }
+
+        with (
+            patch.dict(os.environ, environment),
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch("app.services.etl_service.build_airflow_client", return_value=airflow),
+        ):
+            for job_id in job_groups:
+                with self.session_factory() as db:
+                    response = command_job(
+                        db,
+                        job_id,
+                        "run",
+                        ActorContext(name="Test Admin", role="admin"),
+                    )
+                    self.assertEqual(response.run.status, "queued")
+
+            with self.session_factory() as db:
+                with self.assertRaises(ApiError) as raised:
+                    command_job(
+                        db,
+                        duplicate_job_id,
+                        "run",
+                        ActorContext(name="Test Admin", role="admin"),
+                    )
+
+            for job_id in job_groups:
+                with self.session_factory() as db:
+                    job = db.get(ETLJobModel, job_id)
+                    ensure_batch_iceberg_target(db, job)
+
+        self.assertEqual(raised.exception.code, "EKS_MVP_FIXTURE_SLOT_ACTIVE")
+        self.assertEqual(airflow.trigger_count, 3)
+        with self.session_factory() as db:
+            jobs = [db.get(ETLJobModel, job_id) for job_id in job_groups]
+            runs = list(db.scalars(
+                select(ETLRunModel).where(ETLRunModel.job_id.in_(job_groups))
+            ))
+            duplicate_runs = list(db.scalars(
+                select(ETLRunModel).where(ETLRunModel.job_id == duplicate_job_id)
+            ))
+
+        self.assertEqual(
+            {job.iceberg_target["table"] for job in jobs},
+            {f"eks_mvp_scale_17_{index:02d}" for index in range(1, 4)},
+        )
+        self.assertEqual(
+            {
+                run.task_states["eksMvpFixture"]["sourceBoundary"]["consumerGroup"]
+                for run in runs
+            },
+            set(job_groups.values()),
+        )
+        self.assertEqual(duplicate_runs, [])
 
     def test_eks_mvp_fixture_rejects_success_without_exact_count_and_commit_boundary(self) -> None:
         job_id = "JOB-SQLITE-EKS-MVP-FIXTURE-RESULT-MISMATCH"

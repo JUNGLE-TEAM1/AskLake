@@ -102,6 +102,18 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'airflow.nodeSelector.asklake\.io/workload-class=spark' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a non-General Airflow node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set-string 'trino.nodeSelector.asklake\.io/workload-class=spark' >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a non-General Trino node selector" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set-string 'sparkApplication.nodeSelector.asklake\.io/workload-class=general' >/dev/null 2>&1; then
   echo "EKS workload schema accepted a non-Spark SparkApplication node selector" >&2
   exit 1
@@ -176,7 +188,10 @@ for service_account in \
 done
 
 test "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -eq 2
-test "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -eq 2
+test "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -eq 7
+test "$(grep -c 'asklake.io/workload-class: general' "$RENDERED_FILE")" -eq 5
+test "$(grep -c 'kubernetes.io/arch: amd64' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 4
+test "$(grep -c 'asklake.io/workload-class: general' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 4
 grep -q 'tcpSocket:' "$RENDERED_FILE"
 grep -q 'app.kubernetes.io/name: asklake-workloads' "$RENDERED_FILE"
 grep -q 'app.kubernetes.io/instance: "asklake-workloads"' "$RENDERED_FILE"

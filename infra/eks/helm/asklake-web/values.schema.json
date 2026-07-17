@@ -91,7 +91,14 @@
             }
           },
           "frontend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
-          "backend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
+          "backend": {
+            "properties": {
+              "image": { "maxLength": 0 },
+              "replicaCount": { "const": 0 },
+              "autoscaling": { "properties": { "enabled": { "const": false } } },
+              "resources": { "maxProperties": 0 }
+            }
+          },
           "collector": { "properties": { "resources": { "maxProperties": 0 } } }
         }
       }
@@ -157,20 +164,80 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
         "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
         "preStopDelaySeconds": { "type": "integer", "const": 310 },
+        "autoscaling": { "$ref": "#/$defs/autoscaling" },
         "serviceAccountName": { "type": "string", "const": "asklake-backend" },
         "service": { "$ref": "#/$defs/backendService" },
         "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
         "runtimeBoundaryConfigMapName": { "type": "string", "const": "asklake-runtime-boundary" },
+        "runtimeConfigRevision": { "type": "string", "maxLength": 128 },
         "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
         "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
         "resources": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "autoscaling": {
+                "properties": {
+                  "enabled": { "const": true }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "replicaCount": { "const": 2 }
+            }
+          }
+        }
+      ]
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage", "behavior"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "const": 2 },
+        "maxReplicas": { "type": "integer", "const": 6 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scaleUp", "scaleDown"],
+          "properties": {
+            "scaleUp": { "$ref": "#/$defs/scaleUpBehavior" },
+            "scaleDown": { "$ref": "#/$defs/scaleDownBehavior" }
+          }
+        }
+      }
+    },
+    "scaleUpBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stabilizationWindowSeconds", "pods", "periodSeconds"],
+      "properties": {
+        "stabilizationWindowSeconds": { "type": "integer", "minimum": 0, "maximum": 300 },
+        "pods": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "periodSeconds": { "type": "integer", "minimum": 15, "maximum": 1800 }
+      }
+    },
+    "scaleDownBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stabilizationWindowSeconds", "pods", "periodSeconds"],
+      "properties": {
+        "stabilizationWindowSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
+        "pods": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "periodSeconds": { "type": "integer", "minimum": 15, "maximum": 1800 }
       }
     },
     "collector": {

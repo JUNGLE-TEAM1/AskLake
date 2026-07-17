@@ -8,6 +8,7 @@ output "msk_contract" {
     broker_port                = 9098
     test_topic                 = var.msk_test_topic
     test_consumer_group        = var.msk_test_consumer_group
+    scale_consumer_groups      = sort(tolist(var.msk_scale_consumer_groups))
   }
 }
 
