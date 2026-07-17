@@ -21,7 +21,9 @@ ENV VITE_S3_REGION=${VITE_S3_REGION}
 ENV VITE_SPARK_OUTPUT_BUCKET=${VITE_SPARK_OUTPUT_BUCKET}
 
 COPY package*.json ./
-RUN npm ci
+# npm ci may inherit an omit=optional setting from the build environment.
+# Vite's Lightning CSS adapter requires the Alpine musl binary at build time.
+RUN npm ci --include=optional
 
 COPY . .
 RUN npm run build

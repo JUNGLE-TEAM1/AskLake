@@ -34,15 +34,94 @@ const kafkaSourceTypes = new Set(["Stream / Kafka", "Kafka JSON"]);
 const sourceAssetCache = new Map();
 const sourceAssetFailureCache = new Map();
 const minioDockerFailureCache = new Map();
+export const SOURCE_CONNECTOR_PREVIEW_ROW_LIMIT = 20;
+export const SOURCE_CONNECTOR_RESPONSE_MAX_BYTES = 1024 * 1024;
 
 export async function testSourceConnector(sourceType, fields) {
-  if (objectStorageSourceTypes.has(sourceType)) return testObjectStorageSource(fields, sourceType);
-  if (sourceType === "REST API") return testRestSource(fields);
-  if (sourceType === "Database" || sourceType === "PostgreSQL") return testPostgresSource(fields);
-  if (sourceType === "MongoDB") return testMongoSource(fields);
-  if (dataLakeSourceTypes.has(sourceType)) return testDataLakeSourceStable(fields, sourceType);
-  if (kafkaSourceTypes.has(sourceType)) return testKafkaSource(fields, sourceType);
+  if (objectStorageSourceTypes.has(sourceType)) {
+    return limitSourceConnectorResponse(await testObjectStorageSource(fields, sourceType));
+  }
+  if (sourceType === "REST API") {
+    return limitSourceConnectorResponse(await testRestSource(fields));
+  }
+  if (sourceType === "Database" || sourceType === "PostgreSQL") {
+    return limitSourceConnectorResponse(await testPostgresSource(fields));
+  }
+  if (sourceType === "MongoDB") {
+    return limitSourceConnectorResponse(await testMongoSource(fields));
+  }
+  if (dataLakeSourceTypes.has(sourceType)) {
+    return limitSourceConnectorResponse(await testDataLakeSourceStable(fields, sourceType));
+  }
+  if (kafkaSourceTypes.has(sourceType)) {
+    return limitSourceConnectorResponse(await testKafkaSource(fields, sourceType));
+  }
   throw apiError("UNSUPPORTED_SOURCE", `${sourceType}는 지원하지 않는 소스 커넥터입니다.`, 400);
+}
+
+export function limitSourceConnectorResponse(response) {
+  const sourceSchema = response?.draftPatch?.schema;
+  const limitedSchema = sourceSchema && typeof sourceSchema === "object"
+    ? {
+        ...sourceSchema,
+        sampleRows: limitedPreviewRows(sourceSchema.sampleRows),
+      }
+    : sourceSchema;
+  const limitedDraftPatch = response?.draftPatch && typeof response.draftPatch === "object"
+    ? {
+        ...response.draftPatch,
+        ...(limitedSchema ? { schema: limitedSchema } : {}),
+      }
+    : response?.draftPatch;
+  const limited = {
+    ...response,
+    ...(limitedDraftPatch ? { draftPatch: limitedDraftPatch } : {}),
+    previewRows: limitedPreviewRows(response?.previewRows),
+  };
+  const previewCollections = [
+    limited.previewRows,
+    limited.draftPatch?.schema?.sampleRows,
+  ].filter(Array.isArray);
+
+  while (
+    sourceConnectorResponseBytes(limited) > SOURCE_CONNECTOR_RESPONSE_MAX_BYTES
+    && removeLargestPreviewRow(previewCollections)
+  ) {
+    // Preserve the real connector result and remove only oversized preview
+    // rows until the response can be transported without stdout truncation.
+  }
+  if (sourceConnectorResponseBytes(limited) > SOURCE_CONNECTOR_RESPONSE_MAX_BYTES) {
+    throw apiError(
+      "SOURCE_CONNECTOR_RESPONSE_TOO_LARGE",
+      `Source connector metadata exceeds the ${SOURCE_CONNECTOR_RESPONSE_MAX_BYTES}-byte response limit.`,
+      502,
+    );
+  }
+  return limited;
+}
+
+function limitedPreviewRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows
+    .slice(0, SOURCE_CONNECTOR_PREVIEW_ROW_LIMIT)
+    .map((row) => (Array.isArray(row) ? row.slice() : row));
+}
+
+function removeLargestPreviewRow(collections) {
+  let largest = null;
+  for (const rows of collections) {
+    for (let index = 0; index < rows.length; index += 1) {
+      const bytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
+      if (largest === null || bytes > largest.bytes) largest = { bytes, index, rows };
+    }
+  }
+  if (largest === null) return false;
+  largest.rows.splice(largest.index, 1);
+  return true;
+}
+
+function sourceConnectorResponseBytes(response) {
+  return Buffer.byteLength(JSON.stringify(response), "utf8");
 }
 
 export async function listSourceAssets(sourceType, fields, requestedPrefix) {

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import timedelta
 from typing import Any
 
 import pendulum
@@ -13,18 +15,61 @@ try:
     from airflow.sdk import dag, task
 except ImportError:
     from airflow.decorators import dag, task
+from airflow.exceptions import AirflowFailException, AirflowSkipException
 
 
-def post_json(url: str, payload: dict[str, Any], token: str) -> dict[str, Any]:
+class RagStageRejectedError(RuntimeError):
+    pass
+
+
+class RagJobAlreadyComplete(RuntimeError):
+    pass
+
+
+class RagHttpError(RuntimeError):
+    def __init__(self, status_code: int, body: str, payload: dict[str, Any] | None = None) -> None:
+        super().__init__(f"RAG internal API request failed with HTTP {status_code}: {body[:2000]}")
+        self.status_code = status_code
+        self.body = body
+        self.payload = payload or {}
+
+
+RAG_PHYSICAL_TASK_RETRY_ARGS = {
+    "retries": 2,
+    "retry_delay": timedelta(seconds=15),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=2),
+}
+RAG_STAGE_ORDER = {
+    "queued": 0,
+    "staging": 1,
+    "chunking": 2,
+    "embedding": 3,
+    "indexing": 4,
+    "validating": 5,
+    "ready": 6,
+}
+
+
+def post_json(
+    url: str,
+    payload: dict[str, Any],
+    token: str,
+    *,
+    timeout_seconds: int | None = None,
+) -> dict[str, Any]:
     request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=int(os.environ.get("ASKLAKE_RAG_TIMEOUT_SECONDS", "1800"))) as response:
+        timeout = timeout_seconds if timeout_seconds is not None else int(os.environ.get("ASKLAKE_RAG_TIMEOUT_SECONDS", "1800"))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
-        raise RuntimeError(
-            f"RAG internal API request failed with HTTP {exc.code}: {body[:2000]}"
-        ) from exc
+        try:
+            error_payload = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            error_payload = {}
+        raise RagHttpError(exc.code, body, error_payload if isinstance(error_payload, dict) else {}) from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError(f"RAG internal API request failed: {exc}") from exc
     if not isinstance(body, dict):
@@ -47,6 +92,111 @@ def get_json(url: str) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeError("Spark REST returned an invalid payload")
     return body
+
+
+def ensure_stage_callback_allows_work(
+    response: dict[str, Any],
+    *,
+    expected_stage: str | None = None,
+) -> dict[str, Any]:
+    status = str(response.get("status") or "").strip().casefold()
+    stage = str(response.get("stage") or "").strip().casefold()
+    error = str(response.get("error") or "").strip()
+    if status == "ready" or stage == "ready":
+        raise RagJobAlreadyComplete("RAG job is already ready; physical retry is unnecessary")
+    rejected = {"failed", "canceled", "cancelled", "stale", "superseded"}
+    error_key = error.casefold()
+    if (
+        status in rejected
+        or stage in rejected
+        or "superseded" in error_key
+        or "stale generation" in error_key
+        or "no longer current" in error_key
+    ):
+        raise RagStageRejectedError(error or f"RAG stage was rejected with status={status or stage}")
+    expected = str(expected_stage or "").strip().casefold()
+    actual = stage if stage in RAG_STAGE_ORDER else status
+    if expected in RAG_STAGE_ORDER and actual in RAG_STAGE_ORDER:
+        if RAG_STAGE_ORDER[actual] > RAG_STAGE_ORDER[expected]:
+            raise RagJobAlreadyComplete(
+                f"RAG job already advanced to {actual}; {expected} physical retry is unnecessary"
+            )
+        if RAG_STAGE_ORDER[actual] < RAG_STAGE_ORDER[expected]:
+            raise RuntimeError(
+                f"RAG callback did not acknowledge stage {expected}; current stage is {actual}"
+            )
+    return response
+
+
+def post_callback_json(url: str, payload: dict[str, Any], token: str) -> dict[str, Any]:
+    """Retry only the idempotent backend callback, never Spark submission."""
+
+    if not str(url or "").strip() or not str(token or "").strip():
+        raise RuntimeError("RAG callback URL and token are required")
+    attempts = max(1, min(int(os.environ.get("ASKLAKE_RAG_CALLBACK_ATTEMPTS", "3")), 5))
+    timeout = max(1, min(int(os.environ.get("ASKLAKE_RAG_CALLBACK_TIMEOUT_SECONDS", "30")), 300))
+    for attempt in range(1, attempts + 1):
+        try:
+            return post_json(url, payload, token, timeout_seconds=timeout)
+        except RagHttpError as exc:
+            error = exc.payload.get("error") if isinstance(exc.payload, dict) else None
+            details = error.get("details") if isinstance(error, dict) and isinstance(error.get("details"), dict) else {}
+            code = str(error.get("code") or "") if isinstance(error, dict) else ""
+            message = str(error.get("message") or exc.body) if isinstance(error, dict) else exc.body
+            if (
+                code in {"rag_job_superseded", "rag_activation_rejected"}
+                or (details.get("stopDag") is True and details.get("retryable") is False)
+            ):
+                raise RagStageRejectedError(message or code) from exc
+            retryable = exc.status_code == 429 or exc.status_code >= 500
+            if not retryable or attempt >= attempts:
+                raise
+            time.sleep(min(4.0, float(2 ** (attempt - 1))))
+        except RuntimeError as exc:
+            message = str(exc)
+            retryable = "request failed:" in message or "HTTP 429" in message or "HTTP 5" in message
+            if not retryable or attempt >= attempts:
+                raise
+            time.sleep(min(4.0, float(2 ** (attempt - 1))))
+    raise RuntimeError("RAG callback retry loop exhausted")
+
+
+def require_stage_start(
+    conf: dict[str, Any],
+    *,
+    status: str,
+    stage: str,
+    counts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    base_url = (os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL") or "").rstrip("/")
+    token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN") or ""
+    job_id = str(conf.get("jobId") or "").strip()
+    if not base_url or not token or not job_id:
+        raise RuntimeError("RAG stage callback configuration is incomplete")
+    payload = {
+        "status": status,
+        "event": "stage_started",
+        "stage": stage,
+        "datasetId": conf.get("datasetId"),
+        "jobId": job_id,
+        "observedAt": pendulum.now("UTC").to_iso8601_string(),
+        **(counts or {}),
+    }
+    response = post_callback_json(
+        f"{base_url}/api/internal/airflow/rag-jobs/{job_id}/result",
+        payload,
+        token,
+    )
+    return ensure_stage_callback_allows_work(response, expected_stage=stage)
+
+
+def guard_stage_start(conf: dict[str, Any], *, status: str, stage: str, counts: dict[str, Any] | None = None) -> None:
+    try:
+        require_stage_start(conf, status=status, stage=stage, counts=counts)
+    except RagJobAlreadyComplete as exc:
+        raise AirflowSkipException(str(exc)) from exc
+    except RagStageRejectedError as exc:
+        raise AirflowFailException(str(exc)) from exc
 
 
 def rag_physical_column(name: str) -> str:
@@ -171,11 +321,12 @@ def rag_dag_failure_callback(context: dict[str, Any]) -> None:
     backend_url = (os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL") or "").rstrip("/")
     token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN") or ""
     if not backend_url or not token:
-        return
+        raise RuntimeError("RAG DAG failure callback is not configured")
     try:
-        post_json(f"{backend_url}/api/internal/airflow/rag-jobs/{job_id}/result", {"status": "failed", "error": "Airflow RAG DAG failed; inspect the failed task logs"}, token)
-    except Exception:
-        return
+        post_callback_json(f"{backend_url}/api/internal/airflow/rag-jobs/{job_id}/result", {"status": "failed", "error": "Airflow RAG DAG failed; inspect the failed task logs"}, token)
+    except Exception as exc:
+        print(f"RAG DAG failure callback could not be acknowledged for job {job_id}: {exc}", file=sys.stderr)
+        raise
 
 
 @dag(dag_id="asklake_rag_index", schedule=None, start_date=pendulum.datetime(2026, 1, 1, tz="UTC"), catchup=False, tags=["asklake", "rag", "opensearch"], is_paused_upon_creation=False, on_failure_callback=rag_dag_failure_callback)
@@ -197,15 +348,17 @@ def asklake_rag_index() -> None:
             raise ValueError("RAG indexing requires approved bodyColumns")
         return conf
 
-    @task(task_id="stage_parent_documents")
+    @task(task_id="stage_parent_documents", **RAG_PHYSICAL_TASK_RETRY_ARGS)
     def stage_parent_documents(conf: dict[str, Any]) -> dict[str, Any]:
+        guard_stage_start(conf, status="parent_staged", stage="staging")
         result = submit_parent_spark_job(conf)
         return {"conf": conf, "spark": result}
 
-    @task(task_id="stage_chunks")
+    @task(task_id="stage_chunks", **RAG_PHYSICAL_TASK_RETRY_ARGS)
     def stage_chunks(bundle: dict[str, Any]) -> dict[str, Any]:
         conf = bundle["conf"]
         conf["parentStage"] = bundle.get("spark")
+        guard_stage_start(conf, status="chunked", stage="chunking")
         return {"conf": conf, "spark": submit_rag_spark_stage(conf, kind="chunk")}
 
     @task(task_id="prepare_index_version")
@@ -215,11 +368,9 @@ def asklake_rag_index() -> None:
         conf["chunkStage"] = bundle["spark"]
         return conf
 
-    @task(task_id="run_embedding_worker")
+    @task(task_id="run_embedding_worker", **RAG_PHYSICAL_TASK_RETRY_ARGS)
     def run_worker(conf: dict[str, Any]) -> dict[str, Any]:
-        backend_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
-        backend_token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
-        post_json(f"{backend_url.rstrip('/')}/api/internal/airflow/rag-jobs/{conf['jobId']}/result", {"status": "embedding"}, backend_token)
+        guard_stage_start(conf, status="embedding", stage="embedding")
         return submit_rag_spark_stage(conf, kind="index")
 
     @task(task_id="verify_opensearch_counts")
@@ -228,20 +379,34 @@ def asklake_rag_index() -> None:
             raise ValueError("OpenSearch dispatch Spark stage did not finish")
         return {"conf": conf, "result": result}
 
-    @task(task_id="validate_opensearch_index")
+    @task(task_id="validate_opensearch_index", **RAG_PHYSICAL_TASK_RETRY_ARGS)
     def validate_opensearch(bundle: dict[str, Any]) -> dict[str, Any]:
         base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
         token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
-        validation = post_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/validate", {}, token)
+        guard_stage_start(
+            bundle["conf"],
+            status="validating",
+            stage="validating",
+            counts={
+                "documentCount": bundle["result"].get("documentCount"),
+                "chunkCount": bundle["result"].get("chunkCount"),
+                "parentCount": bundle["result"].get("parentCount"),
+                "indexedCount": bundle["result"].get("indexedCount"),
+                "dimensions": bundle["result"].get("dimensions"),
+                "embeddingProvider": bundle["result"].get("embeddingProvider"),
+                "embeddingModel": bundle["result"].get("embeddingModel"),
+            },
+        )
+        validation = post_callback_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/validate", {}, token)
         if validation.get("validationPassed") is not True:
             raise ValueError("OpenSearch physical index validation failed")
         return {"conf": bundle["conf"], "result": bundle["result"], "validation": validation}
 
-    @task(task_id="activate_index_alias")
+    @task(task_id="activate_index_alias", **RAG_PHYSICAL_TASK_RETRY_ARGS)
     def activate(bundle: dict[str, Any]) -> dict[str, Any]:
         base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL") or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
         token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
-        return post_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/result", {"status": "success", "validationPassed": bundle["validation"].get("validationPassed"), "indexedCount": bundle["validation"].get("documentCount"), "parentCount": bundle["validation"].get("parentCount"), "dimensions": bundle["validation"].get("dimensions"), "activeIndex": bundle["conf"]["preparedIndex"]}, token)
+        return post_callback_json(f"{base_url.rstrip('/')}/api/internal/airflow/rag-jobs/{bundle['conf']['jobId']}/result", {"status": "success", "validationPassed": bundle["validation"].get("validationPassed"), "indexedCount": bundle["validation"].get("documentCount"), "parentCount": bundle["validation"].get("parentCount"), "dimensions": bundle["validation"].get("dimensions"), "activeIndex": bundle["conf"]["preparedIndex"]}, token)
 
     received = receive()
     validated = validate(received)

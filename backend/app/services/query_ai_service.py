@@ -14,6 +14,11 @@ from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
 from app.services.governance_enforcement import require_governed_access
 from app.services.ai_gateway_client import AiGatewayClient
 from app.services.ai_evidence import retain_used_rag_evidence
+from app.services.ai_generation_audit import (
+    evidence_candidate_ids,
+    persist_verified_generation_evidence,
+    verified_used_evidence_ids,
+)
 from app.mcp.context import issue_ai_context_token
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
@@ -126,18 +131,40 @@ class QueryAiService:
             "sources": [],
             "retrieval": None,
         }
+        verified_evidence_ids = verified_used_evidence_ids(used_rag_context)
+        provider = str(raw_suggestion.get("provider") or "").strip()
+        model = str(raw_suggestion.get("model") or "").strip()
+        persist_verified_generation_evidence(
+            self.catalog_repository.db,
+            actor=actor_context,
+            candidate_ids=evidence_candidate_ids(rag_context),
+            context_payload={
+                "baseDatasetId": base_dataset.id,
+                "currentQuery": request.current_query or "",
+                "prompt": prompt,
+                "selectedDatasetIds": context_dataset_ids,
+                "semanticModelId": request.semantic_model_id,
+            },
+            mode="query_sql",
+            model=model,
+            output_payload={"sql": sql},
+            provider=provider,
+            request_id=request_id,
+            used_ids=verified_evidence_ids,
+        )
 
         return QueryAiSuggestionResponse(
             body=suggestion.get("body")
             or "Read-only SQL draft generated from the selected dataset context.",
-            model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else None),
-            provider=(str(raw_suggestion.get("provider")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("provider") else None),
+            model=model,
+            provider=provider,
+            request_id=request_id,
             notices=normalize_notices(suggestion.get("notices")),
             retrieval=used_rag_context.get("retrieval"),
             sources=list(used_rag_context.get("sources") or []),
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
-            used_evidence_ids=used_evidence_ids,
+            used_evidence_ids=verified_evidence_ids,
         )
 
     def get_catalog_dataset(self, dataset_id: str) -> CatalogDatasetResponse:

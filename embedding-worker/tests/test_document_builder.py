@@ -33,7 +33,41 @@ def test_worker_embeds_all_selected_document_fields_and_keeps_dual_use_metadata(
         "\ncategory: Audio\n\nrating: 4.7\n[/BODY]"
     )
     assert document["metadata_display"] == {"category": "Audio"}
-    assert [
-        field["role"] for field in document["source_fields"]
+    category_field = next(
+        field for field in document["source_fields"]
         if field["logicalField"] == "category"
-    ] == ["body", "metadata"]
+    )
+    assert category_field["role"] == "body"
+    assert category_field["roles"] == ["body", "metadata"]
+    assert document["source_columns"].count("category") == 1
+
+
+def test_worker_uses_production_composite_identifier_and_rejects_partial_keys() -> None:
+    document = build_documents(
+        "events",
+        "Events",
+        [{"tenant": "t1", "record": 7, "text": "hello"}],
+        ["text", "tenant"],
+        [],
+        "events-v1",
+        identifier_columns=["tenant", "record"],
+    )[0]
+    assert document["source_row_id"] == "identifier:0989c08947a2469089d3361e0b0b0079"
+    tenant_field = next(field for field in document["source_fields"] if field["logicalField"] == "tenant")
+    assert tenant_field["roles"] == ["body", "identifier"]
+    assert document["source_columns"].count("tenant") == 1
+
+    try:
+        build_documents(
+            "events",
+            "Events",
+            [{"tenant": "t1", "record": None, "text": "hello"}],
+            ["text"],
+            [],
+            "events-v1",
+            identifier_columns=["tenant", "record"],
+        )
+    except ValueError as exc:
+        assert "RAG_SOURCE_IDENTIFIER_MISSING" in str(exc)
+    else:
+        raise AssertionError("partial composite identifiers must be rejected")

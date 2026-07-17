@@ -140,6 +140,7 @@ export type CreateDerivedDatasetRequest = {
     databaseName?: string;
     fileFormat?: "csv" | "json" | "parquet";
     owner: string;
+    principalId?: string;
     overlapPolicy: ScheduleOverlapPolicy;
     partitionColumn?: string;
     partitionColumns?: string[];
@@ -173,6 +174,7 @@ export type CreateTrinoSqlJobRequest = {
     accessScope: "organization" | "private" | "project";
     owner: string;
     permissionSummary: string;
+    principalId?: string;
   };
   jobName?: string;
   query: string;

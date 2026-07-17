@@ -20,6 +20,7 @@ from pyspark.sql import types as T
 __all__ = [
     'NESTED_COLUMN_REFERENCE_PREFIX',
     'REVIEW_ROW_ANALYSIS_LLM_CACHE',
+    'REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS',
     'REVIEW_ROW_ANALYSIS_METHOD_ALIASES',
     'REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS',
     'REVIEW_TEXT_MODEL_CACHE',
@@ -110,6 +111,10 @@ REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
     "copy",
     "one_of_values",
     "instruction",
+}
+REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS = {
+    "copy",
+    "one_of_values",
 }
 
 NESTED_COLUMN_REFERENCE_PREFIX = "__ASKLAKE_NESTED_REF__:"
@@ -1165,8 +1170,8 @@ def plan_review_row_analysis_checks(steps):
         allowed_values = review_row_analysis_allowed_values(column_config, config)
         selected_model_artifact = review_row_analysis_model_artifact(column_config, config)
         portable_model_path = resolve_review_text_model_path(target, allowed_values, selected_model_artifact) if method == "one_of_values" else ""
-        model_required = review_text_model_required(config, column_config) if method == "one_of_values" else False
-        fallback_allowed = review_row_analysis_fallback_allowed(config, column_config) if method == "one_of_values" else False
+        model_required = method == "one_of_values"
+        fallback_allowed = False
         model_selection_policy = review_row_analysis_model_selection_policy(column_config, config) if method == "one_of_values" else "none"
         check = review_row_analysis_check_payload(
             allowed_values=allowed_values,
@@ -1190,6 +1195,13 @@ def plan_review_row_analysis_checks(steps):
                 "validRows": 0,
                 "validationStatus": "needs_review",
             })
+        elif method not in REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS:
+            check.update({
+                "invalidRows": 0,
+                "runtimeStatus": "unsupported_execution_method",
+                "validRows": 0,
+                "validationStatus": "preview_only",
+            })
         elif method == "one_of_values" and not allowed_values:
             check.update({
                 "invalidRows": 0,
@@ -1197,7 +1209,7 @@ def plan_review_row_analysis_checks(steps):
                 "validRows": 0,
                 "validationStatus": "needs_review",
             })
-        elif method == "one_of_values" and model_required and not portable_model_path:
+        elif method == "one_of_values" and not portable_model_path:
             check.update({
                 "invalidRows": 0,
                 "runtimeStatus": "missing_model_artifact",
@@ -1208,12 +1220,6 @@ def plan_review_row_analysis_checks(steps):
             check.update({
                 "runtimeStatus": "portable_text_model_planned",
                 "validationStatus": "model_runtime_planned",
-            })
-        elif method == "one_of_values":
-            check.update({
-                "fallbackUsed": True,
-                "runtimeStatus": "rule_fallback_planned",
-                "validationStatus": "fallback_structural_check_only",
             })
         else:
             check.update({
@@ -1255,15 +1261,18 @@ def review_row_analysis_check_payload(
         "rawMethod": raw_method,
         "runtimeStatus": "recorded",
         "selectedModelArtifact": selected_model_artifact,
-        "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS),
+        "previewOnlyMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS - REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
+        "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
         "target": target,
         "totalRows": total_rows,
         "validationRows": int(metrics.get("validationRows") or 0) if isinstance(metrics, dict) else 0,
     }
 
 def review_row_analysis_execution_mode(method, selected_model_artifact, portable_model_path, model_required):
-    if method in {"copy", "instruction"}:
-        return method
+    if method == "copy":
+        return "copy"
+    if method not in REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS:
+        return "preview_only"
     if method != "one_of_values":
         return ""
     if portable_model_path:

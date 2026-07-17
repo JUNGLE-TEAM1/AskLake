@@ -58,6 +58,7 @@ class QueryAiSuggestionRequest(CamelModel):
 class QueryAiSuggestionResponse(CamelModel):
     body: str
     mode: QueryAiMode = "draft_sql"
+    request_id: str = Field(min_length=1, max_length=255)
     model: str | None = None
     provider: str | None = None
     notices: list[str] = Field(default_factory=list)

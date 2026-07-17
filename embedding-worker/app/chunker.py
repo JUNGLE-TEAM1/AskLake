@@ -36,6 +36,46 @@ SentenceEmbedder = Callable[[list[str]], list[list[float]]]
 BoundaryRefiner = Callable[[list[dict[str, Any]], list[int]], list[dict[str, int]]]
 
 
+def _field_roles(field: dict[str, Any]) -> list[str]:
+    raw_roles = field.get("roles")
+    values = raw_roles if isinstance(raw_roles, list) else [field.get("role")]
+    return list(
+        dict.fromkeys(
+            str(value).strip().casefold()
+            for value in values
+            if str(value or "").strip()
+        )
+    )
+
+
+def _merge_source_fields(fields: Sequence[Any]) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw_field in fields:
+        if not isinstance(raw_field, dict):
+            continue
+        logical = str(raw_field.get("logicalField") or "").strip()
+        physical = str(raw_field.get("physicalField") or logical).strip()
+        if not logical:
+            continue
+        roles = _field_roles(raw_field)
+        key = (logical, physical)
+        current = merged.get(key)
+        if current is None:
+            current = {
+                **raw_field,
+                "logicalField": logical,
+                "physicalField": physical,
+                "role": roles[0] if roles else str(raw_field.get("role") or ""),
+                "roles": roles,
+            }
+            merged[key] = current
+        else:
+            current["roles"] = list(dict.fromkeys([*current.get("roles", []), *roles]))
+            if not current.get("role") and current["roles"]:
+                current["role"] = current["roles"][0]
+    return list(merged.values())
+
+
 def _valid_refined_segments(raw: Sequence[dict[str, Any]], sentence_count: int) -> list[ChunkSegment] | None:
     if not raw or sentence_count <= 0:
         return None
@@ -135,12 +175,23 @@ def chunk_parent_document(
     title = title.strip() or None
     if not body:
         return []
-    full_text = build_embedding_text(title, body)
+    # Repeating an oversized title on every body chunk can make every
+    # embedding request invalid.  Fold its labeled fields into the chunkable
+    # body stream instead: no title content is dropped, while the original
+    # title remains available on each indexed document for display/BM25.
+    title_folded_into_body = bool(title and estimate_tokens(title) >= max_tokens)
+    embedding_title = title
+    if title_folded_into_body:
+        body, canonical_body_blocks = render_field_section(
+            [*canonical_title_blocks, *canonical_body_blocks],
+            "BODY",
+        )
+        body = body.strip()
+        embedding_title = None
+    full_text = build_embedding_text(embedding_title, body)
     sentences = split_sentences(body)
-    title_tokens = estimate_tokens(title or "")
-    if title_tokens >= max_tokens:
-        raise PermanentRagContractError("RAG_TITLE_EXCEEDS_CHUNK_MAX_TOKENS")
-    body_render_overhead = _field_section_overhead(body_blocks, "BODY")
+    title_tokens = estimate_tokens(embedding_title or "")
+    body_render_overhead = _field_section_overhead(canonical_body_blocks, "BODY")
     body_max_tokens = max(1, max_tokens - title_tokens - body_render_overhead)
     body_target_tokens = max(1, target_tokens - title_tokens - body_render_overhead)
     effective_overlap = min(overlap_tokens, max(0, body_max_tokens - 1))
@@ -193,10 +244,20 @@ def chunk_parent_document(
         else:
             strategy = "semantic_embedding"
 
+    if title_folded_into_body:
+        strategy = f"{strategy}_title_folded"
+        fallback_reason = (
+            "title_exceeds_chunk_budget"
+            if not fallback_reason
+            else f"title_exceeds_chunk_budget;{fallback_reason}"
+        )
+
     result: list[dict[str, Any]] = []
     metadata = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
     metadata_display = parent.get("metadata_display") if isinstance(parent.get("metadata_display"), dict) else {}
-    source_fields = parent.get("source_fields") if isinstance(parent.get("source_fields"), list) else []
+    source_fields = _merge_source_fields(
+        parent.get("source_fields") if isinstance(parent.get("source_fields"), list) else []
+    )
     for index, segment in enumerate(segments):
         text, chunk_body_blocks = render_field_section_range(
             canonical_body_blocks,
@@ -209,7 +270,7 @@ def chunk_parent_document(
             chunk_body_blocks = []
         if not text:
             continue
-        effective_embedding_text = build_embedding_text(title, text)
+        effective_embedding_text = build_embedding_text(embedding_title, text)
         if estimate_tokens(effective_embedding_text) > max_tokens:
             raise PermanentRagContractError("RAG_CHUNK_EXCEEDS_MAX_TOKENS")
         chunk_id = chunk_document_id(str(parent["parent_document_id"]), index, effective_embedding_text, metadata)
@@ -220,10 +281,14 @@ def chunk_parent_document(
             if isinstance(field, dict) and field.get("logicalField")
         }
         included_source_fields = [
-            field for field in source_fields
-            if isinstance(field, dict)
-            and str(field.get("role") or "") in {"body", "title"}
-            and (str(field.get("logicalField") or ""), str(field.get("physicalField") or field.get("logicalField") or "")) in included_keys
+            field
+            for field in source_fields
+            if set(_field_roles(field)) & {"body", "title"}
+            and (
+                str(field.get("logicalField") or ""),
+                str(field.get("physicalField") or field.get("logicalField") or ""),
+            )
+            in included_keys
         ]
         result.append({
             "schema_version": CHUNKING_VERSION,
@@ -248,7 +313,16 @@ def chunk_parent_document(
             "metadata": metadata,
             "metadata_display": metadata_display,
             "semantic_bindings": parent.get("semantic_bindings") or {},
-            "source_columns": list(parent.get("source_columns") or [field.get("logicalField") for field in source_fields if isinstance(field, dict)]),
+            "source_columns": list(
+                dict.fromkeys(
+                    str(column)
+                    for column in (
+                        parent.get("source_columns")
+                        or [field.get("logicalField") for field in source_fields]
+                    )
+                    if str(column or "").strip()
+                )
+            ),
             "source_fields": included_source_fields,
             "parent_source_fields": source_fields,
             "content_hash": chunk_content_hash,
@@ -260,7 +334,7 @@ def chunk_parent_document(
             "embedding_status": "pending",
             "embedding_model": parent.get("embedding_model"),
             "embedding_dimensions": parent.get("embedding_dimensions"),
-            "fallback_applied": strategy == "semantic_embedding_fallback",
+            "fallback_applied": fallback_reason is not None,
             "fallback_reason": fallback_reason,
         })
     for chunk in result:

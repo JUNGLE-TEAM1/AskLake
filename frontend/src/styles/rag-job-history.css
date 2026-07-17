@@ -146,6 +146,10 @@
   outline-offset: 2px;
 }
 
+.rag-job-history-summary:focus-visible {
+  outline-offset: -3px;
+}
+
 .rag-job-history-state button svg,
 .rag-job-history-refresh-error button svg {
   width: 15px;
@@ -364,6 +368,44 @@
   border-radius: inherit;
   background: #2e90fa;
   transition: width 360ms ease;
+}
+
+.rag-job-history-indeterminate {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: -10px;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rag-job-history-indeterminate-track {
+  position: relative;
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #eaecf0;
+}
+
+.rag-job-history-indeterminate-track > span {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 34%;
+  border-radius: inherit;
+  background: #2e90fa;
+}
+
+.rag-job-history-indeterminate.is-active .rag-job-history-indeterminate-track > span {
+  animation: rag-job-history-indeterminate 1.35s ease-in-out infinite;
+}
+
+.rag-job-history-indeterminate.is-settled .rag-job-history-indeterminate-track > span {
+  left: 33%;
+  width: 34%;
+  background: #98a2b3;
 }
 
 .rag-job-history-timeline-wrap {
@@ -594,6 +636,11 @@
   50% { box-shadow: 0 0 0 6px rgb(209 233 255 / 45%); }
 }
 
+@keyframes rag-job-history-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(300%); }
+}
+
 @keyframes rag-job-history-reveal {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -673,6 +720,11 @@
   .rag-job-history-detail {
     gap: 18px;
     padding: 18px 16px;
+  }
+
+  .rag-job-history-indeterminate {
+    grid-template-columns: 1fr;
+    gap: 7px;
   }
 
   .rag-job-history-timeline-wrap {
@@ -783,6 +835,7 @@
 @media (prefers-reduced-motion: reduce) {
   .rag-job-history-live-status svg,
   .rag-job-history-spinner,
+  .rag-job-history-indeterminate.is-active .rag-job-history-indeterminate-track > span,
   .rag-job-history-timeline-step.is-active .rag-job-history-timeline-dot,
   .rag-job-history-detail {
     animation: none;

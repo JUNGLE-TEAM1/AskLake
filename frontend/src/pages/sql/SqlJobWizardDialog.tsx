@@ -258,12 +258,13 @@ export function SqlJobWizardDialog({
         ) : null}
 
         {activeStep.id === "governance" ? (
-          <SqlJobGovernanceStep
-            disabled={isBusy}
-            governance={configuration.governance}
-            onChange={updateGovernance}
-            showErrors={showErrors}
-          />
+        <SqlJobGovernanceStep
+          disabled={isBusy}
+          governance={configuration.governance}
+          onChange={updateGovernance}
+          projectGroups={defaultMetadata?.projectGroups ?? []}
+          showErrors={showErrors}
+        />
         ) : null}
 
         {activeStep.id === "review" ? (

@@ -18,7 +18,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     if not context.is_offline_mode():
         inspector = sa.inspect(bind)
-        if "catalog_datasets" in inspector.get_table_names() and "source_manifest" not in {column["name"] for column in inspector.get_columns("catalog_datasets")}: 
+        if "catalog_datasets" in inspector.get_table_names() and "source_manifest" not in {column["name"] for column in inspector.get_columns("catalog_datasets")}:
             op.add_column("catalog_datasets", sa.Column("source_manifest", sa.JSON(), nullable=True))
     tables = [SemanticModelModel.__table__, SemanticModelVersionModel.__table__, SemanticModelDatasetModel.__table__, SemanticMetricModel.__table__, SemanticDimensionModel.__table__, SemanticRelationshipModel.__table__, SemanticVocabularyModel.__table__, RagDatasetProfileModel.__table__, RagClassificationRunModel.__table__, RagColumnRecommendationModel.__table__, RagIndexJobModel.__table__, RagIndexManifestModel.__table__]
     for table in tables:

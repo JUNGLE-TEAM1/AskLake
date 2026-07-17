@@ -16,6 +16,53 @@ def compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def contract_value(value: Any) -> Any:
+    """Match the canonical value normalization used by Spark parent staging."""
+
+    if isinstance(value, dict):
+        return {str(key): contract_value(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
+    if isinstance(value, (list, tuple)):
+        return [contract_value(item) for item in value]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def preview_source_row_id(
+    normalized_row: dict[str, Any],
+    identifier_columns: list[str],
+    physical_column_mapping: dict[str, str],
+) -> str:
+    """Use the production ordered-composite identifier contract in previews."""
+
+    physical_identifiers = [
+        physical_column_mapping.get(column, physical_column_name(column))
+        for column in identifier_columns
+    ]
+    if physical_identifiers:
+        values: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for column in physical_identifiers:
+            value = normalized_row.get(column)
+            if value in (None, "") or (isinstance(value, str) and not value.strip()):
+                missing.append(column)
+            else:
+                values.append({"column": column, "value": contract_value(value)})
+        if missing:
+            raise ValueError(f"RAG_SOURCE_IDENTIFIER_MISSING: {','.join(missing)}")
+        digest = hashlib.sha256(compact_json(values).encode("utf-8")).hexdigest()
+        return f"identifier:{digest[:32]}"
+
+    for fallback in ("id", "review_id", "row_id"):
+        value = normalized_row.get(fallback)
+        if value not in (None, ""):
+            return str(value).strip()
+    digest = hashlib.sha256(compact_json(normalized_row).encode("utf-8")).hexdigest()
+    return f"rowhash:{digest[:32]}"
+
+
 def typed_metadata_filter(metadata: dict[str, Any], expected_types: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     expected_types = expected_types or {}
@@ -137,10 +184,8 @@ def build_documents(*, dataset_id: str, dataset_name: str, rows: list[Any], colu
     physical_column_mapping = physical_column_mapping or {}
     for index, raw_row in enumerate(rows[:limit]):
         row = row_as_dict(raw_row, columns)
-        source_row_id = next((str(row.get(column)) for column in identifier_columns if row.get(column) not in (None, "")), None)
-        source_row_id = source_row_id or str(row.get("id") or row.get("review_id") or row.get("row_id") or "")
         body, body_blocks = render_section(row, body_columns, schema_types, "BODY", physical_column_mapping)
-        metadata = {physical_column_mapping.get(column, physical_column_name(column)): row.get(column) for column in metadata_columns if row.get(column) is not None}
+        metadata = {physical_column_mapping.get(column, physical_column_name(column)): contract_value(row.get(column)) for column in metadata_columns if row.get(column) is not None}
         metadata_display = {column: row.get(column) for column in metadata_columns if row.get(column) is not None}
         title, title_blocks = render_section(row, title_columns, schema_types, "TITLE", physical_column_mapping)
         title = title or None
@@ -150,7 +195,8 @@ def build_documents(*, dataset_id: str, dataset_name: str, rows: list[Any], colu
             physical = physical_column_mapping.get(column, physical_column_name(column))
             value = row.get(column) if column in row else row.get(physical)
             if column in row or physical in row:
-                normalized_row[physical] = value
+                normalized_row[physical] = contract_value(value)
+        source_row_id = preview_source_row_id(normalized_row, identifier_columns, physical_column_mapping)
         content_hash = hashlib.sha256(compact_json({"title": title, "body": body, "metadata": metadata, "normalizedRow": normalized_row}).encode("utf-8")).hexdigest()
         parent_document_id = hashlib.sha256(f"{dataset_id}\x00{source_row_id}\x00{content_hash}".encode("utf-8")).hexdigest()[:32]
         embedding_text = "\n\n".join(value for value in (title, body) if value)
@@ -162,7 +208,7 @@ def build_documents(*, dataset_id: str, dataset_name: str, rows: list[Any], colu
             "body": body, "title": title,
             "filterTerms": {key: str(value) for key, value in metadata.items() if isinstance(value, (str, int, float, bool))},
             "metadataFilter": typed_metadata_filter(metadata, {physical_column_mapping.get(column, physical_column_name(column)): schema_types.get(column, "") for column in metadata_columns}),
-            "metadataDisplay": metadata_display, "sourceDataset": dataset_name, "sourceColumns": [*body_columns, *title_columns, *metadata_columns, *identifier_columns],
+            "metadataDisplay": metadata_display, "sourceDataset": dataset_name, "sourceColumns": normalized_columns,
             "semanticBindings": semantic_bindings,
             "sourceFields": source_fields,
             "targetIndex": target_index, "embeddingStatus": "pending", "contentHash": content_hash, "embeddingText": embedding_text, "chunkingStrategy": "pending", "chunkingVersion": CHUNKING_VERSION,

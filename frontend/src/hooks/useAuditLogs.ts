@@ -10,7 +10,7 @@ export type ToastState = {
   tone: "success" | "info";
 };
 
-export function useAuditLogs() {
+export function useAuditLogs(actorId?: string | null) {
   const [auditSignal, setAuditSignal] = useState("idle");
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [auditOpen, setAuditOpen] = useState(false);
@@ -29,7 +29,7 @@ export function useAuditLogs() {
   const writeAuditLog = useCallback((action: string, apiPath: string, targetId: string, result: AuditResult = "success", options: AuditLogOptions = {}) => {
     const entry: AuditEntry = {
       action,
-      actor_id: "demo.user@asklake.local",
+      actor_id: actorId?.trim() || "anonymous",
       api_path: apiPath,
       created_at: new Date().toISOString(),
       request_id: `req_${Date.now()}`,
@@ -45,15 +45,8 @@ export function useAuditLogs() {
     debugWindow.__asklakeAuditLogs = [entry, ...(debugWindow.__asklakeAuditLogs ?? [])].slice(0, 50);
     debugWindow.__asklakeLastAction = entry;
 
-    try {
-      const previous = JSON.parse(window.localStorage.getItem("asklake.auditLogs") ?? "[]");
-      window.localStorage.setItem("asklake.auditLogs", JSON.stringify([entry, ...previous].slice(0, 50)));
-    } catch {
-      console.warn("[AskLake API adapter] local audit storage is unavailable in this browser context.");
-    }
-
     console.info("[AskLake API adapter]", entry);
-  }, []);
+  }, [actorId]);
 
   return {
     auditLogs,

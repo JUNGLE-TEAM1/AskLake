@@ -77,12 +77,15 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access") as governed,
             patch("app.services.query_ai_service.require_permission"),
+            patch("app.services.query_ai_service.persist_verified_generation_evidence") as persist_evidence,
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql", return_value={
                 "title": "Counts",
                 "body": "Draft",
                 "sql": "SELECT review_id FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "provider": "openai_compatible",
+                "requestId": "query-audit-1",
             }),
         ):
             response = service.create_suggestion(request, actor)
@@ -90,6 +93,7 @@ class QueryAiContractTests(unittest.TestCase):
         self.assertEqual(response.sql, "SELECT review_id FROM review_gold LIMIT 10")
         self.assertIs(governed.call_args.args[0], repository.db)
         self.assertEqual(governed.call_args.kwargs["api_path"], "/api/query/ai-suggestions")
+        persist_evidence.assert_called_once()
 
     def test_generated_sql_cannot_reference_an_unselected_dataset(self) -> None:
         with self.assertRaises(ApiError) as raised:
@@ -142,6 +146,7 @@ class QueryAiContractTests(unittest.TestCase):
             patch.object(service, "get_catalog_dataset", return_value=dataset),
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
+            patch("app.services.query_ai_service.persist_verified_generation_evidence"),
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
         ):
             generate.return_value = {
@@ -151,6 +156,7 @@ class QueryAiContractTests(unittest.TestCase):
                 "notices": [],
                 "model": "gateway-test-model",
                 "provider": "openai_compatible",
+                "requestId": "query-audit-2",
             }
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
@@ -187,12 +193,15 @@ class QueryAiContractTests(unittest.TestCase):
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
             patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
+            patch("app.services.query_ai_service.persist_verified_generation_evidence"),
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql", return_value={
                 "title": "Counts",
                 "body": "Draft",
                 "sql": "SELECT count(*) FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "provider": "openai_compatible",
+                "requestId": "query-audit-3",
                 "usedEvidenceIds": ["doc-1"],
             }) as generate,
         ):
@@ -220,6 +229,7 @@ class QueryAiContractTests(unittest.TestCase):
             patch("app.services.query_ai_service.require_governed_access"),
             patch("app.services.query_ai_service.require_permission"),
             patch("app.services.query_ai_service.build_semantic_rag_context", return_value=rag_context),
+            patch("app.services.query_ai_service.persist_verified_generation_evidence"),
             patch("app.services.query_ai_service.AiGatewayClient.generate_query_sql") as generate,
         ):
             generate.return_value = {
@@ -228,6 +238,8 @@ class QueryAiContractTests(unittest.TestCase):
                 "sql": "SELECT review_id FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "provider": "openai_compatible",
+                "requestId": "query-audit-4",
                 "usedEvidenceIds": [],
             }
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))

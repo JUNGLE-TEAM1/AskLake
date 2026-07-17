@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -18,6 +18,7 @@ RagJobStatus = Literal["queued", "staging", "chunking", "embedding", "indexing",
 RagJobStage = Literal["queued", "staging", "chunking", "embedding", "indexing", "validating", "ready"]
 RagJobValidationStatus = Literal["pending", "passed", "failed"]
 RagJobActivationStatus = Literal["none", "pending", "committed", "failed"]
+RAG_ROLE_COLUMN_LIMIT = 256
 
 
 class SemanticDatasetInput(CamelModel):
@@ -185,11 +186,26 @@ class RagClassifyResponse(CamelModel):
 
 
 class RagApproveRequest(CamelModel):
-    body_columns: list[str] = Field(min_length=1, max_length=50)
-    title_columns: list[str] = Field(default_factory=list, max_length=20)
-    metadata_columns: list[str] = Field(default_factory=list, max_length=100)
-    identifier_columns: list[str] = Field(default_factory=list, max_length=20)
-    excluded_columns: list[str] = Field(default_factory=list, max_length=100)
+    body_columns: list[str] = Field(min_length=1, max_length=RAG_ROLE_COLUMN_LIMIT)
+    title_columns: list[str] = Field(default_factory=list, max_length=RAG_ROLE_COLUMN_LIMIT)
+    metadata_columns: list[str] = Field(default_factory=list, max_length=RAG_ROLE_COLUMN_LIMIT)
+    identifier_columns: list[str] = Field(default_factory=list, max_length=RAG_ROLE_COLUMN_LIMIT)
+    excluded_columns: list[str] = Field(default_factory=list, max_length=RAG_ROLE_COLUMN_LIMIT)
+
+    @model_validator(mode="after")
+    def validate_column_bounds(self) -> "RagApproveRequest":
+        roles = (
+            self.body_columns,
+            self.title_columns,
+            self.metadata_columns,
+            self.identifier_columns,
+            self.excluded_columns,
+        )
+        if any(len(set(columns)) > RAG_ROLE_COLUMN_LIMIT for columns in roles):
+            raise ValueError(f"Each RAG role can contain at most {RAG_ROLE_COLUMN_LIMIT} distinct columns")
+        if len(set().union(*(set(columns) for columns in roles))) > RAG_ROLE_COLUMN_LIMIT:
+            raise ValueError(f"RAG roles can reference at most {RAG_ROLE_COLUMN_LIMIT} distinct columns in total")
+        return self
 
 
 class RagDocumentPreview(CamelModel):
@@ -260,7 +276,9 @@ class RagJobListItem(CamelModel):
     requested_mode: RagJobRequestedMode
     status: RagJobStatus
     stage: RagJobStage
-    progress_percent: int = Field(ge=0, le=100)
+    is_complete: bool
+    progress_percent: int | None = Field(ge=0, le=100)
+    progress_determinate: bool
     document_count: int = Field(ge=0)
     indexed_count: int = Field(ge=0)
     parent_count: int = Field(ge=0)
@@ -308,6 +326,9 @@ class RagJobResponse(CamelModel):
     fallback_count: int = 0
     fallback_reasons: dict[str, int] = Field(default_factory=dict)
     stage: str = "queued"
+    is_complete: bool
+    progress_percent: int | None = Field(ge=0, le=100)
+    progress_determinate: bool
     source_fingerprint: str | None = None
     policy_fingerprint: str | None = None
     embedding_provider: str | None = None
@@ -325,3 +346,4 @@ class RagJobResponse(CamelModel):
     activation_status: str = "none"
     activation_alias: str | None = None
     activation_target_index: str | None = None
+    completed_at: datetime | None

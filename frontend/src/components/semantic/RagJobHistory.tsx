@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, History, Loader2, RefreshCw } from "lucide-react";
 import { listRagJobs, type RagJob } from "../../services/semanticApi";
 import "../../styles/rag-job-history.css";
@@ -6,6 +6,7 @@ import "../../styles/rag-job-history.css";
 export type RagJobHistoryProps = {
   datasetId: string;
   refreshToken?: string | number;
+  onLatestJobSettled?: (job: RagJob) => void;
 };
 
 type HistoryState = {
@@ -16,6 +17,12 @@ type HistoryState = {
 };
 
 type TimelineState = "active" | "cancelled" | "complete" | "failed" | "pending";
+
+type SettledDedupeScope = {
+  datasetId: string;
+  notifiedJobIds: Set<string>;
+  snapshotKeys: Set<string>;
+};
 
 const POLL_INTERVAL_MS = 3_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -105,10 +112,7 @@ const ACTIVATION_LABELS: Record<string, string> = {
   failed: "활성화 실패",
 };
 
-const SUCCESS_VALUES = new Set(["ready", "complete", "completed", "done", "success", "succeeded"]);
-const FAILURE_VALUES = new Set(["failed", "error"]);
-const CANCELLED_VALUES = new Set(["aborted", "canceled", "cancelled"]);
-const ACTIVE_ACTIVATION_VALUES = new Set(["activating", "in_progress", "pending"]);
+const COMPLETION_STAGE_VALUES = new Set(["ready", "complete", "completed", "done", "success", "succeeded"]);
 
 const DATE_FORMATTER = new Intl.DateTimeFormat("ko-KR", {
   year: "numeric",
@@ -125,29 +129,28 @@ function normalize(value: string | null | undefined) {
 }
 
 function isFailedJob(job: RagJob) {
-  return FAILURE_VALUES.has(normalize(job.status)) || FAILURE_VALUES.has(normalize(job.stage));
+  return normalize(job.status) === "failed";
 }
 
 function isCancelledJob(job: RagJob) {
-  return CANCELLED_VALUES.has(normalize(job.status)) || CANCELLED_VALUES.has(normalize(job.stage));
-}
-
-function hasSuccessfulValue(job: RagJob) {
-  return SUCCESS_VALUES.has(normalize(job.status)) || SUCCESS_VALUES.has(normalize(job.stage));
-}
-
-function hasActiveActivation(job: RagJob) {
-  return ACTIVE_ACTIVATION_VALUES.has(normalize(job.activationStatus));
+  return normalize(job.status) === "canceled";
 }
 
 function isSuccessfulJob(job: RagJob) {
-  return !isFailedJob(job) && !isCancelledJob(job) && !hasActiveActivation(job) && hasSuccessfulValue(job);
+  return job.isComplete === true
+    && normalize(job.status) === "ready"
+    && normalize(job.stage) === "ready"
+    && normalize(job.validationStatus) === "passed"
+    && normalize(job.activationStatus) === "committed"
+    && Boolean(job.completedAt);
 }
 
 function isTerminalJob(job: RagJob) {
-  if (isFailedJob(job) || isCancelledJob(job)) return true;
-  if (hasActiveActivation(job)) return false;
-  return isSuccessfulJob(job);
+  return isSuccessfulJob(job) || isFailedJob(job) || isCancelledJob(job);
+}
+
+function isSettledCallbackJob(job: RagJob) {
+  return isTerminalJob(job);
 }
 
 function statusLabel(value: string) {
@@ -156,7 +159,8 @@ function statusLabel(value: string) {
 }
 
 function jobStatusLabel(job: RagJob) {
-  if (hasSuccessfulValue(job) && hasActiveActivation(job)) return "활성화 중";
+  if (isSuccessfulJob(job)) return "완료";
+  if (normalize(job.status) === "ready" || normalize(job.stage) === "ready") return "완료 확인 중";
   return statusLabel(job.status);
 }
 
@@ -170,7 +174,8 @@ function modeLabel(value: string) {
 function currentStageLabel(job: RagJob) {
   if (isFailedJob(job)) return "작업 실패";
   if (isCancelledJob(job)) return "작업 취소";
-  if (hasSuccessfulValue(job) && hasActiveActivation(job)) return "색인 활성화";
+  if (isSuccessfulJob(job)) return "완료";
+  if (normalize(job.status) === "ready" || normalize(job.stage) === "ready") return "완료 조건 확인";
   const index = STAGE_INDEX[normalize(job.stage)];
   if (index !== undefined) return TIMELINE_STAGES[index].label;
   return job.stage ? `단계 미확인 · ${job.stage}` : "단계 미확인";
@@ -186,9 +191,22 @@ function progressValue(value: number) {
   return Math.min(100, Math.max(0, value));
 }
 
+function determinateProgress(job: RagJob) {
+  if (job.progressDeterminate !== true || typeof job.progressPercent !== "number" || !Number.isFinite(job.progressPercent)) {
+    return null;
+  }
+  return progressValue(job.progressPercent);
+}
+
 function formatProgress(value: number) {
-  if (!Number.isFinite(value)) return "기록 없음";
-  return `${PERCENT_FORMATTER.format(progressValue(value))}%`;
+  return `${PERCENT_FORMATTER.format(value)}%`;
+}
+
+function progressAnnouncement(job: RagJob) {
+  const progress = determinateProgress(job);
+  return progress === null
+    ? "수치 진행률이 제공되지 않아 단계 상태로 표시됩니다"
+    : `처리 진행률 ${formatProgress(progress)}입니다`;
 }
 
 function formatCount(value: number) {
@@ -199,6 +217,14 @@ function timestamp(value: string | null) {
   if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareRecentJobs(left: RagJob, right: RagJob) {
+  const createdDifference = timestamp(right.createdAt) - timestamp(left.createdAt);
+  if (createdDifference !== 0) return createdDifference;
+  const updatedDifference = timestamp(right.updatedAt) - timestamp(left.updatedAt);
+  if (updatedDifference !== 0) return updatedDifference;
+  return left.jobId.localeCompare(right.jobId);
 }
 
 function formatDate(value: string | null) {
@@ -221,7 +247,9 @@ function errorMessage(error: unknown) {
 
 function timelineIndex(job: RagJob) {
   if (isSuccessfulJob(job)) return TIMELINE_STAGES.length - 1;
-  const directIndex = STAGE_INDEX[normalize(job.stage)];
+  const normalizedStage = normalize(job.stage);
+  if (COMPLETION_STAGE_VALUES.has(normalizedStage)) return TIMELINE_STAGES.length - 2;
+  const directIndex = STAGE_INDEX[normalizedStage];
   if (directIndex !== undefined) return directIndex;
   if (normalize(job.validationStatus) === "failed" || normalize(job.activationStatus) === "failed") return 5;
   return -1;
@@ -256,7 +284,7 @@ function JobTimeline({ job }: { job: RagJob }) {
             <li
               className={`rag-job-history-timeline-step is-${state}`}
               key={stage.key}
-              aria-current={state === "active" ? "step" : undefined}
+              aria-current={["active", "cancelled", "failed"].includes(state) ? "step" : undefined}
             >
               <span className="rag-job-history-timeline-dot" aria-hidden="true" />
               <span>{stage.label}</span>
@@ -277,9 +305,10 @@ function JobTimeline({ job }: { job: RagJob }) {
 }
 
 function JobDetails({ job, index }: { job: RagJob; index: number }) {
-  const progress = progressValue(job.progressPercent);
+  const progress = determinateProgress(job);
+  const terminal = isTerminalJob(job);
   const tone = toneFor(job);
-  const [open, setOpen] = useState(index === 0 || !isTerminalJob(job));
+  const [open, setOpen] = useState(index === 0 || !terminal);
 
   return (
     <li className="rag-job-history-item">
@@ -295,8 +324,8 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
             <span>{currentStageLabel(job)}</span>
           </span>
           <span className="rag-job-history-summary-progress">
-            <strong>{formatProgress(job.progressPercent)}</strong>
-            <span>실제 진행률</span>
+            <strong>{progress === null ? (terminal ? "종료" : "진행 중") : formatProgress(progress)}</strong>
+            <span>{progress === null ? "수치 진행률 없음" : "실측 처리 진행률"}</span>
           </span>
           <ChevronDown className="rag-job-history-chevron" aria-hidden="true" />
         </summary>
@@ -307,19 +336,30 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
               <span>현재 단계</span>
               <strong>{currentStageLabel(job)}</strong>
             </div>
-            <strong>{formatProgress(job.progressPercent)}</strong>
+            <strong>{progress === null ? "측정값 없음" : formatProgress(progress)}</strong>
           </div>
-          <div
-            className="rag-job-history-progress-track"
-            role="progressbar"
-            aria-label={`${modeLabel(job.requestedMode)} 진행률`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
-            aria-valuetext={formatProgress(job.progressPercent)}
-          >
-            <span style={{ width: `${progress}%` }} />
-          </div>
+          {progress === null ? (
+            <div
+              className={`rag-job-history-indeterminate${terminal ? " is-settled" : " is-active"}`}
+              role="status"
+              aria-label={`${modeLabel(job.requestedMode)} 수치 진행률 미제공`}
+            >
+              <span className="rag-job-history-indeterminate-track" aria-hidden="true"><span /></span>
+              <span>{terminal ? "수치 진행률 없이 종료됨" : "처리량 측정값을 기다리는 중"}</span>
+            </div>
+          ) : (
+            <div
+              className="rag-job-history-progress-track"
+              role="progressbar"
+              aria-label={`${modeLabel(job.requestedMode)} 실측 처리 진행률`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+              aria-valuetext={formatProgress(progress)}
+            >
+              <span style={{ width: `${progress}%` }} />
+            </div>
+          )}
 
           <JobTimeline job={job} />
 
@@ -347,12 +387,12 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
             </div>
           </dl>
 
-          {job.error && (
+          {(job.error || isFailedJob(job)) && (
             <div className="rag-job-history-job-error" role="alert">
               <AlertTriangle aria-hidden="true" />
               <div>
                 <strong>오류 내용</strong>
-                <p>{job.error}</p>
+                <p>{job.error || "오류 상세가 기록되지 않았습니다."}</p>
               </div>
             </div>
           )}
@@ -369,7 +409,7 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
   );
 }
 
-export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
+export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: RagJobHistoryProps) {
   const titleId = useId();
   const requestDatasetId = datasetId.trim();
   const [retryToken, setRetryToken] = useState(0);
@@ -379,11 +419,22 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
     loading: false,
     error: null,
   });
+  const latestSuccessfulJobsRef = useRef<{ datasetId: string; jobs: RagJob[] }>({ datasetId: "", jobs: [] });
+  const settledDedupeRef = useRef<SettledDedupeScope>({
+    datasetId: "",
+    notifiedJobIds: new Set(),
+    snapshotKeys: new Set(),
+  });
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     let requestController: AbortController | null = null;
+
+    if (latestSuccessfulJobsRef.current.datasetId !== requestDatasetId) {
+      latestSuccessfulJobsRef.current = { datasetId: requestDatasetId, jobs: [] };
+    }
+    let lastSuccessfulJobs = latestSuccessfulJobsRef.current.jobs;
 
     setHistory((current) => current.datasetId === requestDatasetId
       ? { ...current, loading: Boolean(requestDatasetId), error: null }
@@ -410,6 +461,8 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
         if (cancelled || controller.signal.aborted) return;
         if (!Array.isArray(response)) throw new Error("RAG 작업 이력 응답 형식이 올바르지 않습니다.");
 
+        lastSuccessfulJobs = response;
+        latestSuccessfulJobsRef.current = { datasetId: requestDatasetId, jobs: response };
         setHistory({ datasetId: requestDatasetId, jobs: response, loading: false, error: null });
         if (response.some((job) => !isTerminalJob(job))) {
           timer = window.setTimeout(() => void loadJobs(), POLL_INTERVAL_MS);
@@ -419,6 +472,9 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
         setHistory((current) => current.datasetId === requestDatasetId
           ? { ...current, loading: false, error: errorMessage(requestError) }
           : current);
+        if (lastSuccessfulJobs.some((job) => !isTerminalJob(job))) {
+          timer = window.setTimeout(() => void loadJobs(), POLL_INTERVAL_MS);
+        }
       } finally {
         if (requestController === controller) requestController = null;
       }
@@ -437,20 +493,40 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
     ? history
     : { datasetId: requestDatasetId, jobs: [], loading: Boolean(requestDatasetId), error: null };
   const sortedJobs = useMemo(
-    () => [...visibleHistory.jobs].sort((left, right) => timestamp(right.createdAt) - timestamp(left.createdAt)),
+    () => [...visibleHistory.jobs].sort(compareRecentJobs),
     [visibleHistory.jobs],
   );
   const hasActiveJobs = sortedJobs.some((job) => !isTerminalJob(job));
   const latestJob = sortedJobs[0];
 
+  useEffect(() => {
+    if (settledDedupeRef.current.datasetId !== requestDatasetId) {
+      settledDedupeRef.current = {
+        datasetId: requestDatasetId,
+        notifiedJobIds: new Set(),
+        snapshotKeys: new Set(),
+      };
+    }
+
+    if (!latestJob || !onLatestJobSettled || !isSettledCallbackJob(latestJob)) return;
+
+    const scope = settledDedupeRef.current;
+    const snapshotKey = `${latestJob.jobId}\u0000${normalize(latestJob.status)}\u0000${latestJob.updatedAt}`;
+    if (scope.snapshotKeys.has(snapshotKey) || scope.notifiedJobIds.has(latestJob.jobId)) return;
+
+    scope.snapshotKeys.add(snapshotKey);
+    scope.notifiedJobIds.add(latestJob.jobId);
+    onLatestJobSettled(latestJob);
+  }, [latestJob, onLatestJobSettled, requestDatasetId]);
+
   return (
-    <section className="rag-job-history" aria-labelledby={titleId}>
+    <section className="rag-job-history" aria-busy={visibleHistory.loading} aria-labelledby={titleId}>
       <header className="rag-job-history-header">
         <div className="rag-job-history-heading">
           <span className="rag-job-history-heading-icon" aria-hidden="true"><History /></span>
           <div>
             <h2 id={titleId}>RAG 작업 이력</h2>
-            <p>최근 재색인·청킹·임베딩·색인 작업을 최대 30건까지 표시합니다.</p>
+            <p>최근 재색인·청킹·임베딩·색인·검증 작업을 최대 30건까지 표시합니다.</p>
           </div>
         </div>
         {(hasActiveJobs || (visibleHistory.loading && sortedJobs.length > 0)) && (
@@ -493,15 +569,15 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
           {visibleHistory.error && (
             <div className="rag-job-history-refresh-error" role="alert">
               <AlertTriangle aria-hidden="true" />
-              <span><strong>최신 상태를 갱신하지 못했습니다.</strong> {visibleHistory.error}</span>
+              <span><strong>최신 상태를 갱신하지 못했습니다.</strong> 진행 중 작업은 자동으로 다시 확인합니다. {visibleHistory.error}</span>
               <button type="button" onClick={() => setRetryToken((value) => value + 1)}>
-                <RefreshCw aria-hidden="true" /> 재시도
+                <RefreshCw aria-hidden="true" /> 지금 재시도
               </button>
             </div>
           )}
           {latestJob && (
             <p className="rag-job-history-sr-only" aria-live="polite">
-              최신 RAG 작업은 {jobStatusLabel(latestJob)}, {currentStageLabel(latestJob)}, 진행률 {formatProgress(latestJob.progressPercent)}입니다.
+              최신 RAG 작업은 {jobStatusLabel(latestJob)}, {currentStageLabel(latestJob)}이며, {progressAnnouncement(latestJob)}
             </p>
           )}
           <ol className="rag-job-history-list">

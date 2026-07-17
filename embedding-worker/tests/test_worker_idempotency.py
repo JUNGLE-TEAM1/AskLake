@@ -88,6 +88,40 @@ def test_index_contract_rejects_unsafe_target_and_duplicate_chunk_ids(monkeypatc
         )
 
 
+def test_index_contract_accepts_256_schema_fields_and_rejects_257() -> None:
+    columns = [f"field_{index}" for index in range(256)]
+    request = IndexBatchRequest.model_validate({
+        "dataset_id": "d",
+        "dataset_name": "d",
+        "body_columns": columns,
+        "title_columns": [columns[0]],
+        "metadata_columns": [columns[1]],
+        "identifier_columns": [columns[2]],
+        "target_index": "d-v1",
+        "chunks": [{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}],
+    })
+    assert len(set(request.body_columns)) == 256
+
+    with pytest.raises(ValueError, match="256"):
+        IndexBatchRequest.model_validate({
+            "dataset_id": "d",
+            "dataset_name": "d",
+            "body_columns": columns,
+            "title_columns": ["field_256"],
+            "target_index": "d-v1",
+            "chunks": [{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}],
+        })
+
+    with pytest.raises(ValueError):
+        IndexBatchRequest.model_validate({
+            "dataset_id": "d",
+            "dataset_name": "d",
+            "body_columns": [*columns, "field_256"],
+            "target_index": "d-v1",
+            "chunks": [{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}],
+        })
+
+
 def test_index_api_contract_rejects_direct_rows_without_explicit_legacy_flag(monkeypatch):
     monkeypatch.delenv("RAG_LEGACY_DIRECT_INDEX_ENABLED", raising=False)
     try:
@@ -125,10 +159,64 @@ def test_retry_skips_chunks_already_persisted_before_embedding(monkeypatch):
 def test_retry_with_all_chunks_persisted_does_not_call_embedding(monkeypatch):
     worker = make_worker()
     monkeypatch.setattr(worker, "existing_document_ids", lambda index, ids: set(ids))
+    monkeypatch.setattr(
+        worker,
+        "existing_embedding_contract",
+        lambda index, ids, **kwargs: {
+            "embeddingProvider": "openai_compatible",
+            "embeddingModel": "text-embedding-3-small",
+            "dimensions": 1536,
+        },
+    )
     monkeypatch.setattr(worker, "index_documents", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("embedding must not run")))
-    result = worker.index_chunks(dataset_id="reviews", dataset_name="reviews", target_index="reviews-v1", chunks=[{"chunk_document_id": "already", "parent_document_id": "p1", "text": "old", "embedding_text": "old"}])
+    result = worker.index_chunks(dataset_id="reviews", dataset_name="reviews", target_index="reviews-v1", embedding_dimensions=1536, chunks=[{"chunk_document_id": "already", "parent_document_id": "p1", "text": "old", "embedding_text": "old"}])
     assert result["indexedCount"] == 0
     assert result["skippedExistingCount"] == 1
+    assert result["embeddingProvider"] == "openai_compatible"
+    assert result["embeddingModel"] == "text-embedding-3-small"
+    assert result["dimensions"] == 1536
+
+
+def test_all_existing_retry_rejects_missing_or_mixed_persisted_contract(monkeypatch):
+    worker = make_worker()
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "hits": {
+                    "hits": [
+                        {"_id": "a", "_source": {"embedding_provider": "openai", "embedding_model": "model", "embedding_dimensions": 2}},
+                        {"_id": "b", "_source": {"embedding_provider": "other", "embedding_model": "model", "embedding_dimensions": 2}},
+                    ]
+                }
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("app.worker.httpx.Client", Client)
+    with pytest.raises(PermanentRagContractError, match="mixed"):
+        worker.existing_embedding_contract(
+            "reviews-v1",
+            ["a", "b"],
+            expected_model="model",
+            expected_dimensions=2,
+        )
 
 
 def test_chunk_indexing_keeps_logical_display_and_physical_filter_fields(monkeypatch):

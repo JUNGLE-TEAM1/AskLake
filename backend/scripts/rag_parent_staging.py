@@ -12,7 +12,6 @@ import os
 import re
 import sys
 import time
-import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,12 +21,16 @@ from pyspark.sql import types as T
 from rag_parent_contract import (
     FIELD_RENDERING_VERSION,
     RAG_PARENT_SCHEMA_VERSION,
+    RagJobAlreadyComplete,
+    RagStageRejectedError,
     build_parent_document,
     build_staging_paths,
     canonical_json,
+    ensure_rag_callback_allows_work,
     failed_row_report,
     normalized_row,
     parent_document_id,
+    post_rag_callback,
     sha256_hex,
     source_row_id,
     validate_parent_document,
@@ -56,14 +59,18 @@ def load_manifest() -> dict:
     return value
 
 
-def callback(manifest: dict, payload: dict) -> None:
+def callback(manifest: dict, payload: dict, *, require_continue: bool = True) -> dict[str, Any]:
     url = str(manifest.get("callbackUrl") or "").strip()
     token = str(manifest.get("callbackToken") or "").strip()
-    if not url or not token:
-        return
-    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=30):
-        return
+    response = post_rag_callback(
+        url,
+        token,
+        payload,
+        timeout_seconds=int(os.environ.get("ASKLAKE_RAG_CALLBACK_TIMEOUT_SECONDS", "30")),
+        max_attempts=int(os.environ.get("ASKLAKE_RAG_CALLBACK_ATTEMPTS", "3")),
+    )
+    expected_stage = str(payload.get("stage") or {"parent_staged": "staging"}.get(str(payload.get("status") or "")) or "")
+    return ensure_rag_callback_allows_work(response, expected_stage=expected_stage) if require_continue else response
 
 
 def role_columns(manifest: dict) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -178,6 +185,28 @@ def main() -> int:
     namespace = str(target.get("namespace") or "rag")
     table = str(target.get("table") or f"parents_{dataset_id}")
     table_id = ".".join(f"`{value.replace('`', '``')}`" for value in (catalog, namespace, table))
+    try:
+        callback(
+            manifest,
+            {
+                "status": "parent_staged",
+                "event": "stage_started",
+                "stage": "staging",
+                "datasetId": dataset_id,
+                "jobId": job_id,
+                "observedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except RagJobAlreadyComplete as exc:
+        print(f"ASKLAKE_RAG_PARENT_SKIPPED={canonical_json({'jobId': job_id, 'reason': str(exc)})}")
+        return 0
+    except RagStageRejectedError as exc:
+        print(f"ASKLAKE_RAG_PARENT_REJECTED={canonical_json({'jobId': job_id, 'reason': str(exc)})}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"ASKLAKE_RAG_PARENT_CALLBACK_ERROR={canonical_json({'jobId': job_id, 'error': str(exc)})}", file=sys.stderr)
+        return 1
+
     spark = make_spark(manifest.get("sourceCollection") or {}, manifest.get("icebergTarget"), disable_speculation=True)
     try:
         # Iceberg table replacement is atomic. Reuse a committed stage when
@@ -305,12 +334,18 @@ def main() -> int:
         print(f"ASKLAKE_RAG_PARENT_RESULT={canonical_json(result)}")
         callback(manifest, {"status": "parent_staged", "parentCount": count, "rowCount": row_count, "failedCount": failed_count, "failedRate": failed_rate, "failedRowReport": report, "parentTable": result["table"], "checkpointPath": paths["checkpoint"]})
         return 0
+    except RagJobAlreadyComplete as exc:
+        print(f"ASKLAKE_RAG_PARENT_SKIPPED={canonical_json({'jobId': job_id, 'reason': str(exc)})}")
+        return 0
     except Exception as exc:
         result = {"status": "failed", "datasetId": dataset_id, "jobId": job_id, "error": str(exc), "rowCount": failure_row_count, "failedCount": failure_count, "failedRate": float(failure_report.get("failedRate") or 0.0), "failedRowReport": failure_report, "durationMs": int((time.time() - started) * 1000)}
         try:
-            callback(manifest, result)
-        except Exception:
-            pass
+            callback(manifest, result, require_continue=False)
+        except Exception as callback_exc:
+            print(
+                f"ASKLAKE_RAG_PARENT_FAILURE_CALLBACK_ERROR={canonical_json({'jobId': job_id, 'error': str(callback_exc)})}",
+                file=sys.stderr,
+            )
         print(f"ASKLAKE_RAG_PARENT_RESULT={canonical_json(result)}", file=sys.stderr)
         return 1
     finally:

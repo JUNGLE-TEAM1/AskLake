@@ -228,7 +228,11 @@ def guard_assistant_response(
         provider=response.provider,
         config_patch=_config_patch_from_actions(guarded_actions),
         widget_patch=_widget_patch_from_actions(guarded_actions),
-        used_evidence_ids=response.used_evidence_ids,
+        used_evidence_ids=list(dict.fromkeys(
+            evidence_id
+            for action in guarded_actions
+            for evidence_id in action.used_evidence_ids
+        )),
     )
 
 

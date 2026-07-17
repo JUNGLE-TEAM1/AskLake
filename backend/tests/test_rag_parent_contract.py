@@ -1,16 +1,24 @@
+import io
 import sys
+import urllib.error
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 from rag_parent_contract import (  # noqa: E402
     EMBEDDING_INPUT_VERSION,
     RAG_PARENT_SCHEMA_VERSION,
+    RagJobAlreadyComplete,
+    RagStageRejectedError,
     build_parent_document,
     build_staging_paths,
     embedding_text,
+    ensure_rag_callback_allows_work,
     failed_row_report,
     normalized_row,
+    post_rag_callback,
     render_scalar,
     source_row_id,
     validate_parent_document,
@@ -177,6 +185,7 @@ def test_source_row_id_uses_ordered_composite_identifier_and_rejects_partial_key
     left = source_row_id({"tenant": "t1", "record": 7}, ["tenant", "record"], 0)
     right = source_row_id({"tenant": "t1", "record": 7}, ["tenant", "record"], 99)
     assert left == right
+    assert left == "identifier:0989c08947a2469089d3361e0b0b0079"
     assert left.startswith("identifier:")
     assert source_row_id({"tenant": "t1", "record": 7}, ["record", "tenant"], 0) != left
     try:
@@ -185,6 +194,98 @@ def test_source_row_id_uses_ordered_composite_identifier_and_rejects_partial_key
         assert "RAG_SOURCE_IDENTIFIER_MISSING" in str(exc)
     else:
         raise AssertionError("expected incomplete composite identifier to be rejected")
+
+
+def test_parent_source_provenance_merges_dual_roles_without_duplicate_columns():
+    document = build_parent_document(
+        dataset_id="products",
+        source_fingerprint="fp-1",
+        row={"id": "p1", "category": "Audio", "description": "Wireless"},
+        schema_columns=["id", "category", "description"],
+        body_columns=["description", "category", "id"],
+        title_columns=[],
+        metadata_columns=["category"],
+        identifier_columns=["id"],
+        ordinal=0,
+        job_id="job-1",
+        policy_fingerprint="policy-1",
+    )
+    assert document["source_columns"] == ["description", "category", "id"]
+    fields = {field["logicalField"]: field for field in document["source_fields"]}
+    assert fields["category"]["roles"] == ["body", "metadata"]
+    assert fields["id"]["roles"] == ["body", "identifier"]
+    assert fields["category"]["role"] == "body"
+
+
+def test_callback_retries_transport_and_rejects_superseded_acknowledgement(monkeypatch):
+    attempts = {"count": 0}
+
+    class Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, _limit=-1):
+            return b'{"status":"staging","stage":"staging"}'
+
+    def open_with_transient_failures(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise urllib.error.URLError("temporary")
+        return Response()
+
+    monkeypatch.setattr("rag_parent_contract.urllib.request.urlopen", open_with_transient_failures)
+    response = post_rag_callback(
+        "http://backend/callback",
+        "token",
+        {"status": "parent_staged"},
+        max_attempts=3,
+        sleep=lambda _seconds: None,
+    )
+    assert response["status"] == "staging"
+    assert attempts["count"] == 3
+    assert ensure_rag_callback_allows_work(response) is response
+
+    with pytest.raises(RagStageRejectedError, match="superseded"):
+        ensure_rag_callback_allows_work({
+            "status": "failed",
+            "stage": "failed",
+            "error": "RAG callback belongs to a superseded activation generation",
+        })
+    with pytest.raises(RagJobAlreadyComplete):
+        ensure_rag_callback_allows_work({"status": "ready", "stage": "ready"})
+    with pytest.raises(RagJobAlreadyComplete, match="advanced"):
+        ensure_rag_callback_allows_work(
+            {"status": "chunking", "stage": "chunking"},
+            expected_stage="staging",
+        )
+
+
+def test_callback_treats_structured_superseded_http_409_as_non_retryable(monkeypatch):
+    body = b'{"error":{"code":"rag_job_superseded","message":"superseded immutable build","details":{"stopDag":true,"retryable":false}}}'
+
+    def reject(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "http://backend/callback",
+            409,
+            "Conflict",
+            None,
+            io.BytesIO(body),
+        )
+
+    monkeypatch.setattr("rag_parent_contract.urllib.request.urlopen", reject)
+    with pytest.raises(RagStageRejectedError, match="superseded immutable"):
+        post_rag_callback(
+            "http://backend/callback",
+            "token",
+            {"status": "chunked"},
+            max_attempts=3,
+            sleep=lambda _seconds: None,
+        )
 
 
 def test_staging_paths_are_dataset_and_job_scoped():

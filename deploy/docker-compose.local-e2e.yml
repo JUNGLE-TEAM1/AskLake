@@ -1,0 +1,38 @@
+services:
+  frontend:
+    ports:
+      - "127.0.0.1:${ASKLAKE_FRONTEND_HOST_PORT:-5173}:80"
+
+  backend:
+    ports:
+      - "127.0.0.1:${ASKLAKE_BACKEND_HOST_PORT:-18080}:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for local object storage}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for local object storage}
+      # The local Trino endpoint is intentionally plain HTTP on the private
+      # Compose network, so production Basic-auth credentials must not leak in
+      # from the shared example environment.
+      TRINO_AUTH_USERNAME: ""
+      TRINO_AUTH_PASSWORD: ""
+      TRINO_MATERIALIZER_USERNAME: ""
+      TRINO_MATERIALIZER_PASSWORD: ""
+
+  airflow-apiserver:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for local object storage}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for local object storage}
+
+  airflow-scheduler:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for local object storage}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for local object storage}
+
+  airflow-dag-processor:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for local object storage}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for local object storage}
+
+  spark-worker:
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required for local object storage}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required for local object storage}

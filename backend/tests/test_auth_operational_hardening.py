@@ -315,6 +315,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 class ProductionConfigurationHardeningTests(unittest.TestCase):
     def test_session_cookie_is_secure_by_default_outside_local_development(self) -> None:
         production = Settings(
+            ai_assistant_enabled=False,
             app_env="production",
             bootstrap_admin_email="owner@example.com",
             bootstrap_admin_password="strong-bootstrap-password",
@@ -327,6 +328,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
 
     def test_session_cookie_secure_flag_supports_an_explicit_http_dev_override(self) -> None:
         http_dev = Settings(
+            ai_assistant_enabled=False,
             app_env="production",
             auth_session_cookie_secure=False,
             bootstrap_admin_email="owner@example.com",

@@ -110,7 +110,9 @@ export type RagJob = {
   requestedMode: string;
   status: string;
   stage: string;
-  progressPercent: number;
+  isComplete: boolean;
+  progressDeterminate: boolean;
+  progressPercent: number | null;
   documentCount: number;
   indexedCount: number;
   parentCount: number;

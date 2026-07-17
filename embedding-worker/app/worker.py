@@ -180,10 +180,25 @@ class EmbeddingWorker:
                 "fallback_applied": bool(chunk.get("fallback_applied")),
                 "fallback_reason": chunk.get("fallback_reason"),
             })
-        existing_ids = self.existing_document_ids(target_index, [item["document_id"] for item in documents])
+        requested_model = embedding_model or self.embedding_model
+        all_document_ids = [item["document_id"] for item in documents]
+        existing_ids = self.existing_document_ids(target_index, all_document_ids)
         documents = [item for item in documents if item["document_id"] not in existing_ids]
         if not documents:
-            return {"indexedCount": 0, "skippedExistingCount": len(existing_ids), "targetIndex": target_index, "dimensions": embedding_dimensions, "embeddingModel": embedding_model or self.embedding_model}
+            stored_contract = self.existing_embedding_contract(
+                target_index,
+                all_document_ids,
+                expected_model=requested_model,
+                expected_dimensions=embedding_dimensions,
+            )
+            return {
+                "indexedCount": 0,
+                "skippedExistingCount": len(existing_ids),
+                "targetIndex": target_index,
+                "dimensions": stored_contract["dimensions"],
+                "embeddingProvider": stored_contract["embeddingProvider"],
+                "embeddingModel": stored_contract["embeddingModel"],
+            }
         result = self.index_documents(documents, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types)
         result["skippedExistingCount"] = len(existing_ids)
         return result
@@ -205,6 +220,69 @@ class EmbeddingWorker:
             if exc.response.status_code == 404:
                 return set()
             raise
+
+    def existing_embedding_contract(
+        self,
+        target_index: str,
+        document_ids: list[str],
+        *,
+        expected_model: str,
+        expected_dimensions: int | None,
+    ) -> dict[str, Any]:
+        """Read the persisted model contract when a retry has nothing to embed."""
+
+        values = list(dict.fromkeys(str(value) for value in document_ids if str(value).strip()))
+        if not values:
+            raise PermanentRagContractError("Existing RAG document contract requires document identities")
+        with httpx.Client(timeout=self.timeout, verify=self.verify_tls) as client:
+            response = client.post(
+                f"{self.opensearch_url}/{target_index}/_search",
+                auth=self.opensearch_auth,
+                json={
+                    "size": len(values),
+                    "_source": ["embedding_provider", "embedding_model", "embedding_dimensions"],
+                    "query": {"ids": {"values": values}},
+                },
+            )
+            if response.status_code == 404:
+                raise PermanentRagContractError("Existing RAG documents disappeared before contract verification")
+            response.raise_for_status()
+            hits = response.json().get("hits", {}).get("hits", [])
+
+        found_ids = {
+            str(item.get("_id"))
+            for item in hits
+            if isinstance(item, dict) and item.get("_id")
+        }
+        if found_ids != set(values):
+            raise PermanentRagContractError("Existing RAG documents changed before contract verification")
+        contracts: set[tuple[str, str, int]] = set()
+        for item in hits:
+            source = item.get("_source") if isinstance(item, dict) else None
+            provider = str((source or {}).get("embedding_provider") or "").strip()
+            model = str((source or {}).get("embedding_model") or "").strip()
+            raw_dimensions = (source or {}).get("embedding_dimensions")
+            if (
+                not provider
+                or not model
+                or isinstance(raw_dimensions, bool)
+                or not isinstance(raw_dimensions, int)
+                or raw_dimensions < 1
+            ):
+                raise PermanentRagContractError("Existing RAG document is missing its embedding contract")
+            contracts.add((provider, model, raw_dimensions))
+        if len(contracts) != 1:
+            raise PermanentRagContractError("Existing RAG documents contain mixed embedding contracts")
+        provider, model, dimensions = next(iter(contracts))
+        if model != expected_model:
+            raise PermanentRagContractError("Existing RAG document model does not match the retry contract")
+        if expected_dimensions is not None and dimensions != expected_dimensions:
+            raise PermanentRagContractError("Existing RAG document dimensions do not match the retry contract")
+        return {
+            "embeddingProvider": provider,
+            "embeddingModel": model,
+            "dimensions": dimensions,
+        }
 
     def index_documents(self, documents: list[dict[str, Any]], *, embedding_model: str | None = None, embedding_dimensions: int | None = None, metadata_types: dict[str, str] | None = None) -> dict[str, Any]:
         if not documents:
@@ -240,7 +318,7 @@ class EmbeddingWorker:
                 )
                 if offset == 0:
                     block_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "text": {"type": "text"}, "fieldText": {"type": "text"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "valueStart": {"type": "integer"}, "valueEnd": {"type": "integer"}, "fieldValueStart": {"type": "integer"}, "fragmentStart": {"type": "integer"}, "fragmentEnd": {"type": "integer"}}}
-                    source_field_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "role": {"type": "keyword"}}}
+                    source_field_mapping = {"type": "object", "dynamic": False, "properties": {"logicalField": {"type": "keyword"}, "physicalField": {"type": "keyword"}, "role": {"type": "keyword"}, "roles": {"type": "keyword"}}}
                     mapping = {"settings": {"index": {"knn": True}}, "mappings": {"properties": {"document_id": {"type": "keyword"}, "job_id": {"type": "keyword"}, "chunk_document_id": {"type": "keyword"}, "parent_document_id": {"type": "keyword"}, "dataset_id": {"type": "keyword"}, "source_row_id": {"type": "keyword"}, "title": {"type": "text"}, "body": {"type": "text"}, "embedding_text": {"type": "text"}, "body_vector": {"type": "knn_vector", "dimension": dimensions}, "filter_terms": {"type": "object", "enabled": True}, "metadata_filter": self._metadata_mapping(metadata_types), "metadata_display": {"type": "object", "enabled": False}, "semantic_bindings": {"type": "object", "enabled": True}, "source_columns": {"type": "keyword"}, "source_fields": source_field_mapping, "parent_source_fields": source_field_mapping, "title_blocks": block_mapping, "body_blocks": block_mapping, "chunk_index": {"type": "integer"}, "chunk_count": {"type": "integer"}, "start_sentence": {"type": "integer"}, "end_sentence": {"type": "integer"}, "char_start": {"type": "integer"}, "char_end": {"type": "integer"}, "chunking_strategy": {"type": "keyword"}, "chunking_version": {"type": "keyword"}, "embedding_input_version": {"type": "keyword"}, "field_rendering_version": {"type": "keyword"}, "content_hash": {"type": "keyword"}, "embedding_provider": {"type": "keyword"}, "embedding_model": {"type": "keyword"}, "embedding_dimensions": {"type": "integer"}, "fallback_applied": {"type": "boolean"}, "fallback_reason": {"type": "keyword"}}}}
                     create_response = client.put(f"{self.opensearch_url}/{batch[0].get('target_index')}", auth=self.opensearch_auth, json=mapping)
                     if create_response.status_code >= 400 and "resource_already_exists_exception" not in create_response.text:

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.models.identity import AuthSessionModel, AuthUserModel, PermissionGrantModel
-from app.repositories.permission_repository import list_permission_grants_by_resource
+from app.repositories.permission_repository import create_permission_grant, list_permission_grants_by_resource
 from app.schemas.identity import PermissionSummary
 from app.services.identity_service import IdentityService
 

@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -182,6 +181,7 @@ from app.application.etl_pipeline_policy import (
     target_identity_changed,
     trino_query_run_belongs_to_actor,
     trino_sql_job_permission_roles,
+    trino_sql_job_permission_summary,
     validate_create_request,
     validate_requested_permission_grants,
     validate_target_contract,
@@ -386,7 +386,6 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
-from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.iceberg_writer_service import (
     IcebergWriterError,
     IcebergWriterService,
@@ -424,16 +423,22 @@ PERMISSION_GROUP_ACTIONS = {
     "data-platform": ["view", "run", "manage"],
     "ops": ["view", "run"],
 }
-LEGACY_PERMISSION_GROUP_IDS = {
-    alias.casefold(): group.id
-    for group in DEMO_GROUPS.values()
-    for alias in (group.id, group.name, group.name.removesuffix(" Team"))
-}
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
+
+
+def configured_spark_output_bucket() -> str:
+    configured_bucket = str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "asklake-output").strip()
+    if (
+        "replace-with-" in configured_bucket.casefold()
+        or re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", configured_bucket) is None
+        or ".." in configured_bucket
+    ):
+        raise ValueError("ASKLAKE_SPARK_OUTPUT_BUCKET is invalid or still contains a deployment placeholder")
+    return configured_bucket
 
 
 def create_trino_sql_job(
@@ -533,6 +538,12 @@ def create_trino_sql_job(
     permission_roles = trino_sql_job_permission_roles(
         request.governance.access_scope,
         request.governance.owner,
+        request.governance.principal_id,
+    )
+    permission_summary = trino_sql_job_permission_summary(
+        request.governance.access_scope,
+        request.governance.owner,
+        request.governance.principal_id,
     )
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
@@ -595,7 +606,7 @@ def create_trino_sql_job(
         schema_sample_rows=[],
         schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
         rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
-        permission_summary=request.governance.permission_summary,
+        permission_summary=permission_summary,
         permission_roles=permission_roles,
         storage_type="Iceberg",
         partition=request.target.partition_column,
