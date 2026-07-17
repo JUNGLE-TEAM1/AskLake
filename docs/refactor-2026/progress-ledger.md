@@ -21,7 +21,9 @@
 - PR 08 검증: CSS boundary 4건, selector 1,250→1,249/unique 1,183 유지/중복 67→66, desktop·mobile computed style와 screenshot SHA-256 동일. frontend UI 136 checks와 production build, backend unit 512건(1 opt-in skip), OpenAPI breaking 0건, legacy register·structural quality 통과. live workspace 화면은 local PostgreSQL/Docker 미기동으로 Draft 후 수동 gate에 유지
 - PR 09: `#879` / `#880` / `refactor-#879` — production legacy 10경로의 30일 0-call·근거·승인 removal evidence fail-closed gate, `#878` 머지 대기 Draft
 - PR 09 검증: removal evidence unit 6건, production 10경로 blocked·eligible 0개, backend unit 512건(1 opt-in skip), frontend UI 136 checks와 production build, OpenAPI breaking 0건, 기존 legacy register·structural quality 통과. runtime/UI source 변경 0건이며 실제 production 30일 log 관찰은 수행하지 않음
-- 다음 단계: 10개 stacked PR merge/readiness 최종 audit를 PR 10으로 고정
+- PR 10: `#881` / PR 생성 전 / `refactor-#881` — 10개 stacked PR의 strict order·base·dependency·green/review/no-deploy release audit gate, `#880` 머지 대기 Draft 예정
+- PR 10 검증: merge plan validator/unit, GitHub live PR 상태와 전체 release/backend/frontend 회귀 완료 후 기록
+- 다음 단계: manifest 순서대로 사람 review·green CI 후 하나씩 merge. production execution은 별도 수동 gate 완료 전 차단
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 

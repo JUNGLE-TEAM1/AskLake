@@ -27,6 +27,18 @@
       "owner": "data-platform",
       "mitigation": "authority matrix의 Python-owned connector use case를 versioned adapter 뒤로 이동하고 Node 경로를 제거한다.",
       "dueDate": "2026-09-30"
+    },
+    {
+      "id": "R-018",
+      "owner": "data-platform",
+      "mitigation": "실제 EKS workload와 EC2 process가 Continuous control plane을 중복 claim하지 않는지 rollout 전에 대조한다.",
+      "dueDate": "2026-08-15"
+    },
+    {
+      "id": "R-019",
+      "owner": "maintainer",
+      "mitigation": "10개 stacked PR을 manifest 순서대로 하나씩 merge하고 각 단계 뒤 다음 diff와 CI를 다시 검증한다.",
+      "dueDate": "2026-08-15"
     }
   ],
   "gates": [
@@ -47,6 +59,26 @@
         "docs/refactor-2026/contracts/etl-e2e-recovery-harness.md",
         "backend/scripts/etl-e2e-recovery-scenarios.json"
       ]
+    },
+    {
+      "id": "stacked-pr-merge-order",
+      "status": "manual-required",
+      "requiredFor": ["canary", "production"],
+      "evidence": [
+        "docs/refactor-2026/final/stacked-pr-merge-plan.json",
+        "docs/refactor-2026/contracts/stacked-pr-merge-plan.md"
+      ],
+      "operatorAction": "manifest의 10개 PR을 순서대로 하나씩 dev에 merge하고 각 단계의 merge SHA, next diff와 green check URL을 release record에 첨부한다."
+    },
+    {
+      "id": "control-plane-live-owner",
+      "status": "manual-required",
+      "requiredFor": ["production"],
+      "evidence": [
+        "deploy/control-plane-ownership.json",
+        "docs/refactor-2026/contracts/control-plane-deployment-ownership.md"
+      ],
+      "operatorAction": "실제 EKS workload/replica와 EC2 Compose process를 대조해 Kafka Continuous와 Continuous SQL owner가 각각 하나임을 release record에 첨부한다."
     },
     {
       "id": "isolated-nightly-fault-suite",
