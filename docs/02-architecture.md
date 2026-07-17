@@ -572,7 +572,7 @@ ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx
 
 ## 19) Frontend CSS·Catalog·Layout 경계
 
-`etl.css`와 `layout.css`는 기존 cascade 순서를 보존하는 import entrypoint만 담당한다. ETL 단계와 shell/account/admin/workflow 규칙은 feature stylesheet가 소유하며 분할 전 원문 SHA-256을 회귀 계약으로 고정한다. 기존 중복 selector는 이 단계에서 의미를 바꾸지 않는다.
+`etl.css`와 `layout.css`는 기존 cascade 순서를 보존하는 import entrypoint만 담당한다. ETL 단계와 shell/account/admin/workflow 규칙은 feature stylesheet가 소유하며 review된 원문 SHA-256과 정확한 selector inventory를 회귀 계약으로 고정한다. 중복 정리는 같은 selector rule이 바로 이어지고 declaration 순서를 그대로 합칠 수 있는 경우로 제한한다. 현재 `.s3-tree-panel` 한 쌍만 통합했으며 나머지 비인접 중복 66개는 의미를 바꾸지 않는다.
 
 Catalog의 기존 `CatalogPage` public import는 façade로 유지한다. 목록·미리보기 표현, 상세, lineage, 순수 model, 검색·선택·상세 조회 state를 독립 module로 분리한다. 상세 요청 cleanup과 명시적 SQL dataset 선택 규칙은 state hook이 소유하고 표현 module은 API를 직접 호출하지 않는다.
 

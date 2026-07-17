@@ -125,3 +125,10 @@
 - 결정: Kafka Continuous와 Continuous SQL reconciliation은 현재 EC2 Continuous deployment cell만 claim하고 EKS 웹·유한 배치 cell은 claim하지 않는 topology를 versioned manifest로 기록한다.
 - 이유: 배포 권한과 live cluster evidence 없이 runtime loop를 끄거나 옮기면 현재 서비스 동작을 바꾼다. 먼저 exactly-one 정적 gate로 의도하지 않은 이중 claim과 근거 drift를 차단해야 한다.
 - 제약: 이 결정은 leader election이나 실행 중 replica discovery를 대신하지 않는다. FastAPI lifespan, Compose environment, EKS workload와 traffic은 변경하지 않으며 실제 owner 이전은 양쪽 deployment evidence와 rollback 승인이 있는 별도 PR로 수행한다.
+
+## D-020 — CSS 중복 정리는 인접 rule과 렌더 동일성으로 제한
+
+- 상태: Accepted
+- 결정: 같은 selector의 rule이 동일 at-rule parent에서 바로 이어질 때만 declaration 순서를 유지해 합치며, 이번 변경은 `.s3-tree-panel` 한 쌍으로 제한한다.
+- 이유: 비인접 중복은 사이 rule의 specificity와 source order에 따라 computed style이 달라질 수 있다. 안전한 한 쌍만 source hash·정확한 inventory·declaration contract와 desktop/mobile 렌더 hash로 증명해야 현재 배포 UI를 유지할 수 있다.
+- 제약: 나머지 중복 66개, selector/DOM/JSX, 색상·간격·반응형 값은 변경하지 않는다. live workspace 렌더가 불가능한 환경에서는 mock/legacy를 켜지 않고 실제 Vite CSS fixture와 자동 UI regression을 사용하며 한계를 PR에 기록한다.

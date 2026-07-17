@@ -9,7 +9,7 @@
 | R-005 | P1 | `EtlPages.tsx` 7,111 LOC God Page | 단계 page/model/panel과 registry 분리, 기존 파일은 compatibility façade | 09 | CLOSED |
 | R-006 | P1 | `JobsPages.tsx` 3,582 LOC | list/detail/runtime/history/DAG feature module 분리, 기존 파일은 façade | 10 | CLOSED |
 | R-007 | P1 | `useAskLakeData.ts` 1,502 LOC | hydrate·mutation·Job·Catalog controller와 revision rollback gate 분리 | 09~10 | CLOSED |
-| R-008 | P1 | `etl.css` 9,803 LOC 전역 cascade | byte-identical feature stylesheet 분리, 기존 중복 selector는 후속 visual cleanup 필요 | 11 | PARTIAL |
+| R-008 | P1 | ETL 전역 cascade와 중복 selector | feature stylesheet 분리 후 인접 `.s3-tree-panel` 1쌍을 declaration 순서·desktop/mobile 렌더 parity로 통합해 1,249 definitions/1,183 unique/중복 66개. 비인접 중복은 후속 visual cleanup 필요 | 11, #877 + cleanup | PARTIAL |
 | R-009 | P1 | Python·Node·Spark 경계가 subprocess/file/env에 의존 | typed Port·Adapter와 versioned bridge, runtime façade·authority matrix 확정 | 04·08 | CLOSED |
 | R-010 | P1 | production verifier가 현재 runtime signature와 불일치 | 현재 signature와 outer timeout 계약 검증 통과 | 02 | CLOSED |
 | R-011 | P1 | deploy regression fixture가 필수 AI env 계약과 불일치 | AI env fixture와 Trino-disabled Compose 계약 보정 후 전체 통과 | 02 | CLOSED |

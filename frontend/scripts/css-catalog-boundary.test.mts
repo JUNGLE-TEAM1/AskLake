@@ -51,7 +51,17 @@ function selectorInventory(css: string) {
   };
 }
 
-test("CSS entrypoints preserve the exact pre-split cascade", () => {
+function declarationsForSelector(css: string, selector: string) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...css.matchAll(new RegExp(`${escaped}\\s*\\{([^{}]*)\\}`, "g"))].map((match) => (
+    match[1]
+      .split(";")
+      .map((declaration) => declaration.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+  ));
+}
+
+test("CSS entrypoints preserve the exact reviewed cascade", () => {
   const expectedEtlEntry = `${etlParts.map((file) => `@import "./etl/${file}";`).join("\n")}\n`;
   const expectedLayoutEntry = `${layoutParts.map((file) => `@import "./layout/${file}";`).join("\n")}\n`;
   assert.equal(read("src/styles/etl.css"), expectedEtlEntry);
@@ -59,18 +69,29 @@ test("CSS entrypoints preserve the exact pre-split cascade", () => {
 
   const etlSources = etlParts.map((file) => read(`src/styles/etl/${file}`));
   const layoutSources = layoutParts.map((file) => read(`src/styles/layout/${file}`));
-  assert.equal(digest(etlSources.join("")), "4e1ae14712e513b30bbc3511c440cf13cb97433c512ff024323e148136dc6942");
+  assert.equal(digest(etlSources.join("")), "c0d13c10270132dee8e1c274fd5c345a99459cb512075cd7253d196647cdf0c4");
   assert.equal(digest(layoutSources.join("")), "c427c6371a8a2703fdb8711fc8e90d542d7e9a5b092b560d04979735cf5e921b");
   for (const [index, source] of etlSources.entries()) assert.equal(braceDelta(source), 0, `${etlParts[index]} must own complete CSS blocks`);
   for (const [index, source] of layoutSources.entries()) assert.equal(braceDelta(source), 0, `${layoutParts[index]} must own complete CSS blocks`);
 
   const etlInventory = selectorInventory(etlSources.join(""));
   const layoutInventory = selectorInventory(layoutSources.join(""));
-  assert.ok(etlInventory.selectors > 1_000);
-  assert.ok(layoutInventory.selectors > 150);
-  assert.ok(etlInventory.duplicateDefinitions >= 0);
-  assert.ok(layoutInventory.duplicateDefinitions >= 0);
+  assert.deepEqual(etlInventory, { duplicateDefinitions: 66, selectors: 1_249, uniqueSelectors: 1_183 });
+  assert.deepEqual(layoutInventory, { duplicateDefinitions: 0, selectors: 246, uniqueSelectors: 246 });
   console.info("CSS selector inventory", { etl: etlInventory, layout: layoutInventory });
+});
+
+test("adjacent S3 tree panel rules stay consolidated without declaration drift", () => {
+  const targetCss = read("src/styles/etl/06-target-shared.css");
+  assert.deepEqual(declarationsForSelector(targetCss, ".s3-tree-panel"), [[
+    "min-width: 0",
+    "min-height: 0",
+    "border: 1px solid #dee1e6",
+    "border-radius: 8px",
+    "background: #f9fbfc",
+    "overflow: auto",
+    "padding: 8px",
+  ]]);
 });
 
 test("CSS and catalog entrypoints stay within their ownership budgets", () => {
