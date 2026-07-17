@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
-import { recoverKafkaLogLines } from "./kafkaPreview.mjs";
+import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -781,17 +781,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
-    const rawValueIndex = parsedSample.columns.findIndex((column) => column === "value");
-    const recoveredLogLines = recoverKafkaLogLines(messages);
-    const rawTextLines = parsedSample.format === "txt" && rawValueIndex >= 0
-      ? messages.filter((line) => line.trim())
-      : recoveredLogLines;
-    const requiresRecordParsing = rawTextLines.length > 0;
-    const detectedFormat = requiresRecordParsing
-      ? "TXT"
-      : parsedSample.format === "kafka"
-      ? undefined
-      : parsedSample.format.toUpperCase();
+    const previewMetadata = buildKafkaPreviewMetadata(messages, parsedSample.format);
 
     const id = sourceId("source", `kafka://${broker}/${topic}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
@@ -827,11 +817,9 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
         source: {
           connectionMessage: `Kafka 토픽 연결 성공: ${topic}`,
           connectionStatus: "success",
-          detectedFormat,
-          rawPreviewLines: requiresRecordParsing
-            ? rawTextLines
-            : messages.filter((line) => line.trim()),
-          requiresRecordParsing,
+          detectedFormat: previewMetadata.detectedFormat,
+          rawPreviewLines: previewMetadata.rawPreviewLines,
+          requiresRecordParsing: previewMetadata.requiresRecordParsing,
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
           sourceType,
