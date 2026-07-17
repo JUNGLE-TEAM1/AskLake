@@ -7,7 +7,9 @@
 - PR 01: `#861` / `#863` / `refactor-#861` — deployed UI no-reactivation contract와 deterministic frontend guard, 리뷰 대기
 - PR 02: `#864` / `#865` / `refactor-#864` — ETL Job list/detail refresh·hydrate·permission·facet application 경계, `#863` 머지 대기 Draft
 - PR 02 검증: backend unit 485건(1 opt-in skip), 조회 경계 unit 3건, hydrate 계약, OpenAPI breaking 0건, legacy register와 structural quality gate 통과
-- 다음 단계: ETL write command/transaction 경계를 별도 이슈/PR로 분리
+- 현재 PR 03: `#866` / `refactor-#866` — ETL Job delete permission·active workload·종속 삭제·commit/rollback application 경계
+- PR 03 검증: backend unit 490건(1 opt-in skip), 신규 command와 기존 delete/동시성 unit 24건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
+- 다음 단계: PR 03 전체 회귀 검증·Draft 생성 후 첫 3개 PR 배치 리뷰
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 

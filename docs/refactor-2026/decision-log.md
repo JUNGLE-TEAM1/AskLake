@@ -90,3 +90,10 @@
 - 결정: `etl_service.py`의 잔여 책임 중 Job list/detail refresh·hydrate·permission·facet을 먼저 `etl_job_queries`로 이동한다.
 - 이유: 공개 GET 계약과 runtime 최신화 순서를 characterization한 뒤 write transaction과 외부 side effect를 별도 PR에서 다뤄야 rollback 단위가 작다.
 - 제약: router는 기존 `etl_service.list_jobs/get_job`을 유지하고 application module은 service를 역참조하지 않는다. UI·API·DB shape는 변경하지 않는다.
+
+## D-015 — 첫 write 경계는 Job 삭제 transaction으로 제한
+
+- 상태: Accepted
+- 결정: create/update/delete 전체를 한 PR에 옮기지 않고 row lock과 commit/rollback이 명확한 `delete_job`을 `etl_job_commands`로 먼저 분리한다.
+- 이유: active Run·Continuous workload, 권한과 audit가 결합된 삭제 흐름은 기존 동시성 테스트로 동작을 고정할 수 있고 rollback 단위를 작게 유지할 수 있다.
+- 제약: create/update, 실행·발행, DB schema와 frontend optimistic rollback은 바꾸지 않는다. 후속 write 경계는 이 PR의 hook·transaction 규칙을 따른다.

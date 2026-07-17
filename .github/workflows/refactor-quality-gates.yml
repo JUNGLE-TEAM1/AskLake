@@ -50,7 +50,7 @@ jobs:
         run: |
           ASKLAKE_FASTAPI_PYTHON=python npm run verify:backward-compatibility
           ASKLAKE_FASTAPI_PYTHON=python npm run verify:legacy-paths
-          PYTHONPATH=. python -m unittest tests.test_observability_contract tests.test_runtime_io_ports tests.test_backward_compatibility_contracts tests.test_etl_job_queries
+          PYTHONPATH=. python -m unittest tests.test_observability_contract tests.test_runtime_io_ports tests.test_backward_compatibility_contracts tests.test_etl_job_queries tests.test_etl_job_commands tests.test_etl_job_delete
 
   release-runtime-contracts:
     if: github.event_name == 'workflow_dispatch' && inputs.release_suite

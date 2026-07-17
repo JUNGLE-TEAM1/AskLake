@@ -235,6 +235,7 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v
 npm run verify:sources
 npm run verify:spark-run
 npm run verify:record-parsing
@@ -266,6 +267,7 @@ FastAPI Pair2 smoke:
 - `ASKLAKE_VERIFY_DASHBOARD_POSTGRES=true npm run verify:dashboard-live-postgres`는 `DATABASE_URL`의 실제 PostgreSQL에 임시 Catalog dataset, revision commit, partition cursor, freshness, widget result를 저장한다. 같은 `run_id` 멱등성, manifest 위치, canonical source range/fingerprint/watermark, 다른 `run_id`의 같은 offset 중복 방지, 부분 겹침 거절, 계산 result/state 재조회를 확인한 뒤 fixture를 삭제한다. repository 테스트는 stream/replay namespace 분리도 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지, explicit canonical empty가 legacy Rule을 되살리지 않는지 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v`는 Job 삭제의 권한 선행, active Run·Continuous 보호, 종속 레코드 삭제 순서, audit·commit/rollback과 Airflow/Kafka reservation 동시성을 검증한다. application 경계는 `docs/refactor-2026/contracts/etl-job-command-boundary.md`에 고정한다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
 - `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 

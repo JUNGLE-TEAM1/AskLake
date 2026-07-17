@@ -1169,6 +1169,17 @@ PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
 ```
 
+### ETL Job 삭제 command·transaction 경계 검증
+
+Job 삭제 권한, active workload 차단, 종속 레코드 또는 transaction을 변경할 때는 application command unit과 기존 row-lock·동시성 회귀를 함께 실행한다. `etl_service.delete_job` façade에 삭제 정책이나 commit/rollback을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+.venv/bin/python ../scripts/refactor_audit/quality_gate.py --base origin/dev
+```
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

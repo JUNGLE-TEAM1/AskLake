@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,10 @@ from app.application.continuous_publication import (
     PublicationOutputEvidence,
     execute_continuous_publication,
     reconcile_continuous_publications,
+)
+from app.application.etl_job_commands import (
+    EtlJobDeleteHooks,
+    delete_job as execute_delete_job,
 )
 from app.application.etl_job_queries import (
     EtlJobQueryHooks,
@@ -994,129 +998,21 @@ def persist_requested_permission_grants(
     refreshed_job = etl_repository.get_job_schema(db, job.id) or job
     return with_job_permissions(db, refreshed_job, actor)
 
+
 def delete_job(db: Session, job_id: str, actor: ActorContext | None = None) -> str:
-    job = etl_repository.get_job_for_update(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-
-    job_name = job.name
-    job_owner = job.owner
-    actor_context = actor or ActorContext()
-    require_governed_access(
+    return execute_delete_job(
         db,
-        actor_context,
-        action="delete",
-        api_path=f"/api/etl/jobs/{job_id}",
-        http_method="DELETE",
-        metadata={"owner": job_owner},
-        resource_id=job.id,
-        resource_name=job.name,
-        resource_type="etl_job",
+        job_id,
+        actor,
+        hooks=EtlJobDeleteHooks(
+            add_audit_event=add_audit_event,
+            permission_grants_for_job=permission_grants_for_etl_job,
+            reconcile_stale_maintenance_runs=reconcile_stale_continuous_maintenance_runs,
+            record_audit_event=safe_record_audit_event,
+            require_governed_access=require_governed_access,
+            require_permission=require_permission,
+        ),
     )
-    try:
-        require_permission(
-            actor_context,
-            "delete",
-            owner=job.owner,
-            grants=permission_grants_for_etl_job(db, job),
-            resource_label="job",
-        )
-    except ApiError as exc:
-        safe_record_audit_event(
-            db,
-            action="etl_job.delete.forbidden",
-            actor=actor_context,
-            api_path=f"/api/etl/jobs/{job_id}",
-            http_method="DELETE",
-            metadata={"owner": job.owner, "requiredAction": "delete"},
-            result="forbidden",
-            status_code=exc.status_code,
-            target_id=job.id,
-            target_name=job.name,
-            target_type="etl_job",
-        )
-        raise
-
-    active_runs = [
-        run
-        for run in etl_repository.list_run_models_for_job(db, job.id)
-        if run.status in ACTIVE_RUN_STATUSES
-    ]
-    if active_runs:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            f"Job has an active run and cannot be deleted: {job_id}",
-            status.HTTP_409_CONFLICT,
-            {"runId": active_runs[0].run_id, "runStatus": active_runs[0].status},
-        )
-
-    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
-    if runtime is not None and runtime.status in {"starting", "running", "pausing", "stopping"}:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            f"Continuous Job is active and cannot be deleted: {job_id}",
-            status.HTTP_409_CONFLICT,
-            {"runtimeStatus": runtime.status},
-        )
-    active_sessions = [
-        session
-        for session in etl_repository.list_kafka_continuous_sessions(db, job.id)
-        if session.status in {"starting", "running", "stopping"}
-    ]
-    if active_sessions:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            f"Continuous Job has an active session and cannot be deleted: {job_id}",
-            status.HTTP_409_CONFLICT,
-            {"sessionId": active_sessions[0].session_id, "sessionStatus": active_sessions[0].status},
-        )
-    reconcile_stale_continuous_maintenance_runs(db, job.id, commit=False)
-    active_maintenance = etl_repository.list_kafka_continuous_maintenance_run_models(db, job.id, active_only=True)
-    if active_maintenance:
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            f"Continuous maintenance is active and the Job cannot be deleted: {job_id}",
-            status.HTTP_409_CONFLICT,
-            {
-                "maintenanceRunId": active_maintenance[0].run_id,
-                "maintenanceStatus": active_maintenance[0].status,
-            },
-        )
-
-    db.execute(delete(KafkaContinuousBatchModel).where(KafkaContinuousBatchModel.job_id == job.id))
-    db.execute(delete(KafkaContinuousSessionModel).where(KafkaContinuousSessionModel.job_id == job.id))
-    db.execute(delete(KafkaContinuousMaintenanceRunModel).where(KafkaContinuousMaintenanceRunModel.job_id == job.id))
-    db.execute(delete(KafkaContinuousRuntimeModel).where(KafkaContinuousRuntimeModel.job_id == job.id))
-    db.execute(delete(ETLRunModel).where(ETLRunModel.job_id == job.id))
-    db.execute(delete(KafkaSnapshotModel).where(KafkaSnapshotModel.job_id == job.id))
-    db.execute(delete(PermissionGrantModel).where(
-        PermissionGrantModel.resource_type == "etl_job",
-        PermissionGrantModel.resource_id == job.id,
-    ))
-    db.execute(delete(ResourceLockModel).where(
-        ResourceLockModel.resource_type == "etl_job",
-        ResourceLockModel.resource_id == job.id,
-    ))
-    db.delete(job)
-    add_audit_event(
-        db,
-        actor=actor_context,
-        action="etl_job.deleted",
-        api_path=f"/api/etl/jobs/{job_id}",
-        http_method="DELETE",
-        metadata={"owner": job_owner},
-        result="success",
-        status_code=status.HTTP_200_OK,
-        target_id=job_id,
-        target_name=job_name,
-        target_type="etl_job",
-    )
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    return job_id
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
