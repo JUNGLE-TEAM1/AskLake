@@ -193,9 +193,10 @@ class DashboardAssistantAccessTests(unittest.TestCase):
             SimpleNamespace(),
             catalog_repository,
             SimpleNamespace(
-                openai_api_key="test-key",
-                openai_assistant_enabled=True,
-                openai_assistant_max_sample_rows=5,
+                ai_assistant_enabled=True,
+                ai_assistant_max_sample_rows=5,
+                ai_gateway_base_url="http://ai-server:8090",
+                ai_gateway_service_token="test-token",
             ),
         )
         request = DashboardAssistantRequest.model_validate({
@@ -213,9 +214,9 @@ class DashboardAssistantAccessTests(unittest.TestCase):
         })
         captured_context: dict[str, object] = {}
 
-        def fake_openai(_request, context):
+        def fake_gateway(_request, context, _actor, _rag_context=None):
             captured_context.update(context.to_prompt_payload())
-            return {"actions": [], "message": "ok", "warnings": []}
+            return {"actions": [], "message": "ok", "warnings": [], "model": "gpt-test", "provider": "openai_compatible"}
 
         def enforce_governance(*_args, **kwargs):
             if kwargs.get("resource_id") == "dataset-locked":
@@ -231,12 +232,14 @@ class DashboardAssistantAccessTests(unittest.TestCase):
                 side_effect=enforce_governance,
             ),
             patch("app.services.dashboard_dataset_access.safe_record_audit_event"),
-            patch.object(service, "_request_openai", side_effect=fake_openai),
+            patch.object(service, "_request_gateway", side_effect=fake_gateway),
         ):
             response = service.generate_response(request, actor)
 
         serialized_context = json.dumps(captured_context, ensure_ascii=False)
         self.assertEqual(response.message, "ok")
+        self.assertEqual(response.model, "gpt-test")
+        self.assertEqual(response.provider, "openai_compatible")
         self.assertEqual(
             [dataset["id"] for dataset in captured_context["availableDatasets"]],
             ["dataset-allowed"],
