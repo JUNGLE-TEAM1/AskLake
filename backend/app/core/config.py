@@ -15,30 +15,57 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
     database_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     local_lake_storage_dir: str | None = None
-    openai_api_key: str | None = None
-    openai_assistant_enabled: bool = True
-    openai_assistant_model: str = "gpt-4o-mini"
-    openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
-    openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
-    openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
-    openai_query_ai_model: str = "gpt-4.1-mini"
-    ai_query_provider: Literal["direct", "gateway"] = "direct"
+    ai_assistant_enabled: bool = True
+    ai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
+    ai_query_provider: Literal["gateway"] = "gateway"
     ai_gateway_base_url: str | None = None
     ai_gateway_generate_path: str = "/v1/generate"
     ai_gateway_service_token: str | None = None
     ai_gateway_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    ai_gateway_max_response_bytes: int = Field(default=1_048_576, ge=65_536, le=16_777_216)
+    ai_gateway_max_embedding_response_bytes: int = Field(default=8_388_608, ge=65_536, le=134_217_728)
+    ai_gateway_classification_path: str = "/v1/generate"
+    ai_gateway_embeddings_path: str = "/v1/embeddings"
     ai_mcp_path: str = "/internal/mcp"
     ai_mcp_service_token: str | None = None
     ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
     ai_context_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     ai_context_max_sample_rows: int = Field(default=20, ge=0, le=20)
+    semantic_model_default_version: int = Field(default=1, ge=1)
+    rag_classification_sample_rows: int = Field(default=20, ge=1, le=100)
+    rag_document_preview_limit: int = Field(default=20, ge=1, le=100)
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
+    rag_embedding_batch_size: int = Field(default=64, ge=1, le=256)
+    rag_chunk_target_tokens: int = Field(default=800, ge=100, le=2_000)
+    rag_chunk_overlap_tokens: int = Field(default=400, ge=0, le=1_000)
+    rag_chunk_max_tokens: int = Field(default=1_200, ge=100, le=4_000)
+    rag_context_max_tokens: int = Field(default=6_000, ge=256, le=32_000)
+    rag_query_intelligence_enabled: bool = True
+    rag_relevance_min_score: float = Field(default=0.6, ge=0.0, le=1.0)
+    rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
+    rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
+    rag_runtime_create_schema: bool = False
+    rag_staging_base_path: str = "s3a://asklake-warehouse/rag-staging"
+    rag_parent_iceberg_namespace: str = "rag"
+    rag_index_prefix: str = "asklake-rag"
+    opensearch_base_url: str | None = None
+    opensearch_username: str | None = None
+    opensearch_password: str | None = None
+    opensearch_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    opensearch_verify_tls: bool = True
+    opensearch_ca_cert: str | None = None
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
+    rag_airflow_dag_id: str = "asklake_rag_index"
     airflow_api_token: str | None = None
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
+    rag_worker_base_url: str | None = None
+    rag_worker_token: str | None = None
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     dashboard_sync_mode: str = "polling"
@@ -70,9 +97,11 @@ class Settings(BaseSettings):
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"
+    asklake_spark_output_bucket: str = "asklake-output"
     s3_endpoint: str | None = None
     s3_force_path_style: bool = False
     aws_region: str = "ap-northeast-2"
+    asklake_spark_iceberg_catalog_name: str = "asklake"
     trino_enabled: bool = False
     trino_base_url: str = "http://localhost:8088"
     trino_catalog: str = "iceberg"
@@ -158,6 +187,32 @@ class Settings(BaseSettings):
             return "minio"
         raise ValueError("ASKLAKE_OBJECT_STORAGE_PROVIDER must be minio or aws")
 
+    @field_validator("asklake_spark_output_bucket", mode="before")
+    @classmethod
+    def validate_spark_output_bucket(cls, value: object) -> str:
+        normalized = str(value or "asklake-output").strip()
+        if (
+            "replace-with-" in normalized.casefold()
+            or not 3 <= len(normalized) <= 63
+            or re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", normalized) is None
+            or ".." in normalized
+        ):
+            raise ValueError("ASKLAKE_SPARK_OUTPUT_BUCKET must be a real S3/MinIO bucket name, not a placeholder")
+        return normalized
+
+    @field_validator("trino_result_storage_bucket", mode="before")
+    @classmethod
+    def validate_trino_result_storage_bucket(cls, value: object) -> str:
+        normalized = str(value or "asklake-query-results").strip()
+        if (
+            "replace-with-" in normalized.casefold()
+            or not 3 <= len(normalized) <= 63
+            or re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", normalized) is None
+            or ".." in normalized
+        ):
+            raise ValueError("TRINO_RESULT_STORAGE_BUCKET must be a real S3/MinIO bucket name, not a placeholder")
+        return normalized
+
     @field_validator("ai_gateway_base_url")
     @classmethod
     def validate_ai_gateway_base_url(cls, value: str | None) -> str | None:
@@ -177,7 +232,12 @@ class Settings(BaseSettings):
             raise ValueError("AI_GATEWAY_BASE_URL must be an absolute http(s) URL without credentials or query parameters")
         return normalized
 
-    @field_validator("ai_gateway_generate_path", "ai_mcp_path")
+    @field_validator(
+        "ai_gateway_generate_path",
+        "ai_gateway_classification_path",
+        "ai_gateway_embeddings_path",
+        "ai_mcp_path",
+    )
     @classmethod
     def validate_ai_internal_path(cls, value: str) -> str:
         normalized = value.strip()
@@ -197,15 +257,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":
+        if self.auth_legacy_demo_users_enabled and not self.is_test_runtime:
+            raise ValueError("AUTH_LEGACY_DEMO_USERS_ENABLED is restricted to test environments")
         if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be configured together"
             )
-        if not self.allows_header_auth_fallback and not self.bootstrap_admin_email:
+        if not self.is_development_runtime and not self.bootstrap_admin_email:
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are required outside local/dev/test"
             )
-        if not self.allows_header_auth_fallback:
+        if self.bootstrap_admin_email:
             normalized_email = str(self.bootstrap_admin_email or "").strip().casefold()
             local_part, separator, domain = normalized_email.partition("@")
             if not separator or not local_part or "." not in domain or domain.startswith(".") or domain.endswith("."):
@@ -220,12 +282,12 @@ class Settings(BaseSettings):
             "asklake-admin",
             "asklake-demo",
         }
-        if not self.allows_header_auth_fallback and (
+        if self.bootstrap_admin_email and (
             str(self.bootstrap_admin_email or "").casefold() in placeholder_values
             or self.bootstrap_admin_password in placeholder_values
         ):
-            raise ValueError("Replace the production bootstrap administrator placeholders before startup")
-        if not self.allows_header_auth_fallback:
+            raise ValueError("Replace the bootstrap administrator placeholders before startup")
+        if not self.is_development_runtime:
             for origin in self.backend_cors_origins:
                 parsed = urlparse(origin)
                 if (
@@ -242,8 +304,30 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
                     )
-        if not self.allows_header_auth_fallback and self.trino_enabled:
+        if self.trino_enabled:
             parsed_trino_url = urlparse(self.trino_base_url)
+            for username_key, username, password_key, password in (
+                (
+                    "TRINO_AUTH_USERNAME",
+                    self.trino_auth_username,
+                    "TRINO_AUTH_PASSWORD",
+                    self.trino_auth_password,
+                ),
+                (
+                    "TRINO_MATERIALIZER_USERNAME",
+                    self.trino_materializer_username,
+                    "TRINO_MATERIALIZER_PASSWORD",
+                    self.trino_materializer_password,
+                ),
+            ):
+                if bool(str(username or "").strip()) != bool(str(password or "").strip()):
+                    raise ValueError(f"{username_key} and {password_key} must be configured together")
+            if parsed_trino_url.scheme == "http" and (
+                self.trino_auth_password or self.trino_materializer_password
+            ):
+                raise ValueError("Trino Basic authentication requires an https TRINO_BASE_URL")
+
+        if not self.is_development_runtime and self.trino_enabled:
             if parsed_trino_url.scheme != "https" or not parsed_trino_url.netloc:
                 raise ValueError("TRINO_BASE_URL must be an explicit https URL when Trino is enabled")
 
@@ -295,7 +379,11 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters"
                 )
-        if not self.allows_header_auth_fallback and self.ai_query_provider == "gateway":
+        if (
+            not self.is_development_runtime
+            and self.ai_assistant_enabled
+            and self.ai_query_provider == "gateway"
+        ):
             required_ai_values = {
                 "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
                 "AI_GATEWAY_SERVICE_TOKEN": self.ai_gateway_service_token,
@@ -308,11 +396,22 @@ class Settings(BaseSettings):
                     raise ValueError(f"{key} must be a non-placeholder production value when AI gateway is enabled")
             if len(self.ai_context_signing_secret) < 32:
                 raise ValueError("AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters")
+        minimum_embedding_response_budget = self.rag_embedding_batch_size * self.rag_embedding_dimensions * 32 + 16_384
+        if self.ai_gateway_max_embedding_response_bytes < minimum_embedding_response_budget:
+            raise ValueError("AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES is too small for the configured RAG embedding batch contract")
         return self
 
     @property
-    def allows_header_auth_fallback(self) -> bool:
+    def is_development_runtime(self) -> bool:
         return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
+
+    @property
+    def is_test_runtime(self) -> bool:
+        return self.app_env.strip().casefold() in {"test", "testing"}
+
+    @property
+    def allows_header_auth_fallback(self) -> bool:
+        return self.is_test_runtime
 
     @property
     def uses_secure_session_cookie(self) -> bool:
@@ -322,7 +421,7 @@ class Settings(BaseSettings):
 
     @property
     def allows_public_signup(self) -> bool:
-        return self.allows_header_auth_fallback or self.auth_public_signup_enabled
+        return self.is_development_runtime or self.auth_public_signup_enabled
 
 
 @lru_cache

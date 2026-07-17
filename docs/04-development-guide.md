@@ -409,8 +409,7 @@ cd backend
 ```
 
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
-`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
-Assistant guard는 OpenAI가 없는 컬럼/부적절한 값축을 반환해도 catalog schema와 sample rows 기준으로 보정한다. 차원 컬럼만 제시된 요청은 `count` 집계 차트로, 매출/금액 지표가 포함된 요청은 `revenue`/`total_amount` 같은 실제 수치 컬럼으로 보정한다. OpenAI 응답이 비어 있으면 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성한다.
+AI provider key가 없거나 private AI Gateway가 unavailable이면 backend는 실패를 명시하고 action을 비운다. Assistant guard는 provider가 반환한 action의 Dataset·컬럼·값축을 catalog schema 기준으로 검증하지만, 응답이 비었다고 기본 막대 차트나 성공 결과를 만들어 내지 않는다.
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -430,20 +429,19 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
-### AI 활용 UI Skeleton
+### 화면별 AI runtime 확인
 
-`AI 활용` 메뉴의 대화형 화면은 현재 UI-only 범위다. 실제 OpenAI/RAG runtime을 호출하지 않으며, 질문을 전송하면 사용자 메시지와 `AI runtime 연결 대기` 상태만 표시한다. 답변, 근거, SQL, 결과 미리보기는 가짜 데이터로 만들지 않는다.
+독립 `AI 활용` 메뉴는 없다. SQL 분석의 `Nessie로 SQL 작성`, Dashboard Assistant, 수집/처리 변환 AI, Semantic Layer의 RAG, 리뷰 분석이 private AI Gateway를 공유한다.
 
 수동 확인은 다음 순서로 한다.
 
-1. `AI 활용` 메뉴를 열어 empty state와 composer가 겹치지 않는지 확인한다.
-2. `데이터셋 선택`에서 `available`이며 query 권한이 있는 Catalog Dataset을 선택한다.
-3. 추천 질문을 누르거나 질문을 입력한 뒤 Enter로 전송한다. Shift+Enter는 줄바꿈으로 유지돼야 한다.
-4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드는 `AI runtime 미연결`만 보이는지 확인한다.
-5. `새 대화`를 눌러 빈 대화가 목록에 추가되는지 확인한다. 새 대화에는 Dataset context가 복사되지 않아야 한다.
-6. 대화 항목 위에 마우스를 올려 삭제 아이콘이 보이는지 확인하고, 삭제 후 다음 대화로 전환되는지 확인한다. 마지막 대화를 삭제하면 빈 대화 하나가 유지되어야 한다.
-7. 이전 대화를 다시 선택해 질문, Dataset context, runtime 미연결 상태가 복원되는지 확인한다.
-8. Dataset selector가 Escape와 바깥 클릭으로 닫히고, Tab으로 checkbox focus를 확인할 수 있는지 확인한다.
+1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면을 렌더링하지 않는지 확인한다.
+2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과해야 한다.
+3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다.
+4. 수집/처리에서 field transform과 SQL transform을 생성하고 입력 schema 밖의 컬럼·관계·위험 함수를 거부하는지 확인한다.
+5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
+6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
+7. Gateway나 serving index가 없을 때 가짜 SQL·차트·근거 대신 명시적인 unavailable/empty 상태가 보이는지 확인한다.
 
 ```bash
 cd frontend
@@ -999,8 +997,8 @@ ASKLAKE_POSTGRES_FULL_SOURCE_TABLE=click_events npm run verify:postgres-full-sou
 ## 11) Manual Smoke Checklist
 
 - `/` 랜딩이 표시되고 시작 CTA가 `/login`으로 이동한다.
-- session이 없으면 `/jobs`, `/ai`, `/admin` 직접 접근이 `AuthPage`로 이동한다.
-- admin 계정 로그인 후 `/jobs`가 표시되고 `/ai`는 `AiChatPage`, `/admin`은 `AdminConsolePage`를 렌더링한다.
+- session이 없으면 `/jobs`, `/admin` 직접 접근이 `AuthPage`로 이동한다.
+- admin 계정 로그인 후 `/jobs`와 `/admin`의 `AdminConsolePage`가 표시되고 sidebar에는 독립 `AI 활용` 메뉴가 없다.
 - viewer 계정에는 관리 메뉴가 보이지 않고 `/admin` 직접 접근은 프로필로 이동한다.
 - 로그아웃 후 보호 route에 다시 접근하면 로그인 화면이 표시된다.
 - 수집/처리 목록이 열린다.
