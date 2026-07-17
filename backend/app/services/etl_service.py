@@ -44,6 +44,11 @@ from app.application.continuous_publication import (
     execute_continuous_publication,
     reconcile_continuous_publications,
 )
+from app.application.etl_job_queries import (
+    EtlJobQueryHooks,
+    get_job as hydrate_job_query,
+    list_jobs as hydrate_job_list_query,
+)
 from app.application.pipeline_mapping import (
     CreatePipelineMappingContext,
     UpdatePipelineMappingContext,
@@ -140,7 +145,6 @@ from app.schemas.etl import (
     CreatePipelineResponse,
     CreateTrinoSqlJobRequest,
     JobCommandResponse,
-    JobListFacets,
     JobListResponse,
     JobDagStep,
     JobRowData,
@@ -202,7 +206,6 @@ from app.services.resource_permission_service import permission_grants_for_resou
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
-JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
@@ -693,49 +696,21 @@ def list_jobs(
     statuses: list[str] | None = None,
     schedule_kind: JobScheduleKind | None = None,
 ) -> JobListResponse:
-    for job in etl_repository.list_job_models(db):
-        refresh_kafka_continuous_runtime(db, job)
-    actor_context = actor or ActorContext()
-    visible_jobs = [
-        with_job_permissions(db, job, actor_context)
-        for job in etl_repository.list_jobs(db)
-    ]
-    all_jobs = [normalize_list_job(job) for job in visible_jobs if job.permissions.can_view]
-    selected_statuses = set(statuses or [])
-    filtered_jobs = [
-        job for job in all_jobs
-        if (not selected_statuses or job.status in selected_statuses)
-        and (not owner or job.owner == owner)
-        and (not last_run_outcome or latest_run_outcome(job) == last_run_outcome)
-    ]
-
-    if schedule_kind:
-        filtered_jobs = [job for job in filtered_jobs if job_schedule_kind(job.schedule) == schedule_kind]
-
-    return JobListResponse(
-        facets=JobListFacets(
-            latest_run_outcome_counts={
-                outcome: sum(latest_run_outcome(job) == outcome for job in all_jobs)
-                for outcome in ("success", "failed", "canceled")
-            },
-            owners=sorted({job.owner for job in all_jobs if job.owner}),
-            status_counts={status: sum(job.status == status for job in all_jobs) for status in JOB_STATUSES},
-            total=len(all_jobs),
+    return hydrate_job_list_query(
+        db,
+        actor,
+        last_run_outcome=last_run_outcome,
+        owner=owner,
+        statuses=statuses,
+        schedule_kind=schedule_kind,
+        hooks=EtlJobQueryHooks(
+            record_audit_event=safe_record_audit_event,
+            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
+            schedule_kind=job_schedule_kind,
+            sync_airflow_runs=sync_airflow_runs_for_job,
+            with_permissions=with_job_permissions,
         ),
-        jobs=filtered_jobs,
     )
-
-
-def normalize_list_job(job: JobRowData) -> JobRowData:
-    return job
-
-
-def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
-    latest_run = (job.run_history or [None])[0]
-    if latest_run is None:
-        return None
-    status_value = latest_run.status if hasattr(latest_run, "status") else latest_run.get("status")
-    return status_value if status_value in {"success", "failed", "canceled"} else None
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
@@ -907,28 +882,18 @@ def run_due_scheduled_jobs(
 
 
 def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
-    actor_context = actor or ActorContext()
-    job_model = etl_repository.get_job(db, job_id)
-    if job_model is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    sync_airflow_runs_for_job(db, job_model)
-    refresh_kafka_continuous_runtime(db, job_model)
-    job = etl_repository.get_job_schema(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    job_with_permissions = with_job_permissions(db, job, actor_context)
-    if not job_with_permissions.permissions.can_view:
-        safe_record_audit_event(
-            db,
-            actor=actor_context,
-            action="etl_job.view.forbidden",
-            result="forbidden",
-            target_id=job_id,
-            target_type="etl_job",
-            details={"reason": "missing_view_permission"},
-        )
-        raise ApiError(ErrorCode.FORBIDDEN, "Job access denied", status.HTTP_403_FORBIDDEN)
-    return job_with_permissions
+    return hydrate_job_query(
+        db,
+        job_id,
+        actor,
+        hooks=EtlJobQueryHooks(
+            record_audit_event=safe_record_audit_event,
+            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
+            schedule_kind=job_schedule_kind,
+            sync_airflow_runs=sync_airflow_runs_for_job,
+            with_permissions=with_job_permissions,
+        ),
+    )
 
 
 def update_pipeline(

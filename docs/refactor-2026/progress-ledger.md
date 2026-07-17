@@ -4,9 +4,10 @@
 
 - 기준: `dev@16110c064094c7c66149ec1564470c16f4968cda`
 - 사용자 제약: 현재 배포 UI·API·DB·runtime 동작을 유지하고 이전 façade/mock/legacy 구현을 다시 활성화하지 않는다.
-- 현재 이슈/브랜치: `#861` / `refactor-#861`
-- PR 01 범위: deployed UI no-reactivation contract와 deterministic frontend guard
-- 다음 단계: PR 01 검증·merge 준비 뒤 ETL 조회/hydrate application 경계를 별도 이슈/PR로 분리
+- PR 01: `#861` / `#863` / `refactor-#861` — deployed UI no-reactivation contract와 deterministic frontend guard, 리뷰 대기
+- 현재 PR 02: `#864` / `refactor-#864` — ETL Job list/detail refresh·hydrate·permission·facet application 경계
+- PR 02 검증: backend unit 485건(1 opt-in skip), 조회 경계 unit 3건, hydrate 계약, OpenAPI breaking 0건, legacy register와 structural quality gate 통과
+- 다음 단계: PR 02 검증·Draft 생성 뒤 ETL write command/transaction 경계를 별도 이슈/PR로 분리
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 

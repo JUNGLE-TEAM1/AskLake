@@ -1158,6 +1158,17 @@ API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, C
 
 ## 20) ETL E2E·복구 프로필 실행
 
+### ETL Job 조회·hydrate 경계 검증
+
+Job 목록·상세의 runtime refresh, Airflow sync, permission projection 또는 facet/filter를 변경할 때는 application 경계 unit과 기존 hydrate/API 계약을 함께 실행한다. `etl_service.py` façade에 조회 정책을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_queries -v
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+```
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

@@ -83,3 +83,10 @@
 - 결정: 최신 `dev`와 현재 배포 UI의 route·DOM·CSS·API 동작을 유지하면서 `App.tsx`는 Job과 workspace canonical module을 직접 import한다.
 - 이유: 후속 backend/runtime 모듈화가 과거 façade 구현을 다시 활성화하거나 UI 변경과 섞이지 않도록 하기 위해서다.
 - 제약: `EtlPages.tsx`, `JobsPages.tsx`, `useAskLakeData.ts`는 이전 import reader로만 보존하며 신규 source import를 CI에서 차단한다. production mock과 legacy demo UI 기본값은 계속 `false`다.
+
+## D-014 — ETL 분해는 조회·명령·실행/발행 순서로 진행
+
+- 상태: Accepted
+- 결정: `etl_service.py`의 잔여 책임 중 Job list/detail refresh·hydrate·permission·facet을 먼저 `etl_job_queries`로 이동한다.
+- 이유: 공개 GET 계약과 runtime 최신화 순서를 characterization한 뒤 write transaction과 외부 side effect를 별도 PR에서 다뤄야 rollback 단위가 작다.
+- 제약: router는 기존 `etl_service.list_jobs/get_job`을 유지하고 application module은 service를 역참조하지 않는다. UI·API·DB shape는 변경하지 않는다.
