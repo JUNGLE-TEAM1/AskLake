@@ -1,8 +1,9 @@
 """Job list/detail hydration use cases.
 
 The public ``etl_service`` functions remain compatibility façades. This module
-owns the read sequence: refresh runtime evidence, hydrate repository schemas,
-apply actor permissions, and build stable list facets or detail failures.
+owns the read sequence: hydrate repository schemas, apply actor permissions,
+and build stable list facets or detail failures. Only detail reads refresh
+runtime evidence; list reads remain side-effect free.
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ class EtlJobQueryHooks:
     schedule_kind: Callable[[str | None], JobScheduleKind]
     sync_airflow_runs: Callable[[Session, ETLJobModel], None]
     with_permissions: Callable[[Session, JobRowData, ActorContext], JobRowData]
+    with_list_permissions: Callable[
+        [Session, list[JobRowData], ActorContext],
+        list[JobRowData],
+    ]
 
 
 def list_jobs(
@@ -49,14 +54,12 @@ def list_jobs(
     *,
     hooks: EtlJobQueryHooks,
 ) -> JobListResponse:
-    for job in etl_repository.list_job_models(db):
-        hooks.refresh_continuous_runtime(db, job)
-
     actor_context = actor or ActorContext()
-    visible_jobs = [
-        hooks.with_permissions(db, job, actor_context)
-        for job in etl_repository.list_jobs(db)
-    ]
+    visible_jobs = hooks.with_list_permissions(
+        db,
+        etl_repository.list_jobs(db),
+        actor_context,
+    )
     all_jobs = [job for job in visible_jobs if job.permissions.can_view]
     selected_statuses = set(statuses or [])
     filtered_jobs = [

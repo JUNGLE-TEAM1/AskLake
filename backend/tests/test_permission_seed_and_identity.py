@@ -95,6 +95,41 @@ class DemoPermissionSeedTests(unittest.TestCase):
             {("dataset", "dataset-demo"): []},
         )
 
+    def test_multiple_resources_are_loaded_with_one_select(self) -> None:
+        create_permission_grant(
+            self.db,
+            resource_type="etl_job",
+            resource_id="job-one",
+            principal_type="user",
+            principal_id="reader@example.com",
+            actions=["view"],
+            created_by="admin",
+        )
+        create_permission_grant(
+            self.db,
+            resource_type="etl_job",
+            resource_id="job-two",
+            principal_type="group",
+            principal_id="ops",
+            actions=["run"],
+            created_by="admin",
+        )
+
+        with patch.object(self.db, "scalars", wraps=self.db.scalars) as scalars:
+            grouped = list_permission_grants_by_resource(
+                self.db,
+                [
+                    ("etl_job", "job-one"),
+                    ("etl_job", "job-two"),
+                    ("etl_job", "job-without-grants"),
+                ],
+            )
+
+        self.assertEqual(scalars.call_count, 1)
+        self.assertEqual(len(grouped[("etl_job", "job-one")]), 1)
+        self.assertEqual(len(grouped[("etl_job", "job-two")]), 1)
+        self.assertEqual(grouped[("etl_job", "job-without-grants")], [])
+
 
 class IdentityDatabaseSourceTests(unittest.TestCase):
     def setUp(self) -> None:

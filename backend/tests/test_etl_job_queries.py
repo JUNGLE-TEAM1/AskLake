@@ -54,29 +54,38 @@ def _schedule_kind(schedule: str | None) -> JobScheduleKind:
 
 
 class EtlJobQueryTests(unittest.TestCase):
-    def test_list_refreshes_models_then_applies_visibility_filters_and_facets(self) -> None:
+    def test_list_reads_persisted_jobs_without_runtime_refresh_then_applies_filters_and_facets(self) -> None:
         jobs = [
             _job("VISIBLE-DAILY", owner="alice", schedule="매일", status="scheduled", run_status="success"),
             _job("VISIBLE-MANUAL", owner="bob", schedule="수동", status="failed", run_status="failed"),
             _job("HIDDEN", owner="alice", schedule="매일", status="scheduled", run_status="success"),
         ]
         refreshed: list[str] = []
+        projected_batches: list[list[str]] = []
 
-        def with_permissions(_db, job: JobRowData, _actor: ActorContext) -> JobRowData:
-            return job.model_copy(update={
-                "permissions": ResourcePermissions(can_view=job.id != "HIDDEN"),
-            })
+        def with_list_permissions(
+            _db,
+            items: list[JobRowData],
+            _actor: ActorContext,
+        ) -> list[JobRowData]:
+            projected_batches.append([job.id for job in items])
+            return [
+                job.model_copy(update={
+                    "permissions": ResourcePermissions(can_view=job.id != "HIDDEN"),
+                })
+                for job in items
+            ]
 
         hooks = EtlJobQueryHooks(
             record_audit_event=lambda *_args, **_kwargs: None,
             refresh_continuous_runtime=lambda _db, model: refreshed.append(model.id),
             schedule_kind=_schedule_kind,
             sync_airflow_runs=lambda _db, _model: None,
-            with_permissions=with_permissions,
+            with_permissions=lambda _db, job, _actor: job,
+            with_list_permissions=with_list_permissions,
         )
-        models = [SimpleNamespace(id=job.id) for job in jobs]
         with (
-            patch("app.application.etl_job_queries.etl_repository.list_job_models", return_value=models),
+            patch("app.application.etl_job_queries.etl_repository.list_job_models") as list_job_models,
             patch("app.application.etl_job_queries.etl_repository.list_jobs", return_value=jobs),
         ):
             response = list_jobs(
@@ -89,7 +98,9 @@ class EtlJobQueryTests(unittest.TestCase):
                 hooks=hooks,
             )
 
-        self.assertEqual(refreshed, ["VISIBLE-DAILY", "VISIBLE-MANUAL", "HIDDEN"])
+        list_job_models.assert_not_called()
+        self.assertEqual(refreshed, [])
+        self.assertEqual(projected_batches, [["VISIBLE-DAILY", "VISIBLE-MANUAL", "HIDDEN"]])
         self.assertEqual([job.id for job in response.jobs], ["VISIBLE-DAILY"])
         self.assertEqual(response.facets.total, 2)
         self.assertEqual(response.facets.owners, ["alice", "bob"])
@@ -113,6 +124,7 @@ class EtlJobQueryTests(unittest.TestCase):
             with_permissions=lambda _db, hydrated, _actor: (
                 order.append("permissions") or hydrated
             ),
+            with_list_permissions=lambda _db, items, _actor: items,
         )
         with (
             patch("app.application.etl_job_queries.etl_repository.get_job", return_value=model),
@@ -133,6 +145,7 @@ class EtlJobQueryTests(unittest.TestCase):
             with_permissions=lambda _db, hydrated, _actor: hydrated.model_copy(update={
                 "permissions": ResourcePermissions(can_view=False),
             }),
+            with_list_permissions=lambda _db, items, _actor: items,
         )
         with patch("app.application.etl_job_queries.etl_repository.get_job", return_value=None):
             with self.assertRaises(ApiError) as missing:
