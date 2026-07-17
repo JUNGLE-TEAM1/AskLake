@@ -19,7 +19,7 @@
 - PR 07 검증: backend unit 512건(1 opt-in skip), ownership validator unit 6건과 현재 production manifest, Continuous runtime contract 39건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. 실제 EKS/EC2 process 대조는 Draft 후 rollout 수동 gate에 유지
 - PR 08: `#877` / `#878` / `refactor-#877` — 인접 `.s3-tree-panel` rule 1쌍을 declaration 순서 그대로 통합하고 exact CSS inventory·렌더 parity gate 강화, `#876` 머지 대기 Draft
 - PR 08 검증: CSS boundary 4건, selector 1,250→1,249/unique 1,183 유지/중복 67→66, desktop·mobile computed style와 screenshot SHA-256 동일. frontend UI 136 checks와 production build, backend unit 512건(1 opt-in skip), OpenAPI breaking 0건, legacy register·structural quality 통과. live workspace 화면은 local PostgreSQL/Docker 미기동으로 Draft 후 수동 gate에 유지
-- PR 09: `#879` / PR 생성 전 / `refactor-#879` — production legacy 10경로의 30일 0-call·근거·승인 removal evidence fail-closed gate, `#878` 머지 대기 Draft 예정
+- PR 09: `#879` / `#880` / `refactor-#879` — production legacy 10경로의 30일 0-call·근거·승인 removal evidence fail-closed gate, `#878` 머지 대기 Draft
 - PR 09 검증: removal evidence unit 6건, production 10경로 blocked·eligible 0개, backend unit 512건(1 opt-in skip), frontend UI 136 checks와 production build, OpenAPI breaking 0건, 기존 legacy register·structural quality 통과. runtime/UI source 변경 0건이며 실제 production 30일 log 관찰은 수행하지 않음
 - 다음 단계: 10개 stacked PR merge/readiness 최종 audit를 PR 10으로 고정
 
