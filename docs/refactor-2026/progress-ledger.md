@@ -9,9 +9,9 @@
 - PR 02 검증: backend unit 485건(1 opt-in skip), 조회 경계 unit 3건, hydrate 계약, OpenAPI breaking 0건, legacy register와 structural quality gate 통과
 - PR 03: `#866` / `#867` / `refactor-#866` — ETL Job delete permission·active workload·종속 삭제·commit/rollback application 경계, `#865` 머지 대기 Draft
 - PR 03 검증: backend unit 490건(1 opt-in skip), 신규 command와 기존 delete/동시성 unit 24건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
-- 현재 PR 04: `#868` / `refactor-#868` — 일반 Pipeline create/update validation·identity·mapping·permission·repository write application 경계
+- PR 04: `#868` / `#869` / `refactor-#868` — 일반 Pipeline create/update validation·identity·mapping·permission·repository write application 경계, `#867` 머지 대기 Draft
 - PR 04 검증: backend unit 496건(1 opt-in skip), 신규 write unit 6건, update·permission create·Rule persistence·dataset identity·Continuous verifier, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
-- 다음 단계: PR 04 전체 회귀 검증·Draft 생성 후 실행·발행 경계를 PR 05로 분리
+- 다음 단계: 실행·발행 경계를 PR 05로 분리
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 
