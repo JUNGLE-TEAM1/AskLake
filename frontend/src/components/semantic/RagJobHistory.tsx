@@ -18,6 +18,7 @@ type HistoryState = {
 type TimelineState = "active" | "cancelled" | "complete" | "failed" | "pending";
 
 const POLL_INTERVAL_MS = 3_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 const TIMELINE_STAGES = [
   { key: "queued", label: "대기" },
@@ -123,10 +124,6 @@ function normalize(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
-function isSuccessfulJob(job: RagJob) {
-  return SUCCESS_VALUES.has(normalize(job.status)) || SUCCESS_VALUES.has(normalize(job.stage));
-}
-
 function isFailedJob(job: RagJob) {
   return FAILURE_VALUES.has(normalize(job.status)) || FAILURE_VALUES.has(normalize(job.stage));
 }
@@ -135,15 +132,32 @@ function isCancelledJob(job: RagJob) {
   return CANCELLED_VALUES.has(normalize(job.status)) || CANCELLED_VALUES.has(normalize(job.stage));
 }
 
+function hasSuccessfulValue(job: RagJob) {
+  return SUCCESS_VALUES.has(normalize(job.status)) || SUCCESS_VALUES.has(normalize(job.stage));
+}
+
+function hasActiveActivation(job: RagJob) {
+  return ACTIVE_ACTIVATION_VALUES.has(normalize(job.activationStatus));
+}
+
+function isSuccessfulJob(job: RagJob) {
+  return !isFailedJob(job) && !isCancelledJob(job) && !hasActiveActivation(job) && hasSuccessfulValue(job);
+}
+
 function isTerminalJob(job: RagJob) {
   if (isFailedJob(job) || isCancelledJob(job)) return true;
-  if (ACTIVE_ACTIVATION_VALUES.has(normalize(job.activationStatus))) return false;
+  if (hasActiveActivation(job)) return false;
   return isSuccessfulJob(job);
 }
 
 function statusLabel(value: string) {
   const normalized = normalize(value);
   return STATUS_LABELS[normalized] ?? (value ? `알 수 없음 · ${value}` : "상태 미확인");
+}
+
+function jobStatusLabel(job: RagJob) {
+  if (hasSuccessfulValue(job) && hasActiveActivation(job)) return "활성화 중";
+  return statusLabel(job.status);
 }
 
 function modeLabel(value: string) {
@@ -156,6 +170,7 @@ function modeLabel(value: string) {
 function currentStageLabel(job: RagJob) {
   if (isFailedJob(job)) return "작업 실패";
   if (isCancelledJob(job)) return "작업 취소";
+  if (hasSuccessfulValue(job) && hasActiveActivation(job)) return "색인 활성화";
   const index = STAGE_INDEX[normalize(job.stage)];
   if (index !== undefined) return TIMELINE_STAGES[index].label;
   return job.stage ? `단계 미확인 · ${job.stage}` : "단계 미확인";
@@ -276,7 +291,7 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
             <code title={job.jobId}>{job.jobId}</code>
           </span>
           <span className="rag-job-history-summary-status">
-            <span className={`rag-job-history-status is-${tone}`}>{statusLabel(job.status)}</span>
+            <span className={`rag-job-history-status is-${tone}`}>{jobStatusLabel(job)}</span>
             <span>{currentStageLabel(job)}</span>
           </span>
           <span className="rag-job-history-summary-progress">
@@ -388,7 +403,10 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
       requestController = controller;
 
       try {
-        const response = await listRagJobs(requestDatasetId, { signal: controller.signal });
+        const response = await listRagJobs(requestDatasetId, {
+          signal: controller.signal,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        });
         if (cancelled || controller.signal.aborted) return;
         if (!Array.isArray(response)) throw new Error("RAG 작업 이력 응답 형식이 올바르지 않습니다.");
 
@@ -483,11 +501,13 @@ export function RagJobHistory({ datasetId, refreshToken }: RagJobHistoryProps) {
           )}
           {latestJob && (
             <p className="rag-job-history-sr-only" aria-live="polite">
-              최신 RAG 작업은 {statusLabel(latestJob.status)}, {currentStageLabel(latestJob)}, 진행률 {formatProgress(latestJob.progressPercent)}입니다.
+              최신 RAG 작업은 {jobStatusLabel(latestJob)}, {currentStageLabel(latestJob)}, 진행률 {formatProgress(latestJob.progressPercent)}입니다.
             </p>
           )}
           <ol className="rag-job-history-list">
-            {sortedJobs.map((job, index) => <JobDetails job={job} index={index} key={job.jobId} />)}
+            {sortedJobs.map((job, index) => (
+              <JobDetails job={job} index={index} key={`${requestDatasetId}:${job.jobId}`} />
+            ))}
           </ol>
         </>
       )}
