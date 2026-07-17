@@ -1206,6 +1206,19 @@ PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
 PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
 ```
 
+### Source connector Python·Node gateway 경계 검증
+
+Source 연결 테스트나 asset listing의 request/response, Node transport 또는 connector adapter를 변경할 때는 typed gateway unit과 기존 bridge·auth·schema·object-storage 회귀를 함께 실행한다. Python application/service에서 Node script 이름이나 stdout marker를 직접 조립하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_source_connector_gateway -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_runtime_io_ports tests.test_etl_endpoint_auth tests.test_source_connector_raw_preview_schema tests.test_object_storage_mode -v
+node --check src/connectors.mjs
+node --check scripts/test-source-connector.mjs
+node --check scripts/list-source-assets.mjs
+```
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

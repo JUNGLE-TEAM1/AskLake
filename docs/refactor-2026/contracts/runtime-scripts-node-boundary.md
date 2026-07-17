@@ -52,7 +52,7 @@ Kafka Continuous는 정확히 한 번의 end-to-end delivery를 주장하지 않
 | Use case | 현재 권위 | production evidence | 호환/종료 조건 |
 |---|---|---|---|
 | FastAPI ETL command, Job/Run/Catalog metadata | Python canonical | production image의 `uvicorn app.main:app` | Node demo persistence와 비교 fixture 제거 전 parity 확인 |
-| Source connector probe·asset listing | Node canonical compatibility | FastAPI가 `test-source-connector.mjs`, `list-source-assets.mjs`를 `SubprocessNodeBridge`로 호출 | Python adapter가 모든 connector parity/secret masking 계약을 통과하면 전환 검토 |
+| Source connector probe·asset listing | Python use case + Node implementation compatibility | FastAPI application이 `SourceConnectorGateway`를 호출하고 Node adapter만 `test-source-connector.mjs`, `list-source-assets.mjs`와 `SubprocessNodeBridge`를 소유 | Python 구현이 모든 connector parity/secret masking 계약을 통과하면 Node 구현 전환 검토 |
 | Spark REST submission·legacy launcher | Node canonical compatibility | `sparkRunner.mjs`, `spark-rest-client.mjs`, launcher script가 production command에 사용 | Python gateway가 timeout/recovery/state-file 계약을 대체한 뒤 전환 |
 | Kafka Continuous start/maintenance launcher | Node canonical compatibility | `manage-kafka-continuous*.mjs`가 FastAPI bridge에서 호출 | Spark REST lifecycle parity와 운영 soak 완료 후 전환 |
 | Review analysis compute | Node canonical behind versioned bridge | `reviewRowAnalysis.mjs` operation을 Python API가 호출 | model/runtime을 Python으로 옮기지 않는 한 Node 유지 |
