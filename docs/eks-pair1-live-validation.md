@@ -44,9 +44,9 @@ Formal image receipt와 실제 endpoint/ARN/digest가 든 handoff는 `infra/eks/
 
 ## 100건 E2E 실행 상태
 
-고유한 fixture 두 세트를 각각 정확히 100건으로 MSK에 발행했고, 임시 private EC2 producer와 IAM role/profile, security group은 매 실행 후 자동 삭제됐다. 두 SparkApplication 모두 MSK에서 해당 batch 100건을 읽어 Iceberg snapshot에 overwrite하고 driver result marker를 남긴 뒤 `COMPLETED`가 됐다.
+고유한 fixture 세 세트를 각각 정확히 100건으로 MSK에 발행했고, 임시 private EC2 producer와 IAM role/profile, security group은 매 실행 후 자동 삭제됐다. 앞선 두 SparkApplication은 MSK에서 해당 batch 100건을 읽어 Iceberg snapshot에 overwrite하고 driver result marker를 남긴 뒤 `COMPLETED`가 됐다. 세 번째 실행은 강화한 runtime identity guard가 실행 중 새 Helm revision을 감지해 success receipt 생성을 즉시 차단했다.
 
-그러나 두 실행 모두 최종 성공 증거로 채택하지 않는다. 실행 도중 별도의 `asklake-web` Helm upgrade가 발생해 FastAPI Pod template과 Pod가 교체됐고, Airflow가 유지하던 내부 HTTP 요청이 `RemoteDisconnected`로 끝났다. Spark의 물리 처리 성공과 달리 durable ETL Run은 `failed`로 수렴했으므로 Issue #860의 end-to-end 성공 조건을 충족하지 않는다.
+그러나 세 실행 모두 최종 성공 증거로 채택하지 않는다. 실행 전후 또는 실행 도중 별도의 `asklake-web` Helm upgrade/rollback이 반복됐고, 앞선 실행에서는 FastAPI Pod 교체로 Airflow의 내부 HTTP 요청이 `RemoteDisconnected`로 끝났다. Spark의 물리 처리 성공과 달리 durable ETL Run은 `failed`로 수렴했으며, 세 번째 실행은 공유 runtime drift 자체가 gate를 닫았으므로 Issue #860의 end-to-end 성공 조건을 충족하지 않는다.
 
 이 실패로 기존 EC2나 production 연결을 변경하지 않았고, fixture 외 운영 데이터를 삭제하지 않았다. 다음 live 재실행은 공유 EKS 배포가 중단된 exclusive window, exact receipt 재배포, 모든 Deployment rollout 완료, ALB draining 0을 확인한 뒤 새 batch ID로만 수행한다.
 
