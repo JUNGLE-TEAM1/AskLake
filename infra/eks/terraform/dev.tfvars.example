@@ -85,6 +85,10 @@ msk_subnet_ids          = []
 msk_security_group_ids  = []
 msk_test_topic          = "asklake.eks-mvp.fixture.v1"
 msk_test_consumer_group = "asklake-eks-mvp-spark-v1"
+# Keep empty outside the Day 17 isolated scale experiment. When approved,
+# select only the exact scale17 groups required by the test; never use a prefix
+# or wildcard.
+msk_scale_consumer_groups = []
 
 # For rds_mode = "create", select the instance class and optional engine
 # version only after workload/cost review. Terraform creates asklake_app;

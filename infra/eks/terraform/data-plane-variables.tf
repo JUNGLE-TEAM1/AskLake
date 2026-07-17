@@ -58,6 +58,25 @@ variable "msk_test_consumer_group" {
   }
 }
 
+variable "msk_scale_consumer_groups" {
+  description = "Exact Day 17 scale fixture consumer groups added to the Spark policy. Wildcards and arbitrary groups are not accepted."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = length(setsubtract(
+      var.msk_scale_consumer_groups,
+      toset([
+        "asklake-eks-mvp-spark-scale17-01",
+        "asklake-eks-mvp-spark-scale17-02",
+        "asklake-eks-mvp-spark-scale17-03",
+        "asklake-eks-mvp-spark-scale17-04",
+      ]),
+    )) == 0
+    error_message = "msk_scale_consumer_groups may contain only the four exact Day 17 scale fixture groups."
+  }
+}
+
 variable "rds_mode" {
   description = "Disable RDS wiring, reference an existing instance, or create an MVP-owned PostgreSQL instance."
   type        = string

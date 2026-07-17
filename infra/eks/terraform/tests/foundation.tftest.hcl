@@ -1129,6 +1129,11 @@ run "irsa_workload_identity_contract" {
     msk_mode                                = "existing"
     existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
     existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+    msk_scale_consumer_groups = [
+      "asklake-eks-mvp-spark-scale17-01",
+      "asklake-eks-mvp-spark-scale17-02",
+      "asklake-eks-mvp-spark-scale17-03",
+    ]
 
     storage_mode = "existing"
     storage_bucket_names = {
@@ -1191,10 +1196,12 @@ run "irsa_workload_identity_contract" {
   assert {
     condition = (
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == [local.msk_topic_arn] &&
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == [local.msk_group_arn] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == local.msk_group_arns &&
+      length(local.msk_group_arns) == 4 &&
+      alltrue([for arn in local.msk_group_arns : !strcontains(arn, "*")]) &&
       one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == [local.msk_topic_arn]
     )
-    error_message = "Spark and MSK smoke policies must stay on the isolated test topic and consumer group."
+    error_message = "Spark and MSK smoke policies must stay on the isolated test topic and exact approved consumer groups."
   }
 
   assert {

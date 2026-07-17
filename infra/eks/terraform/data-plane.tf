@@ -20,11 +20,17 @@ locals {
     replace(local.msk_cluster_arn, ":cluster/", ":topic/"),
     var.msk_test_topic,
   )
-  msk_group_arn = local.msk_cluster_arn == null ? null : format(
-    "%s/%s",
-    replace(local.msk_cluster_arn, ":cluster/", ":group/"),
-    var.msk_test_consumer_group,
-  )
+  msk_group_arns = local.msk_cluster_arn == null ? [] : [
+    for consumer_group in concat(
+      [var.msk_test_consumer_group],
+      sort(tolist(var.msk_scale_consumer_groups)),
+    ) :
+    format(
+      "%s/%s",
+      replace(local.msk_cluster_arn, ":cluster/", ":group/"),
+      consumer_group,
+    )
+  ]
 
   rds_endpoint = local.create_rds ? try(aws_db_instance.metadata[0].address, null) : var.existing_rds_endpoint
   rds_port     = local.create_rds ? try(aws_db_instance.metadata[0].port, 5432) : var.existing_rds_port
