@@ -1,5 +1,12 @@
 services:
   frontend:
+    build:
+      args:
+        # The browser cannot resolve Compose service names or the production
+        # example domain. Keep local E2E requests same-origin so nginx routes
+        # /api/* to the backend service.
+        VITE_API_BASE_URL: ""
+        VITE_DASHBOARD_ASSISTANT_API_PATH: "/api/dashboards/assistant"
     ports:
       - "127.0.0.1:${ASKLAKE_FRONTEND_HOST_PORT:-5173}:80"
 

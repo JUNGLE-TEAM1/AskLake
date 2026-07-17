@@ -1,7 +1,10 @@
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
 
-const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "/api/dashboards/assistant").trim();
+// Docker build args are exposed to Vite as empty strings when omitted. Treat an
+// empty value exactly like an unset value so local and production builds both
+// reach the same-origin dashboard assistant API by default.
+const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH || "/api/dashboards/assistant").trim();
 
 export type DashboardAssistantMode = "dashboard_question" | "visualization_request";
 
