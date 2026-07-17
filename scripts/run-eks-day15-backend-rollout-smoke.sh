@@ -44,9 +44,9 @@ image="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | 
   exit 1
 }
 jq -e '
-  (.spec.replicas // 0) == 2
-  and (.status.readyReplicas // 0) == 2
-  and (.status.updatedReplicas // 0) == 2
+  (.spec.replicas // 0) >= 2
+  and (.status.readyReplicas // 0) == .spec.replicas
+  and (.status.updatedReplicas // 0) == .spec.replicas
   and (.status.unavailableReplicas // 0) == 0
   and any(.spec.template.spec.containers[] | select(.name == "fastapi") | .envFrom[]?; .configMapRef.name == "asklake-runtime")
   and any(.spec.template.spec.containers[] | select(.name == "fastapi") | .envFrom[]?; .secretRef.name == "asklake-backend-runtime")
@@ -147,10 +147,10 @@ deployment_after="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
 generation_after="$(jq -r '.metadata.generation' <<<"$deployment_after")"
 revision_after="$(jq -r '.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber' <<<"$deployment_after")"
 jq -e --arg image "$image" '
-  (.spec.replicas // 0) == 2
-  and (.status.readyReplicas // 0) == 2
-  and (.status.updatedReplicas // 0) == 2
-  and (.status.availableReplicas // 0) == 2
+  (.spec.replicas // 0) >= 2
+  and (.status.readyReplicas // 0) == .spec.replicas
+  and (.status.updatedReplicas // 0) == .spec.replicas
+  and (.status.availableReplicas // 0) == .spec.replicas
   and (.status.unavailableReplicas // 0) == 0
   and ([.spec.template.spec.containers[] | select(.name == "fastapi") | .image] == [$image])
 ' <<<"$deployment_after" >/dev/null
@@ -161,8 +161,9 @@ jq -e --arg image "$image" '
 
 pods="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
 jq -e --arg digest "$digest" '
-  (.items | length) == 2
-  and all(.items[];
+  [.items[] | select(.metadata.deletionTimestamp == null)] as $active
+  | ($active | length) >= 2
+  and all($active[];
     .status.phase == "Running"
     and any(.status.containerStatuses[]?;
       .name == "fastapi"
@@ -181,7 +182,9 @@ bash "$ROOT_DIR/scripts/verify-eks-day15-backend-secret-runtime.sh" >/dev/null
 printf 'backend_source_commit=%s\n' "$EXPECTED_COMMIT"
 printf 'backend_rollout_http_samples=%d\n' "$sample_count"
 printf 'backend_rollout_http_failures=%d\n' "$failure_count"
-printf 'backend_rollout_replicas=2_of_2\n'
+printf 'backend_rollout_replicas=%s_of_%s\n' \
+  "$(jq -r '.status.readyReplicas' <<<"$deployment_after")" \
+  "$(jq -r '.spec.replicas' <<<"$deployment_after")"
 printf 'backend_rollout_digest=unchanged_immutable\n'
 printf 'backend_external_ec2_instance=running_status_checks_ok\n'
 printf 'backend_continuous_runtime_health=not_asserted\n'

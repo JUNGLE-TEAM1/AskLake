@@ -348,5 +348,17 @@ done
 if grep -Fq "printf '000'" "$ROOT_DIR/scripts/run-eks-day15-backend-rollout-smoke.sh"; then
   fail "rollout monitor can still concatenate curl output into 000000"
 fi
+grep -Fq '(.spec.replicas // 0) >= 2' \
+  "$ROOT_DIR/scripts/run-eks-day15-backend-rollout-smoke.sh" || \
+  fail "Backend rollout still requires an exact replica count instead of the HPA floor"
+grep -Fq 'select(.metadata.deletionTimestamp == null)' \
+  "$ROOT_DIR/scripts/run-eks-day15-backend-rollout-smoke.sh" || \
+  fail "Backend rollout still counts terminating Pods as active replicas"
+grep -Fq '(.spec.replicas // 0) >= 2' \
+  "$ROOT_DIR/scripts/verify-eks-day15-backend-secret-runtime.sh" || \
+  fail "Backend Secret runtime verification still requires an exact replica count"
+grep -Fq '"$(jq '\''.items | length'\'' <<<"$pods")" -ge 2' \
+  "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh" || \
+  fail "Continuous boundary verification still requires an exact replica count"
 
 echo "EKS Day 15 validation hardening tests passed."

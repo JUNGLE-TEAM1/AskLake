@@ -57,17 +57,25 @@ Formal image receipt와 실제 endpoint/ARN/digest가 든 handoff는 `infra/eks/
 
 rollout 순서와 Pod template revision을 보완한 뒤 새 fixture 100건으로 다시 실행했다. 이 실행은 시작부터 종료까지 Helm release와 Deployment identity가 고정됐고, SparkApplication image가 formal receipt와 일치했다. persisted evidence 20개 check가 모두 통과했으며 Trino 확인 행은 정확히 100개, materialization은 1개, 임시 verifier residue는 0이었다. 같은 성공 `runId` retry도 25개 check, 행 100개, materialization 1개로 통과해 새 SparkApplication·materialization 중복이 없음을 확인했다. 임시 private EC2 producer, host IAM/profile, security group과 MSK 임시 ingress도 실행마다 정리됐다.
 
-최종 Backend Pod 재생성 검증 직전에 별도의 `asklake-web` upgrade가 다시 발생해 live Backend image가 exact receipt와 달라졌고, 동시에 별도 SparkApplication과 Spark Node가 생성됐다. 이 시점부터 공유 환경을 덮어쓰지 않고 검증을 중단했다. 이미 완료된 고정-window E2E와 retry 증거는 유효하지만, 변경 이후의 Backend 재생성 복구는 새 exclusive window에서 다시 해야 한다.
+최종 Backend Pod 재생성 검증 직전에 별도의 `asklake-web` upgrade가 다시 발생해 live Backend image가 exact receipt와 달라졌고, 동시에 별도 SparkApplication과 Spark Node가 생성됐다. 공유 환경을 덮어쓰지 않고 해당 rollout과 ALB drain이 끝난 뒤, 현재 live Backend의 formal receipt와 exact source commit을 별도 detached worktree에서 검증했다.
+
+동일 immutable Backend 재시작 중 HPA가 replica를 조정하고 Frontend rollout도 겹쳤다. 외부 `/api/health`는 첫 시도 480개, 재실행 330개 표본에서 실패가 0이었지만 기존 검증기는 FastAPI replica를 정확히 2개로 가정하고 unrelated Frontend drain까지 기다려 실패했다. 검증기를 HPA의 현재 desired replica가 최소 2이고 active Pod 전체가 Ready인지 확인하도록 보완하고, terminating Pod는 active 판정에서 제외했다. 이후 ALB steady, full-service ExternalSecret/RDS, 보존 EC2, EKS Continuous process 0을 모두 다시 확인했다. 재시작 뒤 기존 성공 run의 persisted evidence 20개 check도 다시 통과해 동일 run identity, 정확히 100행, materialization 1개와 verifier residue 0을 확인했다.
+
+fail-closed 검증은 운영 Secret이나 권한을 변경하지 않는 격리 probe로 수행했다. 존재하지 않는 Secrets Manager property를 참조한 임시 ExternalSecret은 `Ready=False`였고 target Secret을 만들지 않았다. MSK metadata 전용 Pod Identity는 Connect/DescribeTopic만 허용되고 data read/write와 topic mutation 5개 action은 IAM simulation에서 모두 거부됐다. Backend S3 실제 smoke는 read-only 3개, write 2개, 계약 밖 prefix 2개와 bucket-location deny를 통과했고 versioned object 및 Kubernetes residue가 0이었다. Trino data-plane smoke는 Pod Identity, RDS, DNS, 허용 S3와 계약 밖 prefix deny를 함께 통과했다. 별도 잘못된 RDS 자격 증명 probe도 인증 거부 후 Pod를 삭제했다. Spark driver RBAC deny matrix와 Secret rollback 정적 mutation 회귀도 통과했다.
+
+마지막 정리에서 active Job과 active SparkApplication은 0개였고, Issue #860의 임시 fixture EC2, host IAM role/profile, security group, S3 versioned smoke object와 검증 Pod/Secret residue도 모두 0이었다. 완료 SparkApplication은 7일 evidence TTL 정책에 따라 보존한다.
+
+로컬 최종 회귀에서는 Backend verify, Frontend production build, Helm/EKS foundation와 web workload 계약, validation hardening, tracked evidence redaction을 통과했다. Terraform 1.15.8 컨테이너에서 format·init·validate와 45개 test도 모두 통과했다. GitHub Actions 결과는 이 브랜치 push 뒤 별도로 확인한다.
 
 ## 아직 통과해야 하는 gate
 
 - [x] exact receipt가 고정된 exclusive window에서 새 100건 E2E 성공
 - [x] Trino에서 fixture batch ID 기준 정확히 100건, 중복 0 물리 조회
 - [x] 동일 runId retry가 새 SparkApplication/materialization을 만들지 않는지 확인
-- Backend Pod 1개 재생성 후 같은 runId와 SparkApplication UID 복구
+- [x] Backend Pod 재생성 후 같은 runId와 SparkApplication UID 복구
 - [x] Collector Pod 재생성 후 bounded SQL Query Run terminal 복구와 slot 반환
-- Secret/Pod Identity/MSK/S3/RDS negative 조건의 fail-closed 증거
-- temporary workload, fixture host/IAM/security group, active SparkApplication residue 0
+- [x] Secret/Pod Identity/MSK/S3/RDS negative 조건의 fail-closed 증거
+- [x] temporary workload, fixture host/IAM/security group, active SparkApplication residue 0
 - 전체 Backend/Frontend/EKS/Terraform 회귀와 GitHub Actions 통과
 
 위 항목이 실제 증거로 통과하기 전에는 Issue #860이나 이 문서를 완료 상태로 표시하지 않는다.

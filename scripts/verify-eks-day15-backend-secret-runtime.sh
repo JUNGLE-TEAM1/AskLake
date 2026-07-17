@@ -83,9 +83,9 @@ unset source_hash target_hash
 deployment_json="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
 jq -e \
   --arg secret "$EXTERNAL_SECRET_NAME" '
-    (.spec.replicas // 0) == 2
-    and (.status.readyReplicas // 0) == 2
-    and (.status.updatedReplicas // 0) == 2
+    (.spec.replicas // 0) >= 2
+    and (.status.readyReplicas // 0) == .spec.replicas
+    and (.status.updatedReplicas // 0) == .spec.replicas
     and (.status.unavailableReplicas // 0) == 0
     and any(.spec.template.spec.containers[]?;
       any(.envFrom[]?; .secretRef.name == $secret)

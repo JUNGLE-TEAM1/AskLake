@@ -19,8 +19,8 @@ pods="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=backend -
     | select(any(.status.containerStatuses[]?; .name == "fastapi" and .ready == true))
   ]}
 ')"
-[[ "$(jq '.items | length' <<<"$pods")" -eq 2 ]] || {
-  echo "exactly two Backend Pods are required for the Continuous boundary check" >&2
+[[ "$(jq '.items | length' <<<"$pods")" -ge 2 ]] || {
+  echo "at least two Ready Backend Pods are required for the Continuous boundary check" >&2
   exit 1
 }
 
