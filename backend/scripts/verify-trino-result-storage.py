@@ -66,7 +66,8 @@ def verify() -> None:
             trino_result_storage_bucket="asklake-query-results",
             trino_result_storage_secret_key=None,
         ))
-        aws_storage._client()
+        aws_storage._ensure_bucket()
+        assert aws_storage._bucket_ready is True
     finally:
         result_storage_module.boto3.client = original_client
     assert captured["region_name"] == "ap-northeast-2"

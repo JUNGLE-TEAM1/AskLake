@@ -1,10 +1,10 @@
-# EKS Phase 14 Frontend·FastAPI Workload와 Day 14 Scale 증거
+# EKS Phase 14 Frontend·FastAPI·Trino Result Collector Workload와 Day 14 Scale 증거
 
 ## 결과
 
-Phase 14는 Phase 13 ALB가 연결할 `frontend`와 `fastapi` Deployment/Service 계약을 추가한다. 아직 AWS에 Pod를 배포한 것은 아니다. 기본 chart는 아무 resource도 렌더하지 않으며, 이미지·runtime 설정·Secret·General NodePool·FastAPI runtime 경계가 모두 검증됐다고 명시해야 두 workload가 생성된다.
+Phase 14는 Phase 13 ALB가 연결할 `frontend`와 `fastapi` Deployment/Service, 그리고 Trino continuation을 회수하는 `trino-result-collector` Deployment 계약을 제공한다. 기본 chart는 아무 resource도 렌더하지 않으며, 이미지·runtime 설정·Secret·General NodePool·FastAPI runtime 경계가 모두 검증됐다고 명시해야 세 workload가 생성된다.
 
-Airflow, Trino, Spark Operator와 SparkApplication은 이 chart에 포함하지 않는다. 각각의 lifecycle과 상태 계약이 다르므로 후속 workload phase에서 다룬다. EKS 안에 Kafka broker를 배포하지 않으며 배포 broker는 계속 MSK Serverless + IAM이다. EC2 Continuous runtime도 이 단계에서 이동하거나 제어하지 않는다.
+Airflow, Trino coordinator, Spark Operator와 SparkApplication은 이 chart에 포함하지 않는다. Collector는 Trino coordinator가 아니라 FastAPI와 같은 Backend application worker다. EKS 안에 Kafka broker를 배포하지 않으며 배포 broker는 계속 MSK Serverless + IAM이다. EC2 Continuous runtime도 이 단계에서 이동하거나 제어하지 않는다.
 
 ## 시작 상태와 의존성
 
@@ -16,17 +16,19 @@ Frontend image는 `VITE_API_BASE_URL`을 지정하지 않은 동일-origin 빌�
 
 ## 구현 계약
 
-`infra/eks/helm/asklake-web`은 `frontend` Deployment/ClusterIP Service `frontend:80`과 `fastapi` Deployment/ClusterIP Service `fastapi:8080`만 소유한다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 두 Deployment는 General NodePool과 `kubernetes.io/arch=amd64` selector를 함께 사용하고 Frontend는 ServiceAccount token을 mount하지 않는다. FastAPI는 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고, liveness는 TCP 8080 probe로 분리한다.
+`infra/eks/helm/asklake-web`은 `frontend`, `fastapi`, `trino-result-collector` Deployment와 ClusterIP Service `frontend:80`, `fastapi:8080`을 소유한다. Collector Service나 Ingress는 만들지 않는다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 세 Deployment는 General NodePool과 `kubernetes.io/arch=amd64` selector를 함께 사용한다. Frontend와 Collector는 Kubernetes API token을 mount하지 않는다. FastAPI만 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고, liveness는 TCP 8080 probe로 분리한다.
 
-이미지는 ECR의 `@sha256:` digest만 허용한다. 두 replica 이상과 CPU/memory request·limit를 명시해야 하며 chart가 임의의 production 용량을 고르지 않는다. 저장소의 test values는 schema 검증용 fixture일 뿐 운영 권장치가 아니다. HPA, topology spread, PDB와 세부 autoscaling 수치는 실제 부하·가용성 요구를 학습하고 선택하는 후속 단계다.
+이미지는 ECR의 `@sha256:` digest만 허용한다. Frontend/FastAPI는 두 replica 이상이고 Collector는 1 replica다. Collector는 별도 image를 만들지 않고 FastAPI와 exact Backend digest를 공유하며 `python scripts/collect-trino-results.py`만 실행한다. 세 workload 모두 CPU/memory request·limit를 명시해야 하며 저장소의 test values는 운영 권장치가 아니다. HPA, topology spread, PDB와 세부 autoscaling 수치는 실제 부하·가용성 요구를 학습하고 선택하는 후속 단계다.
 
-FastAPI는 `asklake-runtime` ConfigMap과 `asklake-backend-runtime` Secret을 `envFrom`으로 받으며 Trino CA를 `/var/run/asklake/secrets/trino-ca.pem`에 읽기 전용 mount한다. 기본 `backend.trinoRuntimeSecretName`은 main runtime Secret과 같다. ESO mapping을 단계적으로 전환하는 동안에만 Trino 인증/CA 전용 Secret을 추가 `envFrom`/volume source로 지정할 수 있고, 정식 mapping 적용 뒤 다시 main Secret 하나로 수렴한다. Secret 값 자체는 values, Terraform state, manifest, log에 들어가면 안 된다. `asklake-runtime-boundary` 이름은 Pod annotation으로 추적하지만 애플리케이션이 이 annotation을 읽는다고 간주하지 않는다.
+FastAPI와 Collector는 `asklake-runtime` ConfigMap과 `asklake-backend-runtime` Secret을 `envFrom`으로 받으며 Trino CA를 `/var/run/asklake/secrets/trino-ca.pem`에 읽기 전용 mount한다. 둘 다 `asklake-backend` ServiceAccount의 RDS/S3/Trino runtime identity를 사용하지만 Collector Pod는 Kubernetes API token을 비활성화한다. 기본 `backend.trinoRuntimeSecretName`은 main runtime Secret과 같다. ESO mapping을 단계적으로 전환하는 동안에만 Trino 인증/CA 전용 Secret을 추가 `envFrom`/volume source로 지정할 수 있고, 정식 mapping 적용 뒤 다시 main Secret 하나로 수렴한다. Secret 값 자체는 values, Terraform state, manifest, log에 들어가면 안 된다. `asklake-runtime-boundary` 이름은 Pod annotation으로 추적하지만 애플리케이션이 이 annotation을 읽는다고 간주하지 않는다.
+
+Collector의 상태 원본은 RDS `sql_runs`다. `nextUri`는 Collector만 소비하고 browser polling은 저장된 상태만 읽는다. steady-state replica는 하나지만 DB lease와 증가하는 generation이 Pod 재시작 또는 일시적 중복 실행에서 stale write와 duplicate result page 공개를 막는다. Collector가 없거나 죽어도 Run을 성공으로 바꾸지 않으며 새 Pod가 만료된 lease 뒤 같은 `runId`를 복구한다.
 
 `asklake-runtime`은 `asklake-web`이나 foundation Helm release가 소유하지 않는 Pair B runtime object다. 실제 endpoint·bucket·digest가 든 전체 manifest는 저장소 밖에 두고 `asklake-pair-b-runtime` field manager의 server-side dry-run/apply로 관리한다. `envFrom` ConfigMap 변경은 실행 중 process에 자동 반영되지 않으므로 적용 뒤 `fastapi` Deployment를 명시적으로 rolling restart하고 두 새 Pod의 환경, Ready/RDS health와 ConfigMap의 non-Helm ownership을 다시 확인한다.
 
 ## 실행 순서
 
-Phase 6 artifact의 image receipt와 저장소 밖의 private values를 준비한다. private values의 image 두 개는 receipt의 frontend/backend digest와 정확히 같아야 한다.
+Phase 6 artifact의 image receipt와 저장소 밖의 private values를 준비한다. private values의 Frontend/Backend image는 receipt와 정확히 같아야 하고 Collector는 같은 Backend digest를 재사용해야 한다.
 
 ```bash
 bash scripts/verify-eks-web-workloads.sh
@@ -42,13 +44,13 @@ export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
 bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
 ```
 
-스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·Ready AMD64 General node label을 확인한다. 기존 release의 Helm field ownership을 유지하기 위해 API server preflight도 같은 release의 `helm upgrade --install --dry-run=server`로 수행한 뒤 Helm atomic rollout을 실행한다. 별도 `kubectl apply --server-side` manager로 Deployment image field를 인수하지 않는다.
+스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, ServiceAccount·ConfigMap·Secret·Ready AMD64 General node label을 확인한다. 기존 release의 Helm field ownership을 유지하기 위해 API server preflight도 같은 release의 `helm upgrade --install --dry-run=server`로 수행한 뒤 Helm atomic rollout을 실행하고 세 Deployment rollout을 기다린다. 별도 `kubectl apply --server-side` manager로 Deployment image field를 인수하지 않는다.
 
 ## 완료 기준
 
-코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 두 Deployment와 두 Service를 만들며 mutable tag·1 replica·부분 readiness·포트 drift·ARM64 selector가 모두 실패하는 것이다. Backend는 `/api/health`를 startup/readiness에만 두고 TCP liveness를 사용해야 한다. Terraform handoff가 Phase 13과 같은 Service 이름/포트를 제공하고 전체 Foundation 검증이 통과해야 한다.
+코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 세 Deployment와 두 Service를 만들며 mutable tag, Frontend/FastAPI 1 replica, Collector 0/2 replica, Collector 비활성화, ServiceAccount drift, 포트 drift와 ARM64 selector가 모두 실패하는 것이다. Collector image는 FastAPI image와 exact digest가 같고 HTTP port/Service/Ingress가 없어야 한다. Backend는 `/api/health`를 startup/readiness에만 두고 TCP liveness를 사용해야 한다.
 
-실환경 완료는 별도다. 두 replica의 Ready 상태, 한 Pod 재시작 뒤 FastAPI 상태 복구, `/`와 `/api/health`, EKS FastAPI의 EC2 Continuous 격리를 확인해야 한다. 이 증거가 없으면 readiness를 true로 두거나 Phase 13 Ingress를 적용하면 안 된다.
+실환경 완료는 별도다. Frontend/FastAPI 2/2와 Collector 1/1, `/`와 `/api/health`, EKS FastAPI의 EC2 Continuous 격리를 확인한다. Collector 부재 중 남은 `queued`/`running` Run은 삭제하지 않고 인증된 cancel API로 명시적으로 종료하거나 새 Collector가 terminal로 회수하는지 기록한다. 새 bounded `SELECT count(*)`가 `succeeded`와 기대값 100으로 끝나고 actor의 동시 실행 slot이 반환돼야 한다. Collector Pod 삭제 뒤 새 Pod가 생성되고, 이후 같은 지속 상태에서 새 Query Run이 terminal로 끝나는 것도 확인한다.
 
 ## 삭제와 rollback
 
@@ -61,7 +63,7 @@ export ASKLAKE_WEB_DESTROY_CONFIRM=destroy-web-after-ingress
 bash scripts/destroy-eks-web-workloads.sh
 ```
 
-Foundation ServiceAccount·ConfigMap·Secret, database migration, EC2 데이터 rollback은 Phase 14가 삭제하거나 수행하지 않는다.
+Foundation ServiceAccount·ConfigMap·Secret, RDS Query Run/result page, database migration, EC2 데이터 rollback은 Phase 14가 삭제하거나 수행하지 않는다. Collector rollback 시 진행 중 Run은 RDS에 남으므로 row를 직접 삭제하지 말고 인증된 `POST /api/query/runs/{runId}/cancel` 또는 Collector 재배포로 복구한다.
 
 ## Metrics Server와 Node scale-out
 

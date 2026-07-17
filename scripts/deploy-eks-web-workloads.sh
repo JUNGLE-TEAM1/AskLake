@@ -84,5 +84,6 @@ helm upgrade --install asklake-web "$CHART_DIR" \
   --namespace "$ASKLAKE_EKS_NAMESPACE" --create-namespace=false \
   -f "$VALUES_FILE" --atomic --wait --timeout 10m
 
-kubectl rollout status deployment/frontend deployment/fastapi -n "$ASKLAKE_EKS_NAMESPACE" --timeout=10m
-echo "Web workloads are ready. Record replica distribution, restart recovery and /api/health evidence before applying Phase 13 ingress."
+kubectl rollout status deployment/frontend deployment/fastapi deployment/trino-result-collector \
+  -n "$ASKLAKE_EKS_NAMESPACE" --timeout=10m
+echo "Web workloads and the Trino result collector are ready. Record replica distribution, restart recovery, /api/health, and a terminal Query Run before applying Phase 13 ingress."

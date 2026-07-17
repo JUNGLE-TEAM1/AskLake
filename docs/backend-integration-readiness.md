@@ -581,6 +581,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 - [x] EKS control-plane, lease heartbeat, Kubernetes identity와 fenced progress persistence 전용 모듈 및 직접 단위 테스트
 - [x] Frontend/FastAPI `Deployment` 2 replica와 내부 `ClusterIP` `Service` Helm chart
+- [x] FastAPI와 같은 immutable image/runtime identity를 쓰는 EKS `trino-result-collector` 1-replica Deployment 계약
+- [x] Collector의 Service/Ingress/HTTP port/Kubernetes API token 부재와 exact Backend digest 검증
+- [x] AWS 사전 생성 Query Result bucket에서 bucket-wide `HeadBucket` 없이 prefix-scoped object write/checksum으로 가용성 검증
 - [x] Airflow API server/scheduler/DAG processor/migration Job과 Trino HTTPS coordinator Helm workload
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
 - [x] A Secret contract의 backend/Airflow/Spark/Trino exact key와 file mount 반영
@@ -602,6 +605,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 운영 전 Spark driver/executor ServiceAccount와 Kubernetes API token/RBAC 분리
 - [ ] 통합 환경에서 MSK metadata → bounded Spark output → Trino query live smoke
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
+- [ ] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증
 ## Realtime 2026 foundation readiness
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
