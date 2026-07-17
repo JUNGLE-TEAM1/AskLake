@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
-from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.models.realtime import RealtimeEventModel
 from app.repositories.dashboard_runtime_repository import (
     DashboardRuntimeMetaRecord,
@@ -91,30 +91,15 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
-        DashboardRevision.metadata.create_all(
+        with Session(self.engine) as db:
+            migrate_dashboard_schema(db)
+        RealtimeEventModel.metadata.create_all(
             self.engine,
             tables=[
-                DashboardRevision.__table__,
-                DashboardPage.__table__,
-                DashboardWidget.__table__,
                 RealtimeEventModel.__table__,
             ],
         )
         with self.engine.begin() as connection:
-            connection.execute(text("""
-                CREATE TABLE dashboards (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    owner TEXT,
-                    status TEXT NOT NULL,
-                    dataset_id TEXT,
-                    source_run_id TEXT,
-                    published_revision_id TEXT,
-                    has_published_revision BOOLEAN NOT NULL DEFAULT 0,
-                    created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL
-                )
-            """))
             connection.execute(
                 text("""
                     INSERT INTO dashboards (
