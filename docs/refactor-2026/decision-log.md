@@ -111,3 +111,10 @@
 - 결정: Airflow Spark의 persisted Run identity·lease claim/finalize와 후속 Catalog reconciliation을 `airflow_execution` application module로 이동한다.
 - 이유: 외부 runner 전후의 durable claim과 성공 manifest 이후의 발행은 같은 Run evidence chain이지만 Continuous·SQL Job과는 독립적으로 검증할 수 있어, 배포 동작을 유지하면서 `etl_service.py`의 실행·발행 책임을 줄일 수 있다.
 - 제약: runner·physical verifier·payload builder는 기존 service hook을 사용하고 공개 signature, error/status, DB/API shape, Airflow DAG, frontend와 fallback 활성 상태를 바꾸지 않는다. Node/Python connector 권한은 다음 PR로 분리한다.
+
+## D-018 — Source connector는 Python use case와 Node runtime 구현 권위를 분리
+
+- 상태: Accepted
+- 결정: connector request/response schema는 Python application이 소유하고 기존 Node connector 실행은 `SourceConnectorGateway` port 뒤 adapter로 격리한다.
+- 이유: 지금 Python으로 connector를 재구현하면 S3/PostgreSQL/MongoDB/Kafka/Data Lake parity와 credential masking을 동시에 바꿀 위험이 있으므로, 먼저 dependency direction과 operation mapping을 고정해야 한다.
+- 제약: 기존 script·marker·payload·timeout·bridge 오류와 `connectors.mjs` 구현은 유지한다. Node dev server나 과거 fallback을 활성화하지 않고 Python 재구현·Node 기능 분해는 live parity evidence가 있는 별도 PR로 제한한다.

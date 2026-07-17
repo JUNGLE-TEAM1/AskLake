@@ -78,6 +78,10 @@ from app.application.snapshot_commands import (
     SnapshotExecutionPath,
     plan_snapshot_command,
 )
+from app.application.source_connectors import (
+    list_source_assets as execute_list_source_assets,
+    test_source_connector as execute_test_source_connector,
+)
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import (
@@ -126,6 +130,7 @@ from app.infrastructure.runtime_io import (
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
 )
+from app.infrastructure.source_connectors import NodeSourceConnectorGateway
 from app.ports.runtime_io import (
     AirflowGateway,
     JsonDocument,
@@ -1249,17 +1254,10 @@ def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> J
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
-    result = run_node_bridge(
-        "test-source-connector.mjs",
-        "ASKLAKE_SOURCE_CONNECTOR_RESULT",
-        {
-            "sourceConfig": request.source_config,
-            "sourceType": request.source_type,
-        },
-        error_marker="ASKLAKE_SOURCE_CONNECTOR_ERROR",
-        timeout_seconds=120,
+    return execute_test_source_connector(
+        request,
+        gateway=NodeSourceConnectorGateway(),
     )
-    return SourceConnectorAnalysis.model_validate(result)
 
 
 def is_internal_data_lake_source(source_type: str | None) -> bool:
@@ -1335,18 +1333,10 @@ def resolve_internal_data_lake_source(
 
 
 def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
-    result = run_node_bridge(
-        "list-source-assets.mjs",
-        "ASKLAKE_SOURCE_ASSETS_RESULT",
-        {
-            "prefix": request.prefix,
-            "sourceConfig": request.source_config,
-            "sourceType": request.source_type,
-        },
-        error_marker="ASKLAKE_SOURCE_ASSETS_ERROR",
-        timeout_seconds=120,
+    return execute_list_source_assets(
+        request,
+        gateway=NodeSourceConnectorGateway(),
     )
-    return SourceAssetsResponse.model_validate(result)
 
 
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:

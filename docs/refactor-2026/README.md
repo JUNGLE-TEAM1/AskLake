@@ -23,6 +23,7 @@
 17. [contracts/etl-job-command-boundary.md](./contracts/etl-job-command-boundary.md): Job delete 권한, active workload 보호, 종속 정리와 commit/rollback 경계
 18. [contracts/etl-job-write-boundary.md](./contracts/etl-job-write-boundary.md): 일반 Pipeline create/update validation, identity, mapping, permission과 repository write 경계
 19. [contracts/airflow-execution-publication-boundary.md](./contracts/airflow-execution-publication-boundary.md): Snapshot Airflow Spark 실행 lease·finalize와 Catalog reconciliation transaction 경계
+20. [contracts/source-connector-authority-boundary.md](./contracts/source-connector-authority-boundary.md): Source connector Python use case와 Node runtime adapter 권위 경계
 
 ## 기준선 재생성
 

@@ -13,7 +13,9 @@
 - PR 04 검증: backend unit 496건(1 opt-in skip), 신규 write unit 6건, update·permission create·Rule persistence·dataset identity·Continuous verifier, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
 - PR 05: `#871` / `#872` / `refactor-#871` — persisted Airflow Run identity, Spark execution lease/finalize와 Catalog reconciliation transaction application 경계, `#869` 머지 대기 Draft
 - PR 05 검증: backend unit 506건(1 opt-in skip), 신규 execution/publication unit 10건, Airflow lease concurrency·DAG Catalog wiring·Iceberg reconciliation, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. live PostgreSQL reconciliation script는 local Docker/PostgreSQL 미기동으로 Draft 후 수동 gate에 유지
-- 다음 단계: Node/Python connector 권한을 PR 06으로 분리
+- PR 06: `#873` / `#874` / `refactor-#873` — Source connector Python request/response use case와 기존 Node script transport의 typed gateway 권위 경계, `#872` 머지 대기 Draft
+- PR 06 검증: backend unit 512건(1 opt-in skip), 신규 connector gateway unit 6건, 기존 bridge·endpoint auth·raw preview schema·object-storage unit 20건, Node connector entry syntax, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. live 외부 connector fixture는 runtime 미기동으로 Draft 후 수동 gate에 유지
+- 다음 단계: Continuous control-plane owner와 EKS/EC2 이중 제어를 PR 07로 분리
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 
