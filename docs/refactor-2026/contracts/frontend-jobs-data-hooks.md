@@ -31,6 +31,8 @@ Browser localStorage는 versioned ETL 편집 복구와 mock Catalog 호환에만
 ## 동시성·rollback 계약
 
 - 조회는 resource/query/version lease가 최신인 응답만 반영한다.
+- 초기 Jobs와 Catalog 요청은 동시에 시작하되 각 응답을 독립적으로 반영한다. Jobs 응답이 먼저 도착하면 Catalog 응답 완료를 기다리지 않고 작업 목록을 표시한다.
+- 목록 `JobRowData.runHistory`는 최신 Run 요약만 가진다. `/jobs/:jobId`와 `/jobs/:jobId/runs` 진입 시 `GET /api/etl/jobs/{jobId}`로 전체 상세와 Run history를 별도 hydrate한다.
 - Job별 command는 동시에 하나만 처리한다.
 - optimistic rollback은 `MutationRevisionGate`가 발급한 같은 Job revision을 여전히 소유할 때만 실행한다.
 - edit/delete가 시작되거나 더 최신 command가 시작되면 이전 rollback lease는 무효다.

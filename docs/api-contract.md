@@ -1169,6 +1169,8 @@ type ReviewSnapshot = {
 
 작업 현황의 상태 버튼과 `실행 주기` 컬럼 필터는 이 endpoint를 사용한다. 목록을 프론트엔드에서 임의로 잘라내지 않고, live mode에서는 선택한 조건을 query parameter로 서버에 전달한다.
 
+이 endpoint는 저장된 목록 상태를 읽는 read-only 경로다. 요청 중 Kafka/Node/Spark worker 상태를 확인하거나 runtime/permission row를 갱신하지 않는다. Job, Job별 최신 Run 1개, Continuous runtime, permission/governance 자료는 종류별 일괄 조회한다. 목록의 각 `JobRowData.runHistory`는 비어 있거나 최신 Run 1개만 포함한다. 한 Job의 외부 runtime 최신화, 전체 Run history와 상세 hydrate는 `GET /api/etl/jobs/{jobId}`가 담당한다.
+
 Query parameter:
 
 - `status`: 0개 이상 반복 가능한 job status. 목록 UI 예: `?status=running&status=stopped`. 저장된 legacy `failed`, `canceled`, `paused` 상태는 목록 응답에서 `scheduled`로 정규화한다.

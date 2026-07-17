@@ -530,7 +530,7 @@ Spark/Iceberg commit
 
 Pipeline 생성·수정은 `pipeline_contract`의 순수 validation과 `pipeline_mapping`의 persisted Job mapper를 거친다. `etl_service.py`는 actor 권한, source capability, repository transaction과 외부 runtime adapter를 조정하는 compatibility facade이며 필수값·target·permission 규칙과 draft 직렬화를 중복 구현하지 않는다.
 
-Job 목록·상세 조회는 `etl_job_queries` application module이 runtime/Airflow refresh, repository re-hydrate, actor permission projection과 filter/facet 순서를 소유한다. `etl_service.list_jobs`와 `etl_service.get_job`은 기존 router signature를 유지하면서 production hook만 조립한다. 상세 계약은 [ETL Job 조회·Hydrate Application 경계](refactor-2026/contracts/etl-job-query-boundary.md)를 따른다.
+Job 목록·상세 조회는 `etl_job_queries` application module이 repository hydrate, actor permission projection과 filter/facet 순서를 소유한다. 목록은 persisted Job·Job별 최신 Run 1개·Continuous runtime·permission/governance 자료를 종류별로 일괄 조회하며 외부 runtime을 확인하거나 상태를 쓰지 않는다. 상세만 Airflow/Continuous runtime을 최신화한 뒤 전체 Run history와 함께 다시 hydrate한다. `etl_service.list_jobs`와 `etl_service.get_job`은 기존 router signature를 유지하면서 production hook만 조립한다. 상세 계약은 [ETL Job 조회·Hydrate Application 경계](refactor-2026/contracts/etl-job-query-boundary.md)를 따른다.
 
 Job 삭제는 `etl_job_commands` application module이 row lock 이후 governance·permission, active workload 보호, 종속 레코드와 audit를 포함한 단일 transaction을 소유한다. `etl_service.delete_job`은 기존 router signature와 hook 조립만 유지한다. 상세 계약은 [ETL Job 삭제 Command·Transaction 경계](refactor-2026/contracts/etl-job-command-boundary.md)를 따른다.
 
@@ -564,7 +564,7 @@ ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx
 
 `JobsPages.tsx`는 기존 세 public page export만 유지하는 비활성 compatibility façade다. `App.tsx`와 신규 source는 `pages/ingest/jobs/`의 독립 feature module을 직접 import한다. 목록, 상세, Continuous session/batch, Snapshot Run/DAG의 route, query/filter 의미, class name과 접근성 계약은 유지하며 화면 모듈이 backend fetch ownership을 새로 만들지 않는다.
 
-`useAskLakeData.ts`는 이전 import 호환만 위한 비활성 façade로 유지하고 `App.tsx`는 `useAskLakeWorkspace`를 직접 사용한다. 서버 상태는 `useAskLakeWorkspaceState`, 초기/필터 조회는 `useWorkspaceHydration`, ETL·SQL 생성은 `usePipelineMutations`, Job command와 polling은 `useJobController`, Catalog mutation/navigation은 `useCatalogController`가 소유하고 `useAskLakeWorkspace`가 기존 반환 shape로 조합한다. Job optimistic rollback은 entity revision lease가 최신일 때만 허용한다.
+`useAskLakeData.ts`는 이전 import 호환만 위한 비활성 façade로 유지하고 `App.tsx`는 `useAskLakeWorkspace`를 직접 사용한다. 서버 상태는 `useAskLakeWorkspaceState`, 초기/필터 조회는 `useWorkspaceHydration`, ETL·SQL 생성은 `usePipelineMutations`, Job command와 polling은 `useJobController`, Catalog mutation/navigation은 `useCatalogController`가 소유하고 `useAskLakeWorkspace`가 기존 반환 shape로 조합한다. 초기 Jobs/Catalog 요청은 함께 시작하지만 각각 도착하는 즉시 독립 반영하므로 느린 Catalog hydrate가 Jobs 목록 표시를 막지 않는다. Job 상세/실행 이력 route는 목록의 최신 Run 요약을 먼저 표시한 뒤 상세 endpoint로 전체 이력을 별도 hydrate한다. Job optimistic rollback은 entity revision lease가 최신일 때만 허용한다.
 
 배포 UI의 route·DOM·CSS와 production mock/legacy 기본값을 유지하는 상세 계약은 [배포 UI 무변경·호환 façade 비활성 계약](refactor-2026/contracts/deployed-ui-no-reactivation.md)을 따른다.
 
