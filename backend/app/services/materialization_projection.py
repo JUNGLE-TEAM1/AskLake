@@ -89,6 +89,8 @@ def parse_materialization_timestamp(value: Any) -> datetime:
     text = str(value or "").strip()
     if not text:
         return datetime.min.replace(tzinfo=UTC)
+    if text.upper().endswith(" UTC"):
+        text = f"{text[:-4]}+00:00"
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:

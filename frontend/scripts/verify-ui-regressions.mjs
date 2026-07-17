@@ -20,44 +20,126 @@ const read = (path) => {
     : readFileSync(filePath, "utf8");
 };
 
+const readCheckSources = (check) => {
+  const files = check.files ?? [check.file];
+  return {
+    contents: files.map((file) => read(file)).join("\n"),
+    label: files.join(", "),
+  };
+};
+
+const etlWizardFiles = [
+  "src/pages/etl/EtlPages.tsx",
+  "src/pages/etl/SourceConnectionPage.tsx",
+  "src/pages/etl/SourceConnectionStages.tsx",
+  "src/pages/etl/sourceDefinitions.tsx",
+  "src/pages/etl/sourceModel.tsx",
+  "src/pages/etl/RecordParsingPage.tsx",
+  "src/pages/etl/SchemaInferencePage.tsx",
+  "src/pages/etl/schemaModel.ts",
+  "src/pages/etl/RuleApplicationPage.tsx",
+  "src/pages/etl/RuleEditorPanels.tsx",
+  "src/pages/etl/RulePreviewPanels.tsx",
+  "src/pages/etl/ruleModel.tsx",
+  "src/pages/etl/SchedulePage.tsx",
+  "src/pages/etl/PermissionPage.tsx",
+  "src/pages/etl/TargetPage.tsx",
+  "src/pages/etl/targetModel.ts",
+  "src/pages/etl/ReviewPage.tsx",
+];
+
+const jobsPageFiles = [
+  "src/pages/ingest/JobsPages.tsx",
+  "src/pages/ingest/jobs/jobShared.tsx",
+  "src/pages/ingest/jobs/JobsLandingPage.tsx",
+  "src/pages/ingest/jobs/jobDetailModel.tsx",
+  "src/pages/ingest/jobs/JobDetailPage.tsx",
+  "src/pages/ingest/jobs/jobRunsModel.tsx",
+  "src/pages/ingest/jobs/JobRunsPage.tsx",
+  "src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
+  "src/pages/ingest/jobs/SnapshotJobRunsPage.tsx",
+];
+
+const askLakeDataFiles = [
+  "src/hooks/useAskLakeData.ts",
+  "src/state/asklake/catalogState.ts",
+  "src/state/asklake/contracts.ts",
+  "src/state/asklake/etlDraftState.ts",
+  "src/state/asklake/initialRead.ts",
+  "src/state/asklake/jobState.ts",
+  "src/state/asklake/sqlJobDraft.ts",
+  "src/state/asklake/useAskLakeWorkspace.ts",
+  "src/state/asklake/useAskLakeWorkspaceState.ts",
+  "src/state/asklake/useCatalogController.ts",
+  "src/state/asklake/useJobController.ts",
+  "src/state/asklake/usePipelineMutations.ts",
+  "src/state/asklake/useWorkspaceHydration.ts",
+];
+
+const catalogPageFiles = [
+  "src/pages/catalog/CatalogPage.tsx",
+  "src/pages/catalog/CatalogExplorerPage.tsx",
+  "src/pages/catalog/CatalogDetailPage.tsx",
+  "src/pages/catalog/CatalogLineage.tsx",
+  "src/pages/catalog/catalogModel.ts",
+  "src/pages/catalog/useCatalogExplorerState.ts",
+];
+
 const checks = [
   {
     name: "ETL target storage path uses the deployed Spark output bucket",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /VITE_SPARK_OUTPUT_BUCKET \?\? "asklake-output"/,
-      /return `s3a:\/\/\$\{SPARK_OUTPUT_BUCKET\}\/\$\{targetDataset\}\/\$\{targetLayer\.toLowerCase\(\)\}\//,
+      /buildTargetStoragePathForBucket\(SPARK_OUTPUT_BUCKET, targetDataset, targetLayer\)/,
+      /listS3Buckets\(\)[\s\S]*setRuntimeOutputBucket\(outputBucket\)/,
     ],
     forbiddenPatterns: [
       /return `s3a:\/\/asklake-output\/\$\{targetDataset\}/,
     ],
   },
   {
-    name: "ETL permission composes the governance, policy, and searchable grant workflow with shadcn controls",
-    file: "src/pages/etl/EtlPages.tsx",
+    name: "S3 target picker reconciles a stale frontend bucket with the backend output bucket",
+    file: "src/components/s3/S3PathField.tsx",
+    patterns: [
+      /nextBuckets\.includes\(currentBucket\) \? currentBucket : nextBuckets\[0\] \|\| ""/,
+      /관리자에게 출력 버킷 설정을 확인해 달라고 요청하세요/,
+    ],
+  },
+  {
+    name: "ETL permission composes target selection, per-target actions, and a saved grant summary",
+    files: etlWizardFiles,
     patterns: [
       /title="권한 설정"/,
       /<EtlStepHeader[\s\S]*className="etl-step-standalone-header"[\s\S]*icon=\{<ShieldCheck \/>\}[\s\S]*title="권한 설정"/,
       /data-testid="permission-workflow"/,
-      /<CardTitle>거버넌스 확인<\/CardTitle>/,
-      /<CardTitle>접근 정책<\/CardTitle>/,
-      /<CardTitle>역할 및 사용자 권한<\/CardTitle>/,
-      /<SelectGroup>/,
-      /<TabsTrigger value="roles">역할<\/TabsTrigger>/,
+      /<EtlSectionHeader[\s\S]{0,180}title="빠른 권한 설정"/,
+      /<EtlSectionHeader[\s\S]{0,220}title="권한 대상"/,
+      /<EtlSectionHeader[\s\S]{0,180}title="허용 작업"/,
+      /<EtlSectionHeader[\s\S]{0,180}title="담당자와 전체 조회"/,
+      /<EtlSectionHeader[\s\S]{0,180}title="저장될 권한"/,
+      /PERMISSION_PRESETS/,
+      /buildPermissionDraftPatch/,
+      /normalizePermissionActions/,
+      /<TabsTrigger value="groups">그룹<\/TabsTrigger>/,
       /<TabsTrigger value="users">사용자<\/TabsTrigger>/,
-      /placeholder=\{grantTab === "roles" \? "역할 검색" : "사용자 검색"\}/,
-      /<Checkbox[\s\S]*onCheckedChange=\{\(checked\) => updateRoleCheck\(role\.id, checked === true\)\}/,
+      /placeholder=\{grantTab === "groups" \? "그룹 검색" : "사용자 검색"\}/,
       /<PermissionGrantEmpty query=\{grantSearch\} \/>/,
-      /fetchPermissionOptions\(\)/,
-      /permissionGrants,/,
+      /fetchPermissionOptions\(draft\.id \|\| undefined\)/,
+      /모든 사용자에게 조회 허용/,
+      /전체 권한 \(자동\)/,
+      /nextLabel="다음"/,
       /principalType: "group" as const/,
-      /principalType: "user" as const/,
+      /principalType: "user"/,
       /data-testid="permission-options-loading"/,
     ],
     additionalForbiddenPatterns: [
       /<CardTitle>Governance Check<\/CardTitle>/,
       /<CardTitle>Access Policy<\/CardTitle>/,
       /<CardTitle>Role Grants<\/CardTitle>/,
+      /<CardTitle>거버넌스 확인<\/CardTitle>/,
+      /<CardTitle>접근 정책<\/CardTitle>/,
+      /<CardTitle>역할 및 사용자 권한<\/CardTitle>/,
       /\$\{selectedRoleCount\}개 선택/,
       /\$\{selectedUserCount\}명 선택/,
     ],
@@ -78,6 +160,44 @@ const checks = [
       /APPROVAL_STATUS_OPTIONS/,
       /label: "승인자"/,
       /label: "승인 상태"/,
+    ],
+  },
+  {
+    name: "Kafka raw text creation removes repeated preview counts and keeps permission presets compact",
+    files: etlWizardFiles,
+    patterns: [
+      /previewShowsRawText && activeSourceType === "Stream \/ Kafka" \? undefined/,
+      /"h-16 justify-center whitespace-normal px-4 py-3 text-center"/,
+      /<strong>\{preset\.label\}<\/strong>/,
+    ],
+    forbiddenPatterns: [
+      /className="record-parsing-source-strip"/,
+      /className="record-parsing-count"/,
+      /\{preset\.description\}/,
+      /description: "데이터와 작업 정보를 확인합니다\."/,
+    ],
+  },
+  {
+    name: "Continuous Kafka details use localized common headers without duplicate summaries",
+    files: jobsPageFiles,
+    patterns: [
+      /<PanelHeader icon=\{<Activity[^>]*\/>\} title="연속 수집 런타임" \/>/,
+      /icon=\{<TerminalSquare[^>]*\/>\}[\s\S]*title="워커 로그"/,
+      /icon=\{<HardDrive[^>]*\/>\}[\s\S]*title="격리 · 유지보수"/,
+      /<Field label="Kafka 지연"/,
+      /<Field label="체크포인트"/,
+      /running: "실행 중"/,
+      /stable: "정상"/,
+    ],
+    forbiddenPatterns: [
+      />Continuous Runtime</,
+      />Worker Log</,
+      />Quarantine · Maintenance</,
+      /Continuous 설정 대기/,
+      /\{sourceType\} → \{job\.targetFormat/,
+      /개 컬럼 · 변환 \{transformRuleRows\.length\}개/,
+      /\{formatJobSchedule\(job\.schedule\)\} · 역할별 접근 권한/,
+      /meta=\{<Badge[^>]*>\{(?:outputSchemaRows|transformRuleRows|qualityRuleRows)\.length\}/,
     ],
   },
   {
@@ -417,7 +537,7 @@ const checks = [
   },
   {
     name: "SQL Job creation submits an explicit draft without opening ETL Review",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
@@ -434,7 +554,7 @@ const checks = [
   },
   {
     name: "ETL Job collection upserts and reconciles rows by stable job id",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /function upsertJobById\(/,
       /jobs\.filter\(\(job\) => job\.id !== nextJob\.id\)/,
@@ -516,7 +636,7 @@ const checks = [
   },
   {
     name: "SQL Job draft preserves database, format, tags, and multiple partitions",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /const targetFormat = request\.job\?\.fileFormat/,
       /const partitionColumns = request\.job\?\.partitionColumns/,
@@ -572,17 +692,17 @@ const checks = [
   },
   {
     name: "Catalog preview restores SQL navigation for the selected dataset",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /onOpenSql:\s*\(dataset: CatalogDataset\) => void;/,
-      /const openSelectedSqlDataset = \(\) =>/,
+      /const openSelectedSqlDataset = useCallback\(\(\) =>/,
       /onOpenSql\(previewDataset\);/,
       /SQL 분석에서 열기/,
     ],
   },
   {
     name: "Catalog metadata uses live detail values and schema samples",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /getCatalogDataset\(datasetId\)/,
       /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
@@ -594,7 +714,7 @@ const checks = [
   },
   {
     name: "Catalog schema modal excludes the duplicate sample-data viewer",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /<CatalogDatasetViewer dataset=\{previewDataset\} \/>/,
       /function CatalogDatasetViewer\([\s\S]*<CatalogSchema dataset=\{dataset\} \/>[\s\S]*<\/div>/,
@@ -686,7 +806,7 @@ const checks = [
   },
   {
     name: "Catalog dataset status uses the Jobs StatusBadge primitive",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
       /<StatusBadge shape=\{shape\} size="sm" tone=\{statusTone\}>\{statusMeta\.label\}<\/StatusBadge>/,
@@ -694,7 +814,7 @@ const checks = [
   },
   {
     name: "Job detail localizes source metadata and manual schedules",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /"Bucket \/ Stage Name": "버킷 \/ 스테이지 이름"/,
       /"Path \/ Prefix": "경로 \/ 프리픽스"/,
@@ -705,7 +825,7 @@ const checks = [
   },
   {
     name: "ETL source can select a folder and persist its collection policy",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const updateCollectionConfig = \(patches:/,
       /const loadSourceAssetChildren = async \(folderPath: string\) =>/,
@@ -717,7 +837,7 @@ const checks = [
   },
   {
     name: "Collection policy changes invalidate stale sample and schema state",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const updateCollectionConfig = \(patches:/,
       /\[\.\.\.patches, \["__Sample Object", ""\]\]/,
@@ -740,7 +860,7 @@ const checks = [
   },
   {
     name: "Job detail tolerates partial stats so delete remains reachable",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
       /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
@@ -748,7 +868,7 @@ const checks = [
   },
   {
     name: "Live Job deletion updates persisted rows and list facets together",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /deletePipelineJob as deleteLivePipelineJob/,
       /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
@@ -757,8 +877,75 @@ const checks = [
     ],
   },
   {
+    name: "Stopped continuous Job detail exposes governed deletion",
+    files: jobsPageFiles,
+    patterns: [
+      /if \(isContinuousKafkaJob\(job\)\)/,
+      /return \[\s*\{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" \},\s*\{ className: "job-action-button", kind: "edit", label: "수정" \},\s*\{ className: "job-action-button danger", kind: "delete", label: "삭제" \},\s*\];/,
+      /const disabled = jobActionDisabled\(job, action\.kind\);/,
+      /title=\{disabled \? permissionDeniedMessage\("작업", action\.label\) : undefined\}/,
+    ],
+  },
+  {
+    name: "ETL section headings converge on the shared hierarchy",
+    file: "src/components/etl/EtlSectionHeader.tsx",
+    patterns: [
+      /<PanelHeader/,
+      /etl-section-header min-h-\[68px\] px-5 py-3\.5/,
+      /iconClassName=\{iconToneClasses\[tone\]\}/,
+      /size="default"/,
+    ],
+    forbiddenPatterns: [
+      /density/,
+      /compact/,
+      /size-9/,
+      /size-\[18px\]/,
+    ],
+  },
+  {
+    name: "ETL source explorer uses the same full-size section headers as every other panel",
+    file: "src/pages/etl/SourceExplorerWorkbench.tsx",
+    patterns: [
+      /<EtlSectionHeader[\s\S]{0,180}icon=\{<FolderSearch \/>\}/,
+      /<EtlSectionHeader[\s\S]{0,180}icon=\{(?:previewIcon \?\? )?<Table2 \/>\}/,
+    ],
+    forbiddenPatterns: [
+      /density="compact"/,
+    ],
+  },
+  {
+    name: "ETL source selection and connection settings share the common bordered panel",
+    file: "src/pages/etl/SourceConnectionStages.tsx",
+    patterns: [
+      /<Panel className="source-bordered-panel source-choice-panel">[\s\S]{0,180}<EtlSectionHeader icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
+      /<Panel className="source-bordered-panel source-step-section active">[\s\S]{0,220}<EtlSectionHeader/,
+    ],
+    forbiddenPatterns: [
+      /<EtlSectionHeader bordered=\{false\} icon=\{<Database \/>\} title="데이터 소스 선택" \/>/,
+    ],
+  },
+  {
+    name: "ETL source selection panel fills the workbench and contains the connector grid",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.source-choice-screen \{[\s\S]*?max-width: none;[\s\S]*?margin: 0;[\s\S]*?width: 100%;/,
+      /\.source-bordered-panel,\s*\.source-bordered-panel\.source-step-section \{[\s\S]*?width: 100%;[\s\S]*?border: 2px solid #93c5fd;[\s\S]*?border-radius: 12px;/,
+      /\.source-choice-panel > \.source-choice-grid \{[\s\S]*?padding: 18px;/,
+    ],
+  },
+  {
+    name: "ETL target form typography stays readable under shared headers",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.etl-review-kv dd \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.field > span \{[\s\S]*?font-size: 15px;/,
+      /\.target-config-card \.input \{[\s\S]*?font-size: 16px;/,
+      /\.target-partition-name \{[\s\S]*?font-size: 15px;/,
+    ],
+  },
+  {
     name: "Jobs landing run modal follows centrally polled state by stable run identity",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /type LatestRunModalSelection = \{[\s\S]*jobId: string;[\s\S]*runId: string;/,
       /const latestRunModal = useMemo\(\(\) => \{[\s\S]*jobs\.find\(\(candidate\) => candidate\.id === latestRunModalSelection\.jobId\)/,
@@ -853,14 +1040,16 @@ const checks = [
     ],
   },
   {
-    name: "Target settings keep normalized payload defaults while simplifying the visible form",
-    file: "src/pages/etl/EtlPages.tsx",
+    name: "Target settings expose user-facing storage options while keeping normalized payloads",
+    files: etlWizardFiles,
     patterns: [
       /const targetLayer = initialTargetLayer;/,
-      /const targetFormat = initialTargetFormat;/,
+      /const \[targetFormat, setTargetFormat\] = useState\(initialTargetFormat\);/,
+      /label="파일 형식"/,
+      /setTargetFormat\(normalizeTargetFileFormat\(value\)\)/,
       /className="field wide target-storage-field" label="저장 경로"/,
       /className="field wide target-tags-field" label="태그"/,
-      /<h2>파티션 설정<\/h2>/,
+      /<EtlSectionHeader icon=\{<SlidersHorizontal \/>\} title="파티션 설정" \/>/,
       /className="target-partition-header"/,
       /<span>컬럼명<\/span>/,
       /<span>데이터 타입<\/span>/,
@@ -869,8 +1058,10 @@ const checks = [
     forbiddenPatterns: [
       /label="DB 선택"/,
       /label="데이터 레이어"/,
+      /label="데이터 계층"/,
       /aria-label="파일 포맷 선택"/,
       /label="오너"/,
+      /const targetFormat = initialTargetFormat;/,
     ],
   },
   {
@@ -886,7 +1077,7 @@ const checks = [
   },
   {
     name: "Catalog requires explicit dataset selection before SQL analysis",
-    file: "src/pages/catalog/CatalogPage.tsx",
+    files: catalogPageFiles,
     patterns: [
       /setSelectedSqlDatasetId\(dataset\.id\);/,
       /selectedSqlDatasetId !== previewDataset\.id \|\| !canQueryCurrentDataset\(previewDataset\)/,
@@ -1071,6 +1262,16 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard field combobox uses a fixed scroll viewport",
+    file: "src/pages/dashboard/runtime/DashboardFieldCombobox.tsx",
+    patterns: [
+      /<ScrollArea className="mt-2 h-56" type="always">/,
+    ],
+    forbiddenPatterns: [
+      /<ScrollArea className="mt-2 max-h-56" type="always">/,
+    ],
+  },
+  {
     name: "Dashboard edit toolbar separates active tools from action buttons",
     file: "src/pages/dashboard/runtime/DashboardEditToolbar.tsx",
     patterns: [
@@ -1199,6 +1400,13 @@ const checks = [
       /new MutationObserver\(cleanupApexStyleText\)/,
       /observer\.observe\(chartContainer,\s*\{\s*childList:\s*true,\s*subtree:\s*true\s*\}\)/,
       /<div className="asklake-apex-widget" ref=\{chartContainerRef\}/,
+    ],
+  },
+  {
+    name: "Dashboard bar charts keep values in axes and tooltips without drawing labels above bars",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /function BarChartWidget[\s\S]*?dataLabels:\s*\{\s*enabled:\s*false,?\s*\}/,
     ],
   },
   {
@@ -1352,7 +1560,7 @@ const checks = [
   },
   {
     name: "ETL schedule uses one conditional shadcn settings surface",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /<Card className="overflow-hidden" size="none">/,
       /<div aria-label="실행 방식" className="grid gap-4 md:grid-cols-2" role="group">/,
@@ -1380,7 +1588,7 @@ const checks = [
   },
   {
     name: "Continuous execution history uses durable sessions and guarded live polling",
-    file: "src/pages/ingest/JobsPages.tsx",
+    files: jobsPageFiles,
     patterns: [
       /props\.job\.executionMode === "continuous"/,
       /getContinuousSessions\(job\.id\)/,
@@ -1402,23 +1610,24 @@ const checks = [
   },
   {
     name: "Continuous Kafka creation skips the scheduler and keeps stream controls explicit",
-    file: "src/App.tsx",
+    files: ["src/App.tsx", "src/pages/etl/stepRegistry.ts"],
     patterns: [
-      /\["source", \.\.\.\(requiresRecordParsing \? \["recordParsing" as const\] : \[\]\), "schema", "permission", "target", "review"\]/,
-      /labels\.filter\(\(step\) => step !== "스케줄"\)/,
+      /if \(requiresRecordParsing\) steps\.push\(baseStepRegistry\.recordParsing\);/,
+      /if \(!continuousKafka\) \{[\s\S]*label: "스케줄"/,
       /continuousKafkaDraft \? "permission" : lastScheduleFlow/,
     ],
   },
   {
     name: "Continuous Kafka source exposes compact advanced stream settings",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /고급 설정/,
       /label="시작 위치"/,
       /label="수집 실행 간격"/,
       /label="한 번에 처리할 최대 메시지"/,
       /getSourceConnectorDefaults\(\)/,
-      /\["Broker \/ Endpoint", defaultKafkaBroker\]/,
+      /\["Broker \/ Endpoint", sourceDefaults\.kafkaBroker\]/,
+      /\["TOPIC \/ QUEUE NAME", sourceDefaults\.kafkaTopic\]/,
     ],
   },
   {
@@ -1475,7 +1684,7 @@ const checks = [
   },
   {
     name: "ETL review requests use stable payload keys with visible retry handling",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /getReviewSnapshotRequestKey\(buildReviewSnapshotRequest\(draft\)\)/,
       /\[reviewRequest, reviewRetryCount\]/,
@@ -1485,7 +1694,7 @@ const checks = [
   },
   {
     name: "Kafka target defaults keep runtime-supported layer and format combinations",
-    file: "src/pages/etl/EtlPages.tsx",
+    files: etlWizardFiles,
     patterns: [
       /const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer\[\] = \["RAW", "BRONZE", "SILVER"\]/,
       /const KAFKA_SNAPSHOT_TARGET_FORMAT_OPTIONS: TargetFileFormat\[\] = \["jsonl"\]/,
@@ -1501,6 +1710,14 @@ const checks = [
       /const continuousKafka = draft\.source\.executionMode === "continuous"/,
       /scheduleLabel: continuousKafka \? "스케줄링 건너뛰기" : draft\.schedule\.label/,
       /scheduleSummary: continuousKafka \? "실시간 스트림은 작업 생성 후 시작\/중지로 제어"/,
+    ],
+  },
+  {
+    name: "ETL updates omit create-only Kafka lifecycle settings",
+    file: "src/services/draftPipelineContract.ts",
+    patterns: [
+      /continuousConfig: _continuousConfig/,
+      /executionMode: _executionMode/,
     ],
   },
   {
@@ -1523,13 +1740,54 @@ const checks = [
     patterns: [
       /const ruleCompilation = compileRuleContract\(\{/,
       /const processingReady = ruleCompilation\.status === "pass"/,
+      /const permissionIssue = reviewPermissionIssue\(request\.owner, request\.permissionGrants\)/,
       /ruleCompilation,/,
       /"규칙 없음 · 원본 스키마 그대로 통과"/,
       /ruleCompilation\.issues\[0\]\?\.message/,
+      /validationRow\("접근 권한", permissionReady/,
+      /validationRow\("저장 위치", targetReady/,
     ],
     forbiddenPatterns: [
       /Boolean\(request\.ruleSummary\.trim\(\)\)/,
       /Continuous에서는 transform\/quality rule을 제거하세요/,
+      /validationRow\("권한\/타겟"/,
+      /validationRow\("스케줄"/,
+      /validationRow\("스트림 제어"/,
+      /validationRow\("실패 재시도"/,
+      /\["테이블 이름",/,
+      /\["계층", request\.targetLayer\]/,
+    ],
+  },
+  {
+    name: "ETL review separates saved permissions from creation readiness",
+    files: etlWizardFiles,
+    patterns: [
+      /<EtlSectionHeader[\s\S]{0,260}title="권한 설정"/,
+      /label="권한 설정 수정"/,
+      /<EtlSectionHeader[\s\S]{0,180}title="생성 준비 상태"/,
+      /className="etl-review-validation"/,
+      /title="생성 준비 상태"[\s\S]*title="기본 정보"/,
+      /label="출력 데이터셋 이름"/,
+      /label="설명"/,
+      /label="파일 형식"/,
+      /label !== "테이블 이름" && label !== "계층"/,
+    ],
+    forbiddenPatterns: [
+      /<h2>권한 및 검증<\/h2>/,
+      /label="권한 및 검증 수정"/,
+      /className: label === "설명" \? "wide"/,
+      /className: label === "요약" \? "wide"/,
+      /label="데이터 계층"/,
+      /\["작업 ID", request\.id\]/,
+      /\["작업명", request\.jobName\]/,
+      /Snapshot batch/,
+    ],
+  },
+  {
+    name: "ETL review readiness grid keeps balanced vertical spacing",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.etl-review-validation\s*\{[\s\S]*?padding:\s*20px;/,
     ],
   },
   {
@@ -1595,19 +1853,21 @@ const checks = [
   },
   {
     name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
-      /const dataHydrationRequestRef = useRef\(0\);/,
+      /const dataHydrationRequests = useRef\(new LatestRequestGate\(\)\);/,
       /const refreshData = async \(\) =>/,
       /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
       /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
-      /filterJobs,\s*refreshData,\s*createSqlDatasetJob,/,
+      /filterJobs: hydration\.filterJobs,/,
+      /refreshData: hydration\.refreshData,/,
+      /createSqlDatasetJob: pipeline\.createSqlDatasetJob,/,
     ],
   },
   {
     name: "Catalog materialization totals stop at the newest snapshot",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /activeDatasetMaterializationRuns\(materializationRuns\)/,
       /if \(run\.materializationMode !== "delta"\) break;/,
@@ -1628,6 +1888,30 @@ const checks = [
     ],
   },
   {
+    name: "ETL wizard blocks incomplete forward navigation while keeping validated Next callbacks",
+    file: "src/App.tsx",
+    patterns: [
+      /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
+      /canNavigateToWizardStep\(\{/,
+      /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
+      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,
+      /onNext=\{\(\) => completeWizardFlowAndMove\("target", "review"\)\}/,
+    ],
+  },
+  {
+    name: "Locked ETL wizard steps use native disabled button semantics",
+    file: "src/components/layout/Stepper.tsx",
+    patterns: [
+      /isStepDisabled\?: \(stepIndex: number\) => boolean;/,
+      /const disabled = isStepDisabled\?\.\(index\) \?\? false;/,
+      /disabled=\{disabled\}/,
+      /aria-label=\{disabled \? `\$\{step\} 단계 잠김`/,
+    ],
+  },
+  {
     name: "Global top bar exposes only appearance and language placeholders",
     file: "src/components/layout/Topbar.tsx",
     patterns: [
@@ -1643,7 +1927,7 @@ const checks = [
   },
   {
     name: "SQL Result Job drafts use the query result as the source contract",
-    file: "src/hooks/useAskLakeData.ts",
+    files: askLakeDataFiles,
     patterns: [
       /sourceType: "SQL Result",/,
       /SQL Run ID/,
@@ -1661,15 +1945,15 @@ const checks = [
 const failures = [];
 
 for (const check of checks) {
-  const contents = read(check.file);
+  const { contents, label } = readCheckSources(check);
   check.patterns.forEach((pattern, index) => {
     if (!pattern.test(contents)) {
-      failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
+      failures.push(`${check.name}: missing pattern #${index + 1} in ${label}`);
     }
   });
   [...(check.forbiddenPatterns ?? []), ...(check.additionalForbiddenPatterns ?? [])].forEach((pattern, index) => {
     if (pattern.test(contents)) {
-      failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
+      failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${label}`);
     }
   });
 }

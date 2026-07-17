@@ -75,6 +75,7 @@ def configure_environment(root):
         "ASKLAKE_CONTINUOUS_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
         "ASKLAKE_CONTINUOUS_RULES": json.dumps(RULES),
         "ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS": json.dumps(schema_columns),
+        "ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS": "3",
         "ASKLAKE_MAINTENANCE_RULE_CONTRACT_VERSION": "1.0",
         "ASKLAKE_MAINTENANCE_RULE_FINGERPRINT": rule_fingerprint,
         "ASKLAKE_MAINTENANCE_RULE_OUTPUT_SCHEMA": json.dumps(OUTPUT_SCHEMA),
@@ -105,6 +106,49 @@ def main():
         )
         spark.sparkContext.setLogLevel("ERROR")
         try:
+            spark.conf.set("spark.sql.shuffle.partitions", "32")
+            worker.apply_continuous_spark_settings(spark)
+            assert spark.conf.get("spark.sql.shuffle.partitions") == "3"
+
+            manifest_recovery_root = f"file://{root}/manifest-recovery"
+            for batch_id in range(3):
+                worker.write_batch_manifest(
+                    spark,
+                    manifest_recovery_root,
+                    batch_id,
+                    {
+                        "batchId": batch_id,
+                        "consumedCount": batch_id + 1,
+                        "storedCount": 0,
+                        "quarantinedCount": 0,
+                        "sourceRanges": [{
+                            "topic": "reviews.verify",
+                            "partition": 0,
+                            "startOffset": batch_id,
+                            "endOffset": batch_id + 1,
+                        }],
+                    },
+                )
+            recovered = worker.recover_published_state(
+                spark,
+                manifest_recovery_root,
+                acknowledged_batch=0,
+                batch_limit=1,
+            )
+            assert recovered["backlogCount"] == 2
+            assert [item["batchId"] for item in recovered["batches"]] == [1]
+            assert recovered["counts"] == {
+                "consumedCount": 6,
+                "storedCount": 0,
+                "quarantinedCount": 0,
+            }
+            assert recovered["latest"]["batchId"] == 2
+            assert recovered["partitionCursors"] == [{
+                "topic": "reviews.verify",
+                "partition": 0,
+                "nextOffset": 3,
+            }]
+
             maintenance_plan = maintenance.iceberg_maintenance_plan(
                 {
                     "catalog": "iceberg",
@@ -163,30 +207,30 @@ def main():
             assert len(bounded_report["publishedBatches"]) == 25
             assert bounded_report["publicationBacklogCount"] == 1_000
             assert bounded_report["publicationWindowLimit"] == 25
-            original_recover_published_state = worker.recover_published_state
             original_recovery_spark = worker.RECOVERY_SPARK
             original_recovery_root = worker.RECOVERY_ROOT
+            original_load_committed_manifests = worker.load_committed_manifests
+            original_output_committed = worker.output_committed
             worker.RECOVERY_SPARK = object()
             worker.RECOVERY_ROOT = "s3a://asklake-output/reviews/_batches"
-            worker.recover_published_state = lambda *_args, **_kwargs: {
-                "backlogCount": 975,
-                "batches": [
+            worker.output_committed = lambda *_args, **_kwargs: True
+            worker.load_committed_manifests = lambda _spark, _root, manifest_paths: [
                     {
                         "batchId": batch_id,
                         "manifestPath": f"s3://manifests/batch_id={batch_id}",
                         "storedCount": 1,
                     }
-                    for batch_id in range(25, 50)
-                ],
-            }
+                    for batch_id, _path in manifest_paths
+                ]
             ack_path = Path(root) / "report.catalog-ack.json"
             ack_path.write_text(json.dumps({"batchId": 24}), encoding="utf-8")
             worker.apply_catalog_ack()
             assert [item["batchId"] for item in worker.PUBLISHED_BATCHES] == list(range(25, 50))
             assert worker.PUBLISHED_BACKLOG_COUNT == 975
-            worker.recover_published_state = original_recover_published_state
             worker.RECOVERY_SPARK = original_recovery_spark
             worker.RECOVERY_ROOT = original_recovery_root
+            worker.load_committed_manifests = original_load_committed_manifests
+            worker.output_committed = original_output_committed
             ack_path.unlink()
             worker.PUBLISHED_BATCH_LIMIT = original_publication_limit
             worker.PUBLISHED_BATCHES = []

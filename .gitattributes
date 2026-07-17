@@ -1,1 +1,4 @@
 *.sh text eol=lf
+# Split CSS parts retain one EOF separator to reproduce the pre-split cascade byte-for-byte.
+frontend/src/styles/etl/*.css whitespace=-blank-at-eof
+frontend/src/styles/layout/*.css whitespace=-blank-at-eof

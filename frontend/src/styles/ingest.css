@@ -278,13 +278,16 @@
   padding: 7px 10px;
 }
 
-.job-runtime-log-header {
-  align-items: center;
-  border-top: 1px solid #e2e8f0;
-  display: flex;
-  justify-content: space-between;
-  margin-top: 16px;
-  padding-top: 14px;
+.job-continuous-runtime {
+  display: grid;
+  gap: 16px;
+}
+
+.job-runtime-panel-body {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
 }
 
 .job-runtime-log {
@@ -293,7 +296,7 @@
   border-radius: 6px;
   color: #263548;
   font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  margin: 10px 0 0;
+  margin: 0;
   max-height: 220px;
   min-height: 72px;
   overflow: auto;
@@ -305,7 +308,7 @@
 .job-inline-error {
   color: #b42318;
   font-size: 13px;
-  margin: 10px 0 0;
+  margin: 0;
 }
 
 .job-runtime-actions {
@@ -318,7 +321,7 @@
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 12px;
+  margin: 0;
 }
 
 .job-maintenance-summary span {
@@ -332,7 +335,7 @@
 
 .job-quarantine-list {
   border-top: 1px solid #e2e8f0;
-  margin-top: 12px;
+  margin: 0;
 }
 
 .job-quarantine-list > div {

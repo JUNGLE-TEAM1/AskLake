@@ -42,7 +42,6 @@ export function CreationTopActions({
   prevLabel = "이전",
   showPrev = true,
   split = false,
-  useShadcnStyles = false,
 }: {
   nextDisabled?: boolean;
   nextLabel?: string;
@@ -51,12 +50,11 @@ export function CreationTopActions({
   prevLabel?: string;
   showPrev?: boolean;
   split?: boolean;
-  useShadcnStyles?: boolean;
 }) {
   return (
     <CommandBar className={split ? "creation-top-actions is-split" : "creation-top-actions"} density="compact">
-      {showPrev ? <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button> : null}
-      <Button className={useShadcnStyles ? undefined : "primary-button"} type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
+      {showPrev ? <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button> : null}
+      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </CommandBar>
   );
 }

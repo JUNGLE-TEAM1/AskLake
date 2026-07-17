@@ -109,6 +109,10 @@ Prod compose는 MinIO를 포함하지 않고 실제 AWS S3를 사용한다. 시�
 ASKLAKE_OBJECT_STORAGE_PROVIDER=aws
 AWS_REGION=ap-northeast-2
 ASKLAKE_RAW_BUCKET=replace-with-asklake-raw-bucket
+# 선택 사항: 새 빈 Source draft에만 표시할 비밀이 아닌 기본값
+ASKLAKE_SOURCE_DEFAULT_S3_BUCKET=
+ASKLAKE_SOURCE_DEFAULT_S3_PREFIX=
+ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC=asklake-source-events
 ASKLAKE_SPARK_OUTPUT_MODE=s3a
 ASKLAKE_SPARK_OUTPUT_BUCKET=replace-with-asklake-output-bucket
 COMPOSE_PROFILES=
@@ -138,7 +142,7 @@ Trino를 켤 때는 `TRINO_ENABLED=true`와 `COMPOSE_PROFILES=trino`를 함께 �
 
 Production Trino는 public port를 열지 않고 backend/PostgreSQL과 통신하는 internal network에서 HTTPS/password authentication을 사용한다. 별도 outbound network는 EC2 instance profile의 IMDS credential과 AWS S3에 나갈 때만 사용한다. Query identity는 read-only, materializer identity는 `asklake` schema CTAS/`DESCRIBE`/drop 최소 권한으로 분리한다. JDBC role/password, TLS CA/keystore, password hash file과 shared secret은 서버 secret mount에만 두고 Git에 저장하지 않는다. 로컬 root Compose에서만 MinIO와 local credential을 사용한다.
 
-Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. readiness 실패를 bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다.
+Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VITE_SPARK_OUTPUT_BUCKET`으로 전달해 Target 경로와 Spark 출력 경로를 일치시킨다. backend의 `GET /api/s3/buckets`도 같은 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 목록 첫 번째로 반환해야 하며, frontend는 이 runtime 값으로 빌드 시점 기본 경로를 다시 맞춘다. Output bucket은 `S3_ALLOWED_BUCKETS`와 `ASKLAKE_S3_READINESS_WRITE_BUCKETS`에도 포함한다. AWS mode에서는 설정 누락을 local `asklake-output`으로 대체하지 않으므로, `503 SERVICE_UNAVAILABLE`이 보이면 세 값을 먼저 비교한다. readiness 실패를 bucket 자동 생성이나 static AWS key 추가로 우회하지 않는다.
 
 ## 4. 재배포
 
@@ -183,6 +187,17 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml \
 ```bash
 scripts/deploy.sh restart
 ```
+
+Production Compose는 one-shot 초기화 대신 `spark-runtime-guard`를 `restart: unless-stopped`로 실행한다. guard는 Ivy `cache`/`jars`, report, local checkpoint/output path를 생성하고 기존 파일을 보존한 채 `185:185`, directory `2770`, file `0660` 계약을 복구한다. Spark worker와 backend는 실제 write/read probe가 통과한 뒤 시작하므로 Docker daemon 자동 restart에서도 `compose up` 순서에만 의존하지 않는다.
+
+재부팅 뒤 storage readiness를 별도로 확인하려면 다음을 실행한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml ps spark-runtime-guard spark-master spark-worker backend
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml logs --tail=100 spark-runtime-guard
+```
+
+오류 JSON의 `code`, `path`, expected/actual owner·mode를 확인한다. 수동 `chmod 777` 또는 report/checkpoint 삭제로 우회하지 않는다. 상세 복구·검증·rollback 절차는 [Spark runtime 경로 재부팅 복구 Runbook](./refactor-2026/operations/spark-runtime-reboot-recovery.md)을 따른다.
 
 ## 6. Health Check
 

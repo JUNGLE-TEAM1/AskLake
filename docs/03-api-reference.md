@@ -62,6 +62,22 @@ TRINO_COLLECTOR_POLL_SECONDS=1
 TRINO_PROGRESS_POLL_SECONDS=0.5
 TRINO_PROGRESS_TIMEOUT_SECONDS=1
 TRINO_CLEANUP_POLL_SECONDS=3600
+DASHBOARD_SYNC_MODE=polling
+REALTIME_EVENTS_ENABLED=false
+CONTINUOUS_SQL_JOIN_ENABLED=false
+LATEST_STATIC_PER_BATCH_ENABLED=false
+STATIC_CHANGE_BACKFILL_ENABLED=false
+CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS=100000
+CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT=10
+REALTIME_EVENT_RETENTION_SECONDS=86400
+REALTIME_EVENT_PAYLOAD_MAX_BYTES=8192
+REALTIME_REPLAY_LIMIT=500
+REALTIME_SUBSCRIBER_QUEUE_SIZE=128
+REALTIME_CONNECTION_LIMIT_PER_ACTOR=5
+REALTIME_HEARTBEAT_SECONDS=15
+REALTIME_DISPATCH_POLL_SECONDS=0.5
+REALTIME_CLEANUP_INTERVAL_SECONDS=3600
+REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 ```
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 일반 Trino 결과는 private gzip page object로 저장하고 PostgreSQL에는 manifest/page metadata만 둔다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
@@ -71,12 +87,22 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 - `VITE_USE_MOCK_API=true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
+- `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
+- `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
+- `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
+- `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
+- `CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS`: Catalog row 통계가 이 값 이하인 static relation만 broadcast 후보가 된다. 통계가 없으면 broadcast하지 않는다.
+- `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`: Catalog row 통계가 이 값 이하인 static snapshot만 worker memory/disk cache 후보가 된다. 기본값은 5,000,000이고, 통계가 없거나 값이 0이면 cache하지 않는다.
+- `CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT`: micro-batch JOIN output 증폭 hard limit이다.
+- `REALTIME_EVENT_*`, `REALTIME_REPLAY_LIMIT`: durable event retention, payload byte limit, replay page의 안전 경계다.
+- `REALTIME_SUBSCRIBER_QUEUE_SIZE`, `REALTIME_CONNECTION_LIMIT_PER_ACTOR`: process memory와 actor별 multi-tab 연결을 제한한다.
+- `REALTIME_HEARTBEAT_SECONDS`, `REALTIME_DISPATCH_POLL_SECONDS`, `REALTIME_CLEANUP_INTERVAL_SECONDS`, `REALTIME_SSE_SEND_TIMEOUT_SECONDS`: heartbeat, NOTIFY 유실 catch-up, retention cleanup, slow-send 종료 경계다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Object storage local mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, `S3_FORCE_PATH_STYLE=true`를 사용한다.
 - EC2 production mode는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용한다. `S3_ENDPOINT`와 장기 AWS access key/secret은 비워 두고 EC2 instance profile IAM Role/default credential chain을 사용한다.
-- AWS Source request에는 provider, region, bucket/prefix만 전송한다. frontend는 endpoint/access key/secret 입력을 숨기며 AWS credential을 browser bundle이나 API payload에 넣지 않는다.
+- AWS Source 화면은 발표용 호환 레이아웃을 위해 Endpoint URL, Access Key, Secret Key 입력을 표시하지만 세 값은 선택 입력이며 연결 동작에는 사용하지 않는다. Frontend adapter는 값의 내용과 관계없이 API 요청과 pipeline draft에서 세 필드를 비우고 provider, region, bucket/prefix만 전송한다. 실제 인증은 EC2 instance profile IAM Role/default credential chain을 사용하며 AWS credential을 browser 밖으로 전송하거나 저장하지 않는다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
-- Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. `S3_ALLOWED_BUCKETS` allowlist가 없으면 local demo 기본값으로 `asklake-output`을 사용한다.
+- Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. 목록은 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 나머지 `S3_ALLOWED_BUCKETS`를 뒤에 합친다. local MinIO demo만 설정이 없을 때 `asklake-output`을 사용하며, AWS mode의 설정 누락은 `503 SERVICE_UNAVAILABLE`이다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`와 runtime 응답 전체에서 공유하는 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS` 예산을 적용한다. DuckDB 기본 경계는 query당 15초, memory/temp 각 256 MiB, 2 threads이며 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`, `ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 더 낮거나 제한된 운영값을 지정할 수 있다.
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며, 브라우저 env에는 provider key를 두지 않는다. `AI_QUERY_PROVIDER=direct`는 롤백 호환 모드다.
@@ -107,6 +133,56 @@ FastAPI schema 구현 기준:
 - 실패 응답은 `ErrorResponse` / `ErrorDetail`을 사용하고, code 값은 `docs/api-contract.md`의 권장 에러 코드를 우선한다.
 - 목록형 API는 필요에 따라 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`, `SortDirection`을 재사용한다.
 - 모든 성공 응답을 하나의 envelope로 강제하지 않는다. 각 endpoint의 성공 response shape는 `docs/api-contract.md`의 상세 계약을 따른다.
+
+### Realtime runtime config
+
+`GET /api/realtime/config`는 인증된 actor에게 frontend와 backend가 공유할 effective deployment mode를 반환한다.
+
+```json
+{
+  "dashboardSyncMode": "polling",
+  "realtimeEventsEnabled": false,
+  "continuousSqlJoinEnabled": false,
+  "latestStaticPerBatchEnabled": false,
+  "staticChangeBackfillEnabled": false,
+  "featureScope": "deployment",
+  "fallbackReason": null,
+  "heartbeatSeconds": 15,
+  "reconnectRetryMs": 3000,
+  "safetyPollAfterMs": 60000
+}
+```
+
+`fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 secret이나 raw env 값을 반환하지 않는다.
+
+### Realtime Dashboard stream
+
+`GET /api/realtime/events?dashboardId=<id>&datasetIds=<id,id>&cursor=<eventCursor>`는 인증된 `text/event-stream` endpoint다. `asklake_session` cookie를 사용하고 Dashboard `view`와 모든 Dataset `query` 권한을 검사한다. reconnect에서는 `Last-Event-ID`와 query cursor 중 큰 값을 사용한다.
+
+Domain event는 `id`, `event`, JSON `data`를 가지며 `dataset.revision.committed`와 `dashboard.published`를 지원한다. `stream.ready`, `system.heartbeat`, `system.resync_required`, `system.authorization_changed`는 client control event다. response는 `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`이며 cursor retention gap 또는 bounded queue overflow에서는 resync를 지시하고 연결을 닫는다.
+
+`GET /api/realtime/status`는 인증된 운영 진단용 JSON으로 effective mode, readiness, cursor bounds와 process metric/capacity snapshot을 반환한다. `GET /api/health/realtime`는 load balancer용 realtime readiness를 일반 `/api/health`와 분리한다.
+
+Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 snapshot 작성 시작 시점의 `eventCursor`가 포함된다. frontend는 이 cursor 이후를 구독하므로 snapshot fetch와 EventSource 연결 사이의 event도 replay된다.
+
+상세 envelope, replay, proxy, rollback 계약은 `docs/realtime-2026/contracts/realtime-event-v1.md`와 `docs/realtime-2026/sse-operations.md`를 따른다.
+
+### Continuous SQL Job
+
+`CONTINUOUS_SQL_JOIN_ENABLED=true`일 때 다음 API를 사용한다. 모든 JSON field는 camelCase다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| POST | `/api/query/continuous-jobs/validate` | SQL·relation·권한·schema·key를 검증하고 versioned plan 반환 |
+| POST | `/api/query/continuous-jobs` | stopped Job 생성. `clientRequestId` idempotency 지원 |
+| GET | `/api/query/continuous-jobs` | admin은 전체, 일반 actor는 소유 Job 목록 |
+| GET | `/api/query/continuous-jobs/{jobId}` | 상태 조회 및 active worker reconcile |
+| POST | `/api/query/continuous-jobs/{jobId}/commands` | `start|pause|resume|stop|recover`, `commandId` 필수 |
+| GET | `/api/query/continuous-jobs/{jobId}/batches?limit=100` | generation/batch 내림차순 publication lineage |
+
+validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, optional `checkpointPath`, `clientRequestId`와 append-only Iceberg `output`을 추가한다. plan relation의 `cacheHint`는 서버가 Catalog 통계와 안전 한도로 계산한 실행 hint이며 client가 임의로 지정하는 입력이 아니다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
+
+지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
 Canonical status values:
 
@@ -143,7 +219,7 @@ Canonical status values:
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `GET` | `/api/etl/kafka/replay-producer` | `manage` | 배포 환경 Kafka replay producer 상태/최근 로그 조회 | `docs/api-contract.md` |
-| `POST` | `/api/etl/kafka/replay-producer` | `manage` | loop 또는 유한 Kafka review replay producer 시작 | `docs/api-contract.md` |
+| `POST` | `/api/etl/kafka/replay-producer` | `manage` | JSON envelope 또는 원문 줄 단위 Kafka replay producer 시작 | `docs/api-contract.md` |
 | `DELETE` | `/api/etl/kafka/replay-producer` | `manage` | 실행 중인 Kafka replay producer에 graceful stop 요청 | `docs/api-contract.md` |
 | `POST` | `/api/internal/airflow/spark-runs/{runId}/execute` | Airflow service bearer token | 저장된 일반 배치 Job/Run을 재검증하고 PySpark 실행. 브라우저 호출 금지 | `docs/api-contract.md` |
 | `POST` | `/api/internal/airflow/spark-runs/{runId}/catalog` | Airflow service bearer token | 저장된 성공 Spark manifest를 실제 Parquet와 대조하고 Catalog에 멱등 반영. 브라우저 호출 금지 | `docs/api-contract.md` |
@@ -164,7 +240,7 @@ Canonical status values:
 | `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run의 1회성 Iceberg CTAS 등록 시작. SQL 결과 toolbar에는 노출하지 않음 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin + current `query` access | persisted CTAS/등록 상태 조회 | `docs/trino-query-run-contract.md` |
 
-`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "..." }`를 반환한다. 새 Kafka Source 화면은 build-time 상수가 아니라 이 값을 사용하므로 `ASKLAKE_KAFKA_BROKER`를 바꾼 backend와 같은 endpoint를 기본 표시한다.
+`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "...", "kafkaTopic": "...", "s3Bucket": "...", "s3Prefix": "..." }`를 반환한다. 새 빈 Kafka/S3 Source draft만 build-time 상수 대신 이 값을 한 번 채우며 저장된 설정과 사용자가 편집한 값은 보존한다. 응답에는 access key, secret, token 같은 인증 정보를 포함하지 않는다.
 
 Iceberg Dataset rows에서 Trino coordinator가 응답하지 않으면 HTTP 502 `SQL_STORAGE_ERROR`를 반환하고 `details.reason`은 원래 `ErrorCode`의 wire value인 `BACKEND_TIMEOUT`처럼 정규화한다. Python enum 표현, 내부 endpoint, query나 credential marker를 응답에 포함하지 않는다.
 
@@ -192,13 +268,13 @@ Airflow DAG Run은 Catalog endpoint가 성공한 뒤에만 `success`가 된다. 
 
 ETL 성공 dataset의 `lineageGraph`는 transform-aware column lineage를 사용한다. source node는 실제 transform input만 포함하고, 하나의 source `text`에서 여러 분류 컬럼을 파생하면 `text -> 각 output` edge를 각각 반환한다. Spark가 생성한 `_asklake_*` 컬럼은 job node에서 시작한다.
 
-Issue #500은 같은 command endpoint에 `startContinuous`, `pauseContinuous`, `resumeContinuous`, `stopContinuous`를 추가한다. 이 명령은 `executionMode: "continuous"` Kafka Job에만 적용하며, Docker가 시작한 long-running Spark Structured Streaming worker를 제어한다. 사용자 화면은 checkpoint를 보존하는 `중지`와 `스트림 시작`만 제공한다. Continuous 생성은 일반 cron 스케줄 단계를 건너뛰며 request에는 `scheduleLabel: "스케줄링 건너뛰기"`와 스트림 lifecycle 설명을 저장한다. `pauseContinuous`/`resumeContinuous`는 기존 API 호환을 위해 유지하지만 별도 UI 흐름으로 노출하지 않는다. 응답의 `processingResult.controlPlaneOnly`는 `false`, `worker`는 `spark_structured_streaming`이다. `GET /api/etl/jobs/{jobId}`는 worker container liveness와 heartbeat를 검사해 runtime을 hydrate하며, 요청 없이 종료되거나 heartbeat가 만료된 active worker는 `failed`로 반영한다. `pausing`/`stopping`에서의 의도된 worker 종료는 각각 `paused`/`stopped`로 완료한다. Continuous Job은 장기 실행 Spark query와 checkpoint로 상태를 복원하므로 `run`/`retry` Snapshot command와 섞어 사용할 수 없다. 상세 request/response와 충돌 정책은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
+Issue #500은 같은 command endpoint에 `startContinuous`, `pauseContinuous`, `resumeContinuous`, `stopContinuous`를 추가한다. 이 명령은 `executionMode: "continuous"` Kafka Job에만 적용하며, Docker가 시작한 long-running Spark Structured Streaming worker를 제어한다. 사용자 화면은 checkpoint를 보존하는 `중지`와 `스트림 시작`만 제공한다. Continuous 생성은 일반 cron 스케줄 단계를 건너뛰며 request에는 `scheduleLabel: "스케줄링 건너뛰기"`와 스트림 lifecycle 설명을 저장한다. `pauseContinuous`/`resumeContinuous`는 기존 API 호환을 위해 유지하지만 별도 UI 흐름으로 노출하지 않는다. 응답의 `processingResult.controlPlaneOnly`는 `false`, `worker`는 `spark_structured_streaming`이다. `GET /api/etl/jobs/{jobId}`는 worker container liveness와 heartbeat를 검사해 runtime을 hydrate하며, 요청 없이 종료되거나 heartbeat가 만료된 active worker는 `failed`로 반영한다. `pausing`/`stopping`에서의 의도된 worker 종료는 각각 `paused`/`stopped`로 완료한다. `continuousRuntime`은 기존 `status`/`lastError`와 함께 additive `desiredState`, `observedState`, `stateRevision`, `fencingToken`, `errorDetail`을 반환한다. command revision과 active worker attempt fencing으로 늦은 polling/report가 최신 상태를 덮지 못하게 하며 legacy row는 migration 없이 hydrate한다. Continuous Job은 장기 실행 Spark query와 checkpoint로 상태를 복원하므로 `run`/`retry` Snapshot command와 섞어 사용할 수 없다. 상세 request/response와 충돌 정책은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md), 상태 소유권은 [Continuous runtime 상태·오류 소유권](refactor-2026/contracts/runtime-state-ownership.md)을 따른다.
 
 Issue #567 Phase 5부터 Continuous create/review/preview는 Snapshot conformance를 통과한 stateless canonical Rule을 허용한다. `GET /api/etl/jobs/{jobId}`의 `continuousRuntime`은 `ruleContractVersion`, `ruleFingerprint`, `runtimeFingerprint`, `ruleMetrics`, `lastRuleResult`를 추가로 반환한다. Worker report, batch manifest와 Catalog `materializationRuns`도 schema/rule/runtime fingerprint와 Transform/Quality 결과를 보존한다. 실행 중 processing contract 변경은 `409 CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE`, checkpoint가 초기화된 뒤의 schema/Rule/physical target 변경은 `409 CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE`이며 Job copy와 새 checkpoint가 필요하다.
 
 Continuous 운영 API는 `GET /api/etl/jobs/{jobId}/continuous/logs`, `GET /api/etl/jobs/{jobId}/continuous/sessions`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}`, `GET /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}/batches?limit=100`, `GET /api/etl/jobs/{jobId}/continuous/quarantine`, `GET /api/etl/jobs/{jobId}/continuous/maintenance-runs`, `POST /api/etl/jobs/{jobId}/continuous/quarantine/replays`, `POST /api/etl/jobs/{jobId}/continuous/compactions`, `POST /api/etl/jobs/{jobId}/continuous/iceberg-maintenance`를 제공한다. session은 한 번의 stream start부터 terminal 전환까지를 나타내고 batch endpoint는 그 session에 속한 최근 micro-batch를 최신순으로 반환한다. batch는 `sourceBoundary`, `icebergSnapshotId`, `icebergTableUri`를 추가로 반환한다. session과 batch의 `dagSteps`는 Source, Schema, Transform, Quality, Target, Manifest/Checkpoint, Catalog 7단계 근거를 제공하며 Catalog cursor 확인 전 publication은 마지막 단계가 `pending`이다. manifest 전에 Rule이 실패한 batch도 `failed` 이력과 오류를 반환하고, 규칙이 없는 Transform/Quality 단계는 `pass-through`다. 조회 API는 worker report와 liveness를 먼저 동기화하므로 별도 새로고침 명령 없이 최신 durable 상태를 읽는다. Replay body는 `offsets?: string[]`와 `approveUnknownFields?: boolean`을 받고 현재 policy/Rule을 적용한 성공 행을 같은 Iceberg table에 append한 뒤 Trino 검증 성공 시 `catalogApplied=true`를 남긴다. `approveUnknownFields: true`는 unknown field만 고정 projection으로 승인하는 `manage` 권한 작업이다. `compactions`는 `targetFileSizeMb`(128~512)를 받아 Iceberg `rewrite_data_files`를 실행한다. `iceberg-maintenance`는 rewrite와 선택적 snapshot expiration/orphan cleanup을 조합하며 삭제성 작업은 `manage` 권한이 필요하다. 모든 maintenance는 worker가 paused/stopped일 때 Job/runtime row lock 순서로 worker start/resume과 상호 배제되고, 완료 snapshot과 파일 지표를 Trino로 검증한다. Maintenance run은 기본 900초 lease를 가지며 durable REST runner heartbeat가 fresh이면 lease를 갱신하고 stale/absent runner만 정리한다.
 
-Kafka replay producer API는 Continuous worker와 분리된 테스트 입력 도구다. `POST /api/etl/kafka/replay-producer`는 `topic`, `rate`, `batchSize`, `loop`, `maxCycles?`, `maxMessages?`, `cycleDelayMs?`, `burstMinMessages?`, `burstMaxMessages?`, `burstIntervalSeconds?`, `inputPath?`를 받으며 한 번에 하나만 실행한다. burst 세 값은 함께 쓰며 loop mode에서 매 interval마다 min~max의 랜덤 건수를 rate 제한 없이 전송한다. loop 모드는 cycle별 고유 `event_id`와 증가하는 논리 `offset`을 만들고, 기존 topic을 삭제하지 않는다. `inputPath`는 배포 설정의 `ASKLAKE_REPLAY_INPUT_DIR` 아래 상대 경로만 허용한다.
+Kafka replay producer API는 Continuous worker와 분리된 테스트 입력 도구다. `POST /api/etl/kafka/replay-producer`는 `topic`, `rate`, `batchSize`, `loop`, `maxCycles?`, `maxMessages?`, `cycleDelayMs?`, `burstMinMessages?`, `burstMaxMessages?`, `burstIntervalSeconds?`, `inputPath?`, `payloadMode?`를 받으며 한 번에 하나만 실행한다. `payloadMode` 기본값은 `json_envelope`이고 기존 fixture를 유지한다. `raw_text`이면 `inputPath`가 필수이며 `.txt`, `.log`, `.jsonl` 파일의 비어 있지 않은 각 줄을 JSON 변환 없이 Kafka value로 보낸다. burst 세 값은 함께 쓰며 loop mode에서 매 interval마다 min~max의 랜덤 건수를 rate 제한 없이 전송한다. JSON envelope loop 모드는 cycle별 고유 `event_id`와 증가하는 논리 `offset`을 만들고, 기존 topic을 삭제하지 않는다. `inputPath`는 배포 설정의 `ASKLAKE_REPLAY_INPUT_DIR` 아래 상대 경로만 허용한다.
 
 `GET /api/etl/jobs/{jobId}`는 Job 상세, 실행 polling, 수정 화면 hydrate의 source of truth다. 응답은 source config, schema columns/fingerprint/sample/summary, transform/quality, schedule/retry/watermark, permission summary/roles, target database/metadata를 함께 유지한다.
 
@@ -372,7 +448,7 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | DuckDB compatibility 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
-현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
+현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 `owner` 표시는 identity metadata이면서 backend owner fallback의 기준이고, `permissionGrants`는 실제 Job 접근 제어 입력이다. `permissionSummary`와 `permissionRoles`는 호환용 요약 값이다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
 
 ## 6) P2 / 확장 API
 
@@ -437,7 +513,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Target 저장경로 | S3 bucket/prefix picker가 `target.storagePath` string을 갱신 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`, `POST /api/etl/jobs` |
 | Target DB 선택 | DB picker가 `target.databaseName` string을 갱신하고 hidden tableName은 datasetName을 사용 | `GET /api/target/databases`, `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
-| 조건부 레코드 구조화 | Source에서 선택한 `.txt`/`.log` raw preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
+| 조건부 레코드 구조화 | Source에서 선택한 File/S3 `.txt`/`.log` 또는 Kafka raw text preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
@@ -728,7 +804,7 @@ Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을
 - 같은 Job 또는 표시명이 정확히 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns` history에 추가한다. 일반 ETL/SQL full refresh는 `materializationMode: "snapshot"`, Kafka 추가분은 `materializationMode: "delta"`다. 현재 Dataset은 최신 성공 snapshot과 그보다 최신인 성공 delta만 사용한다. 대상 판정은 손실 가능한 slug가 아니라 저장된 `targetDataset` 표시명으로 수행한다. 새 dataset의 내부 `datasetId`는 안전한 소문자 ASCII 이름이면 `ds_<name>`, 그 외에는 `ds_<slug>_<stable-hash>` 형식이므로 서로 다른 한글·공백·특수문자 이름이 같은 ID로 합쳐지지 않는다. Catalog 목록 row는 하나만 보이고, row 펼침에서 version history를 최대 5개씩 pagination으로 표시한다.
 - Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDatabase`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다. 다중 파티션 컬럼은 선택 순서를 유지한 `partitionColumns` 배열과 `/`로 연결한 하위 호환용 `partition` 문자열로 함께 전송한다. SQL 결과 처리 Job wizard도 같은 target metadata를 구성한 뒤 기존 create request로 변환한다.
 - `POST /api/etl/jobs`의 `job.icebergTarget`은 frontend 입력이 아니라 backend가 `targetDataset`과 Dataset ID로 만든 optional writer 계약이다. 새 ETL Job은 `catalog`, `namespace`, `table`, `tableUri`, `writeMode`, `partitionColumns`를 저장하며 기존 Job은 첫 일반 batch 실행 전에 같은 규칙으로 backfill된다. 일반 full batch는 `replace`, 증분 S3/Data Lake folder는 `append`, Kafka는 `append`다. 이 선언만으로 Catalog `queryEngineTable`이나 SQL 권한을 만들지 않으며 실제 commit과 Trino 검증이 필요하다.
-- Target 화면은 모든 Source에서 `targetLayer`를 명시적으로 선택한다. Kafka Snapshot은 기존 draft 호환을 위해 `RAW/BRONZE/SILVER + JSONL`, Kafka Continuous는 `Parquet` 설정을 유지하지만 두 Job 실행의 final target은 backend-owned Iceberg table이다. Backend review/create/update는 각 mode의 호환 조합을 검증한다.
+- Target 화면은 `targetLayer`를 노출하지 않는다. 기존 create/update 계약 호환을 위해 frontend가 source/execution별 내부 기본값을 전송하고 backend는 기존 조합 검증을 유지한다. Kafka Snapshot은 JSONL, Kafka Continuous는 Parquet 포맷만 사용자에게 노출하며 두 실행의 최종 target은 backend-owned Iceberg table이다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
 - Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.
 - Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.
@@ -943,16 +1019,27 @@ type DashboardAssistantResponse = {
 - 요청은 `POST /api/etl/jobs`와 같은 pipeline draft 계약에 `sourceConnectionStatus`를 추가합니다.
 - live mode에서는 source status가 `success`일 때 backend가 source connector를 다시 확인하고, 실패하면 Review의 소스 연결 상태를 `확인 필요`로 반환합니다. 내부 `Data Lake`는 파일 경로를 재검사하지 않고 `Source Dataset ID`의 Catalog 존재, `available` 상태, 현재 actor의 조회 권한, 사용 가능한 Iceberg table mapping을 검증합니다.
 - 응답은 `basicInformation`, `schema`, `destination`, `permission`, `validation`, `canCreate`를 포함합니다.
+- `basicInformation`은 생성 전 사용자가 확인할 값만 표시합니다. 내부 `id`와 자동 생성용 `jobName`은 노출하지 않고, 실행 방식은 `배치 처리` 또는 `실시간 스트리밍`, 저장 대상은 `출력 데이터셋 이름`으로 표시합니다.
+- `permission`은 담당자의 자동 전체 권한, 로그인한 모든 사용자의 조회 허용 여부, 그룹·사용자·역할별 저장 예정 action을 반환합니다. `public:view`는 별도 대상 행으로 중복하지 않고 `로그인한 모든 사용자=조회 가능`으로 요약합니다. draft grant의 optional `principalName`은 Review 표시용 이름이며 권한 판정은 `principalType + principalId`를 사용합니다.
+- `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치를 반환합니다. 스케줄과 실패 재시도는 생성 차단 조건이 아니므로 포함하지 않습니다.
 - frontend는 이 응답만 화면에 표시하며, 생성 버튼은 `canCreate`가 `true`일 때만 활성화합니다.
 - mock mode는 같은 응답 shape의 fixture를 반환하며, live API를 호출하지 않습니다.
 
 ## 9) 변경 규칙
 
+### Pipeline·Snapshot·SQL·Catalog 내부 경계 호환
+
+PR 07의 application 경계 분리는 공개 endpoint와 payload를 변경하지 않는다. `POST /api/etl/jobs`, `PATCH /api/etl/jobs/{jobId}`, `POST /api/etl/jobs/{jobId}/commands`, SQL Query Run, derived Dataset, Catalog 조회 endpoint는 기존 request/response/status code를 유지한다. 내부적으로 Snapshot command는 Continuous command와 별도 planner를 사용하고, SQL/ETL Catalog writer는 같은 payload port 및 materialization identity를 사용한다. 상세 검증은 [Pipeline·Snapshot·SQL·Catalog Application 경계](refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 따른다.
+
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
+
+### Refactor 하위 호환 게이트
+
+`npm run verify:backward-compatibility`는 refactor baseline의 95개 operation과 component schema를 현재 FastAPI OpenAPI와 비교한다. 기존 operation·response·property·enum 제거, request required 강화는 허용하지 않는다. 현재 추가된 `KafkaContinuousRuntime.desiredState`, `observedState`와 `ContinuousRuntimeErrorDetail`은 기존 `status`, `lastError`를 유지하는 응답 전용 additive 계약이다. 이 검증은 endpoint를 추가하는 작업을 막지 않지만 additive 항목을 출력해 리뷰 근거로 남긴다.
 
 ## 10) ETL Permission 옵션 및 grant 저장
 
-`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. 직접 사용자·그룹 권한을 설정하는 기능이므로 현재 actor의 `role`이 `admin`이어야 하며, 그렇지 않으면 `403 FORBIDDEN`을 반환한다. 이 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는 경량 디렉터리 조회다.
+`GET /api/etl/permission-options`는 ETL 생성 화면에서 선택할 수 있는 조직 그룹과 사용자를 반환한다. `jobId` query가 없으면 새 작업 생성에 필요한 경량 디렉터리 조회이므로 인증된 사용자가 호출할 수 있다. `jobId`가 있으면 기존 Job의 권한 편집으로 간주하며 admin, 해당 Job의 생성자, 담당자(owner), 또는 `manage` grant를 가진 actor만 호출할 수 있다. 그 외 actor는 `403 FORBIDDEN`, 존재하지 않는 Job은 `404 NOT_FOUND`를 반환한다. 응답은 권한 요약이나 전체 resource 목록을 계산하지 않는다.
 
 ```ts
 type PermissionOptionsResponse = {
@@ -972,7 +1059,7 @@ type PermissionOptionsResponse = {
 };
 ```
 
-`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 기존 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영된다.
+`POST /api/etl/jobs`와 `PATCH /api/etl/jobs/{jobId}`는 `permissionGrants?: PermissionGrant[]` 계약을 실제 저장 경로로 사용한다. 전달된 grant는 해당 Job의 `permission_ui` source 행으로 저장되며, 수정 시 기존 `permission_ui` 행만 교체한다. 관리 콘솔에서 생성한 `admin` source grant는 유지한다. `query`, `run`, `manage`, `delete`, `share` action은 기본 조회가 가능하도록 `view`와 함께 정규화한다. `모든 사용자에게 조회 허용`은 `principalType=public`, `principalId=public`, `actions=[view]`로 저장된다. 담당자(owner)의 전체 권한은 별도 grant 없이 backend fallback으로 계산한다. 생성·수정 응답의 `permissionGrants`와 actor별 `permissions`에는 저장 결과가 즉시 반영되고, Review 응답의 `permission`에는 담당자 자동 권한과 실제 저장 예정 grant를 나열한다. `principalName`은 Review 표시를 돕는 optional metadata이며 저장 identity와 권한 판정에는 사용하지 않는다.
 
 ETL Job에 직접 대응하는 action은 아래와 같다.
 
@@ -983,15 +1070,15 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 | `manage` | 운영/수정 | Job 수정, 일시정지, 취소, 중지, 스케줄 재개 |
 | `delete` | 삭제 | Job 삭제 |
 
-공통 계약의 `query`, `share`도 validation 가능한 action이다. 현재 frontend는 그룹 선택 시 options API의 `groups[].actions`를 그대로 사용하고, 사용자 선택 시 `view`, `run`을 고정 적용한다. 대상별 action 편집 UI는 아직 없다.
+공통 계약의 `query`, `share`도 validation 가능한 action이다. frontend는 프리셋으로 선택 대상 전체에 같은 action 집합을 적용하거나, 직접 설정에서 대상별 action을 편집한다.
 
 현재 응답의 사용자 후보는 `auth_users` table을 우선하고, 비어 있으면 demo user를 사용한다. 그룹 후보는 아직 `DEMO_GROUPS` 고정 정의이며 조직 디렉터리 연동 결과가 아니다. 따라서 `groups[].actions`는 현재 backend가 제공하는 기본 action bundle이고, 프론트는 이를 실제 조직 역할 체계로 과장해 표시하지 않는다.
 
-`principalType="public"`, `principalId="public"`, `actions=["view"]`는 인증 경계 안의 모든 actor에게 Job 조회를 허용한다. 현재 frontend의 공개 범위 `외부 공유`가 이 grant를 만든다. 이는 익명 공개 링크나 별도 share token을 생성하지 않는다.
+`principalType="public"`, `principalId="public"`, `actions=["view"]`는 인증 경계 안의 모든 actor에게 Job 조회를 허용한다. Permission 화면의 `모든 사용자에게 조회 허용`이 이 grant를 만든다. 이는 익명 공개 링크나 별도 share token을 생성하지 않는다.
 
-`owner`, `permissionSummary`, `permissionRoles`는 표시·호환 metadata다. 실제 권한은 저장된 `permissionGrants`로 판정한다. 다만 현재 owner는 자유 문자열 입력이고 backend 이름 일치 fallback에도 사용된다.
+`owner`, `permissionSummary`, `permissionRoles`는 표시·호환 metadata다. 실제 권한은 저장된 `permissionGrants`로 판정하며 owner는 별도 grant 없이 전체 권한 fallback으로 계산한다.
 
-`GET /api/etl/permission-options`는 권한 디렉터리 조회만 수행한다. 민감 데이터 감지나 공개 범위 안전 판정을 반환하지 않는다. 현재 화면의 민감 데이터 상태는 컬럼명 정규식 기반 frontend 추정값이다.
+`GET /api/etl/permission-options`는 권한 디렉터리 조회만 수행한다. 민감 데이터 감지나 공개 범위 안전 판정을 반환하지 않는다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
 ## Text Structuring Runtime Contract
@@ -1003,7 +1090,6 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 - Spark run results include `textStructuring.definition` and `textStructuring.execution`; job runs, Catalog datasets, and materialization runs preserve `textStructuringExecution`.
 - Column execution records must distinguish `executionMode: "selected_model"`, `executionMode: "auto_model"`, `executionMode: "fallback_rule"`, and `executionMode: "missing_model"` so fallback output is not presented as a model result.
 - Model dropdowns must filter by `targetColumn`, `method: "one_of_values"`, and exact `allowedValues` compatibility for the edited output column.
-
 ## EKS MVP runtime contract
 
 EKS FastAPI는 아래 환경 계약을 사용한다.
@@ -1050,3 +1136,10 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
   "resultMarkerFound": true
 }
 ```
+## 공통 correlation·오류·health 계약 (2026-07-16)
+
+- 모든 API는 유효한 request `X-Correlation-ID`를 보존하거나 새 ID를 생성해 같은 response header로 반환한다.
+- 공통 `error`는 기존 `code`, `message`, `details`를 유지하고 `stage`, `retryable`, `operatorMessage`, `userMessage`, `diagnosticId`를 additive field로 제공한다.
+- `details`는 secret key를 재귀적으로 redaction하며 validation input 원문과 unhandled stack을 반환하지 않는다.
+- `GET /api/health/live`는 process liveness, `GET /api/health/ready`는 DB readiness, 기존 `GET /api/health`는 호환 readiness다.
+- `GET /api/health/metrics`는 현재 backend process의 진단 counter snapshot을 반환한다.

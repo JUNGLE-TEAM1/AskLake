@@ -174,9 +174,7 @@ export function DashboardPage({
   }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
 
   const runtimeResources = useDashboardRuntimeResources({
-    active: view === "runtime",
-    dashboardId: runtimeSelection.dashboardId,
-    mode: runtimeSelection.mode,
+    active: view === "runtime", dashboardId: runtimeSelection.dashboardId, mode: runtimeSelection.mode,
   });
   const {
     draftError,
@@ -186,6 +184,7 @@ export function DashboardPage({
     loadPublishedRuntime,
     pages: runtimePages,
     publishedRuntime,
+    realtimeConnectionState,
     runtimeError,
     runtimeLoading,
     selectedPageId: selectedRuntimePageId,
@@ -905,6 +904,7 @@ export function DashboardPage({
       notice: runtimeNotice,
       pages: runtimePages,
       publishedRuntime,
+      realtimeConnectionState,
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,

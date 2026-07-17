@@ -6,6 +6,7 @@ export type PermissionGrant = {
   id?: string;
   actions: PermissionAction[];
   principalId: string;
+  principalName?: string;
   principalType: PermissionPrincipalType;
   source?: string;
 };

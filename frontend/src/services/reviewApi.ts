@@ -1,4 +1,4 @@
-import type { CreatePipelineRequest, DraftPipeline, RuleCompilationResult } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { compileRuleContract } from "./ruleContract";
@@ -30,6 +30,15 @@ export type ReviewSnapshot = {
   schema: ReviewSchemaRow[];
   validation: ReviewValidationRow[];
 };
+
+const PERMISSION_REVIEW_ACTION_LABELS = {
+  delete: "삭제",
+  manage: "관리",
+  query: "쿼리 실행",
+  run: "실행",
+  share: "공유",
+  view: "조회",
+} as const;
 
 export type ReviewSnapshotRequest = CreatePipelineRequest & {
   sourceConnectionStatus: DraftPipeline["source"]["connectionStatus"];
@@ -85,32 +94,25 @@ function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot
   const sourceReady = request.sourceConnectionStatus === "success";
   const schemaReady = includedColumns.length > 0;
   const processingReady = ruleCompilation.status === "pass";
-  const scheduleReady = Boolean(request.scheduleLabel.trim());
-  const retryReady = Boolean(request.retryPolicySummary.trim());
-  const permissionReady = Boolean(request.permissionSummary.trim() && request.targetDataset.trim() && request.owner.trim());
+  const targetReady = Boolean(request.targetDataset.trim() && String(request.targetLayer).trim() && request.targetFormat.trim());
+  const permissionIssue = reviewPermissionIssue(request.owner, request.permissionGrants);
+  const permissionReady = permissionIssue === null;
 
   return {
     basicInformation: toReviewEntries([
-      ["작업 ID", request.id],
-      ["작업명", request.jobName],
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
-      ["실행 방식", request.executionMode === "continuous" ? "실시간 수집" : "일괄 수집"],
-      ["대상 데이터셋", request.targetDataset],
+      ["처리 방식", request.executionMode === "continuous" ? "실시간 스트리밍" : "배치 처리"],
+      ["출력 데이터셋 이름", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
-    canCreate: sourceReady && schemaReady && processingReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
+    canCreate: sourceReady && schemaReady && processingReady && targetReady && permissionReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()),
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
-      ["테이블 이름", request.targetDataset],
       ["형식", request.targetFormat],
-      ["계층", request.targetLayer],
       ["파티션", request.partition || "없음"],
     ]),
-    permission: toReviewEntries([
-      ["담당자", request.owner],
-      ["요약", request.permissionSummary],
-    ]),
+    permission: permissionReviewEntries(request.owner, request.permissionGrants),
     ruleCompilation,
     schema: outputColumns.map(([name, type]) => {
       const sourceColumn = includedColumns.find((column) => column.targetName === name || column.sourceName === name);
@@ -122,8 +124,8 @@ function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot
       };
     }),
     validation: [
-      validationRow("소스 연결", sourceReady, "완료", "확인 필요"),
-      validationRow("스키마", schemaReady, "확정됨", "추론 필요"),
+      validationRow("소스 데이터", sourceReady, "연결됨", "연결 확인 필요"),
+      validationRow("출력 스키마", schemaReady, "확정됨", "필드 선택 필요"),
       validationRow(
         "처리 규칙",
         processingReady,
@@ -132,15 +134,43 @@ function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot
           : "규칙 없음 · 원본 스키마 그대로 통과",
         ruleCompilation.issues[0]?.message ?? "규칙을 확인하세요",
       ),
-      validationRow(request.executionMode === "continuous" ? "스트림 제어" : "스케줄", scheduleReady, request.executionMode === "continuous" ? "시작/중지로 제어" : "유효함", "확인 필요"),
-      validationRow("실패 재시도", retryReady, "유효함", "확인 필요"),
-      validationRow("권한/타겟", permissionReady, "유효함", "확인 필요"),
+      validationRow("접근 권한", permissionReady, "설정됨", permissionIssue ?? "권한 확인 필요"),
+      validationRow("저장 위치", targetReady, "설정됨", "출력 데이터셋 이름 확인 필요"),
     ],
   };
 }
 
 function validationRow(label: string, ready: boolean, readyValue: string, warningValue: string): ReviewValidationRow {
   return { label, status: ready ? "ready" : "warning", value: ready ? readyValue : warningValue };
+}
+
+function permissionReviewEntries(owner: string, grants: PermissionGrant[] | undefined): ReviewEntry[] {
+  const principalLabels = {
+    group: "그룹",
+    public: "모든 사용자",
+    role: "역할",
+    user: "사용자",
+  } as const;
+  const publicView = (grants ?? []).some((grant) => grant.principalType === "public" && grant.actions.includes("view"));
+  return toReviewEntries([
+    ["담당자", `${owner} · 모든 작업 가능`],
+    ["로그인한 모든 사용자", publicView ? "조회 가능" : "조회 불가"],
+    ...(grants ?? []).filter((grant) => grant.principalType !== "public").map((grant): [string, string] => {
+      return [
+        `${grant.principalName ?? grant.principalId} (${principalLabels[grant.principalType]})`,
+        grant.actions.map((action) => PERMISSION_REVIEW_ACTION_LABELS[action]).join(" · ") || "권한 없음",
+      ];
+    }),
+  ]);
+}
+
+function reviewPermissionIssue(owner: string, grants: PermissionGrant[] | undefined): string | null {
+  if (!owner.trim()) return "담당자 확인 필요";
+  for (const grant of grants ?? []) {
+    if (grant.principalType !== "public" && !grant.principalId.trim()) return "권한 대상 확인 필요";
+    if (grant.actions.length === 0) return "허용 작업 확인 필요";
+  }
+  return null;
 }
 
 function toReviewEntries(rows: Array<[string, string | undefined]>): ReviewEntry[] {

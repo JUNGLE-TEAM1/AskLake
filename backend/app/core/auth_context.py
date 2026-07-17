@@ -45,6 +45,28 @@ def get_actor_context(
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
     db: Annotated[Session, Depends(get_db)] = None,
 ) -> ActorContext:
+    return resolve_actor_context(
+        db=db,
+        session_token=session_token,
+        actor_name=actor_name,
+        actor_role=actor_role,
+        actor_groups=actor_groups,
+    )
+
+
+def resolve_actor_context(
+    *,
+    db: Session | None,
+    session_token: str | None,
+    actor_name: str = "Admin User",
+    actor_role: str = "admin",
+    actor_groups: str | None = None,
+) -> ActorContext:
+    """Resolve an actor without retaining a request-scoped DB session.
+
+    Long-lived streaming endpoints call this helper with a short-lived session
+    before returning their StreamingResponse.
+    """
     if session_token and db is not None:
         session_actor = load_session_actor(db, session_token)
         if session_actor is not None:

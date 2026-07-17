@@ -78,6 +78,8 @@ GET /api/s3/prefixes?bucket=asklake-output&prefix= -> folder prefixes
 GET /api/target/databases -> { "databases": [{ "name": "asklake", "description": "..." }] }
 ```
 
+위 `asklake-output` 응답은 설정이 없는 local MinIO demo의 fallback이다. AWS mode에서는 `ASKLAKE_SPARK_OUTPUT_BUCKET`이 목록 첫 번째에 오고 `S3_ALLOWED_BUCKETS`의 나머지 bucket이 뒤따른다. AWS에서 두 설정이 모두 비면 잘못된 local bucket을 반환하지 않고 `503 SERVICE_UNAVAILABLE`로 기동 설정 오류를 드러낸다.
+
 Target S3 picker 환경변수:
 
 ```powershell
@@ -119,6 +121,8 @@ cd backend
 npm run synthetic-commerce:click-log
 npm run verify:synthetic-click-log
 ```
+
+이 변환기의 `click-events.log` 필드 순서는 `event_time`, `event_id`, `user_id`, `session_id`, `event_type`, `product_id`, `page_url`, `device_type`, `referrer`, `position`이다. Frontend 추천 스키마는 basename과 10필드 검증이 모두 맞을 때만 이 순서와 타입 초안을 채우며 backend Preview 검증을 생략하지 않는다. 위의 별도 `click-events-whitespace-100.log` fixture는 필드 의미가 다르므로 추천 대상이 아니다.
 
 운영 AWS S3 또는 local MinIO prefix는 내려받기 없이 S3-to-S3로 변환한다. AWS S3에서는 endpoint 옵션을 생략하고 instance profile 또는 workload IAM credential chain을 사용한다.
 
@@ -300,6 +304,8 @@ npm run verify:kafka-continuous-soak
 
 `npm run verify:kafka-continuous-contract`는 같은 worker attempt의 실패 카운터 멱등성, 종료 worker의 manifest 기반 Catalog 복구, Iceberg replay 경계, worker/maintenance 양방향 fencing, durable runner heartbeat 기반 lease 갱신과 stale cleanup 1회를 검증한다. E2E는 기본 replay가 현재 schema policy를 다시 적용하는지, `approveUnknownFields` 관리자 예외만 unknown-field 행을 복구하는지, replay snapshot이 Trino 검증 후 Catalog에 반영되는지, rewrite 결과가 같은 Iceberg target으로 Trino 재검증되는지 확인한다. Stream manifest는 deterministic source boundary, Iceberg snapshot/table URI와 topic/partition별 `[startOffset, endOffset)`을 포함해야 한다.
 
+ACK backlog 검증에서는 publication window보다 많은 manifest를 만든 뒤 ACK를 전진시켜도 worker가 전체 이력을 매번 다시 Spark query로 읽지 않고 다음 window만 보충하는지 확인한다. 지연 검증 환경은 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS=4`와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`을 기본으로 사용하고, checkpoint가 과거 shuffle 수를 복원해도 각 `foreachBatch`에서 설정값을 다시 적용하는지 확인하며 `lastBatchDurationMs`와 각 DAG stage duration을 함께 기록한다. Catalog manifest 복구 검증은 `_SUCCESS`와 빈 `part-*`가 먼저 정렬돼도 실제 JSON이 든 part를 찾아 revision을 전진시켜야 한다.
+
 ```bash
 cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
@@ -362,6 +368,8 @@ npm run test:dashboard-live-refresh
 
 실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 평소에는 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 1000, 60000)`을 따른다. 여러 revision을 따라잡을 때는 응답이 실제 전진한 경우에만 250ms 뒤 다음 revision을 요청한다.
 
+Continuous SQL은 먼저 `npm run verify:continuous-sql-contract`로 plan hash, 지원/거절 SQL, static binding retry, generation/fencing, lifecycle과 publication identity를 검증한다. 실제 harness에서는 Kafka streaming fixture 1개와 unique-key metadata가 있는 작은/큰 Iceberg dimension을 사용해 INNER/LEFT 결과, pinned update 미반영, latest-per-batch update 반영, duplicate key 차단, broadcast threshold, commit 후 fault와 restart 중복 방지를 확인해야 한다. 이 실제 통합 시나리오는 STACK-04 opt-in gate이며 계약 테스트 통과만으로 Spark/Iceberg E2E가 끝났다고 판정하지 않는다.
+
 운영 로그에서는 다음 event를 확인한다.
 
 ```text
@@ -382,3 +390,22 @@ npm run dev
 ```
 
 The browser calls backend endpoints for source tests and create flow.
+
+## 10. 통합 E2E·장애 복구 프로필
+
+개별 Kafka E2E/soak 명령은 `backend/scripts/etl-e2e-recovery-scenarios.json`에서 full-stack 복구 시나리오로 묶는다. PR은 Spark 없는 application/ephemeral 계약, release는 fake Spark REST actual process와 Docker UID 185 mount, nightly는 격리 Kafka/Spark/object storage와 headless browser를 실행한다.
+
+```bash
+cd backend
+npm run verify:etl-e2e-recovery
+npm run verify:etl-e2e-recovery:release
+
+# isolated self-hosted stack only
+ASKLAKE_E2E_ISOLATED_ENV=true \
+ASKLAKE_CONTINUOUS_E2E_BASE_URL=http://127.0.0.1:8080 \
+ASKLAKE_E2E_FRONTEND_URL=http://127.0.0.1:5174 \
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+npm run verify:etl-e2e-recovery:nightly
+```
+
+nightly는 worker/backend/Kafka/MinIO pause·restart와 publication fault를 기존 opt-in script로 주입하고, 각 scenario가 `missingCount=0`, `duplicateCount=0`, monotonic checkpoint/cursor와 idempotent Catalog/Dashboard identity를 증명해야 한다. production URL, static AWS/MinIO credential과 공유 topic/table에는 실행하지 않는다. 상세 결과 형식과 Go/No-Go는 [ETL E2E·복구 하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)을 따른다.

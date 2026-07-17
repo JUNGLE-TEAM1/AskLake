@@ -19,6 +19,7 @@ required_files=(
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
+  "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
   "$CHART_DIR/Chart.yaml"
@@ -259,11 +260,11 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
-grep -q 'option("startingOffsets", "earliest")' "$ROOT_DIR/backend/scripts/spark_job_run.py"
-grep -q 'option("endingOffsets", "latest")' "$ROOT_DIR/backend/scripts/spark_job_run.py"
-grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/spark_job_run.py"
-grep -q 'Kafka fixture batch filter requires raw.fixture_batch_id' "$ROOT_DIR/backend/scripts/spark_job_run.py"
-grep -q 'validate_kafka_fixture_row_count' "$ROOT_DIR/backend/scripts/spark_job_run.py"
+grep -q 'option("startingOffsets", "earliest")' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
+grep -q 'option("endingOffsets", "latest")' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
+grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
+grep -q 'Kafka fixture batch filter requires raw.fixture_batch_id' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
+grep -q 'validate_kafka_fixture_row_count' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
 grep -q 'platforms: linux/amd64' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
 grep -q 'npm run test:spark-kubernetes' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
 

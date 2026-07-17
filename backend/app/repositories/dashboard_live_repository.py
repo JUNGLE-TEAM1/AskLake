@@ -18,6 +18,7 @@ from app.models.dashboard_live import (
 )
 from app.models.etl import ETLJobModel
 from app.models.catalog import CatalogDatasetModel
+from app.services.dashboard_realtime_bridge import append_dataset_revision_event
 
 
 DEFAULT_DASHBOARD_POLL_MS = 1_000
@@ -438,7 +439,6 @@ class DashboardLiveRepository:
                 raise ValueError("Kafka revision requires a durable storage location")
             if normalized_manifest_location is None:
                 raise ValueError("Kafka revision requires a publication manifest")
-
         existing_commit = self.commit_by_run_id(run_id)
         if existing_commit is not None:
             existing_ranges = normalize_kafka_source_ranges(
@@ -524,6 +524,7 @@ class DashboardLiveRepository:
         self.db.add(commit)
         self.db.add(freshness)
         self.db.flush()
+        append_dataset_revision_event(self.db, dataset_id, revision, run_id, normalized_commit_kind, now)
         return commit, True
 
     def list_commits(

@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context, require_permission
 from app.core.database import get_db
+from app.core.errors import ApiError
+from app.core.observability import increment_metric
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
@@ -89,10 +91,11 @@ def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsin
 
 @router.get("/permission-options", response_model=PermissionOptionsResponse)
 def get_permission_options(
+    job_id: str | None = Query(default=None, alias="jobId"),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> PermissionOptionsResponse:
-    return etl_service.get_permission_options(db, actor)
+    return etl_service.get_permission_options(db, actor, job_id)
 
 
 @router.post("/review", response_model=ReviewSnapshot)
@@ -235,7 +238,14 @@ def command_job(
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobCommandResponse:
-    return etl_service.command_job(db, job_id, request.command, actor)
+    try:
+        response = etl_service.command_job(db, job_id, request.command, actor)
+    except ApiError as error:
+        metric = "job_command_duplicate_total" if error.status_code == status.HTTP_409_CONFLICT else "job_command_rejected_total"
+        increment_metric(metric, command=request.command, code=str(error.code))
+        raise
+    increment_metric("job_command_accepted_total", command=request.command)
+    return response
 
 
 @router.get("/jobs/{job_id}/continuous/logs", response_model=ContinuousWorkerLogsResponse)

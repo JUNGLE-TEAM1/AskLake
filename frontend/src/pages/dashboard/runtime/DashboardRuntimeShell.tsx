@@ -15,6 +15,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
+import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 
 type DashboardPageTab = {
   id: string;
@@ -51,6 +52,7 @@ export function DashboardRuntimeShell({
   onShare,
   onToggleDatasetSidebar,
   pages,
+  realtimeConnectionState,
   renamingPageId,
   selectedPageId,
   shareLink,
@@ -80,6 +82,7 @@ export function DashboardRuntimeShell({
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
+  realtimeConnectionState?: RealtimeConnectionState;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -135,6 +138,7 @@ export function DashboardRuntimeShell({
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
         mode={mode}
+        realtimeConnectionState={realtimeConnectionState}
         title={title}
         onOpenDraft={onOpenDraft}
         onOpenPublished={onOpenPublished}

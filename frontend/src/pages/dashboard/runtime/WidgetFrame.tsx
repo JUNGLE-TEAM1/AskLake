@@ -95,7 +95,7 @@ export function WidgetFrame({
               title={`데이터셋 revision ${liveRevision.toLocaleString("ko-KR")}까지 반영됨`}
             >
               <span aria-hidden="true" className="asklake-widget-live-dot" />
-              실시간 · R{liveRevision.toLocaleString("ko-KR")}
+              실시간
             </span>
           )}
           {editable && selected && (

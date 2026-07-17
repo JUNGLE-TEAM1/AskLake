@@ -166,13 +166,20 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
             def list_objects_v2(self, **_request):
                 return {
                     "Contents": [
-                        {"Key": "orders/_batch-manifests/batch_id=7/_SUCCESS"},
-                        {"Key": "orders/_batch-manifests/batch_id=7/part-00000.json"},
+                        {"Key": "orders/_batch-manifests/batch_id=7/_SUCCESS", "Size": 0},
+                        {"Key": "orders/_batch-manifests/batch_id=7/part-00000.json", "Size": 0},
+                        {"Key": "orders/_batch-manifests/batch_id=7/part-00003.json", "Size": 512},
                     ],
                 }
 
-            def get_object(self, **_request):
-                return {"Body": BytesIO(json.dumps(manifest).encode("utf-8"))}
+            def get_object(self, **request):
+                self.requested_key = request["Key"]
+                payload = (
+                    b""
+                    if request["Key"].endswith("part-00000.json")
+                    else json.dumps(manifest).encode("utf-8")
+                )
+                return {"Body": BytesIO(payload)}
 
         job = SimpleNamespace(
             storage_path="s3a://lake/orders",
@@ -188,6 +195,10 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
             recovered = etl_service.read_continuous_stream_manifest(job, "7")
 
         self.assertIsNotNone(recovered)
+        self.assertEqual(
+            recovered["batchId"],
+            7,
+        )
         self.assertEqual(recovered["manifestPath"], "s3a://lake/orders/_batch-manifests/batch_id=7")
         self.assertEqual(recovered["dataPath"], "s3a://lake/orders/_batches/batch_id=7")
 

@@ -4,7 +4,9 @@ from typing import Any, NamedTuple
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.compatibility import record_legacy_runtime_error_projection
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
     CatalogDatasetModel,
     ETLJobModel,
@@ -804,7 +806,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         owner=job.owner or "demo-user",
         created_by=job.created_by or job.owner or "demo-user",
         created_by_profile=job.created_by_profile,
-        permission_grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        permission_grants=[],
         permissions=resource_permissions(can_run=True),
         status=job.status or "scheduled",
         tag=job.tag or "[생성]",
@@ -871,8 +873,23 @@ def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) ->
         return None
     metrics = runtime.metrics or {}
     schema_state = runtime.schema_state or {}
+    record_legacy_runtime_error_projection(
+        metrics,
+        runtime.last_error,
+        public_status=runtime.status,
+    )
+    contract = runtime_contract_projection(
+        metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
     return KafkaContinuousRuntime(
         status=runtime.status,
+        desired_state=contract["desiredState"],
+        observed_state=contract["observedState"],
+        state_revision=contract["stateRevision"],
+        fencing_token=contract["fencingToken"],
+        error_detail=contract["errorDetail"],
         checkpoint_path=runtime.checkpoint_path,
         heartbeat_at=runtime.heartbeat_at,
         last_flush_at=runtime.last_flush_at,
