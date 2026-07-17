@@ -458,6 +458,17 @@ def exec_after_probe(probe, command: Sequence[str]) -> NoReturn:
     os.execvp(command[0], list(command))
 
 
+def exec_after_prepare(command: Sequence[str]) -> NoReturn:
+    if not command:
+        raise RuntimePathError(
+            "runtime_storage_configuration_invalid",
+            "An executable command is required after --.",
+            operation="exec",
+        )
+    prepare_runtime_paths()
+    os.execvp(command[0], list(command))
+
+
 def guard() -> NoReturn:
     prepare_runtime_paths()
     interval_seconds = max(1, integer_environment("ASKLAKE_SPARK_RUNTIME_GUARD_INTERVAL_SECONDS", 30))
@@ -505,6 +516,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "check-metadata",
                 "check-writer",
                 "check-backend",
+                "prepare-backend-exec",
                 "wait-writer-exec",
                 "wait-backend-exec",
             ]},
@@ -525,6 +537,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if command == "check-backend":
         emit_success(backend_read_probe())
         return 0
+    if command == "prepare-backend-exec":
+        exec_after_prepare(command_after_separator(remaining))
     if command == "wait-writer-exec":
         exec_after_probe(writer_probe, command_after_separator(remaining))
     if command == "wait-backend-exec":
