@@ -22,8 +22,10 @@ done
 RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || \
   fail "current image receipt is invalid"
 [[ -s "$BASE_VALUES" ]] || fail "captured live runtime values are missing"
-git -C "$ROOT_DIR" check-ignore -q -- "$BASE_VALUES" "$OUTPUT" || \
-  fail "runtime ConfigMap values must remain ignored"
+for values in "$BASE_VALUES" "$OUTPUT"; do
+  git -C "$ROOT_DIR" check-ignore -q -- "$values" || \
+    fail "runtime ConfigMap values must remain ignored"
+done
 [[ "$(stat -f '%Lp' "$BASE_VALUES")" == "600" ]] || \
   fail "captured live runtime values must use mode 0600"
 
