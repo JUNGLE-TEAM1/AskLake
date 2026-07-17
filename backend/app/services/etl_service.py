@@ -46,7 +46,11 @@ from app.application.continuous_publication import (
 )
 from app.application.etl_job_commands import (
     EtlJobDeleteHooks,
+    EtlPipelineCreateHooks,
+    EtlPipelineUpdateHooks,
+    create_pipeline as execute_create_pipeline,
     delete_job as execute_delete_job,
+    update_pipeline as execute_update_pipeline,
 )
 from app.application.etl_job_queries import (
     EtlJobQueryHooks,
@@ -361,76 +365,27 @@ def create_pipeline(
     request: CreatePipelineRequest,
     actor: ActorContext | str = "demo-user",
 ) -> CreatePipelineResponse:
-    compiled_rules = compile_pipeline_rules(request)
-    require_compiled_rules(compiled_rules)
-    apply_compiled_rules(request, compiled_rules)
-    validate_create_request(request)
-    actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
-    if is_internal_data_lake_source(request.source_type):
-        resolve_internal_data_lake_source(db, request.source_config, actor=actor_context)
-    actor_name = actor_context.name
-    created_by = identity_name(request.created_by or actor_name or request.owner)
-    created_by_profile = request.created_by_profile or identity_profile(created_by)
-    existing_job = etl_repository.get_job_by_target(db, request.target_dataset)
-    dataset_id = str(existing_job.dataset_id) if existing_job is not None and existing_job.dataset_id else make_dataset_id(request.target_dataset)
-    if existing_job is not None:
-        if existing_job.execution_mode != request.execution_mode:
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "Kafka execution mode cannot change on an existing target. Copy the Job to use another mode.",
-                status.HTTP_409_CONFLICT,
-            )
-        if request.execution_mode == "continuous":
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "Continuous Job configuration is immutable. Copy the Job to create another continuous stream.",
-                status.HTTP_409_CONFLICT,
-            )
-        append_context = pipeline_create_mapping_context(
-            request,
-            dataset_id=dataset_id,
-            job_id=existing_job.id,
-            created_by=created_by,
-            created_by_profile=created_by_profile,
-        )
-        apply_append_request_to_job(existing_job, request, append_context)
-        saved_job = etl_repository.save_job(db, existing_job)
-        saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
-        return CreatePipelineResponse(
-            catalog_target={
-                "id": dataset_id,
-                "layer": request.target_layer,
-                "name": request.target_dataset,
-                "status": "pending_run",
-            },
-            job=saved_job,
-        )
-
-    job_id = make_job_id(request.id or request.job_name)
-    job = map_create_request_to_job(
+    return execute_create_pipeline(
+        db,
         request,
-        pipeline_create_mapping_context(
-            request,
-            dataset_id=dataset_id,
-            job_id=job_id,
-            created_by=created_by,
-            created_by_profile=created_by_profile,
+        actor,
+        hooks=EtlPipelineCreateHooks(
+            apply_append_request_to_job=apply_append_request_to_job,
+            apply_compiled_rules=apply_compiled_rules,
+            build_mapping_context=pipeline_create_mapping_context,
+            compile_pipeline_rules=compile_pipeline_rules,
+            continuous_runtime_from_job=continuous_runtime_from_job,
+            identity_name=identity_name,
+            identity_profile=identity_profile,
+            is_internal_data_lake_source=is_internal_data_lake_source,
+            make_dataset_id=make_dataset_id,
+            make_job_id=make_job_id,
+            map_create_request_to_job=map_create_request_to_job,
+            persist_permission_grants=persist_requested_permission_grants,
+            require_compiled_rules=require_compiled_rules,
+            resolve_internal_data_lake_source=resolve_internal_data_lake_source,
+            validate_create_request=validate_create_request,
         ),
-    )
-
-    saved_job = etl_repository.create_job(db, job)
-    if request.execution_mode == "continuous":
-        etl_repository.save_kafka_continuous_runtime(db, continuous_runtime_from_job(job))
-        saved_job = etl_repository.get_job_schema(db, job_id) or saved_job
-    saved_job = persist_requested_permission_grants(db, saved_job, request.permission_grants, created_by, actor_context)
-    return CreatePipelineResponse(
-        catalog_target={
-            "id": dataset_id,
-            "layer": request.target_layer,
-            "name": request.target_dataset,
-            "status": "pending_run",
-        },
-        job=saved_job,
     )
 
 
@@ -906,77 +861,29 @@ def update_pipeline(
     request: UpdatePipelineRequest,
     actor: ActorContext | None = None,
 ) -> JobRowData:
-    job = etl_repository.get_job(db, job_id)
-    if job is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-
-    actor_context = actor or ActorContext()
-    require_governed_access(
+    return execute_update_pipeline(
         db,
-        actor_context,
-        action="manage",
-        api_path=f"/api/etl/jobs/{job_id}",
-        http_method="PATCH",
-        metadata={"owner": job.owner},
-        resource_id=job.id,
-        resource_name=job.name,
-        resource_type="etl_job",
-    )
-    require_permission(
-        actor_context,
-        "manage",
-        owner=job.owner,
-        grants=permission_grants_for_etl_job(db, job),
-        resource_label="job",
-    )
-    compiled_rules = compile_pipeline_rules(
+        job_id,
         request,
-        execution_mode=job.execution_mode or "snapshot",
-        source_type=job.source_type or "",
+        actor,
+        hooks=EtlPipelineUpdateHooks(
+            apply_compiled_rules=apply_compiled_rules,
+            apply_update_request=apply_update_request,
+            compile_pipeline_rules=compile_pipeline_rules,
+            continuous_checkpoint_initialized=continuous_checkpoint_initialized,
+            continuous_processing_contract_changed=continuous_processing_contract_changed,
+            has_successful_run=has_successful_run,
+            permission_grants_for_job=permission_grants_for_etl_job,
+            persist_permission_grants=persist_requested_permission_grants,
+            require_compiled_rules=require_compiled_rules,
+            require_governed_access=require_governed_access,
+            require_permission=require_permission,
+            target_identity_changed=target_identity_changed,
+            validate_target_contract=validate_target_contract,
+            validate_update_request=validate_update_request,
+            with_permissions=with_job_permissions,
+        ),
     )
-    require_compiled_rules(compiled_rules)
-    apply_compiled_rules(request, compiled_rules)
-    validate_update_request(request)
-    validate_target_contract(
-        source_type=job.source_type or "",
-        execution_mode=job.execution_mode or "snapshot",
-        target_layer=request.target_layer,
-        target_format=request.target_format,
-    )
-    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id) if job.execution_mode == "continuous" else None
-    continuous_contract_changed = continuous_processing_contract_changed(job, request)
-    if runtime is not None and continuous_contract_changed and runtime.status in {"starting", "running", "pausing", "stopping"}:
-        raise ApiError(
-            "CONTINUOUS_IMMUTABLE_CONFIG_ACTIVE",
-            "Stop the Continuous worker before changing schema, Rules, or target configuration.",
-            status.HTTP_409_CONFLICT,
-        )
-    if job.status == "running":
-        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
-    if runtime is not None and continuous_contract_changed and continuous_checkpoint_initialized(runtime):
-        raise ApiError(
-            "CONTINUOUS_CHECKPOINT_CONTRACT_IMMUTABLE",
-            "This Continuous checkpoint already has a schema and Rule contract. Copy the Job to use a new checkpoint.",
-            status.HTTP_409_CONFLICT,
-        )
-    target_changed = target_identity_changed(job, request)
-    if target_changed and has_successful_run(db, job.id):
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "Target dataset, database, layer, format, storage type, and path are immutable after a successful run. Clone the job to change its destination.",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    apply_update_request(job, request, target_changed)
-    saved_job = etl_repository.save_job(db, job)
-    saved_job = persist_requested_permission_grants(
-        db,
-        saved_job,
-        request.permission_grants,
-        actor_context.name,
-        actor_context,
-    )
-    return with_job_permissions(db, saved_job, actor_context)
 
 
 def persist_requested_permission_grants(

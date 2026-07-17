@@ -97,3 +97,10 @@
 - 결정: create/update/delete 전체를 한 PR에 옮기지 않고 row lock과 commit/rollback이 명확한 `delete_job`을 `etl_job_commands`로 먼저 분리한다.
 - 이유: active Run·Continuous workload, 권한과 audit가 결합된 삭제 흐름은 기존 동시성 테스트로 동작을 고정할 수 있고 rollback 단위를 작게 유지할 수 있다.
 - 제약: create/update, 실행·발행, DB schema와 frontend optimistic rollback은 바꾸지 않는다. 후속 write 경계는 이 PR의 hook·transaction 규칙을 따른다.
+
+## D-016 — 일반 Pipeline create/update와 SQL·실행 side effect를 분리
+
+- 상태: Accepted
+- 결정: 일반 Pipeline `create_pipeline/update_pipeline`만 `etl_job_commands`로 이동하고 `create_trino_sql_job`, 실행·발행·Catalog publication은 다음 PR에 남긴다.
+- 이유: request mutation, identity, mapping, permission과 repository write는 기존 verifier로 독립 검증할 수 있지만 SQL/runner side effect까지 합치면 rollback 단위가 커진다.
+- 제약: service façade와 public helper는 기존 import reader를 위해 유지하고 DB schema·commit 의미, UI·API shape와 legacy 활성 상태를 바꾸지 않는다.
