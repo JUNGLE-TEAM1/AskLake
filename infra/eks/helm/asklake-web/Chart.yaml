@@ -2,5 +2,5 @@ apiVersion: v2
 name: asklake-web
 description: Fail-closed AskLake Frontend, FastAPI, and Backend worker workloads for EKS
 type: application
-version: 0.2.1
+version: 0.2.2
 appVersion: "1.0"

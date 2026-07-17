@@ -36,9 +36,9 @@ for contract in \
   'key: trino-ca.pem' \
   'path: trino-ca.pem' \
   'path: /api/health' \
-  'terminationGracePeriodSeconds: 60' \
+  'terminationGracePeriodSeconds: 120' \
   'preStop:' \
-  'sleep 20' \
+  'sleep 60' \
   'scripts/collect-trino-results.py' \
   'containerPort: 80' \
   'containerPort: 8080'; do
@@ -76,8 +76,8 @@ if [[ "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -ne 2 ]] || \
   exit 1
 fi
 
-if [[ "$(grep -c 'terminationGracePeriodSeconds: 60' "$RENDERED_FILE")" -ne 1 ]] || \
-   [[ "$(grep -c 'sleep 20' "$RENDERED_FILE")" -ne 1 ]]; then
+if [[ "$(grep -c 'terminationGracePeriodSeconds: 120' "$RENDERED_FILE")" -ne 1 ]] || \
+   [[ "$(grep -c 'sleep 60' "$RENDERED_FILE")" -ne 1 ]]; then
   echo "FastAPI must stay alive during ALB target deregistration before shutdown" >&2
   exit 1
 fi
@@ -88,7 +88,7 @@ negative_cases=(
   'readiness.generalNodePoolReady=false'
   'frontend.replicaCount=1'
   'backend.replicaCount=1'
-  'backend.terminationGracePeriodSeconds=30'
+  'backend.terminationGracePeriodSeconds=60'
   'backend.preStopDelaySeconds=0'
   'collector.enabled=false'
   'collector.replicaCount=0'
