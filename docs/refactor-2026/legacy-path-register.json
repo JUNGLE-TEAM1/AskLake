@@ -42,7 +42,7 @@
       "id": "etl.legacy-permission-roles",
       "marker": "CompatibilityPath.ETL_LEGACY_PERMISSION_ROLES",
       "owner": "governance",
-      "paths": ["backend/app/services/etl_service.py", "backend/app/repositories/permission_repository.py"],
+      "paths": ["backend/app/services/etl/api_job_operations.py", "backend/app/repositories/permission_repository.py"],
       "reachability": "production",
       "removalCondition": "All persisted jobs have permission_grants and no legacy role activation is observed for 30 days",
       "targetRelease": "2026-Q4",
