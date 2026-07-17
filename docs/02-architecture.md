@@ -594,7 +594,7 @@ SQL과 ETL의 Catalog write는 `CatalogWriterPort`의 payload 계약을 사용�
 
 배포 command가 참조하는 `spark_job_run.py`와 `kafka_continuous_stream.py` 경로는 compatibility façade로 고정한다. 실제 Spark/Kafka 구현은 `backend/scripts/runtime/`의 typed config, atomic document contract, cursor state, Spark text-analysis 모듈로 분리한다. report/checkpoint/manifest는 additive schema version을 가지며 이전 필드 없는 문서를 계속 읽는다.
 
-EKS control-plane ownership, Spark 실행 lease heartbeat와 Kubernetes immutable identity 정규화는 `app/services/eks_execution_contract.py`가 소유한다. `etl_service.py`는 이 계약을 호출해 Run transaction과 progress persistence를 조정하며, EKS 전용 실행 규칙을 다시 인라인으로 확장하지 않는다.
+EKS control-plane ownership, Spark 실행 lease heartbeat, Kubernetes immutable identity 정규화와 fenced progress persistence는 `app/services/eks_execution_contract.py`가 소유한다. `etl_service.py`는 이 계약을 호출해 Run transaction과 Catalog reconciliation을 조정하며, EKS 전용 실행 규칙을 다시 인라인으로 확장하지 않는다.
 
 production control-plane과 metadata의 권위는 FastAPI/Python이다. Node는 connector probe, Spark/Kafka launcher, review analysis처럼 production evidence가 있는 use case만 명시적 adapter 뒤에서 유지한다. 새 review analysis 호출은 allow-list 기반 versioned JSON bridge를 사용하고, 기존 marker script는 호환 기간 동안 `SubprocessNodeBridge`만 거쳐 호출한다. Python application 코드는 Node module URI나 inline JavaScript command를 조립하지 않는다.
 

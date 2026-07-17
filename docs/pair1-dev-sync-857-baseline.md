@@ -206,3 +206,15 @@ commit 직전에 `git fetch origin --prune`과 `scripts/audit-pair1-dev-sync.sh`
 최종 index는 370개 파일이며 이는 `dev`의 realtime/refactor 전체 변경과 `pair1` EKS 경계의 통합 결과다. unmerged entry와 conflict marker는 0개다. `git diff --cached --check`, tracked evidence redaction과 Phase 4의 Backend·Frontend·EKS 검증 결과를 최종 gate로 사용한다.
 
 Phase 5는 현재 전용 브랜치에서 `origin/dev` merge commit을 만드는 것으로 종료한다. 원격 branch push, PR 갱신과 `pair1` 병합은 이 commit을 검토한 다음 단계에서 수행한다.
+
+## Phase 6 보완 감사 결과
+
+merge commit `cfa80e32635a83f547853f79229de935b4b2f58d`을 독립 검수한 뒤 다음 보완을 적용했다.
+
+- EKS execution contract의 control-plane, lease heartbeat와 Kubernetes immutable identity에 더해 fenced progress persistence와 callback session factory도 `app/services/eks_execution_contract.py`로 이동했다. `etl_service.py`는 기존 import surface를 유지하면서 9,487줄로 줄어 realtime architecture budget에 63줄의 여유를 확보했다.
+- 새 전용 테스트 `tests/test_eks_execution_contract.py`에 local/external control-plane, heartbeat interval, renewal success/false/exception/stop, identity 필수값·run/job mismatch·immutable drift·terminal optional field, execution-fenced progress persistence와 별도 callback session 11개 scenario를 추가했다.
+- 분할 CSS의 의도적인 EOF separator 예외는 `.gitattributes`의 두 CSS directory에만 유지하고 이유를 주석으로 기록했다. exact pre-split cascade 검사는 계속 통과한다.
+- Frontend Vite를 exact `5.4.11`에서 `5.4.21`로 제한 업그레이드했다. UI 136개 검사와 production build는 통과했다. 다만 2026-07-17 registry audit은 Vite `<=6.4.2`와 esbuild에 moderate 1/high 1을 계속 보고하며 자동 fix는 Vite 8 major upgrade다. `npm audit fix --force`는 사용하지 않았고 별도 migration 전까지 dev server 외부 노출 금지를 운영 제약으로 기록했다.
+- 로컬 Terraform CLI 대신 문서의 `hashicorp/terraform:1.15.8` Docker 검증을 `-lockfile=readonly`로 실행했다. format, init, validate와 Terraform test 45개가 통과했으며 `.terraform.lock.hcl`은 변경되지 않았다. AWS backend나 apply는 실행하지 않았다.
+
+전체 재검증 결과는 Backend 기본/API 호환/Kubernetes Spark, EKS 집중 57개, Realtime 69개, Frontend UI 136개/build, EKS foundation/workload/redaction/runtime Secret 25개 scenario가 모두 통과했다. Git conflict marker와 unmerged entry는 없다. 남은 항목은 별도 승인이 필요한 Vite major migration과 실제 AWS/EKS live 검증이며, 이번 보완에서는 실환경 mutation, push, PR 갱신과 `pair1` 병합을 수행하지 않는다.

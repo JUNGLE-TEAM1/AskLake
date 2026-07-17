@@ -579,6 +579,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 ## EKS MVP backend readiness
 
+- [x] EKS control-plane, lease heartbeat, Kubernetes identity와 fenced progress persistence 전용 모듈 및 직접 단위 테스트
 - [x] Frontend/FastAPI `Deployment` 2 replica와 내부 `ClusterIP` `Service` Helm chart
 - [x] Airflow API server/scheduler/DAG processor/migration Job과 Trino HTTPS coordinator Helm workload
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약

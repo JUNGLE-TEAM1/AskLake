@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.compatibility import (
@@ -120,8 +120,11 @@ from app.services.eks_execution_contract import (
     job_visible_in_current_control_plane,
     merge_spark_kubernetes_execution,
     normalize_spark_kubernetes_execution,
+    persist_spark_kubernetes_execution_progress,
     require_local_continuous_control_plane,
-    run_execution_heartbeat_interval_seconds, run_execution_lease_lost,
+    run_execution_heartbeat_interval_seconds,
+    run_execution_lease_lost,
+    spark_kubernetes_execution_progress_callback,
     spark_execution_lease_seconds,
     spark_execution_identity_mismatch,
 )
@@ -3032,72 +3035,6 @@ def finalize_spark_execution_attempt(
     run.execution_owner = None
     run.execution_lease_expires_at = None
     db.commit()
-
-
-def persist_spark_kubernetes_execution_progress(
-    db: Session,
-    *,
-    job_id: str,
-    run_id: str,
-    generation: int,
-    progress: dict[str, Any],
-) -> None:
-    run = etl_repository.get_run_for_execution_fence(
-        db,
-        run_id,
-        owner=FASTAPI_EXECUTION_OWNER,
-        generation=generation,
-    )
-    if run is None:
-        raise run_execution_lease_lost(job_id, run_id)
-    if run.job_id != job_id:
-        raise spark_execution_identity_mismatch(
-            "Spark progress jobId does not match the persisted AskLake Run.",
-            job_id=job_id,
-            run_id=run_id,
-        )
-    execution = (run.task_states or {}).get("sparkExecution")
-    if not isinstance(execution, dict) or execution.get("generation") != generation:
-        raise run_execution_lease_lost(job_id, run_id)
-    observed = normalize_spark_kubernetes_execution(progress, job_id=job_id, run_id=run_id)
-    current = execution.get("kubernetesExecution")
-    if isinstance(current, dict):
-        observed = merge_spark_kubernetes_execution(
-            current,
-            observed,
-            job_id=job_id,
-            run_id=run_id,
-        )
-    run.task_states = {
-        **(run.task_states or {}),
-        "sparkExecution": {
-            **execution,
-            "kubernetesExecution": observed,
-        },
-    }
-    db.commit()
-
-
-def spark_kubernetes_execution_progress_callback(
-    db: Session,
-    *,
-    job_id: str,
-    run_id: str,
-    generation: int,
-) -> Callable[[dict[str, Any]], None]:
-    progress_sessions = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
-
-    def persist(progress: dict[str, Any]) -> None:
-        with progress_sessions() as progress_db:
-            persist_spark_kubernetes_execution_progress(
-                progress_db,
-                job_id=job_id,
-                run_id=run_id,
-                generation=generation,
-                progress=progress,
-            )
-
-    return persist
 
 
 def reconcile_airflow_catalog(

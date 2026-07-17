@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import status
 from sqlalchemy.orm import Session, sessionmaker
@@ -179,3 +179,69 @@ def merge_spark_kubernetes_execution(
                 run_id=run_id,
             )
     return {**current, **observed}
+
+
+def persist_spark_kubernetes_execution_progress(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+    progress: dict[str, Any],
+) -> None:
+    run = etl_repository.get_run_for_execution_fence(
+        db,
+        run_id,
+        owner=FASTAPI_EXECUTION_OWNER,
+        generation=generation,
+    )
+    if run is None:
+        raise run_execution_lease_lost(job_id, run_id)
+    if run.job_id != job_id:
+        raise spark_execution_identity_mismatch(
+            "Spark progress jobId does not match the persisted AskLake Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    execution = (run.task_states or {}).get("sparkExecution")
+    if not isinstance(execution, dict) or execution.get("generation") != generation:
+        raise run_execution_lease_lost(job_id, run_id)
+    observed = normalize_spark_kubernetes_execution(progress, job_id=job_id, run_id=run_id)
+    current = execution.get("kubernetesExecution")
+    if isinstance(current, dict):
+        observed = merge_spark_kubernetes_execution(
+            current,
+            observed,
+            job_id=job_id,
+            run_id=run_id,
+        )
+    run.task_states = {
+        **(run.task_states or {}),
+        "sparkExecution": {
+            **execution,
+            "kubernetesExecution": observed,
+        },
+    }
+    db.commit()
+
+
+def spark_kubernetes_execution_progress_callback(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    generation: int,
+) -> Callable[[dict[str, Any]], None]:
+    progress_sessions = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False, class_=Session)
+
+    def persist(progress: dict[str, Any]) -> None:
+        with progress_sessions() as progress_db:
+            persist_spark_kubernetes_execution_progress(
+                progress_db,
+                job_id=job_id,
+                run_id=run_id,
+                generation=generation,
+                progress=progress,
+            )
+
+    return persist
