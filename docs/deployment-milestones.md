@@ -706,7 +706,6 @@ Definition of Done:
 ```bash
 cd frontend
 npm run build
-VITE_USE_MOCK_API=false npm run build
 ```
 
 서버 검증:
@@ -776,7 +775,6 @@ Definition of Done:
 APP_DOMAIN=도메인
 HTTP_PORT=80
 HTTPS_PORT=443
-VITE_USE_MOCK_API=false
 VITE_API_BASE_URL=https://도메인
 BACKEND_CORS_ORIGINS=https://도메인
 POSTGRES_DB=asklake_metadata

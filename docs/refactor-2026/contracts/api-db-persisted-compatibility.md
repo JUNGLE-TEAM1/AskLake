@@ -57,7 +57,7 @@ Drop/rename/type rewrite와 checkpoint·Job·session 초기화는 이 리팩토�
 
 ## Legacy 경로 관리
 
-[Legacy·Fallback 경로 등록부](../legacy-path-register.md)가 운영 도달 가능성, owner, activation, telemetry, 제거 조건과 목표 release를 소유한다. 운영 경로는 구조화 warning과 counter 없이는 추가할 수 없다. 개발 mock은 `import.meta.env.DEV` 등 명시적 guard가 필요하고, `VITE_USE_MOCK_API=true`인 production build는 startup/import 단계에서 실패한다.
+[Legacy·Fallback 경로 등록부](../legacy-path-register.md)가 운영 도달 가능성, owner, activation, telemetry, 제거 조건과 목표 release를 소유한다. 운영 경로는 구조화 warning과 counter 없이는 추가할 수 없다. 브라우저 mock API와 관련 build switch는 제거되었으며 development와 production 모두 live API만 사용한다.
 
 ```bash
 cd backend

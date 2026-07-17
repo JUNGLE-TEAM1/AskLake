@@ -1,5 +1,7 @@
 # Dashboard View
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/dashboards/:dashboardId`
@@ -59,7 +61,7 @@
 
 ## QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 `/dashboards/dash_sales_demo`를 열었을 때 route와 published empty state가 오류 없이 렌더링된다.
+- 당시 브라우저 mock 환경에서 `/dashboards/dash_sales_demo` route와 published empty state가 오류 없이 렌더링됨을 확인했다.
 - 현재 mock runtime은 published widget이 채워진 fixture가 아니라 revision/widget 없음 상태를 반환한다. 따라서 실제 chart/table widget의 populated visual QA는 이번 audit에서 수행하지 못했다.
 - page identity, topbar, share/edit action, empty state 구조는 확인 가능하다.
 - populated fixture가 추가되면 widget grid overflow, chart resize, table pagination, page switching을 다시 확인해야 한다.

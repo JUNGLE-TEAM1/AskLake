@@ -1,5 +1,7 @@
 # SQL Analysis
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/sql`
@@ -60,7 +62,7 @@
 
 ## Pre-#468 QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 `/sql`을 열었을 때 dataset/schema/editor UI가 API 오류 없이 렌더링된다.
+- 당시 브라우저 mock 환경에서 `/sql`의 dataset/schema/editor UI가 API 오류 없이 렌더링됨을 확인했다.
 - 페이지 진입 smoke만 수행했으며 query 실행, CSV download, materialize, dashboard 생성 interaction은 이번 문서 PR에서 재검증하지 않았다.
 - autocomplete keyboard, editor focus, sidebar collapse, nested dialog focus trap이 후속 구현의 핵심 QA다.
 - mobile에서는 세 column workspace가 순차 layout으로 바뀔 때 editor와 schema가 겹치지 않는지 확인한다.

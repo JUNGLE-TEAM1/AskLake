@@ -1,5 +1,7 @@
 # Catalog
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/catalog`
@@ -60,7 +62,7 @@
 
 ## QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 실행했을 때 `/catalog`가 mock 데이터와 함께 렌더링되고 API 오류가 없다.
+- 당시 브라우저 mock 환경에서 `/catalog`가 fixture 데이터와 함께 렌더링되고 API 오류가 없음을 확인했다.
 - mock dataset 수가 page size보다 많아 result pagination, tag filter, preview 선택 상태를 확인할 수 있다.
 - keyboard QA는 result card Enter/Space, dropdown menu, lineage teaser, run 선택을 포함해야 한다.
 - loading/error는 현재 목록 영역의 표현이 약하므로 후속 구현에서 layout shift와 focus 복귀를 확인한다.

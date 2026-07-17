@@ -20,16 +20,15 @@ Nginx serves `frontend/dist` and proxies `/api/*` to
 
 ## 2) Deployment Mode
 
-Choose one mode before building the frontend:
+The frontend always uses the live backend API:
 
 | Mode | Frontend env | Use when |
 | --- | --- | --- |
-| Live-core smoke | `VITE_USE_MOCK_API=false` | Source, schema, create, job, catalog, and SQL should hit the backend/Postgres. |
-| Demo-safe click-through | `VITE_USE_MOCK_API=true` | The whole UI must stay clickable even while backend dashboard APIs are incomplete. |
+| Live smoke | `VITE_API_BASE_URL=http://YOUR_DOMAIN_OR_IP` | Source, schema, create, job, catalog, SQL, and dashboard hit the backend/Postgres. |
 
-The live-core backend currently covers the core Source/Schema/Create/Job/SQL
-path. Dashboard runtime endpoints may need more backend work before a fully
-live dashboard demo.
+The live backend covers Source/Schema/Create/Job/Catalog/SQL and dashboard
+runtime paths. A failed endpoint is surfaced as an error and is never replaced
+with browser fixture data.
 
 ## 3) EC2 Baseline
 
@@ -142,18 +141,10 @@ npm ci
 npm run build
 ```
 
-For live-core smoke:
+For the live smoke build:
 
 ```bash
 VITE_API_BASE_URL=http://YOUR_DOMAIN_OR_IP
-VITE_USE_MOCK_API=false
-```
-
-For demo-safe click-through:
-
-```bash
-VITE_API_BASE_URL=http://YOUR_DOMAIN_OR_IP
-VITE_USE_MOCK_API=true
 ```
 
 The frontend reads `VITE_*` values at build time, so rebuild after changing

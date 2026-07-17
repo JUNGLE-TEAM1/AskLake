@@ -239,7 +239,6 @@ docker build -t asklake-backend-deploy-check:local backend
 
 cd frontend
 npm run build
-VITE_USE_MOCK_API=false npm run build
 ```
 
 서버에서는 다음을 확인한다.
@@ -324,7 +323,7 @@ Frontend deploy image dependencies:
 
 - Node 22 build image and Nginx runtime from `frontend/Dockerfile`.
 - Frontend packages from `frontend/package.json`.
-- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, `VITE_DASHBOARD_ASSISTANT_API_PATH`, `VITE_OBJECT_STORAGE_PROVIDER`, and `VITE_S3_REGION`.
+- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_DASHBOARD_ASSISTANT_API_PATH`, `VITE_OBJECT_STORAGE_PROVIDER`, and `VITE_S3_REGION`.
 
 Local deploy dependency verification:
 

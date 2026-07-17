@@ -1,5 +1,7 @@
 # Frontend Dev Server Incident Analysis
 
+> 이 문서는 과거 장애 기록입니다. 당시 사용한 브라우저 mock mode와 환경변수는 현재 제거되었습니다.
+
 이 문서는 AskLake 프론트 dev server가 `127.0.0.1:5174`에서 반복적으로 안 뜨거나, 흰 화면으로 보이거나, `POSTGRES ERROR / Failed to fetch`를 보였던 원인을 정리한다.
 
 ## 결론
@@ -170,7 +172,7 @@ npm run dev
 backend 없이 프론트 UI만 보고 싶다면 `frontend/.env`에 mock mode를 명시하는 방식을 검토한다.
 
 ```bash
-VITE_USE_MOCK_API=true
+# 당시 mock mode 활성화 값(현재는 지원하지 않음)
 ```
 
 단, 현재 작업 흐름이 live backend 검증을 요구하는 경우에는 mock mode로 숨기지 말고 backend/Postgres를 켜서 확인해야 한다.

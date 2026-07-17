@@ -1,5 +1,7 @@
 # Dashboard Edit
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/dashboards/:dashboardId/edit`
@@ -66,7 +68,7 @@
 
 ## QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 `/dashboards/dash_sales_demo/edit`를 열었을 때 draft workspace가 API 오류 없이 렌더링된다.
+- 당시 브라우저 mock 환경에서 `/dashboards/dash_sales_demo/edit` draft workspace가 API 오류 없이 렌더링됨을 확인했다.
 - 현재 mock은 빈 draft에서 시작하므로 populated widget drag/resize와 inspector type별 설정은 이번 최소 smoke에서 실행하지 않았다.
 - 후속 구현 QA는 dataset 선택, widget 생성, drag/resize, collision rollback, undo/redo, page rename/delete, publish 순서로 진행한다.
 - mobile/narrow viewport에서는 sidebar와 inspector가 canvas를 가리거나 keyboard focus를 가두지 않는지 확인한다.

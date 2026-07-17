@@ -1,5 +1,7 @@
 # Dashboards
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/dashboards`
@@ -54,7 +56,7 @@
 
 ## QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 `/dashboards`를 열었을 때 mock card 목록이 오류 없이 렌더링된다.
+- 당시 브라우저 mock 환경에서 `/dashboards` fixture card 목록이 오류 없이 렌더링됨을 확인했다.
 - mock card가 page size보다 많아 pagination과 owner/tag/sort control을 감사할 수 있다.
 - 이번 문서 PR에서는 생성, 삭제, filter interaction을 실행하지 않고 route rendering만 최소 확인했다.
 - 좁은 화면에서 toolbar menu trigger text, table horizontal scroll, destructive icon button hit area를 확인해야 한다.
