@@ -1180,6 +1180,20 @@ PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
 .venv/bin/python ../scripts/refactor_audit/quality_gate.py --base origin/dev
 ```
 
+### ETL Pipeline 생성·수정 write 경계 검증
+
+일반 Pipeline POST/PATCH의 Rule validation, mapping, identity, permission 또는 repository write를 변경할 때는 application unit과 기존 create/update 계약 verifier를 함께 실행한다. `etl_service.create_pipeline/update_pipeline` façade에 write 정책을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-permission-create-flow-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-dataset-identity-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
+```
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

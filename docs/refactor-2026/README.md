@@ -21,6 +21,7 @@
 15. [contracts/deployed-ui-no-reactivation.md](./contracts/deployed-ui-no-reactivation.md): 배포 UI 무변경, compatibility façade 비활성, production mock/legacy 차단 계약
 16. [contracts/etl-job-query-boundary.md](./contracts/etl-job-query-boundary.md): Job list/detail runtime refresh, hydrate, permission과 facet application 경계
 17. [contracts/etl-job-command-boundary.md](./contracts/etl-job-command-boundary.md): Job delete 권한, active workload 보호, 종속 정리와 commit/rollback 경계
+18. [contracts/etl-job-write-boundary.md](./contracts/etl-job-write-boundary.md): 일반 Pipeline create/update validation, identity, mapping, permission과 repository write 경계
 
 ## 기준선 재생성
 
