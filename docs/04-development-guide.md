@@ -822,6 +822,8 @@ Day 17 A/B 최종 통합 campaign은 반드시 최신 `pair1` merge SHA를 고�
 
 Phase 3의 canonical image 정렬은 공식 image delivery workflow가 만든 하나의 receipt를 Frontend, Backend/Collector, Airflow, Spark runtime과 Trino에 함께 적용한다. 같은 Kafka topic의 multi-Spark scale candidate가 존재하더라도 HPA same-run fixture 선택은 기본 consumer group 하나만 허용해야 한다. receipt와 live role `5/5`, `linux/amd64`, Backend contract version `2`와 slot `4`, multi-Spark와 HPA preflight를 모두 확인한 실제 결과는 [Day 17 A/B 최종 이미지 정렬과 preflight](eks-day17-final-integration-image-alignment.md)를 따른다.
 
+Issue #909 Phase 4에서는 50 RPS probe 뒤 200 RPS 부하로 HPA `2→4→6`을 확인하고 `6/6/6`에서 same-run 경합을 시작했다. scale-down으로 Airflow 연결이 실패해도 새 Run을 만들지 않고, failed-task dry-run, 같은 DAG run clear, persisted state sync와 read-only recovery verification 순서를 지킨다. 실제 exact-one 결과와 200 RPS 발행 skip 한계는 [Day 17 최종 통합 HPA campaign](eks-day17-final-integration-hpa-campaign.md)을 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
