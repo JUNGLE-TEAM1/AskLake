@@ -215,6 +215,8 @@ Canonical status values:
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/record-parsing/preview` | TBD | 이름 없는 TXT 제한 샘플을 연속 공백으로 구조화하고 필드 개수·컬럼 타입 초안 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
+| `GET` | `/api/etl/jobs` | `view` | 저장된 작업 목록·최신 Run 요약·facet 조회. 외부 runtime probe나 상태 write 없이 관련 DB 자료를 일괄 조회 | `docs/api-contract.md` |
+| `GET` | `/api/etl/jobs/{jobId}` | `view` | 한 작업의 상세·실행 이력 조회와 Airflow/Continuous runtime 최신화 | `docs/api-contract.md` |
 | `POST` | `/api/etl/sql-jobs` | source Query Run submitter/admin | 성공한 Trino Query Run에서 반복 full-refresh SQL Job 생성 | `docs/trino-query-run-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |

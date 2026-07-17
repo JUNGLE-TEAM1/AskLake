@@ -141,6 +141,7 @@ from app.ports.runtime_io import (
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
     REPLAY_COMMIT_KIND,
     STREAM_COMMIT_KIND,
@@ -151,7 +152,12 @@ from app.repositories.dashboard_live_repository import (
     save_catalog_dataset_and_revision,
 )
 from app.repositories.sql_repository import SqlRepository
-from app.repositories.permission_repository import ensure_legacy_permission_grants, replace_permission_ui_grants
+from app.repositories.permission_repository import (
+    UI_MANAGED_SOURCES,
+    ensure_legacy_permission_grants,
+    list_permission_grants_by_resource,
+    replace_permission_ui_grants,
+)
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -224,7 +230,12 @@ from app.services.materialization_projection import (
     upsert_materialization_run,
 )
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
-from app.services.resource_permission_service import permission_grants_for_resource, permissions_for_actor_with_governance
+from app.services.resource_permission_service import (
+    merge_permission_grants,
+    permission_grants_for_resource,
+    permissions_for_actor_with_governance,
+    permissions_for_actor_with_governance_state,
+)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -682,6 +693,7 @@ def list_jobs(
             schedule_kind=job_schedule_kind,
             sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
         ),
     )
 
@@ -865,6 +877,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
             schedule_kind=job_schedule_kind,
             sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
         ),
     )
 
@@ -1251,6 +1264,56 @@ def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> J
             resource_type="etl_job",
         ),
     })
+
+
+def with_jobs_permissions(
+    db: Session,
+    jobs: list[JobRowData],
+    actor: ActorContext,
+) -> list[JobRowData]:
+    """Project list permissions with a fixed number of database reads.
+
+    A list GET must not seed legacy grants or query grants and governance state
+    once per Job. Legacy roles remain available as an in-memory compatibility
+    fallback until a UI-managed grant exists for that Job.
+    """
+    if not jobs:
+        return []
+
+    persisted_grants = list_permission_grants_by_resource(
+        db,
+        [("etl_job", job.id) for job in jobs],
+    )
+    principal_blocked = blocked_principal_for_actor(db, actor) is not None
+    locked_job_ids = locked_resource_ids(
+        db,
+        resource_ids=[job.id for job in jobs],
+        resource_type="etl_job",
+    )
+
+    projected_jobs: list[JobRowData] = []
+    for job in jobs:
+        stored_grants = persisted_grants.get(("etl_job", job.id), [])
+        has_ui_managed_grants = any(
+            grant.source in UI_MANAGED_SOURCES
+            for grant in stored_grants
+        )
+        effective_grants = merge_permission_grants(
+            stored_grants,
+            [] if has_ui_managed_grants else legacy_permission_grants(job.permission_roles),
+        )
+        grant_payloads = [grant.model_dump(by_alias=True) for grant in effective_grants]
+        projected_jobs.append(job.model_copy(update={
+            "permission_grants": effective_grants,
+            "permissions": permissions_for_actor_with_governance_state(
+                actor,
+                owner=job.owner,
+                grants=grant_payloads,
+                principal_blocked=principal_blocked,
+                resource_locked=job.id in locked_job_ids,
+            ),
+        }))
+    return projected_jobs
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
