@@ -11,6 +11,7 @@ NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-web"
 TEMP_DIR="$(mktemp -d)"
+RAW_VALUES="$TEMP_DIR/raw-values.json"
 CURRENT_VALUES="$TEMP_DIR/current-values.json"
 CANDIDATE_VALUES="$TEMP_DIR/candidate-values.json"
 MONITOR_FILE="$TEMP_DIR/health-monitor.txt"
@@ -105,13 +106,6 @@ receipt_commit="$(jq -r '.gitRevision' "$RECEIPT_PATH")"
 new_backend_image="$(jq -r '.images.backend' "$RECEIPT_PATH")"
 new_backend_digest="${new_backend_image##*@}"
 
-helm get values asklake-web -n "$NAMESPACE" -o json >"$CURRENT_VALUES"
-jq --arg image "$new_backend_image" '.backend.image = $image' "$CURRENT_VALUES" >"$CANDIDATE_VALUES"
-jq -e --slurp '
-  (.[0] | del(.backend.image)) == (.[1] | del(.backend.image))
-  and .[0].backend.image != .[1].backend.image
-' "$CURRENT_VALUES" "$CANDIDATE_VALUES" >/dev/null || fail "rollout values changed more than backend.image"
-
 RELEASE_REVISION_BEFORE="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | select(.name == "asklake-web") | .revision')"
 [[ "$RELEASE_REVISION_BEFORE" =~ ^[0-9]+$ ]] || fail "the current Helm release revision is unavailable"
 
@@ -132,6 +126,19 @@ frontend_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.i
 if [[ "$old_collector_present" == "true" ]]; then
   [[ "$old_collector_image" == "$old_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
 fi
+
+helm get values asklake-web -n "$NAMESPACE" -o json >"$RAW_VALUES"
+jq \
+  --arg backendImage "$old_backend_image" \
+  --arg frontendImage "$frontend_image_before" '
+    .backend.image = $backendImage
+    | .frontend.image = $frontendImage
+  ' "$RAW_VALUES" >"$CURRENT_VALUES"
+jq --arg image "$new_backend_image" '.backend.image = $image' "$CURRENT_VALUES" >"$CANDIDATE_VALUES"
+jq -e --slurp '
+  (.[0] | del(.backend.image)) == (.[1] | del(.backend.image))
+  and .[0].backend.image != .[1].backend.image
+' "$CURRENT_VALUES" "$CANDIDATE_VALUES" >/dev/null || fail "rollout values changed more than backend.image"
 
 target_secret_before="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json)"
 secret_keys_before="$(jq -c '.data | keys | sort' <<<"$target_secret_before")"
@@ -295,6 +302,7 @@ echo "backend_rollout_pod_digest=verified"
 echo "backend_rollout_collector_replicas=1_of_1"
 echo "backend_rollout_collector_digest=verified"
 echo "backend_rollout_collector_baseline=$([[ "$old_collector_present" == "true" ]] && echo present || echo absent)"
+echo "backend_rollout_release_values_images=normalized_to_live"
 echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"

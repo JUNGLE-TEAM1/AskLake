@@ -13,6 +13,7 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 FIX_COMMIT="${ASKLAKE_BACKEND_FIX_COMMIT:-f556e95ebfc72897983fb8079e335c8296d956e1}"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-web"
 TEMP_DIR="$(mktemp -d)"
+RAW_VALUES="$TEMP_DIR/raw-values.json"
 CURRENT_VALUES="$TEMP_DIR/current-values.json"
 CANDIDATE_VALUES="$TEMP_DIR/candidate-values.json"
 RENDERED_FILE="$TEMP_DIR/rendered.yaml"
@@ -162,7 +163,13 @@ jq -e '.os == "linux" and .architecture == "amd64"' <<<"$image_config" >/dev/nul
   fail "the candidate Backend image config is not linux/amd64"
 unset manifest_json config_digest config_url image_config
 
-helm get values asklake-web -n "$NAMESPACE" -o json >"$CURRENT_VALUES"
+helm get values asklake-web -n "$NAMESPACE" -o json >"$RAW_VALUES"
+jq \
+  --arg backendImage "$current_backend_image" \
+  --arg frontendImage "$current_frontend_image" '
+    .backend.image = $backendImage
+    | .frontend.image = $frontendImage
+  ' "$RAW_VALUES" >"$CURRENT_VALUES"
 jq --arg image "$new_backend_image" '.backend.image = $image' "$CURRENT_VALUES" >"$CANDIDATE_VALUES"
 jq -e --slurp '
   (.[0] | del(.backend.image)) == (.[1] | del(.backend.image))
@@ -248,6 +255,7 @@ echo "backend_candidate_platform=linux_amd64"
 echo "backend_candidate_values_change=backend_image_only"
 echo "backend_candidate_collector_image=same_immutable_digest"
 echo "backend_candidate_collector_baseline=$([[ "$collector_present_before" == "true" ]] && echo present || echo absent)"
+echo "backend_candidate_release_values_images=normalized_to_live"
 echo "backend_candidate_server_dry_run=passed"
 echo "backend_candidate_cluster_mutation=zero"
 echo "backend_candidate_pre_rollout_health=passed"
