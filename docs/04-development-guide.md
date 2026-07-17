@@ -133,9 +133,12 @@ PYTHONPATH=. .venv/bin/python -m unittest \
 
 Trino Query Run protocol, storage, collector, registration, actor isolation은 프로젝트 가상환경에서 아래 명령으로 각각 확인한다.
 
+Query Run 내부를 수정할 때는 façade 파일에 새 로직을 다시 쌓지 않는다. 요청 제출은 `trino_query_submission.py`, 권한은 `trino_query_access.py`, 상태 조회·취소는 `trino_query_lifecycle.py`, worker 수집은 `trino_query_collector.py`, 결과 page·CSV·retention은 `trino_query_results.py`에서 수정한다. DB 쿼리는 실행 기록, 결과 page, collector lease에 맞춰 각각 `sql_run_repository.py`, `sql_result_page_repository.py`, `trino_collector_repository.py`에서 수정한다. 프론트는 preview 상태를 `useTrinoPreviewRun.ts`, 검증·estimate를 `useTrinoQueryPreflight.ts`, full-result를 `useTrinoFullResult.ts`, API 호출을 `sqlQueryApi.ts`에서 수정한다.
+
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-preview-full-flow
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-result-storage
@@ -143,6 +146,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilienc
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 .venv/bin/python -m unittest tests.test_query_route_compatibility tests.test_trino_production_hardening -v
 ```
+
+프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
