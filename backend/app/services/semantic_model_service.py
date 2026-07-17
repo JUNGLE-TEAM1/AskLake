@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import status
+from pydantic import ValidationError
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
@@ -141,6 +142,7 @@ class SemanticModelService:
         datasets = self.db.scalars(select(SemanticModelDatasetModel).where(SemanticModelDatasetModel.model_id == model_id)).all()
         metrics = self.db.scalars(select(SemanticMetricModel).where(SemanticMetricModel.model_id == model_id)).all()
         dimensions = self.db.scalars(select(SemanticDimensionModel).where(SemanticDimensionModel.model_id == model_id)).all()
+        relationships = self.db.scalars(select(SemanticRelationshipModel).where(SemanticRelationshipModel.model_id == model_id)).all()
         if not datasets:
             errors.append("At least one Catalog Dataset must be connected")
         if not metrics and not dimensions:
@@ -149,11 +151,18 @@ class SemanticModelService:
         catalog_available = self._catalog_table_available()
         if dataset_ids and not catalog_available:
             warnings.append("Catalog schema validation is unavailable because the Catalog table is not initialized")
+        catalog_datasets: dict[str, dict[str, Any] | None] = {}
+        if catalog_available:
+            repository = CatalogRepository(self.db)
+            for dataset_id in dataset_ids:
+                catalog_datasets[dataset_id] = repository.get_dataset_payload(dataset_id)
+                if catalog_datasets[dataset_id] is None:
+                    errors.append(f"Connected Dataset {dataset_id} does not exist in Catalog")
         for item in [*metrics, *dimensions]:
             if item.dataset_id and item.dataset_id not in dataset_ids:
                 errors.append(f"Definition {item.name} references an unconnected Dataset")
             if item.dataset_id and item.dataset_id in dataset_ids and catalog_available:
-                catalog_dataset = CatalogRepository(self.db).get_dataset_payload(item.dataset_id)
+                catalog_dataset = catalog_datasets.get(item.dataset_id)
                 if catalog_dataset is None:
                     errors.append(f"Definition {item.name} references a missing Catalog Dataset")
                     continue
@@ -162,6 +171,23 @@ class SemanticModelService:
                 missing_columns = [column for column in selected_columns if column and column not in available_columns]
                 if missing_columns:
                     errors.append(f"Definition {item.name} references missing schema column(s): {', '.join(missing_columns)}")
+        supported_relationship_types = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
+        for item in relationships:
+            missing_endpoints = [
+                dataset_id
+                for dataset_id in (item.from_dataset_id, item.to_dataset_id)
+                if dataset_id not in dataset_ids
+            ]
+            if missing_endpoints:
+                errors.append(
+                    "Relationship "
+                    f"{item.from_dataset_id}->{item.to_dataset_id} references unconnected Dataset(s): "
+                    f"{', '.join(dict.fromkeys(missing_endpoints))}"
+                )
+            if item.relationship_type not in supported_relationship_types:
+                errors.append(
+                    f"Relationship {item.from_dataset_id}->{item.to_dataset_id} has unsupported type {item.relationship_type}"
+                )
         return SemanticValidationResponse(valid=not errors, errors=errors, warnings=warnings)
 
     def publish(self, model_id: str, actor: ActorContext) -> SemanticPublishResponse:
@@ -190,6 +216,34 @@ class SemanticModelService:
         target = self.db.scalar(select(SemanticModelVersionModel).where(SemanticModelVersionModel.model_id == model_id, SemanticModelVersionModel.version == version))
         if target is None:
             raise ApiError("not_found", f"Semantic model version {version} was not found", status.HTTP_404_NOT_FOUND)
+        if target.status != "published":
+            raise ApiError(
+                "validation_error",
+                f"Semantic model version {version} was never published and cannot be restored",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            raw_definition = target.definition if isinstance(target.definition, dict) else {}
+            definition = SemanticModelCreate.model_validate({
+                **raw_definition,
+                "name": raw_definition.get("name") or model.name,
+                "description": raw_definition.get("description", model.description),
+            })
+        except ValidationError as exc:
+            raise ApiError(
+                "validation_error",
+                f"Semantic model version {version} contains an invalid definition",
+                status.HTTP_400_BAD_REQUEST,
+            ) from exc
+        for kind in ("datasets", "metrics", "dimensions", "relationships", "vocabulary"):
+            self._replace_children(model_id, definition, only=kind)
+        model.name = definition.name
+        model.description = definition.description
+        self.db.flush()
+        validation = self.validate(model_id, actor)
+        if not validation.valid:
+            self.db.rollback()
+            raise ApiError("validation_error", "; ".join(validation.errors), status.HTTP_400_BAD_REQUEST)
         model.published_version = version
         model.status = "published"
         self.db.commit()
@@ -363,7 +417,7 @@ class SemanticModelService:
             self.db.add_all([table(**factory(item)) for item in items])
 
     def _create_version(self, model_id: str, version: int, request: SemanticModelCreate, *, status_value: str = "draft", published_by: str | None = None) -> SemanticModelVersionModel:
-        definition = {"datasets": [item.model_dump() for item in request.datasets], "metrics": [item.model_dump() for item in request.metrics], "dimensions": [item.model_dump() for item in request.dimensions], "relationships": [item.model_dump() for item in request.relationships], "vocabulary": [item.model_dump() for item in request.vocabulary]}
+        definition = {"name": request.name, "description": request.description, "datasets": [item.model_dump() for item in request.datasets], "metrics": [item.model_dump() for item in request.metrics], "dimensions": [item.model_dump() for item in request.dimensions], "relationships": [item.model_dump() for item in request.relationships], "vocabulary": [item.model_dump() for item in request.vocabulary]}
         row = SemanticModelVersionModel(id=f"smv_{uuid4().hex}", model_id=model_id, version=version, status=status_value, definition=definition, published_at=datetime.now(timezone.utc) if status_value == "published" else None, published_by=published_by)
         self.db.add(row)
         return row
@@ -373,13 +427,15 @@ class SemanticModelService:
         return (latest.version + 1) if latest else 1
 
     def _definition_request(self, model_id: str) -> SemanticModelCreate:
+        model = self._model(model_id)
         datasets = self.db.scalars(select(SemanticModelDatasetModel).where(SemanticModelDatasetModel.model_id == model_id)).all()
         metrics = self.db.scalars(select(SemanticMetricModel).where(SemanticMetricModel.model_id == model_id)).all()
         dimensions = self.db.scalars(select(SemanticDimensionModel).where(SemanticDimensionModel.model_id == model_id)).all()
         relationships = self.db.scalars(select(SemanticRelationshipModel).where(SemanticRelationshipModel.model_id == model_id)).all()
         vocabulary = self.db.scalars(select(SemanticVocabularyModel).where(SemanticVocabularyModel.model_id == model_id)).all()
         return SemanticModelCreate(
-            name="snapshot", datasets=[{"datasetId": item.dataset_id, "role": item.role, "joinConfig": item.join_config or {}} for item in datasets],
+            name=model.name, description=model.description,
+            datasets=[{"datasetId": item.dataset_id, "role": item.role, "joinConfig": item.join_config or {}} for item in datasets],
             metrics=[self._item(item) for item in metrics], dimensions=[self._item(item) for item in dimensions],
             relationships=[self._item(item) for item in relationships], vocabulary=[self._item(item) for item in vocabulary],
         )

@@ -1,7 +1,7 @@
 import hashlib
 
 from app.chunker import chunk_parent_document
-from app.rag_core import estimate_tokens
+from app.rag_core import estimate_tokens, render_field_section
 
 
 def _parent(body: str, *, title: str | None = "delivery", blocks: list[dict] | None = None) -> dict:
@@ -53,6 +53,39 @@ def test_multiple_body_fields_keep_labels_even_when_values_match():
     assert [item["logicalField"] for item in chunks[0]["body_blocks"]] == ["review_text", "seller_response"]
     assert [item["logicalField"] for item in chunks[0]["source_fields"]] == ["review_text", "seller_response"]
     assert [item["logicalField"] for item in chunks[0]["parent_source_fields"]] == ["review_text", "seller_response"]
+
+
+def test_title_only_row_is_embedded_instead_of_dropped():
+    parent = _parent("", title="Wireless headphones")
+    parent["source_columns"] = ["product_name"]
+    parent["source_fields"] = [
+        {
+            "logicalField": "product_name",
+            "physicalField": "product_name",
+            "role": "title",
+            "roles": ["title"],
+        }
+    ]
+    parent["title_blocks"] = [
+        {
+            "logicalField": "product_name",
+            "physicalField": "product_name",
+            "text": "Wireless headphones",
+        }
+    ]
+
+    chunks = chunk_parent_document(
+        parent,
+        embed_sentences=lambda values: [],
+        refine_boundaries=lambda sentences, boundaries: [],
+    )
+
+    assert len(chunks) == 1
+    assert "product_name: Wireless headphones" in chunks[0]["embedding_text"]
+    assert chunks[0]["chunking_strategy"] == "semantic_embedding_title_folded"
+    assert chunks[0]["fallback_applied"] is False
+    assert chunks[0]["fallback_reason"] is None
+    assert chunks[0]["source_fields"][0]["roles"] == ["title"]
 
 
 def test_chunk_provenance_merges_body_metadata_and_composite_identifier_roles():
@@ -108,16 +141,20 @@ def test_very_long_title_is_folded_and_fully_covered_by_bounded_chunks():
     chunks = chunk_parent_document(
         parent,
         embed_sentences=lambda values: [[1.0, 0.0] for _ in values],
-        refine_boundaries=lambda sentences, boundaries: [],
+        refine_boundaries=lambda sentences, boundaries: [
+            {"startSentence": index, "endSentence": index}
+            for index in range(len(sentences))
+        ],
         target_tokens=60,
-        overlap_tokens=10,
+        overlap_tokens=0,
         max_tokens=80,
     )
     combined = "\n".join(chunk["embedding_text"] for chunk in chunks)
     assert len(chunks) > 1
     assert all(estimate_tokens(chunk["embedding_text"]) <= 80 for chunk in chunks)
-    assert all(chunk["fallback_reason"].startswith("title_exceeds_chunk_budget") for chunk in chunks)
-    assert all(chunk["fallback_applied"] is True for chunk in chunks)
+    assert all(chunk["chunking_strategy"] == "semantic_embedding_llm_title_folded" for chunk in chunks)
+    assert all(chunk["fallback_reason"] is None for chunk in chunks)
+    assert all(chunk["fallback_applied"] is False for chunk in chunks)
     assert all(marker in combined for marker in markers)
     assert any(
         "title" in field["roles"]
@@ -156,3 +193,49 @@ def test_invalid_llm_result_falls_back_to_embedding_boundaries():
     assert chunks
     assert all(chunk["chunking_strategy"] == "semantic_embedding_fallback" for chunk in chunks)
     assert all(chunk["fallback_reason"] for chunk in chunks)
+
+
+def test_llm_segments_may_omit_only_the_closing_body_wrapper() -> None:
+    body = " ".join(
+        f"Sentence {index} preserves marker-{index}."
+        for index in range(90)
+    )
+    blocks = [{"logicalField": "content", "physicalField": "content", "text": body}]
+    parent = _parent(body, title="Long document", blocks=blocks)
+    observed: dict[str, object] = {}
+
+    def refine(sentences: list[dict], boundaries: list[int]) -> list[dict[str, int]]:
+        observed["sentence_count"] = len(sentences)
+        observed["last_sentence"] = sentences[-1]["text"].strip()
+        meaningful_last = len(sentences) - 2
+        ranges: list[dict[str, int]] = []
+        start = 0
+        for end in (value for value in boundaries if value <= meaningful_last):
+            if end >= start:
+                ranges.append({"startSentence": start, "endSentence": end})
+                start = end + 1
+        if start <= meaningful_last:
+            ranges.append({"startSentence": start, "endSentence": meaningful_last})
+        return ranges
+
+    chunks = chunk_parent_document(
+        parent,
+        embed_sentences=lambda values: [[1.0, 0.0] for _ in values],
+        refine_boundaries=refine,
+        target_tokens=80,
+        overlap_tokens=10,
+        max_tokens=120,
+    )
+    rendered_body, _ = render_field_section(blocks, "BODY")
+    combined = "\n".join(chunk["embedding_text"] for chunk in chunks)
+
+    assert observed == {"sentence_count": 91, "last_sentence": "[/BODY]"}
+    assert len(chunks) > 1
+    assert all(chunk["chunking_strategy"] == "semantic_embedding_llm" for chunk in chunks)
+    assert all(chunk["fallback_applied"] is False for chunk in chunks)
+    assert all(chunk["fallback_reason"] is None for chunk in chunks)
+    assert all(estimate_tokens(chunk["embedding_text"]) <= 120 for chunk in chunks)
+    assert all(f"marker-{index}" in combined for index in range(90))
+    assert chunks[0]["char_start"] == 0
+    assert chunks[-1]["char_end"] == len(rendered_body.strip())
+    assert chunks[-1]["body"].endswith("[/BODY]")

@@ -8,7 +8,7 @@ from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
 from app.models.semantic_rag import RagClassificationRunModel, RagColumnRecommendationModel, RagDatasetProfileModel, RagIndexJobModel, RagIndexManifestModel
-from app.schemas.semantic import SemanticModelCreate
+from app.schemas.semantic import SemanticDimensionInput, SemanticModelCreate, SemanticModelPatch
 from app.services.rag_document_service import build_documents
 from app.services.rag_search_service import RagSearchService, build_metadata_filter_clauses, hybrid_rrf
 from app.services.rag_service import FILTER_CONTRACT_VERSION, RAG_TABLES, RagService
@@ -347,6 +347,106 @@ def test_semantic_model_can_publish_a_valid_connected_definition() -> None:
         assert published.published_version == 2
         assert published.model.status == "published"
         assert published.model.datasets[0].dataset_id == "orders_clean"
+
+
+def test_semantic_model_rollback_restores_the_published_definition() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[*SEMANTIC_TABLES, PermissionGrantModel.__table__])
+    with Session(engine) as db:
+        service = SemanticModelService(db)
+        actor = ActorContext(name="admin", role="admin")
+        model = service.create(
+            SemanticModelCreate.model_validate({
+                "name": "Commerce Sales",
+                "datasets": [{"datasetId": "orders_clean"}],
+                "dimensions": [{
+                    "name": "published_region",
+                    "label": "Published region",
+                    "columnName": "region",
+                    "datasetId": "orders_clean",
+                }],
+            }),
+            actor,
+        )
+        published_version = service.publish(model.id, actor).published_version
+        service.update(
+            model.id,
+            SemanticModelPatch(name="Draft commerce", description="Draft description"),
+            actor,
+        )
+        service.replace_collection(
+            model.id,
+            "dimensions",
+            [SemanticDimensionInput.model_validate({
+                "name": "draft_country",
+                "label": "Draft country",
+                "columnName": "country",
+                "datasetId": "orders_clean",
+            })],
+            actor,
+        )
+
+        restored = service.rollback(model.id, published_version, actor)
+        query_contract = service.published_query_model(model.id, actor)
+
+        assert restored.status == "published"
+        assert restored.published_version == published_version
+        assert restored.name == "Commerce Sales"
+        assert restored.description == ""
+        assert [item.name for item in restored.dimensions] == ["published_region"]
+        assert [item["name"] for item in query_contract["dimensions"]] == ["published_region"]
+
+
+def test_semantic_model_rollback_rejects_a_never_published_draft_version() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[*SEMANTIC_TABLES, PermissionGrantModel.__table__])
+    with Session(engine) as db:
+        service = SemanticModelService(db)
+        actor = ActorContext(name="admin", role="admin")
+        model = service.create(
+            SemanticModelCreate.model_validate({
+                "name": "Commerce Sales",
+                "datasets": [{"datasetId": "orders_clean"}],
+            }),
+            actor,
+        )
+
+        with pytest.raises(ApiError, match="never published"):
+            service.rollback(model.id, 1, actor)
+
+
+def test_semantic_model_publish_rejects_relationships_outside_connected_datasets() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[*SEMANTIC_TABLES, PermissionGrantModel.__table__])
+    with Session(engine) as db:
+        service = SemanticModelService(db)
+        actor = ActorContext(name="admin", role="admin")
+        model = service.create(
+            SemanticModelCreate.model_validate({
+                "name": "Commerce Sales",
+                "datasets": [{"datasetId": "orders_clean"}],
+                "dimensions": [{
+                    "name": "order_id",
+                    "label": "Order ID",
+                    "columnName": "order_id",
+                    "datasetId": "orders_clean",
+                }],
+                "relationships": [{
+                    "fromDatasetId": "orders_clean",
+                    "toDatasetId": "customers_missing",
+                    "relationshipType": "many_to_one",
+                    "joinExpression": "orders_clean.customer_id = customers_missing.id",
+                }],
+            }),
+            actor,
+        )
+
+        validation = service.validate(model.id, actor)
+
+        assert validation.valid is False
+        assert any("customers_missing" in error and "unconnected" in error for error in validation.errors)
+        with pytest.raises(ApiError, match="customers_missing"):
+            service.publish(model.id, actor)
 
 
 def test_invalid_ai_rag_roles_are_discarded_and_old_recommendations_replaced() -> None:

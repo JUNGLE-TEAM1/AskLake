@@ -33,12 +33,11 @@ def _generation_response(*, provider: str, metadata: dict[str, object] | None = 
     ("provider", "metadata"),
     [
         ("mock", None),
-        ("openai_compatible_fallback", None),
-        ("openai_compatible", {"fallbackApplied": True}),
-        ("openai_compatible", {"route": "fallback"}),
+        ("mock_local", None),
+        ("deterministic_mock", None),
     ],
 )
-def test_gateway_rejects_mock_or_fallback_generation_provenance(
+def test_gateway_rejects_mock_generation_provenance(
     provider: str,
     metadata: dict[str, object] | None,
 ) -> None:
@@ -65,7 +64,8 @@ def test_gateway_rejects_mock_or_fallback_generation_provenance(
     persist_usage.assert_not_called()
 
 
-def test_gateway_accepts_primary_provider_with_nonfallback_metadata() -> None:
+@pytest.mark.parametrize("provider", ["openai_compatible", "openai_compatible_fallback"])
+def test_gateway_accepts_real_primary_or_failover_provider(provider: str) -> None:
     client = AiGatewayClient(Settings(
         ai_gateway_base_url="http://ai-server:8090",
         ai_gateway_service_token="service-secret",
@@ -75,8 +75,8 @@ def test_gateway_accepts_primary_provider_with_nonfallback_metadata() -> None:
         patch(
             "app.services.ai_gateway_client.httpx.post",
             return_value=_generation_response(
-                provider="openai_compatible",
-                metadata={"fallbackApplied": False, "route": "primary"},
+                provider=provider,
+                metadata={"fallbackApplied": provider.endswith("_fallback"), "route": "fallback" if provider.endswith("_fallback") else "primary"},
             ),
         ),
         patch.object(client, "_persist_generation_usage"),
@@ -90,10 +90,10 @@ def test_gateway_accepts_primary_provider_with_nonfallback_metadata() -> None:
             "context-secret",
         )
 
-    assert result["provider"] == "openai_compatible"
+    assert result["provider"] == provider
 
 
-def test_fallback_source_is_removed_from_used_ids_and_public_sources() -> None:
+def test_content_preserving_fallback_source_remains_visible_when_actually_used() -> None:
     rag_context = {
         "sources": [
             {"documentId": "doc-primary", "title": "primary", "fallbackApplied": False},
@@ -110,7 +110,7 @@ def test_fallback_source_is_removed_from_used_ids_and_public_sources() -> None:
     assert validate_used_evidence_ids(
         ["doc-primary", "doc-fallback"],
         rag_context,
-    ) == ["doc-primary"]
+    ) == ["doc-primary", "doc-fallback"]
 
     retained = retain_used_rag_evidence(
         rag_context,
@@ -118,7 +118,7 @@ def test_fallback_source_is_removed_from_used_ids_and_public_sources() -> None:
     )
 
     assert retained is not None
-    assert retained["sources"] == [rag_context["sources"][0]]
-    assert retained["retrieval"]["resultCount"] == 1
-    assert retained["retrieval"]["fallbackEvidenceCount"] == 0
-    assert retained["retrieval"]["fallbackReasons"] == []
+    assert retained["sources"] == rag_context["sources"]
+    assert retained["retrieval"]["resultCount"] == 2
+    assert retained["retrieval"]["fallbackEvidenceCount"] == 1
+    assert retained["retrieval"]["fallbackReasons"] == ["context_expansion_unavailable"]

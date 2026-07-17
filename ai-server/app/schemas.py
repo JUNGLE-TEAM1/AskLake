@@ -206,14 +206,22 @@ class DashboardActionOutput(BaseModel):
     @model_validator(mode="after")
     def validate_action_shape(self) -> "DashboardActionOutput":
         if self.type == "report":
-            if not self.markdown or self.widget is not None or self.patch is not None or self.widget_id is not None:
-                raise ValueError("Report actions must contain only markdown")
+            if not self.markdown:
+                raise ValueError("Report actions require markdown")
+            self.widget = None
+            self.patch = None
+            self.widget_id = None
         elif self.type == "create_widget":
-            if self.widget is None or self.patch is not None or self.widget_id is not None or self.markdown is not None:
-                raise ValueError("Create actions must contain only widget")
+            if self.widget is None:
+                raise ValueError("Create actions require widget")
+            self.patch = None
+            self.widget_id = None
+            self.markdown = None
         elif self.type == "update_widget":
-            if not self.widget_id or self.patch is None or self.widget is not None or self.markdown is not None:
-                raise ValueError("Update actions must contain widgetId and patch")
+            if not self.widget_id or self.patch is None:
+                raise ValueError("Update actions require widgetId and patch")
+            self.widget = None
+            self.markdown = None
         return self
 
 
@@ -232,15 +240,6 @@ class DashboardAssistantOutput(BaseModel):
             raise ValueError("Dashboard warnings must be at most 500 characters")
         return value
 
-    @field_validator("used_evidence_ids")
-    @classmethod
-    def validate_used_evidence_ids(cls, value: list[str]) -> list[str]:
-        if any(not item.strip() or len(item) > 255 for item in value):
-            raise ValueError("Used evidence IDs must be non-empty and at most 255 characters")
-        if len(set(value)) != len(value):
-            raise ValueError("Used evidence IDs must be unique")
-        return value
-
     @model_validator(mode="after")
     def require_action_scoped_evidence(self) -> "DashboardAssistantOutput":
         scoped_ids = list(dict.fromkeys(
@@ -248,8 +247,8 @@ class DashboardAssistantOutput(BaseModel):
             for action in self.actions
             for evidence_id in action.used_evidence_ids
         ))
-        if self.used_evidence_ids and set(self.used_evidence_ids) != set(scoped_ids):
-            raise ValueError("Top-level usedEvidenceIds must equal the union of action-scoped evidence IDs")
+        # The top-level list is redundant provider output. Action-scoped IDs are
+        # authoritative, so only evidence attached to an actual action survives.
         self.used_evidence_ids = scoped_ids
         return self
 

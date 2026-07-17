@@ -36,16 +36,7 @@ def validate_used_evidence_ids(
     }
     if any(evidence_id not in candidate_ids for evidence_id in normalized):
         raise ValueError("AI cited evidence outside the supplied RAG context")
-    fallback_ids = {
-        str(source.get("documentId") or "").strip()
-        for source in sources or []
-        if (
-            isinstance(source, dict)
-            and source.get("fallbackApplied") is True
-            and str(source.get("documentId") or "").strip()
-        )
-    }
-    return [evidence_id for evidence_id in normalized if evidence_id not in fallback_ids]
+    return normalized
 
 
 def retain_used_rag_evidence(
@@ -59,7 +50,7 @@ def retain_used_rag_evidence(
     normalized = validate_used_evidence_ids(used_evidence_ids, rag_context)
     source_by_id: dict[str, dict[str, Any]] = {}
     for source in rag_context.get("sources") or []:
-        if not isinstance(source, dict) or source.get("fallbackApplied") is True:
+        if not isinstance(source, dict):
             continue
         document_id = str(source.get("documentId") or "").strip()
         if document_id and document_id not in source_by_id:
@@ -73,6 +64,16 @@ def retain_used_rag_evidence(
     )
     retrieval["resultCount"] = len(selected_sources)
     retrieval["evidenceStatus"] = "used" if selected_sources else "not_used"
-    retrieval["fallbackEvidenceCount"] = 0
-    retrieval["fallbackReasons"] = []
+    fallback_sources = [source for source in selected_sources if source.get("fallbackApplied") is True]
+    retrieval["fallbackEvidenceCount"] = len(fallback_sources)
+    retrieval["fallbackReasons"] = list(dict.fromkeys(
+        str(reason).strip()
+        for source in fallback_sources
+        for reason in (
+            source.get("fallbackReasons")
+            if isinstance(source.get("fallbackReasons"), list)
+            else [source.get("fallbackReason")]
+        )
+        if str(reason or "").strip()
+    ))
     return {"sources": selected_sources, "retrieval": retrieval}

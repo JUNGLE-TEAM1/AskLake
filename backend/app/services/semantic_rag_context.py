@@ -4,7 +4,56 @@ from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.services.rag_search_service import RagSearchService
 from app.services.rag_service import RagService
+from app.services.rag_tokens import count_tokens, truncate_tokens
 from app.services.semantic_model_service import SemanticModelService
+
+
+def _compact_generation_source(source: dict[str, Any]) -> dict[str, Any]:
+    """Remove duplicate heavy fields while retaining exact chunk provenance."""
+
+    compacted = dict(source)
+    compacted.pop("context", None)  # duplicates the merged ``body`` value
+    compacted.pop("semanticModels", None)  # available once in retrieval metadata
+    raw_chunks = compacted.get("chunks")
+    if isinstance(raw_chunks, list):
+        compacted["chunks"] = [
+            {
+                key: chunk.get(key)
+                for key in (
+                    "documentId",
+                    "chunkDocumentId",
+                    "chunkIndex",
+                    "charStart",
+                    "charEnd",
+                    "fallbackApplied",
+                    "fallbackReason",
+                )
+                if key in chunk
+            }
+            for chunk in raw_chunks
+            if isinstance(chunk, dict)
+        ]
+    return compacted
+
+
+def _apply_total_context_budget(
+    sources: list[dict[str, Any]],
+    token_budget: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply the configured RAG token limit once across all source bodies."""
+
+    remaining = max(1, int(token_budget))
+    bounded: list[dict[str, Any]] = []
+    for index, source in enumerate(sources):
+        slots = len(sources) - index
+        allowance = max(1, remaining // max(1, slots)) if remaining > 0 else 0
+        compacted = _compact_generation_source(source)
+        body = truncate_tokens(str(compacted.get("body") or ""), allowance)
+        compacted["body"] = body
+        used = count_tokens(body)
+        remaining = max(0, remaining - used)
+        bounded.append(compacted)
+    return bounded, sum(count_tokens(str(source.get("body") or "")) for source in bounded)
 
 
 def build_semantic_rag_context(
@@ -175,12 +224,15 @@ def build_semantic_rag_context(
             evidence_scope_mismatch = True
             continue
         enriched["semanticModelIds"] = model_ids
-        enriched["semanticModels"] = [model for model in resolved_models if str(model["id"]) in model_ids]
         sources.append(enriched)
     if evidence_scope_mismatch:
         retrieval["status"] = "evidence_scope_mismatch"
         retrieval["reason"] = "Search evidence was not bound to the expected semantic model Dataset aliases"
         retrieval["resultCount"] = 0
         return {"sources": [], "retrieval": retrieval}
+    context_token_budget = max(1, int(getattr(settings, "rag_context_max_tokens", 6_000)))
+    sources, context_token_count = _apply_total_context_budget(sources, context_token_budget)
+    retrieval["contextTokenBudget"] = context_token_budget
+    retrieval["contextTokenCount"] = context_token_count
     retrieval["resultCount"] = len(sources)
     return {"sources": sources, "retrieval": retrieval}
