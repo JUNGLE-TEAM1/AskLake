@@ -33,6 +33,10 @@ RAG_JOB_LIST_DEFAULT_LIMIT = 20
 RAG_JOB_LIST_MAX_LIMIT = 100
 RAG_JOB_STAGES: tuple[RagJobStage, ...] = ("queued", "staging", "chunking", "embedding", "indexing", "validating", "ready")
 RAG_JOB_STAGE_ORDER = {stage: index for index, stage in enumerate(RAG_JOB_STAGES)}
+RAG_JOB_STAGE_BASE_PROGRESS_PERCENT = {
+    stage: (index * 100) // (len(RAG_JOB_STAGES) - 1)
+    for index, stage in enumerate(RAG_JOB_STAGES)
+}
 
 
 def safe_identifier(value: str) -> str:
@@ -733,10 +737,11 @@ class RagService:
         stage = cls._job_list_stage(job)
         return RagJobListItem(
             job_id=job.id,
+            dataset_id=job.dataset_id,
             requested_mode=job.requested_mode,
             status=job.status,
             stage=stage,
-            progress_percent=cls._job_progress_percent(job, stage),
+            progress_percent=cls._job_stage_progress_percent(job, stage),
             document_count=job.document_count,
             indexed_count=job.indexed_count,
             parent_count=job.parent_count,
@@ -807,14 +812,21 @@ class RagService:
         )
 
     @classmethod
-    def _job_progress_percent(cls, job: RagIndexJobModel, stage: RagJobStage) -> int | None:
+    def _job_stage_progress_percent(cls, job: RagIndexJobModel, stage: RagJobStage) -> int:
+        """Return monotonic seven-stage completion, never an elapsed-time estimate."""
         if cls._job_is_complete(job):
             return 100
+        safe_stage: RagJobStage = "validating" if stage == "ready" else stage
+        base_percent = RAG_JOB_STAGE_BASE_PROGRESS_PERCENT[safe_stage]
+        if safe_stage != "indexing":
+            return min(99, base_percent)
         chunk_count = int(job.chunk_count or 0)
-        if chunk_count > 0:
-            indexed_count = max(0, min(int(job.indexed_count or 0), chunk_count))
-            return min(99, (indexed_count * 100) // chunk_count)
-        return 0 if stage == "queued" else None
+        if chunk_count <= 0:
+            return base_percent
+        indexed_count = max(0, min(int(job.indexed_count or 0), chunk_count))
+        validating_percent = RAG_JOB_STAGE_BASE_PROGRESS_PERCENT["validating"]
+        interpolated = base_percent + ((validating_percent - base_percent) * indexed_count) // chunk_count
+        return min(99, interpolated)
 
     def validate_job(self, job_id: str) -> dict[str, Any]:
         """Validate the newly built physical index before an alias can move.

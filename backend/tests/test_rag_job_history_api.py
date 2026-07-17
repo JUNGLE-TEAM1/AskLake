@@ -218,6 +218,33 @@ def test_incomplete_ready_state_never_reports_ready_or_one_hundred_percent() -> 
 
 
 @pytest.mark.parametrize(
+    ("validation_status", "activation_status", "completed_at"),
+    [
+        ("pending", "committed", NOW),
+        ("passed", "pending", NOW),
+        ("passed", "committed", None),
+    ],
+)
+def test_each_completion_gate_independently_blocks_one_hundred_percent(
+    validation_status: str,
+    activation_status: str,
+    completed_at: datetime | None,
+) -> None:
+    item = project_job(
+        status="ready",
+        stage="ready",
+        chunk_count=10,
+        indexed_count=10,
+        validation_status=validation_status,
+        activation_status=activation_status,
+        completed_at=completed_at,
+    )
+
+    assert item.stage == "validating"
+    assert item.progress_percent == 83
+
+
+@pytest.mark.parametrize(
     ("status", "counts", "expected_stage", "expected_progress"),
     [
         ("failed", {"chunk_count": 8, "indexed_count": 3}, "indexing", 72),

@@ -73,6 +73,7 @@
 .semantic-real-role-heading-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .semantic-real-embedding-guide { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding: 11px 13px; border: 1px solid #d1e0ff; border-radius: 9px; background: #eff6ff; color: #475467; font-size: 12px; }
 .semantic-real-embedding-guide strong { color: #175cd3; }
+.semantic-real-embedding-guide .is-warning { width: 100%; color: #b54708; font-weight: 700; }
 .semantic-real-embedding-toggle { display: inline-flex; gap: 7px; align-items: center; color: #344054; font-size: 12px; cursor: pointer; }
 .semantic-real-embedding-toggle:has(input:disabled) { color: #667085; cursor: default; }
 .semantic-real-rag-actions { justify-content: flex-end; margin-top: 16px; }
