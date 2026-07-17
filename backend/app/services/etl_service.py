@@ -65,6 +65,7 @@ from app.application.etl_job_queries import (
     EtlJobQueryHooks,
     get_job as hydrate_job_query,
     list_jobs as hydrate_job_list_query,
+    list_job_statuses as hydrate_job_statuses_query,
 )
 from app.application.pipeline_mapping import (
     CreatePipelineMappingContext,
@@ -77,6 +78,10 @@ from app.application.snapshot_commands import (
     SnapshotCommandViolation,
     SnapshotExecutionPath,
     plan_snapshot_command,
+)
+from app.application.snapshot_reconciliation import (
+    SnapshotReconciliationHooks,
+    reconcile_active_airflow_runs,
 )
 from app.application.source_connectors import (
     list_source_assets as execute_list_source_assets,
@@ -139,7 +144,7 @@ from app.ports.runtime_io import (
     RuntimeDocumentStore,
 )
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
-from app.repositories import etl_repository
+from app.repositories import etl_repository, snapshot_status_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
@@ -209,6 +214,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.job_status import JobStatusListResponse
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionGrant
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
@@ -689,11 +695,50 @@ def list_jobs(
         schedule_kind=schedule_kind,
         hooks=EtlJobQueryHooks(
             record_audit_event=safe_record_audit_event,
-            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
             schedule_kind=job_schedule_kind,
-            sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
+        ),
+    )
+
+
+def list_job_statuses(
+    db: Session,
+    job_ids: list[str],
+    actor: ActorContext | None = None,
+) -> JobStatusListResponse:
+    return hydrate_job_statuses_query(
+        db,
+        job_ids,
+        actor,
+        hooks=EtlJobQueryHooks(
+            record_audit_event=safe_record_audit_event,
+            schedule_kind=job_schedule_kind,
+            with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
+        ),
+    )
+
+
+def sync_active_airflow_snapshot_runs() -> int:
+    """Persist finite Airflow Run state without depending on browser reads."""
+    import logging
+
+    from app.core.database import SessionLocal
+
+    logger = logging.getLogger(__name__)
+    return reconcile_active_airflow_runs(
+        SessionLocal,
+        hooks=SnapshotReconciliationHooks(
+            acquire_sync_owner=snapshot_status_repository.try_acquire_snapshot_airflow_sync,
+            get_job=etl_repository.get_job,
+            list_active_job_ids=snapshot_status_repository.list_active_airflow_job_ids,
+            on_job_error=lambda job_id, _error: logger.exception(
+                "Snapshot Airflow synchronization failed for Job %s",
+                job_id,
+            ),
+            release_sync_owner=snapshot_status_repository.release_snapshot_airflow_sync,
+            sync_job=sync_airflow_runs_for_job,
         ),
     )
 
@@ -873,9 +918,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
         actor,
         hooks=EtlJobQueryHooks(
             record_audit_event=safe_record_audit_event,
-            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
             schedule_kind=job_schedule_kind,
-            sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
         ),

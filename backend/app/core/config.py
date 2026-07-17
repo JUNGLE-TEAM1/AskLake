@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
+    airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     dashboard_sync_mode: str = "polling"
