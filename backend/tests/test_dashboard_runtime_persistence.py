@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.models.realtime import RealtimeEventModel
 from app.repositories.dashboard_runtime_repository import (
     DashboardRuntimeMetaRecord,
     DashboardRuntimeRepository,
@@ -96,6 +97,7 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
                 DashboardRevision.__table__,
                 DashboardPage.__table__,
                 DashboardWidget.__table__,
+                RealtimeEventModel.__table__,
             ],
         )
         with self.engine.begin() as connection:
