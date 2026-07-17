@@ -588,6 +588,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
 - [x] A Secret contract의 backend/Airflow/Spark/Trino exact key와 file mount 반영
 - [x] FastAPI `/api/health` startup/readiness와 DB 장애에서 재시작하지 않는 TCP liveness probe
+- [x] dev ALB 300초 deregistration을 포함하는 FastAPI `preStop` 310초와 termination grace 360초 계약
 - [x] EKS의 Kafka Continuous 생성·조회·변경·freshness/widget read·background sync fail-closed 경계
 - [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
 - [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리
@@ -605,7 +606,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 운영 전 Spark driver/executor ServiceAccount와 Kubernetes API token/RBAC 분리
 - [ ] 통합 환경에서 MSK metadata → bounded Spark output → Trino query live smoke
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
-- [ ] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증
+- [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
 - [x] bounded E2E temporary Job failure 즉시 감지와 Helm/Deployment runtime drift fail-closed
 - [ ] 공유 Helm rollout이 없는 exclusive window에서 새 fixture 100건의 durable Run success 재검증
 ## Realtime 2026 foundation readiness

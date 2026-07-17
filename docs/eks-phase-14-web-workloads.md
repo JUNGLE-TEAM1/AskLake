@@ -16,7 +16,7 @@ Frontend image는 `VITE_API_BASE_URL`을 지정하지 않은 동일-origin 빌�
 
 ## 구현 계약
 
-`infra/eks/helm/asklake-web`은 `frontend`, `fastapi`, `trino-result-collector` Deployment와 ClusterIP Service `frontend:80`, `fastapi:8080`을 소유한다. Collector Service나 Ingress는 만들지 않는다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 세 Deployment는 General NodePool과 `kubernetes.io/arch=amd64` selector를 함께 사용한다. Frontend와 Collector는 Kubernetes API token을 mount하지 않는다. FastAPI만 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고, liveness는 TCP 8080 probe로 분리한다.
+`infra/eks/helm/asklake-web`은 `frontend`, `fastapi`, `trino-result-collector` Deployment와 ClusterIP Service `frontend:80`, `fastapi:8080`을 소유한다. Collector Service나 Ingress는 만들지 않는다. 서비스 이름·포트·health path는 Phase 13 ALB handoff와 동일하다. 세 Deployment는 General NodePool과 `kubernetes.io/arch=amd64` selector를 함께 사용한다. Frontend와 Collector는 Kubernetes API token을 mount하지 않는다. FastAPI만 Foundation이 만든 backend ServiceAccount token과 최소 namespace RBAC를 유지한다. FastAPI의 DB-aware `/api/health`는 startup/readiness에만 사용하고, liveness는 TCP 8080 probe로 분리한다. Rolling 종료 시 EndpointSlice와 ALB target deregistration이 먼저 전파되도록 FastAPI는 `preStop`에서 310초 동안 기존 process를 유지하고 전체 종료 유예를 360초로 둔다. 이 값은 dev Backend target group의 300초 deregistration delay를 완전히 포함하며, 해당 ALB 계약이 바뀌면 함께 재검토해야 한다. Collector는 ALB target이 아니므로 이 HTTP drain hook을 사용하지 않는다.
 
 이미지는 ECR의 `@sha256:` digest만 허용한다. Frontend/FastAPI는 두 replica 이상이고 Collector는 1 replica다. Collector는 별도 image를 만들지 않고 FastAPI와 exact Backend digest를 공유하며 `python scripts/collect-trino-results.py`만 실행한다. 세 workload 모두 CPU/memory request·limit를 명시해야 하며 저장소의 test values는 운영 권장치가 아니다. HPA, topology spread, PDB와 세부 autoscaling 수치는 실제 부하·가용성 요구를 학습하고 선택하는 후속 단계다.
 
@@ -48,9 +48,11 @@ bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /priva
 
 ## 완료 기준
 
-코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 세 Deployment와 두 Service를 만들며 mutable tag, Frontend/FastAPI 1 replica, Collector 0/2 replica, Collector 비활성화, ServiceAccount drift, 포트 drift와 ARM64 selector가 모두 실패하는 것이다. Collector image는 FastAPI image와 exact digest가 같고 HTTP port/Service/Ingress가 없어야 한다. Backend는 `/api/health`를 startup/readiness에만 두고 TCP liveness를 사용해야 한다.
+코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 세 Deployment와 두 Service를 만들며 mutable tag, Frontend/FastAPI 1 replica, Collector 0/2 replica, Collector 비활성화, ServiceAccount drift, 포트 drift와 ARM64 selector가 모두 실패하는 것이다. Collector image는 FastAPI image와 exact digest가 같고 HTTP port/Service/Ingress가 없어야 한다. Backend는 `/api/health`를 startup/readiness에만 두고 TCP liveness를 사용해야 하며, dev ALB의 300초 deregistration을 포함하는 `preStop` 310초와 `terminationGracePeriodSeconds` 360초보다 짧은 drain 계약을 허용하지 않는다.
 
 실환경 완료는 별도다. Frontend/FastAPI 2/2와 Collector 1/1, `/`와 `/api/health`, EKS FastAPI의 EC2 Continuous 격리를 확인한다. Collector 부재 중 남은 `queued`/`running` Run은 삭제하지 않고 인증된 cancel API로 명시적으로 종료하거나 새 Collector가 terminal로 회수하는지 기록한다. 새 bounded `SELECT count(*)`가 `succeeded`와 기대값 100으로 끝나고 actor의 동시 실행 slot이 반환돼야 한다. Collector Pod 삭제 뒤 새 Pod가 생성되고, 이후 같은 지속 상태에서 새 Query Run이 terminal로 끝나는 것도 확인한다.
+
+2026-07-17 dev 환경에서 위 조건을 모두 통과했다. FastAPI/Collector 동일 digest rollout, 외부 health 318표본 non-200 0개, 연속 count query scalar 100, active slot 0, Collector `0 -> 1` 교체 뒤 같은 `runId` terminal 복구와 result page 1개를 [Day 17 Collector live evidence](eks-day17-trino-result-collector-evidence.md)에 기록한다.
 
 ## 삭제와 rollback
 

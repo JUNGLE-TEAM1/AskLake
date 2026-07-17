@@ -11,6 +11,7 @@ NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-web"
 TEMP_DIR="$(mktemp -d)"
+RAW_VALUES="$TEMP_DIR/raw-values.json"
 CURRENT_VALUES="$TEMP_DIR/current-values.json"
 CANDIDATE_VALUES="$TEMP_DIR/candidate-values.json"
 MONITOR_FILE="$TEMP_DIR/health-monitor.txt"
@@ -34,7 +35,7 @@ stop_monitor() {
 }
 
 rollback_on_error() {
-  local exit_code=$? rollback_deadline rollback_steady
+  local exit_code=$? rollback_deadline rollback_steady collector_rollback_restored
   trap - ERR
   set +e
   stop_monitor
@@ -52,8 +53,17 @@ rollback_on_error() {
         fi
         sleep 5
       done
+      collector_rollback_restored=false
+      if [[ "$old_collector_present" == "true" ]]; then
+        if [[ "$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="trino-result-collector")].image}' 2>/dev/null)" == "$old_collector_image" ]]; then
+          collector_rollback_restored=true
+        fi
+      elif ! kubectl get deployment trino-result-collector -n "$NAMESPACE" >/dev/null 2>&1; then
+        collector_rollback_restored=true
+      fi
       if [[ "$rollback_steady" == "true" ]] \
-        && [[ "$(kubectl get deployment fastapi -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="fastapi")].image}')" == "$old_backend_image" ]]; then
+        && [[ "$(kubectl get deployment fastapi -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="fastapi")].image}')" == "$old_backend_image" ]] \
+        && [[ "$collector_rollback_restored" == "true" ]]; then
         echo "backend_rollout_rollback=completed_and_steady" >&2
       else
         echo "backend_rollout_rollback=workload_restored_but_postcheck_failed" >&2
@@ -86,22 +96,31 @@ bash "$ROOT_DIR/scripts/preflight-eks-backend-image-rollout.sh" "$RECEIPT_PATH" 
 namespace_json="$(kubectl get namespace "$NAMESPACE" -o json)"
 jq -e '.metadata.labels["eks.amazonaws.com/pod-readiness-gate-inject"] == "enabled"' \
   <<<"$namespace_json" >/dev/null || fail "the namespace does not enable ALB Pod readiness gate injection"
-target_group_bindings="$(kubectl get targetgroupbindings -n "$NAMESPACE" -o json)"
-jq -e '
-  [.items[] | select(.spec.serviceRef.name == "fastapi" and .spec.targetType == "ip")] | length == 1
-' <<<"$target_group_bindings" >/dev/null || fail "FastAPI must have exactly one IP TargetGroupBinding for readiness gates"
-unset namespace_json target_group_bindings
+target_group_binding_check="pod_readiness_gate"
+if [[ "$(kubectl auth can-i list targetgroupbindings.eks.amazonaws.com -n "$NAMESPACE")" == "yes" ]]; then
+  target_group_bindings="$(kubectl get targetgroupbindings -n "$NAMESPACE" -o json)"
+  jq -e '
+    [.items[] | select(.spec.serviceRef.name == "fastapi" and .spec.targetType == "ip")] | length == 1
+  ' <<<"$target_group_bindings" >/dev/null || fail "FastAPI must have exactly one IP TargetGroupBinding for readiness gates"
+  target_group_binding_check="live_crd"
+else
+  backend_readiness_pods="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
+  jq -e '
+    (.items | length) == 2
+    and all(.items[];
+      ([.spec.readinessGates[]?.conditionType | select(startswith("target-health."))] | length) >= 1
+      and any(.status.conditions[]?;
+        (.type | startswith("target-health."))
+        and .status == "True"
+      )
+    )
+  ' <<<"$backend_readiness_pods" >/dev/null || fail "FastAPI Pods do not prove the managed ALB readiness-gate contract"
+fi
+unset namespace_json target_group_bindings backend_readiness_pods
 
 receipt_commit="$(jq -r '.gitRevision' "$RECEIPT_PATH")"
 new_backend_image="$(jq -r '.images.backend' "$RECEIPT_PATH")"
 new_backend_digest="${new_backend_image##*@}"
-
-helm get values asklake-web -n "$NAMESPACE" -o json >"$CURRENT_VALUES"
-jq --arg image "$new_backend_image" '.backend.image = $image' "$CURRENT_VALUES" >"$CANDIDATE_VALUES"
-jq -e --slurp '
-  (.[0] | del(.backend.image)) == (.[1] | del(.backend.image))
-  and .[0].backend.image != .[1].backend.image
-' "$CURRENT_VALUES" "$CANDIDATE_VALUES" >/dev/null || fail "rollout values changed more than backend.image"
 
 RELEASE_REVISION_BEFORE="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | select(.name == "asklake-web") | .revision')"
 [[ "$RELEASE_REVISION_BEFORE" =~ ^[0-9]+$ ]] || fail "the current Helm release revision is unavailable"
@@ -109,10 +128,33 @@ RELEASE_REVISION_BEFORE="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | sele
 backend_before="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
 frontend_before="$(kubectl get deployment frontend -n "$NAMESPACE" -o json)"
 old_backend_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | .image' <<<"$backend_before")"
+collector_before=""
+old_collector_image=""
+old_collector_present=false
+if collector_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json 2>/dev/null)"; then
+  old_collector_present=true
+  old_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_before")"
+fi
 frontend_image_before="$(jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image' <<<"$frontend_before")"
 frontend_generation_before="$(jq -r '.metadata.generation' <<<"$frontend_before")"
 frontend_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=frontend -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
 [[ "$old_backend_image" != "$new_backend_image" ]] || fail "the new Backend image is already deployed"
+if [[ "$old_collector_present" == "true" ]]; then
+  [[ "$old_collector_image" == "$old_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
+fi
+
+helm get values asklake-web -n "$NAMESPACE" -o json >"$RAW_VALUES"
+jq \
+  --arg backendImage "$old_backend_image" \
+  --arg frontendImage "$frontend_image_before" '
+    .backend.image = $backendImage
+    | .frontend.image = $frontendImage
+  ' "$RAW_VALUES" >"$CURRENT_VALUES"
+jq --arg image "$new_backend_image" '.backend.image = $image' "$CURRENT_VALUES" >"$CANDIDATE_VALUES"
+jq -e --slurp '
+  (.[0] | del(.backend.image)) == (.[1] | del(.backend.image))
+  and .[0].backend.image != .[1].backend.image
+' "$CURRENT_VALUES" "$CANDIDATE_VALUES" >/dev/null || fail "rollout values changed more than backend.image"
 
 target_secret_before="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json)"
 secret_keys_before="$(jq -c '.data | keys | sort' <<<"$target_secret_before")"
@@ -161,6 +203,7 @@ helm upgrade --install asklake-web "$CHART_DIR" \
   -f "$CANDIDATE_VALUES" --rollback-on-failure --wait --timeout 10m >/dev/null
 
 kubectl rollout status deployment/fastapi -n "$NAMESPACE" --timeout=10m >/dev/null
+kubectl rollout status deployment/trino-result-collector -n "$NAMESPACE" --timeout=10m >/dev/null
 
 steady_deadline=$((SECONDS + 420))
 steady_ready=false
@@ -196,6 +239,18 @@ jq -e --arg image "$new_backend_image" '
   and ([.spec.template.spec.containers[] | select(.name == "fastapi") | .image] == [$image])
 ' <<<"$backend_after" >/dev/null || fail "Backend Deployment did not converge on the new image"
 
+collector_after="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
+jq -e --arg image "$new_backend_image" '
+  (.spec.replicas // 0) == 1
+  and (.status.readyReplicas // 0) == 1
+  and (.status.updatedReplicas // 0) == 1
+  and (.status.availableReplicas // 0) == 1
+  and (.status.unavailableReplicas // 0) == 0
+  and .spec.template.spec.serviceAccountName == "asklake-backend"
+  and .spec.template.spec.automountServiceAccountToken == false
+  and ([.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image] == [$image])
+' <<<"$collector_after" >/dev/null || fail "Trino result collector Deployment did not converge on the new image"
+
 pods_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
 jq -e --arg digest "$new_backend_digest" '
   (.items | length) == 2
@@ -214,6 +269,20 @@ jq -e --arg digest "$new_backend_digest" '
     )
   )
 ' <<<"$pods_after" >/dev/null || fail "Backend Pods do not match the new immutable digest"
+
+collector_pods_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json)"
+jq -e --arg digest "$new_backend_digest" '
+  (.items | length) == 1
+  and all(.items[];
+    .status.phase == "Running"
+    and any(.status.containerStatuses[]?;
+      .name == "trino-result-collector"
+      and .ready == true
+      and .restartCount == 0
+      and (.imageID | endswith($digest))
+    )
+  )
+' <<<"$collector_pods_after" >/dev/null || fail "Trino result collector Pod does not match the new immutable digest"
 
 frontend_after="$(kubectl get deployment frontend -n "$NAMESPACE" -o json)"
 frontend_image_after="$(jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image' <<<"$frontend_after")"
@@ -246,6 +315,11 @@ echo "backend_rollout_values_change=backend_image_only"
 echo "backend_rollout_atomic_upgrade=passed"
 echo "backend_rollout_replicas=2_of_2"
 echo "backend_rollout_pod_digest=verified"
+echo "backend_rollout_collector_replicas=1_of_1"
+echo "backend_rollout_collector_digest=verified"
+echo "backend_rollout_collector_baseline=$([[ "$old_collector_present" == "true" ]] && echo present || echo absent)"
+echo "backend_rollout_release_values_images=normalized_to_live"
+echo "backend_rollout_target_group_binding=$target_group_binding_check"
 echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"
