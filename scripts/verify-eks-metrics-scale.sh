@@ -7,7 +7,15 @@ VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/scale-smoke.test.example.yaml"
 RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED"' EXIT
 
-bash -n "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh" "$ROOT_DIR/scripts/verify-eks-node-scale-in.sh"
+bash -n \
+  "$ROOT_DIR/scripts/run-eks-node-scale-smoke.sh" \
+  "$ROOT_DIR/scripts/verify-eks-node-scale-in.sh" \
+  "$ROOT_DIR/scripts/capture-eks-day17-autoscaling-evidence.sh" \
+  "$ROOT_DIR/scripts/run-eks-day17-isolated-nodepool-smoke.sh" \
+  "$ROOT_DIR/scripts/test-eks-day17-autoscaling-evidence.sh"
+node --check "$ROOT_DIR/scripts/build-eks-day17-autoscaling-snapshot.mjs"
+bash "$ROOT_DIR/scripts/test-eks-day17-autoscaling-evidence.sh" >/dev/null
+bash "$ROOT_DIR/scripts/verify-eks-day17-nodepool-smoke.sh" >/dev/null
 
 helm lint "$CHART_DIR"
 [[ -z "$(helm template asklake-scale-smoke "$CHART_DIR")" ]] || { echo "disabled scale smoke must render nothing" >&2; exit 1; }

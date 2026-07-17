@@ -38,3 +38,4 @@ infra/eks/delivery/*.fixture-receipt.json
 infra/eks/delivery/*.phase5-*.json
 infra/eks/delivery/*.phase6-*.json
 infra/eks/delivery/*.iam-receipt.json
+infra/eks/delivery/*.day17-autoscaling-evidence.json

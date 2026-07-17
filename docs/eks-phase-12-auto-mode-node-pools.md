@@ -6,6 +6,8 @@ Phase 12는 EKS Auto Mode 위에서 일반 서비스와 Spark batch가 같은 �
 
 이 단계의 저장소 결과물은 Terraform의 node IAM/access 계약, Helm의 NodeClass/NodePool manifest, workload selector/toleration 전달 형식과 정적 회귀 검증이다. 2026-07-15 `dev` 환경에는 실제 AWS `apply`와 NodePool 생성, smoke workload 기반 node scale-out/in까지 수행했다. 환경별 runtime 결과는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에서 분리해 관리하므로, 다른 환경에서는 코드 완성을 실제 배포 준비 완료로 간주하지 않는다.
 
+7/17 실제 FastAPI HPA와 동시 Spark workload로 확장·축소를 검증하기 전 Git/live 차이와 공유 환경 경합은 [Pair A autoscaling 기준선](eks-day17-a-autoscaling-baseline.md), placement·용량·disruption 세부 대조는 [NodePool 계약 감사](eks-day17-a-nodepool-contract-audit.md)를 따른다. Day 14 synthetic General scale 증거를 금요일의 전체 workload autoscaling 완료로 확대 해석하지 않는다.
+
 EKS 1.36 Auto Mode의 실제 API는 `expireAfter`와 `terminationGracePeriod`의 합이 21일을 넘는 NodePool을 거부한다. 저장소 fixture는 이 server-side 제약 안에 머물도록 `expireAfter=480h`를 사용하며, 실제 values도 `kubectl --dry-run=server`를 통과해야 한다.
 
 NodeClass의 EC2 `spec.tags`에는 application 태그를 추가하지 않는다. `AmazonEKSComputePolicy`의 Launch Template 생성 조건은 EKS 예약 태그 key만 허용하므로 임의 태그가 있으면 `CreateLaunchTemplateAuthCheckFailed`가 발생한다. General/Spark 구분은 NodePool template label과 Spark taint로 유지한다.
