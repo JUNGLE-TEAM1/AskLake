@@ -528,6 +528,25 @@ def quote_spark_identifier(value):
     return f"`{str(value).replace('`', '``')}`"
 
 
+def spark_iceberg_source_identifier(value):
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    if lowered.startswith("iceberg://"):
+        parts = raw[len("iceberg://"):].split("/")
+    elif lowered.startswith("iceberg:"):
+        parts = raw[len("iceberg:"):].split(".")
+    else:
+        parts = raw.split(".")
+    if len(parts) != 3 or any(not str(part).strip() for part in parts):
+        raise ValueError("ICEBERG_SOURCE_INVALID expected catalog.namespace.table")
+    names = (
+        required_iceberg_identifier(parts[0], "source.catalog"),
+        required_iceberg_identifier(parts[1], "source.namespace"),
+        required_iceberg_identifier(parts[2], "source.table"),
+    )
+    return ".".join(quote_spark_identifier(name) for name in names)
+
+
 def spark_iceberg_table_identifier(target):
     return ".".join(
         quote_spark_identifier(item)
@@ -801,7 +820,7 @@ def cleanup_failed_output_paths(spark, output_path):
     return errors
 
 
-def make_spark(source_collection=None, iceberg_target=None):
+def make_spark(source_collection=None, iceberg_target=None, *, disable_speculation=False):
     change_detection_source = source_change_detection_mode(source_collection)
     builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
@@ -810,6 +829,11 @@ def make_spark(source_collection=None, iceberg_target=None):
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if disable_speculation:
+        # RAG stages perform idempotent-but-external HTTP work per partition.
+        # A speculative duplicate would waste provider calls and can race the
+        # stage callback even though the final writes are job scoped.
+        builder = builder.config("spark.speculation", "false")
     if iceberg_target:
         catalog = spark_iceberg_catalog_name()
         jdbc_url = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_URL")
@@ -895,6 +919,8 @@ def read_source(
     transform_steps=None,
 ):
     source_collection = source_collection or {}
+    if source_format == "iceberg":
+        return spark.table(spark_iceberg_source_identifier(source_path))
     exact_paths = incremental_source_paths(source_path, source_collection)
     if exact_paths == []:
         return empty_source_frame(spark, schema_columns)
@@ -919,8 +945,6 @@ def read_source(
         return (reader.schema(source_schema) if source_schema is not None else reader).json(read_path)
     if source_format == "parquet":
         return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
-    if source_format == "iceberg":
-        return spark.table(source_path)
     if source_format in {"txt", "text"}:
         if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
             return read_whitespace_records(spark, read_path, record_parsing)
