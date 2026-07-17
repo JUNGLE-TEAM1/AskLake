@@ -35,10 +35,6 @@
   white-space: nowrap;
 }
 
-.catalog-semantic-page > .semantic-layer-page {
-  gap: 18px;
-}
-
 .catalog-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 420px);
