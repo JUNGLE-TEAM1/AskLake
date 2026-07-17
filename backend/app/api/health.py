@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Response, status
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import SessionLocal
@@ -52,9 +52,43 @@ def observability_metrics() -> dict[str, object]:
 
 @router.get("/health/ai")
 def ai_health_check(response: Response) -> dict[str, object]:
-    if settings.ai_query_provider != "gateway":
-        return {"ok": True, "status": "disabled", "provider": "direct"}
-    ready = AiGatewayClient().health_check()
+    gateway = AiGatewayClient().health_status()
+    ready = bool(gateway.get("ok"))
+    available_modes = {
+        str(mode)
+        for mode in gateway.get("capabilities", [])
+        if isinstance(mode, str)
+    }
+    opensearch_ready = False
+    if settings.opensearch_base_url:
+        try:
+            opensearch_ready = OpenSearchClient(settings).health()
+        except Exception:
+            opensearch_ready = False
+    definitions = [
+        ("sql", "SQL 생성", ["query_sql"], "AI Gateway + MCP + Semantic RAG"),
+        ("dashboard", "대시보드 생성", ["dashboard_assistant"], "AI Gateway + MCP + action guard"),
+        ("transform", "데이터 가공식", ["etl_transform"], "AI Gateway + ETL SQL validator"),
+        ("rag", "근거 검색", ["embeddings", "classify_dataset", "segment_document", "rag_query_plan", "rag_relevance"], "AI Gateway + OpenSearch + relevance gate"),
+        ("review", "리뷰 분석", ["review_schema", "review_row"], "AI Gateway structured output"),
+    ]
+    capabilities = [
+        {
+            "id": capability_id,
+            "label": label,
+            "route": route,
+            "status": "ready" if ready and all(mode in available_modes for mode in modes) and (capability_id != "rag" or opensearch_ready) else "unavailable",
+        }
+        for capability_id, label, modes, route in definitions
+    ]
+    ml_artifacts = list_catalog_model_artifacts()
+    capabilities.append({
+        "id": "ml",
+        "label": "전통 ML 분류",
+        "route": "검증된 portable model artifact 기반 추론",
+        "status": "ready" if ml_artifacts else "unavailable",
+        "artifactCount": len(ml_artifacts),
+    })
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
     return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}
 

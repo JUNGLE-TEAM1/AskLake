@@ -38,6 +38,8 @@ async def continuous_runtime_sync_loop() -> None:
 def run_scheduled_job_tick() -> None:
     with SessionLocal() as db:
         run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False))
+        RagService(db).reconcile_alias_activations()
+        RagService(db).reconcile_source_changes()
 
 
 async def scheduled_job_tick_loop() -> None:
@@ -48,6 +50,17 @@ async def scheduled_job_tick_loop() -> None:
         except Exception:  # Keep the control plane alive for the next interval.
             logger.exception("Scheduled job tick failed")
         await asyncio.sleep(settings.scheduled_job_tick_interval_seconds)
+
+
+async def review_analysis_worker_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(ReviewAnalysisService.fail_stale_runs)
+            processed = await asyncio.to_thread(ReviewAnalysisService.process_next_queued_run)
+        except Exception:  # A failed queue tick must not stop later persisted runs.
+            logger.exception("Review analysis worker tick failed")
+            processed = False
+        await asyncio.sleep(0 if processed else 2)
 
 
 def initialize_auth_on_startup() -> None:

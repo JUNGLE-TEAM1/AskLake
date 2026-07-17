@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.api.admin import router as admin_router
+from app.api.ai import router as ai_router
 from app.api.airflow_execution import router as airflow_execution_router
 from app.api.auth import router as auth_router
 from app.api.catalog import router as catalog_router
@@ -19,12 +20,15 @@ from app.api.realtime import router as realtime_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
 from app.api.users import router as users_router
+from app.api.rag import router as rag_router
+from app.api.semantic_models import router as semantic_models_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_router)
+api_router.include_router(ai_router)
 api_router.include_router(airflow_execution_router)
 api_router.include_router(etl_router)
 api_router.include_router(catalog_router)
@@ -37,6 +41,8 @@ api_router.include_router(dashboard_live_router)
 api_router.include_router(dashboard_assistant_router)
 api_router.include_router(realtime_router)
 api_router.include_router(integration_router)
-if settings.app_env.strip().lower() in {"local", "development", "dev", "test", "testing"}:
+api_router.include_router(semantic_models_router)
+api_router.include_router(rag_router)
+if settings.is_test_runtime:
     api_router.include_router(harness_router)
     api_router.include_router(demo_hydration_router, prefix="/demo")
