@@ -1,7 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
-import calendar
 import hashlib
 import json
 import os
@@ -10,9 +9,7 @@ import re
 import secrets
 from types import SimpleNamespace
 from typing import Any, Callable
-import unicodedata
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import status
 from sqlalchemy import select
@@ -65,6 +62,66 @@ from app.application.etl_job_queries import (
     EtlJobQueryHooks,
     get_job as hydrate_job_query,
     list_jobs as hydrate_job_list_query,
+)
+from app.application.etl_job_projection import (
+    apply_job_command,
+    continuous_config_from_request,
+    continuous_runtime_from_job,
+    dag_steps_from_command,
+    dataset_sample_rows_from_request,
+    dataset_schema_from_request,
+    dataset_storage_key,
+    fallback_lineage_graph,
+    field_value,
+    format_bytes,
+    format_duration_ms,
+    format_iso_duration,
+    format_rows,
+    initial_dag_steps,
+    initial_job_stats,
+    iso_now,
+    kafka_field_value,
+    lineage_node,
+    make_dataset_id,
+    make_job_id,
+    normalize_column_name,
+    normalize_lineage_id,
+    normalize_optional_text,
+    normalize_string_list,
+    normalize_target_tags,
+    parse_positive_integer,
+    quality_status_label,
+    quality_summary_from_request,
+    run_from_command,
+    source_metrics_from_request,
+    source_unit_label,
+    stable_id,
+    stats_from_runs,
+    target_dataset_description,
+    target_dataset_tags,
+    tuple_rows_to_lists,
+)
+from app.application.etl_record_parsing import (
+    dominant_field_count,
+    infer_record_parsing_type,
+    preview_record_parsing,
+    record_parsing_column_names,
+    record_parsing_timestamp,
+)
+from app.application.etl_schedule import (
+    cron_matches,
+    has_scheduled_execution,
+    has_scheduled_label,
+    job_schedule_kind,
+    next_custom_cron_local,
+    next_scheduled_run_utc_for_schedule,
+    parse_cron_field,
+    schedule_next_run_label,
+    schedule_policy_from_request,
+    schedule_timezone,
+    trino_sql_job_next_run_utc,
+    trino_sql_job_schedule_label,
+    trino_sql_job_schedule_summary,
 )
 from app.application.pipeline_mapping import (
     CreatePipelineMappingContext,
@@ -179,11 +236,8 @@ from app.schemas.etl import (
     KafkaContinuousSession,
     ReviewEntry,
     ReviewPipelineRequest,
-    RecordParsingColumnDraft,
     RecordParsingDraft,
-    RecordParsingInvalidRow,
     RecordParsingPreviewRequest,
-    RecordParsingPreviewResponse,
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
@@ -254,16 +308,6 @@ MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
-DEFAULT_SCHEDULE_TIMEZONE = "Asia/Seoul"
-SCHEDULE_WEEKDAY_VALUES = {
-    "월": 0,
-    "화": 1,
-    "수": 2,
-    "목": 3,
-    "금": 4,
-    "토": 5,
-    "일": 6,
-}
 
 
 def source_connector_defaults() -> SourceConnectorDefaults:
@@ -1344,143 +1388,6 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
-
-
-def preview_record_parsing(request: RecordParsingPreviewRequest) -> RecordParsingPreviewResponse:
-    raw_rows = [
-        (line_number, line.strip())
-        for line_number, line in enumerate(request.raw_lines, start=1)
-        if line.strip()
-    ]
-    if request.record_parsing.delimiter_kind != "whitespace":
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "Only whitespace record parsing is supported.",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if not raw_rows:
-        empty_parsing = request.record_parsing.model_copy(update={"expected_field_count": 0, "columns": []})
-        return RecordParsingPreviewResponse(
-            can_apply=False,
-            columns=[],
-            sample_rows=[],
-            record_parsing=empty_parsing,
-            total_rows=0,
-            valid_rows=0,
-            invalid_rows=[],
-        )
-
-    tokenized_rows = [(line_number, re.split(r"\s+", line), line) for line_number, line in raw_rows]
-    header_tokens: list[str] = []
-    if request.record_parsing.header and tokenized_rows:
-        _, header_tokens, _ = tokenized_rows.pop(0)
-
-    configured_columns = sorted(request.record_parsing.columns, key=lambda column: column.position)
-    expected_field_count = request.record_parsing.expected_field_count
-    if expected_field_count == 0 and configured_columns:
-        expected_field_count = len(configured_columns)
-    if expected_field_count == 0:
-        expected_field_count = dominant_field_count([tokens for _, tokens, _ in tokenized_rows])
-
-    column_names = record_parsing_column_names(header_tokens, configured_columns, expected_field_count)
-    valid_token_rows = [tokens for _, tokens, _ in tokenized_rows if len(tokens) == expected_field_count]
-    invalid_records = [
-        RecordParsingInvalidRow(
-            line_number=line_number,
-            expected_field_count=expected_field_count,
-            actual_field_count=len(tokens),
-            raw_preview=raw_line[:200],
-        )
-        for line_number, tokens, raw_line in tokenized_rows
-        if len(tokens) != expected_field_count
-    ]
-    inferred_types = [
-        infer_record_parsing_type([row[index] for row in valid_token_rows if index < len(row)])
-        for index in range(expected_field_count)
-    ]
-    record_columns = [
-        RecordParsingColumnDraft(
-            position=index,
-            name=column_names[index],
-            inferred_type=(configured_columns[index].inferred_type if index < len(configured_columns) else inferred_types[index]),
-        )
-        for index in range(expected_field_count)
-    ]
-    schema_columns = [
-        SchemaColumnDraft(
-            confidence=90,
-            nullable=False,
-            source_name=column.name,
-            target_name=column.name,
-            type=column.inferred_type,
-        )
-        for column in record_columns
-    ]
-    unique_names = len(set(column_names)) == len(column_names) and all(column_names)
-    normalized = request.record_parsing.model_copy(update={
-        "enabled": True,
-        "expected_field_count": expected_field_count,
-        "columns": record_columns,
-    })
-    return RecordParsingPreviewResponse(
-        can_apply=bool(expected_field_count and tokenized_rows and not invalid_records and unique_names),
-        columns=schema_columns,
-        sample_rows=valid_token_rows[:100],
-        record_parsing=normalized,
-        total_rows=len(tokenized_rows),
-        valid_rows=len(valid_token_rows),
-        invalid_rows=invalid_records[:20],
-    )
-
-
-def dominant_field_count(rows: list[list[str]]) -> int:
-    counts: dict[int, int] = {}
-    for row in rows:
-        counts[len(row)] = counts.get(len(row), 0) + 1
-    if not counts:
-        return 0
-    highest = max(counts.values())
-    winners = [field_count for field_count, count in counts.items() if count == highest]
-    return winners[0] if len(winners) == 1 else 0
-
-
-def record_parsing_column_names(
-    header_tokens: list[str],
-    configured_columns: list[RecordParsingColumnDraft],
-    expected_field_count: int,
-) -> list[str]:
-    names: list[str] = []
-    for index in range(expected_field_count):
-        raw_name = (
-            configured_columns[index].name
-            if index < len(configured_columns)
-            else header_tokens[index] if index < len(header_tokens) else f"field_{index + 1}"
-        )
-        names.append(normalize_column_name(raw_name) or f"field_{index + 1}")
-    return names
-
-
-def infer_record_parsing_type(values: list[str]) -> str:
-    non_empty = [value.strip() for value in values if value.strip()]
-    if not non_empty:
-        return "String"
-    if all(re.fullmatch(r"-?\d+", value) for value in non_empty):
-        return "Integer"
-    if all(re.fullmatch(r"-?\d+(?:\.\d+)?", value) for value in non_empty):
-        return "Float"
-    if all(value.lower() in {"true", "false"} for value in non_empty):
-        return "Boolean"
-    if all(record_parsing_timestamp(value) for value in non_empty):
-        return "Timestamp"
-    return "String"
-
-
-def record_parsing_timestamp(value: str) -> bool:
-    try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return "T" in value or ":" in value
-    except ValueError:
-        return False
 
 
 def review_pipeline(
@@ -7519,16 +7426,6 @@ def apply_update_request(
     )
 
 
-def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
-    schedule = str(schedule_label or "").strip()
-    fallback_label = str(fallback or "").strip()
-    if not schedule or not has_scheduled_label(schedule):
-        return "-"
-    if "1회" in schedule or "예약" in schedule:
-        return fallback_label if fallback_label and fallback_label != "-" else re.sub(r"\s*(예약\s*)?1회 실행\s*$", "", schedule).strip()
-    return fallback_label if fallback_label and fallback_label != "-" else schedule
-
-
 def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
     access = ["조회", "쿼리 실행", "메타데이터", "관리"]
     if access_scope == "private":
@@ -7538,55 +7435,6 @@ def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[s
         {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
         {"access": access, "checked": access_scope == "project", "name": "Project Members"},
     ]
-
-
-def trino_sql_job_schedule_label(request: CreateTrinoSqlJobRequest) -> str:
-    schedule = request.schedule
-    if schedule.mode == "manual":
-        return "스케줄링 건너뛰기"
-    if schedule.mode == "daily":
-        return f"매일 {schedule.time}"
-    return f"매주 {schedule.weekday}요일 {schedule.time}"
-
-
-def trino_sql_job_schedule_summary(request: CreateTrinoSqlJobRequest) -> str:
-    if request.schedule.mode == "manual":
-        return "스케줄링 건너뛰기 · Job 목록에서 직접 실행 · full refresh"
-    return (
-        f"반복 실행 · {trino_sql_job_schedule_label(request)} · "
-        f"{request.schedule.timezone} · {request.schedule.overlap_policy} · full refresh"
-    )
-
-
-def trino_sql_job_next_run_utc(request: CreateTrinoSqlJobRequest) -> str | None:
-    schedule = request.schedule
-    if schedule.mode == "manual":
-        return None
-    try:
-        hour_text, minute_text = schedule.time.split(":", maxsplit=1)
-        hour = int(hour_text)
-        minute = int(minute_text)
-        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
-            raise ValueError
-        timezone = ZoneInfo(schedule.timezone)
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "SQL Job schedule time or timezone is invalid",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        ) from exc
-
-    now = datetime.now(timezone)
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if schedule.mode == "daily":
-        if candidate <= now:
-            candidate += timedelta(days=1)
-    else:
-        weekdays = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
-        candidate += timedelta(days=(weekdays[schedule.weekday] - candidate.weekday()) % 7)
-        if candidate <= now:
-            candidate += timedelta(days=7)
-    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def trino_sql_job_run_as_actor(db: Session, job: ETLJobModel) -> ActorContext:
@@ -7645,218 +7493,6 @@ def trino_query_run_belongs_to_actor(payload: dict[str, Any], actor: ActorContex
         (actor.id and submitted_user_id and actor.id == submitted_user_id)
         or (actor.name and submitted_name and actor.name == submitted_name)
     )
-
-
-def has_scheduled_label(schedule_label: str | None) -> bool:
-    schedule = str(schedule_label or "").strip().lower()
-    if not schedule or schedule == "-":
-        return False
-    return not any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"])
-
-
-def job_schedule_kind(schedule_label: str | None) -> JobScheduleKind:
-    schedule = str(schedule_label or "").strip().lower()
-    if not schedule or schedule == "-" or any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"]):
-        return "none"
-    if any(token in schedule for token in ["실시간", "realtime", "real-time", "stream", "kafka"]):
-        return "realtime"
-    if any(token in schedule for token in ["매일", "daily"]):
-        return "daily"
-    if any(token in schedule for token in ["매주", "weekly"]):
-        return "weekly"
-    if any(token in schedule for token in ["매월", "monthly"]):
-        return "monthly"
-    return "other"
-
-
-def schedule_timezone(timezone_name: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(str(timezone_name or DEFAULT_SCHEDULE_TIMEZONE))
-    except (KeyError, ValueError, ZoneInfoNotFoundError):
-        return ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)
-
-
-def parse_cron_field(expression: str, minimum: int, maximum: int) -> tuple[set[int], bool] | None:
-    values: set[int] = set()
-    is_wildcard = all(part.strip().split("/", 1)[0] == "*" for part in expression.split(","))
-    for part in expression.split(","):
-        token = part.strip()
-        if not token:
-            return None
-        base, separator, step_text = token.partition("/")
-        try:
-            step = int(step_text) if separator else 1
-        except ValueError:
-            return None
-        if step < 1:
-            return None
-        if base == "*":
-            start, end = minimum, maximum
-        elif "-" in base:
-            start_text, end_text = base.split("-", 1)
-            try:
-                start, end = int(start_text), int(end_text)
-            except ValueError:
-                return None
-        else:
-            try:
-                start = end = int(base)
-            except ValueError:
-                return None
-        if start < minimum or end > maximum or start > end:
-            return None
-        values.update(range(start, end + 1, step))
-    return values, is_wildcard
-
-
-def cron_matches(local_time: datetime, fields: list[str]) -> bool:
-    ranges = [
-        parse_cron_field(fields[0], 0, 59),
-        parse_cron_field(fields[1], 0, 23),
-        parse_cron_field(fields[2], 1, 31),
-        parse_cron_field(fields[3], 1, 12),
-        parse_cron_field(fields[4], 0, 7),
-    ]
-    if any(value is None for value in ranges):
-        return False
-    minute, hour, day_of_month, month, day_of_week = ranges
-    assert minute is not None and hour is not None and day_of_month is not None and month is not None and day_of_week is not None
-    weekday_value = (local_time.weekday() + 1) % 7
-    weekday_values = day_of_week[0]
-    month_matches = local_time.month in month[0]
-    day_matches = local_time.day in day_of_month[0]
-    weekday_matches = weekday_value in weekday_values or (weekday_value == 0 and 7 in weekday_values)
-    day_matches = (
-        day_matches and weekday_matches
-        if not day_of_month[1] and not day_of_week[1]
-        else day_matches if day_of_week[1]
-        else weekday_matches if day_of_month[1]
-        else day_matches or weekday_matches
-    )
-    return local_time.minute in minute[0] and local_time.hour in hour[0] and month_matches and day_matches
-
-
-def next_custom_cron_local(expression: str, start: datetime) -> datetime | None:
-    fields = expression.split()
-    if len(fields) != 5:
-        return None
-    candidate = start.replace(second=0, microsecond=0)
-    if candidate <= start:
-        candidate += timedelta(minutes=1)
-    for _ in range(366 * 24 * 60 * 2):
-        if cron_matches(candidate, fields):
-            return candidate
-        candidate += timedelta(minutes=1)
-    return None
-
-
-def next_scheduled_run_utc_for_schedule(
-    schedule: str | None,
-    timezone_name: str | None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    now: datetime | None = None,
-) -> str:
-    label = str(schedule or "").strip()
-    if not has_scheduled_label(label):
-        return ""
-    timezone = schedule_timezone(timezone_name)
-    now_utc = now.astimezone(UTC) if now is not None else datetime.now(UTC)
-    local_now = now_utc.astimezone(timezone)
-    earliest = local_now.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    try:
-        start_boundary = datetime.strptime(str(start_date), "%Y-%m-%d").date() if start_date else None
-        end_boundary = datetime.strptime(str(end_date), "%Y-%m-%d").date() if end_date else None
-    except ValueError:
-        start_boundary = end_boundary = None
-    if start_boundary and earliest.date() < start_boundary:
-        earliest = datetime.combine(start_boundary, datetime.min.time(), timezone=timezone)
-
-    candidate: datetime | None = None
-    hourly_match = re.match(r"^매시간\s+(\d{1,2})분$", label)
-    daily_match = re.match(r"^매일\s+(\d{1,2}):(\d{2})$", label)
-    weekly_match = re.match(r"^매주\s+([월화수목금토일])요일\s+(\d{1,2}):(\d{2})$", label)
-    monthly_match = re.match(r"^매월\s+(\d{1,2})일\s+(\d{1,2}):(\d{2})$", label)
-    custom_match = re.match(r"^커스텀:\s*(.+)$", label)
-
-    if hourly_match:
-        minute = min(59, int(hourly_match.group(1)))
-        candidate = earliest.replace(minute=minute, second=0, microsecond=0)
-        while candidate < earliest:
-            candidate += timedelta(hours=1)
-    elif daily_match:
-        hour = min(23, int(daily_match.group(1)))
-        minute = min(59, int(daily_match.group(2)))
-        candidate = earliest.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate < earliest:
-            candidate += timedelta(days=1)
-    elif weekly_match:
-        weekday = SCHEDULE_WEEKDAY_VALUES[weekly_match.group(1)]
-        hour = min(23, int(weekly_match.group(2)))
-        minute = min(59, int(weekly_match.group(3)))
-        days_ahead = (weekday - earliest.weekday()) % 7
-        candidate = (earliest + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate < earliest:
-            candidate += timedelta(days=7)
-    elif monthly_match:
-        day = min(31, int(monthly_match.group(1)))
-        hour = min(23, int(monthly_match.group(2)))
-        minute = min(59, int(monthly_match.group(3)))
-        year, month = earliest.year, earliest.month
-        for _ in range(24):
-            if day <= calendar.monthrange(year, month)[1]:
-                candidate = earliest.replace(year=year, month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0)
-                if candidate >= earliest:
-                    break
-            month += 1
-            if month > 12:
-                year, month = year + 1, 1
-    elif custom_match:
-        candidate = next_custom_cron_local(custom_match.group(1).strip(), earliest)
-
-    if candidate is None or (end_boundary and candidate.date() > end_boundary):
-        return ""
-    return candidate.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-def schedule_policy_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> dict[str, Any]:
-    watermark_policy = request.watermark_policy
-    if hasattr(watermark_policy, "model_dump"):
-        watermark_policy = watermark_policy.model_dump(mode="json", by_alias=True)
-    next_run_utc = str(request.next_run_utc or "").strip()
-    if has_scheduled_label(request.schedule_label):
-        try:
-            requested_next_run = datetime.fromisoformat(next_run_utc.replace("Z", "+00:00")) if next_run_utc else None
-            if requested_next_run is not None and requested_next_run.tzinfo is None:
-                requested_next_run = requested_next_run.replace(tzinfo=UTC)
-            if requested_next_run is None or requested_next_run <= datetime.now(UTC):
-                next_run_utc = next_scheduled_run_utc_for_schedule(
-                    request.schedule_label,
-                    request.timezone,
-                    request.start_date,
-                    request.end_date,
-                )
-        except (TypeError, ValueError):
-            next_run_utc = next_scheduled_run_utc_for_schedule(
-                request.schedule_label,
-                request.timezone,
-                request.start_date,
-                request.end_date,
-            )
-    else:
-        next_run_utc = ""
-    return {
-        "endDate": request.end_date,
-        "nextRunUtc": next_run_utc,
-        "overlapPolicy": request.overlap_policy or ("skip_if_running" if has_scheduled_label(request.schedule_label) else None),
-        "startDate": request.start_date,
-        "timezone": request.timezone,
-        "watermarkPolicy": watermark_policy,
-    }
-
-
-def has_scheduled_execution(job: ETLJobModel) -> bool:
-    return job.status != "stopped" and has_scheduled_label(job.schedule)
 
 
 def should_run_scheduled_job(job: ETLJobModel, request: ScheduledJobRunRequest) -> tuple[bool, str]:
@@ -7938,452 +7574,3 @@ def ensure_scheduled_job_next_run(db: Session, job: ETLJobModel) -> None:
     job.schedule_policy = {**policy, "nextRunUtc": next_run_utc}
     job.next_run = next_run_utc
     etl_repository.save_job(db, job)
-
-
-def apply_job_command(job: ETLJobModel, command: str) -> None:
-    if command in {"run", "retry"}:
-        now = iso_now()
-        job.last_run = now
-        job.last_state = "Spark 재실행 중" if command == "retry" else "Spark 실행 중"
-        job.next_run = "-"
-        job.progress = {"label": "Spark ETL 실행 중", "value": 66}
-        job.status = "running"
-        return
-    if command == "pause":
-        job.last_run = iso_now()
-        job.last_state = "사용자 일시정지"
-        job.next_run = "재개 대기"
-        job.progress = job.progress or {"label": "일시정지됨", "value": 50}
-        job.status = "paused"
-        return
-    if command == "stopSchedule":
-        if job.status == "running" and job_schedule_kind(job.schedule) == "realtime":
-            job.last_run = iso_now()
-        job.last_state = "실시간 수집 중지" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 일시중지"
-        job.next_run = "-"
-        job.progress = None
-        job.status = "stopped"
-        return
-    if command == "resumeSchedule":
-        policy_next_run = (job.schedule_policy or {}).get("nextRunUtc")
-        job.last_state = "실시간 수집 재개됨" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 재개됨"
-        job.next_run = schedule_next_run_label(job.schedule, policy_next_run)
-        job.progress = None
-        job.status = "scheduled"
-        return
-
-    job.last_run = iso_now()
-    job.last_state = "취소됨"
-    job.next_run = schedule_next_run_label(job.schedule, job.next_run)
-    job.progress = None
-    job.status = "scheduled"
-
-
-def run_from_command(job: ETLJobModel, command: str) -> ETLRunModel:
-    now = iso_now()
-    run_id = stable_id("run", f"{job.id}:{command}:{now}")
-    input_rows = job.stats.get("inputRows") or job.stats.get("input_rows") or "0"
-    if command in {"cancelRun", "stopSchedule"}:
-        realtime_stop = command == "stopSchedule"
-        return ETLRunModel(
-            run_id=run_id,
-            job_id=job.id,
-            status="canceled",
-            started_at=now,
-            ended_at=now,
-            duration="수집 중지" if realtime_stop else "-",
-            input_rows=input_rows,
-            output_rows="0",
-            output_path=None,
-            failed_stage="실시간 수집 중지" if realtime_stop else "실행 취소",
-            error_summary="사용자 요청으로 실시간 수집 중지" if realtime_stop else "사용자 취소",
-        )
-    return ETLRunModel(
-        run_id=run_id,
-        job_id=job.id,
-        status="running",
-        started_at=now,
-        ended_at="-",
-        duration="실행 중",
-        input_rows=input_rows,
-        output_rows="0",
-        output_path="-",
-        failed_stage="-",
-        error_summary="-",
-    )
-
-
-def source_metrics_from_request(request: CreatePipelineRequest, schema: list[tuple[str, str]], sample_rows: list[list[str]]) -> dict[str, Any]:
-    sample_rows_count = len(sample_rows)
-    schema_columns = len(schema)
-    row_limit = parse_positive_integer(field_value(request.source_config, "__Sample Row Limit"))
-    requested_bytes = parse_positive_integer(field_value(request.source_config, "__Sample Requested Bytes"))
-    source_units = parse_positive_integer(field_value(request.source_config, "__Source Unit Count"))
-    sample_scope = field_value(request.source_config, "__Schema Sample Scope Label") or "현재 샘플"
-    unit_label = source_unit_label(request.source_type)
-    row_label = "문서" if request.source_type == "MongoDB" else "행"
-    dataset_rows = (
-        f"샘플 {sample_rows_count:,}{row_label}"
-        if sample_rows_count > 0
-        else f"{source_units:,}개 {unit_label} 감지"
-        if source_units > 0
-        else "샘플 없음"
-    )
-    dataset_size = (
-        format_bytes(requested_bytes)
-        if requested_bytes > 0
-        else f"최대 {row_limit:,}{row_label} 샘플"
-        if row_limit > 0
-        else f"{source_units:,}개 {unit_label}"
-        if source_units > 0
-        else "확인 대기"
-    )
-    return {
-        "dataset_rows": dataset_rows,
-        "dataset_size": dataset_size,
-        "row_label": row_label,
-        "sample_rows": sample_rows_count,
-        "sample_scope": sample_scope,
-        "schema_columns": schema_columns,
-        "source_units": source_units,
-        "unit_label": unit_label,
-    }
-
-
-def initial_job_stats(metrics: dict[str, Any]) -> dict[str, str]:
-    return {
-        "averageDuration": "-",
-        "currentStage": "생성 완료 · 실행 전",
-        "inputRows": f"{metrics['sample_rows']:,} 샘플 {metrics['row_label']}" if metrics["sample_rows"] > 0 else "-",
-        "lastSuccess": "-",
-        "outputRows": "0",
-        "sampleScope": metrics["sample_scope"],
-        "schemaColumns": f"{metrics['schema_columns']:,}개",
-        "sourceUnits": f"{metrics['source_units']:,}개 {metrics['unit_label']}" if metrics["source_units"] > 0 else "-",
-        "successRate": "-",
-        "totalRuns": "0회",
-    }
-
-
-def initial_dag_steps(request: CreatePipelineRequest, metrics: dict[str, Any]) -> list[dict[str, str]]:
-    return [
-        {"id": "source", "meta": f"{request.source_type} / {request.source_label}", "status": "success", "title": "1. 소스 연결"},
-        {"id": "schema", "meta": f"{metrics['schema_columns']:,}개 컬럼 · {metrics['sample_scope']}", "status": "success" if metrics["schema_columns"] > 0 else "pending", "title": "2. 스키마 추론"},
-        {"id": "create", "meta": request.target_dataset, "status": "success", "title": "3. Job 생성"},
-        {"id": "transform", "meta": f"{len(request.transform_steps)}개 규칙", "status": "pending", "title": "4. 처리 규칙 대기"},
-        {"id": "quality", "meta": f"{len(request.quality_rules)}개 검사", "status": "pending", "title": "5. 품질 검증 대기"},
-        {"id": "run", "meta": "아직 실행되지 않음", "status": "pending", "title": "6. 실행 대기"},
-    ]
-
-
-def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, str]]:
-    if command in {"cancelRun", "stopSchedule"}:
-        return [
-            {"id": "source", "meta": job.source, "status": "blocked", "title": "1. 소스 연결"},
-            {"id": "schema", "meta": job.stats.get("schemaColumns", "-"), "status": "blocked", "title": "2. 스키마 확인"},
-            {"id": "read", "meta": run.get("inputRows", "0"), "status": "blocked", "title": "3. 소스 읽기"},
-            {"id": "transform", "meta": f"{len(job.transform_steps)}개 규칙", "status": "blocked", "title": "4. 처리 규칙"},
-            {"id": "quality", "meta": f"{len(job.quality_rules)}개 검사", "status": "pending", "title": "5. 품질 검증"},
-            {"id": "target", "meta": job.target, "status": "pending", "title": "6. Lake 적재"},
-        ]
-    return [
-        {"id": "source", "meta": job.source, "status": "success", "title": "1. 소스 연결"},
-        {"id": "schema", "meta": job.stats.get("schemaColumns", "-"), "status": "success", "title": "2. 스키마 확인"},
-        {"id": "read", "meta": run.get("inputRows", "0"), "status": "running", "title": "3. Spark 소스 읽기"},
-        {"id": "transform", "meta": f"{len(job.transform_steps)}개 규칙", "status": "pending", "title": "4. 처리 규칙 적용"},
-        {"id": "quality", "meta": f"{len(job.quality_rules)}개 검사", "status": "pending", "title": "5. 품질 검증"},
-        {"id": "write", "meta": run.get("outputPath", "-"), "status": "pending", "title": "6. Parquet 적재"},
-        {"id": "catalog", "meta": job.target, "status": "pending", "title": "7. 카탈로그 데이터셋 갱신"},
-    ]
-
-
-def stats_from_runs(job: ETLJobModel, runs: list[Any]) -> dict[str, Any]:
-    total_runs = len(runs)
-    success_runs = len([run for run in runs if run.status == "success"])
-    latest_run = runs[0] if runs else None
-    return {
-        **(job.stats or {}),
-        "averageDuration": latest_run.duration if latest_run else "-",
-        "currentStage": job.last_state,
-        "lastSuccess": next((run.ended_at for run in runs if run.status == "success"), "-"),
-        "outputPath": latest_run.output_path if latest_run else job.stats.get("outputPath", "-"),
-        "outputRows": latest_run.output_rows if latest_run else job.stats.get("outputRows", "0"),
-        "successRate": f"{round((success_runs / total_runs) * 100)}%" if total_runs else "-",
-        "totalRuns": f"{total_runs:,}회",
-    }
-
-
-def dataset_schema_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> list[tuple[str, str]]:
-    if request.transform_output_columns:
-        return [(name, type_ or "string") for name, type_ in request.transform_output_columns if name]
-    return [
-        (column.target_name, (column.type or "string").lower())
-        for column in request.schema_columns
-        if column.included and column.target_name.strip()
-    ]
-
-
-def dataset_sample_rows_from_request(request: CreatePipelineRequest, schema: list[tuple[str, str]]) -> list[list[str]]:
-    if not request.schema_sample_rows:
-        return []
-    columns = [(column, index) for index, column in enumerate(request.schema_columns) if column.included and column.target_name.strip()]
-    source_index_by_output_name = {
-        name: index
-        for column, index in columns
-        for name in [column.target_name, column.source_name]
-        if name
-    }
-    if not columns:
-        return [[str(row[index] if index < len(row) else "-") for index, _ in enumerate(schema)] for row in request.schema_sample_rows]
-    return [
-        [str(row[source_index_by_output_name[name]] if name in source_index_by_output_name and source_index_by_output_name[name] < len(row) else "") for name, _ in schema]
-        for row in request.schema_sample_rows
-    ]
-
-
-def quality_summary_from_request(request: CreatePipelineRequest) -> str:
-    if request.quality_score is not None:
-        return f"품질 점수 {request.quality_score:.1f}% · 상태 {quality_status_label(request.quality_status)}"
-    return request.rule_summary or "확인 대기"
-
-
-def quality_status_label(status_value: str | None) -> str:
-    return {"pass": "통과", "warn": "주의", "fail": "실패"}.get(str(status_value or "checked").lower(), "확인됨")
-
-
-def field_value(fields: list[tuple[str, str]], label: str) -> str:
-    for field_label, value in fields:
-        if field_label == label:
-            return str(value).strip()
-    return ""
-
-
-def kafka_field_value(fields: list[tuple[str, str]], *labels: str) -> str:
-    for label in labels:
-        value = field_value(fields, label)
-        if value:
-            return value
-    return ""
-
-
-def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) -> dict[str, Any] | None:
-    if request.execution_mode != "continuous":
-        return None
-    config = request.continuous_config
-    base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
-    return {
-        "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
-        "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
-        "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
-        "schemaEvolutionPolicy": config.schema_evolution_policy.model_dump(mode="json", by_alias=True) if config else {
-            "additiveNullable": "allow",
-            "missingRequired": "quarantine",
-            "incompatibleType": "quarantine",
-            "unknownField": "preserve",
-        },
-        "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
-    }
-
-
-def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:
-    fields = job.source_config or []
-    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092"
-    topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
-    consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
-    config = job.continuous_config or {}
-    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
-    return KafkaContinuousRuntimeModel(
-        job_id=job.id,
-        broker=broker,
-        topic=topic,
-        consumer_group_id=consumer_group_id,
-        target_identity=str(job.storage_path or job.target_path or job.target),
-        checkpoint_path=checkpoint_path,
-        status="stopped",
-        metrics=record_runtime_observation(
-            {},
-            "stopped",
-            default_public_status="stopped",
-        ),
-    )
-
-
-def source_unit_label(source_type: str) -> str:
-    if source_type == "MongoDB":
-        return "컬렉션"
-    if source_type == "PostgreSQL":
-        return "테이블"
-    if source_type in ("Stream / Kafka", "Kafka JSON"):
-        return "파티션"
-    return "오브젝트"
-
-
-def make_job_id(value: str) -> str:
-    return f"JOB-{stable_id('job', f'{value}:{iso_now()}')[-8:].upper()}"
-
-
-def make_dataset_id(value: str) -> str:
-    display_name = unicodedata.normalize("NFC", value.strip())
-    slug = normalize_column_name(display_name)
-    if display_name == slug and re.fullmatch(r"[a-z0-9_]+", display_name):
-        return f"ds_{slug}"
-    digest = hashlib.sha1(display_name.encode("utf-8")).hexdigest()[:12]
-    return f"ds_{slug}_{digest}"
-
-
-def dataset_storage_key(value: str) -> str:
-    return make_dataset_id(value).removeprefix("ds_")
-
-
-def stable_id(prefix: str, value: str) -> str:
-    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
-    return f"{prefix}_{digest}"
-
-
-def normalize_column_name(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip().lower())
-    normalized = re.sub(r"_+", "_", normalized).strip("_")
-    return normalized or "dataset"
-
-
-def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
-    current_node = lineage_node(dataset.id, dataset.name, dataset.layer, dataset.schema_json or [], "ICEBERG")
-    upstream_nodes = [
-        lineage_node(
-            normalize_lineage_id(f"{dataset.id}-{item}"),
-            item,
-            "SOURCE" if index == 0 else "BRONZE",
-            dataset.schema_json or [],
-            "SOURCE" if index == 0 else "ICEBERG",
-        )
-        for index, item in enumerate(dataset.upstream or [])
-    ]
-    edges = []
-    for upstream_node in upstream_nodes:
-        for source_column, target_column in zip(upstream_node["columns"], current_node["columns"], strict=False):
-            edges.append({
-                "fromColumnId": source_column["id"],
-                "fromDatasetId": upstream_node["id"],
-                "toColumnId": target_column["id"],
-                "toDatasetId": current_node["id"],
-            })
-    return {
-        "datasetId": dataset.id,
-        "datasets": [*upstream_nodes, current_node],
-        "edges": edges,
-    }
-
-
-def lineage_node(dataset_id: str, name: str, layer: str, schema: list[list[str]], engine: str) -> dict[str, Any]:
-    return {
-        "columns": [
-            {
-                "id": normalize_lineage_id(f"{dataset_id}-{column_name}"),
-                "name": str(column_name),
-                "type": str(column_type or "string"),
-            }
-            for column_name, column_type in schema
-            if column_name
-        ],
-        "engine": engine,
-        "id": dataset_id,
-        "layer": layer,
-        "name": name,
-    }
-
-
-def normalize_lineage_id(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower())
-    return normalized.strip("-") or "lineage"
-
-
-def tuple_rows_to_lists(rows: list[tuple[str, str]]) -> list[list[str]]:
-    return [[str(key), str(value)] for key, value in rows]
-
-
-def normalize_string_list(values: list[str] | None) -> list[str]:
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for value in values or []:
-        item = str(value).strip()
-        if not item or item in seen:
-            continue
-        seen.add(item)
-        normalized.append(item)
-    return normalized
-
-
-def normalize_target_tags(values: list[str] | None) -> list[str]:
-    normalized = []
-    for value in normalize_string_list(values):
-        normalized.append(value if value.startswith("#") else f"#{value}")
-    return normalized
-
-
-def normalize_optional_text(value: str | None) -> str | None:
-    text = str(value).strip() if value is not None else ""
-    return text or None
-
-
-def target_dataset_description(job: ETLJobModel) -> str:
-    return (
-        normalize_optional_text(job.target_description)
-        or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋"
-    )
-
-
-def target_dataset_tags(job: ETLJobModel) -> list[str]:
-    return normalize_target_tags(job.target_tags) or ["#생성", f"#{str(job.target_layer).lower()}"]
-
-
-def parse_positive_integer(value: str) -> int:
-    try:
-        parsed = int(float(value))
-    except (TypeError, ValueError):
-        return 0
-    return parsed if parsed > 0 else 0
-
-
-def format_bytes(value: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    size = float(value)
-    unit = 0
-    while size >= 1024 and unit < len(units) - 1:
-        size /= 1024
-        unit += 1
-    return f"{size:.1f} {units[unit]}" if unit > 0 else f"{int(size)} {units[unit]}"
-
-
-def format_rows(value: Any) -> str:
-    try:
-        parsed = int(float(value))
-    except (TypeError, ValueError):
-        return str(value or "0")
-    return f"{parsed:,}\ud589"
-
-
-def format_duration_ms(value: Any) -> str:
-    try:
-        ms = int(float(value))
-    except (TypeError, ValueError):
-        return "-"
-    if ms < 1000:
-        return f"{ms}ms"
-    seconds = round(ms / 1000)
-    if seconds < 60:
-        return f"{seconds}\ucd08"
-    minutes, rest = divmod(seconds, 60)
-    return f"{minutes}\ubd84 {rest}\ucd08"
-
-
-def format_iso_duration(started_at: str, ended_at: str) -> str:
-    try:
-        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-        end = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
-    except ValueError:
-        return "-"
-    return format_duration_ms(max(0, int((end - start).total_seconds() * 1000)))
-
-
-def iso_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
