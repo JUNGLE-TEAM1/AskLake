@@ -91,6 +91,7 @@
     "verify:kafka-target-projection": "node scripts/verify-kafka-target-projection.mjs",
     "verify:kafka-continuous-contract": "node scripts/run-python-verification.mjs scripts/verify-kafka-continuous-contract.py",
     "verify:continuous-sql-contract": "node scripts/run-python-verification.mjs scripts/verify-continuous-sql-contract.py",
+    "verify:clickhouse-kafka-join": "node scripts/run-python-verification.mjs scripts/verify-clickhouse-kafka-join.py",
     "verify:realtime-quality-gates": "node scripts/run-python-verification.mjs scripts/verify-realtime-quality-gates.py",
     "verify:realtime-stack": "node scripts/run-python-verification.mjs scripts/verify-realtime-stack.py",
     "verify:realtime-postgres": "node scripts/run-python-verification.mjs scripts/verify-realtime-postgres.py",

@@ -66,6 +66,14 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 DASHBOARD_SYNC_MODE=polling
 REALTIME_EVENTS_ENABLED=false
 CONTINUOUS_SQL_JOIN_ENABLED=false
+CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false
+CLICKHOUSE_URL=http://clickhouse:8123
+CLICKHOUSE_USER=asklake
+CLICKHOUSE_PASSWORD=<server-only secret>
+CLICKHOUSE_DATABASE=asklake
+CLICKHOUSE_QUERY_TIMEOUT_SECONDS=15
+CLICKHOUSE_STATIC_LOAD_MAX_ROWS=1000000
+CLICKHOUSE_INSERT_BATCH_ROWS=5000
 LATEST_STATIC_PER_BATCH_ENABLED=false
 STATIC_CHANGE_BACKFILL_ENABLED=false
 CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS=100000
@@ -92,6 +100,9 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
+- `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Continuous SQL 중 `servingMode=clickhouse` 요청만 허용하는 추가 opt-in이다. 상위 Continuous SQL flag가 꺼지면 effective false이며, 운영에서는 Trino와 Compose `clickhouse` profile이 함께 켜져야 한다.
+- `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`: backend가 private ClickHouse HTTP endpoint를 호출할 때 쓰는 서버 전용 연결값이다. password는 frontend와 API 응답에 노출하지 않는다.
+- `CLICKHOUSE_QUERY_TIMEOUT_SECONDS`, `CLICKHOUSE_STATIC_LOAD_MAX_ROWS`, `CLICKHOUSE_INSERT_BATCH_ROWS`: Dashboard 질의 timeout, 시작 시 S3/Iceberg 정적 snapshot 적재 상한, 적재 batch 크기다.
 - `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
 - `CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS`: Catalog row 통계가 이 값 이하인 static relation만 broadcast 후보가 된다. 통계가 없으면 broadcast하지 않는다.
 - `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`: Catalog row 통계가 이 값 이하인 static snapshot만 worker memory/disk cache 후보가 된다. 기본값은 5,000,000이고, 통계가 없거나 값이 0이면 cache하지 않는다.
@@ -145,6 +156,7 @@ FastAPI schema 구현 기준:
   "dashboardSyncMode": "polling",
   "realtimeEventsEnabled": false,
   "continuousSqlJoinEnabled": false,
+  "clickhouseContinuousJoinEnabled": false,
   "latestStaticPerBatchEnabled": false,
   "staticChangeBackfillEnabled": false,
   "featureScope": "deployment",
@@ -182,7 +194,12 @@ Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 s
 | POST | `/api/query/continuous-jobs/{jobId}/commands` | `start|pause|resume|stop|recover`, `commandId` 필수 |
 | GET | `/api/query/continuous-jobs/{jobId}/batches?limit=100` | generation/batch 내림차순 publication lineage |
 
-validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, optional `checkpointPath`, `clientRequestId`와 append-only Iceberg `output`을 추가한다. plan relation의 `cacheHint`는 서버가 Catalog 통계와 안전 한도로 계산한 실행 hint이며 client가 임의로 지정하는 입력이 아니다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
+validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
+
+- 기본 `servingMode=iceberg`: 기존처럼 `storagePath`, append `icebergTarget`, optional `checkpointPath`를 사용한다.
+- opt-in `servingMode=clickhouse`: `clickhouseTarget: { engine: "clickhouse", database, table }`만 사용한다. `storagePath`, `icebergTarget`, `checkpointPath`를 함께 보내면 `422`다. 정적 S3/Iceberg relation은 Job 시작 때 Trino로 한 번 읽어 ClickHouse local static table에 고정하고, Kafka row는 ClickHouse Kafka Engine과 materialized view가 raw table과 JOIN output table에 연속 반영한다. 이 mode는 `PINNED_AT_START`만 지원한다.
+
+Job 응답은 `servingMode`와 mode별 `outputTarget`을 반환한다. ClickHouse 결과 Dataset은 Catalog에 `storageFormat=clickhouse`와 `clickhouseTable`을 기록하며 Dataset row와 Dashboard widget API는 output table을 `FINAL`로 읽는다. 일반 Trino SQL mapping은 만들지 않는다. plan relation의 `cacheHint`는 서버가 Catalog 통계와 안전 한도로 계산한 실행 hint이며 client가 임의로 지정하는 입력이 아니다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 

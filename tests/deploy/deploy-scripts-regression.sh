@@ -143,6 +143,21 @@ write_valid_trino_aws_env() {
   } >> "$target"
 }
 
+write_valid_clickhouse_trino_aws_env() {
+  local target="$1"
+  write_valid_trino_aws_env "$target"
+  replace_env_value "$target" COMPOSE_PROFILES 'trino,clickhouse'
+  {
+    printf '%s\n' \
+      'CONTINUOUS_SQL_JOIN_ENABLED=true' \
+      'CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true' \
+      'CLICKHOUSE_URL=http://clickhouse:8123' \
+      'CLICKHOUSE_USER=asklake' \
+      'CLICKHOUSE_PASSWORD=ClickHousePassword_123' \
+      'CLICKHOUSE_DATABASE=asklake'
+  } >> "$target"
+}
+
 replace_env_value() {
   local target="$1"
   local key="$2"
@@ -211,7 +226,9 @@ printf '%s\n' 'asklake-api:test' 'asklake-materializer:test' > "$TRINO_PASSWORD_
 write_valid_env "$ENV_FILE"
 expect_preflight_pass 'valid production environment passes'
 
-if python3 "$ROOT_DIR/backend/scripts/verify-spark-runtime-paths.py" >/dev/null; then
+if ! python3 -c 'import os; raise SystemExit(0 if hasattr(os, "geteuid") else 1)'; then
+  record_skip 'Spark runtime paths survive restart repair without data loss' 'requires a POSIX Python runtime'
+elif python3 "$ROOT_DIR/backend/scripts/verify-spark-runtime-paths.py" >/dev/null; then
   record_pass 'Spark runtime paths survive restart repair without data loss'
 else
   record_fail 'Spark runtime paths survive restart repair without data loss'
@@ -235,6 +252,35 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
 else
   record_fail 'Trino-enabled production Compose passes strict preflight (unexpected failure)'
 fi
+
+write_valid_clickhouse_trino_aws_env "$ENV_FILE"
+if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
+  record_pass 'ClickHouse-enabled production Compose passes strict preflight'
+else
+  record_fail 'ClickHouse-enabled production Compose passes strict preflight (unexpected failure)'
+fi
+
+write_valid_clickhouse_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino'
+expect_preflight_failure \
+  'ClickHouse-enabled deployment requires its Compose profile' \
+  'COMPOSE_PROFILES must include clickhouse' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_PASSWORD 'replace-with-clickhouse-password'
+expect_preflight_failure \
+  'ClickHouse-enabled deployment rejects a placeholder password' \
+  'CLICKHOUSE_PASSWORD must be set to a non-placeholder value' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino,clickhouse'
+printf '%s\n' 'CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false' >> "$ENV_FILE"
+expect_preflight_failure \
+  'ClickHouse-disabled deployment rejects a stale ClickHouse Compose profile' \
+  'COMPOSE_PROFILES must not include clickhouse' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_trino_aws_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" COMPOSE_PROFILES ''
@@ -366,6 +412,36 @@ if output="$(mock_trino_deploy_control true 2>&1)" \
   record_pass 'deploy control bootstraps and strictly verifies Trino when enabled'
 else
   record_fail 'deploy control bootstraps and strictly verifies Trino when enabled'
+fi
+
+mock_clickhouse_deploy_control() (
+  local enabled="$1"
+
+  remote_clickhouse_enabled() {
+    printf '%s\n' "$enabled"
+  }
+  remote_compose() {
+    printf 'compose:%s\n' "$1"
+  }
+
+  prepare_clickhouse_runtime
+  verify_clickhouse_runtime
+)
+
+if output="$(mock_clickhouse_deploy_control false 2>&1)" \
+  && [[ "$output" == *'compose:rm -sf clickhouse'* ]] \
+  && [[ "$output" != *'ClickHouseClient'* ]]; then
+  record_pass 'deploy control removes stale ClickHouse and skips readiness when disabled'
+else
+  record_fail 'deploy control removes stale ClickHouse and skips readiness when disabled'
+fi
+
+if output="$(mock_clickhouse_deploy_control true 2>&1)" \
+  && [[ "$output" == *'compose:up -d redpanda clickhouse'* ]] \
+  && [[ "$output" == *'ClickHouseClient'* ]]; then
+  record_pass 'deploy control starts and verifies ClickHouse when enabled'
+else
+  record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
 mock_health_check() (

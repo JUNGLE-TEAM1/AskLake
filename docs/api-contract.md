@@ -3904,6 +3904,7 @@ type PermissionGrant = {
 | dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
+| clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
 | latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | featureScope | deployment | 현재 저장소에는 tenant model이 없으므로 고정 |
@@ -3944,10 +3945,30 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 ### Continuous SQL Job API
 
 - `POST /api/query/continuous-jobs/validate`: `query`, `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 받아 `normalizedSql`, `runtimeSql`, `planVersion`, `planHash`, relation/JOIN/output schema와 compiled plan을 반환한다.
-- `POST /api/query/continuous-jobs`: validate request에 `name`, append Iceberg `output`, optional `checkpointPath`, `clientRequestId`를 추가해 stopped Job을 생성한다. 동일 owner의 같은 idempotency key와 fingerprint는 같은 Job을 반환하고 다른 payload는 `409`다.
+- `POST /api/query/continuous-jobs`: validate request에 `name`, mode별 `output`, optional `checkpointPath`, `clientRequestId`를 추가해 stopped Job을 생성한다. 동일 owner의 같은 idempotency key와 fingerprint는 같은 Job을 반환하고 다른 payload는 `409`다.
 - `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{jobId}`: owner/admin 범위 Job과 active Run을 반환한다. Run은 fencing token 원문 대신 `fencingTokenHash`를 반환한다.
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
+
+`output.servingMode`의 기본값은 `iceberg`다. 기존 mode는 `storagePath`, append `icebergTarget`, optional S3 `checkpointPath`를 그대로 요구한다. `clickhouse` mode는 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`일 때만 허용하며 output shape는 다음과 같다.
+
+```json
+{
+  "datasetId": "ds_live_customer_join",
+  "datasetName": "live_customer_join",
+  "layer": "GOLD",
+  "servingMode": "clickhouse",
+  "clickhouseTarget": {
+    "engine": "clickhouse",
+    "database": "asklake",
+    "table": "live_customer_join"
+  }
+}
+```
+
+ClickHouse mode에는 `storagePath`, `icebergTarget`, `checkpointPath`를 보내지 않으며 `staticBindingPolicy`는 `PINNED_AT_START`만 허용한다. 실행 시작 시 정적 Catalog relation의 exact S3/Iceberg snapshot을 Trino로 bounded load하고 ClickHouse local static table에 고정한다. Kafka Engine은 먼저 raw `ReplacingMergeTree(partition, offset)`에 원문과 offset을 보존하고, JOIN materialized view가 매칭된 row만 output `ReplacingMergeTree(partition, offset)`에 기록한다. 이 순서 때문에 INNER JOIN에서 매칭되지 않은 메시지도 소비 진도에서 사라지지 않으며 pause/resume은 같은 raw/output table을 재사용한다.
+
+ClickHouse Job 응답은 `servingMode=clickhouse`, `outputTarget`의 `engine/database/table/tableUri`를 반환한다. Catalog Dataset은 `storageFormat=clickhouse`, `clickhouseTable`, input offset과 별도인 output row count를 보존한다. Dataset row와 Dashboard widget physical query는 `FINAL`을 사용해 같은 `(partition, offset)` retry 중복을 제거한다. 일반 Trino query mapping은 만들지 않으므로 이 Dataset을 범용 SQL editor source로 사용하지 않는다. worker가 실패한 같은 Run을 Spark/Iceberg로 자동 전환하지 않으며 rollback은 새 실행 전에 flag를 끄고 기존 Iceberg mode로 Job을 생성하는 방식이다.
 
 `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL validate/create request에서 생략하면 5초다. 기존 persisted Job의 주기와 일반 Kafka Continuous 기본값은 변경하지 않는다. 이 값은 micro-batch 시작 주기이며 end-to-end 반영 시간에는 Spark JOIN, Iceberg commit, Trino exact-count, Catalog/Dashboard publication이 추가된다.
 

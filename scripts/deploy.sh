@@ -134,6 +134,19 @@ print("true" if str(enabled).strip().lower() == "true" else "false")
 '
 }
 
+remote_clickhouse_enabled() {
+  remote_compose 'config --format json' | python3 -c '
+import json
+import sys
+
+try:
+    enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED")
+except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+print("true" if str(enabled).strip().lower() == "true" else "false")
+'
+}
+
 wait_for_ssh() {
   local host
   host="$(resolve_host)"
@@ -288,13 +301,42 @@ verify_trino_runtime() {
   die "Trino production readiness failed"
 }
 
+prepare_clickhouse_runtime() {
+  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
+    printf 'ClickHouse Continuous JOIN is disabled; removing any stale profiled runtime container.\n'
+    remote_compose 'rm -sf clickhouse'
+    return
+  fi
+  remote_compose 'up -d redpanda clickhouse'
+}
+
+verify_clickhouse_runtime() {
+  local attempt
+  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
+    printf 'ClickHouse Continuous JOIN is disabled; runtime readiness check skipped.\n'
+    return
+  fi
+  for attempt in $(seq 1 12); do
+    if remote_compose 'exec -T backend python -c "from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient(); assert client.ping(); client.close()"'; then
+      return
+    fi
+    if [[ "$attempt" -lt 12 ]]; then
+      printf 'ClickHouse readiness is not ready yet (attempt %s/12).\n' "$attempt"
+      sleep 5
+    fi
+  done
+  die "ClickHouse production readiness failed"
+}
+
 start_stack() {
   ensure_started
   remote_deploy_preflight
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 
@@ -326,9 +368,11 @@ deploy_stack() {
   ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
   remote_deploy_preflight
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 
@@ -336,9 +380,11 @@ restart_stack() {
   ensure_started
   remote_deploy_preflight
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 

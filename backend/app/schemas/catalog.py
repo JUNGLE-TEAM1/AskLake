@@ -53,6 +53,11 @@ class QueryEngineTableRef(CamelModel):
     partition_columns: list[str] = Field(default_factory=list)
 
 
+class ClickHouseTableRef(CamelModel):
+    database: str
+    table: str
+
+
 class DatasetMaterializationRun(CamelModel):
     created_at: str
     iceberg_committed_at: str | None = None
@@ -113,6 +118,7 @@ class CatalogDatasetResponse(CamelModel):
     query_engine_table: QueryEngineTableRef | None = None
     query_engine_status: QueryEngineStatus = "unavailable"
     query_engine_error: str | None = None
+    clickhouse_table: ClickHouseTableRef | None = None
     query_engine_required: bool = False
     index_columns: list[str] | None = None
     index_columns_unique: bool = False

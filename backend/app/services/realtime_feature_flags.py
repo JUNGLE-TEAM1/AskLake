@@ -13,6 +13,7 @@ class RealtimeFeatureState:
     dashboard_sync_mode: DashboardSyncMode
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
+    clickhouse_continuous_join_enabled: bool
     latest_static_per_batch_enabled: bool
     static_change_backfill_enabled: bool
     fallback_reason: str | None
@@ -40,6 +41,10 @@ def resolve_realtime_feature_state(settings: Settings) -> RealtimeFeatureState:
         dashboard_sync_mode=effective_mode,
         realtime_events_enabled=realtime_events_enabled,
         continuous_sql_join_enabled=continuous_sql_join_enabled,
+        clickhouse_continuous_join_enabled=(
+            continuous_sql_join_enabled
+            and bool(settings.clickhouse_continuous_join_enabled)
+        ),
         latest_static_per_batch_enabled=(
             continuous_sql_join_enabled and bool(settings.latest_static_per_batch_enabled)
         ),

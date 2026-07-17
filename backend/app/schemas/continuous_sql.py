@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.iceberg import IcebergWriterTarget
 
 ContinuousSqlStaticBindingPolicy = Literal["PINNED_AT_START", "LATEST_PER_BATCH"]
+ContinuousSqlServingMode = Literal["iceberg", "clickhouse"]
 CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 5
 ContinuousSqlDesiredState = Literal["stopped", "running", "paused"]
 ContinuousSqlObservedState = Literal[
@@ -31,16 +33,41 @@ ContinuousSqlBatchStage = Literal[
 ContinuousSqlCommand = Literal["start", "pause", "resume", "stop", "recover"]
 
 
+class ClickHouseWriterTarget(CamelModel):
+    engine: Literal["clickhouse"] = "clickhouse"
+    database: str = Field(min_length=1, max_length=128)
+    table: str = Field(min_length=1, max_length=128)
+
+    @field_validator("database", "table")
+    @classmethod
+    def validate_identifier(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", normalized) is None:
+            raise ValueError(
+                "ClickHouse target identifiers may contain letters, numbers, and underscores and cannot start with a number"
+            )
+        return normalized
+
+    @computed_field(alias="tableUri", return_type=str)
+    @property
+    def table_uri(self) -> str:
+        return f"clickhouse://{self.database}/{self.table}"
+
+
 class ContinuousSqlOutput(CamelModel):
     dataset_id: str = Field(min_length=1, max_length=160)
     dataset_name: str = Field(min_length=1, max_length=255)
     layer: Literal["SILVER", "GOLD"] = "GOLD"
-    storage_path: str = Field(min_length=1, max_length=2048)
-    iceberg_target: IcebergWriterTarget
+    serving_mode: ContinuousSqlServingMode = "iceberg"
+    storage_path: str | None = Field(default=None, min_length=1, max_length=2048)
+    iceberg_target: IcebergWriterTarget | None = None
+    clickhouse_target: ClickHouseWriterTarget | None = None
 
     @field_validator("storage_path")
     @classmethod
-    def validate_storage_path(cls, value: str) -> str:
+    def validate_storage_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip().rstrip("/")
         if not normalized.startswith(("s3://", "s3a://")):
             raise ValueError("Continuous SQL storagePath must use s3:// or s3a://")
@@ -49,9 +76,23 @@ class ContinuousSqlOutput(CamelModel):
         return normalized
 
     @model_validator(mode="after")
-    def require_append_target(self) -> "ContinuousSqlOutput":
-        if self.iceberg_target.write_mode != "append":
-            raise ValueError("Continuous SQL output requires an append Iceberg target")
+    def require_mode_target(self) -> "ContinuousSqlOutput":
+        if self.serving_mode == "iceberg":
+            if self.storage_path is None or self.iceberg_target is None:
+                raise ValueError(
+                    "Iceberg Continuous SQL output requires storagePath and icebergTarget"
+                )
+            if self.iceberg_target.write_mode != "append":
+                raise ValueError("Continuous SQL output requires an append Iceberg target")
+            if self.clickhouse_target is not None:
+                raise ValueError("Iceberg Continuous SQL output cannot include clickhouseTarget")
+            return self
+        if self.clickhouse_target is None:
+            raise ValueError("ClickHouse Continuous SQL output requires clickhouseTarget")
+        if self.iceberg_target is not None:
+            raise ValueError("ClickHouse Continuous SQL output cannot include icebergTarget")
+        if self.storage_path is not None:
+            raise ValueError("ClickHouse Continuous SQL output cannot include storagePath")
         return self
 
 
@@ -94,6 +135,12 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
             raise ValueError("Continuous SQL checkpointPath must use s3:// or s3a://")
         return normalized
 
+    @model_validator(mode="after")
+    def reject_clickhouse_checkpoint(self) -> "ContinuousSqlCreateRequest":
+        if self.output.serving_mode == "clickhouse" and self.checkpoint_path is not None:
+            raise ValueError("ClickHouse Continuous SQL does not accept checkpointPath")
+        return self
+
 
 class ContinuousSqlRelationBinding(CamelModel):
     alias: str
@@ -101,6 +148,8 @@ class ContinuousSqlRelationBinding(CamelModel):
     dataset_name: str
     mode: Literal["streaming", "static"]
     query_engine_table: dict[str, Any]
+    runtime_view: str = ""
+    schema_: list[list[str]] = Field(default_factory=list, alias="schema")
     referenced_columns: list[str] = Field(default_factory=list)
     schema_fingerprint: str
     snapshot_id: str | None = None
@@ -173,12 +222,13 @@ class ContinuousSqlJob(CamelModel):
     relation_bindings: list[ContinuousSqlRelationBinding]
     static_binding_policy: ContinuousSqlStaticBindingPolicy
     trigger_interval_seconds: int
+    serving_mode: ContinuousSqlServingMode = "iceberg"
     checkpoint_path: str
     output_dataset_id: str
     output_dataset_name: str
     output_layer: Literal["SILVER", "GOLD"]
     output_storage_path: str
-    output_target: IcebergWriterTarget
+    output_target: IcebergWriterTarget | ClickHouseWriterTarget
     desired_state: ContinuousSqlDesiredState
     observed_state: ContinuousSqlObservedState
     generation: int
@@ -203,3 +253,22 @@ class ContinuousSqlCommandResponse(CamelModel):
 
 class ContinuousSqlJobList(CamelModel):
     jobs: list[ContinuousSqlJob] = Field(default_factory=list)
+
+
+def continuous_sql_target(
+    value: dict[str, Any] | IcebergWriterTarget | ClickHouseWriterTarget,
+) -> IcebergWriterTarget | ClickHouseWriterTarget:
+    if isinstance(value, (IcebergWriterTarget, ClickHouseWriterTarget)):
+        return value
+    if str(value.get("engine") or "").strip().casefold() == "clickhouse":
+        return ClickHouseWriterTarget.model_validate(value)
+    return IcebergWriterTarget.model_validate(value)
+
+
+def continuous_sql_serving_mode(value: Any) -> ContinuousSqlServingMode:
+    target = value.output_target if hasattr(value, "output_target") else value
+    if isinstance(target, ClickHouseWriterTarget):
+        return "clickhouse"
+    if isinstance(target, dict) and str(target.get("engine") or "").strip().casefold() == "clickhouse":
+        return "clickhouse"
+    return "iceberg"

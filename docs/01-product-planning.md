@@ -58,6 +58,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. 원본 event는 기존대로 S3/MinIO에 둔다.
 - Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 기본 static binding은 Job 시작 시 snapshot을 고정하는 PINNED_AT_START이며, LATEST_PER_BATCH와 static change backfill은 각각 별도 기능 플래그와 운영 승인이 필요한 opt-in이다. 새 Continuous SQL Job의 기본 micro-batch trigger는 5초이고, Catalog 통계가 안전 한도 이하인 불변 static snapshot은 worker가 재사용한다. 5초는 시작 주기이며 JOIN·Iceberg commit·Trino 검증·Dashboard 게시 시간까지 포함한 반영 SLA는 아니다.
+- 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. 기존 Iceberg mode와 일반 Kafka Continuous Job은 바꾸지 않으며 ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -152,10 +153,11 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 1. 사용자는 query 가능한 Catalog Dataset 중 Kafka Continuous streaming relation 1개와 static Iceberg relation 1개 이상을 선택한다.
 2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key type과 static unique-key evidence를 실행 전에 검사한다.
 3. 생성된 Job은 기본적으로 stopped 상태이며 명시적 start command에서 Run generation, fencing, checkpoint와 static snapshot set을 고정한다.
-4. 각 Kafka micro-batch는 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용하고, 유일키 실데이터 검증도 같은 snapshot·JOIN key에서 한 번만 한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 경우에만 다음 batch부터 새 snapshot을 사용하며 이때 이전 cache를 폐기하고 다시 검증한다.
-5. 새 Continuous SQL output table은 내부 `_asklake_run_id`를 partition column으로 사용해 해당 batch만 Trino가 가지치기하도록 한다. 기존 table은 기존 partition spec을 유지한다.
-6. exact Iceberg snapshot과 `_asklake_run_id` 행 수가 검증된 뒤에만 Catalog revision과 Dashboard change event가 공개된다. publication 재시도는 이미 처리한 Kafka input을 다시 쓰지 않는다.
-7. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다.
+4. 기본 Iceberg mode에서는 각 Kafka micro-batch가 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 Iceberg mode에서만 허용한다.
+5. ClickHouse mode에서는 Kafka Engine의 전용 consumer group이 원문을 raw MergeTree에 먼저 기록하고, cascading Materialized View가 `PINNED_AT_START` static snapshot과 JOIN해 output ReplacingMergeTree에 쓴다. raw와 output은 `partition + offset`으로 중복을 제거하며 `INNER JOIN`에서 결과가 없는 입력도 raw offset lineage에는 남는다.
+6. 기본 Iceberg mode의 새 output table은 내부 `_asklake_run_id`를 partition column으로 사용해 해당 batch만 Trino가 가지치기하도록 한다. ClickHouse mode의 Dashboard query는 output table을 `FINAL`로 읽고 Catalog user schema만 노출한다.
+7. Iceberg mode는 exact snapshot·행 수 검증 후, ClickHouse mode는 raw offset boundary와 query 가능한 output count 확인 후에만 Catalog revision과 Dashboard change event를 공개한다. publication 재시도는 같은 source range를 다시 올리지 않는다.
+8. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`와 `docs/clickhouse-dashboard-join-plan.md`를 따른다.
 
 ## 7) 성공 기준
 
