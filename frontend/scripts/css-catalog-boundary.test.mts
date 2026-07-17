@@ -6,6 +6,7 @@ import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
 const etlParts = [
+  "00-shared.css",
   "01-source-shared.css",
   "02-schema.css",
   "03-rules.css",
@@ -15,6 +16,28 @@ const etlParts = [
   "07-schema-target-overrides.css",
   "08-record-parsing.css",
 ];
+const etlFacadeImports = [
+  "./shared/base.css",
+  "./routes/source.css",
+  "./routes/schema.css",
+  "./routes/rules.css",
+  "./routes/schedule.css",
+  "./routes/permission.css",
+  "./routes/review.css",
+  "./routes/target.css",
+  "./shared/schema-target-overrides.css",
+  "./routes/record-parsing.css",
+];
+const etlRouteFacades = new Map([
+  ["permission.css", '@import "../04-permission.css";\n'],
+  ["record-parsing.css", '@import "../08-record-parsing.css";\n'],
+  ["review.css", '@import "../05-review.css";\n'],
+  ["rules.css", '@import "../03-rules.css";\n'],
+  ["schedule.css", "/* Schedule uses the shared ETL shell and component-level utility styles. */\n"],
+  ["schema.css", '@import "../02-schema.css";\n'],
+  ["source.css", '@import "../01-source-shared.css";\n'],
+  ["target.css", '@import "../06-target-shared.css";\n'],
+]);
 const layoutParts = [
   "01-shell.css",
   "02-account.css",
@@ -62,21 +85,28 @@ function declarationsForSelector(css: string, selector: string) {
 }
 
 test("CSS entrypoints preserve the exact reviewed cascade", () => {
-  const expectedEtlEntry = `${etlParts.map((file) => `@import "./etl/${file}";`).join("\n")}\n`;
+  const expectedEtlEntry = '@import "./etl/facade.css";\n';
+  const expectedEtlFacade = `${etlFacadeImports.map((file) => `@import "${file}";`).join("\n")}\n`;
   const expectedLayoutEntry = `${layoutParts.map((file) => `@import "./layout/${file}";`).join("\n")}\n`;
   assert.equal(read("src/styles/etl.css"), expectedEtlEntry);
+  assert.equal(read("src/styles/etl/facade.css"), expectedEtlFacade);
+  assert.equal(read("src/styles/etl/shared/base.css"), '@import "../00-shared.css";\n');
+  assert.equal(read("src/styles/etl/shared/schema-target-overrides.css"), '@import "../07-schema-target-overrides.css";\n');
+  for (const [file, expected] of etlRouteFacades) {
+    assert.equal(read(`src/styles/etl/routes/${file}`), expected);
+  }
   assert.equal(read("src/styles/layout.css"), expectedLayoutEntry);
 
   const etlSources = etlParts.map((file) => read(`src/styles/etl/${file}`));
   const layoutSources = layoutParts.map((file) => read(`src/styles/layout/${file}`));
-  assert.equal(digest(etlSources.join("")), "c0d13c10270132dee8e1c274fd5c345a99459cb512075cd7253d196647cdf0c4");
+  assert.equal(digest(etlSources.join("")), "e8a4a4d04e0552c7d4c5277a917c5909861a4d3555281077af9b6e6742e8db22");
   assert.equal(digest(layoutSources.join("")), "c427c6371a8a2703fdb8711fc8e90d542d7e9a5b092b560d04979735cf5e921b");
   for (const [index, source] of etlSources.entries()) assert.equal(braceDelta(source), 0, `${etlParts[index]} must own complete CSS blocks`);
   for (const [index, source] of layoutSources.entries()) assert.equal(braceDelta(source), 0, `${layoutParts[index]} must own complete CSS blocks`);
 
   const etlInventory = selectorInventory(etlSources.join(""));
   const layoutInventory = selectorInventory(layoutSources.join(""));
-  assert.deepEqual(etlInventory, { duplicateDefinitions: 66, selectors: 1_249, uniqueSelectors: 1_183 });
+  assert.deepEqual(etlInventory, { duplicateDefinitions: 20, selectors: 429, uniqueSelectors: 409 });
   assert.deepEqual(layoutInventory, { duplicateDefinitions: 0, selectors: 246, uniqueSelectors: 246 });
   console.info("CSS selector inventory", { etl: etlInventory, layout: layoutInventory });
 });
@@ -92,6 +122,19 @@ test("adjacent S3 tree panel rules stay consolidated without declaration drift",
     "overflow: auto",
     "padding: 8px",
   ]]);
+});
+
+test("retired ETL selectors cannot silently reactivate legacy screens", () => {
+  const etlCss = etlParts.map((file) => read(`src/styles/etl/${file}`)).join("\n");
+  for (const retiredSelector of [
+    ".source-connect-stack",
+    ".schema-transform-editor",
+    ".permission-row",
+    ".target-debug-panel",
+    ".transform-code-workbench",
+  ]) {
+    assert.doesNotMatch(etlCss, new RegExp(retiredSelector.replace(".", "\\.")));
+  }
 });
 
 test("CSS and catalog entrypoints stay within their ownership budgets", () => {

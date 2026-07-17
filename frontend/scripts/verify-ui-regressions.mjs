@@ -8,7 +8,7 @@ const readCssWithLocalImports = (filePath, visited = new Set()) => {
   visited.add(filePath);
 
   return readFileSync(filePath, "utf8").replace(
-    /@import\s+["'](\.\/[^"']+)["'];/g,
+    /@import\s+["']((?:\.{1,2}\/)[^"']+)["'];/g,
     (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
   );
 };

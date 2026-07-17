@@ -23,7 +23,7 @@ import { SchedulePage } from "./pages/etl/SchedulePage";
 import { SchemaInferencePage } from "./pages/etl/SchemaInferencePage";
 import { SourceConnectionPage } from "./pages/etl/SourceConnectionPage";
 import { TargetPage } from "./pages/etl/TargetPage";
-import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath } from "./pages/etl/stepRegistry";
+import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath, etlStyleRoute } from "./pages/etl/stepRegistry";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeWorkspace } from "./state/asklake/useAskLakeWorkspace";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
@@ -567,7 +567,7 @@ export function App() {
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
               <Skeleton className="h-5 w-24" />
