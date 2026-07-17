@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from app.application.source_connectors import list_source_assets, test_source_connector
+from app.application.source_connectors import (
+    list_source_assets,
+    test_source_connector as execute_test_source_connector,
+)
 from app.infrastructure.source_connectors import (
     NodeSourceConnectorGateway,
     SOURCE_CONNECTOR_TIMEOUT_SECONDS,
 )
+from app.infrastructure.runtime_io import SubprocessNodeBridge
 from app.schemas.etl import SourceAssetsRequest, SourceConnectorRequest
 from app.services import etl_service
 
@@ -91,7 +98,7 @@ class SourceConnectorApplicationTests(unittest.TestCase):
             "sourceType": "File / S3",
         })
 
-        response = test_source_connector(request, gateway=gateway)
+        response = execute_test_source_connector(request, gateway=gateway)
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.draft_patch.source.source_label, "raw/orders")
@@ -123,7 +130,7 @@ class SourceConnectorApplicationTests(unittest.TestCase):
         request = SourceConnectorRequest(sourceType="Kafka", sourceConfig=[])
 
         with self.assertRaises(ValidationError):
-            test_source_connector(request, gateway=gateway)
+            execute_test_source_connector(request, gateway=gateway)
 
 
 class NodeSourceConnectorGatewayTests(unittest.TestCase):
@@ -175,6 +182,30 @@ class NodeSourceConnectorGatewayTests(unittest.TestCase):
             "error_marker": "ASKLAKE_SOURCE_ASSETS_ERROR",
             "timeout_seconds": SOURCE_CONNECTOR_TIMEOUT_SECONDS,
         })
+
+    def test_gateway_uses_ascii_newline_marker_parsing_for_unicode_content(self) -> None:
+        result = analysis_payload()
+        result["message"] = "first\u0085second\u2028third\u2029fourth"
+        bridge = SubprocessNodeBridge(
+            backend_dir=Path("/backend"),
+            scripts_dir=Path("/backend/scripts"),
+            runner=lambda *_args, **_options: SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "diagnostic\n"
+                    f"ASKLAKE_SOURCE_CONNECTOR_RESULT={json.dumps(result, ensure_ascii=False)}\r\n"
+                ),
+                stderr="",
+            ),
+        )
+        gateway = NodeSourceConnectorGateway(bridge)
+
+        response = gateway.test_source(
+            source_type="File / S3",
+            source_config=[("Bucket", "raw")],
+        )
+
+        self.assertEqual(response["message"], result["message"])
 
 
 if __name__ == "__main__":

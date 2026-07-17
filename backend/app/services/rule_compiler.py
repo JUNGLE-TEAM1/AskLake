@@ -266,12 +266,26 @@ def compile_rule_set(
             available_types[outputs[0]] = output_type or "String"
             output_types[outputs[0]] = output_type or "String"
 
+    full_sql_transform = any(
+        rule.enabled
+        and rule.kind == "transform"
+        and rule.operation == "sql_expression"
+        and str(rule.parameters.get("expression") or "").lstrip().lower().startswith(("select", "with"))
+        for rule in normalized_rules
+    )
+    if full_sql_transform and not declared_types:
+        issues.append(_issue(
+            "RULE_OUTPUT_SCHEMA_REQUIRED",
+            "transformOutputColumns",
+            "Full SQL transforms require a validated output schema.",
+        ))
+
     legacy_steps = [canonical_transform_to_legacy(rule) for rule in normalized_rules if rule.kind == "transform"]
     legacy_quality = [canonical_quality_to_legacy(rule) for rule in normalized_rules if rule.kind == "quality"]
     result = RuleCompilationResult(
         contract_version="1.0",
         issues=issues,
-        output_schema=list(output_types.items()),
+        output_schema=list((declared_types if full_sql_transform else output_types).items()),
         rules=normalized_rules,
         status="fail" if issues else "pass",
     )

@@ -19,7 +19,12 @@ const checks = [
   ["malformed hash fails without throwing", !verifyPassword(password, salt, "pbkdf2_sha256$999999999$00")],
   ["production disables demo users", !authRuntimePolicy({ APP_ENV: "production" }).allowsDemoUsers],
   ["production disables memory fallback", !authRuntimePolicy({ APP_ENV: "production" }).allowsMemoryFallback],
-  ["local development keeps explicit demo auth", authRuntimePolicy({ APP_ENV: "local" }).allowsDemoUsers],
+  ["local development has no implicit demo auth", !authRuntimePolicy({ APP_ENV: "local" }).allowsDemoUsers],
+  ["local development rejects demo auth even when requested", !authRuntimePolicy({ APP_ENV: "local", AUTH_LEGACY_DEMO_USERS_ENABLED: "true" }).allowsDemoUsers],
+  ["test runtime can explicitly enable demo auth", authRuntimePolicy({ APP_ENV: "test", AUTH_LEGACY_DEMO_USERS_ENABLED: "true" }).allowsDemoUsers],
+  ["local development has no implicit memory fallback", !authRuntimePolicy({ APP_ENV: "local" }).allowsMemoryFallback],
+  ["local development rejects memory fallback even when requested", !authRuntimePolicy({ APP_ENV: "local", ASKLAKE_AUTH_MEMORY_FALLBACK: "true" }).allowsMemoryFallback],
+  ["test runtime can explicitly enable memory fallback", authRuntimePolicy({ APP_ENV: "test", ASKLAKE_AUTH_MEMORY_FALLBACK: "true" }).allowsMemoryFallback],
   ["production cookies are secure", authRuntimePolicy({ APP_ENV: "production" }).secureCookies],
   ["valid bootstrap admin is accepted", bootstrapAdminConfig({
     BOOTSTRAP_ADMIN_EMAIL: "owner@example.com",

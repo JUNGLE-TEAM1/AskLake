@@ -576,11 +576,9 @@ def object_manifest_port(client: Any | None = None) -> ObjectManifestPort:
 
 
 def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
-    prefix = f"{marker}="
-    for line in reversed(str(output or "").splitlines()):
-        if line.startswith(prefix):
-            return json.loads(line[len(prefix):])
-    return None
+    from app.infrastructure.runtime_io import marker_payload as parse_marker_payload
+
+    return parse_marker_payload(output, marker)
 
 
 def persisted_stream_partition_cursors(

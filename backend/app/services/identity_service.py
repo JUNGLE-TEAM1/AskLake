@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
-from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import dedupe_grants
 from app.models.identity import AuthUserModel
@@ -24,7 +23,6 @@ from app.repositories.permission_repository import (
     create_permission_grant,
     delete_permission_grant,
     list_permission_grants_by_resource,
-    ensure_demo_permission_grants,
     update_permission_grant,
 )
 from app.services.resource_permission_service import permissions_for_actor_with_governance
@@ -50,49 +48,6 @@ from app.schemas.identity import (
     PermissionSummary,
 )
 from app.schemas.permissions import PermissionGrant
-
-DEMO_GROUPS = {
-    "data-platform": IdentityGroup(
-        id="data-platform",
-        name="Data Platform Team",
-        description="Lake platform administrators",
-        member_count=0,
-    ),
-    "analytics": IdentityGroup(
-        id="analytics",
-        name="Analytics Team",
-        description="SQL and dashboard analysts",
-        member_count=1,
-    ),
-    "ops": IdentityGroup(
-        id="ops",
-        name="Operations Team",
-        description="ETL job operators",
-        member_count=0,
-    ),
-}
-
-DEMO_USERS = {
-    "Admin User": {
-        "id": "admin-user",
-        "display_name": "Admin User",
-        "email": "admin.user@asklake.local",
-        "role": "admin",
-        "groups": [],
-        "title": "Platform Admin",
-        "last_active_at": "2026-07-09T06:30:00.000Z",
-    },
-    "demo-user": {
-        "id": "demo-user",
-        "display_name": "Demo User",
-        "email": "demo.user@asklake.local",
-        "role": "viewer",
-        "groups": ["analytics"],
-        "title": "Data Viewer",
-        "last_active_at": "2026-07-09T05:45:00.000Z",
-    },
-}
-
 
 class IdentityService:
     def __init__(self, db: Session) -> None:
@@ -121,13 +76,10 @@ class IdentityService:
             for group_id in set(user.groups or []):
                 member_counts[group_id] = member_counts.get(group_id, 0) + 1
         group_ids = set(member_counts)
-        if settings.allows_header_auth_fallback:
-            group_ids.update(DEMO_GROUPS)
         return AdminGroupsResponse(groups=[
             IdentityGroup(
                 id=group_id,
-                name=DEMO_GROUPS[group_id].name if group_id in DEMO_GROUPS else group_id,
-                description=DEMO_GROUPS[group_id].description if group_id in DEMO_GROUPS else None,
+                name=group_id,
                 member_count=member_counts.get(group_id, 0),
             )
             for group_id in sorted(group_ids)
@@ -365,13 +317,15 @@ class IdentityService:
             self.db.rollback()
 
     def _current_user_response(self, actor: ActorContext, summary: PermissionSummary) -> CurrentUserResponse:
-        user = self._user_record(actor.name, actor.role, actor.groups)
-        if actor.id:
-            user["id"] = actor.id
-        if actor.email:
-            user["email"] = actor.email
-        if actor.title:
-            user["title"] = actor.title
+        display_name = actor.name.strip() or "Anonymous User"
+        user = {
+            "id": actor.id or slugify(display_name),
+            "display_name": display_name,
+            "email": (actor.email or "").strip(),
+            "role": actor.role,
+            "groups": list(actor.groups),
+            "title": actor.title or "AskLake User",
+        }
         groups = self._groups_for_user(user["groups"])
         profile = self._profile_for_user(user)
         return CurrentUserResponse(
@@ -414,32 +368,8 @@ class IdentityService:
             last_active_at=user.last_active_at.isoformat() if user.last_active_at else None,
         )
 
-    def _user_record(
-        self,
-        actor_name: str,
-        role: str | None = None,
-        groups: tuple[str, ...] | None = None,
-    ) -> dict[str, Any]:
-        user = DEMO_USERS.get(actor_name)
-        if user:
-            return dict(user)
-        display_name = actor_name.strip() or "Demo User"
-        group_ids = list(groups or ())
-        return {
-            "id": slugify(display_name),
-            "display_name": display_name,
-            "email": f"{slugify(display_name)}@asklake.local",
-            "role": role or "viewer",
-            "groups": group_ids,
-            "title": "AskLake User",
-            "last_active_at": None,
-        }
-
     def _groups_for_user(self, group_ids: list[str]) -> list[IdentityGroup]:
-        return [
-            DEMO_GROUPS.get(group_id) or IdentityGroup(id=group_id, name=group_id)
-            for group_id in group_ids
-        ]
+        return [IdentityGroup(id=group_id, name=group_id) for group_id in group_ids]
 
     def _profile_for_user(self, user: dict[str, Any]) -> IdentityProfile:
         display_name = str(user["display_name"])
@@ -465,7 +395,6 @@ class IdentityService:
         return summary
 
     def _permission_resources(self, actor: ActorContext) -> list[AdminPermissionSummary]:
-        self._ensure_permission_grants_seeded()
         resources: list[AdminPermissionSummary] = []
         resources.extend(self._dataset_permission_summaries(actor))
         resources.extend(self._job_permission_summaries(actor))
@@ -572,18 +501,6 @@ class IdentityService:
             )
         return summaries
 
-    def _ensure_permission_grants_seeded(self) -> None:
-        if not settings.allows_header_auth_fallback:
-            return
-        repository = CatalogRepository(self.db)
-        ensure_demo_permission_grants(
-            self.db,
-            dataset_ids=[model.id for model in repository.list_dataset_models()],
-            job_ids=[job.id for job in list_jobs(self.db)],
-            dashboard_ids=[dashboard.id for dashboard in list_dashboard_cards(self.db)],
-        )
-
-
 def parse_grants(value: Any) -> list[PermissionGrant]:
     grants = value or []
     parsed: list[PermissionGrant] = []
@@ -643,11 +560,11 @@ def string_or_none(value: Any) -> str | None:
 
 def slugify(value: str) -> str:
     normalized = "".join(character.lower() if character.isalnum() else "-" for character in value)
-    return "-".join(part for part in normalized.split("-") if part) or "demo-user"
+    return "-".join(part for part in normalized.split("-") if part) or "anonymous"
 
 
 def initials(value: str) -> str:
     words = [word for word in value.replace("_", " ").replace("-", " ").split() if word]
     if not words:
-        return "DU"
+        return "AU"
     return "".join(word[0].upper() for word in words[:2])

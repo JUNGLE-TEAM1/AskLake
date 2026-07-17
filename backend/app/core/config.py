@@ -391,7 +391,7 @@ class Settings(BaseSettings):
     def uses_secure_session_cookie(self) -> bool:
         if self.auth_session_cookie_secure is not None:
             return self.auth_session_cookie_secure
-        return not self.allows_header_auth_fallback
+        return not self.is_development_runtime
 
     @property
     def allows_public_signup(self) -> bool:

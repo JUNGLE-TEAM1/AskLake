@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  defaultOutputBucket,
   defaultRawBucket,
+  defaultWarehouseBucket,
   isMinioProvider,
   objectStorageDockerEnv,
   resolveObjectStorageConfig,
   toDockerEnvArgs,
+  validateConfiguredS3Location,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
@@ -24,7 +27,7 @@ const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const reviewTextModelHostDir = path.resolve(
   process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-    || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+    || path.join(backendDir, "tmp", "review-text-models", "latest"),
 );
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
@@ -57,20 +60,27 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packages = sparkPackages(job, source, output);
   const packageArgs = sparkPackageArgs(packages);
-  const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
-    || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
-    || "http://host.docker.internal:1234/v1/chat/completions";
-  const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
-  const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
-    || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
-  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
+  // Spark REST drivers inherit object-storage credentials from the Spark
+  // worker.  Never serialize those credentials into the REST submission;
+  // Docker-mode jobs may still receive them directly in their isolated
+  // container environment.
+  const forbiddenRestCredentialNames = new Set([
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "SPARK_MINIO_ACCESS_KEY",
+    "SPARK_MINIO_SECRET_KEY",
+  ]);
   const storageEnvironment = Object.fromEntries(
     objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
-      executionMode === "docker"
-      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
+      executionMode === "docker" || !forbiddenRestCredentialNames.has(name)
     )),
   );
   const sparkEnvironment = {
@@ -84,22 +94,12 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
     ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
     ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
-    ASKLAKE_LOCAL_LLM_ENDPOINT: localLlmEndpoint,
-    ASKLAKE_LOCAL_LLM_MODEL: localLlmModel,
-    ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS: localLlmTimeoutSeconds,
-    ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS: process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000",
-    ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
     ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
     ...icebergEnvironment,
     HOME: "/tmp",
   };
   const sparkExecutorProperties = Object.fromEntries(
     [
-      "ASKLAKE_LOCAL_LLM_ENDPOINT",
-      "ASKLAKE_LOCAL_LLM_MODEL",
-      "ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS",
-      "ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS",
-      "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
       "ASKLAKE_REVIEW_TEXT_MODEL_ROOT",
     ].map((name) => [`spark.executorEnv.${name}`, sparkEnvironment[name]]),
   );
@@ -142,16 +142,6 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
     "-e",
-    `ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
-    "-e",
-    `ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
-    "-e",
-    `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
-    "-e",
     `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...Object.entries(icebergEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     "-e",
@@ -173,16 +163,6 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `spark.cores.max=${process.env.ASKLAKE_SPARK_CORES_MAX || "4"}`,
     "--conf",
     `spark.sql.shuffle.partitions=${process.env.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "--conf",
     `spark.executorEnv.ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...packageArgs,
@@ -585,12 +565,11 @@ export function sparkPackages(job, source, output) {
 export function sparkIcebergEnvironment(job) {
   if (!job?.icebergTarget) return {};
   const database = String(process.env.TRINO_ICEBERG_JDBC_DATABASE || process.env.POSTGRES_DB || "asklake");
-  const warehouseBucket = String(process.env.TRINO_ICEBERG_WAREHOUSE_BUCKET || "").trim();
   const warehousePrefix = normalizePrefix(process.env.TRINO_ICEBERG_WAREHOUSE_PREFIX || "warehouse");
-  const warehouse = String(
-    process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE
-      || (warehouseBucket ? `s3a://${warehouseBucket}/${warehousePrefix}` : ""),
-  ).replace(/\/+$/, "");
+  const configuredWarehouse = String(process.env.ASKLAKE_SPARK_ICEBERG_WAREHOUSE || "").trim();
+  const warehouse = configuredWarehouse
+    ? validateConfiguredS3Location(configuredWarehouse, "ASKLAKE_SPARK_ICEBERG_WAREHOUSE")
+    : `s3a://${defaultWarehouseBucket()}/${warehousePrefix}`;
   const jdbcUrl = String(
     process.env.ASKLAKE_SPARK_ICEBERG_JDBC_URL
       || `jdbc:postgresql://postgres:5432/${database}`,
@@ -874,7 +853,7 @@ function sparkOutputPath(job, runId) {
     const configuredTarget = normalizeSparkOutputTargetPath(job.storagePath);
     const targetBase = /^s3a?:\/\//i.test(configuredTarget)
       ? toS3APath(configuredTarget).replace(/\/+$/, "")
-      : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
+      : `s3a://${defaultOutputBucket()}/${prefix}${layer}/${dataset}`;
     const sparkPath = targetBase.endsWith(`/${runId}`) ? targetBase : `${targetBase}/${runId}`;
     return { displayPath: sparkPath, sparkPath };
   }
@@ -892,7 +871,7 @@ export function normalizeSparkOutputTargetPath(value) {
   const configuredTarget = String(value || "").trim();
   if (!/^s3a?:\/\//i.test(configuredTarget)) return configuredTarget;
   const normalizedTarget = toS3APath(configuredTarget).replace(/\/+$/, "");
-  const configuredBucket = normalizeBucketName(process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output");
+  const configuredBucket = normalizeBucketName(defaultOutputBucket());
   if (!configuredBucket || configuredBucket.toLowerCase() === "asklake-output") return normalizedTarget;
   return normalizedTarget.replace(
     /^s3a:\/\/asklake-output(?=\/|$)/i,

@@ -1,17 +1,11 @@
 import os
 
+from app.core.config import Settings, settings
 from app.schemas.integration import TargetDatabaseOption, TargetDatabasesResponse
 
 
-DEFAULT_TARGET_DATABASES = [
-    TargetDatabaseOption(description="AskLake catalog database", name="asklake"),
-    TargetDatabaseOption(description="Gold dataset target database", name="asklake_gold"),
-    TargetDatabaseOption(description="Analytics data mart database", name="analytics"),
-    TargetDatabaseOption(description="Marketing customer data database", name="marketing"),
-]
-
-
-def list_target_databases() -> TargetDatabasesResponse:
+def list_target_databases(runtime_settings: Settings | None = None) -> TargetDatabasesResponse:
+    active_settings = runtime_settings or settings
     configured = [
         name.strip()
         for name in (
@@ -21,14 +15,16 @@ def list_target_databases() -> TargetDatabasesResponse:
         ).split(",")
         if name.strip()
     ]
-    if not configured:
-        return TargetDatabasesResponse(databases=DEFAULT_TARGET_DATABASES)
+    if not configured and active_settings.trino_schema.strip():
+        configured = [active_settings.trino_schema.strip()]
+
+    unique_names = list(dict.fromkeys(configured))
     return TargetDatabasesResponse(
         databases=[
             TargetDatabaseOption(
-                description="Configured by environment variable",
+                description="Configured Trino/Iceberg target schema",
                 name=name,
             )
-            for name in configured
+            for name in unique_names
         ]
     )

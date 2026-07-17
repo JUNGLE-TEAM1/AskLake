@@ -8,14 +8,13 @@ const prefix = typeof payload.prefix === "string" ? payload.prefix : "";
 
 try {
   const result = await listSourceAssets(sourceType, sourceConfig, prefix);
-  console.log(`ASKLAKE_SOURCE_ASSETS_RESULT=${JSON.stringify(result)}`);
-  process.exit(0);
+  process.stdout.write(`ASKLAKE_SOURCE_ASSETS_RESULT=${JSON.stringify(result)}\n`);
 } catch (error) {
-  console.log(`ASKLAKE_SOURCE_ASSETS_ERROR=${JSON.stringify({
+  process.stdout.write(`ASKLAKE_SOURCE_ASSETS_ERROR=${JSON.stringify({
     code: error?.code || "SOURCE_ASSETS_FAILED",
     message: error?.message || "Source asset listing failed.",
     status: error?.status || 502,
-  })}`);
+  })}\n`);
   console.error(error?.stack || error?.message || error);
-  process.exit(1);
+  process.exitCode = 1;
 }

@@ -74,7 +74,12 @@ def main():
         canonical_rules = manifest.get("rules") if "rules" in manifest else None
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
-        final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
+        rule_output_schema = manifest.get("ruleOutputSchema") or []
+        final_schema_columns = (
+            schema_columns_from_rule_output(rule_output_schema)
+            if full_select_sql_transform(transform_steps) and rule_output_schema
+            else merge_rule_output_schema(schema_columns, rule_output_schema)
+        )
         spark = make_spark(source_collection, iceberg_target)
         verify_spark_source_inventory(
             spark,
@@ -545,6 +550,18 @@ def iceberg_table_exists(spark, target):
         raise
 
 
+def spark_schema_signature(schema):
+    return tuple(
+        (str(field.name), str(field.dataType.simpleString()))
+        for field in schema.fields
+    )
+
+
+def iceberg_table_schema_matches_frame(spark, target, frame):
+    existing_schema = spark.table(spark_iceberg_table_identifier(target)).schema
+    return spark_schema_signature(existing_schema) == spark_schema_signature(frame.schema)
+
+
 def iceberg_snapshot(spark, target, snapshot_id):
     table_identifier = spark_iceberg_table_identifier(target)
     rows = spark.sql(
@@ -640,10 +657,15 @@ def commit_iceberg_table(
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": None,
         }
+    replace_table_definition = (
+        effective_write_mode == "replace"
+        and existed_before
+        and not iceberg_table_schema_matches_frame(spark, target, frame)
+    )
     committed = False
     try:
         writer = frame.writeTo(table_identifier)
-        if not existed_before:
+        if not existed_before or replace_table_definition:
             writer = (
                 writer
                 .using("iceberg")
@@ -656,6 +678,8 @@ def commit_iceberg_table(
             writer.append()
         elif effective_write_mode == "append":
             writer.create()
+        elif replace_table_definition:
+            writer.replace()
         elif existed_before:
             writer.overwrite(F.lit(True))
         else:
@@ -677,6 +701,7 @@ def commit_iceberg_table(
             "warehouseLocation": snapshot["warehouseLocation"],
             "schemaFingerprint": schema_fingerprint,
             "ruleFingerprint": rule_fingerprint,
+            "schemaReplaced": replace_table_definition,
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": previous_snapshot,
         }
@@ -773,6 +798,30 @@ def merge_rule_output_schema(schema_columns, rule_output_schema):
             "type": logical_type,
         })
     return merged
+
+
+def schema_columns_from_rule_output(rule_output_schema):
+    return [
+        {
+            "included": True,
+            "nullable": True,
+            "sourceName": str(item[0]).strip(),
+            "targetName": str(item[0]).strip(),
+            "type": str(item[1] or "String"),
+        }
+        for item in (rule_output_schema or [])
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0] or "").strip()
+    ]
+
+
+def full_select_sql_transform(transform_steps):
+    return any(
+        step
+        and step.get("enabled") is not False
+        and "sql expression" in str(step.get("operation") or "").strip().lower()
+        and str(step.get("params") or "").lstrip().lower().startswith(("select", "with"))
+        for step in (transform_steps or [])
+    )
 
 
 def snapshot_quality_report(quality):

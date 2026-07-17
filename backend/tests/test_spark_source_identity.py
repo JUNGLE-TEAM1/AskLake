@@ -1,7 +1,9 @@
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
@@ -14,7 +16,7 @@ try:
     try:
         spark_job_run = importlib.import_module("spark_job_run")
     except ModuleNotFoundError as exc:
-        if exc.name != "pyspark":
+        if exc.name not in {"pyspark", "py4j"}:
             raise
         pyspark_module = ModuleType("pyspark")
         sql_module = ModuleType("pyspark.sql")
@@ -40,6 +42,95 @@ from scripts.spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
 )
+
+
+class FullSqlTransformSchemaTests(unittest.TestCase):
+    def test_full_select_transform_is_detected(self) -> None:
+        self.assertTrue(spark_job_run.full_select_sql_transform([{
+            "enabled": True,
+            "operation": "SQL Expression",
+            "params": "SELECT title, price FROM input",
+        }]))
+        self.assertFalse(spark_job_run.full_select_sql_transform([{
+            "enabled": True,
+            "operation": "SQL Expression",
+            "params": "upper(title)",
+        }]))
+
+    def test_rule_output_schema_replaces_final_schema_for_full_select(self) -> None:
+        self.assertEqual(
+            spark_job_run.schema_columns_from_rule_output([
+                ["title", "String"],
+                ["average_rating", "Double"],
+            ]),
+            [
+                {
+                    "included": True,
+                    "nullable": True,
+                    "sourceName": "title",
+                    "targetName": "title",
+                    "type": "String",
+                },
+                {
+                    "included": True,
+                    "nullable": True,
+                    "sourceName": "average_rating",
+                    "targetName": "average_rating",
+                    "type": "Double",
+                },
+            ],
+        )
+
+    def test_review_classification_fails_closed_when_model_is_missing(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "allowedValues": ["positive", "negative"],
+                "fallbackAllowed": True,
+                "method": "one_of_values",
+                "requireModel": False,
+                "targetName": "sentiment",
+            }],
+            "sourceField": "text",
+        })
+        with tempfile.TemporaryDirectory() as model_root, patch.dict(
+            os.environ,
+            {"ASKLAKE_REVIEW_TEXT_MODEL_ROOT": model_root},
+        ):
+            checks = spark_job_run.plan_review_row_analysis_checks([{
+                "enabled": True,
+                "id": "sentiment",
+                "input": "text",
+                "operation": "Text Row Analysis",
+                "output": "sentiment",
+                "params": params,
+            }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "missing_model_artifact")
+        self.assertTrue(checks[0]["modelRequired"])
+        self.assertFalse(checks[0]["fallbackAllowed"])
+        self.assertFalse(checks[0]["fallbackUsed"])
+
+    def test_free_form_instruction_is_preview_only_in_spark(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "instruction": "Summarize the review",
+                "method": "instruction",
+                "targetName": "summary",
+            }],
+            "sourceField": "text",
+        })
+        checks = spark_job_run.plan_review_row_analysis_checks([{
+            "enabled": True,
+            "id": "summary",
+            "input": "text",
+            "operation": "Text Row Analysis",
+            "output": "summary",
+            "params": params,
+        }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "unsupported_execution_method")
+        self.assertEqual(checks[0]["executionMode"], "preview_only")
+        self.assertIn("instruction", checks[0]["previewOnlyMethods"])
 
 
 def identity(
@@ -171,6 +262,49 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["snapshotId"], "999")
         self.assertEqual(result["sourceBoundary"], boundary)
         frame.writeTo.assert_not_called()
+
+    def test_replace_mode_atomically_replaces_an_incompatible_table_schema(self) -> None:
+        writer = Mock()
+        writer.using.return_value = writer
+        writer.tableProperty.return_value = writer
+        frame = SimpleNamespace(writeTo=Mock(return_value=writer))
+        spark = SimpleNamespace(sql=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "projected_products",
+            "tableUri": "iceberg://iceberg/asklake/projected_products",
+            "writeMode": "replace",
+        }
+        previous = {
+            "committedAt": "2026-07-16T00:00:00Z",
+            "snapshotId": "100",
+            "warehouseLocation": "s3://warehouse/projected_products",
+        }
+        current = {**previous, "snapshotId": "101"}
+
+        with (
+            patch.object(spark_job_run, "iceberg_table_exists", return_value=True),
+            patch.object(spark_job_run, "latest_iceberg_snapshot", side_effect=[previous, current]),
+            patch.object(spark_job_run, "iceberg_table_schema_matches_frame", return_value=False),
+        ):
+            result = spark_job_run.commit_iceberg_table(
+                spark,
+                frame,
+                target,
+                job_id="JOB-PROJECTION",
+                run_id="RUN-PROJECTION",
+                partition_columns=[],
+                schema_fingerprint="schema-v2",
+                rule_fingerprint="rules-v2",
+                source_boundary={},
+            )
+
+        writer.replace.assert_called_once_with()
+        writer.overwrite.assert_not_called()
+        self.assertTrue(result["schemaReplaced"])
+        self.assertEqual(result["snapshotId"], "101")
 
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())
