@@ -10,6 +10,8 @@
 
 모든 entry는 base `dev`, branch `refactor-#<issue>`를 사용한다. 첫 entry를 제외한 각 PR은 바로 앞 PR 번호를 `dependsOnPullRequest`로 가진다. 최종 PR을 생성하는 짧은 구간에만 마지막 entry의 `pullRequest=null`, `declaredReviewState=pending-pr`를 허용한다.
 
+현재 merge order는 `#863 → #865 → #867 → #869 → #872 → #874 → #876 → #878 → #880 → #882`다.
+
 ## 사람 merge 절차
 
 1. manifest의 가장 앞 open PR 하나만 review-ready로 전환한다.

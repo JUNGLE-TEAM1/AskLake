@@ -103,11 +103,11 @@
     {
       "base": "dev",
       "branch": "refactor-#881",
-      "declaredReviewState": "pending-pr",
+      "declaredReviewState": "draft",
       "dependsOnPullRequest": 880,
       "issue": 881,
       "order": 10,
-      "pullRequest": null,
+      "pullRequest": 882,
       "scope": "10단계 순차 머지·release audit gate"
     }
   ],
