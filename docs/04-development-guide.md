@@ -820,6 +820,8 @@ Day 17 A/B 최종 통합 campaign은 반드시 최신 `pair1` merge SHA를 고�
 
 병합된 placement를 기존 component release에 반영할 때는 먼저 `helm get values`를 mode `0600` 임시 파일에 저장하고 현재 manifest와 새 render를 구조 비교한다. image, env, Secret reference, Service, ConfigMap, resource와 probe가 동일하고 nodeSelector delta만 존재할 때 release별 `helm upgrade --install --dry-run=server`를 실행한다. Airflow의 placement-only upgrade는 migration hook을 다시 실행할 이유가 없으므로 `--no-hooks`를 사용한다. Issue #909에서는 Airflow revision `17→18`, Trino `15→16`을 component ownership 그대로 적용했고 모든 대상 Pod의 General 배치, EndpointSlice, ALB/RDS steady를 통과했다. 적용 결과와 rollback 기준은 [Day 17 A/B 최종 통합 placement 적용](eks-day17-final-integration-placement.md)을 따른다.
 
+Phase 3의 canonical image 정렬은 공식 image delivery workflow가 만든 하나의 receipt를 Frontend, Backend/Collector, Airflow, Spark runtime과 Trino에 함께 적용한다. 같은 Kafka topic의 multi-Spark scale candidate가 존재하더라도 HPA same-run fixture 선택은 기본 consumer group 하나만 허용해야 한다. receipt와 live role `5/5`, `linux/amd64`, Backend contract version `2`와 slot `4`, multi-Spark와 HPA preflight를 모두 확인한 실제 결과는 [Day 17 A/B 최종 이미지 정렬과 preflight](eks-day17-final-integration-image-alignment.md)를 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
