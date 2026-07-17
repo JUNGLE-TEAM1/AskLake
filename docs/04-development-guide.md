@@ -824,6 +824,8 @@ Phase 3의 canonical image 정렬은 공식 image delivery workflow가 만든 �
 
 Issue #909 Phase 4에서는 50 RPS probe 뒤 200 RPS 부하로 HPA `2→4→6`을 확인하고 `6/6/6`에서 same-run 경합을 시작했다. scale-down으로 Airflow 연결이 실패해도 새 Run을 만들지 않고, failed-task dry-run, 같은 DAG run clear, persisted state sync와 read-only recovery verification 순서를 지킨다. 실제 exact-one 결과와 200 RPS 발행 skip 한계는 [Day 17 최종 통합 HPA campaign](eks-day17-final-integration-hpa-campaign.md)을 따른다.
 
+Issue #909 Phase 5의 직접 multi-Spark 제출은 Frontend polling을 동반하지 않으므로 Spark/Catalog가 success여도 RDS 요약이 queued로 남을 수 있다. 이 경우 새 Run을 제출하거나 Spark를 재실행하지 않고 정상 `get_job` 조회 경로를 각 Job에 한 번 호출해 Airflow terminal 상태만 동기화한 뒤 read-only result verifier를 실행한다. 실제 Run 3개, Spark Node `0→1→2`, exact row `300/300`과 전체 pairwise isolation 결과는 [Day 17 최종 통합 multi-Spark campaign](eks-day17-final-integration-multi-spark-campaign.md)을 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
