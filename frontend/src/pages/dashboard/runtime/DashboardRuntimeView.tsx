@@ -85,7 +85,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetScrollTarget: () => void;
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
-  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
@@ -108,7 +108,7 @@ type DashboardRuntimeViewActions = {
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
-  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
 };
 
 type DashboardRuntimeViewProps = {
@@ -232,15 +232,17 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       다시 시도
     </Button>
   );
-  const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
-    config: {
-      ...widget.config,
-      ...patch,
-    } as UpdateDraftWidgetFormInput["config"],
-    datasetId: widget.datasetId ?? null,
-    title: widget.title ?? "제목 없는 위젯",
-    type: widget.type,
-  });
+  const patchWidgetConfig = async (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => {
+    await onUpdateWidget(widget.id, {
+      config: {
+        ...widget.config,
+        ...patch,
+      } as UpdateDraftWidgetFormInput["config"],
+      datasetId: widget.datasetId ?? null,
+      title: widget.title ?? "제목 없는 위젯",
+      type: widget.type,
+    });
+  };
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {
@@ -473,6 +475,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         inspector={isAssistantInspectorOpen ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
+              currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
               pageId={selectedPageId}

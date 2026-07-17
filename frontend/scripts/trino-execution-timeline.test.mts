@@ -23,9 +23,8 @@ function makeRun(overrides: Partial<TrinoQueryRun> = {}): TrinoQueryRun {
 }
 
 test("Trino timeline is isolated from compatibility and mock execution", () => {
-  assert.equal(shouldShowTrinoSubmissionTimeline(true, false), true);
-  assert.equal(shouldShowTrinoSubmissionTimeline(false, false), false);
-  assert.equal(shouldShowTrinoSubmissionTimeline(true, true), false);
+  assert.equal(shouldShowTrinoSubmissionTimeline(true), true);
+  assert.equal(shouldShowTrinoSubmissionTimeline(false), false);
 });
 
 test("queued Trino work remains in the query execution stage", () => {
