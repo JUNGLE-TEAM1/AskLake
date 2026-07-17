@@ -39,3 +39,9 @@ backend:
   trinoRuntimeSecretName: asklake-backend-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem
   resources: {}
+
+collector:
+  enabled: true
+  replicaCount: 1
+  serviceAccountName: asklake-backend
+  resources: {}

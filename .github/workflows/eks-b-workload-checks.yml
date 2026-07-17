@@ -11,12 +11,14 @@ on:
       - "airflow/**"
       - "backend/**"
       - "frontend/**"
+      - "infra/eks/helm/asklake-web/**"
       - "infra/eks/helm/asklake-workloads/**"
       - "infra/eks/secrets/**"
       - "infra/eks/values/workloads/**"
       - "scripts/test-eks-runtime-secrets.mjs"
       - "scripts/verify-eks-runtime-secrets.mjs"
       - "scripts/verify-eks-runtime-secrets.sh"
+      - "scripts/verify-eks-web-workloads.sh"
       - "scripts/verify-eks-workloads.sh"
       - "docs/02-architecture.md"
       - "docs/03-api-reference.md"
@@ -63,7 +65,15 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Verify Helm and AWS workload boundaries
-        run: scripts/verify-eks-workloads.sh
+        run: |
+          scripts/verify-eks-workloads.sh
+          scripts/verify-eks-web-workloads.sh
+
+      - name: Verify Trino collector AWS storage contract
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python -m unittest tests.test_trino_result_storage_aws_contract -v
 
       - name: Verify runtime Secret contracts and dev mappings
         run: scripts/verify-eks-runtime-secrets.sh

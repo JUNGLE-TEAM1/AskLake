@@ -812,7 +812,7 @@ bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
 
 위 live 검증 script와 Backend S3 runner는 모두 `ASKLAKE_EKS_CLUSTER_NAME`을 필수로 받고 AWS EKS endpoint와 현재 `kubectl` endpoint가 같은지 먼저 확인한다. namespace 존재 확인까지 통과하기 전에는 Kubernetes 또는 AWS runtime 검증을 수행하지 않는다.
 
-Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
+Phase 14 web/collector workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI·Collector Workload](eks-phase-14-web-workloads.md)를 따른다.
 
 14일 Metrics Server/Node scale 계약은 `bash scripts/verify-eks-metrics-scale.sh`로 검사한다. 실제 cluster에서는 `describe-addon-versions`로 호환되는 exact community add-on version을 선택하고 Terraform plan/apply 뒤 Metrics API와 `kubectl top`을 확인한다. Node scale smoke는 저장소 밖 values와 evidence 경로를 사용하며 비용 confirmation 없이는 실행되지 않는다. scale-out 뒤 임시 Helm release를 제거하고 Auto Mode scale-in까지 별도 기록한다.
 
@@ -1551,3 +1551,34 @@ npm run verify:etl-e2e-recovery
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
 
 시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.
+
+## 24) EKS Trino Result Collector 배포·복구
+
+EKS SQL Query Run은 FastAPI submit만으로 끝나지 않는다. `asklake-web` release의 `trino-result-collector` Deployment가 RDS에 저장된 `nextUri`를 lease로 선점해 Trino result page를 S3에 저장하고 terminal 상태를 확정한다. 이 worker는 FastAPI와 같은 Backend image, `asklake-runtime`, `asklake-backend-runtime`, `asklake-backend` Pod Identity를 사용하지만 HTTP endpoint와 Kubernetes API token은 사용하지 않는다.
+
+정적 검증과 실제 배포는 기존 web release owner를 유지한다.
+
+```bash
+bash scripts/verify-eks-web-workloads.sh
+bash scripts/deploy-eks-web-workloads.sh --render /private/web-values.yaml /private/image-receipt.json
+
+export ASKLAKE_EKS_CLUSTER_NAME=<reviewed-cluster>
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
+bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
+
+kubectl get deployment,pod -n asklake-dev -l app.kubernetes.io/component=trino-result-collector
+kubectl logs -n asklake-dev deployment/trino-result-collector --tail=50
+```
+
+배포 전부터 `queued`/`running`인 Run을 정리할 때 DB row나 S3 object를 수동 삭제하지 않는다. 계속 필요하지 않은 Run은 인증된 `POST /api/query/runs/{runId}/cancel`로 generation을 먼저 fence하고 Trino cancel/result cleanup을 수행한다. 이후 bounded `SELECT count(*)`를 새 Query Run으로 제출해 `succeeded`, 기대값 100, actor concurrent slot 반환을 함께 확인한다.
+
+Pod self-healing은 아래처럼 확인한다. 새 Pod가 생겼다는 사실과 새 Query Run이 terminal로 끝났다는 사실을 둘 다 기록해야 하며, Pod 재생성만으로 continuation 복구가 증명됐다고 쓰지 않는다.
+
+```bash
+kubectl delete pod -n asklake-dev -l app.kubernetes.io/component=trino-result-collector
+kubectl rollout status deployment/trino-result-collector -n asklake-dev --timeout=5m
+kubectl logs -n asklake-dev deployment/trino-result-collector --tail=50
+```
+
+Collector 중단은 Run을 성공으로 바꾸지 않는다. Pod가 죽으면 lease 만료 뒤 새 worker가 같은 `runId`를 이어받고, stale generation의 page metadata 공개는 거부된다. rollback으로 Collector를 제거한 상태가 길어지면 actor별 `queued`/`running` slot이 다시 찰 수 있으므로 FastAPI나 Trino 재시작으로 숨기지 말고 Collector 복구 또는 cancel API를 사용한다.

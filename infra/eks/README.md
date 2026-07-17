@@ -9,7 +9,7 @@
 - `terraform/`: 기존/new EKS Auto Mode cluster, external/MVP-owned VPC network, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `helm/asklake-ingress/`: EKS Auto Mode IngressClassParams/Class와 HTTPS ALB routing 계약
-- `helm/asklake-web/`: immutable image와 runtime 준비 gate 뒤 Frontend/FastAPI를 배포하는 workload 계약
+- `helm/asklake-web/`: immutable image와 runtime 준비 gate 뒤 Frontend/FastAPI 및 Trino result collector를 배포하는 Backend workload 계약
 - `helm/asklake-scale-smoke/`: Metrics API와 General NodePool scale-out을 확인한 뒤 제거하는 임시 test Deployment
 - `helm/asklake-auto-mode/`: 명시적인 운영값이 없으면 아무 resource도 만들지 않는 General/Spark NodeClass·NodePool 계약
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
@@ -118,7 +118,7 @@ helm template asklake-foundation \
   -f infra/eks/values/identity/pod-identity.example.yaml
 ```
 
-현재 foundation contract `2.5`는 EKS Auto Mode compute, Phase 11 network, Phase 12 custom node placement, Phase 13 Auto Mode ALB, Phase 14 Frontend/FastAPI workload와 Metrics Server handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
+현재 foundation contract `2.5`는 EKS Auto Mode compute, Phase 11 network, Phase 12 custom node placement, Phase 13 Auto Mode ALB, Phase 14 Frontend/FastAPI/Collector workload와 Metrics Server handoff, frontend, backend, Airflow, Trino, MSK IAM smoke, Spark service account를 제공한다. Replay Producer compatibility input은 `create=false`로 유지하며 ECR repository, service account 또는 workload를 만들지 않는다. `trino_handoff`는 실제 secret 값 없이 image digest, IRSA role ARN, in-cluster Service URL, RDS/S3 network와 Secret reference를 전달한다. AWS inventory가 확정되기 전 nullable 값은 resource 생성 gate로 남고 manifest render·fake client test만 완료할 수 있다.
 
 Phase 3 data-plane Terraform은 MSK Serverless + IAM, private PostgreSQL RDS, 분리된 S3 bucket과 workload별 최소 권한 policy document를 추가한다. MSK topic 생성, RDS의 `airflow_metadata`/`iceberg_catalog` database와 user/grant bootstrap, IAM role attachment는 Terraform resource 생성과 분리된 후속 책임이다. 상세 모드와 미결정 사항은 [Phase 3 Data Plane 계약](../../docs/eks-phase-3-data-plane.md)을 따른다.
 
@@ -144,7 +144,7 @@ Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark N
 
 Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 ALB를 관리한다. dev MVP는 AWS 기본 DNS + HTTP를 사용하고 사용자 도메인·ACM·HTTPS는 후속 결정으로 남긴다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector, Helm ownership preflight와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md), [ALB route 적용 기록](../../docs/eks-day15-alb-runtime-evidence.md)을 따른다.
 
-Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service 및 두 Deployment를 추가한다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
+Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service, Frontend/FastAPI Deployment 및 HTTP endpoint가 없는 Trino result collector Deployment를 추가한다. Collector는 FastAPI와 같은 immutable Backend image·runtime identity를 사용하고 steady-state 1 replica로 RDS Query Run continuation을 회수한다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI·Collector Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 
