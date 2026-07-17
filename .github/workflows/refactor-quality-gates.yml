@@ -28,6 +28,8 @@ jobs:
         run: |
           python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
           python3 scripts/refactor_audit/control_plane_ownership.py
+          python3 -m unittest scripts.refactor_audit.test_legacy_removal_evidence
+          python3 scripts/refactor_audit/legacy_removal_evidence.py
           python3 scripts/refactor_audit/quality_gate.py --base origin/${{ github.base_ref || 'dev' }}
 
   backend-contracts:

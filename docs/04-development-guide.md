@@ -1141,6 +1141,16 @@ npm run build
 
 운영에서 도달 가능한 fallback/legacy adapter를 추가할 때 `docs/refactor-2026/legacy-path-register.json`에 안정적인 ID, owner, activation, telemetry, 제거 조건과 목표 release를 등록한다. 구조화 warning과 counter 없는 production entry는 검증 실패다. 개발 mock/우회는 명시적 환경 guard가 필요하며 production에서 mock으로 조용히 전환해서는 안 된다.
 
+production compatibility path를 제거 후보로 바꾸려면 `docs/refactor-2026/legacy-removal-evidence.json`에 최소 30일의 시작·종료일, `observedCalls=0`, log query/dashboard export/release record 참조와 별도 reviewer 승인을 기록한다. validator `status=pass`만으로 제거할 수 없으며 `eligiblePaths`에 해당 ID가 있어야 한다. 현재 10개 경로는 모두 `not_started`/`not_requested`이므로 삭제하거나 비활성화하지 않는다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_legacy_removal_evidence
+python3 scripts/refactor_audit/legacy_removal_evidence.py
+
+cd backend
+npm run verify:legacy-removal-evidence
+```
+
 DB breaking change는 같은 PR에서 바로 수행하지 않는다. expand schema와 rollback reader, idempotent backfill, 호출 0 관측 기간, contract 제거를 각각 검증 가능한 단계로 나눈다. Job, session, runtime artifact, checkpoint를 테스트 편의를 위해 초기화하지 않는다.
 # 관측성·품질 게이트 개발 절차 (2026-07-16)
 

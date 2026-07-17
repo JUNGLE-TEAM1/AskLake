@@ -2,6 +2,7 @@
 
 기준일: 2026-07-16
 기계 판독 원본: [legacy-path-register.json](./legacy-path-register.json)
+제거 증거 상태: [legacy-removal-evidence.json](./legacy-removal-evidence.json)
 
 ## 원칙
 
@@ -26,6 +27,7 @@
 3. 제거 PR은 persisted fixture와 rollback reader를 함께 검증한다.
 4. 새 호환 경로를 추가할 때 JSON 등록부, owner, 제거 조건, 목표 release, 테스트를 함께 추가한다.
 5. 운영 경로에서 mock 데이터를 반환하는 신규 코드는 금지한다. 서비스 unavailable 또는 명시적 빈 action처럼 안전한 degraded response만 허용한다.
+6. 제거 후보는 evidence manifest의 최소 30일 0-call 관찰과 근거·승인을 모두 통과해야 하며, 현재 production 10경로는 모두 관찰 미시작 상태다.
 
 ## 제거 우선순위
 
