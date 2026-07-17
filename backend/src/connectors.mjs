@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -461,6 +461,10 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
 
   const schemaColumns = inspected?.schemaColumns ?? [];
   const sampleRows = inspected?.sampleRows ?? [];
+  const selectedInventory = selectedObject
+    ? objects.filter((item) => String(item?.Key ?? "") === selectedObject)
+    : [];
+  const selectedTotalBytes = selectedInventory.reduce((total, object) => total + nonNegativeNumber(object.Size), 0);
   const id = sourceId("source", `${lakePath}:${objects.length}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
@@ -477,6 +481,9 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
     ["__Source ID", id],
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
+    ["__Source Total Bytes", String(selectedTotalBytes)],
+    ["__Source Inventory Fingerprint", selectedInventory.length ? sourceInventoryFingerprint(selectedInventory) : ""],
+    ["__Source Identity Contract Version", selectedInventory.length ? "1" : ""],
     ["__Sample Object", sample?.Key ?? ""],
     ["__Selected Object", selectedObject],
     ["__Schema Inspect Path", inspectPath],
@@ -1065,6 +1072,7 @@ export async function buildObjectStoragePrefixAnalysis({
 
   const fingerprint = schemaFingerprint(representative.schemaColumns);
   const totalBytes = selection.objects.reduce((total, object) => total + nonNegativeNumber(object.Size), 0);
+  const inventoryFingerprint = sourceInventoryFingerprint(selection.objects);
   const sampledBytes = samples.reduce((total, sample) => total + sample.requestedBytes, 0);
   const id = sourceId("source", `${endpoint}:${bucket}:${canonicalPrefix}:${selection.format}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
@@ -1079,6 +1087,8 @@ export async function buildObjectStoragePrefixAnalysis({
     ["__Dataset Prefix", canonicalPrefix],
     ["__Source Unit Count", String(selection.objects.length)],
     ["__Source Total Bytes", String(totalBytes)],
+    ["__Source Inventory Fingerprint", inventoryFingerprint],
+    ["__Source Identity Contract Version", "1"],
     ["__Excluded File Count", String(selection.excludedFileCount)],
     ["__Representative Object", representative.key],
     ["__Schema Fingerprint", fingerprint],
@@ -1183,6 +1193,10 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const schemaColumns = inferSchemaColumns(parsedSample);
+  const selectedInventory = selectedObject
+    ? objects.filter((item) => String(item?.Key ?? "") === selectedObject)
+    : [];
+  const selectedTotalBytes = selectedInventory.reduce((total, object) => total + nonNegativeNumber(object.Size), 0);
   const summary = schemaColumns.length
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
@@ -1200,6 +1214,9 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ["__Source ID", id],
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
+    ["__Source Total Bytes", String(selectedTotalBytes)],
+    ["__Source Inventory Fingerprint", selectedInventory.length ? sourceInventoryFingerprint(selectedInventory) : ""],
+    ["__Source Identity Contract Version", selectedInventory.length ? "1" : ""],
     ["__Sample Object", sampleKey],
     ["__Selected Object", selectedObject],
   ]);
@@ -1275,6 +1292,10 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const schemaColumns = inferSchemaColumns(parsedSample);
+  const selectedInventory = selectedObject
+    ? objects.filter((item) => String(item?.Key ?? "") === selectedObject)
+    : [];
+  const selectedTotalBytes = selectedInventory.reduce((total, object) => total + nonNegativeNumber(object.Size), 0);
   const summary = schemaColumns.length
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기(오브젝트 ${objects.length}개)`;
@@ -1290,6 +1311,9 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     ["__Source ID", id],
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
+    ["__Source Total Bytes", String(selectedTotalBytes)],
+    ["__Source Inventory Fingerprint", selectedInventory.length ? sourceInventoryFingerprint(selectedInventory) : ""],
+    ["__Source Identity Contract Version", selectedInventory.length ? "1" : ""],
     ["__Sample Object", sampleKey],
     ["__Selected Object", selectedObject],
     ["__MinIO Runtime", "docker-container"],
@@ -1536,6 +1560,28 @@ function compareObjectKeys(left, right) {
   if (leftKey < rightKey) return -1;
   if (leftKey > rightKey) return 1;
   return 0;
+}
+
+function sourceInventoryFingerprint(objects) {
+  const identities = (Array.isArray(objects) ? objects : []).map((object) => {
+    const key = String(object?.Key ?? "").trim();
+    const size = Number(object?.Size);
+    const lastModifiedMs = object?.LastModified instanceof Date
+      ? object.LastModified.getTime()
+      : Date.parse(String(object?.LastModified ?? ""));
+    if (!key || !Number.isInteger(size) || size < 0 || !Number.isFinite(lastModifiedMs)) {
+      throw apiError(
+        "SOURCE_OBJECT_IDENTITY_UNAVAILABLE",
+        `Source object identity metadata is incomplete: ${key || "<missing-key>"}`,
+        502,
+      );
+    }
+    return { key, lastModifiedMs: Math.trunc(lastModifiedMs), size };
+  }).sort((left, right) => Buffer.compare(Buffer.from(left.key, "utf8"), Buffer.from(right.key, "utf8")));
+  const payload = identities
+    .map((identity) => `${identity.key}\t${identity.size}\t${identity.lastModifiedMs}\n`)
+    .join("");
+  return createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
 function nonNegativeNumber(value) {

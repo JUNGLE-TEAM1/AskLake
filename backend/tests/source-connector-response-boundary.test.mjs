@@ -26,6 +26,7 @@ test("50,000 real JSONL rows inform schema while only 20 preview rows cross the 
   const object = {
     Key: "amazon_reviews/reviews.jsonl",
     Size: Buffer.byteLength(jsonLines, "utf8"),
+    LastModified: new Date("2026-07-17T00:00:00.000Z"),
   };
 
   const connectorResult = await buildObjectStoragePrefixAnalysis({

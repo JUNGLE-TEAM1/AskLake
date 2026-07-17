@@ -5,8 +5,10 @@ import ts from "typescript";
 
 const modelPath = new URL("../src/pages/etl/sourceModel.tsx", import.meta.url);
 const pagePath = new URL("../src/pages/etl/SourceConnectionPage.tsx", import.meta.url);
+const connectorServicePath = new URL("../src/services/sourceConnectorService.ts", import.meta.url);
 const modelSource = readFileSync(modelPath, "utf8");
 const pageSource = readFileSync(pagePath, "utf8");
+const connectorServiceSource = readFileSync(connectorServicePath, "utf8");
 const sourceFile = ts.createSourceFile(modelPath.pathname, modelSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 function loadFunction<T extends (...args: any[]) => any>(name: string): T {
@@ -75,4 +77,17 @@ test("the page wires direct probes to code-specific fallback without extension g
     /fallbackToFolderOnNotFound\s*&&\s*isSourceObjectNotFoundError\(error\)[\s\S]{0,700}await loadSourceAssetChildren\(assetPath\)/,
   );
   assert.doesNotMatch(pageSource, /navigateSourceAssetPath[\s\S]{0,1200}\.(csv|json|parquet)/i);
+});
+
+test("all source calls use the authenticated API client and backend schema contract", () => {
+  assert.doesNotMatch(connectorServiceSource, /VITE_BACKEND_DIRECT_URL|postBackendDirect|getBackendDirect/);
+  assert.doesNotMatch(connectorServiceSource, /inferSchemaColumnsFromPreview|normalizeConnectorAnalysis/);
+  assert.match(
+    connectorServiceSource,
+    /apiClient\.post<SourceAssetsResponse>\("\/api\/etl\/sources\/assets"/,
+  );
+  assert.match(
+    connectorServiceSource,
+    /apiClient\.get<SourceConnectorDefaults>\("\/api\/etl\/sources\/defaults"\)/,
+  );
 });

@@ -1,13 +1,6 @@
 import { apiClient } from "./apiClient";
-import { ApiError } from "../types";
-import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
+import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SourceDraft } from "../types";
 import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
-
-const directBackendBaseUrl = String(
-  import.meta.env.VITE_BACKEND_DIRECT_URL
-    || import.meta.env.VITE_API_BASE_URL
-    || "http://127.0.0.1:8080",
-).replace(/\/$/, "");
 
 export type SourceDatasetSummary = {
   selectionKind: "prefix";
@@ -58,11 +51,10 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
     return buildSqlResultConnectorAnalysis(fields);
   }
   const requestFields = sanitizeSourceConnectorFields(normalizedSourceType, fields);
-  return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
+  return withUnselectedTargetSchema(withRecordParsingSourceMetadata(
     await postSourceConnector(normalizedSourceType, requestFields),
-    normalizedSourceType,
     requestFields,
-  ), requestFields));
+  ));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -70,7 +62,7 @@ export async function previewRecordParsing(rawLines: string[], recordParsing: Re
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
+  return apiClient.get<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -85,140 +77,11 @@ async function postSourceConnector(sourceType: string, fields: SourceFieldRows):
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
   const body = { prefix, sourceConfig: fields, sourceType };
-  return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
-}
-
-async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
-  if (import.meta.env.DEV) {
-    try {
-      return await postBackendDirect<T>(path, body);
-    } catch (error) {
-      if (!isNetworkError(error) && !isNotFoundError(error)) {
-        throw error;
-      }
-    }
-  }
-
-  try {
-    return await apiClient.post<T>(path, body);
-  } catch (error) {
-    if (import.meta.env.DEV && isNotFoundError(error)) {
-      return postBackendDirect<T>(path, body);
-    }
-    throw error;
-  }
-}
-
-async function getWithDevFallback<T>(path: string): Promise<T> {
-  if (import.meta.env.DEV) {
-    try {
-      return await getBackendDirect<T>(path);
-    } catch (error) {
-      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
-    }
-  }
-
-  return apiClient.get<T>(path);
-}
-
-async function getBackendDirect<T>(path: string): Promise<T> {
-  const response = await fetch(`${directBackendBaseUrl}${path}`);
-  if (response.ok) return await response.json() as T;
-  const text = await response.text().catch(() => "");
-  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
-}
-
-async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${directBackendBaseUrl}${path}`, {
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  });
-  if (response.ok) {
-    return await response.json() as T;
-  }
-  const text = await response.text().catch(() => "");
-  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
-}
-
-function isNetworkError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /failed to fetch|networkerror|load failed/i.test(message);
-}
-
-function isNotFoundError(error: unknown) {
-  return error instanceof ApiError && error.status === 404;
+  return apiClient.post<SourceAssetsResponse>("/api/etl/sources/assets", body);
 }
 
 function normalizeSourceType(sourceType: string) {
   return sourceType === "Database" ? "PostgreSQL" : sourceType;
-}
-
-function normalizeConnectorAnalysis(
-  analysis: BackendSourceConnectorResponse,
-  sourceType: string,
-  fields: SourceFieldRows,
-): SourceConnectorAnalysis {
-  const columns = analysis.draftPatch.schema?.columns ?? [];
-  const sampleRows = analysis.draftPatch.schema?.sampleRows ?? [];
-  if (columns.length > 0 && sampleRows.length > 0) {
-    return analysis;
-  }
-
-  if (isObjectStorageSource(sourceType) && !hasSelectedObject(fields)) {
-    return {
-      ...analysis,
-      draftPatch: {
-        ...analysis.draftPatch,
-        schema: undefined,
-      },
-    };
-  }
-
-  if (analysis.previewColumns.length === 0 || analysis.previewRows.length === 0) {
-    return analysis;
-  }
-
-  const inferredColumns = inferSchemaColumnsFromPreview(analysis.previewColumns, analysis.previewRows);
-  if (inferredColumns.length === 0) {
-    return analysis;
-  }
-
-  return {
-    ...analysis,
-    draftPatch: {
-      ...analysis.draftPatch,
-      schema: {
-        columns: inferredColumns,
-        sampleRows: analysis.previewRows,
-        schemaFingerprint: inferredColumns
-          .map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`)
-          .join("|"),
-        summary: `${analysis.previewNote || "\uC0D8\uD50C"} \uAE30\uC900 ${inferredColumns.length}\uAC1C \uD544\uB4DC \uCD94\uB860`,
-      },
-    },
-  };
-}
-
-function isObjectStorageSource(sourceType: string) {
-  return sourceType === "File / S3" || sourceType === "Data Lake";
-}
-
-function hasSelectedObject(fields: SourceFieldRows) {
-  const selectionKind = fieldValue(fields, "__Selection Kind").toLowerCase();
-  const selectedPrefix = fieldValue(fields, "Path / Prefix");
-  return Boolean(
-    (selectionKind === "prefix" && selectedPrefix)
-      || fieldValue(fields, "__Selected Object")
-      || fieldValue(fields, "__Sample Object")
-      || looksLikeDataFile(fieldValue(fields, "Path / Prefix"))
-      || looksLikeDataFile(fieldValue(fields, "Path"))
-      || looksLikeDataFile(fieldValue(fields, "DATASET OR TABLE SELECTOR")),
-  );
-}
-
-function looksLikeDataFile(value: string) {
-  return /\.(csv|tsv|txt|log|json|jsonl|parquet)$/i.test(value.trim());
 }
 
 function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fields: SourceFieldRows): SourceConnectorAnalysis {
@@ -270,40 +133,6 @@ function withUnselectedTargetSchema(analysis: SourceConnectorAnalysis): SourceCo
       },
     },
   };
-}
-
-function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): SchemaColumnDraft[] {
-  return columns.map((column, columnIndex) => {
-    const values = rows.map((row) => row[columnIndex] ?? "");
-    return {
-      confidence: 85,
-      included: false,
-      nullable: values.some((value) => isEmptyValue(value)),
-      sourceName: column,
-      targetName: normalizeColumnName(column),
-      type: inferPreviewColumnType(values),
-    };
-  });
-}
-
-function inferPreviewColumnType(values: string[]) {
-  const nonEmptyValues = values.map((value) => value.trim()).filter((value) => !isEmptyValue(value));
-  if (nonEmptyValues.length === 0) return "String";
-  if (nonEmptyValues.every((value) => /^(true|false)$/i.test(value))) return "Boolean";
-  if (nonEmptyValues.every((value) => /^-?\d+$/.test(value))) return "Integer";
-  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Double";
-  if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[-T:]/.test(value))) return "Timestamp";
-  if (nonEmptyValues.some((value) => /^[\[{]/.test(value))) return "JSON";
-  return "String";
-}
-
-function normalizeColumnName(value: string) {
-  return value.trim().replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "") || "column";
-}
-
-function isEmptyValue(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return normalized === "" || normalized === "null" || normalized === "undefined" || normalized === "-";
 }
 
 function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnectorAnalysis {

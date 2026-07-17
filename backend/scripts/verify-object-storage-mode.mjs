@@ -114,6 +114,8 @@ try {
   assert.equal(preview.status, "success");
   assert.deepEqual(preview.previewColumns, ["product_id", "name"]);
   assert.deepEqual(preview.previewRows, [["p-100", "Desk Lamp"], ["p-101", "Monitor Stand"]]);
+  assert.match(configValue(preview, "__Source Inventory Fingerprint"), /^[a-f0-9]{64}$/);
+  assert.equal(configValue(preview, "__Source Identity Contract Version"), "1");
   await assert.rejects(
     testObjectStorageSource([
       ["Storage Provider", "MinIO"],
@@ -148,4 +150,8 @@ try {
     if (previous[name] === undefined) delete process.env[name];
     else process.env[name] = previous[name];
   }
+}
+
+function configValue(analysis, label) {
+  return analysis.draftPatch.source.sourceConfig.find(([fieldLabel]) => fieldLabel === label)?.[1];
 }

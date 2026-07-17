@@ -4,6 +4,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote, urlparse
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -15,6 +16,7 @@ from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snap
 from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
+    verify_source_selection_inventory,
 )
 from runtime.contracts import (
     append_secondary_error,
@@ -97,10 +99,14 @@ def main():
             transform_steps,
         )
         input_files = sorted(source_df.inputFiles())
-        input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
-        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
-            source_collection.get("expectedTotalBytes") or 0
+        input_inventory = source_file_inventory(spark, input_files)
+        verified_selection = verify_spark_source_selection_inventory(
+            source_collection,
+            input_inventory,
+            phase="before_read",
         )
+        input_file_count = verified_selection["fileCount"]
+        input_bytes = verified_selection["totalBytes"]
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
         contracted_df, input_rows = apply_schema_contract_with_count(
@@ -237,6 +243,11 @@ def main():
             spark,
             source_path,
             source_collection,
+            phase="after_read",
+        )
+        verify_spark_source_selection_inventory(
+            source_collection,
+            source_file_inventory(spark, input_files),
             phase="after_read",
         )
         if quality["status"] == "fail":
@@ -894,7 +905,10 @@ def s3a_source_object_identity(spark, source_path):
     try:
         e_tag = status.getEtag()
     except Exception:
-        e_tag = status.getETag()
+        try:
+            e_tag = status.getETag()
+        except Exception:
+            e_tag = ""
     try:
         version_id = status.getVersionId()
     except Exception:
@@ -909,6 +923,23 @@ def s3a_source_object_identity(spark, source_path):
         "lastModified": last_modified,
         "size": int(status.getLen()),
     }
+
+
+def source_file_inventory(spark, paths):
+    inventory = []
+    for source_path in paths:
+        identity = s3a_source_object_identity(spark, source_path)
+        parsed = urlparse(str(source_path or ""))
+        key = unquote(parsed.path).lstrip("/") if parsed.scheme else str(source_path or "").replace("\\", "/")
+        inventory.append({"key": key, **identity})
+    return inventory
+
+
+def verify_spark_source_selection_inventory(source_collection, inventory, *, phase):
+    try:
+        return verify_source_selection_inventory(source_collection, inventory)
+    except ValueError as exc:
+        raise ValueError(f"{exc} phase={phase}") from exc
 
 
 def verify_spark_source_inventory(spark, source_path, source_collection, *, phase):
