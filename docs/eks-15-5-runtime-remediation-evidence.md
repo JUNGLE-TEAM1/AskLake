@@ -65,7 +65,7 @@ GitHub의 수동 `EKS image delivery` workflow를 `fix-#798`의 Phase 0 commit�
 - receipt revision은 `f556e95e`를 포함한다.
 - Backend focused test 8개가 통과했으며 service와 FastAPI TestClient HTTP 502 정보 비노출 scenario를 포함한다.
 - receipt는 Phase 6 schema를 통과하고 Git 제외 private 경로에 보관했다.
-- 새 Backend image는 `linux/amd64` OCI index이며 현재 배포 Backend digest와 다르다.
+- 새 Backend image는 실제 image config가 `linux/amd64`인 단일 OCI manifest이며 현재 배포 Backend digest와 다르다.
 - 새 digest는 ECR에 정확히 하나 존재하고 `git-<short-sha>` tag가 같은 digest를 가리킨다.
 - Backend ECR repository는 immutable 상태다.
 - 현재 Deployment와 Pod image는 변경하지 않았다.
@@ -76,7 +76,7 @@ GitHub의 수동 `EKS image delivery` workflow를 `fix-#798`의 Phase 0 commit�
 
 ## Phase 2: Backend-only rollout 사전 검증
 
-Git에서 제외된 Phase 1 receipt와 현재 `asklake-web` Helm release values를 사용해 실제 apply 없는 사전 검증을 수행했다. `scripts/preflight-eks-backend-image-rollout.sh`는 receipt revision이 `f556e95e`를 포함하고 현재 branch의 ancestor인지, Backend digest가 immutable ECR artifact인지, 실제 OCI index가 `linux/amd64`인지 다시 확인한다.
+Git에서 제외된 Phase 1 receipt와 현재 `asklake-web` Helm release values를 사용해 실제 apply 없는 사전 검증을 수행했다. `scripts/preflight-eks-backend-image-rollout.sh`는 receipt revision이 `f556e95e`를 포함하고 현재 branch의 ancestor인지, Backend digest가 immutable ECR artifact인지, 단일 OCI manifest가 가리키는 실제 image config가 `linux/amd64`인지 다시 확인한다.
 
 현재 Helm values에서 `backend.image`만 새 receipt의 digest로 바꾼 임시 candidate를 만들었다. 원본과 candidate를 구조적으로 비교해 다른 field가 바뀌지 않았음을 확인했고, render 결과에서 Frontend image가 현재 값 그대로이며 Backend image만 새 digest가 되는지 검사했다. 이어 기존 release의 field ownership을 유지하는 `helm upgrade --install --dry-run=server`를 통과했다.
 

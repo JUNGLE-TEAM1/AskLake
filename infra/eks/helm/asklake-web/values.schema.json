@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend"],
+  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend", "collector"],
   "properties": {
     "enabled": { "type": "boolean" },
     "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
@@ -37,7 +37,8 @@
       }
     },
     "frontend": { "$ref": "#/$defs/frontend" },
-    "backend": { "$ref": "#/$defs/backend" }
+    "backend": { "$ref": "#/$defs/backend" },
+    "collector": { "$ref": "#/$defs/collector" }
   },
   "allOf": [
     {
@@ -67,6 +68,13 @@
               "replicaCount": { "minimum": 2 },
               "resources": { "$ref": "#/$defs/resources" }
             }
+          },
+          "collector": {
+            "properties": {
+              "enabled": { "const": true },
+              "replicaCount": { "const": 1 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
           }
         }
       },
@@ -83,7 +91,8 @@
             }
           },
           "frontend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
-          "backend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } }
+          "backend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
+          "collector": { "properties": { "resources": { "maxProperties": 0 } } }
         }
       }
     }
@@ -148,10 +157,12 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
+        "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
+        "preStopDelaySeconds": { "type": "integer", "const": 310 },
         "serviceAccountName": { "type": "string", "const": "asklake-backend" },
         "service": { "$ref": "#/$defs/backendService" },
         "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
@@ -159,6 +170,17 @@
         "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
         "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
+        "resources": { "type": "object" }
+      }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicaCount", "serviceAccountName", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string", "const": "asklake-backend" },
         "resources": { "type": "object" }
       }
     }

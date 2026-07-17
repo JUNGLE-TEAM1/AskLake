@@ -28,6 +28,8 @@ frontend:
 backend:
   image: ""
   replicaCount: 0
+  terminationGracePeriodSeconds: 360
+  preStopDelaySeconds: 310
   serviceAccountName: asklake-backend
   service:
     name: fastapi
@@ -38,4 +40,10 @@ backend:
   runtimeSecretName: asklake-backend-runtime
   trinoRuntimeSecretName: asklake-backend-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem
+  resources: {}
+
+collector:
+  enabled: true
+  replicaCount: 1
+  serviceAccountName: asklake-backend
   resources: {}

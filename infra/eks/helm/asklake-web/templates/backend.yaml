@@ -25,12 +25,20 @@ spec:
     spec:
       serviceAccountName: {{ .Values.backend.serviceAccountName }}
       automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       nodeSelector:
         {{- toYaml .Values.placement.nodeSelector | nindent 8 }}
       containers:
         - name: fastapi
           image: {{ .Values.backend.image | quote }}
           imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - {{ printf "sleep %d" (int .Values.backend.preStopDelaySeconds) | quote }}
           envFrom:
             - configMapRef:
                 name: {{ .Values.backend.runtimeConfigMapName }}

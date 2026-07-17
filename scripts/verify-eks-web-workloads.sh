@@ -16,15 +16,16 @@ fi
 helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 
-if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 2 ]] || \
+if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 3 ]] || \
    [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 2 ]]; then
-  echo "web chart must render exactly two Deployments and two Services" >&2
+  echo "web chart must render Frontend, FastAPI, Collector Deployments and two Services" >&2
   exit 1
 fi
 
 for contract in \
   'name: frontend' \
   'name: fastapi' \
+  'name: trino-result-collector' \
   'serviceAccountName: asklake-frontend' \
   'serviceAccountName: asklake-backend' \
   'asklake.io/workload-class: general' \
@@ -35,6 +36,10 @@ for contract in \
   'key: trino-ca.pem' \
   'path: trino-ca.pem' \
   'path: /api/health' \
+  'terminationGracePeriodSeconds: 360' \
+  'preStop:' \
+  'sleep 310' \
+  'scripts/collect-trino-results.py' \
   'containerPort: 80' \
   'containerPort: 8080'; do
   if ! grep -Fq "$contract" "$RENDERED_FILE"; then
@@ -48,13 +53,20 @@ helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
 grep -Fq 'name: asklake-backend-trino-runtime' "$RENDERED_FILE"
 grep -Fq 'secretName: asklake-backend-trino-runtime' "$RENDERED_FILE"
 
-if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 2 ]]; then
-  echo "web workloads must use exactly two digest-pinned images" >&2
+if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 3 ]]; then
+  echo "web workloads must use three digest-pinned image references" >&2
   exit 1
 fi
 
-if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 2 ]]; then
-  echo "web workloads must schedule both Deployments on AMD64 nodes" >&2
+fastapi_image="$(awk '$1 == "-" && $2 == "name:" && $3 == "fastapi" { found = 1; next } found && $1 == "image:" { gsub(/\"/, "", $2); print $2; exit }' "$RENDERED_FILE")"
+collector_image="$(awk '$1 == "-" && $2 == "name:" && $3 == "trino-result-collector" { found = 1; next } found && $1 == "image:" { gsub(/\"/, "", $2); print $2; exit }' "$RENDERED_FILE")"
+if [[ -z "$fastapi_image" || "$collector_image" != "$fastapi_image" ]]; then
+  echo "Trino collector must use the exact FastAPI backend image digest" >&2
+  exit 1
+fi
+
+if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 3 ]]; then
+  echo "web workloads must schedule all three Deployments on AMD64 nodes" >&2
   exit 1
 fi
 
@@ -64,12 +76,24 @@ if [[ "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -ne 2 ]] || \
   exit 1
 fi
 
+if [[ "$(grep -c 'terminationGracePeriodSeconds: 360' "$RENDERED_FILE")" -ne 1 ]] || \
+   [[ "$(grep -c 'sleep 310' "$RENDERED_FILE")" -ne 1 ]]; then
+  echo "FastAPI must stay alive during ALB target deregistration before shutdown" >&2
+  exit 1
+fi
+
 negative_cases=(
   'readiness.backendRuntimeBoundaryReady=false'
   'readiness.runtimeSecretReady=false'
   'readiness.generalNodePoolReady=false'
   'frontend.replicaCount=1'
   'backend.replicaCount=1'
+  'backend.terminationGracePeriodSeconds=120'
+  'backend.preStopDelaySeconds=0'
+  'collector.enabled=false'
+  'collector.replicaCount=0'
+  'collector.replicaCount=2'
+  'collector.serviceAccountName=asklake-trino'
   'frontend.service.port=8080'
   'backend.service.port=80'
   'frontend.image=nginx:latest'
@@ -85,6 +109,16 @@ done
 
 if grep -Eq '^kind: (Ingress|HorizontalPodAutoscaler|Secret|ConfigMap)$' "$RENDERED_FILE"; then
   echo "Phase 14 web chart crossed the workload-only ownership boundary" >&2
+  exit 1
+fi
+
+collector_block="$(awk '
+  /^  name: trino-result-collector$/ { in_collector = 1 }
+  in_collector { print }
+' "$RENDERED_FILE")"
+grep -Fq 'automountServiceAccountToken: false' <<<"$collector_block"
+if grep -Eq '^kind: Service$|containerPort:|uvicorn|/api/health' <<<"$collector_block"; then
+  echo "Trino collector must be a private worker without HTTP or Service resources" >&2
   exit 1
 fi
 

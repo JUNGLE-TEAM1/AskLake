@@ -812,7 +812,7 @@ bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
 
 위 live 검증 script와 Backend S3 runner는 모두 `ASKLAKE_EKS_CLUSTER_NAME`을 필수로 받고 AWS EKS endpoint와 현재 `kubectl` endpoint가 같은지 먼저 확인한다. namespace 존재 확인까지 통과하기 전에는 Kubernetes 또는 AWS runtime 검증을 수행하지 않는다.
 
-Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI Workload](eks-phase-14-web-workloads.md)를 따른다.
+Phase 14 web/collector workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI·Collector Workload](eks-phase-14-web-workloads.md)를 따른다.
 
 14일 Metrics Server/Node scale 계약은 `bash scripts/verify-eks-metrics-scale.sh`로 검사한다. 실제 cluster에서는 `describe-addon-versions`로 호환되는 exact community add-on version을 선택하고 Terraform plan/apply 뒤 Metrics API와 `kubectl top`을 확인한다. Node scale smoke는 저장소 밖 values와 evidence 경로를 사용하며 비용 confirmation 없이는 실행되지 않는다. scale-out 뒤 임시 Helm release를 제거하고 Auto Mode scale-in까지 별도 기록한다.
 
@@ -820,7 +820,7 @@ Phase 14 web workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 �
 
 수요일 Pair B의 Frontend/FastAPI rollout, 내부 Service/RDS health, Pod 자동복구, 실제 두 Pod의 RDS lease/generation fence, EC2 Continuous 경계와 MSK IAM client 실행 결과는 [EKS MVP 수요일 Pair B 실환경 검증 기록](eks-day15-b-live-evidence.md)에 요약한다. exact temporary `CreateTopic` permission으로 1 partition test topic을 bootstrap하고 권한을 제거한 뒤, 원래 Describe-only Pod Identity로 private `9098` IAM metadata Job `Complete 1/1`을 확인했다. B 기록 당시 미완료였던 S3 positive/negative 경계는 후속 [Backend S3 최소 권한 검증 기록](eks-day15-backend-s3-runtime-evidence.md)에서 완료했다. PR #774 머지 후에는 최신 `pair1`을 A 브랜치에 merge하고 최종 Backend source commit, ECR immutable digest와 현재 Pod imageID 일치, ALB `--steady`, ExternalSecret Ready와 RDS health를 다시 확인한다.
 
-최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Phase 6의 Git 제외 image receipt와 full Git SHA, Deployment/Pod imageID, ECR immutable digest를 대조한다. `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 지정한 정확한 rollback EC2가 running이고 instance/system status가 모두 `ok`인지 확인하며, 다른 실행 중 instance의 존재로 대신 통과하지 않는다. 이는 EC2 instance 보존 증거이고 Continuous 서비스 자체 health 증거는 아니다. rollout 동안 외부 `/api/health`를 1초 간격으로 측정하고 30초마다 식별자 없는 진행 건수를 출력한다. 종료 후 같은 digest의 새 Pod `2/2`, ALB steady target, Secret/RDS health, 각 Pod의 `external_ec2` 값과 worker·maintenance Continuous process 0개를 다시 확인한다. 실제 receipt, commit과 instance ID는 저장소 밖에서 전달하고 전체 digest·repository·endpoint·instance ID는 출력하거나 Git에 기록하지 않는다.
+최종 Backend rollout gate는 새 image를 만들지 않고 확인된 동일 digest로 Deployment를 restart한다. 아래 runner는 실행 전 Phase 6의 Git 제외 image receipt와 full Git SHA, Deployment/Pod imageID, ECR immutable digest를 대조한다. `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 지정한 정확한 rollback EC2가 running이고 instance/system status가 모두 `ok`인지 확인하며, 다른 실행 중 instance의 존재로 대신 통과하지 않는다. 이는 EC2 instance 보존 증거이고 Continuous 서비스 자체 health 증거는 아니다. rollout 동안 외부 `/api/health`를 1초 간격으로 측정하고 30초마다 식별자 없는 진행 건수를 출력한다. 종료 후 같은 digest의 FastAPI Pod `2/2`와 Trino result collector Pod `1/1`, ALB steady target, Secret/RDS health, 각 FastAPI Pod의 `external_ec2` 값과 worker·maintenance Continuous process 0개를 다시 확인한다. 실제 receipt, commit과 instance ID는 저장소 밖에서 전달하고 전체 digest·repository·endpoint·instance ID는 출력하거나 Git에 기록하지 않는다.
 
 15.5 물리 조회에서 발견한 Iceberg rows `ApiError` import와 enum reason drift는 Issue #798에서 새 `linux/amd64` immutable digest로 Backend-only atomic upgrade했고 live 오류 계약까지 검증했다. 이후 같은 경로를 변경하거나 재배포할 때도 source 수정만으로 runtime 완료를 선언하지 않는다. formal receipt revision/digest와 Deployment/Pod imageID를 대조한다. Trino 미배포 상태의 sanitized HTTP 502 계약에 이어, 현재 Trino coordinator에서는 CA 검증을 거친 snapshot rows HTTP 200과 Phase 5의 exact row/file 조회까지 통과했다. 세부 handoff와 rollback 기준은 [15.5 Backend image handoff](eks-day15-5-backend-image-handoff.md), 최종 데이터 경로는 [Phase 5 current-runtime E2E](eks-day16-phase5-current-runtime-e2e.md)를 따른다.
 
@@ -828,7 +828,7 @@ Issue #798의 변경 전 기준점은 [15.5 runtime 보완 실행 기록](eks-15
 
 Issue #798 Phase 1은 수동 `EKS image delivery` workflow의 dev 보호 환경과 OIDC를 사용해 `f556e95e`를 포함하는 새 Backend AMD64 digest와 formal receipt를 인수했다. receipt가 함께 제공한 다른 component digest는 이번 Backend-only rollout 입력으로 승인하지 않는다. receipt는 Git 제외 경로에 두고 Phase 2에서 새 Backend digest만 private Helm values에 반영해 render와 server dry-run을 수행한다.
 
-Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽어 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·실제 AMD64 OCI index·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. 전후 Helm revision, Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend ExternalSecret은 현재 승인된 12-key bounded runtime 계약과 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
+Phase 2 Backend-only 사전 검증은 아래 명령으로 수행한다. 이 script는 현재 Helm release values를 읽되 rollback 뒤 저장 values와 live manifest의 image가 어긋날 수 있으므로 Frontend/Backend image field를 현재 Deployment 값으로 먼저 정규화한다. 그 뒤 임시 candidate의 `backend.image`만 바꾸고, receipt/fix ancestry·ECR immutability·단일 OCI manifest의 실제 image config가 `linux/amd64`인지·Frontend image 보존을 확인한 뒤 `helm upgrade --install --dry-run=server`만 실행한다. Collector가 이미 있으면 FastAPI와 같은 digest이고 steady인지 확인하며, 이슈 재현 상태처럼 없으면 absent baseline을 보존한다. 두 경우 모두 candidate render에는 새 digest를 공유하는 Collector가 반드시 있어야 한다. server dry-run 전후 Helm revision, 기존 Deployment generation/image와 Pod UID가 같지 않으면 실패한다. Backend runtime Secret은 선택한 bounded 또는 full-service profile과 정확히 일치해야 하며 Secrets Manager source와 target 전체 hash가 같아야 한다. operator가 ExternalSecret CRD를 읽을 수 있으면 live mapping과 Ready까지 확인하고, 읽을 수 없으면 target의 controller ownerReference와 source-target 전체 payload 일치가 모두 맞아야만 통과한다. 다른 rollout 때문에 ALB target이 draining이면 기다림 없이 실패하므로 steady 복구 후 다시 실행한다.
 
 ```bash
 export ASKLAKE_EKS_CLUSTER_NAME='<terraform output>'
@@ -839,7 +839,7 @@ bash scripts/preflight-eks-backend-image-rollout.sh
 
 이 명령은 실제 Backend image를 배포하지 않는다. 성공 결과는 Backend-only atomic rollout의 입력이 준비됐다는 뜻이며 runtime 수정 완료 증거가 아니다.
 
-새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.*` readiness condition을 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. condition suffix는 controller 구현에 종속되므로 exact prefix 하나를 가정하지 않고 주입된 target-health gate와 같은 condition이 `True`인지 확인한다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. 외부 health 표본 하나라도 실패하거나 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
+새 Backend digest의 실제 atomic rollout은 `scripts/rollout-eks-backend-image.sh`를 사용한다. 같은 `backend.image`를 소비하는 FastAPI와 `trino-result-collector`를 한 Helm revision에서 함께 교체하고 각각 `2/2`, `1/1`과 동일 immutable digest를 확인한다. Collector가 없던 baseline에서 실패하면 rollback은 새 Collector를 제거해 원래 release ownership까지 복원한다. 실행기는 EKS Auto Mode namespace의 `eks.amazonaws.com/pod-readiness-gate-inject=enabled`, FastAPI의 단일 `ip` TargetGroupBinding과 새 Pod의 `target-health.*` readiness condition을 요구한다. operator가 TargetGroupBinding CRD를 읽을 수 있으면 live CR을 직접 확인하고, 읽을 수 없으면 두 FastAPI Pod에 주입된 managed `target-health.*` readiness gate/True condition과 AWS ALB exact target 검증을 함께 요구한다. namespace key는 실제 managed `eks-load-balancing-webhook` selector와 일치해야 하며 self-managed controller용 `elbv2.k8s.aws/...` key로 대체하지 않는다. condition suffix는 controller 구현에 종속되므로 exact prefix 하나를 가정하지 않고 주입된 target-health gate와 같은 condition이 `True`인지 확인한다. 이는 Kubernetes Ready와 ALB Healthy 사이의 간격에서 기존 Pod가 먼저 종료되는 것을 막는다. dev target group의 deregistration delay가 300초이므로 FastAPI chart는 terminating Pod를 `preStop` 310초 동안 유지하고 360초 종료 유예 안에서 정리한다. ALB delay를 바꾸면 이 두 값과 zero-non-200 rollout smoke를 함께 다시 검증한다. 외부 health 표본 하나라도 실패하거나 두 workload의 Pod digest·Frontend·Secret·ALB/RDS·Continuous·보존 EC2 gate가 어긋나면 직전 Helm revision으로 되돌리고 ALB steady 복구까지 확인한다.
 
 외부 health monitor는 HTTP 응답 code를 그대로 판정한다. client transport `000`만 0.2초 뒤 한 번 재확인해 검증 머신의 순간 연결 오류와 실제 ALB 응답을 구분하며, 재확인도 실패하거나 HTTP가 200이 아니면 rollout을 실패 처리한다. HTTP 502 같은 서버/ALB 응답은 재시도로 숨기지 않는다.
 
@@ -1551,3 +1551,34 @@ npm run verify:etl-e2e-recovery
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
 
 시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.
+
+## 24) EKS Trino Result Collector 배포·복구
+
+EKS SQL Query Run은 FastAPI submit만으로 끝나지 않는다. `asklake-web` release의 `trino-result-collector` Deployment가 RDS에 저장된 `nextUri`를 lease로 선점해 Trino result page를 S3에 저장하고 terminal 상태를 확정한다. 이 worker는 FastAPI와 같은 Backend image, `asklake-runtime`, `asklake-backend-runtime`, `asklake-backend` Pod Identity를 사용하지만 HTTP endpoint와 Kubernetes API token은 사용하지 않는다.
+
+정적 검증과 실제 배포는 기존 web release owner를 유지한다.
+
+```bash
+bash scripts/verify-eks-web-workloads.sh
+bash scripts/deploy-eks-web-workloads.sh --render /private/web-values.yaml /private/image-receipt.json
+
+export ASKLAKE_EKS_CLUSTER_NAME=<reviewed-cluster>
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
+bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
+
+kubectl get deployment,pod -n asklake-dev -l app.kubernetes.io/component=trino-result-collector
+kubectl logs -n asklake-dev deployment/trino-result-collector --tail=50
+```
+
+배포 전부터 `queued`/`running`인 Run을 정리할 때 DB row나 S3 object를 수동 삭제하지 않는다. 계속 필요하지 않은 Run은 인증된 `POST /api/query/runs/{runId}/cancel`로 generation을 먼저 fence하고 Trino cancel/result cleanup을 수행한다. 이후 bounded `SELECT count(*)`를 새 Query Run으로 제출해 `succeeded`, 기대값 100, actor concurrent slot 반환을 함께 확인한다.
+
+Pod self-healing은 아래처럼 확인한다. 새 Pod가 생겼다는 사실과 새 Query Run이 terminal로 끝났다는 사실을 둘 다 기록해야 하며, Pod 재생성만으로 continuation 복구가 증명됐다고 쓰지 않는다.
+
+```bash
+kubectl delete pod -n asklake-dev -l app.kubernetes.io/component=trino-result-collector
+kubectl rollout status deployment/trino-result-collector -n asklake-dev --timeout=5m
+kubectl logs -n asklake-dev deployment/trino-result-collector --tail=50
+```
+
+Collector 중단은 Run을 성공으로 바꾸지 않는다. Pod가 죽으면 lease 만료 뒤 새 worker가 같은 `runId`를 이어받고, stale generation의 page metadata 공개는 거부된다. rollback으로 Collector를 제거한 상태가 길어지면 actor별 `queued`/`running` slot이 다시 찰 수 있으므로 FastAPI나 Trino 재시작으로 숨기지 말고 Collector 복구 또는 cancel API를 사용한다.
