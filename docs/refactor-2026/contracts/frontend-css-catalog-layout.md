@@ -23,14 +23,14 @@
 | Admin | `styles/layout/03-admin.css` |
 | 공통 workflow form | `styles/layout/04-workflow-forms.css` |
 
-분할 시 selector나 declaration을 재작성하지 않았다. import 순서로 재조합한 내용의 SHA-256은 분할 전과 동일하다.
+분할 시 selector나 declaration을 재작성하지 않았다. 이후 정리는 현재 배포 cascade에서 서로 바로 이어지고 같은 selector를 가진 rule만 declaration 순서 그대로 합치며, review된 원문 SHA-256과 정확한 inventory를 갱신한다.
 
-- ETL: `4e1ae14712e513b30bbc3511c440cf13cb97433c512ff024323e148136dc6942`
+- ETL: `c0d13c10270132dee8e1c274fd5c345a99459cb512075cd7253d196647cdf0c4`
 - Layout: `c427c6371a8a2703fdb8711fc8e90d542d7e9a5b092b560d04979735cf5e921b`
-- ETL selector inventory: 1,250 definitions, 1,183 unique, 기존 중복 정의 67개
+- ETL selector inventory: 1,249 definitions, 1,183 unique, 중복 정의 66개
 - Layout selector inventory: 246 definitions, 246 unique, 중복 정의 0개
 
-기존 중복 selector 67개는 cascade 호환을 위해 이 PR에서 의미를 바꾸거나 제거하지 않는다. 후속 정리는 시각 회귀 근거와 별도 PR이 필요하다.
+`06-target-shared.css`에서 바로 이어진 두 `.s3-tree-panel` rule은 사이에 다른 rule이 없어 `min-width`부터 `padding`까지 기존 declaration 순서를 유지한 한 block으로 통합했다. selector specificity와 computed style은 동일하다. 나머지 비인접 중복 selector 66개는 cascade 호환을 위해 의미를 바꾸거나 제거하지 않으며, 후속 정리는 페이지별 시각 회귀와 computed-style 근거가 있는 별도 PR이 필요하다.
 
 ## Catalog 소유권
 
@@ -61,4 +61,4 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-경계 테스트는 CSS 원문 hash, block 완결성, selector inventory, entrypoint·feature LOC budget, Catalog query/state ownership을 검사한다. rollback은 entrypoint와 feature 파일을 분할 전 파일로 함께 되돌리며 persisted data migration은 없다.
+경계 테스트는 CSS 원문 hash, block 완결성, 정확한 selector inventory, `.s3-tree-panel` 단일 block과 declaration 순서, entrypoint·feature LOC budget, Catalog query/state ownership을 검사한다. Browser QA는 실제 Vite CSS를 읽는 정적 S3 tree fixture에서 desktop `1440x900`, mobile `390x844`의 변경 전·후 computed style과 screenshot SHA-256 동일성을 확인했다. live workspace는 local PostgreSQL/Docker 미기동으로 인증 이후 화면을 열 수 없어 fixture 범위로 제한했다. rollback은 해당 rule을 원래 두 인접 block으로 되돌리고 hash/inventory 계약을 함께 복원하며 persisted data migration은 없다.

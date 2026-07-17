@@ -408,9 +408,6 @@
   border: 1px solid #dee1e6;
   border-radius: 8px;
   background: #f9fbfc;
-}
-
-.s3-tree-panel {
   overflow: auto;
   padding: 8px;
 }

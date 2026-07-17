@@ -1095,7 +1095,7 @@ Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증
 
-ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
+ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. 인접 중복을 합칠 때도 selector, at-rule parent와 declaration 순서를 유지하고 source hash·정확한 selector inventory·해당 rule declaration 계약을 함께 갱신한다. 비인접 중복은 computed-style와 페이지별 visual baseline 없이 제거하지 않는다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
 
 ```bash
 cd frontend
@@ -1104,7 +1104,7 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다.
+Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다. 렌더 검증은 mock/legacy를 production처럼 켜지 않고 live workspace 또는 실제 Vite CSS를 읽는 최소 fixture에서 desktop/mobile computed style, console, screenshot과 target interaction을 비교한다.
 
 ### ETL Permission create-flow 검증
 
