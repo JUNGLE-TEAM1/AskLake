@@ -10,6 +10,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.errors import ApiError
+from app.infrastructure.runtime_io import SubprocessNodeBridge
 from app.services import etl_service
 
 
@@ -19,9 +20,6 @@ original_incremental_source_object_inventory = etl_service.incremental_source_ob
 original_is_internal_data_lake_source = etl_service.is_internal_data_lake_source
 original_job_payload = etl_service.job_payload_for_spark
 original_run_node_bridge = etl_service.run_node_bridge
-original_source_incremental_window = etl_service.source_incremental_window
-original_source_uses_incremental_folder_window = etl_service.source_uses_incremental_folder_window
-original_subprocess_run = etl_service.subprocess.run
 
 try:
     os.environ["ASKLAKE_SPARK_RUNNER"] = "rest"
@@ -41,23 +39,13 @@ try:
         })
         return {"status": "success"}
 
-    etl_service.ensure_batch_iceberg_target = lambda _db, _job: None
-    etl_service.incremental_source_object_inventory = lambda *_args, **_kwargs: None
-    etl_service.is_internal_data_lake_source = lambda _source_type: False
     etl_service.job_payload_for_spark = lambda _job, *_args, **_kwargs: {"id": "timeout-contract"}
     etl_service.run_node_bridge = capture_bridge
-    etl_service.source_incremental_window = lambda *_args, **_kwargs: (None, None)
-    etl_service.source_uses_incremental_folder_window = lambda _job: False
-    etl_service.run_spark_job(
-        object(),
-        SimpleNamespace(source_config=[], source_type=""),
-        "run",
-        "run-timeout-contract",
-    )
+    kafka_job = SimpleNamespace(source_type="Apache Kafka", source_config=[])
+    etl_service.run_spark_job(object(), kafka_job, "run", "run-timeout-contract")
 
-    assert captured["payload"]["sparkRestTimeoutMs"] == 1000
     assert captured["options"]["timeout_seconds"] == 61
-    assert captured["options"]["timeout_seconds"] * 1000 > captured["payload"]["sparkRestTimeoutMs"]
+    assert captured["options"]["timeout_seconds"] * 1000 > etl_service.spark_rest_poll_timeout_ms()
     assert captured["options"]["timeout_recovery"] is not None
     assert etl_service.continuous_maintenance_bridge_timeout_seconds(1000) == 31
 
@@ -67,7 +55,11 @@ try:
         raise subprocess.TimeoutExpired(cmd=["node"], timeout=1)
 
     etl_service.run_node_bridge = original_run_node_bridge
-    etl_service.subprocess.run = raise_timeout
+    timeout_bridge = SubprocessNodeBridge(
+        backend_dir=BACKEND_DIR,
+        scripts_dir=BACKEND_DIR / "scripts",
+        runner=raise_timeout,
+    )
     try:
         etl_service.run_node_bridge(
             "run-spark-job-once.mjs",
@@ -76,6 +68,7 @@ try:
             error_marker="ASKLAKE_SPARK_RUN_ERROR",
             timeout_seconds=1,
             timeout_recovery=lambda: recovery_calls.append("kill") or {"killed": True},
+            bridge=timeout_bridge,
         )
         raise AssertionError("A timed out bridge must raise ApiError.")
     except ApiError as error:
@@ -93,6 +86,3 @@ finally:
     etl_service.is_internal_data_lake_source = original_is_internal_data_lake_source
     etl_service.job_payload_for_spark = original_job_payload
     etl_service.run_node_bridge = original_run_node_bridge
-    etl_service.source_incremental_window = original_source_incremental_window
-    etl_service.source_uses_incremental_folder_window = original_source_uses_incremental_folder_window
-    etl_service.subprocess.run = original_subprocess_run

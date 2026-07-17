@@ -13,6 +13,7 @@ type SourceAssetTreeProps = {
   loadingPath?: string;
   selectedPath: string;
   onOpenFolder?: (folderPath: string) => void | Promise<void>;
+  onSelectFolder?: (folderPath: string) => void | Promise<void>;
   onSelect: (assetPath: string) => void | Promise<void>;
 };
 
@@ -40,6 +41,7 @@ export function SourceAssetTree({
   loadingPath = "",
   selectedPath,
   onOpenFolder,
+  onSelectFolder,
   onSelect,
 }: SourceAssetTreeProps) {
   const { nodeById, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
@@ -85,13 +87,13 @@ export function SourceAssetTree({
   const getTrailing = useCallback((node: NodeApi<SourceAssetTreeNode>) => (
     <>
       {node.data.isFolder ? (
-        folderSelectionControl(node.data)
+        folderSelectionControl(node.data, selectedPath, onSelectFolder)
       ) : null}
       {node.data.path === loadingPath
         ? <Loader2 className="size-3.5 animate-spin text-blue-600" />
         : null}
     </>
-  ), [loadingPath]);
+  ), [loadingPath, onSelectFolder, selectedPath]);
 
   if (nodes.length === 0) {
     return (
@@ -128,14 +130,27 @@ export function SourceAssetTree({
   );
 }
 
-function folderSelectionControl(node: SourceAssetTreeNode) {
+function folderSelectionControl(
+  node: SourceAssetTreeNode,
+  selectedPath: string,
+  onSelectFolder?: (folderPath: string) => void | Promise<void>,
+) {
+  if (!onSelectFolder) return null;
+  const isSelected = node.path === selectedPath;
   return (
-    <span
+    <button
       aria-label={`폴더 ${node.name} 선택`}
-      className="source-asset-folder-select"
-      role="img"
-      title="이 폴더를 수집 범위로 선택"
-    />
+      aria-pressed={isSelected}
+      className={isSelected ? "source-asset-folder-select active" : "source-asset-folder-select"}
+      title={`${node.path} 전체를 하나의 데이터셋으로 선택`}
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        void onSelectFolder(node.path);
+      }}
+    >
+      <Folder className="size-4" aria-hidden="true" />
+    </button>
   );
 }
 

@@ -5,11 +5,24 @@ const DEFAULT_BUCKETS = ["asklake-output"];
 const MAX_PREFIX_LENGTH = 1024;
 
 function allowedBuckets() {
-  const configured = (process.env.S3_ALLOWED_BUCKETS || process.env.AWS_S3_ALLOWED_BUCKETS || "")
-    .split(",")
+  const configured = [
+    process.env.ASKLAKE_SPARK_OUTPUT_BUCKET,
+    process.env.S3_ALLOWED_BUCKETS,
+    process.env.AWS_S3_ALLOWED_BUCKETS,
+    process.env.ASKLAKE_S3_ALLOWED_BUCKETS,
+  ]
+    .flatMap((value) => String(value || "").split(","))
     .map((bucket) => bucket.trim())
     .filter(Boolean);
-  return configured.length > 0 ? configured : DEFAULT_BUCKETS;
+  const buckets = [...new Set(configured)];
+  if (buckets.length > 0) return buckets;
+  if (resolveObjectStorageConfig().provider === "aws") {
+    throw Object.assign(
+      new Error("S3 target browsing requires ASKLAKE_SPARK_OUTPUT_BUCKET or S3_ALLOWED_BUCKETS."),
+      { code: "SERVICE_UNAVAILABLE", status: 503 },
+    );
+  }
+  return DEFAULT_BUCKETS;
 }
 
 function normalizePrefix(prefix = "") {

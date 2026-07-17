@@ -32,7 +32,11 @@ def get_published_dashboard_runtime(
     db: Session = Depends(get_db),
 ) -> DashboardRuntimeResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository, CatalogRepository(db), DashboardLiveRepository(db, ensure_schema=False))
+    service = DashboardRuntimeService(
+        repository,
+        CatalogRepository(db),
+        DashboardLiveRepository(db, ensure_schema=False),
+    )
     return service.get_published_runtime(dashboard_id, actor)
 
 

@@ -81,7 +81,6 @@ export function DashboardPage({
   onRuntimeNavigate,
 }: {
   dataset: CatalogDataset;
-  datasets?: CatalogDataset[];
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -147,7 +146,7 @@ export function DashboardPage({
     datasets: dashboardDatasets,
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
-  } = useDashboardDatasets();
+  } = useDashboardDatasets(view === "runtime" || view === "builder");
   const availableDashboardDatasets = useMemo(
     () => sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
@@ -174,9 +173,7 @@ export function DashboardPage({
   }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
 
   const runtimeResources = useDashboardRuntimeResources({
-    active: view === "runtime",
-    dashboardId: runtimeSelection.dashboardId,
-    mode: runtimeSelection.mode,
+    active: view === "runtime", dashboardId: runtimeSelection.dashboardId, mode: runtimeSelection.mode,
   });
   const {
     draftError,
@@ -186,6 +183,7 @@ export function DashboardPage({
     loadPublishedRuntime,
     pages: runtimePages,
     publishedRuntime,
+    realtimeConnectionState,
     runtimeError,
     runtimeLoading,
     selectedPageId: selectedRuntimePageId,
@@ -907,6 +905,7 @@ export function DashboardPage({
       notice: runtimeNotice,
       pages: runtimePages,
       publishedRuntime,
+      realtimeConnectionState,
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,

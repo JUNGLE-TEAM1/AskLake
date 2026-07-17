@@ -1,7 +1,10 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
+import { resolveMockApiMode } from "./apiRuntimeMode.ts";
 
-const defaultApiBaseUrl = "";
+const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
+const mockApiRequested = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
+const useMockApi = resolveMockApiMode(mockApiRequested, import.meta.env.DEV);
 
 export const apiConfig = {
   baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
@@ -83,7 +86,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       const detailMessage = typeof payload.error?.details?.message === "string" ? payload.error.details.message : "";
       throw new ApiError({
         code: payload.error?.code ?? fallback.error.code,
-        message: detailMessage || payload.error?.message || validationDetail || fallback.error.message,
+        diagnosticId: payload.error?.diagnosticId ?? response.headers.get("X-Correlation-ID") ?? undefined,
+        message: payload.error?.userMessage || detailMessage || payload.error?.message || validationDetail || fallback.error.message,
+        retryable: payload.error?.retryable ?? response.status >= 500,
+        stage: payload.error?.stage ?? "api",
         status: response.status,
       });
     }

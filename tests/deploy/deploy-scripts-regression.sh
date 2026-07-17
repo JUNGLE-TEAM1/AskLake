@@ -68,8 +68,8 @@ write_valid_env() {
       'AIRFLOW_PASSWORD=AirflowLoginPassword_123' \
       'AI_CONTEXT_SIGNING_SECRET=AiContextSigningSecret_12345678901234567890' \
       'AI_GATEWAY_SERVICE_TOKEN=AiGatewayServiceToken_12345678901234567890' \
-      'AI_MCP_SERVICE_TOKEN=AiMcpServiceToken_12345678901234567890123' \
-      'AI_PROVIDER_API_KEY=ProviderApiKey_TestOnly_12345678901234567890' \
+      'AI_MCP_SERVICE_TOKEN=AiMcpServiceToken_123456789012345678901234' \
+      'AI_PROVIDER_API_KEY=AiProviderApiKey_TestOnly' \
       'BOOTSTRAP_ADMIN_EMAIL=admin@asklake.test' \
       'BOOTSTRAP_ADMIN_PASSWORD=BootstrapPassword_123' \
       'MINIO_ROOT_USER=MinioRootUser_123' \
@@ -213,6 +213,12 @@ printf '%s\n' 'asklake-api:test' 'asklake-materializer:test' > "$TRINO_PASSWORD_
 write_valid_env "$ENV_FILE"
 expect_preflight_pass 'valid production environment passes'
 
+if python3 "$ROOT_DIR/backend/scripts/verify-spark-runtime-paths.py" >/dev/null; then
+  record_pass 'Spark runtime paths survive restart repair without data loss'
+else
+  record_fail 'Spark runtime paths survive restart repair without data loss'
+fi
+
 write_valid_aws_env "$ENV_FILE"
 if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; then
   if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
@@ -221,10 +227,8 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
     record_pass 'actual production Compose passes preflight'
   fi
 else
-  record_fail 'actual production Compose passes preflight (unexpected failure)'
-  if [[ "$output" != *"$SECRET_SENTINEL"* ]]; then
-    printf '%s\n' "$output" >&2
-  fi
+  output="${output//$SECRET_SENTINEL/[REDACTED]}"
+  record_fail "actual production Compose passes preflight (unexpected failure: $output)"
 fi
 
 write_valid_trino_aws_env "$ENV_FILE"
@@ -316,8 +320,12 @@ expect_preflight_failure 'relative Spark data directory is rejected' 'ASKLAKE_HO
 
 write_valid_env "$ENV_FILE"
 rmdir "$SPARK_DATA_DIR/spark-runs"
-expect_preflight_failure 'missing Spark data subdirectory is rejected' 'ASKLAKE_HOST_DATA_DIR/spark-runs directory does not exist'
+expect_preflight_pass 'missing Spark data subdirectory is delegated to the runtime guard'
 mkdir -p "$SPARK_DATA_DIR/spark-runs"
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_HOST_DATA_DIR "$TMP_DIR/missing-spark-data-root"
+expect_preflight_failure 'missing Spark data root is rejected' 'ASKLAKE_HOST_DATA_DIR directory does not exist'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" ASKLAKE_REPLAY_HOST_INPUT_DIR "$TMP_DIR/missing-replay-input"

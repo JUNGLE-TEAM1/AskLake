@@ -339,6 +339,7 @@ class DashboardRuntimeResponse(CamelModel):
     dashboard: DashboardMeta
     mode: DashboardRuntimeMode
     revision: DashboardRevision | None
+    event_cursor: int = Field(default=0, ge=0)
     pages: list[DashboardRuntimePage]
     widgets_by_page_id: dict[str, list[DashboardRuntimeWidget]]
     filters: list[DashboardFilter] = Field(default_factory=list)
@@ -353,7 +354,7 @@ class DatasetFreshnessResponse(CamelModel):
     is_continuous: bool
     latest_revision: int = Field(ge=0)
     updated_at: str | None = None
-    next_check_after_ms: int = Field(ge=5_000, le=60_000)
+    next_check_after_ms: int = Field(ge=1_000, le=60_000)
 
 
 class DatasetFreshnessQueryResponse(CamelModel):

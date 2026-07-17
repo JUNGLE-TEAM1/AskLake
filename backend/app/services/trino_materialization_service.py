@@ -11,7 +11,7 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
-from app.repositories.catalog_repository import CatalogRepository
+from app.ports.catalog import CatalogWriterPort
 from app.schemas.catalog import CreateDerivedDatasetRequest, QueryEngineTableRef
 from app.schemas.common import ErrorCode
 from app.schemas.trino import TrinoMaterializationRunResponse, TrinoQueryRunResponse
@@ -28,7 +28,7 @@ class TrinoMaterializationService:
     def __init__(
         self,
         repository: SqlRepository,
-        catalog_repository: CatalogRepository,
+        catalog_repository: CatalogWriterPort,
         runtime_settings: Settings | None = None,
         *,
         client: TrinoClient | None = None,

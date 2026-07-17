@@ -138,6 +138,8 @@ try {
     try { compose(["unpause", pausedService]); } catch { /* Best-effort fault cleanup. */ }
   }
   if (jobId && !streamStopped) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
+  if (jobId) await del(`/api/etl/jobs/${encodeURIComponent(jobId)}`).catch(() => undefined);
+  try { rpk(["topic", "delete", topic]); } catch { /* Unique soak topic cleanup is best effort. */ }
 }
 
 function jobPayload() {
@@ -321,6 +323,7 @@ async function datasets() {
   return Array.isArray(response) ? response : response.datasets ?? [];
 }
 async function post(path, body) { return request(path, { method: "POST", body: JSON.stringify(body) }); }
+async function del(path) { return request(path, { method: "DELETE" }); }
 async function request(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, { ...options, headers: { "Content-Type": "application/json", "X-AskLake-Role": "admin", ...(options.headers || {}) } });
   const payload = await response.json().catch(() => ({}));

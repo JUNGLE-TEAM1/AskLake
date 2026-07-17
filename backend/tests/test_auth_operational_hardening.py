@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api import auth
 from app.api.auth import get_auth_service, login_client_address
 from app.api.health import health_check
 from app.core.config import Settings
@@ -312,7 +313,36 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
-    def test_legacy_demo_users_are_rejected_outside_tests(self) -> None:
+    def test_session_cookie_is_secure_by_default_outside_local_development(self) -> None:
+        production = Settings(
+            app_env="production",
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+        )
+        local = Settings(app_env="local")
+
+        self.assertTrue(production.uses_secure_session_cookie)
+        self.assertFalse(local.uses_secure_session_cookie)
+
+    def test_session_cookie_secure_flag_supports_an_explicit_http_dev_override(self) -> None:
+        http_dev = Settings(
+            app_env="production",
+            auth_session_cookie_secure=False,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+        )
+
+        with patch.object(auth, "settings", http_dev):
+            cookie_options = auth.session_cookie_options()
+
+        self.assertFalse(http_dev.uses_secure_session_cookie)
+        self.assertFalse(cookie_options["secure"])
+        self.assertTrue(cookie_options["httponly"])
+        self.assertEqual(cookie_options["samesite"], "lax")
+
+    def test_production_legacy_demo_users_require_an_explicit_opt_in(self) -> None:
         default_settings = Settings(
             ai_assistant_enabled=False,
             app_env="production",

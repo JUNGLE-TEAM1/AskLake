@@ -67,6 +67,23 @@ class Settings(BaseSettings):
     rag_worker_token: str | None = None
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
+    dashboard_sync_mode: str = "polling"
+    realtime_events_enabled: bool = False
+    continuous_sql_join_enabled: bool = False
+    latest_static_per_batch_enabled: bool = False
+    static_change_backfill_enabled: bool = False
+    continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
+    continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
+    continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
+    realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
+    realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)
+    realtime_subscriber_queue_size: int = Field(default=128, ge=8, le=1_000)
+    realtime_connection_limit_per_actor: int = Field(default=5, ge=1, le=50)
+    realtime_heartbeat_seconds: int = Field(default=15, ge=5, le=60)
+    realtime_dispatch_poll_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+    realtime_cleanup_interval_seconds: int = Field(default=3_600, ge=60, le=86_400)
+    realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
@@ -118,6 +135,7 @@ class Settings(BaseSettings):
     bootstrap_admin_display_name: str = "AskLake Administrator"
     auth_legacy_demo_users_enabled: bool = False
     auth_public_signup_enabled: bool = False
+    auth_session_cookie_secure: bool | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -362,12 +380,10 @@ class Settings(BaseSettings):
         return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
 
     @property
-    def is_test_runtime(self) -> bool:
-        return self.app_env.strip().casefold() in {"test", "testing"}
-
-    @property
-    def allows_header_auth_fallback(self) -> bool:
-        return self.is_test_runtime
+    def uses_secure_session_cookie(self) -> bool:
+        if self.auth_session_cookie_secure is not None:
+            return self.auth_session_cookie_secure
+        return not self.allows_header_auth_fallback
 
     @property
     def allows_public_signup(self) -> bool:

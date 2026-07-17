@@ -1,10 +1,22 @@
 import type { DashboardDatasetFreshness } from "../../../services/dashboardRuntimeApi";
+import type { DashboardSyncMode } from "../../../services/realtimeConfigApi";
+import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../../../types";
 
-export const DASHBOARD_LIVE_REFRESH_DEFAULT_MS = 5_000;
+export const DASHBOARD_LIVE_REFRESH_DEFAULT_MS = 1_000;
 export const DASHBOARD_LIVE_REFRESH_MAX_MS = 60_000;
-export const DASHBOARD_LIVE_REFRESH_MIN_MS = 5_000;
+export const DASHBOARD_LIVE_REFRESH_MIN_MS = 1_000;
 export const DASHBOARD_LIVE_CATCH_UP_MS = 250;
+
+export type DashboardLivePollingStrategy = "normal" | "safety" | "suspended";
+
+export function dashboardLivePollingStrategy(
+  syncMode: DashboardSyncMode,
+  connectionState: RealtimeConnectionState,
+): DashboardLivePollingStrategy {
+  if (connectionState !== "open" || syncMode === "polling") return "normal";
+  return syncMode === "sse" ? "suspended" : "safety";
+}
 
 export function dashboardLiveRefreshInterval(
   value: number | null | undefined,

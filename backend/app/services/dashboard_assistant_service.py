@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.core.auth_context import ActorContext
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.mcp.context import issue_ai_context_token
@@ -131,6 +132,11 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
+        record_compatibility_path(
+            CompatibilityPath.DASHBOARD_ASSISTANT_DEGRADED,
+            reason=warning,
+            context={"mode": request.mode},
+        )
         return DashboardAssistantResponse(
             message="AI Gateway를 사용할 수 없어 요청을 실행하지 않았습니다.",
             actions=[],

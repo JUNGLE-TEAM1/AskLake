@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "contractOwner": "data-platform",
+  "reviewBy": "2026-10-31",
+  "requiredPlatforms": [
+    "eks",
+    "ec2-compose"
+  ],
+  "requiredControlPlanes": [
+    {
+      "id": "kafka-continuous-runtime-sync",
+      "ownerPolicy": "exactly-one",
+      "entrypoints": [
+        "backend/app/main.py::sync_active_kafka_continuous_runtimes"
+      ]
+    },
+    {
+      "id": "continuous-sql-runtime-sync",
+      "ownerPolicy": "exactly-one",
+      "entrypoints": [
+        "backend/app/main.py::sync_active_continuous_sql_jobs"
+      ]
+    }
+  ],
+  "workloads": [
+    {
+      "id": "eks-web-finite-batch",
+      "platform": "eks",
+      "deploymentCell": "production-eks",
+      "active": true,
+      "responsibilities": [
+        "web-api",
+        "finite-batch"
+      ],
+      "ownsControlPlanes": [],
+      "evidence": [
+        {
+          "kind": "operator-declared",
+          "reference": "current deployed EKS web and finite-batch baseline"
+        }
+      ]
+    },
+    {
+      "id": "ec2-continuous-control-plane",
+      "platform": "ec2-compose",
+      "deploymentCell": "production-ec2-compose",
+      "active": true,
+      "responsibilities": [
+        "continuous-control-plane"
+      ],
+      "ownsControlPlanes": [
+        "kafka-continuous-runtime-sync",
+        "continuous-sql-runtime-sync"
+      ],
+      "evidence": [
+        {
+          "kind": "repository",
+          "reference": "deploy/docker-compose.prod.yml::backend:"
+        },
+        {
+          "kind": "repository",
+          "reference": "backend/app/main.py::continuous_runtime_sync_loop"
+        }
+      ]
+    }
+  ]
+}

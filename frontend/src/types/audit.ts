@@ -17,18 +17,29 @@ export type ApiErrorResponse = {
   error: {
     code: string;
     details?: Record<string, unknown> | null;
+    diagnosticId?: string | null;
     message: string;
+    operatorMessage?: string | null;
+    retryable?: boolean;
+    stage?: string;
+    userMessage?: string | null;
   };
 };
 
 export class ApiError extends Error {
   code: string;
+  diagnosticId?: string;
+  retryable: boolean;
+  stage: string;
   status: number;
 
-  constructor({ code, message, status }: { code: string; message: string; status: number }) {
+  constructor({ code, diagnosticId, message, retryable = false, stage = "api", status }: { code: string; diagnosticId?: string; message: string; retryable?: boolean; stage?: string; status: number }) {
     super(message);
     this.name = "ApiError";
     this.code = code;
+    this.diagnosticId = diagnosticId;
+    this.retryable = retryable;
+    this.stage = stage;
     this.status = status;
   }
 }

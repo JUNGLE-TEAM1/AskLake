@@ -1,0 +1,199 @@
+{
+  "generator_version": 2,
+  "run_id": "commerce-250mb-seed-20260711",
+  "seed": 20260711,
+  "source_file": "meta_Electronics.jsonl",
+  "window": {
+    "start": "2026-06-01T00:00:00+09:00",
+    "end_exclusive": "2026-07-01T00:00:00+09:00"
+  },
+  "sizing": {
+    "mode": "target_total_size",
+    "requested_products": 10000,
+    "requested_users": null,
+    "target_total_size_mb": 250.0,
+    "max_file_size_mb": 64.0,
+    "resolved_products": 10000,
+    "resolved_users": 33297,
+    "actual_total_bytes": 262229855,
+    "actual_total_mib": 250.081878,
+    "target_size_error_pct": 0.033
+  },
+  "resolved_counts": {
+    "products": 10000,
+    "users": 33297,
+    "click_events": 849054,
+    "sessions": 213152
+  },
+  "counts": {
+    "products": 10000,
+    "users": 33297,
+    "event_count": 849054,
+    "session_count": 213152,
+    "event_type_counts": {
+      "product_impression": 593757,
+      "product_click": 206740,
+      "add_to_cart": 35980,
+      "purchase_click": 12577
+    },
+    "products_exposed": 10000,
+    "product_coverage_pct": 100.0
+  },
+  "product_selection": {
+    "source_rows_scanned": 1610012,
+    "invalid_json_rows": 0,
+    "selected_by_category": {
+      "Camera & Photo": 1250,
+      "Car & Vehicle Electronics": 1250,
+      "Computers & Accessories": 1250,
+      "Headphones, Earbuds & Accessories": 1250,
+      "Home Audio": 1250,
+      "Portable Audio & Video": 1250,
+      "Television & Video": 1250,
+      "Wearable Technology": 1250
+    },
+    "eligible_by_category": {
+      "Computers & Accessories": 155142,
+      "Camera & Photo": 67607,
+      "Television & Video": 35772,
+      "Headphones, Earbuds & Accessories": 25357,
+      "Home Audio": 20624,
+      "Car & Vehicle Electronics": 21763,
+      "Portable Audio & Video": 14593,
+      "Wearable Technology": 5177
+    },
+    "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5"
+  },
+  "datasets": {
+    "meta": {
+      "format": "jsonl",
+      "prefix": "meta/",
+      "rows": 10000,
+      "bytes": 3128520,
+      "mib": 2.983589,
+      "file_count": 1,
+      "files": [
+        {
+          "path": "meta/part-00000.jsonl",
+          "rows": 10000,
+          "bytes": 3128520,
+          "sha256": "5bb480708e1b3118337019d95762678a52b0f719cdeaf7b0202ee4197794fc07"
+        }
+      ]
+    },
+    "users": {
+      "format": "jsonl",
+      "prefix": "users/",
+      "rows": 33297,
+      "bytes": 6461017,
+      "mib": 6.161706,
+      "file_count": 1,
+      "files": [
+        {
+          "path": "users/part-00000.jsonl",
+          "rows": 33297,
+          "bytes": 6461017,
+          "sha256": "c8c1217db8edf18228856c0fc30a164e426b0ac615db64236cc8f16ae899647f"
+        }
+      ]
+    },
+    "click_events": {
+      "format": "jsonl",
+      "prefix": "click_events/",
+      "rows": 849054,
+      "bytes": 252640318,
+      "mib": 240.936583,
+      "file_count": 4,
+      "files": [
+        {
+          "path": "click_events/part-00000.jsonl",
+          "rows": 225583,
+          "bytes": 67108791,
+          "sha256": "9e70c5c5fb998a9a1a67887e0f4a584b3fd227c689d4863226ce4eb2f2d55132"
+        },
+        {
+          "path": "click_events/part-00001.jsonl",
+          "rows": 225471,
+          "bytes": 67108860,
+          "sha256": "27064c79ce6849a2bb807f4180f2daed74f885d4520755fc56df0ee765518efd"
+        },
+        {
+          "path": "click_events/part-00002.jsonl",
+          "rows": 225541,
+          "bytes": 67108565,
+          "sha256": "ac7e319e6f880b8c9b8449127b7310f030fe84d9f83e30aa80b3f77792181e03"
+        },
+        {
+          "path": "click_events/part-00003.jsonl",
+          "rows": 172459,
+          "bytes": 51314102,
+          "sha256": "c4d748f9b13b27c36c38e072494d6e4cf3c15c57be115f686b384c9a4d0c4dac"
+        }
+      ]
+    }
+  },
+  "files": [
+    {
+      "path": "meta/part-00000.jsonl",
+      "rows": 10000,
+      "bytes": 3128520,
+      "sha256": "5bb480708e1b3118337019d95762678a52b0f719cdeaf7b0202ee4197794fc07"
+    },
+    {
+      "path": "users/part-00000.jsonl",
+      "rows": 33297,
+      "bytes": 6461017,
+      "sha256": "c8c1217db8edf18228856c0fc30a164e426b0ac615db64236cc8f16ae899647f"
+    },
+    {
+      "path": "click_events/part-00000.jsonl",
+      "rows": 225583,
+      "bytes": 67108791,
+      "sha256": "9e70c5c5fb998a9a1a67887e0f4a584b3fd227c689d4863226ce4eb2f2d55132"
+    },
+    {
+      "path": "click_events/part-00001.jsonl",
+      "rows": 225471,
+      "bytes": 67108860,
+      "sha256": "27064c79ce6849a2bb807f4180f2daed74f885d4520755fc56df0ee765518efd"
+    },
+    {
+      "path": "click_events/part-00002.jsonl",
+      "rows": 225541,
+      "bytes": 67108565,
+      "sha256": "ac7e319e6f880b8c9b8449127b7310f030fe84d9f83e30aa80b3f77792181e03"
+    },
+    {
+      "path": "click_events/part-00003.jsonl",
+      "rows": 172459,
+      "bytes": 51314102,
+      "sha256": "c4d748f9b13b27c36c38e072494d6e4cf3c15c57be115f686b384c9a4d0c4dac"
+    }
+  ],
+  "total_bytes": 262229855,
+  "total_mib": 250.081878,
+  "public_user_columns": [
+    "user_id",
+    "age",
+    "gender",
+    "region",
+    "signup_at",
+    "acquisition_channel",
+    "membership_tier",
+    "primary_device"
+  ],
+  "hidden_generation_traits": [
+    "activity_tier",
+    "price_sensitivity",
+    "purchase_propensity",
+    "category_affinity"
+  ],
+  "planted_patterns": [
+    "age 18-34 favors headphones, wearables, and computers",
+    "age 45+ favors television/video and home audio",
+    "referral users have higher cart and purchase-click propensity than paid-search users",
+    "premium/vip users have higher funnel progression than basic users",
+    "mobile sessions concentrate in local evening hours",
+    "gender and region have no direct behavior multiplier and act as null controls"
+  ]
+}

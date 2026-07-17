@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { recoverKafkaLogLines } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -20,7 +21,7 @@ import {
   sparkRestRuntimeConfig,
 } from "./sparkRunner.mjs";
 
-const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".txt", ".tsv"];
+const textFileExtensions = [".csv", ".json", ".jsonl", ".log", ".ndjson", ".text", ".txt", ".tsv"];
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
 const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
@@ -104,11 +105,29 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3", 
   const bucket = requiredSourceField(fields, "Bucket / Stage Name", "MinIO/S3 bucket name is required.");
   const prefix = normalizePrefix(fieldValue(fields, "Path / Prefix"));
   const selectedObject = selectedObjectKey(fields);
+  const selectionKind = fieldValue(fields, "__Selection Kind").toLowerCase();
   const collectionScope = String(fieldValue(fields, "Collection Scope") || "file").trim().toLowerCase();
   const collectionPattern = fieldValue(fields, "File Pattern") || "*";
   const collectionRecursive = parseBoolean(fieldValue(fields, "Recursive"), false);
 
   requireMinioCredentials(storage);
+
+  if (selectionKind === "prefix") {
+    if (!prefix) {
+      throw apiError("SOURCE_PREFIX_REQUIRED", "Prefix dataset selection requires Path / Prefix.", 400);
+    }
+    return testObjectStoragePrefixDataset({
+      accessKeyId,
+      bucket,
+      endpoint,
+      fields,
+      forcePathStyle,
+      prefix,
+      region,
+      secretAccessKey,
+      sourceType,
+    });
+  }
 
   // A selected Parquet object needs the Spark reader; treating it as a text
   // object silently falls back to object metadata instead of its real schema.
@@ -762,6 +781,17 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
+    const rawValueIndex = parsedSample.columns.findIndex((column) => column === "value");
+    const recoveredLogLines = recoverKafkaLogLines(messages);
+    const rawTextLines = parsedSample.format === "txt" && rawValueIndex >= 0
+      ? messages.filter((line) => line.trim())
+      : recoveredLogLines;
+    const requiresRecordParsing = rawTextLines.length > 0;
+    const detectedFormat = requiresRecordParsing
+      ? "TXT"
+      : parsedSample.format === "kafka"
+      ? undefined
+      : parsedSample.format.toUpperCase();
 
     const id = sourceId("source", `kafka://${broker}/${topic}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
@@ -797,6 +827,11 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
         source: {
           connectionMessage: `Kafka 토픽 연결 성공: ${topic}`,
           connectionStatus: "success",
+          detectedFormat,
+          rawPreviewLines: requiresRecordParsing
+            ? rawTextLines
+            : messages.filter((line) => line.trim()),
+          requiresRecordParsing,
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
           sourceType,
@@ -824,6 +859,216 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   } finally {
     await admin.disconnect().catch(() => undefined);
   }
+}
+
+async function testObjectStoragePrefixDataset({ accessKeyId, bucket, endpoint, fields, forcePathStyle, prefix, region, secretAccessKey, sourceType }) {
+  const samplePolicy = samplePolicyForFields(fields, "object");
+  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  let directError;
+
+  try {
+    const objects = await listPrefixObjects(client, bucket, prefix);
+    return await buildObjectStoragePrefixAnalysis({
+      bucket,
+      endpoint,
+      fields,
+      forcePathStyle,
+      objects,
+      prefix,
+      readSample: async ({ bytes, key }) => {
+        const objectResult = await client.send(new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Range: bytes > 0 ? `bytes=0-${Math.max(0, bytes - 1)}` : undefined,
+        }));
+        return readBodyTextWithinLimit(objectResult.Body, bytes);
+      },
+      region,
+      samplePolicy,
+      sourceType,
+    });
+  } catch (error) {
+    if (isPrefixContractError(error)) throw error;
+    directError = error;
+  }
+
+  const objects = listPrefixObjectsViaMinioContainer({
+    accessKeyId,
+    bucket,
+    endpoint,
+    prefix,
+    secretAccessKey,
+  });
+  if (!objects) throw directError;
+
+  return buildObjectStoragePrefixAnalysis({
+    bucket,
+    endpoint,
+    fields,
+    forcePathStyle,
+    objects,
+    prefix,
+    readSample: async ({ bytes, key }) => readObjectSampleViaMinioContainer({
+      accessKeyId,
+      bucket,
+      bytes,
+      endpoint,
+      key,
+      secretAccessKey,
+    }),
+    region,
+    samplePolicy,
+    sourceType,
+  });
+}
+
+export async function buildObjectStoragePrefixAnalysis({
+  bucket,
+  endpoint,
+  fields,
+  forcePathStyle,
+  objects,
+  prefix,
+  readSample,
+  region,
+  samplePolicy = samplePolicyForFields(fields, "object"),
+  sourceType = "File / S3",
+}) {
+  if (typeof readSample !== "function") {
+    throw apiError("SOURCE_PREFIX_SAMPLE_READER_REQUIRED", "Prefix dataset sample reader is required.", 500);
+  }
+
+  const canonicalPrefix = datasetPrefix(prefix);
+  const configuredFormat = configuredDatasetFormat(fields, sourceType);
+  const selection = selectPrefixDatasetObjects(objects, canonicalPrefix, configuredFormat);
+  const samples = [];
+
+  for (const object of selection.objects) {
+    const key = String(object.Key);
+    const requestedBytes = sampleObjectRangeBytes(samplePolicy, Number(object.Size ?? 0));
+    let text;
+    try {
+      text = await readSample({ bytes: requestedBytes, key, object });
+    } catch (error) {
+      throw apiError(
+        "SOURCE_PREFIX_SAMPLE_READ_FAILED",
+        `Prefix dataset sample read failed for ${key}: ${error?.message || error}`,
+        502,
+      );
+    }
+    const parsedSample = parseSourceSample(key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    const schemaColumns = inferSchemaColumns(parsedSample);
+    if (schemaColumns.length === 0) {
+      throw apiError(
+        "SOURCE_PREFIX_SCHEMA_INFERENCE_FAILED",
+        `Schema could not be inferred from prefix data file: ${key}`,
+        400,
+      );
+    }
+    samples.push({
+      key,
+      parsedSample,
+      requestedBytes,
+      schemaColumns,
+      shapeFingerprint: schemaCompatibilityFingerprint(schemaColumns),
+    });
+  }
+
+  const representative = samples[0];
+  const incompatible = samples.find((sample) => sample.shapeFingerprint !== representative.shapeFingerprint);
+  if (incompatible) {
+    throw apiError(
+      "SOURCE_PREFIX_SCHEMA_MISMATCH",
+      `Prefix dataset schemas are incompatible: ${incompatible.key} differs from ${representative.key}.`,
+      400,
+    );
+  }
+
+  const fingerprint = schemaFingerprint(representative.schemaColumns);
+  const totalBytes = selection.objects.reduce((total, object) => total + nonNegativeNumber(object.Size), 0);
+  const sampledBytes = samples.reduce((total, sample) => total + sample.requestedBytes, 0);
+  const id = sourceId("source", `${endpoint}:${bucket}:${canonicalPrefix}:${selection.format}`);
+  const runId = sourceId("run", `${id}:${Date.now()}`);
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Endpoint URL", endpoint],
+    ["Region", region],
+    ["Bucket / Stage Name", bucket],
+    ["Path / Prefix", canonicalPrefix],
+    ["Use Path Style", String(forcePathStyle)],
+    ["__Selection Kind", "prefix"],
+    ["__Dataset Format", selection.format],
+    ["__Dataset Prefix", canonicalPrefix],
+    ["__Source Unit Count", String(selection.objects.length)],
+    ["__Source Total Bytes", String(totalBytes)],
+    ["__Excluded File Count", String(selection.excludedFileCount)],
+    ["__Representative Object", representative.key],
+    ["__Schema Fingerprint", fingerprint],
+    ["__Schema Compatible", "true"],
+    ["__Schema Sample Scope", samplePolicy.scope],
+    ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Schema Sample File Count", String(samples.length)],
+    ["__Sample Row Limit", String(samplePolicy.rowLimit)],
+    ["__Sample Requested Bytes", String(representative.requestedBytes)],
+    ["__Schema Sample Requested Bytes", String(sampledBytes)],
+    ["__Source ID", id],
+    ["__Run ID", runId],
+    ["__Sample Object", representative.key],
+    ["__Selected Object", ""],
+  ]);
+  const sourceLabel = `${bucket}/${canonicalPrefix}`;
+  const summary = `MinIO/S3 ${selection.format} prefix dataset · ${selection.objects.length} files · ${formatBytes(totalBytes)} · compatible schema`;
+
+  return {
+    actionPath: "/api/etl/sources/minio/test",
+    assets: toSourceAssets(selection.objects, sourceAssetListLimit()),
+    datasetSummary: {
+      bucket,
+      excludedFileCount: selection.excludedFileCount,
+      fileCount: selection.objects.length,
+      format: selection.format,
+      prefix: canonicalPrefix,
+      representativeObject: representative.key,
+      schemaCompatible: true,
+      schemaFingerprint: fingerprint,
+      selectionKind: "prefix",
+      totalBytes,
+    },
+    draftPatch: {
+      schema: {
+        columns: representative.schemaColumns,
+        sampleRows: representative.parsedSample.rows,
+        schemaFingerprint: fingerprint,
+        summary,
+      },
+      source: {
+        connectionMessage: `MinIO/S3 prefix dataset verified: ${sourceLabel}`,
+        connectionStatus: "success",
+        sourceConfig,
+        sourceLabel,
+        sourceType,
+      },
+    },
+    logs: [
+      `MinIO/S3 prefix recursive listing succeeded: bucket=${bucket}, prefix=${canonicalPrefix}`,
+      `Dataset files selected: ${selection.objects.length}, excluded objects: ${selection.excludedFileCount}`,
+      `Dataset format: ${selection.format}, total size: ${formatBytes(totalBytes)}`,
+      `Representative sample: ${representative.key}`,
+      `Schema compatibility verified across ${samples.length} files`,
+    ],
+    message: `MinIO/S3 prefix dataset verified: ${selection.objects.length} files`,
+    previewColumns: representative.parsedSample.columns,
+    previewNote: `${representative.key} representative sample · ${selection.objects.length} files · ${formatBytes(totalBytes)}`,
+    previewRows: representative.parsedSample.rows,
+    status: "success",
+    testItems: [
+      ["Endpoint", endpoint],
+      ["Bucket", bucket],
+      ["Prefix", canonicalPrefix],
+      ["Dataset format", selection.format],
+      ["Data files", String(selection.objects.length)],
+      ["Total size", formatBytes(totalBytes)],
+    ],
+  };
 }
 
 async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, forcePathStyle, objects, prefix, region, sampleObject, samplePolicy, selectedObject = "", sourceType }) {
@@ -933,6 +1178,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
       accessKeyId,
       bucket,
       bytes: requestedBytes,
+      endpoint,
       key: sampleObject.Key,
       secretAccessKey,
     });
@@ -1034,6 +1280,29 @@ async function listObjects(client, bucket, prefix) {
   return objects;
 }
 
+async function listPrefixObjects(client, bucket, prefix) {
+  const canonicalPrefix = datasetPrefix(prefix);
+  const objects = [];
+  let continuationToken;
+
+  do {
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: 1000,
+      Prefix: canonicalPrefix,
+    }));
+    objects.push(...(result.Contents ?? []).filter((item) => item.Key));
+    if (!result.IsTruncated) break;
+    if (!result.NextContinuationToken || result.NextContinuationToken === continuationToken) {
+      throw apiError("SOURCE_PREFIX_LIST_INCOMPLETE", "Prefix object listing did not provide a valid continuation token.", 502);
+    }
+    continuationToken = result.NextContinuationToken;
+  } while (continuationToken);
+
+  return objects.sort(compareObjectKeys);
+}
+
 async function listSelectedObject(client, bucket, key) {
   const normalizedKey = normalizePrefix(key);
   if (!normalizedKey) return [];
@@ -1069,6 +1338,135 @@ function safeAssetConfigPrefix(value, selectedObject) {
     return parentPrefix(normalized);
   }
   return normalized;
+}
+
+function datasetPrefix(value) {
+  const normalized = normalizePrefix(value);
+  return normalized ? `${normalized}/` : "";
+}
+
+function configuredDatasetFormat(fields, sourceType) {
+  const fileType = fieldValue(fields, "File Type");
+  const configured = canonicalDatasetFormat(fileType);
+  if (fileType && !isAutomaticFormat(fileType) && !configured) {
+    throw apiError("SOURCE_PREFIX_FORMAT_UNSUPPORTED", `Unsupported prefix dataset format: ${fileType}`, 400);
+  }
+  if (configured) return configured;
+  const sourceTypeFormat = String(sourceType ?? "").replace(/^File\s*\/\s*S3\s*/i, "");
+  return canonicalDatasetFormat(sourceTypeFormat);
+}
+
+function canonicalDatasetFormat(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (isAutomaticFormat(normalized)) return "";
+  const compact = normalized.replace(/[^a-z0-9]+/g, "");
+  if (compact.includes("jsonl") || compact.includes("ndjson") || compact.includes("jsonlines")) return "JSONL";
+  if (compact === "json" || compact.endsWith("json")) return "JSON";
+  if (compact.includes("tsv") || compact.includes("tabseparated")) return "TSV";
+  if (compact.includes("csv") || compact.includes("commaseparated")) return "CSV";
+  if (compact.includes("txt") || compact.includes("text") || compact.includes("log")) return "TXT";
+  return "";
+}
+
+function isAutomaticFormat(value) {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  return !normalized || normalized === "auto" || normalized === "autodetect" || normalized === "automatic";
+}
+
+function selectPrefixDatasetObjects(objects, canonicalPrefix, configuredFormat) {
+  const candidates = [];
+  let excludedFileCount = 0;
+
+  for (const object of Array.isArray(objects) ? objects : []) {
+    const key = String(object?.Key ?? "");
+    if (!key || (canonicalPrefix && !key.startsWith(canonicalPrefix)) || isExcludedPrefixObject(object, key)) {
+      excludedFileCount += 1;
+      continue;
+    }
+    const format = datasetFormatForObjectKey(key);
+    if (!format) {
+      excludedFileCount += 1;
+      continue;
+    }
+    candidates.push({ format, object: { ...object, __folder: false } });
+  }
+
+  if (!configuredFormat) {
+    const detectedFormats = [...new Set(candidates.map((candidate) => candidate.format))].sort();
+    if (detectedFormats.length > 1) {
+      throw apiError(
+        "SOURCE_PREFIX_MIXED_FORMATS",
+        `Prefix dataset contains mixed data formats: ${detectedFormats.join(", ")}. Select one File Type or separate the files by prefix.`,
+        400,
+      );
+    }
+  }
+
+  const format = configuredFormat || candidates[0]?.format || "";
+  const selected = candidates
+    .filter((candidate) => {
+      if (candidate.format === format) return true;
+      excludedFileCount += 1;
+      return false;
+    })
+    .map((candidate) => candidate.object)
+    .sort(compareObjectKeys);
+
+  if (!format || selected.length === 0) {
+    const formatLabel = configuredFormat ? ` matching ${configuredFormat}` : "";
+    throw apiError(
+      "SOURCE_PREFIX_NO_DATA_FILES",
+      `Prefix dataset contains no supported data files${formatLabel}: ${canonicalPrefix || "(root)"}`,
+      400,
+    );
+  }
+
+  return { excludedFileCount, format, objects: selected };
+}
+
+function isExcludedPrefixObject(object, key) {
+  if (object?.__folder || key.endsWith("/")) return true;
+  const basename = path.posix.basename(key);
+  if (!basename) return true;
+  const lowerBasename = basename.toLowerCase();
+  return basename.startsWith("_")
+    || basename.startsWith(".")
+    || lowerBasename === "manifest.json";
+}
+
+function datasetFormatForObjectKey(key) {
+  const lower = String(key ?? "").toLowerCase();
+  if (lower.endsWith(".jsonl") || lower.endsWith(".ndjson")) return "JSONL";
+  if (lower.endsWith(".json")) return "JSON";
+  if (lower.endsWith(".csv")) return "CSV";
+  if (lower.endsWith(".tsv")) return "TSV";
+  if (lower.endsWith(".txt") || lower.endsWith(".text") || lower.endsWith(".log")) return "TXT";
+  return "";
+}
+
+function schemaCompatibilityFingerprint(columns) {
+  return columns
+    .map((column) => `${String(column.sourceName ?? "").trim()}->${column.targetName}:${column.type}`)
+    .sort()
+    .join("|");
+}
+
+function compareObjectKeys(left, right) {
+  const leftKey = String(left?.Key ?? "");
+  const rightKey = String(right?.Key ?? "");
+  if (leftKey < rightKey) return -1;
+  if (leftKey > rightKey) return 1;
+  return 0;
+}
+
+function nonNegativeNumber(value) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function isPrefixContractError(error) {
+  const status = Number(error?.status ?? 0);
+  return String(error?.code ?? "").startsWith("SOURCE_PREFIX_") && status >= 400 && status < 500;
 }
 
 function parentPrefix(value) {
@@ -1258,7 +1656,6 @@ function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = s
   const normalizedPrefix = normalizePrefix(prefix);
   const maxItems = configuredInlineLimit(limit, sourceListLimit());
   const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
-  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   const result = runMinioClientCommand({
     accessKeyId,
     command: `mc ls --json ${shellQuote(target)} | head -n ${maxItems}`,
@@ -1267,7 +1664,25 @@ function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = s
   });
   if (!result) return null;
 
+  return parseMinioListedObjects(result, bucket, normalizedPrefix);
+}
+
+function listPrefixObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
+  const result = runMinioClientCommand({
+    accessKeyId,
+    command: `mc ls --recursive --json ${shellQuote(target)}`,
+    endpoint,
+    secretAccessKey,
+  });
+  if (!result) return null;
+  return parseMinioListedObjects(result, bucket, normalizedPrefix).sort(compareObjectKeys);
+}
+
+function parseMinioListedObjects(result, bucket, normalizedPrefix) {
   const root = `local/${bucket}/`;
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   return result
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1354,12 +1769,13 @@ function toSourceAssets(items, limit = sourceListLimit()) {
   ]);
 }
 
-function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, secretAccessKey }) {
+function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, endpoint, key, secretAccessKey }) {
   const byteLimit = Math.max(1, Math.trunc(Number(bytes) || 512 * 1024));
   const target = `local/${bucket}/${key}`;
   return runMinioClientCommand({
     accessKeyId,
     command: `mc cat ${shellQuote(target)} | head -c ${byteLimit}`,
+    endpoint,
     secretAccessKey,
   }) ?? "";
 }
