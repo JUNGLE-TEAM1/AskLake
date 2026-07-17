@@ -27,6 +27,20 @@ Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종�
 SQL 결과 위젯 설정도 별도 form이나 renderer를 만들지 않고 Dashboard runtime `WidgetConfigPanel`, `WidgetRenderer`, `DashboardDatasetOption` adapter를 재사용한다. SQL 화면은 SQL 결과와 선택 데이터셋을 설정 panel의 데이터 소스로 제공하되 Dashboard 저장 상태는 만들지 않는다.
 Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며, 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
+### Dashboard DB schema 준비
+
+Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하는 요청에서 만들지 않는다. backend 시작 전에 Dashboard 전용 versioned migration이 필요한 구조를 준비하고, 적용한 버전은 `dashboard_schema_migrations` 테이블에 기록한다.
+
+일반적인 backend 시작에서는 자동으로 한 번 확인된다. 배포 전 미리 확인하거나 기존 DB를 먼저 올릴 때는 아래 명령을 사용한다.
+
+```bash
+cd backend
+npm run migrate:dashboard-schema
+npm run verify:dashboard-storage
+```
+
+`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다.
+
 ## 2) 빌드
 
 ```bash

@@ -222,29 +222,50 @@ CI에서는 다음처럼 흔들리지 않는 값을 검사한다.
 
 선택지는 다음과 같다.
 
-#### 선택지 A — versioned SQL과 명시적 bootstrap 사용
+#### 선택지 A — Dashboard 전용 versioned migration/bootstrap 사용
 
-- 기존 `deploy/postgres/init/*.sql` 흐름을 확장한다.
-- 새 DB 초기화뿐 아니라 기존 volume upgrade에도 실행할 명령을 제공한다.
+- 적용한 버전을 DB에 기록하고, 새 DB 초기화와 기존 DB upgrade에 같은 명령을 사용한다.
+- backend 시작 전 또는 배포 preflight에서 아직 적용하지 않은 버전만 실행한다.
 - 현재 저장소 구조에 가장 작은 변경으로 적용할 수 있다.
 
 주의:
 
-- Docker의 init SQL은 빈 volume에서만 실행될 수 있으므로 기존 DB upgrade 명령이 반드시 필요하다.
+- Dashboard 범위 밖의 schema 정책까지 자동으로 통일하지 않는다. 전체 DB migration 표준화는 별도 의사결정이다.
 
 #### 선택지 B — Alembic 같은 migration framework 도입
 
 - schema 변경 이력을 정식 revision으로 관리할 수 있다.
 - 장기적으로는 더 명확하지만 Dashboard 한 이슈보다 범위가 커질 수 있다.
 
-PR 1에서는 저장소 전체 migration 정책을 새로 만들지, 기존 SQL/bootstrap을 확장할지 먼저 결정하고 문서화한다. 어느 방식을 고르든 request handler나 repository 생성자에서 DDL을 실행하는 방식으로 되돌아가지 않는다.
+#### PR 1에서 선택한 방식
 
-### 4.4 예상 커밋
+PR 1은 **Dashboard 전용 versioned migration/bootstrap**을 선택했다. Alembic을 저장소 전체에 도입하지는 않았다.
+
+- `dashboard_schema_migrations`에 `20260718_dashboard_card_runtime_v1` 적용 여부를 기록한다.
+- backend 시작 시와 `npm run migrate:dashboard-schema` 명령에서 아직 적용하지 않은 Dashboard migration만 실행한다.
+- PostgreSQL에서는 advisory lock으로 여러 backend instance가 동시에 같은 migration을 실행하지 않게 한다.
+- Dashboard 목록·runtime repository와 API 요청 경로에서는 schema DDL을 실행하지 않는다.
+- 이 방식은 Dashboard 카드와 draft runtime 범위만 다룬다. PostgreSQL 전체, ClickHouse 등 모든 DB의 migration 정책을 정하는 Alembic 도입은 별도 이슈에서 결정한다.
+
+검증 명령은 아래와 같다.
+
+```bash
+cd backend
+npm run migrate:dashboard-schema
+npm run verify:dashboard-storage
+
+cd ../frontend
+npm run test:dashboard-draft-layout-persistence
+npm run build
+```
+
+### 4.4 커밋 분리 기준
 
 1. `test: Dashboard runtime 저장 회귀 기준 추가`
 2. `refactor: Dashboard schema 준비를 명시적 migration으로 이동`
-3. `fix: layout 저장 성공 확인과 실패 복구 처리`
-4. `docs: Dashboard migration과 검증 절차 문서화`
+3. `refactor: Dashboard 요청 경로의 schema DDL 제거`
+4. `fix: layout 저장 성공 확인과 실패 복구 처리`
+5. `docs: Dashboard migration과 검증 절차 문서화`
 
 각 커밋은 독립적으로 관련 테스트와 build가 통과하는 상태를 유지한다.
 
@@ -259,13 +280,13 @@ PR 1에서는 저장소 전체 migration 정책을 새로 만들지, 기존 SQL/
 ### 4.6 PR 1 완료 조건
 
 - [x] Backend 저장 회귀 테스트가 있다.
-- [ ] Frontend layout 성공·실패 상태 테스트가 있다.
-- [ ] 변경 전후 측정 결과가 PR에 기록된다.
-- [ ] 신규 DB schema 준비 경로가 검증된다.
-- [ ] 기존 DB upgrade 경로가 검증된다.
-- [ ] Dashboard 사용자 요청 중 schema DDL이 실행되지 않는다.
-- [ ] layout 저장 실패 시 화면과 저장 값이 어긋나지 않는다.
-- [ ] 관련 문서가 실제 명령과 일치한다.
+- [x] Frontend layout 성공·실패 상태 테스트가 있다.
+- [x] 요청 경로의 Dashboard schema DDL 횟수 `0`을 자동 테스트로 검증한다. widget 계산 시간 측정·개선은 이 PR의 범위 밖이며 후속 성능 이슈에서 다룬다.
+- [x] 신규 DB schema 준비 경로가 검증된다.
+- [x] 기존 DB upgrade 경로가 검증된다.
+- [x] Dashboard 사용자 요청 중 schema DDL이 실행되지 않는다.
+- [x] layout 저장 실패 시 화면과 저장 값이 어긋나지 않는다.
+- [x] 관련 문서가 실제 명령과 일치한다.
 
 ## 5. PR 2 — 위젯 변경 후 전체 runtime 재조회 제거
 
