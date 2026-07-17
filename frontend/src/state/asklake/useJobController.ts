@@ -4,7 +4,7 @@ import { apiConfig } from "../../services/apiClient";
 
 import { hydrateDraftPipelineFromJob } from "../../services/draftPipelineContract";
 import { isContinuousRuntimeTransition, shouldAcceptContinuousRuntimeUpdate } from "../../services/continuousRuntimeContract";
-import { getDatasets, runJobCommand as runMockJobCommand } from "../../services/mockApi";
+import { runJobCommand as runMockJobCommand } from "../../services/mockApi";
 import { deletePipelineJob as deleteLivePipelineJob, getJob as getLiveJob, runJobCommand as runLiveJobCommand } from "../../services/pipelineApi";
 
 import { MutationRevisionGate } from "../../state/requestOwnership";
@@ -44,8 +44,6 @@ export function useJobController({
     setCommandPendingByJobId,
     setCreateMutationState,
     setDagStepsByRunId,
-    setDataError,
-    setDataLoading,
     setDatasets,
     setDraftPipeline,
     setEditingJobId,
@@ -130,15 +128,6 @@ export function useJobController({
         const nextRun = nextJob.runHistory?.find((candidate) => candidate.runId === runId);
         if (!nextRun || !isTerminalRunStatus(nextRun.status)) continue;
 
-        if (nextRun.status === "success") {
-          try {
-            const nextDatasets = (await getDatasets()).map(normalizeDatasetRow);
-            setDatasets(nextDatasets);
-            setSelectedDataset((selected) => nextDatasets.find((dataset) => dataset.id === selected.id) ?? selected);
-          } catch {
-            showToast("작업은 완료됐지만 Catalog 목록을 자동 갱신하지 못했습니다.", "info");
-          }
-        }
         return;
       }
 

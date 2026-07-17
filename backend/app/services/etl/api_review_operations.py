@@ -18,8 +18,10 @@ RUNTIME_NAMES = {
     'ReviewValidationRow',
     'SchemaDraft',
     'SourceConnectorRequest',
+    'UI_MANAGED_SOURCES',
     'any',
     'begin_kafka_continuous_session',
+    'blocked_principal_for_actor',
     'bool',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
@@ -34,15 +36,20 @@ RUNTIME_NAMES = {
     'is_internal_data_lake_source',
     'is_kafka_job',
     'isinstance',
+    'legacy_permission_grants',
     'len',
     'list',
+    'list_permission_grants_by_resource',
+    'locked_resource_ids',
     'mark_kafka_continuous_session_stopping',
+    'merge_permission_grants',
     'next',
     'normalize_column_name',
     'permission_grants_for_etl_job',
     'permission_grants_for_resource',
     'permission_review_entries',
     'permissions_for_actor_with_governance',
+    'permissions_for_actor_with_governance_state',
     'persisted_stream_partition_cursors',
     'reconcile_pending_continuous_replay_catalog',
     'reconcile_stale_continuous_maintenance_runs',
@@ -107,6 +114,51 @@ def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> J
             resource_type="etl_job",
         ),
     })
+
+
+def with_jobs_permissions(
+    db: Session,
+    jobs: list[JobRowData],
+    actor: ActorContext,
+) -> list[JobRowData]:
+    """Project list permissions with a fixed number of database reads."""
+    if not jobs:
+        return []
+
+    persisted_grants = list_permission_grants_by_resource(
+        db,
+        [("etl_job", job.id) for job in jobs],
+    )
+    principal_blocked = blocked_principal_for_actor(db, actor) is not None
+    locked_job_ids = locked_resource_ids(
+        db,
+        resource_ids=[job.id for job in jobs],
+        resource_type="etl_job",
+    )
+
+    projected_jobs: list[JobRowData] = []
+    for job in jobs:
+        stored_grants = persisted_grants.get(("etl_job", job.id), [])
+        has_ui_managed_grants = any(
+            grant.source in UI_MANAGED_SOURCES
+            for grant in stored_grants
+        )
+        effective_grants = merge_permission_grants(
+            stored_grants,
+            [] if has_ui_managed_grants else legacy_permission_grants(job.permission_roles),
+        )
+        grant_payloads = [grant.model_dump(by_alias=True) for grant in effective_grants]
+        projected_jobs.append(job.model_copy(update={
+            "permission_grants": effective_grants,
+            "permissions": permissions_for_actor_with_governance_state(
+                actor,
+                owner=job.owner,
+                grants=grant_payloads,
+                principal_blocked=principal_blocked,
+                resource_locked=job.id in locked_job_ids,
+            ),
+        }))
+    return projected_jobs
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
@@ -358,6 +410,7 @@ def review_validation(label: str, ready: bool, ready_value: str, warning_value: 
 EXPORTED_FUNCTIONS = (
     'command_kafka_continuous_job',
     'with_job_permissions',
+    'with_jobs_permissions',
     'test_source_connector',
     'is_internal_data_lake_source',
     'resolve_internal_data_lake_source',

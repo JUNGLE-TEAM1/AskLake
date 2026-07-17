@@ -108,6 +108,7 @@ RUNTIME_NAMES = {
     'validate_target_contract',
     'validate_update_request',
     'with_job_permissions',
+    'with_jobs_permissions',
     'writer_mode_for_pipeline',
 }
 
@@ -305,6 +306,7 @@ def list_jobs(
             schedule_kind=job_schedule_kind,
             sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
         ),
     )
 
@@ -438,6 +440,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
             schedule_kind=job_schedule_kind,
             sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
         ),
     )
 

@@ -301,6 +301,7 @@ from app.ports.runtime_io import (
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository
 from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
     REPLAY_COMMIT_KIND,
     STREAM_COMMIT_KIND,
@@ -311,7 +312,12 @@ from app.repositories.dashboard_live_repository import (
     save_catalog_dataset_and_revision,
 )
 from app.repositories.sql_repository import SqlRepository
-from app.repositories.permission_repository import ensure_legacy_permission_grants, replace_permission_ui_grants
+from app.repositories.permission_repository import (
+    UI_MANAGED_SOURCES,
+    ensure_legacy_permission_grants,
+    list_permission_grants_by_resource,
+    replace_permission_ui_grants,
+)
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
@@ -393,7 +399,12 @@ from app.services.materialization_projection import (
     upsert_materialization_run,
 )
 from app.services.rule_compiler import CompiledRuleSet, compile_rule_set
-from app.services.resource_permission_service import permission_grants_for_resource, permissions_for_actor_with_governance
+from app.services.resource_permission_service import (
+    merge_permission_grants,
+    permission_grants_for_resource,
+    permissions_for_actor_with_governance,
+    permissions_for_actor_with_governance_state,
+)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -2032,6 +2043,7 @@ get_dataset_lineage = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['get_
 execute_query = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['execute_query'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 command_kafka_continuous_job = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['command_kafka_continuous_job'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)
 with_job_permissions = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['with_job_permissions'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)
+with_jobs_permissions = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['with_jobs_permissions'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)
 test_source_connector = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['test_source_connector'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)
 is_internal_data_lake_source = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['is_internal_data_lake_source'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)
 resolve_internal_data_lake_source = bind_runtime(_etl_api_review_operations.IMPLEMENTATIONS['resolve_internal_data_lake_source'], globals(), runtime_names=_etl_api_review_operations.RUNTIME_NAMES)

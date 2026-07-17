@@ -81,7 +81,6 @@ export function DashboardPage({
   onRuntimeNavigate,
 }: {
   dataset: CatalogDataset;
-  datasets?: CatalogDataset[];
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -147,7 +146,7 @@ export function DashboardPage({
     datasets: dashboardDatasets,
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
-  } = useDashboardDatasets();
+  } = useDashboardDatasets(view === "runtime" || view === "builder");
   const availableDashboardDatasets = useMemo(
     () => sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
