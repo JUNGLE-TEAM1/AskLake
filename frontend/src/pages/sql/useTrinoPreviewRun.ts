@@ -4,7 +4,7 @@ import {
   cancelTrinoQueryRun,
   getTrinoQueryRun,
   getTrinoQueryRunResultPage,
-} from "../../services/pipelineApi";
+} from "../../services/sqlQueryApi";
 import type {
   AuditResult,
   CatalogDataset,

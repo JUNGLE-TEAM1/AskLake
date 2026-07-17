@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 
 import { apiConfig } from "../../services/apiClient";
-import { getTrinoQueryRun, getTrinoQueryRunResultPage, requestTrinoFullResults } from "../../services/pipelineApi";
+import { getTrinoQueryRun, getTrinoQueryRunResultPage, requestTrinoFullResults } from "../../services/sqlQueryApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
 import type { SqlRemoteResultPagination } from "./SqlResultsPanel";
 

@@ -20,7 +20,7 @@ import {
   estimateSqlQueryRun,
   isTrinoQueryRun,
   submitSqlQueryRun,
-} from "../../services/pipelineApi";
+} from "../../services/sqlQueryApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";

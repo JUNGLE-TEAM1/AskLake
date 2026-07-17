@@ -1,6 +1,20 @@
-import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunResultPage, TrinoQueryValidation } from "../types";
+import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
+
+export {
+  cancelTrinoQueryRun,
+  estimateSqlQueryRun,
+  executeQueryDraft,
+  getQueryRun,
+  getTrinoQueryRun,
+  getTrinoQueryRunResultPage,
+  isTrinoQueryRun,
+  requestTrinoFullResults,
+  submitSqlQueryRun,
+  validateSqlQueryRun,
+} from "./sqlQueryApi";
+export type { SqlQueryRunResponse } from "./sqlQueryApi";
 
 export type PipelineCreationResult = {
   catalogTarget?: {
@@ -73,75 +87,6 @@ export async function replayContinuousQuarantine(jobId: string, offsets: string[
 
 export async function compactContinuousTarget(jobId: string, targetFileSizeMb = 256): Promise<ContinuousMaintenanceRun> {
   return apiClient.post<ContinuousMaintenanceRun>(`/api/etl/jobs/${encodeURIComponent(jobId)}/continuous/compactions`, { targetFileSizeMb });
-}
-
-export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
-  return apiClient.post<SqlResultDraft>("/api/query/runs", { datasetId: dataset.id, query });
-}
-
-export async function getQueryRun(runId: string): Promise<SqlResultDraft> {
-  return apiClient.get<SqlResultDraft>(`/api/query/runs/${encodeURIComponent(runId)}`);
-}
-
-export type SqlQueryRunResponse = SqlResultDraft | TrinoQueryRun;
-
-export function isTrinoQueryRun(response: SqlQueryRunResponse): response is TrinoQueryRun {
-  return "engine" in response && response.engine === "trino";
-}
-
-export async function submitSqlQueryRun(
-  dataset: CatalogDataset,
-  query: string,
-  referenceDatasetIds: string[],
-  confirmationToken?: string,
-  clientRequestId?: string,
-): Promise<SqlQueryRunResponse> {
-  return apiClient.post<SqlQueryRunResponse>("/api/query/runs", {
-    baseDatasetId: dataset.id,
-    clientRequestId,
-    confirmationToken,
-    datasetId: dataset.id,
-    limit: 100,
-    mode: "preview",
-    query,
-    referenceDatasetIds,
-    resultPageSize: 100,
-  });
-}
-
-export async function requestTrinoFullResults(previewRunId: string, clientRequestId?: string): Promise<TrinoQueryRun> {
-  return apiClient.post<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(previewRunId)}/full-results`, {
-    clientRequestId,
-  });
-}
-
-export async function estimateSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[]): Promise<TrinoQueryEstimate> {
-  return apiClient.post<TrinoQueryEstimate>("/api/query/estimates", {
-    baseDatasetId: dataset.id,
-    query,
-    referenceDatasetIds,
-  });
-}
-
-export async function validateSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[]): Promise<TrinoQueryValidation> {
-  return apiClient.post<TrinoQueryValidation>("/api/query/validate", {
-    baseDatasetId: dataset.id,
-    query,
-    referenceDatasetIds,
-  });
-}
-
-export async function getTrinoQueryRun(runId: string): Promise<TrinoQueryRun> {
-  return apiClient.get<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(runId)}`);
-}
-
-export async function getTrinoQueryRunResultPage(runId: string, cursor?: string | null): Promise<TrinoQueryRunResultPage> {
-  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  return apiClient.get<TrinoQueryRunResultPage>(`/api/query/runs/${encodeURIComponent(runId)}/results${query}`);
-}
-
-export async function cancelTrinoQueryRun(runId: string): Promise<TrinoQueryRun> {
-  return apiClient.post<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(runId)}/cancel`, {});
 }
 
 export async function createTrinoSqlJob(request: CreateTrinoSqlJobRequest): Promise<PipelineCreationResult> {

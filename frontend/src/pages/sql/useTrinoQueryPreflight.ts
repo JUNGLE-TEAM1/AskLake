@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer } from "react";
 
 import { apiConfig } from "../../services/apiClient";
-import { estimateSqlQueryRun, validateSqlQueryRun } from "../../services/pipelineApi";
+import { estimateSqlQueryRun, validateSqlQueryRun } from "../../services/sqlQueryApi";
 import type { CatalogDataset, TrinoQueryEstimate } from "../../types";
 
 type QueryPreflightState = {
