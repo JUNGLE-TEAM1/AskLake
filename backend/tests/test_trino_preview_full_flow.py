@@ -13,7 +13,7 @@ from app.schemas.trino import (
     TrinoQueryRunResponse,
     TrinoQueryRunResult,
 )
-from app.services.trino_query_run_service import TrinoQueryRunService, build_run_response
+from app.services.trino_query_run_service import TrinoQueryRunService, build_run_response, trino_request_fingerprint
 
 
 class InlineResultRepository:
@@ -55,6 +55,20 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
 
         self.assertEqual(normalized.mode, "preview")
         self.assertEqual(normalized.preview_limit, 100)
+
+    def test_internal_run_mode_remains_explicit_and_changes_idempotency_fingerprint(self) -> None:
+        full_request = SubmitTrinoQueryRunRequest(
+            baseDatasetId="dataset-1",
+            mode="run",
+            query="SELECT * FROM events",
+        )
+        preview_request = full_request.model_copy(update={"mode": "preview"})
+
+        self.assertEqual(full_request.mode, "run")
+        self.assertNotEqual(
+            trino_request_fingerprint(full_request),
+            trino_request_fingerprint(preview_request),
+        )
 
     def test_preview_executes_a_limit_but_persists_the_unbounded_sql_recipe(self) -> None:
         repository = InlineResultRepository()
