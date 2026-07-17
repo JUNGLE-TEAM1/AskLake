@@ -28,21 +28,34 @@ while IFS= read -r pod; do
 import os
 
 current = os.getpid()
-needles = (
+script_names = {
     "kafka_continuous_stream.py",
     "manage-kafka-continuous.mjs",
     "kafka_continuous_maintenance.py",
     "manage-kafka-continuous-maintenance.mjs",
-)
+}
+
+def is_continuous_worker(argv):
+    return any(os.path.basename(argument) in script_names for argument in argv)
+
+assert not is_continuous_worker([
+    "python", "-c", "diagnostic mentions kafka_continuous_stream.py only as source text"
+])
+assert is_continuous_worker(["python", "/opt/asklake/scripts/kafka_continuous_stream.py"])
+
 count = 0
 for entry in os.listdir("/proc"):
     if not entry.isdigit() or int(entry) == current:
         continue
     try:
-        command = open(f"/proc/{entry}/cmdline", "rb").read().replace(b"\x00", b" ").decode("utf-8", "ignore")
+        argv = [
+            value.decode("utf-8", "ignore")
+            for value in open(f"/proc/{entry}/cmdline", "rb").read().split(b"\x00")
+            if value
+        ]
     except OSError:
         continue
-    if any(needle in command for needle in needles):
+    if is_continuous_worker(argv):
         count += 1
 print(count)
 ')"

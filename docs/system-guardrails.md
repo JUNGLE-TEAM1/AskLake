@@ -208,3 +208,12 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - `npm run verify:refactor-release-execution`은 격리 nightly fault, production canary clean reboot, backup/restore drill이 모두 증명되기 전 exit 2로 차단한다.
 - production 배포, EC2 reboot, traffic promotion은 별도 명시적 승인과 release owner가 필요하다.
 - rollback은 DB 수동 편집, checkpoint 삭제, 수동 chown을 정상 절차로 사용하지 않는다.
+
+# 공유 EKS live mutation guardrail (2026-07-17)
+
+- `asklake-dev`의 Helm rollout과 bounded data E2E는 같은 시간에 실행하지 않는다.
+- live E2E 전에는 모든 application Deployment rollout 완료와 ALB healthy target exact count, draining 0을 확인한다.
+- E2E runner는 시작 시 Helm revision과 Deployment UID/Pod template을 snapshot하고 실행 중 drift를 성공으로 숨기지 않는다.
+- 공유 runtime drift, Job failure, Airflow transport disconnect가 발생하면 Spark `COMPLETED`만으로 전체 Run을 성공 처리하지 않는다.
+- 경합 중 commit된 fixture는 운영 데이터로 승격하지 않고, 다음 검증은 고유 batch ID의 새 100건으로 수행한다.
+- 실패한 검증을 정리할 때 기존 EC2 Continuous, RDS 이력, Iceberg evidence를 수동 삭제하거나 production cutover를 수행하지 않는다.

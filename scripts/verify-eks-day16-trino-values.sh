@@ -58,7 +58,13 @@ rendered="$(mktemp)"
 before="$(mktemp)"
 after="$(mktemp)"
 trap 'rm -f "$rendered" "$before" "$after"' EXIT
-kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '[.items[]|select(.metadata.name|contains("trino"))|{kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$before"
+release_revision_before="$(helm list -n "$NAMESPACE" -o json | jq -r '.[]|select(.name=="asklake-trino")|.revision')"
+kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '
+  [.items[]|select(.metadata.name|contains("trino"))|{
+    kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,
+    generation:(.metadata.generation//null),spec:(.spec//null),data:(.data//null)
+  }]|sort_by(.kind,.name)
+' >"$before"
 component_overrides=(
   --set frontend.enabled=false
   --set backend.enabled=false
@@ -71,8 +77,15 @@ grep -q 'app.kubernetes.io/component: trino' "$rendered" || fail "rendered Trino
 helm upgrade --install asklake-trino "$CHART" \
   --namespace "$NAMESPACE" --create-namespace=false \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" --dry-run=server >/dev/null
-kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '[.items[]|select(.metadata.name|contains("trino"))|{kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$after"
+kubectl get deployment,service,configmap -n "$NAMESPACE" -o json | jq -S -c '
+  [.items[]|select(.metadata.name|contains("trino"))|{
+    kind,namespace:.metadata.namespace,name:.metadata.name,uid:.metadata.uid,
+    generation:(.metadata.generation//null),spec:(.spec//null),data:(.data//null)
+  }]|sort_by(.kind,.name)
+' >"$after"
 cmp -s "$before" "$after" || fail "server dry-run changed live resources"
+release_revision_after="$(helm list -n "$NAMESPACE" -o json | jq -r '.[]|select(.name=="asklake-trino")|.revision')"
+[[ "$release_revision_after" == "$release_revision_before" ]] || fail "server dry-run changed the Trino Helm revision"
 
 grep -q '^  name: asklake-trino$' "$rendered"
 grep -q 'serviceAccountName: asklake-trino' "$rendered"

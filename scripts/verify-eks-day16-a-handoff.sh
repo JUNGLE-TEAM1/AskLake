@@ -14,6 +14,7 @@ STATE="${ASKLAKE_TERRAFORM_STATE:-$ROOT_DIR/infra/eks/terraform/terraform.tfstat
 FIXTURE_RECEIPT="${ASKLAKE_FIXTURE_RECEIPT:-$ROOT_DIR/infra/eks/delivery/dev.fixture-receipt.json}"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-workloads"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
+RUNTIME_CONFIG_RELEASE="${ASKLAKE_RUNTIME_CONFIG_RELEASE:-asklake-runtime-config}"
 MODE="${1:---audit}"
 
 fail() { echo "$1" >&2; exit 1; }
@@ -43,7 +44,8 @@ ASKLAKE_BACKEND_RUNTIME_SCOPE="$backend_scope" \
 runtime_secret_delivery="ready"
 bash "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh" >/dev/null
 
-runtime_config_result="$(bash "$ROOT_DIR/scripts/verify-eks-runtime-config-ownership.sh" --audit)"
+runtime_config_result="$(ASKLAKE_RUNTIME_CONFIG_RELEASE="$RUNTIME_CONFIG_RELEASE" \
+  bash "$ROOT_DIR/scripts/verify-eks-runtime-config-ownership.sh" --audit)"
 runtime_config_ownership="$(jq -r '.ownership' <<<"$runtime_config_result")"
 runtime_config_image="$(jq -r '.image' <<<"$runtime_config_result")"
 runtime_config_selection="$(jq -r '.selection' <<<"$runtime_config_result")"
@@ -61,7 +63,12 @@ web_values="$(mktemp)"; airflow_values="$(mktemp)"; trino_values="$(mktemp)"
 dryrun_error="$(mktemp)"; before="$(mktemp)"; after="$(mktemp)"
 trap 'rm -f "$web_values" "$airflow_values" "$trino_values" "$dryrun_error" "$before" "$after"' EXIT
 chmod 600 "$web_values" "$airflow_values" "$trino_values"
-kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$before"
+kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '
+  [.items[]|{
+    kind,name:.metadata.name,uid:.metadata.uid,generation:(.metadata.generation//null),
+    spec:(.spec//null),data:(.data//null)
+  }]|sort_by(.kind,.name)
+' >"$before"
 helm get values asklake-web -n "$NAMESPACE" -o json >"$web_values"
 helm get values asklake-airflow -n "$NAMESPACE" -o json >"$airflow_values"
 helm get values asklake-trino -n "$NAMESPACE" -o json >"$trino_values"
@@ -90,7 +97,12 @@ if [[ "$release_ownership" == "blocked" ]]; then
   blockers=$((blockers+1))
 fi
 
-kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' >"$after"
+kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json | jq -S -c '
+  [.items[]|{
+    kind,name:.metadata.name,uid:.metadata.uid,generation:(.metadata.generation//null),
+    spec:(.spec//null),data:(.data//null)
+  }]|sort_by(.kind,.name)
+' >"$after"
 cmp -s "$before" "$after" || fail "Phase 5 dry-run changed live resources"
 
 fixture_state="blocked"

@@ -1582,3 +1582,21 @@ kubectl logs -n asklake-dev deployment/trino-result-collector --tail=50
 ```
 
 Collector 중단은 Run을 성공으로 바꾸지 않는다. Pod가 죽으면 lease 만료 뒤 새 worker가 같은 `runId`를 이어받고, stale generation의 page metadata 공개는 거부된다. rollback으로 Collector를 제거한 상태가 길어지면 actor별 `queued`/`running` slot이 다시 찰 수 있으므로 FastAPI나 Trino 재시작으로 숨기지 말고 Collector 복구 또는 cancel API를 사용한다.
+
+## 25) 공유 EKS에서 bounded live 검증
+
+`asklake-dev`처럼 여러 작업자가 같은 Helm release를 사용하는 환경에서는 live E2E와 workload rollout을 동시에 실행하지 않는다. 먼저 진행 중인 Helm 작업과 ALB draining target이 없고 모든 Deployment rollout이 완료됐는지 확인한 뒤 exclusive 검증 시간을 잡는다. fixture가 이미 발행됐더라도 경합으로 실패한 batch를 성공 증거로 재사용하지 않고 새 batch ID를 발행한다.
+
+```bash
+kubectl rollout status deployment/frontend deployment/fastapi \
+  deployment/trino-result-collector deployment/asklake-airflow-apiserver \
+  deployment/asklake-airflow-scheduler deployment/asklake-airflow-dag-processor \
+  deployment/asklake-trino -n asklake-dev --timeout=10m
+
+export ASKLAKE_PHASE6_E2E_CONFIRM=run-new-bounded-e2e-once
+export ASKLAKE_FIXTURE_RECEIPT=/private/new.fixture-receipt.json
+export ASKLAKE_PHASE6_RUN_RECEIPT=/private/new.phase6-bounded-run.json
+bash scripts/run-eks-day16-phase6-bounded-e2e.sh
+```
+
+runner는 시작 시 `asklake-web`, `asklake-airflow`, `asklake-trino`, `asklake-runtime-config` revision과 7개 Deployment의 UID/Pod template을 저장한다. 실행 중 이 identity가 바뀌거나 temporary Job이 failed가 되면 즉시 fail-closed한다. Spark driver가 실제 100건을 commit했더라도 durable Run이 `success`가 아니면 E2E 성공으로 기록하지 않는다.

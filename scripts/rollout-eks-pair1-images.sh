@@ -28,6 +28,9 @@ HANDOFF_CANDIDATE="$TEMP_DIR/handoff-candidate.json"
 TRINO_PRIVATE_CANDIDATE="$ROOT_DIR/infra/eks/values/workloads/dev.pair1-candidate.private-values.json"
 RESOURCE_BEFORE="$TEMP_DIR/resources-before.json"
 RESOURCE_AFTER="$TEMP_DIR/resources-after.json"
+HANDOFF_BACKUP="$TEMP_DIR/handoff-backup.json"
+TRINO_VALUES_BACKUP="$TEMP_DIR/trino-values-backup.json"
+RUNTIME_VALUES_BACKUP="$TEMP_DIR/runtime-values-backup.json"
 
 WEB_REVISION=""
 AIRFLOW_REVISION=""
@@ -48,8 +51,11 @@ release_revision() {
 
 rollback_on_error() {
   local exit_code=$?
+  local failed_line="${1:-unknown}"
+  local failed_command="${2:-unknown}"
   trap - ERR
   set +e
+  printf 'pair1_image_rollout_error line=%s command=%q\n' "$failed_line" "$failed_command" >&2
   if [[ "$APPLY_STARTED" == true && "$APPLY_COMPLETE" != true ]]; then
     echo "pair1 image rollout failed; restoring previous Helm revisions" >&2
     for release in asklake-runtime-config asklake-trino asklake-airflow asklake-web; do
@@ -65,10 +71,21 @@ rollback_on_error() {
         helm rollback "$release" "$revision" -n "$NAMESPACE" --wait --timeout 10m >/dev/null || true
       fi
     done
-    kubectl rollout status deployment/frontend deployment/fastapi \
+    kubectl rollout status deployment/frontend deployment/fastapi deployment/trino-result-collector \
       deployment/asklake-airflow-apiserver deployment/asklake-airflow-scheduler \
       deployment/asklake-airflow-dag-processor deployment/asklake-trino \
       -n "$NAMESPACE" --timeout=10m >/dev/null 2>&1 || true
+    for pair in \
+      "$HANDOFF_BACKUP:$HANDOFF" \
+      "$TRINO_VALUES_BACKUP:$TRINO_VALUES" \
+      "$RUNTIME_VALUES_BACKUP:$RUNTIME_VALUES"; do
+      source_file="${pair%%:*}"
+      target_file="${pair#*:}"
+      if [[ -s "$source_file" ]]; then
+        cp "$source_file" "$target_file"
+        chmod 600 "$target_file"
+      fi
+    done
   fi
   exit "$exit_code"
 }
@@ -78,7 +95,7 @@ cleanup() {
   rm -f "$TRINO_PRIVATE_CANDIDATE"
 }
 
-trap rollback_on_error ERR
+trap 'rollback_on_error "$LINENO" "$BASH_COMMAND"' ERR
 trap cleanup EXIT
 
 [[ "$MODE" == "--preflight" || "$MODE" == "--apply" ]] || \
@@ -93,6 +110,10 @@ RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || fail "current image re
 for file in "$STATE" "$HANDOFF" "$TRINO_VALUES" "$RUNTIME_VALUES"; do
   git -C "$ROOT_DIR" check-ignore -q -- "$file" || fail "private EKS input must remain ignored"
 done
+cp "$HANDOFF" "$HANDOFF_BACKUP"
+cp "$TRINO_VALUES" "$TRINO_VALUES_BACKUP"
+cp "$RUNTIME_VALUES" "$RUNTIME_VALUES_BACKUP"
+chmod 600 "$HANDOFF_BACKUP" "$TRINO_VALUES_BACKUP" "$RUNTIME_VALUES_BACKUP"
 [[ ! -e "$TRINO_PRIVATE_CANDIDATE" ]] || fail "stale Trino rollout candidate exists"
 
 export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value' "$STATE")}" 
@@ -153,8 +174,17 @@ helm get values asklake-airflow -n "$NAMESPACE" -o json >"$AIRFLOW_CURRENT"
 helm get values asklake-trino -n "$NAMESPACE" -o json >"$TRINO_CURRENT"
 helm get values asklake-runtime-config -n "$NAMESPACE" -o json >"$RUNTIME_CURRENT"
 
-jq --arg frontend "$frontend_image" --arg backend "$backend_image" \
-  '.frontend.image=$frontend | .backend.image=$backend' "$WEB_CURRENT" >"$WEB_CANDIDATE"
+jq --arg frontend "$frontend_image" --arg backend "$backend_image" '
+  .frontend.image=$frontend
+  | .backend.image=$backend
+  | .collector=(.collector // {
+      enabled:true,replicaCount:1,serviceAccountName:"asklake-backend",
+      resources:{
+        requests:{cpu:"100m",memory:"256Mi"},
+        limits:{cpu:"500m",memory:"512Mi"}
+      }
+    })
+' "$WEB_CURRENT" >"$WEB_CANDIDATE"
 airflow_image_object="$(split_image "$airflow_image")"
 jq --argjson image "$airflow_image_object" '.airflow.image=$image' \
   "$AIRFLOW_CURRENT" >"$AIRFLOW_CANDIDATE"
@@ -167,7 +197,16 @@ jq --slurpfile receipt "$RECEIPT" '.images=$receipt[0].images' \
   "$HANDOFF" >"$HANDOFF_CANDIDATE"
 
 jq -e --slurp '
-  (.[0] | del(.frontend.image,.backend.image)) == (.[1] | del(.frontend.image,.backend.image))
+  (.[0] | del(.frontend.image,.backend.image,.collector)) == (.[1] | del(.frontend.image,.backend.image,.collector))
+  and .[1].collector == (
+    .[0].collector // {
+      enabled:true,replicaCount:1,serviceAccountName:"asklake-backend",
+      resources:{
+        requests:{cpu:"100m",memory:"256Mi"},
+        limits:{cpu:"500m",memory:"512Mi"}
+      }
+    }
+  )
 ' "$WEB_CURRENT" "$WEB_CANDIDATE" >/dev/null || fail "web candidate changed non-image values"
 jq -e --slurp '(.[0] | del(.airflow.image)) == (.[1] | del(.airflow.image))' \
   "$AIRFLOW_CURRENT" "$AIRFLOW_CANDIDATE" >/dev/null || fail "Airflow candidate changed non-image values"
@@ -190,7 +229,10 @@ for pair in \
 done
 
 kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json \
-  | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' \
+  | jq -S -c '[.items[]|{
+      kind,name:.metadata.name,uid:.metadata.uid,generation:(.metadata.generation//null),
+      spec:(.spec//null),data:(.data//null)
+    }]|sort_by(.kind,.name)' \
   >"$RESOURCE_BEFORE"
 helm upgrade --install asklake-web "$ROOT_DIR/infra/eks/helm/asklake-web" \
   -n "$NAMESPACE" -f "$WEB_CANDIDATE" --dry-run=server >/dev/null
@@ -201,7 +243,10 @@ helm upgrade --install asklake-trino "$ROOT_DIR/infra/eks/helm/asklake-workloads
 helm upgrade --install asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-config" \
   -n "$NAMESPACE" -f "$RUNTIME_CANDIDATE" --dry-run=server >/dev/null
 kubectl get deployment,service,configmap,job -n "$NAMESPACE" -o json \
-  | jq -S -c '[.items[]|{kind,name:.metadata.name,uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}]|sort_by(.kind,.name)' \
+  | jq -S -c '[.items[]|{
+      kind,name:.metadata.name,uid:.metadata.uid,generation:(.metadata.generation//null),
+      spec:(.spec//null),data:(.data//null)
+    }]|sort_by(.kind,.name)' \
   >"$RESOURCE_AFTER"
 cmp -s "$RESOURCE_BEFORE" "$RESOURCE_AFTER" || fail "server dry-run changed live resources"
 
@@ -220,7 +265,7 @@ jq -e '(.items|length)==4 and all(.items[]; any(.status.conditions[]?; .type=="R
   < <(kubectl get externalsecrets.external-secrets.io -n "$NAMESPACE" -o json) >/dev/null \
   || fail "runtime ExternalSecrets are not all Ready"
 
-echo "pair1_image_preflight=passed dry_run_mutation=zero components=5"
+echo "pair1_image_preflight=passed dry_run_mutation=zero components=5 collector_contract=preserved_or_restored"
 [[ "$MODE" == "--preflight" ]] && exit 0
 
 [[ "${ASKLAKE_PAIR1_IMAGE_ROLLOUT_CONFIRM:-}" == "deploy-exact-pair1-receipt" ]] || \
@@ -245,12 +290,12 @@ helm upgrade --install asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-
   -n "$NAMESPACE" -f "$RUNTIME_CANDIDATE" --server-side=true --force-conflicts \
   --rollback-on-failure --wait --timeout 10m >/dev/null
 
-kubectl rollout status deployment/frontend deployment/fastapi \
+kubectl rollout status deployment/frontend deployment/fastapi deployment/trino-result-collector \
   deployment/asklake-airflow-apiserver deployment/asklake-airflow-scheduler \
   deployment/asklake-airflow-dag-processor deployment/asklake-trino \
   -n "$NAMESPACE" --timeout=10m >/dev/null
 
-kubectl get deployment frontend fastapi asklake-airflow-apiserver \
+kubectl get deployment frontend fastapi trino-result-collector asklake-airflow-apiserver \
   asklake-airflow-scheduler asklake-airflow-dag-processor asklake-trino \
   -n "$NAMESPACE" -o json | jq -e \
   --arg frontend "$frontend_image" --arg backend "$backend_image" \
@@ -263,6 +308,7 @@ kubectl get deployment frontend fastapi asklake-airflow-apiserver \
     all(.items[]; steady)
     and ([.items[]|select(.metadata.name=="frontend")|.spec.template.spec.containers[0].image] == [$frontend])
     and ([.items[]|select(.metadata.name=="fastapi")|.spec.template.spec.containers[0].image] == [$backend])
+    and ([.items[]|select(.metadata.name=="trino-result-collector")|.spec.template.spec.containers[0].image] == [$backend])
     and all(.items[]|select(.metadata.name|startswith("asklake-airflow-")); .spec.template.spec.containers[0].image==$airflow)
     and ([.items[]|select(.metadata.name=="asklake-trino")|.spec.template.spec.containers[0].image] == [$trino])
   ' >/dev/null || fail "application Deployments did not converge on the receipt"
@@ -281,10 +327,14 @@ ASKLAKE_RUNTIME_CONFIG_VALUES="$RUNTIME_VALUES" \
 ASKLAKE_IMAGE_RECEIPT="$RECEIPT" \
   ASKLAKE_RUNTIME_CONFIG_VALUES="$RUNTIME_VALUES" \
   bash "$ROOT_DIR/scripts/verify-eks-runtime-config-release.sh" --owned >/dev/null
+kubectl rollout status deployment/frontend deployment/fastapi deployment/trino-result-collector \
+  deployment/asklake-airflow-apiserver deployment/asklake-airflow-scheduler \
+  deployment/asklake-airflow-dag-processor deployment/asklake-trino \
+  -n "$NAMESPACE" --timeout=3m >/dev/null
 ASKLAKE_IMAGE_RECEIPT="$RECEIPT" \
   ASKLAKE_DAY16_HANDOFF="$HANDOFF" \
   ASKLAKE_DAY16_TRINO_VALUES="$TRINO_VALUES" \
-  bash "$ROOT_DIR/scripts/verify-eks-day16-a-handoff.sh" --ready >/dev/null
+  bash "$ROOT_DIR/scripts/verify-eks-day16-a-handoff.sh" --ready
 
 APPLY_COMPLETE=true
 echo "pair1_image_rollout=passed components=5 rollback_guard=armed private_handoff=refreshed"

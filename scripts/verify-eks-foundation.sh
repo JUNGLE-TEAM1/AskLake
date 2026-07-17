@@ -156,6 +156,9 @@ bash -n "$ROOT_DIR/scripts/verify-tracked-evidence-redaction.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-day16-bounded-e2e-evidence.sh"
 bash -n "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
 bash -n "$ROOT_DIR/scripts/retain-eks-phase6-spark-evidence.sh"
+grep -Fq 'capture_runtime_identity' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
+grep -Fq 'shared EKS runtime changed during the bounded E2E' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
+grep -Fq 'Phase 6 bounded E2E Job failed' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
 
 helm lint "$ROOT_DIR/infra/eks/helm/asklake-runtime-config" \
   -f "$ROOT_DIR/infra/eks/values/workloads/runtime-config.test.example.yaml"
