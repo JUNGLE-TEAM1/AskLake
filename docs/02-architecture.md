@@ -550,6 +550,8 @@ production control-plane과 metadata의 권위는 FastAPI/Python이다. Source c
 
 상세 authority matrix, Kafka 보장 범위, bridge error/rollback 계약은 [Spark/Kafka Runtime Script·Python/Node 경계](refactor-2026/contracts/runtime-scripts-node-boundary.md)를, Source connector operation mapping은 [Source Connector Python·Node 권위 경계](refactor-2026/contracts/source-connector-authority-boundary.md)를 따른다.
 
+Production deployment topology에서 EKS 웹·유한 배치 cell과 EC2 Continuous cell의 장기 control-plane claim을 분리한다. 현재 Kafka Continuous runtime sync와 Continuous SQL runtime sync의 canonical deployment owner는 EC2 Continuous cell 하나이며 EKS cell은 두 loop를 claim하지 않는다. `deploy/control-plane-ownership.json`과 exactly-one validator는 이 선언의 누락·중복과 source marker drift를 PR에서 차단하지만 실행 중 cluster discovery나 leader election을 대신하지 않는다. FastAPI lifespan과 실제 workload 이동 없이 적용하는 정적 경계이며, 상세 계약은 [EKS·EC2 Continuous control-plane 단일-owner 계약](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
+
 ## 17) Frontend 상태 소유권과 ETL Wizard 경계
 
 Frontend 서버 상태의 application composition은 `useAskLakeWorkspace`를 직접 사용하며 요청 순서는 `LatestRequestGate`가 소유한다. `useAskLakeData`는 이전 import reader를 위한 비활성 re-export façade로만 유지한다. resource/session/version/params 기반 query key와 revision lease로 초기 hydrate, 수동 refresh, Job filter의 stale completion을 차단한다. 생성 mutation은 `idle`, `pending`, `accepted`, `reconciled`, `failed` 단계를 additive 상태로 노출하며 API 응답과 후속 목록 reconciliation을 구분한다.
