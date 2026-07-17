@@ -495,11 +495,30 @@ function PhysicalColumnPicker({ model, catalogDatasets, datasetId, selectedColum
   return <div className="semantic-real-binding"><label>원본 Dataset<select value={datasetId} onChange={(event) => onDatasetChange(event.target.value)}><option value="">선택하세요</option>{model.datasets.map((item) => <option key={item.datasetId} value={item.datasetId}>{item.name ?? item.datasetId}</option>)}</select></label><div><span>실제 schema 컬럼</span><div className="semantic-real-column-options">{schema.map((column) => <label key={column.name}><input type={single ? "radio" : "checkbox"} name={single ? inputName ?? `schema-${datasetId}` : undefined} checked={selectedColumns.includes(column.name)} onChange={(event) => onColumnsChange(single ? [column.name] : event.target.checked ? [...selectedColumns, column.name] : selectedColumns.filter((item) => item !== column.name))} /><code>{schemaColumnLabel(column)}</code></label>)}</div></div></div>;
 }
 
+type SensitiveEmbeddingConfirmation = {
+  column: string;
+  role: "identifier" | "metadata";
+};
+
+const RAG_APPROVAL_COLUMN_LIMIT = 256;
+
+function isSensitiveRagRole(role: string): role is SensitiveEmbeddingConfirmation["role"] {
+  return role === "identifier" || role === "metadata";
+}
+
 function RagTab({ model, selectedDatasetId, profile, previewDocuments, jobsRefreshToken, onDatasetChange, onRefresh, onClassify, onApprove, onIndex, busy }: { model: SemanticModel; selectedDatasetId: string; profile?: RagProfile; previewDocuments: RagDocument[]; jobsRefreshToken: number; onDatasetChange: (id: string) => void; onRefresh: () => void; onClassify: () => void; onApprove: (roles: RagRolePayload) => void; onIndex: () => void; busy: string | null }) {
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [embeddedColumns, setEmbeddedColumns] = useState<Record<string, boolean>>({});
+  const [pendingSensitiveEmbedding, setPendingSensitiveEmbedding] = useState<SensitiveEmbeddingConfirmation | null>(null);
+  const [pendingWholeDocumentEmbedding, setPendingWholeDocumentEmbedding] = useState(false);
   useEffect(() => {
-    if (!profile) return;
+    setPendingSensitiveEmbedding(null);
+    setPendingWholeDocumentEmbedding(false);
+    if (!profile || profile.datasetId !== selectedDatasetId) {
+      setRoles({});
+      setEmbeddedColumns({});
+      return;
+    }
     const next: Record<string, string> = {};
     const nextEmbedded: Record<string, boolean> = {};
     profile.bodyColumns.forEach((column) => { next[column] = "body"; });
@@ -511,39 +530,88 @@ function RagTab({ model, selectedDatasetId, profile, previewDocuments, jobsRefre
     [...profile.bodyColumns, ...profile.titleColumns].forEach((column) => { nextEmbedded[column] = true; });
     setRoles(next);
     setEmbeddedColumns(nextEmbedded);
-  }, [profile]);
+  }, [profile, selectedDatasetId]);
   const schema = profile?.schema ?? modelDataset(model, selectedDatasetId)?.schema ?? [];
   const selectRole = (column: string, role: string) => {
+    setPendingWholeDocumentEmbedding(false);
     setRoles((current) => ({ ...current, [column]: role }));
     setEmbeddedColumns((current) => ({
       ...current,
-      [column]: role === "body" || role === "title" ? true : role === "excluded" ? false : Boolean(current[column]),
+      [column]: role === "body" || role === "title",
     }));
+    setPendingSensitiveEmbedding((current) => current?.column === column ? null : current);
   };
-  const includeWholeDocument = () => setEmbeddedColumns(Object.fromEntries(
-    schema.map((column) => [column.name, roles[column.name] !== "excluded"]),
-  ));
+  const isColumnEmbedded = (column: string) => {
+    const role = roles[column] ?? "excluded";
+    return role === "body" || role === "title" || (role !== "excluded" && Boolean(embeddedColumns[column]));
+  };
+  const schemaLimitExceeded = schema.length > RAG_APPROVAL_COLUMN_LIMIT;
+  const includeSafeDocumentFields = () => {
+    if (schemaLimitExceeded) return;
+    setPendingSensitiveEmbedding(null);
+    setPendingWholeDocumentEmbedding(false);
+    setEmbeddedColumns(Object.fromEntries(
+      schema.map((column) => {
+        const role = roles[column.name] ?? "excluded";
+        return [column.name, role === "body" || role === "title"];
+      }),
+    ));
+  };
+  const requestWholeDocumentEmbedding = () => {
+    if (schemaLimitExceeded) return;
+    setPendingSensitiveEmbedding(null);
+    setPendingWholeDocumentEmbedding(true);
+  };
+  const confirmWholeDocumentEmbedding = () => {
+    setRoles((current) => Object.fromEntries(schema.map((column) => {
+      const role = current[column.name] ?? "excluded";
+      return [column.name, role === "excluded" ? "body" : role];
+    })));
+    setEmbeddedColumns(Object.fromEntries(schema.map((column) => [column.name, true])));
+    setPendingWholeDocumentEmbedding(false);
+  };
+  const requestEmbeddingChange = (column: string, role: string, checked: boolean) => {
+    setPendingWholeDocumentEmbedding(false);
+    if (!checked) {
+      setEmbeddedColumns((current) => ({ ...current, [column]: false }));
+      setPendingSensitiveEmbedding((current) => current?.column === column ? null : current);
+      return;
+    }
+    if (isSensitiveRagRole(role)) {
+      setPendingSensitiveEmbedding({ column, role });
+      return;
+    }
+    setEmbeddedColumns((current) => ({ ...current, [column]: true }));
+  };
+  const confirmSensitiveEmbedding = () => {
+    if (!pendingSensitiveEmbedding) return;
+    const { column, role } = pendingSensitiveEmbedding;
+    if (roles[column] === role) {
+      setEmbeddedColumns((current) => ({ ...current, [column]: true }));
+    }
+    setPendingSensitiveEmbedding(null);
+  };
   const approveWithRoles = () => {
-    if (!profile) return;
+    if (!profile || schemaLimitExceeded) return;
     onApprove({
-      bodyColumns: schema.filter((column) => {
+      bodyColumns: uniqueDisplayValues(schema.filter((column) => {
         const role = roles[column.name];
-        return role === "body" || (embeddedColumns[column.name] && role !== "title" && role !== "excluded");
-      }).map((column) => column.name),
-      titleColumns: schema.filter((column) => roles[column.name] === "title").map((column) => column.name),
-      metadataColumns: schema.filter((column) => roles[column.name] === "metadata").map((column) => column.name),
-      identifierColumns: schema.filter((column) => roles[column.name] === "identifier").map((column) => column.name),
-      excludedColumns: schema.filter((column) => roles[column.name] === "excluded").map((column) => column.name),
+        return role === "body" || (isColumnEmbedded(column.name) && role !== "title" && role !== "excluded");
+      }).map((column) => column.name)),
+      titleColumns: uniqueDisplayValues(schema.filter((column) => roles[column.name] === "title").map((column) => column.name)),
+      metadataColumns: uniqueDisplayValues(schema.filter((column) => roles[column.name] === "metadata").map((column) => column.name)),
+      identifierColumns: uniqueDisplayValues(schema.filter((column) => roles[column.name] === "identifier").map((column) => column.name)),
+      excludedColumns: uniqueDisplayValues(schema.filter((column) => roles[column.name] === "excluded").map((column) => column.name)),
     });
   };
   const hasServingIndex = profile?.servingStatus === "serving" || profile?.servingStatus === "stale";
   const hasEmbeddingBody = schema.some((column) => {
     const role = roles[column.name];
-    return role === "body" || (embeddedColumns[column.name] && role !== "title" && role !== "excluded");
+    return role === "body" || (isColumnEmbedded(column.name) && role !== "title" && role !== "excluded");
   });
   const hasIdentifier = schema.some((column) => roles[column.name] === "identifier");
-  const embeddedFieldCount = schema.filter((column) => roles[column.name] === "title" || embeddedColumns[column.name]).length;
-  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 근거 검색" description="선택한 Semantic Model의 실제 schema·분석 기준으로 문서를 만들고, 색인된 원문 근거를 직접 검색합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{embeddedFieldCount}</strong>개 임베딩 포함</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{hasServingIndex ? statusLabel(profile.servingStatus ?? "serving") : statusLabel(profile.indexStatus)}</strong></span>{profile.activeEmbeddingModel && <span><strong>{[profile.activeEmbeddingProvider, profile.activeEmbeddingModel, profile.activeEmbeddingDimensions ? `${profile.activeEmbeddingDimensions}차원` : null].filter(Boolean).join(" · ")}</strong></span>}<Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>제목과 본문은 여러 컬럼을 선택할 수 있으며, 선택된 모든 값이 필드명과 함께 하나의 문서로 합쳐져 청킹·임베딩됩니다.</p></div><div className="semantic-real-role-heading-actions"><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge><Button variant="outline" type="button" onClick={includeWholeDocument}><FileText /> 제외 필드 빼고 전체 포함</Button></div></div><div className="semantic-real-embedding-guide"><strong>실제 임베딩 입력: {embeddedFieldCount}개 필드</strong><span>문서 제목은 항상 포함됩니다. 필터 메타데이터와 식별자도 아래 체크를 켜면 원래 역할을 유지하면서 본문 임베딩에 함께 들어갑니다.</span>{!hasIdentifier && <span className="is-warning">승인하려면 원본 행을 구분할 문서 식별자를 1개 이상 선택하세요.</span>}</div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>주 역할</span><span>임베딩 포함</span></div>{schema.map((column) => { const role = roles[column.name] ?? "excluded"; const recommendation = profile.recommendations.find((item) => item.columnName === column.name); const alwaysEmbedded = role === "body" || role === "title"; const cannotEmbed = role === "excluded"; return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={role} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">검색 본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select><label className="semantic-real-embedding-toggle"><input type="checkbox" checked={alwaysEmbedded || Boolean(embeddedColumns[column.name])} disabled={alwaysEmbedded || cannotEmbed} onChange={(event) => setEmbeddedColumns((current) => ({ ...current, [column.name]: event.target.checked }))} /><span>{cannotEmbed ? "제외됨" : alwaysEmbedded ? "자동 포함" : "본문에도 포함"}</span></label></div>; })}</div><div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !hasEmbeddingBody || !hasIdentifier} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{hasServingIndex ? <RefreshCw /> : <Check />} {hasServingIndex ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><RagJobHistory datasetId={selectedDatasetId} refreshToken={jobsRefreshToken} /><RagSearchPanel datasetId={selectedDatasetId} profile={profile} /><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
+  const embeddedFieldCount = schema.filter((column) => isColumnEmbedded(column.name)).length;
+  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 근거 검색" description="선택한 Semantic Model의 실제 schema·분석 기준으로 문서를 만들고, 색인된 원문 근거를 직접 검색합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{embeddedFieldCount}</strong>개 임베딩 포함</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{hasServingIndex ? statusLabel(profile.servingStatus ?? "serving") : statusLabel(profile.indexStatus)}</strong></span>{profile.activeEmbeddingModel && <span><strong>{uniqueDisplayValues([profile.activeEmbeddingProvider, profile.activeEmbeddingModel, profile.activeEmbeddingDimensions ? `${profile.activeEmbeddingDimensions}차원` : null]).join(" · ")}</strong></span>}<Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>제목과 본문은 여러 컬럼을 선택할 수 있으며, 선택된 모든 값이 필드명과 함께 하나의 문서로 합쳐져 청킹·임베딩됩니다.</p></div><div className="semantic-real-role-heading-actions"><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge><Button variant="outline" type="button" disabled={schemaLimitExceeded} title={schemaLimitExceeded ? `backend 안전 상한 ${RAG_APPROVAL_COLUMN_LIMIT}개를 초과했습니다.` : undefined} onClick={includeSafeDocumentFields}><FileText /> 제목·본문만 포함</Button><Button variant="outline" type="button" disabled={schemaLimitExceeded} title={schemaLimitExceeded ? `backend 안전 상한 ${RAG_APPROVAL_COLUMN_LIMIT}개를 초과했습니다.` : undefined} onClick={requestWholeDocumentEmbedding}><FileText /> 문서 전체 임베딩</Button></div></div><div className="semantic-real-embedding-guide"><strong>실제 임베딩 입력: {embeddedFieldCount}개 필드</strong><span>제목·본문만 포함은 민감 역할을 제외합니다. 문서 전체 임베딩은 경고 확인 후 제외 컬럼까지 검색 본문으로 바꾸고 식별자·메타데이터도 포함합니다.</span><span className="is-warning"><AlertTriangle size={16} /> 식별자·메타데이터를 임베딩하면 이메일, 전화번호, 계정 ID 같은 민감정보/PII가 VectorDB 검색 본문에 저장되고 유사도 검색 결과에 노출될 수 있습니다. 필요한 필드만 개별 확인 후 포함하세요.</span>{schemaLimitExceeded && <span className="is-warning" role="alert">현재 schema는 {schema.length}개 컬럼으로 backend 안전 상한 {RAG_APPROVAL_COLUMN_LIMIT}개를 초과했습니다. 전체 포함과 역할 승인을 차단했습니다. Dataset schema 계약을 정정한 뒤 다시 분석하세요.</span>}{!hasIdentifier && <span className="is-warning">승인하려면 원본 행을 구분할 문서 식별자를 1개 이상 선택하세요.</span>}</div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>주 역할</span><span>임베딩 포함</span></div>{schema.map((column) => { const role = roles[column.name] ?? "excluded"; const recommendation = profile.recommendations.find((item) => item.columnName === column.name); const alwaysEmbedded = role === "body" || role === "title"; const cannotEmbed = role === "excluded"; const sensitiveEmbedding = isSensitiveRagRole(role); const embedded = isColumnEmbedded(column.name); return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={role} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">검색 본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select><label className="semantic-real-embedding-toggle"><input type="checkbox" checked={embedded} disabled={alwaysEmbedded || cannotEmbed} onChange={(event) => requestEmbeddingChange(column.name, role, event.target.checked)} /><span>{cannotEmbed ? "제외됨" : alwaysEmbedded ? "자동 포함" : sensitiveEmbedding ? embedded ? "민감 필드 포함됨" : "개별 확인 후 포함" : "본문에도 포함"}</span></label></div>; })}</div>{pendingSensitiveEmbedding && <div className="semantic-real-embedding-guide" role="alert"><AlertTriangle size={18} /><strong><code>{pendingSensitiveEmbedding.column}</code> 필드를 임베딩 본문에 포함할까요?</strong><span>이 필드의 식별자·메타데이터 값은 VectorDB 검색 본문에 저장되어 유사도 검색 결과에 노출될 수 있습니다.</span><Button type="button" onClick={confirmSensitiveEmbedding}>위험을 이해하고 포함</Button><Button variant="outline" type="button" onClick={() => setPendingSensitiveEmbedding(null)}>취소</Button></div>}{pendingWholeDocumentEmbedding && <div className="semantic-real-embedding-guide" role="alert"><AlertTriangle size={18} /><strong>현재 schema의 {schema.length}개 컬럼을 모두 임베딩할까요?</strong><span>제외 컬럼은 검색 본문으로 바뀌고 식별자·메타데이터도 VectorDB 검색 본문에 저장됩니다. 민감정보가 포함된 Dataset이라면 먼저 해당 필드를 제외하세요.</span><Button type="button" onClick={confirmWholeDocumentEmbedding}>위험을 이해하고 문서 전체 포함</Button><Button variant="outline" type="button" onClick={() => setPendingWholeDocumentEmbedding(false)}>취소</Button></div>}<div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !hasEmbeddingBody || !hasIdentifier || schemaLimitExceeded} title={schemaLimitExceeded ? `schema 컬럼은 최대 ${RAG_APPROVAL_COLUMN_LIMIT}개까지 승인할 수 있습니다.` : undefined} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{hasServingIndex ? <RefreshCw /> : <Check />} {hasServingIndex ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><RagJobHistory datasetId={selectedDatasetId} refreshToken={jobsRefreshToken} onLatestJobSettled={() => onRefresh()} /><RagSearchPanel datasetId={selectedDatasetId} profile={profile} /><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
 }
 
 function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: RagProfile }) {
@@ -607,9 +675,11 @@ function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: Ra
 
 function RagSearchResults({ result }: { result: RagSearchResponse }) {
   const resultCount = typeof result.retrieval.resultCount === "number" ? result.retrieval.resultCount : result.sources.length;
-  const aliases = Array.isArray(result.retrieval.aliases) ? result.retrieval.aliases.join(", ") : "";
+  const aliasValues = uniqueDisplayValues(Array.isArray(result.retrieval.aliases) ? result.retrieval.aliases : []);
+  const aliases = aliasValues.join(", ");
+  const servingIndex = String(result.retrieval.servingIndex ?? "").trim();
   const retrievalStatus = String(result.retrieval.status ?? "complete");
-  const filterLabels = ragAppliedFilterLabels(result.retrieval.filters);
+  const filterLabels = uniqueDisplayValues(ragAppliedFilterLabels(result.retrieval.filters));
   const fallbackEvidenceCount = typeof result.retrieval.fallbackEvidenceCount === "number"
     ? result.retrieval.fallbackEvidenceCount
     : result.sources.filter((source) => source.fallbackApplied).length;
@@ -620,10 +690,10 @@ function RagSearchResults({ result }: { result: RagSearchResponse }) {
         <strong>{resultCount}개 실제 근거</strong>
         <span>{result.retrieval.mode ?? "hybrid"} · {statusLabel(retrievalStatus)}</span>
         {aliases && <code>{aliases}</code>}
-        {result.retrieval.servingIndex && <code>{String(result.retrieval.servingIndex)}</code>}
-        {(result.retrieval.queryPlannerProvider || result.retrieval.queryPlannerModel) && <code>검색 계획 {[result.retrieval.queryPlannerProvider, result.retrieval.queryPlannerModel].filter(Boolean).join(" · ")}</code>}
-        {queryEmbeddings.map(([datasetId, embedding]) => <code key={`query-embedding-${datasetId}`}>쿼리 임베딩 {datasetId} · {[embedding.provider, embedding.model, embedding.dimensions ? `${embedding.dimensions}차원` : null].filter(Boolean).join(" · ")}</code>)}
-        {(result.retrieval.relevanceProvider || result.retrieval.relevanceModel) && <code>관련성 검증 {[result.retrieval.relevanceProvider, result.retrieval.relevanceModel].filter(Boolean).join(" · ")}</code>}
+        {servingIndex && !aliasValues.includes(servingIndex) && <code>{servingIndex}</code>}
+        {(result.retrieval.queryPlannerProvider || result.retrieval.queryPlannerModel) && <code>검색 계획 {uniqueDisplayValues([result.retrieval.queryPlannerProvider, result.retrieval.queryPlannerModel]).join(" · ")}</code>}
+        {queryEmbeddings.map(([datasetId, embedding]) => <code key={`query-embedding-${datasetId}`}>쿼리 임베딩 {datasetId} · {uniqueDisplayValues([embedding.provider, embedding.model, embedding.dimensions ? `${embedding.dimensions}차원` : null]).join(" · ")}</code>)}
+        {(result.retrieval.relevanceProvider || result.retrieval.relevanceModel) && <code>관련성 검증 {uniqueDisplayValues([result.retrieval.relevanceProvider, result.retrieval.relevanceModel]).join(" · ")}</code>}
         {filterLabels.map((label) => <code key={label}>{label}</code>)}
         {fallbackEvidenceCount > 0 && <Badge variant="warning">임베딩 전용 청킹 {fallbackEvidenceCount}건</Badge>}
       </div>
@@ -639,9 +709,9 @@ function RagSearchResults({ result }: { result: RagSearchResponse }) {
             </div>
             <p>{source.body || "본문이 비어 있습니다."}</p>
             {source.relevanceReason && <small>{source.relevanceReason}</small>}
-            {source.fallbackApplied && <small>청킹 방식: {(source.chunkingStrategies ?? [source.chunkingStrategy]).filter(Boolean).join(", ") || "semantic_embedding_fallback"} · 사유: {(source.fallbackReasons ?? [source.fallbackReason]).filter(Boolean).join(", ") || "경계 조정 응답 검증 실패"}</small>}
+            {source.fallbackApplied && <small>청킹 방식: {uniqueDisplayValues(source.chunkingStrategies ?? [source.chunkingStrategy]).join(", ") || "semantic_embedding_fallback"} · 사유: {uniqueDisplayValues(source.fallbackReasons ?? [source.fallbackReason]).join(", ") || "경계 조정 응답 검증 실패"}</small>}
             {Object.keys(source.metadata ?? {}).length > 0 && <dl>{Object.entries(source.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}
-            <footer><code>{source.documentId}</code>{source.sourceRowId && <span>원본 행 {source.sourceRowId}</span>}{(source.embeddingProvider || source.embeddingModel) && <span>임베딩 {[source.embeddingProvider, source.embeddingModel, source.embeddingDimensions ? `${source.embeddingDimensions}차원` : null].filter(Boolean).join(" · ")}</span>}{source.chunkingVersion && <span>청킹 {source.chunkingVersion}</span>}{source.sourceFields?.length > 0 && <span>필드 {source.sourceFields.map(ragSourceFieldLabel).join(", ")}</span>}</footer>
+            <footer><code>{source.documentId}</code>{source.sourceRowId && <span>원본 행 {source.sourceRowId}</span>}{(source.embeddingProvider || source.embeddingModel) && <span>임베딩 {uniqueDisplayValues([source.embeddingProvider, source.embeddingModel, source.embeddingDimensions ? `${source.embeddingDimensions}차원` : null]).join(" · ")}</span>}{source.chunkingVersion && <span>청킹 {source.chunkingVersion}</span>}{source.sourceFields?.length > 0 && <span>필드 {ragSourceFieldSummary(source.sourceFields)}</span>}</footer>
           </article>
         ))}
       </div>}
@@ -687,9 +757,24 @@ function ragSourceFieldLabel(field: string | { logicalField?: string; physicalFi
   return `${logical}${physical}${role}`;
 }
 
+function uniqueDisplayValues(values: readonly unknown[]) {
+  const seen = new Set<string>();
+  return values.flatMap((value) => {
+    if (value === null || value === undefined) return [];
+    const label = String(value).trim();
+    if (!label || seen.has(label)) return [];
+    seen.add(label);
+    return [label];
+  });
+}
+
+function ragSourceFieldSummary(fields: Array<string | { logicalField?: string; physicalField?: string; role?: string }>) {
+  return uniqueDisplayValues(fields.map(ragSourceFieldLabel)).join(", ");
+}
+
 function DocumentPreview({ profile, documents }: { profile: RagProfile; documents: RagDocument[] }) {
   const servingReady = profile.servingStatus === "serving" || profile.servingStatus === "stale";
-  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어간 실제 문서</h3><p>임베딩 숫자 배열 대신, 어떤 필드가 어떤 문자열로 합쳐져 임베딩되는지 직접 확인합니다.</p></div><Badge variant={servingReady ? "success" : "muted"}>{statusLabel(servingReady ? profile.servingStatus ?? "serving" : profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div>{document.embeddingText && <details className="semantic-real-embedding-preview"><summary>실제 임베딩 입력 보기</summary><pre>{document.embeddingText}</pre></details>}<small>{document.sourceDataset} · {document.sourceColumns.join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
+  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어간 실제 문서</h3><p>임베딩 숫자 배열 대신, 어떤 필드가 어떤 문자열로 합쳐져 임베딩되는지 직접 확인합니다.</p></div><Badge variant={servingReady ? "success" : "muted"}>{statusLabel(servingReady ? profile.servingStatus ?? "serving" : profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div>{document.embeddingText && <details className="semantic-real-embedding-preview"><summary>실제 임베딩 입력 보기</summary><pre>{document.embeddingText}</pre></details>}<small>{document.sourceDataset} · {uniqueDisplayValues(document.sourceColumns).join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
 }
 
 function AccessTab({ model }: { model: SemanticModel }) {

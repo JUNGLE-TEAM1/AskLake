@@ -70,7 +70,7 @@ def test_policy_fingerprint_preserves_approved_field_order():
 def test_policy_fingerprint_and_manifest_reuse_include_filter_contract_versions():
     dataset = {"schema": [{"name": "review_text", "dataType": "string"}, {"name": "rating", "dataType": "integer"}], "sourceManifest": {"fingerprint": "fp"}}
     profile = RagDatasetProfileModel(dataset_id="reviews", metadata_columns=["rating"], physical_column_mapping={"rating": "rating"})
-    manifest = RagIndexManifestModel(id="manifest-contract", dataset_id="reviews", index_name="reviews-v1", alias_name="reviews", embedding_provider="openai_compatible", embedding_model=settings.rag_embedding_model, dimensions=settings.rag_embedding_dimensions, parent_schema_version="rag-parent-v3", embedding_input_version="title_body_fields_v2", chunking_version="rag-chunk-v3", filter_contract_version="typed-filter-v1", semantic_bindings_fingerprint=RagService._semantic_bindings_fingerprint({}), metadata_columns=["rating"], metadata_types={"rating": "integer"}, physical_column_mapping={"rating": "rating"})
+    manifest = RagIndexManifestModel(id="manifest-contract", dataset_id="reviews", index_name="reviews-v1", alias_name="reviews", embedding_provider="openai_compatible", embedding_model=settings.rag_embedding_model, dimensions=settings.rag_embedding_dimensions, parent_schema_version="rag-parent-v3", embedding_input_version="title_body_fields_v2", chunking_version="rag-chunk-v3", filter_contract_version="typed-filter-v1", semantic_bindings_fingerprint=RagService._semantic_bindings_fingerprint({}), body_columns=[], title_columns=[], metadata_columns=["rating"], identifier_columns=[], metadata_types={"rating": "integer"}, physical_column_mapping={"rating": "rating"}, contract_versions=RagService._contract_version_snapshot())
     assert RagService._manifest_contract_matches(dataset, profile, manifest)
     manifest.embedding_provider = None
     assert not RagService._manifest_contract_matches(dataset, profile, manifest)
@@ -87,23 +87,31 @@ def test_pending_activation_is_reconciled_only_with_persisted_validation(monkeyp
     Base.metadata.create_all(engine, tables=RAG_TABLES)
     with Session(engine) as db:
         service = RagService(db)
+        dataset = {"sourceManifest": {"fingerprint": ""}, "schema": []}
         profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews", active_index="rag-reviews-v1", desired_generation=1)
-        job = RagIndexJobModel(id="ragjob-pending", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", generation=1, status="ready", stage="ready", source_fingerprint="", validation_status="passed", validated_index="rag-reviews-v2", activation_status="pending", activation_alias="rag-reviews", activation_previous_index="rag-reviews-v1", activation_target_index="rag-reviews-v2")
+        job = RagIndexJobModel(id="ragjob-pending", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", generation=1, status="ready", stage="ready", source_fingerprint="", policy_fingerprint=RagService._policy_fingerprint(dataset, profile), indexed_count=0, chunk_count=0, parent_count=0, embedding_dimensions=2, validation_status="passed", validated_index="rag-reviews-v2", validated_document_count=0, validated_parent_count=0, validated_dimensions=2, activation_status="pending", activation_alias="rag-reviews", activation_previous_index="rag-reviews-v1", activation_target_index="rag-reviews-v2")
         db.add_all([profile, job])
         db.commit()
 
         class FakeOpenSearch:
+            indices = ["rag-reviews-v1"]
+
             def alias_indices(self, alias):
                 assert alias == "rag-reviews"
-                return ["rag-reviews-v1", "rag-reviews-v2"]
+                return list(self.indices)
 
-            def replace_alias(self, alias, index):
-                assert (alias, index) == ("rag-reviews", "rag-reviews-v2")
+            def _request(self, method, path, *, json):
+                assert (method, path) == ("POST", "_aliases")
+                for action in json["actions"]:
+                    if "remove" in action:
+                        self.indices.remove(action["remove"]["index"])
+                    else:
+                        self.indices.append(action["add"]["index"])
                 return {}
 
         monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
         monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
-        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: {"sourceManifest": {"fingerprint": ""}, "schema": []})
+        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: dataset)
         assert service.reconcile_alias_activations() == 1
         db.refresh(job)
         db.refresh(profile)
@@ -123,11 +131,18 @@ def test_superseded_first_activation_clears_alias_without_previous_index(monkeyp
         db.commit()
 
         class FakeOpenSearch:
-            def alias_indices(self, alias):
-                return ["rag-reviews-v1"]
+            indices = ["rag-reviews-v1"]
 
-            def clear_alias(self, alias):
-                assert alias == "rag-reviews"
+            def alias_indices(self, alias):
+                return list(self.indices)
+
+            def _request(self, method, path, *, json):
+                assert (method, path) == ("POST", "_aliases")
+                for action in json["actions"]:
+                    if "remove" in action:
+                        self.indices.remove(action["remove"]["index"])
+                    else:
+                        self.indices.append(action["add"]["index"])
                 return {}
 
         monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
@@ -413,8 +428,11 @@ def test_successful_job_without_physical_validation_cannot_activate(monkeypatch)
         db.add_all([profile, job])
         db.commit()
         monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
-        service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
+        with pytest.raises(ApiError) as raised:
+            service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
         db.refresh(job)
+        assert raised.value.code == "rag_activation_rejected"
+        assert raised.value.details["fenceReason"] == "validationStage"
         assert job.status == "failed"
         assert "validation" in str(job.error)
 
@@ -445,8 +463,11 @@ def test_physical_validation_evidence_cannot_skip_validating_state(monkeypatch):
         db.add_all([profile, job])
         db.commit()
         monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
-        service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
+        with pytest.raises(ApiError) as raised:
+            service.complete_job(job.id, {"status": "success", "activeIndex": "rag-reviews-v2"})
         db.refresh(job)
+        assert raised.value.code == "rag_activation_rejected"
+        assert raised.value.details["fenceReason"] == "validationStage"
         assert job.status == "failed"
         assert "validation" in str(job.error)
 
@@ -462,6 +483,9 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
         db.commit()
 
         class FakeOpenSearch:
+            def __init__(self):
+                self.alias_target = None
+
             def count(self, index):
                 return 1
 
@@ -482,6 +506,17 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
             def switch_alias(self, alias, index, old_index=None):
                 return {}
 
+            def alias_indices(self, alias):
+                return [self.alias_target] if self.alias_target else []
+
+            def _request(self, method, path, json=None):
+                for action in (json or {}).get("actions", []):
+                    if "add" in action:
+                        self.alias_target = action["add"]["index"]
+                    elif "remove" in action and self.alias_target == action["remove"]["index"]:
+                        self.alias_target = None
+                return {}
+
         monkeypatch.setattr("app.clients.opensearch_client.OpenSearchClient", lambda settings: FakeOpenSearch())
         monkeypatch.setattr("app.core.config.settings.opensearch_base_url", "http://opensearch")
         validation = service.validate_job(job.id)
@@ -491,7 +526,10 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
         assert job.validated_index == job.target_index
         assert job.validation_evidence_hash
 
-        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: {"sourceManifest": {}})
+        current_dataset = {"schema": [], "sourceManifest": {}}
+        job.policy_fingerprint = service._policy_fingerprint(current_dataset, profile)
+        db.commit()
+        monkeypatch.setattr(service.catalog, "get_dataset_payload", lambda dataset_id: current_dataset)
         monkeypatch.setattr(service, "job", lambda *args, **kwargs: None)
         service.complete_job(job.id, {"status": "success", "validationPassed": False})
         db.refresh(job)

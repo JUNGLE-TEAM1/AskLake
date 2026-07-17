@@ -23,6 +23,7 @@ from .errors import PermanentRagContractError
 
 app = FastAPI(title="AskLake Embedding Worker")
 logger = logging.getLogger(__name__)
+MAX_RAG_SCHEMA_FIELDS = 256
 
 
 def release_claim(store: IdempotencyStore, key: str, request_hash: str, lease_token: str | None, *, retryable: bool, error: str = "") -> None:
@@ -40,15 +41,15 @@ class IndexBatchRequest(BaseModel):
     dataset_id: str = Field(min_length=1, max_length=255)
     dataset_name: str = Field(min_length=1, max_length=255)
     rows: list[dict[str, Any]] | None = Field(default=None, max_length=1000)
-    body_columns: list[str] = Field(min_length=1, max_length=50)
-    title_columns: list[str] = Field(default_factory=list, max_length=20)
-    metadata_columns: list[str] = Field(default_factory=list, max_length=100)
-    identifier_columns: list[str] = Field(default_factory=list, max_length=20)
+    body_columns: list[str] = Field(min_length=1, max_length=MAX_RAG_SCHEMA_FIELDS)
+    title_columns: list[str] = Field(default_factory=list, max_length=MAX_RAG_SCHEMA_FIELDS)
+    metadata_columns: list[str] = Field(default_factory=list, max_length=MAX_RAG_SCHEMA_FIELDS)
+    identifier_columns: list[str] = Field(default_factory=list, max_length=MAX_RAG_SCHEMA_FIELDS)
     semantic_bindings: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     target_index: str = Field(min_length=1, max_length=255)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=255)
     embedding_dimensions: int | None = Field(default=None, ge=1, le=16_384)
-    metadata_types: dict[str, str] = Field(default_factory=dict)
+    metadata_types: dict[str, str] = Field(default_factory=dict, max_length=MAX_RAG_SCHEMA_FIELDS)
     source_manifest: dict[str, Any] | None = None
     chunks: list[dict[str, Any]] | None = Field(default=None, max_length=5_000)
 
@@ -63,12 +64,30 @@ class IndexBatchRequest(BaseModel):
             raise ValueError("targetIndex must be a safe lowercase OpenSearch index name")
         return normalized
 
+    @field_validator("body_columns", "title_columns", "metadata_columns", "identifier_columns")
+    @classmethod
+    def validate_role_columns(cls, values: list[str]) -> list[str]:
+        normalized = [str(value).strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("RAG role columns cannot contain blank names")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("RAG role columns cannot contain duplicates")
+        return normalized
+
     @model_validator(mode="after")
     def require_rows_or_manifest(self) -> "IndexBatchRequest":
         if not self.rows and not self.source_manifest and not self.chunks:
             raise ValueError("rows, chunks, or sourceManifest is required")
         if not self.chunks and os.environ.get("RAG_LEGACY_DIRECT_INDEX_ENABLED", "false").casefold() not in {"1", "true", "yes"}:
             raise ValueError("RAG v2 indexing requires staged chunks")
+        approved_schema_fields = {
+            *self.body_columns,
+            *self.title_columns,
+            *self.metadata_columns,
+            *self.identifier_columns,
+        }
+        if len(approved_schema_fields) > MAX_RAG_SCHEMA_FIELDS:
+            raise ValueError(f"RAG role columns cannot reference more than {MAX_RAG_SCHEMA_FIELDS} schema fields")
         return self
 
 

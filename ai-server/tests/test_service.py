@@ -578,6 +578,22 @@ def test_mock_provider_is_rejected_outside_tests() -> None:
         Settings(app_env="local", internal_auth_token="test-token", provider="mock")
 
 
+def test_blank_optional_provider_settings_are_treated_as_unset() -> None:
+    settings = Settings(
+        provider_fallback_base_url="  ",
+        provider_fallback_api_key="",
+        provider_fallback_model="",
+        provider_model_query_sql="",
+        mcp_server_url="",
+    )
+
+    assert settings.provider_fallback_base_url is None
+    assert settings.provider_fallback_api_key is None
+    assert settings.provider_fallback_model is None
+    assert settings.provider_model_query_sql is None
+    assert settings.mcp_server_url is None
+
+
 def test_mcp_server_url_rejects_credentials_and_query_parameters() -> None:
     with pytest.raises(ValueError):
         Settings(mcp_server_url="http://user:pass@backend:8080/internal/mcp")

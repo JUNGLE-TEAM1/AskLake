@@ -123,7 +123,9 @@ def test_job_list_schema_is_strict_and_serializes_only_declared_camel_case_field
         "requestedMode",
         "status",
         "stage",
+        "isComplete",
         "progressPercent",
+        "progressDeterminate",
         "documentCount",
         "indexedCount",
         "parentCount",
@@ -166,7 +168,7 @@ def test_job_list_schema_is_strict_and_serializes_only_declared_camel_case_field
         RagJobListItem.model_validate(missing_field)
 
 
-def test_job_stage_progress_is_the_monotonic_seven_stage_ratio_not_a_time_estimate() -> None:
+def test_job_progress_is_nullable_without_measurement_and_uses_actual_indexing_ratio() -> None:
     projected = [
         project_job(status=stage, stage=stage)
         for stage in RAG_JOB_STAGES[:-1]
@@ -180,11 +182,16 @@ def test_job_stage_progress_is_the_monotonic_seven_stage_ratio_not_a_time_estima
     )
 
     assert [item.stage for item in projected] == list(RAG_JOB_STAGES[:-1])
-    assert [item.progress_percent for item in projected] == [0, 16, 33, 50, 66, 83]
+    assert [item.progress_percent for item in projected] == [None, None, None, None, None, None]
+    assert not any(item.progress_determinate for item in projected)
     assert completed.stage == "ready"
+    assert completed.is_complete is True
     assert completed.progress_percent == 100
-    assert project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=3).progress_percent == 72
-    assert project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=8).progress_percent == 83
+    assert completed.progress_determinate is True
+    partial = project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=3)
+    indexed = project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=8)
+    assert (partial.progress_percent, partial.progress_determinate) == (37, True)
+    assert (indexed.progress_percent, indexed.progress_determinate) == (99, True)
 
 
 def test_incomplete_ready_state_never_reports_ready_or_one_hundred_percent() -> None:
@@ -213,7 +220,9 @@ def test_incomplete_ready_state_never_reports_ready_or_one_hundred_percent() -> 
 
     assert item.status == "ready"
     assert item.stage == "validating"
-    assert item.progress_percent == 83
+    assert item.is_complete is False
+    assert item.progress_percent is None
+    assert item.progress_determinate is False
     assert item.completed_at is None
 
 
@@ -241,28 +250,31 @@ def test_each_completion_gate_independently_blocks_one_hundred_percent(
     )
 
     assert item.stage == "validating"
-    assert item.progress_percent == 83
+    assert item.is_complete is False
+    assert item.progress_percent is None
+    assert item.progress_determinate is False
 
 
 @pytest.mark.parametrize(
     ("status", "counts", "expected_stage", "expected_progress"),
     [
-        ("failed", {"chunk_count": 8, "indexed_count": 3}, "indexing", 72),
-        ("canceled", {"row_count": 5, "parent_count": 4}, "staging", 16),
-        ("failed", {"validation_status": "failed"}, "validating", 83),
+        ("failed", {"chunk_count": 8, "indexed_count": 3}, "indexing", 37),
+        ("canceled", {"row_count": 5, "parent_count": 4}, "staging", None),
+        ("failed", {"validation_status": "failed"}, "validating", None),
     ],
 )
 def test_failed_and_canceled_jobs_show_last_evidenced_stage(
     status: str,
     counts: dict[str, object],
     expected_stage: str,
-    expected_progress: int,
+    expected_progress: int | None,
 ) -> None:
     item = project_job(status=status, stage=status, error="stopped", completed_at=NOW, **counts)
 
     assert item.status == status
     assert item.stage == expected_stage
     assert item.progress_percent == expected_progress
+    assert item.progress_determinate is (expected_progress is not None)
 
 
 def test_list_jobs_checks_view_permission_and_scopes_orders_and_limits_rows(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,7 +314,7 @@ def test_list_jobs_checks_view_permission_and_scopes_orders_and_limits_rows(db: 
     assert [item.job_id for item in all_reviews] == ["ragjob_new", "ragjob_old"]
     assert all(item.job_id != "ragjob_other" for item in all_reviews)
     assert limited[0].requested_mode == "reindex"
-    assert limited[0].progress_percent == 72
+    assert limited[0].progress_percent == 40
     assert limited[0].fallback_count == 2
     assert permission_checks == [("reviews", "view"), ("reviews", "view")]
 

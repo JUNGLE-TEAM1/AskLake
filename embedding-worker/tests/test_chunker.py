@@ -55,6 +55,77 @@ def test_multiple_body_fields_keep_labels_even_when_values_match():
     assert [item["logicalField"] for item in chunks[0]["parent_source_fields"]] == ["review_text", "seller_response"]
 
 
+def test_chunk_provenance_merges_body_metadata_and_composite_identifier_roles():
+    parent = _parent(
+        "Audio t1 7",
+        title=None,
+        blocks=[
+            {"logicalField": "category", "physicalField": "category", "text": "Audio"},
+            {"logicalField": "tenant", "physicalField": "tenant", "text": "t1"},
+            {"logicalField": "record", "physicalField": "record", "text": "7"},
+        ],
+    )
+    parent["source_columns"] = ["category", "category", "tenant", "record", "tenant"]
+    parent["source_fields"] = [
+        {"logicalField": "category", "physicalField": "category", "role": "body"},
+        {"logicalField": "category", "physicalField": "category", "role": "metadata"},
+        {"logicalField": "tenant", "physicalField": "tenant", "role": "body", "roles": ["body", "identifier"]},
+        {"logicalField": "record", "physicalField": "record", "role": "body"},
+        {"logicalField": "record", "physicalField": "record", "role": "identifier"},
+    ]
+
+    chunk = chunk_parent_document(
+        parent,
+        embed_sentences=lambda values: [],
+        refine_boundaries=lambda sentences, boundaries: [],
+    )[0]
+    assert chunk["source_columns"] == ["category", "tenant", "record"]
+    assert len(chunk["source_fields"]) == 3
+    roles = {field["logicalField"]: field["roles"] for field in chunk["source_fields"]}
+    assert roles == {
+        "category": ["body", "metadata"],
+        "tenant": ["body", "identifier"],
+        "record": ["body", "identifier"],
+    }
+
+
+def test_very_long_title_is_folded_and_fully_covered_by_bounded_chunks():
+    markers = [f"marker{index}" for index in range(240)]
+    parent = _parent(
+        "short body",
+        title=None,
+        blocks=[{"logicalField": "description", "physicalField": "description", "text": "short body"}],
+    )
+    parent["title"] = " ".join(markers)
+    parent["title_blocks"] = [
+        {"logicalField": "product_name", "physicalField": "product_name", "text": " ".join(markers)}
+    ]
+    parent["source_columns"] = ["description", "product_name"]
+    parent["source_fields"] = [
+        {"logicalField": "description", "physicalField": "description", "role": "body", "roles": ["body"]},
+        {"logicalField": "product_name", "physicalField": "product_name", "role": "title", "roles": ["title"]},
+    ]
+    chunks = chunk_parent_document(
+        parent,
+        embed_sentences=lambda values: [[1.0, 0.0] for _ in values],
+        refine_boundaries=lambda sentences, boundaries: [],
+        target_tokens=60,
+        overlap_tokens=10,
+        max_tokens=80,
+    )
+    combined = "\n".join(chunk["embedding_text"] for chunk in chunks)
+    assert len(chunks) > 1
+    assert all(estimate_tokens(chunk["embedding_text"]) <= 80 for chunk in chunks)
+    assert all(chunk["fallback_reason"].startswith("title_exceeds_chunk_budget") for chunk in chunks)
+    assert all(chunk["fallback_applied"] is True for chunk in chunks)
+    assert all(marker in combined for marker in markers)
+    assert any(
+        "title" in field["roles"]
+        for chunk in chunks
+        for field in chunk["source_fields"]
+    )
+
+
 def test_long_field_repeats_its_label_on_each_chunk():
     text = " ".join(f"event {index} payload" for index in range(500))
     blocks = [{"logicalField": "review_text", "physicalField": "review_text", "text": text}]

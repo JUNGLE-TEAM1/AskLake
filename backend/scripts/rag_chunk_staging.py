@@ -13,11 +13,19 @@ import hashlib
 import os
 import sys
 import time
-import urllib.request
+from datetime import datetime, timezone
+from typing import Any
 
 from pyspark.sql import types as T
 
-from rag_parent_contract import CHUNKING_VERSION, canonical_json
+from rag_parent_contract import (
+    CHUNKING_VERSION,
+    RagJobAlreadyComplete,
+    RagStageRejectedError,
+    canonical_json,
+    ensure_rag_callback_allows_work,
+    post_rag_callback,
+)
 from spark_job_run import make_spark, required_env, quote_spark_identifier
 
 
@@ -29,14 +37,18 @@ def load_manifest() -> dict:
     return value
 
 
-def callback(manifest: dict, payload: dict) -> None:
+def callback(manifest: dict, payload: dict, *, require_continue: bool = True) -> dict[str, Any]:
     url = str(manifest.get("callbackUrl") or "").strip()
     token = str(manifest.get("callbackToken") or "").strip()
-    if not url or not token:
-        return
-    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=30):
-        return
+    response = post_rag_callback(
+        url,
+        token,
+        payload,
+        timeout_seconds=int(os.environ.get("ASKLAKE_RAG_CALLBACK_TIMEOUT_SECONDS", "30")),
+        max_attempts=int(os.environ.get("ASKLAKE_RAG_CALLBACK_ATTEMPTS", "3")),
+    )
+    expected_stage = str(payload.get("stage") or {"chunked": "chunking"}.get(str(payload.get("status") or "")) or "")
+    return ensure_rag_callback_allows_work(response, expected_stage=expected_stage) if require_continue else response
 
 
 def chunk_schema() -> T.StructType:
@@ -134,6 +146,27 @@ def main() -> int:
     target_table = str(manifest.get("chunkTable") or "")
     if len(source_table.split(".")) != 3 or len(target_table.split(".")) != 3:
         raise ValueError("RAG_CHUNK_TABLE_IDENTIFIERS_REQUIRED")
+    try:
+        callback(
+            manifest,
+            {
+                "status": "chunked",
+                "event": "stage_started",
+                "stage": "chunking",
+                "datasetId": manifest.get("datasetId"),
+                "jobId": manifest.get("jobId"),
+                "observedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except RagJobAlreadyComplete as exc:
+        print(f"ASKLAKE_RAG_CHUNK_SKIPPED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}")
+        return 0
+    except RagStageRejectedError as exc:
+        print(f"ASKLAKE_RAG_CHUNK_REJECTED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"ASKLAKE_RAG_CHUNK_CALLBACK_ERROR={canonical_json({'jobId': manifest.get('jobId'), 'error': str(exc)})}", file=sys.stderr)
+        return 1
     spark = make_spark(manifest.get("sourceCollection") or {}, {"catalog": target_table.split(".")[0], "namespace": target_table.split(".")[1], "table": target_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{target_table}"}, disable_speculation=True)
     try:
         parents = spark.table(".".join(quote_spark_identifier(item) for item in source_table.split(".")))
@@ -190,12 +223,18 @@ def main() -> int:
         print(f"ASKLAKE_RAG_CHUNK_RESULT={canonical_json(result)}")
         callback(manifest, result)
         return 0
+    except RagJobAlreadyComplete as exc:
+        print(f"ASKLAKE_RAG_CHUNK_SKIPPED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}")
+        return 0
     except Exception as exc:
         result = {"status": "failed", "datasetId": manifest.get("datasetId"), "jobId": manifest.get("jobId"), "error": str(exc), "durationMs": int((time.time() - started) * 1000)}
         try:
-            callback(manifest, result)
-        except Exception:
-            pass
+            callback(manifest, result, require_continue=False)
+        except Exception as callback_exc:
+            print(
+                f"ASKLAKE_RAG_CHUNK_FAILURE_CALLBACK_ERROR={canonical_json({'jobId': manifest.get('jobId'), 'error': str(callback_exc)})}",
+                file=sys.stderr,
+            )
         print(f"ASKLAKE_RAG_CHUNK_RESULT={canonical_json(result)}", file=sys.stderr)
         return 1
     finally:

@@ -5783,7 +5783,13 @@ def bounded_environment_integer(name: str, *, default: int, minimum: int, maximu
 
 def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
     prefix = f"{marker}="
-    for line in reversed(str(output or "").splitlines()):
+    # Bridge markers are delimited by the ASCII newline emitted by
+    # ``console.log``. ``str.splitlines()`` also treats valid JSON string
+    # characters such as U+0085, U+2028 and U+2029 as separators, which can
+    # cut real review text in half and turn a successful connector response
+    # into an unterminated JSON payload.
+    for raw_line in reversed(str(output or "").split("\n")):
+        line = raw_line.removesuffix("\r")
         if line.startswith(prefix):
             return json.loads(line[len(prefix):])
     return None

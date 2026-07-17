@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
@@ -33,10 +35,14 @@ RAG_JOB_LIST_DEFAULT_LIMIT = 20
 RAG_JOB_LIST_MAX_LIMIT = 100
 RAG_JOB_STAGES: tuple[RagJobStage, ...] = ("queued", "staging", "chunking", "embedding", "indexing", "validating", "ready")
 RAG_JOB_STAGE_ORDER = {stage: index for index, stage in enumerate(RAG_JOB_STAGES)}
-RAG_JOB_STAGE_BASE_PROGRESS_PERCENT = {
-    stage: (index * 100) // (len(RAG_JOB_STAGES) - 1)
-    for index, stage in enumerate(RAG_JOB_STAGES)
-}
+
+
+@dataclass(frozen=True)
+class RagJobCompletionState:
+    stage: RagJobStage
+    is_complete: bool
+    progress_percent: int | None
+    progress_determinate: bool
 
 
 def safe_identifier(value: str) -> str:
@@ -189,9 +195,11 @@ class RagService:
             payload = OpenSearchClient(settings).search_raw(active_manifest.index_name, {"size": settings.rag_document_preview_limit, "query": {"match_all": {}}})
             hits = payload.get("hits", {}).get("hits", []) if isinstance(payload, dict) else []
             documents = [self._preview_document_from_index_hit(hit, dataset_name=str(dataset.get("name") or dataset_id), target_index=active_manifest.index_name) for hit in hits if isinstance(hit, dict)]
-            return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=[*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])], documents=documents)
+            source_columns = list(dict.fromkeys([*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])]))
+            return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=source_columns, documents=documents)
         documents = build_documents(dataset_id=dataset_id, dataset_name=str(dataset.get("name") or dataset_id), rows=dataset.get("sampleRows") or [], columns=dataset_columns(dataset), body_columns=row.body_columns or [], title_columns=row.title_columns or [], metadata_columns=row.metadata_columns or [], identifier_columns=row.identifier_columns or [], semantic_bindings=row.semantic_bindings or {}, schema_types={str(item.get("name")): str(item.get("dataType") or item.get("data_type") or "") for item in dataset_schema(dataset) if isinstance(item, dict) and item.get("name")}, physical_column_mapping=row.physical_column_mapping or {}, target_index=alias, limit=settings.rag_document_preview_limit)
-        return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=[*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])], documents=documents)
+        source_columns = list(dict.fromkeys([*(row.body_columns or []), *(row.title_columns or []), *(row.metadata_columns or []), *(row.identifier_columns or [])]))
+        return RagDocumentPreviewResponse(dataset_id=dataset_id, target_alias=alias, source_columns=source_columns, documents=documents)
 
     @staticmethod
     def _preview_document_from_index_hit(hit: dict[str, Any], *, dataset_name: str, target_index: str) -> dict[str, Any]:
@@ -361,7 +369,103 @@ class RagService:
         metadata_types = {mapping.get(logical, cls._physical_column_name(logical)): schema_by_name.get(logical, "string") for logical in metadata_columns}
         return metadata_columns, mapping, metadata_types
 
+    @staticmethod
+    def _contract_version_snapshot() -> dict[str, str]:
+        return {
+            "parentSchemaVersion": RAG_PARENT_SCHEMA_VERSION,
+            "embeddingInputVersion": EMBEDDING_INPUT_VERSION,
+            "chunkingVersion": CHUNKING_VERSION,
+            "fieldRenderingVersion": FIELD_RENDERING_VERSION,
+            "filterContractVersion": FILTER_CONTRACT_VERSION,
+        }
+
+    @staticmethod
+    def _role_snapshot(profile: RagDatasetProfileModel) -> dict[str, list[str]]:
+        return {
+            "bodyColumns": list(profile.body_columns or []),
+            "titleColumns": list(profile.title_columns or []),
+            "metadataColumns": list(profile.metadata_columns or []),
+            "identifierColumns": list(profile.identifier_columns or []),
+        }
+
+    @staticmethod
+    def _configured_embedding_provider(
+        active_manifest: RagIndexManifestModel | None,
+        existing_job: RagIndexJobModel | None = None,
+    ) -> str | None:
+        fallback = str(
+            (active_manifest.embedding_provider if active_manifest is not None else None)
+            or (existing_job.embedding_provider_snapshot if existing_job is not None else None)
+            or ""
+        ).strip() or None
+        if not settings.ai_gateway_base_url or not settings.ai_gateway_service_token:
+            return fallback
+        try:
+            provider = str(AiGatewayClient().health_status().get("provider") or "").strip()
+        except Exception:
+            return fallback
+        return provider or fallback
+
+    @classmethod
+    def _job_request_contract(
+        cls,
+        *,
+        mode: str,
+        source_fingerprint: str | None,
+        policy_fingerprint: str,
+        embedding_provider: str | None,
+        embedding_model: str,
+        embedding_dimensions: int,
+        roles: dict[str, list[str]],
+        versions: dict[str, str],
+    ) -> dict[str, Any]:
+        return {
+            "mode": mode,
+            "sourceFingerprint": source_fingerprint,
+            "policyFingerprint": policy_fingerprint,
+            "embeddingProvider": embedding_provider,
+            "embeddingModel": embedding_model,
+            "embeddingDimensions": embedding_dimensions,
+            "roles": roles,
+            "versions": versions,
+        }
+
+    @staticmethod
+    def _request_fingerprint(contract: dict[str, Any]) -> str:
+        encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _idempotency_mismatches(
+        cls,
+        existing: RagIndexJobModel,
+        contract: dict[str, Any],
+        request_fingerprint: str,
+    ) -> list[str]:
+        roles = contract["roles"]
+        comparisons = {
+            "mode": (existing.requested_mode, contract["mode"]),
+            "sourceFingerprint": (existing.source_fingerprint, contract["sourceFingerprint"]),
+            "policyFingerprint": (existing.policy_fingerprint, contract["policyFingerprint"]),
+            "embeddingProvider": (existing.embedding_provider_snapshot, contract["embeddingProvider"]),
+            "embeddingModel": (existing.embedding_model, contract["embeddingModel"]),
+            "embeddingDimensions": (existing.embedding_dimensions, contract["embeddingDimensions"]),
+            "bodyColumns": (list(existing.body_columns or []), roles["bodyColumns"]),
+            "titleColumns": (list(existing.title_columns or []), roles["titleColumns"]),
+            "metadataColumns": (list(existing.metadata_columns or []), roles["metadataColumns"]),
+            "identifierColumns": (list(existing.identifier_columns or []), roles["identifierColumns"]),
+            "versions": (dict(existing.contract_versions or {}), contract["versions"]),
+        }
+        mismatches = [name for name, (stored, requested) in comparisons.items() if stored != requested]
+        if existing.request_fingerprint is None:
+            mismatches.append("requestFingerprint")
+        elif existing.request_fingerprint != request_fingerprint and not mismatches:
+            mismatches.append("requestFingerprint")
+        return mismatches
+
     def index(self, dataset_id: str, actor: ActorContext, *, mode: str = "index", idempotency_key: str | None = None) -> RagIndexResponse:
+        if mode not in {"index", "reindex"}:
+            raise ApiError("validation_error", "RAG index mode must be index or reindex", status.HTTP_400_BAD_REQUEST)
         dataset = self._dataset(dataset_id, actor, "query")
         require_permission(actor, "publish", owner=dataset.get("owner"), grants=dataset.get("permissionGrants") or [], resource_label="Dataset RAG index")
         row = self._profile_row(dataset_id)
@@ -385,29 +489,76 @@ class RagService:
             raise ApiError("definition_changed", "RAG title/body/metadata roles changed after approval; approve the definition again before indexing", status.HTTP_409_CONFLICT)
         source_manifest = dataset.get("sourceManifest") or dataset.get("source_manifest") or {}
         source_fingerprint = str(source_manifest.get("fingerprint") or "") if isinstance(source_manifest, dict) else ""
-        if idempotency_key:
-            existing = self.db.scalar(select(RagIndexJobModel).where(RagIndexJobModel.dataset_id == dataset_id, RagIndexJobModel.idempotency_key == idempotency_key))
-            if existing is not None:
-                if existing.source_fingerprint != (source_fingerprint or None):
-                    raise ApiError("idempotency_conflict", "The idempotency key was already used for a different source fingerprint", status.HTTP_409_CONFLICT)
-                return RagIndexResponse(job_id=existing.id, dataset_id=dataset_id, status=existing.status, target_index=existing.target_index)
-        alias = row.target_alias or f"{settings.rag_index_prefix}-ds-{dataset_id}"
-        target = f"{alias}-v{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
         policy_fingerprint = self._policy_fingerprint(dataset, row)
         metadata_columns, physical_mapping, metadata_types = self._metadata_filter_contract(dataset, row)
-        active_manifest = self.db.scalar(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active").order_by(RagIndexManifestModel.activated_at.desc()))
-        if mode == "index" and active_manifest is not None and active_manifest.source_fingerprint == (source_fingerprint or None) and active_manifest.policy_fingerprint == policy_fingerprint and active_manifest.embedding_model == settings.rag_embedding_model and active_manifest.dimensions == settings.rag_embedding_dimensions and active_manifest.index_name and self._manifest_contract_matches(dataset, row, active_manifest):
+        active_manifest = self.db.scalar(
+            select(RagIndexManifestModel)
+            .where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active")
+            .order_by(RagIndexManifestModel.generation.desc(), RagIndexManifestModel.activated_at.desc())
+        )
+        existing = None
+        if idempotency_key:
+            existing = self.db.scalar(select(RagIndexJobModel).where(RagIndexJobModel.dataset_id == dataset_id, RagIndexJobModel.idempotency_key == idempotency_key))
+        embedding_provider_snapshot = self._configured_embedding_provider(active_manifest, existing)
+        roles = self._role_snapshot(row)
+        versions = self._contract_version_snapshot()
+        request_contract = self._job_request_contract(
+            mode=mode,
+            source_fingerprint=source_fingerprint or None,
+            policy_fingerprint=policy_fingerprint,
+            embedding_provider=embedding_provider_snapshot,
+            embedding_model=settings.rag_embedding_model,
+            embedding_dimensions=settings.rag_embedding_dimensions,
+            roles=roles,
+            versions=versions,
+        )
+        request_fingerprint = self._request_fingerprint(request_contract)
+        if existing is not None:
+            mismatches = self._idempotency_mismatches(existing, request_contract, request_fingerprint)
+            if mismatches:
+                raise ApiError(
+                    "idempotency_conflict",
+                    "The idempotency key was already used for a different immutable RAG request",
+                    status.HTTP_409_CONFLICT,
+                    {"mismatchedFields": mismatches},
+                )
+            return RagIndexResponse(job_id=existing.id, dataset_id=dataset_id, status=existing.status, target_index=existing.target_index)
+        alias = row.target_alias or f"{settings.rag_index_prefix}-ds-{dataset_id}"
+        target = f"{alias}-v{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
+        if mode == "index" and active_manifest is not None and active_manifest.source_fingerprint == (source_fingerprint or None) and active_manifest.policy_fingerprint == policy_fingerprint and active_manifest.embedding_provider == embedding_provider_snapshot and active_manifest.embedding_model == settings.rag_embedding_model and active_manifest.dimensions == settings.rag_embedding_dimensions and active_manifest.index_name and self._manifest_contract_matches(dataset, row, active_manifest):
             return RagIndexResponse(job_id=f"active:{active_manifest.index_name}", dataset_id=dataset_id, status="ready", target_index=active_manifest.index_name)
         job_id = f"ragjob_{uuid4().hex}"
         spark_catalog = str(settings.asklake_spark_iceberg_catalog_name or settings.trino_catalog).strip()
         parent_table = f"{spark_catalog}.{settings.rag_parent_iceberg_namespace}.parents_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
         chunk_table = f"{spark_catalog}.{settings.rag_parent_iceberg_namespace}.chunks_{safe_identifier(dataset_id)}_{safe_identifier(job_id)}"
         row.desired_generation = int(row.desired_generation or 0) + 1
-        job = RagIndexJobModel(id=job_id, dataset_id=dataset_id, generation=row.desired_generation, physical_column_mapping=physical_mapping, metadata_columns=metadata_columns, metadata_types=metadata_types, filter_contract_version=FILTER_CONTRACT_VERSION, status="queued", stage="queued", requested_by=actor.name, requested_mode=mode, idempotency_key=idempotency_key, target_index=target, document_count=0, source_fingerprint=source_fingerprint or None, policy_fingerprint=policy_fingerprint, embedding_model=settings.rag_embedding_model, embedding_dimensions=settings.rag_embedding_dimensions, failed_row_rate_threshold=settings.rag_failed_row_rate_threshold, parent_table=parent_table, chunk_table=chunk_table, checkpoint_path=f"{settings.rag_staging_base_path.rstrip('/')}/rag/checkpoints/parents/dataset_id={dataset_id}/job_id={job_id}")
+        job = RagIndexJobModel(id=job_id, dataset_id=dataset_id, generation=row.desired_generation, physical_column_mapping=physical_mapping, body_columns=roles["bodyColumns"], title_columns=roles["titleColumns"], metadata_columns=metadata_columns, identifier_columns=roles["identifierColumns"], metadata_types=metadata_types, contract_versions=versions, filter_contract_version=FILTER_CONTRACT_VERSION, status="queued", stage="queued", requested_by=actor.name, requested_mode=mode, idempotency_key=idempotency_key, request_fingerprint=request_fingerprint, target_index=target, document_count=0, source_fingerprint=source_fingerprint or None, policy_fingerprint=policy_fingerprint, embedding_provider_snapshot=embedding_provider_snapshot, embedding_model=settings.rag_embedding_model, embedding_dimensions=settings.rag_embedding_dimensions, failed_row_rate_threshold=settings.rag_failed_row_rate_threshold, parent_table=parent_table, chunk_table=chunk_table, checkpoint_path=f"{settings.rag_staging_base_path.rstrip('/')}/rag/checkpoints/parents/dataset_id={dataset_id}/job_id={job_id}")
         row.index_status = "queued"
         row.embedding_status = "pending"
         self.db.add(job)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            if not idempotency_key:
+                raise
+            winner = self.db.scalar(
+                select(RagIndexJobModel).where(
+                    RagIndexJobModel.dataset_id == dataset_id,
+                    RagIndexJobModel.idempotency_key == idempotency_key,
+                )
+            )
+            if winner is None:
+                raise
+            mismatches = self._idempotency_mismatches(winner, request_contract, request_fingerprint)
+            if mismatches:
+                raise ApiError(
+                    "idempotency_conflict",
+                    "The idempotency key was concurrently used for a different immutable RAG request",
+                    status.HTTP_409_CONFLICT,
+                    {"mismatchedFields": mismatches},
+                )
+            return RagIndexResponse(job_id=winner.id, dataset_id=dataset_id, status=winner.status, target_index=winner.target_index)
         self._trigger_airflow(job, dataset, row)
         return RagIndexResponse(job_id=job.id, dataset_id=dataset_id, status=job.status, target_index=target)
 
@@ -445,14 +596,28 @@ class RagService:
                 self.db.commit()
                 continue
             contract_changed = bool(profile and isinstance(dataset, dict) and not self._manifest_contract_matches(dataset, profile, manifest))
+            current_embedding_provider = self._configured_embedding_provider(manifest)
             changed = bool(current_fingerprint and current_fingerprint != manifest.source_fingerprint)
             changed = changed or bool(current_policy and current_policy != manifest.policy_fingerprint)
             changed = changed or contract_changed
+            changed = changed or manifest.embedding_provider != current_embedding_provider
             changed = changed or bool(profile and manifest.embedding_model != settings.rag_embedding_model)
             changed = changed or bool(profile and manifest.dimensions != settings.rag_embedding_dimensions)
             if not changed:
                 continue
-            key = f"auto-reindex:{manifest.dataset_id}:{current_fingerprint}:{current_policy or ''}"
+            if profile is None or current_policy is None:
+                continue
+            auto_contract = self._job_request_contract(
+                mode="reindex",
+                source_fingerprint=current_fingerprint or None,
+                policy_fingerprint=current_policy,
+                embedding_provider=current_embedding_provider,
+                embedding_model=settings.rag_embedding_model,
+                embedding_dimensions=settings.rag_embedding_dimensions,
+                roles=self._role_snapshot(profile),
+                versions=self._contract_version_snapshot(),
+            )
+            key = f"auto-reindex:{self._request_fingerprint(auto_contract)}"
             existing = self.db.scalar(
                 select(RagIndexJobModel).where(
                     RagIndexJobModel.dataset_id == manifest.dataset_id,
@@ -473,10 +638,34 @@ class RagService:
         if job is None:
             raise ApiError("not_found", f"RAG job {job_id} was not found", status.HTTP_404_NOT_FOUND)
         profile = self.db.scalar(select(RagDatasetProfileModel).where(RagDatasetProfileModel.dataset_id == job.dataset_id).with_for_update()) or self._profile_row(job.dataset_id)
-        result_status = str(result.get("status") or "success")
+        result_status = str(result.get("status") or "success").strip().casefold()
+        if result_status not in {"failed", "canceled"} and job.activation_status == "pending":
+            return self._activation_callback_response(
+                job,
+                profile,
+                chunking_version=str(result.get("chunkingVersion") or CHUNKING_VERSION),
+            )
+
+        if result_status not in {"failed", "canceled"}:
+            superseded_reason = self._persisted_superseded_fence_reason(job, profile)
+            if superseded_reason is not None:
+                if job.status not in {"failed", "canceled"}:
+                    job.status = "failed"
+                    job.stage = "failed"
+                    job.activation_status = "failed" if job.activation_status == "pending" else job.activation_status
+                    job.error = "RAG callback belongs to a superseded activation generation"
+                    job.completed_at = datetime.now(timezone.utc)
+                    self.db.commit()
+                raise self._superseded_callback_error(
+                    job,
+                    profile.desired_generation,
+                    fence_reason=superseded_reason,
+                )
+
         terminal_statuses = {"ready", "failed", "canceled"}
         if job.status in terminal_statuses:
             return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
+
         stage_updates = {
             "parent_staged": ("staging", "staging", "pending"),
             "chunked": ("chunking", "chunking", "pending"),
@@ -486,13 +675,6 @@ class RagService:
         }
         stage_order = {"queued": 0, "staging": 1, "chunking": 2, "embedding": 3, "indexing": 4, "validating": 5, "ready": 6, "failed": 99, "canceled": 99}
         if result_status in stage_updates:
-            if int(job.generation or 0) != int(profile.desired_generation or 0):
-                job.status = "failed"
-                job.stage = "failed"
-                job.error = "RAG callback belongs to a superseded activation generation"
-                job.completed_at = datetime.now(timezone.utc)
-                self.db.commit()
-                return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
             next_status = stage_updates[result_status][0]
             if stage_order.get(next_status, -1) < stage_order.get(job.status, -1):
                 return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
@@ -514,6 +696,7 @@ class RagService:
             job.checkpoint_path = str(result.get("checkpointPath") or job.checkpoint_path or "") or None
             self.db.commit()
             return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
+
         if result_status != "success":
             job.status = "failed"
             job.stage = "failed"
@@ -532,152 +715,381 @@ class RagService:
             job.completed_at = datetime.now(timezone.utc)
             self.db.commit()
             return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
-        else:
-            validation_matches_job = (
-                job.status == "validating"
-                and job.stage == "validating"
-                and job.validation_status == "passed"
-                and job.validated_index == job.target_index
-                and job.validated_document_count == int(job.indexed_count or job.chunk_count)
-                and job.validated_parent_count == int(job.parent_count)
-                and job.validated_dimensions == int(job.embedding_dimensions or 0)
-            )
-            current_dataset = (self.catalog.get_dataset_payload(job.dataset_id) or {}) if validation_matches_job else {}
-            current_source = current_dataset.get("sourceManifest") or current_dataset.get("source_manifest") or {}
-            current_source_fingerprint = str(current_source.get("fingerprint") or "") if isinstance(current_source, dict) else ""
-            current_policy_fingerprint = self._policy_fingerprint(current_dataset, profile) if isinstance(current_dataset, dict) and current_dataset and profile.review_state == "approved" else None
-            fenced_for_activation = (
-                int(job.generation or 0) == int(profile.desired_generation or 0)
-                and current_source_fingerprint == (job.source_fingerprint or "")
-                and (not job.policy_fingerprint or current_policy_fingerprint == job.policy_fingerprint)
-            )
-            if not validation_matches_job or not fenced_for_activation:
-                job.status = "failed"
-                job.stage = "failed"
-                if fenced_for_activation:
-                    profile.index_status = "failed"
-                    profile.embedding_status = "failed"
-                job.error = "Activation requires persisted validation evidence for this target index and current generation"
-                if fenced_for_activation:
-                    profile.last_error = job.error
-                job.completed_at = datetime.now(timezone.utc)
-                self.db.commit()
-                return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
-            job.status = "ready"
-            job.stage = "ready"
-            job.indexed_count = int(result.get("indexedCount") or job.document_count)
-            job.parent_count = int(result.get("parentCount") or job.parent_count)
-            job.chunk_count = int(result.get("chunkCount") or job.chunk_count)
-            job.failed_count = int(result.get("failedCount") or job.failed_count)
-            job.row_count = int(result.get("rowCount") or job.row_count)
-            job.failed_row_rate = float(result.get("failedRate") or job.failed_row_rate)
-            job.failed_row_report = result.get("failedRowReport") if isinstance(result.get("failedRowReport"), dict) else (job.failed_row_report or {})
-            job.fallback_count = int(result.get("fallbackCount") or job.fallback_count)
-            job.fallback_reasons = result.get("fallbackReasons") if isinstance(result.get("fallbackReasons"), dict) else (job.fallback_reasons or {})
-            job.document_count = int(result.get("documentCount") or job.chunk_count or job.document_count)
-            job.embedding_dimensions = int(result.get("dimensions") or job.embedding_dimensions or settings.rag_embedding_dimensions)
-            job.embedding_provider = str(result.get("embeddingProvider") or job.embedding_provider or "") or None
-            profile.index_status = "ready"
-            profile.embedding_status = "ready"
-            profile.last_error = None
-            previous_index = profile.active_index
-            next_index = str(result.get("activeIndex") or job.target_index or "") or None
-            alias = profile.target_alias or f"{settings.rag_index_prefix}-ds-{job.dataset_id}"
-            job.activation_status = "pending"
-            job.activation_alias = alias
-            job.activation_previous_index = previous_index
-            job.activation_target_index = next_index
-            job.activation_started_at = datetime.now(timezone.utc)
+
+        fence_reason = self._validation_fence_reason(job)
+        current_dataset = {}
+        if fence_reason is None:
+            current_dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+            fence_reason = self._activation_fence_reason(job, profile, current_dataset)
+        if fence_reason is not None:
+            superseded = fence_reason in {"generation", "sourceFingerprint", "policyFingerprint", "profileApproval"}
+            job.status = "failed"
+            job.stage = "failed"
+            job.error = f"RAG activation fence rejected the callback: {fence_reason}"
+            job.completed_at = datetime.now(timezone.utc)
+            if not superseded and int(job.generation or 0) == int(profile.desired_generation or 0):
+                profile.index_status = "failed"
+                profile.embedding_status = "failed"
+                profile.last_error = job.error
             self.db.commit()
-            if settings.opensearch_base_url and next_index:
-                from app.clients.opensearch_client import OpenSearchClient
-                try:
-                    client = OpenSearchClient(settings)
-                    if hasattr(client, "replace_alias"):
-                        client.replace_alias(alias, next_index)
-                    else:
-                        client.switch_alias(alias, next_index, previous_index)
-                except Exception as exc:
-                    job.status = "failed"
-                    job.stage = "failed"
-                    job.activation_status = "failed"
-                    profile.index_status = "failed"
-                    profile.embedding_status = "failed"
-                    job.error = f"OpenSearch alias activation failed: {exc.__class__.__name__}"
-                    profile.last_error = job.error
-                    job.completed_at = datetime.now(timezone.utc)
-                    self.db.commit()
-                    return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
-            dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
-            self._finalize_activation(job, profile, dataset, next_index, chunking_version=str(result.get("chunkingVersion") or CHUNKING_VERSION))
-        return self.job(job_id, ActorContext(name=job.requested_by, role="admin"))
+            if superseded:
+                raise self._superseded_callback_error(job, profile.desired_generation, fence_reason=fence_reason)
+            raise ApiError(
+                "rag_activation_rejected",
+                job.error,
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "stopDag": True, "retryable": False, "fenceReason": fence_reason},
+            )
 
-    def reconcile_alias_activations(self, *, limit: int | None = None) -> int:
-        """Repair an alias/DB split left by a process failure after alias switch.
+        job.status = "ready"
+        job.stage = "ready"
+        job.indexed_count = int(result.get("indexedCount") or job.document_count)
+        job.parent_count = int(result.get("parentCount") or job.parent_count)
+        job.chunk_count = int(result.get("chunkCount") or job.chunk_count)
+        job.failed_count = int(result.get("failedCount") or job.failed_count)
+        job.row_count = int(result.get("rowCount") or job.row_count)
+        job.failed_row_rate = float(result.get("failedRate") or job.failed_row_rate)
+        job.failed_row_report = result.get("failedRowReport") if isinstance(result.get("failedRowReport"), dict) else (job.failed_row_report or {})
+        job.fallback_count = int(result.get("fallbackCount") or job.fallback_count)
+        job.fallback_reasons = result.get("fallbackReasons") if isinstance(result.get("fallbackReasons"), dict) else (job.fallback_reasons or {})
+        job.document_count = int(result.get("documentCount") or job.chunk_count or job.document_count)
+        job.embedding_dimensions = int(result.get("dimensions") or job.embedding_dimensions or settings.rag_embedding_dimensions)
+        job.embedding_provider = str(result.get("embeddingProvider") or job.embedding_provider or "") or None
+        job.activation_status = "pending"
+        job.activation_alias = profile.target_alias or f"{settings.rag_index_prefix}-ds-{job.dataset_id}"
+        job.activation_previous_index = self._current_serving_index(job.dataset_id, profile, stale_target=job.target_index)
+        job.activation_target_index = str(result.get("activeIndex") or job.target_index or "") or None
+        job.activation_started_at = datetime.now(timezone.utc)
+        job.error = None
+        self.db.commit()
 
-        The activation intent is committed before the OpenSearch request.  A
-        later control-plane tick can therefore safely make the alias point to
-        the intended index and finish the database transaction idempotently.
-        """
-        statement = select(RagIndexJobModel).where(RagIndexJobModel.activation_status == "pending").order_by(RagIndexJobModel.activation_started_at.asc())
-        if limit is not None and limit > 0:
-            statement = statement.limit(limit)
-        jobs = self.db.scalars(statement).all()
-        repaired = 0
+        return self._activation_callback_response(
+            job,
+            profile,
+            chunking_version=str(result.get("chunkingVersion") or CHUNKING_VERSION),
+        )
+
+    def _activation_callback_response(
+        self,
+        job: RagIndexJobModel,
+        profile: RagDatasetProfileModel,
+        *,
+        chunking_version: str,
+    ) -> RagJobResponse:
+        activation_result = self._process_pending_activation(
+            job.id,
+            chunking_version=chunking_version,
+        )
+        refreshed = self.db.get(RagIndexJobModel, job.id) or job
+        if activation_result == "committed":
+            return self.job(job.id, ActorContext(name=job.requested_by, role="admin"))
+        if activation_result == "superseded":
+            reason = self._persisted_superseded_fence_reason(refreshed, profile) or "generation"
+            raise self._superseded_callback_error(
+                refreshed,
+                profile.desired_generation,
+                fence_reason=reason,
+            )
+        raise ApiError(
+            "rag_activation_pending",
+            "Alias activation outcome is not yet determinate; reconciliation will retry",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {"jobId": job.id, "stopDag": True, "retryable": True},
+        )
+
+    @staticmethod
+    def _persisted_superseded_fence_reason(
+        job: RagIndexJobModel,
+        profile: RagDatasetProfileModel,
+    ) -> str | None:
+        if int(job.generation or 0) != int(profile.desired_generation or 0):
+            return "generation"
+        error = str(job.error or "")
+        prefixes = (
+            "RAG activation fence rejected the callback: ",
+            "Pending alias activation was superseded: ",
+        )
+        for prefix in prefixes:
+            if error.startswith(prefix):
+                reason = error[len(prefix):].strip()
+                if reason in {"generation", "sourceFingerprint", "policyFingerprint", "profileApproval"}:
+                    return reason
+        if error == "RAG callback belongs to a superseded activation generation":
+            return "generation"
+        return None
+
+    @staticmethod
+    def _superseded_callback_error(
+        job: RagIndexJobModel,
+        desired_generation: int,
+        *,
+        fence_reason: str = "generation",
+    ) -> ApiError:
+        return ApiError(
+            "rag_job_superseded",
+            "RAG callback belongs to a superseded immutable build",
+            status.HTTP_409_CONFLICT,
+            {
+                "jobId": job.id,
+                "jobGeneration": int(job.generation or 0),
+                "desiredGeneration": int(desired_generation or 0),
+                "fenceReason": fence_reason,
+                "stopDag": True,
+                "retryable": False,
+            },
+        )
+
+    @classmethod
+    def _activation_fence_reason(
+        cls,
+        job: RagIndexJobModel,
+        profile: RagDatasetProfileModel,
+        dataset: dict[str, Any],
+    ) -> str | None:
+        if int(job.generation or 0) != int(profile.desired_generation or 0):
+            return "generation"
+        if profile.review_state != "approved":
+            return "profileApproval"
+        source = dataset.get("sourceManifest") or dataset.get("source_manifest") or {}
+        current_source_fingerprint = str(source.get("fingerprint") or "") if isinstance(source, dict) else ""
+        if current_source_fingerprint != (job.source_fingerprint or ""):
+            return "sourceFingerprint"
+        current_policy = cls._policy_fingerprint(dataset, profile) if dataset else None
+        if not job.policy_fingerprint or current_policy != job.policy_fingerprint:
+            return "policyFingerprint"
+        return cls._validation_fence_reason(job)
+
+    @staticmethod
+    def _validation_fence_reason(job: RagIndexJobModel) -> str | None:
+        if job.status not in {"validating", "ready"} or job.stage not in {"validating", "ready"}:
+            return "validationStage"
+        if job.validation_status != "passed" or job.validated_index != (job.activation_target_index or job.target_index):
+            return "validationStatus"
+        if job.validated_document_count != int(job.indexed_count or job.chunk_count):
+            return "validatedDocumentCount"
+        if job.validated_parent_count != int(job.parent_count):
+            return "validatedParentCount"
+        if job.validated_dimensions != int(job.embedding_dimensions or 0):
+            return "validatedDimensions"
+        return None
+
+    def _current_serving_index(
+        self,
+        dataset_id: str,
+        profile: RagDatasetProfileModel,
+        *,
+        stale_target: str | None,
+    ) -> str | None:
+        manifest = self.db.scalar(
+            select(RagIndexManifestModel)
+            .where(RagIndexManifestModel.dataset_id == dataset_id, RagIndexManifestModel.status == "active")
+            .order_by(RagIndexManifestModel.generation.desc(), RagIndexManifestModel.activated_at.desc())
+        )
+        candidate = manifest.index_name if manifest is not None else profile.active_index
+        return candidate if candidate and candidate != stale_target else None
+
+    @staticmethod
+    def _cas_activate_alias(client: Any, alias: str, target: str, expected_previous: str | None) -> str:
+        try:
+            before = client.alias_indices(alias)
+        except Exception:
+            return "pending"
+        if before == [target]:
+            return "applied"
+        expected = [expected_previous] if expected_previous else []
+        if before != expected:
+            return "pending"
+        actions: list[dict[str, Any]] = []
+        if expected_previous:
+            actions.append({"remove": {"alias": alias, "index": expected_previous, "must_exist": True}})
+        actions.append({"add": {"alias": alias, "index": target}})
+        try:
+            client._request("POST", "_aliases", json={"actions": actions})
+        except Exception:
+            try:
+                return "applied" if client.alias_indices(alias) == [target] else "pending"
+            except Exception:
+                return "pending"
+        try:
+            return "applied" if client.alias_indices(alias) == [target] else "pending"
+        except Exception:
+            return "pending"
+
+    @staticmethod
+    def _cas_remove_stale_alias(client: Any, alias: str, stale_target: str, replacement: str | None) -> str:
+        try:
+            before = client.alias_indices(alias)
+        except Exception:
+            return "pending"
+        if stale_target not in before:
+            return "removed"
+        actions: list[dict[str, Any]] = [
+            {"remove": {"alias": alias, "index": stale_target, "must_exist": True}}
+        ]
+        if before == [stale_target] and replacement and replacement != stale_target:
+            actions.append({"add": {"alias": alias, "index": replacement}})
+        try:
+            client._request("POST", "_aliases", json={"actions": actions})
+        except Exception:
+            try:
+                return "removed" if stale_target not in client.alias_indices(alias) else "pending"
+            except Exception:
+                return "pending"
+        try:
+            return "removed" if stale_target not in client.alias_indices(alias) else "pending"
+        except Exception:
+            return "pending"
+
+    @staticmethod
+    def _mark_superseded_activation(job: RagIndexJobModel, reason: str) -> None:
+        job.activation_status = "failed"
+        job.status = "failed"
+        job.stage = "failed"
+        job.error = f"Pending alias activation was superseded: {reason}"
+        job.completed_at = datetime.now(timezone.utc)
+
+    def _process_pending_activation(self, job_id: str, *, chunking_version: str) -> str:
+        job = self.db.scalar(select(RagIndexJobModel).where(RagIndexJobModel.id == job_id).with_for_update())
+        if job is None or job.activation_status != "pending":
+            return "committed" if job is not None and job.activation_status == "committed" else "superseded"
+        profile = self.db.scalar(
+            select(RagDatasetProfileModel)
+            .where(RagDatasetProfileModel.dataset_id == job.dataset_id)
+            .with_for_update()
+        )
+        if profile is None or not job.activation_alias or not job.activation_target_index:
+            self._mark_superseded_activation(job, "missing activation intent")
+            self.db.commit()
+            return "superseded"
+
+        dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+        fence_reason = self._activation_fence_reason(job, profile, dataset)
+        if fence_reason is not None:
+            if not settings.opensearch_base_url:
+                self._mark_superseded_activation(job, fence_reason)
+                self.db.commit()
+                return "superseded"
+            from app.clients.opensearch_client import OpenSearchClient
+
+            client = OpenSearchClient(settings)
+            replacement = self._current_serving_index(job.dataset_id, profile, stale_target=job.activation_target_index)
+            cleanup = self._cas_remove_stale_alias(client, job.activation_alias, job.activation_target_index, replacement)
+            if cleanup == "pending":
+                job.error = f"Superseded alias cleanup is pending: {fence_reason}"
+                self.db.commit()
+                return "pending"
+            self._mark_superseded_activation(job, fence_reason)
+            self.db.commit()
+            return "superseded"
+
+        if not settings.opensearch_base_url:
+            final_dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+            final_reason = self._activation_fence_reason(job, profile, final_dataset)
+            if final_reason is not None:
+                self._mark_superseded_activation(job, final_reason)
+                self.db.commit()
+                return "superseded"
+            self._finalize_activation(job, profile, final_dataset, job.activation_target_index, chunking_version=chunking_version)
+            return "committed"
+
         from app.clients.opensearch_client import OpenSearchClient
 
-        for job in jobs:
-            profile = self.db.scalar(select(RagDatasetProfileModel).where(RagDatasetProfileModel.dataset_id == job.dataset_id).with_for_update())
-            if profile is None or not job.activation_target_index or not job.activation_alias:
-                continue
-            dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
-            current_source = dataset.get("sourceManifest") or dataset.get("source_manifest") or {}
-            current_source_fingerprint = str(current_source.get("fingerprint") or "") if isinstance(current_source, dict) else ""
-            current_policy = self._policy_fingerprint(dataset, profile) if profile.review_state == "approved" else None
-            valid = (
-                int(job.generation or 0) == int(profile.desired_generation or 0)
-                and current_source_fingerprint == (job.source_fingerprint or "")
-                and (not job.policy_fingerprint or current_policy == job.policy_fingerprint)
-                and job.validation_status == "passed"
-                and job.validated_index == job.activation_target_index
+        client = OpenSearchClient(settings)
+        before_external_dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+        before_external_reason = self._activation_fence_reason(job, profile, before_external_dataset)
+        if before_external_reason is not None:
+            cleanup = self._cas_remove_stale_alias(
+                client,
+                job.activation_alias,
+                job.activation_target_index,
+                self._current_serving_index(job.dataset_id, profile, stale_target=job.activation_target_index),
             )
-            if not valid:
-                if settings.opensearch_base_url:
-                    client = OpenSearchClient(settings)
-                    if job.activation_previous_index:
-                        client.replace_alias(job.activation_alias, job.activation_previous_index)
-                    else:
-                        client.clear_alias(job.activation_alias)
-                job.activation_status = "failed"
-                job.status = "failed"
-                job.stage = "failed"
-                job.error = "Pending alias activation was superseded by a newer Dataset generation"
-                job.completed_at = datetime.now(timezone.utc)
+            if cleanup == "pending":
+                job.error = f"Superseded alias cleanup is pending: {before_external_reason}"
                 self.db.commit()
-                continue
-            if settings.opensearch_base_url:
-                client = OpenSearchClient(settings)
-                if client.alias_indices(job.activation_alias) != [job.activation_target_index]:
-                    client.replace_alias(job.activation_alias, job.activation_target_index)
-            self._finalize_activation(job, profile, dataset, job.activation_target_index, chunking_version=CHUNKING_VERSION)
-            repaired += 1
+                return "pending"
+            self._mark_superseded_activation(job, before_external_reason)
+            self.db.commit()
+            return "superseded"
+
+        expected_previous = self._current_serving_index(job.dataset_id, profile, stale_target=job.activation_target_index)
+        switched = self._cas_activate_alias(client, job.activation_alias, job.activation_target_index, expected_previous)
+        if switched != "applied":
+            job.error = "Alias activation outcome is unknown; reconciliation will retry"
+            self.db.commit()
+            return "pending"
+
+        after_external_dataset = self.catalog.get_dataset_payload(job.dataset_id) or {}
+        after_external_reason = self._activation_fence_reason(job, profile, after_external_dataset)
+        if after_external_reason is not None:
+            cleanup = self._cas_remove_stale_alias(
+                client,
+                job.activation_alias,
+                job.activation_target_index,
+                self._current_serving_index(job.dataset_id, profile, stale_target=job.activation_target_index),
+            )
+            if cleanup == "pending":
+                job.error = f"Post-switch alias cleanup is pending: {after_external_reason}"
+                self.db.commit()
+                return "pending"
+            self._mark_superseded_activation(job, after_external_reason)
+            self.db.commit()
+            return "superseded"
+        try:
+            if client.alias_indices(job.activation_alias) != [job.activation_target_index]:
+                job.error = "Alias changed after activation; reconciliation will retry"
+                self.db.commit()
+                return "pending"
+        except Exception:
+            job.error = "Alias activation cannot yet be confirmed; reconciliation will retry"
+            self.db.commit()
+            return "pending"
+        self._finalize_activation(job, profile, after_external_dataset, job.activation_target_index, chunking_version=chunking_version)
+        return "committed"
+
+    def reconcile_alias_activations(self, *, limit: int | None = None) -> int:
+        """Resolve persisted activation intents without overwriting a newer alias."""
+        statement = select(RagIndexJobModel.id).where(RagIndexJobModel.activation_status == "pending").order_by(RagIndexJobModel.activation_started_at.asc())
+        if limit is not None and limit > 0:
+            statement = statement.limit(limit)
+        job_ids = list(self.db.scalars(statement).all())
+        repaired = 0
+        for job_id in job_ids:
+            if self._process_pending_activation(job_id, chunking_version=CHUNKING_VERSION) == "committed":
+                repaired += 1
         return repaired
 
     def _finalize_activation(self, job: RagIndexJobModel, profile: RagDatasetProfileModel, dataset: dict[str, Any], target_index: str | None, *, chunking_version: str) -> None:
         now = datetime.now(timezone.utc)
         profile.active_index = target_index
-        for manifest in self.db.scalars(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == job.dataset_id, RagIndexManifestModel.status == "active", RagIndexManifestModel.index_name != target_index)).all():
+        active_manifests = self.db.scalars(
+            select(RagIndexManifestModel)
+            .where(
+                RagIndexManifestModel.dataset_id == job.dataset_id,
+                RagIndexManifestModel.status == "active",
+                RagIndexManifestModel.index_name != target_index,
+            )
+            .with_for_update()
+        ).all()
+        for manifest in active_manifests:
             manifest.status = "retired"
             manifest.retired_at = now
+        if active_manifests:
+            self.db.flush()
         manifest = self.db.scalar(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == job.dataset_id, RagIndexManifestModel.index_name == target_index))
         if manifest is None:
-            manifest = RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, index_name=target_index or "", alias_name=profile.target_alias or "")
+            manifest = RagIndexManifestModel(id=f"ragmanifest_{uuid4().hex}", dataset_id=job.dataset_id, index_name=target_index or "", alias_name=job.activation_alias or profile.target_alias or "")
             self.db.add(manifest)
+        versions = job.contract_versions or self._contract_version_snapshot()
         manifest.generation = job.generation
         manifest.physical_column_mapping = job.physical_column_mapping or profile.physical_column_mapping or {}
+        manifest.body_columns = job.body_columns or []
+        manifest.title_columns = job.title_columns or []
         manifest.metadata_columns = job.metadata_columns or []
+        manifest.identifier_columns = job.identifier_columns or []
         manifest.metadata_types = job.metadata_types or {}
-        manifest.filter_contract_version = job.filter_contract_version
+        manifest.contract_versions = versions
+        manifest.filter_contract_version = versions.get("filterContractVersion") or job.filter_contract_version
         manifest.status = "active"
         manifest.embedding_provider = job.embedding_provider
         manifest.embedding_model = job.embedding_model or settings.rag_embedding_model
@@ -696,9 +1108,9 @@ class RagService:
         manifest.schema_fingerprint = schema_fingerprint(dataset)
         manifest.policy_fingerprint = job.policy_fingerprint
         manifest.semantic_bindings_fingerprint = self._semantic_bindings_fingerprint(profile.semantic_bindings)
-        manifest.chunking_version = chunking_version
-        manifest.embedding_input_version = EMBEDDING_INPUT_VERSION
-        manifest.parent_schema_version = RAG_PARENT_SCHEMA_VERSION
+        manifest.chunking_version = versions.get("chunkingVersion") or chunking_version
+        manifest.embedding_input_version = versions.get("embeddingInputVersion") or EMBEDDING_INPUT_VERSION
+        manifest.parent_schema_version = versions.get("parentSchemaVersion") or RAG_PARENT_SCHEMA_VERSION
         manifest.parent_table = job.parent_table
         manifest.chunk_table = job.chunk_table
         manifest.checkpoint_path = job.checkpoint_path
@@ -711,6 +1123,7 @@ class RagService:
         job.activation_status = "committed"
         job.activation_committed_at = now
         job.completed_at = job.completed_at or now
+        job.error = None
         self.db.commit()
 
     def job(self, job_id: str, actor: ActorContext) -> RagJobResponse:
@@ -718,7 +1131,8 @@ class RagService:
         if job is None:
             raise ApiError("not_found", f"RAG job {job_id} was not found", status.HTTP_404_NOT_FOUND)
         self._dataset(job.dataset_id, actor, "view")
-        return RagJobResponse(job_id=job.id, dataset_id=job.dataset_id, status=job.status, requested_mode=job.requested_mode, target_index=job.target_index, document_count=job.document_count, indexed_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, row_count=job.row_count, failed_row_rate=job.failed_row_rate, failed_row_rate_threshold=job.failed_row_rate_threshold, failed_row_report=job.failed_row_report or {}, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, stage=job.stage, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, embedding_provider=job.embedding_provider, embedding_model=job.embedding_model, embedding_dimensions=job.embedding_dimensions, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, error=job.error, airflow_run_id=job.airflow_run_id, generation=job.generation, validation_status=job.validation_status, validated_at=job.validated_at, physical_column_mapping=job.physical_column_mapping or {}, activation_status=job.activation_status, activation_alias=job.activation_alias, activation_target_index=job.activation_target_index)
+        completion = self._job_completion_state(job)
+        return RagJobResponse(job_id=job.id, dataset_id=job.dataset_id, status=job.status, requested_mode=job.requested_mode, target_index=job.target_index, document_count=job.document_count, indexed_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, row_count=job.row_count, failed_row_rate=job.failed_row_rate, failed_row_rate_threshold=job.failed_row_rate_threshold, failed_row_report=job.failed_row_report or {}, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, stage=completion.stage, is_complete=completion.is_complete, progress_percent=completion.progress_percent, progress_determinate=completion.progress_determinate, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, embedding_provider=job.embedding_provider, embedding_model=job.embedding_model, embedding_dimensions=job.embedding_dimensions, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, error=job.error, airflow_run_id=job.airflow_run_id, generation=job.generation, validation_status=job.validation_status, validated_at=job.validated_at, physical_column_mapping=job.physical_column_mapping or {}, activation_status=job.activation_status, activation_alias=job.activation_alias, activation_target_index=job.activation_target_index, completed_at=job.completed_at)
 
     def list_jobs(self, dataset_id: str, actor: ActorContext, *, limit: int = RAG_JOB_LIST_DEFAULT_LIMIT) -> list[RagJobListItem]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= RAG_JOB_LIST_MAX_LIMIT:
@@ -734,14 +1148,16 @@ class RagService:
 
     @classmethod
     def _job_list_item(cls, job: RagIndexJobModel) -> RagJobListItem:
-        stage = cls._job_list_stage(job)
+        completion = cls._job_completion_state(job)
         return RagJobListItem(
             job_id=job.id,
             dataset_id=job.dataset_id,
             requested_mode=job.requested_mode,
             status=job.status,
-            stage=stage,
-            progress_percent=cls._job_stage_progress_percent(job, stage),
+            stage=completion.stage,
+            is_complete=completion.is_complete,
+            progress_percent=completion.progress_percent,
+            progress_determinate=completion.progress_determinate,
             document_count=job.document_count,
             indexed_count=job.indexed_count,
             parent_count=job.parent_count,
@@ -772,8 +1188,34 @@ class RagService:
         )
 
     @classmethod
-    def _job_list_stage(cls, job: RagIndexJobModel) -> RagJobStage:
-        if cls._job_is_complete(job):
+    def _job_completion_state(cls, job: RagIndexJobModel) -> RagJobCompletionState:
+        is_complete = (
+            job.status == "ready"
+            and job.stage == "ready"
+            and job.validation_status == "passed"
+            and job.activation_status == "committed"
+            and job.completed_at is not None
+        )
+        if is_complete:
+            return RagJobCompletionState(stage="ready", is_complete=True, progress_percent=100, progress_determinate=True)
+
+        stage = cls._job_evidenced_stage(job)
+        if stage != "indexing" or int(job.chunk_count or 0) <= 0:
+            return RagJobCompletionState(stage=stage, is_complete=False, progress_percent=None, progress_determinate=False)
+        chunk_count = int(job.chunk_count or 0)
+        indexed_count = max(0, min(int(job.indexed_count or 0), chunk_count))
+        progress_percent = min(99, (indexed_count * 100) // chunk_count)
+        return RagJobCompletionState(stage=stage, is_complete=False, progress_percent=progress_percent, progress_determinate=True)
+
+    @classmethod
+    def _job_evidenced_stage(cls, job: RagIndexJobModel) -> RagJobStage:
+        if (
+            job.status == "ready"
+            and job.stage == "ready"
+            and job.validation_status == "passed"
+            and job.activation_status == "committed"
+            and job.completed_at is not None
+        ):
             return "ready"
 
         evidenced_stages: list[RagJobStage] = ["queued"]
@@ -800,33 +1242,6 @@ class RagService:
         ):
             evidenced_stages.append("validating")
         return max(evidenced_stages, key=RAG_JOB_STAGE_ORDER.__getitem__)
-
-    @staticmethod
-    def _job_is_complete(job: RagIndexJobModel) -> bool:
-        return (
-            job.status == "ready"
-            and job.stage == "ready"
-            and job.validation_status == "passed"
-            and job.activation_status == "committed"
-            and job.completed_at is not None
-        )
-
-    @classmethod
-    def _job_stage_progress_percent(cls, job: RagIndexJobModel, stage: RagJobStage) -> int:
-        """Return monotonic seven-stage completion, never an elapsed-time estimate."""
-        if cls._job_is_complete(job):
-            return 100
-        safe_stage: RagJobStage = "validating" if stage == "ready" else stage
-        base_percent = RAG_JOB_STAGE_BASE_PROGRESS_PERCENT[safe_stage]
-        if safe_stage != "indexing":
-            return min(99, base_percent)
-        chunk_count = int(job.chunk_count or 0)
-        if chunk_count <= 0:
-            return base_percent
-        indexed_count = max(0, min(int(job.indexed_count or 0), chunk_count))
-        validating_percent = RAG_JOB_STAGE_BASE_PROGRESS_PERCENT["validating"]
-        interpolated = base_percent + ((validating_percent - base_percent) * indexed_count) // chunk_count
-        return min(99, interpolated)
 
     def validate_job(self, job_id: str) -> dict[str, Any]:
         """Validate the newly built physical index before an alias can move.
@@ -1134,6 +1549,8 @@ class RagService:
         expected_mapping = {str(column): physical_mapping.get(str(column), cls._physical_column_name(column)) for column in metadata_columns}
         actual_mapping = {str(column): (manifest.physical_column_mapping or {}).get(str(column)) for column in metadata_columns}
         actual_types = {str(key): str(value) for key, value in (manifest.metadata_types or {}).items()}
+        roles = cls._role_snapshot(profile)
+        versions = cls._contract_version_snapshot()
         return (
             bool(str(manifest.embedding_provider or "").strip())
             and manifest.embedding_model == settings.rag_embedding_model
@@ -1142,42 +1559,53 @@ class RagService:
             and manifest.embedding_input_version == EMBEDDING_INPUT_VERSION
             and manifest.chunking_version == CHUNKING_VERSION
             and manifest.filter_contract_version == FILTER_CONTRACT_VERSION
+            and dict(manifest.contract_versions or {}) == versions
             and manifest.semantic_bindings_fingerprint == cls._semantic_bindings_fingerprint(profile.semantic_bindings)
+            and list(manifest.body_columns or []) == roles["bodyColumns"]
+            and list(manifest.title_columns or []) == roles["titleColumns"]
             and list(manifest.metadata_columns or []) == metadata_columns
+            and list(manifest.identifier_columns or []) == roles["identifierColumns"]
             and actual_mapping == expected_mapping
             and actual_types == {str(key): str(value) for key, value in metadata_types.items()}
         )
 
+    def _fail_airflow_dispatch(self, job: RagIndexJobModel, message: str) -> None:
+        locked_job = self.db.scalar(select(RagIndexJobModel).where(RagIndexJobModel.id == job.id).with_for_update()) or job
+        profile = self.db.scalar(
+            select(RagDatasetProfileModel)
+            .where(RagDatasetProfileModel.dataset_id == locked_job.dataset_id)
+            .with_for_update()
+        )
+        locked_job.status = "failed"
+        locked_job.stage = "failed"
+        locked_job.error = message
+        locked_job.completed_at = datetime.now(timezone.utc)
+        if profile is not None and int(locked_job.generation or 0) == int(profile.desired_generation or 0):
+            profile.index_status = "failed"
+            profile.embedding_status = "failed"
+            profile.last_error = message
+        self.db.commit()
+
     def _trigger_airflow(self, job: RagIndexJobModel, dataset: dict[str, Any], profile: RagDatasetProfileModel) -> None:
         airflow_token = settings.airflow_api_token or self._airflow_login_token()
         if not settings.airflow_api_base_url or not airflow_token:
-            job.status = "failed"
-            job.stage = "failed"
-            job.error = "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and Airflow credentials are required"
-            profile.last_error = job.error
-            job.completed_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self._fail_airflow_dispatch(job, "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and Airflow credentials are required")
             return
         source_manifest = dataset.get("sourceManifest") or dataset.get("source_manifest")
         if not isinstance(source_manifest, dict) or source_manifest.get("manifestVersion") != 1 or source_manifest.get("datasetId") != job.dataset_id or not source_manifest.get("readUrl") or not source_manifest.get("sparkPath") or not source_manifest.get("format") or not source_manifest.get("fingerprint") or not source_manifest.get("expiresAt"):
-            job.status = "failed"
-            job.stage = "failed"
-            job.error = "Catalog-issued sourceManifest with datasetId, readUrl, sparkPath, format, fingerprint, and expiry is required for Airflow indexing"
-            profile.last_error = job.error
-            job.completed_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self._fail_airflow_dispatch(job, "Catalog-issued sourceManifest with datasetId, readUrl, sparkPath, format, fingerprint, and expiry is required for Airflow indexing")
             return
         import httpx
         dag_run_id = f"rag_{job.id}"
-        payload = {"dag_run_id": dag_run_id, "logical_date": None, "conf": {"jobId": job.id, "datasetId": job.dataset_id, "targetIndex": job.target_index, "sourceManifest": source_manifest, "sourcePath": source_manifest["sparkPath"], "sourceFormat": source_manifest.get("format"), "sourceFingerprint": job.source_fingerprint, "datasetName": dataset.get("name"), "schema": dataset_schema(dataset), "bodyColumns": profile.body_columns, "titleColumns": profile.title_columns, "metadataColumns": profile.metadata_columns, "metadataTypes": job.metadata_types or {}, "filterContractVersion": job.filter_contract_version, "identifierColumns": profile.identifier_columns, "semanticBindings": profile.semantic_bindings, "physicalColumnMapping": job.physical_column_mapping or profile.physical_column_mapping or {}, "policyFingerprint": job.policy_fingerprint, "embeddingModel": job.embedding_model, "embeddingDimensions": job.embedding_dimensions, "parentSchemaVersion": RAG_PARENT_SCHEMA_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "chunkingVersion": CHUNKING_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "failedRowRateThreshold": job.failed_row_rate_threshold, "stagingBasePath": settings.rag_staging_base_path, "parentTable": job.parent_table, "chunkTable": job.chunk_table, "chunkTargetTokens": settings.rag_chunk_target_tokens, "chunkOverlapTokens": settings.rag_chunk_overlap_tokens, "chunkMaxTokens": settings.rag_chunk_max_tokens}}
-        response = httpx.post(f"{settings.airflow_api_base_url.rstrip('/')}/api/v2/dags/{settings.rag_airflow_dag_id}/dagRuns", json=payload, headers={"Authorization": f"Bearer {airflow_token}", "Content-Type": "application/json"}, timeout=settings.airflow_request_timeout_seconds)
+        versions = job.contract_versions or self._contract_version_snapshot()
+        payload = {"dag_run_id": dag_run_id, "logical_date": None, "conf": {"jobId": job.id, "datasetId": job.dataset_id, "targetIndex": job.target_index, "sourceManifest": source_manifest, "sourcePath": source_manifest["sparkPath"], "sourceFormat": source_manifest.get("format"), "sourceFingerprint": job.source_fingerprint, "datasetName": dataset.get("name"), "schema": dataset_schema(dataset), "bodyColumns": job.body_columns or [], "titleColumns": job.title_columns or [], "metadataColumns": job.metadata_columns or [], "metadataTypes": job.metadata_types or {}, "filterContractVersion": versions.get("filterContractVersion") or job.filter_contract_version, "identifierColumns": job.identifier_columns or [], "semanticBindings": profile.semantic_bindings, "physicalColumnMapping": job.physical_column_mapping or {}, "policyFingerprint": job.policy_fingerprint, "embeddingProvider": job.embedding_provider_snapshot, "embeddingModel": job.embedding_model, "embeddingDimensions": job.embedding_dimensions, "parentSchemaVersion": versions.get("parentSchemaVersion"), "embeddingInputVersion": versions.get("embeddingInputVersion"), "chunkingVersion": versions.get("chunkingVersion"), "fieldRenderingVersion": versions.get("fieldRenderingVersion"), "failedRowRateThreshold": job.failed_row_rate_threshold, "stagingBasePath": settings.rag_staging_base_path, "parentTable": job.parent_table, "chunkTable": job.chunk_table, "chunkTargetTokens": settings.rag_chunk_target_tokens, "chunkOverlapTokens": settings.rag_chunk_overlap_tokens, "chunkMaxTokens": settings.rag_chunk_max_tokens}}
+        try:
+            response = httpx.post(f"{settings.airflow_api_base_url.rstrip('/')}/api/v2/dags/{settings.rag_airflow_dag_id}/dagRuns", json=payload, headers={"Authorization": f"Bearer {airflow_token}", "Content-Type": "application/json"}, timeout=settings.airflow_request_timeout_seconds)
+        except (httpx.HTTPError, TimeoutError) as exc:
+            self._fail_airflow_dispatch(job, f"Airflow RAG dispatch failed before acknowledgement: {exc.__class__.__name__}")
+            return
         if response.status_code >= 400:
-            job.status = "failed"
-            job.stage = "failed"
-            job.error = f"Airflow rejected the RAG index request ({response.status_code}): {response.text[:500]}"
-            profile.last_error = job.error
-            job.completed_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self._fail_airflow_dispatch(job, f"Airflow rejected the RAG index request ({response.status_code}): {response.text[:500]}")
             return
         job.airflow_run_id = dag_run_id
         self.db.commit()

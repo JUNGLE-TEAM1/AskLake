@@ -23,7 +23,13 @@ class McpContextClient:
             return True
         if not self.settings.mcp_server_url or not self.settings.mcp_service_token:
             return False
-        headers = {"Authorization": f"Bearer {self.settings.mcp_service_token.get_secret_value()}"}
+        headers = {
+            "Authorization": f"Bearer {self.settings.mcp_service_token.get_secret_value()}",
+            # The backend requires a context header before the MCP transport is
+            # entered. Health checks only initialize the transport and list tool
+            # names; this sentinel is never accepted by a governed catalog tool.
+            "X-AskLake-AI-Context": "asklake-mcp-healthcheck",
+        }
         try:
             timeout = httpx.Timeout(self.settings.mcp_timeout_seconds)
             async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=False) as http_client:

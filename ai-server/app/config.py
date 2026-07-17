@@ -77,6 +77,32 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator(
+        "provider_model_query_sql",
+        "provider_model_dashboard_assistant",
+        "provider_model_etl_transform",
+        "provider_model_rag",
+        "provider_model_review",
+        "provider_fallback_base_url",
+        "provider_fallback_api_key",
+        "provider_fallback_model",
+        "mcp_server_url",
+        mode="before",
+    )
+    @classmethod
+    def normalize_blank_optional_values(cls, value: object) -> object | None:
+        """Treat blank Compose values as an omitted optional setting.
+
+        Compose intentionally emits empty strings for optional provider fallback
+        fields.  Rejecting those values makes the gateway impossible to start
+        unless a fallback provider is configured.
+        """
+
+        raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+        if isinstance(raw_value, str) and not raw_value.strip():
+            return None
+        return value
+
     @field_validator("provider_base_url", "provider_fallback_base_url")
     @classmethod
     def validate_provider_base_url(cls, value: str | None) -> str | None:

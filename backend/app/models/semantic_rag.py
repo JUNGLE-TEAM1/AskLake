@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -152,7 +152,10 @@ class RagColumnRecommendationModel(TimestampMixin, Base):
 
 class RagIndexJobModel(TimestampMixin, Base):
     __tablename__ = "rag_index_jobs"
-    __table_args__ = (Index("ix_rag_index_jobs_dataset", "dataset_id", "created_at"), Index("uq_rag_index_job_idempotency", "dataset_id", "idempotency_key", unique=True))
+    __table_args__ = (
+        Index("ix_rag_index_jobs_dataset", "dataset_id", "created_at"),
+        Index("uq_rag_index_job_idempotency", "dataset_id", "idempotency_key", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     dataset_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
@@ -160,6 +163,7 @@ class RagIndexJobModel(TimestampMixin, Base):
     requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
     requested_mode: Mapped[str] = mapped_column(String(32), default="index", nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     target_index: Mapped[str | None] = mapped_column(String(255), nullable=True)
     document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     indexed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -177,9 +181,14 @@ class RagIndexJobModel(TimestampMixin, Base):
     policy_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     physical_column_mapping: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    body_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    title_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     metadata_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    identifier_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     metadata_types: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    contract_versions: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
     filter_contract_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedding_provider_snapshot: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -207,7 +216,16 @@ class RagIndexJobModel(TimestampMixin, Base):
 
 class RagIndexManifestModel(TimestampMixin, Base):
     __tablename__ = "rag_index_manifests"
-    __table_args__ = (UniqueConstraint("dataset_id", "index_name", name="uq_rag_index_manifest"),)
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "index_name", name="uq_rag_index_manifest"),
+        Index(
+            "uq_rag_index_manifests_one_active_per_dataset",
+            "dataset_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     dataset_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
@@ -232,8 +250,12 @@ class RagIndexManifestModel(TimestampMixin, Base):
     policy_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     physical_column_mapping: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    body_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    title_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     metadata_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    identifier_columns: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     metadata_types: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    contract_versions: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
     filter_contract_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     semantic_bindings_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chunking_version: Mapped[str | None] = mapped_column(String(64), nullable=True)

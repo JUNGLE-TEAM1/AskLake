@@ -22,8 +22,7 @@
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
 | 10 | P2 | `GET /api/admin/audit-logs` | 서버 감사 로그 조회/검색 |
 
-현재 Pair A Source/Schema/Create/Run/Catalog/SQL 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다. SQL은 `TRINO_ENABLED=true`에서 canonical Trino Query Run을, `false`에서 DuckDB compatibility runtime을 사용합니다.
-Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
+현재 Source/Schema/Create/Run/Catalog/SQL 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다. SQL은 `TRINO_ENABLED=true`에서 canonical Trino Query Run을, `false`에서 DuckDB compatibility runtime을 사용합니다. frontend local/mock adapter는 제거되었으며 API 실패는 명시적 오류 상태로 처리합니다.
 
 ## 2. 프론트 연결 위치
 
@@ -48,7 +47,6 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
@@ -64,15 +62,13 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- `VITE_USE_MOCK_API`: `false` 또는 미설정이면 live backend를 호출합니다. frontend mock mode는 `true`를 명시합니다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 호출합니다. 다른 Assistant API 경로 또는 origin이 필요할 때만 지정합니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
 - EC2 production은 `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, `S3_FORCE_PATH_STYLE=false`를 사용합니다. custom endpoint와 장기 AWS access key/secret은 설정하지 않고 EC2 instance profile IAM Role/default credential chain으로 인증합니다.
 - `TRINO_ENABLED=true`이면 production은 사전 생성한 Warehouse와 Query Result S3 bucket도 같은 default credential chain으로 사용합니다. Query Result page는 canonical `storage="s3"`로 응답하며 local MinIO와 legacy PostgreSQL page는 read compatibility로만 구분합니다.
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
-- mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
-- live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
+- Source/Schema/Create/Run 흐름은 실제 백엔드를 호출합니다. provider나 인프라가 준비되지 않으면 성공 fixture로 대체하지 않습니다.
 - 새 Kafka Source의 broker 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`, runtime 응답 전체에서 공유하는 기본 512 MiB/256 object 예산, DuckDB query당 기본 15초와 memory/temp 각 256 MiB/2 threads 경계를 사용합니다. 예산은 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS`, 실행 경계는 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`/`ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 설정합니다.
@@ -1128,7 +1124,7 @@ type ReviewSnapshot = {
 ```
 
 - `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
-- live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
+- backend는 source connector 결과를 재확인하며 실패 시 Review를 `확인 필요`로 반환합니다. frontend fixture로 성공 상태를 대체하지 않습니다.
 - 내부 `Data Lake` source는 `sourceConfig`의 `Source Dataset ID`를 기준으로 Catalog dataset을 다시 검증합니다. dataset은 `available` 상태이며 현재 actor가 조회할 수 있어야 하고, `queryEngineStatus=available`인 Iceberg `queryEngineTable`을 가져야 합니다. 실제 Snapshot Run은 이 table identity를 Spark catalog source로 읽습니다. `Data Lake Parquet`은 이 계약과 별개로 S3/S3A path connector 검증을 유지합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.
@@ -1448,7 +1444,7 @@ Response 예시:
 - `selectedJob`을 응답값으로 변경합니다.
 - Catalog Dataset은 비동기 command 접수 응답에서 추가하지 않습니다. Airflow의 `publish_run_result`가 Catalog reconciliation까지 성공한 뒤 frontend polling이 terminal success를 관찰하면 Catalog 목록을 재조회해 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
-- mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
+- 생성된 pipeline Dataset은 backend Catalog에 영속화하고 `GET /api/catalog/datasets`로 다시 읽습니다. browser localStorage를 Catalog source of truth로 사용하지 않습니다.
 - Spark와 Catalog reconciliation 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
 - ETL `lineageGraph`의 source node에는 실제 source/transform input 컬럼만 포함합니다. source-to-job edge는 transform step의 `input -> output` 또는 명시적 sourceName-to-targetName mapping으로 만들고, job-to-target edge는 같은 output column name으로 연결합니다. 결과 schema를 source node에 복제하거나 컬럼 순번만으로 연결하지 않습니다. `_asklake_run_id`, `_asklake_ingested_at` 같은 실행 metadata는 source가 아니라 Spark job에서 생성된 것으로 표현합니다.
 - ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 요청값이 아니라 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용합니다.
@@ -2037,9 +2033,13 @@ type QueryAiSuggestionResponse = {
   body: string;
   mode: "draft_sql";
   model?: string | null;
+  provider?: string | null;
   notices: string[];
+  retrieval?: Record<string, unknown>;
+  sources?: Array<Record<string, unknown>>;
   sql: string;
   title: string;
+  usedEvidenceIds: string[];
 };
 ```
 
@@ -2067,17 +2067,18 @@ Validation:
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
-- frontend는 live 응답이 선택 reference JOIN을 포함하지 않는 경우 동일한 선택 metadata로 JOIN SQL 초안 fallback을 적용할 수 있습니다.
+- frontend는 Gateway가 검증된 SQL 초안을 반환하지 않으면 오류를 표시하며 로컬 SQL 초안을 대신 만들지 않습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
 - AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.
 - OpenAI 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
+- `sources`는 검색 후보 전체가 아니라 `usedEvidenceIds`와 정확히 일치하는 실제 사용 근거만 포함합니다.
 
 프론트 기대 동작:
 
 - Query AI 제안은 자동 실행하지 않고 SQL editor 적용 버튼을 통해서만 반영합니다.
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
-- mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
+- provider 실패나 RAG 선행 조건 부족을 가짜 SQL·근거로 대체하지 않습니다.
 
 ### 7.9 DuckDB compatibility SQL 결과 기반 Lake Dataset 생성
 
@@ -2174,7 +2175,7 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 - 마지막 `처리 Job 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
 - 저장 화면에서 입력한 `name`, `description`, 스케줄, owner, permission summary, DB, 파일 포맷, 압축, 다중 파티션, 태그, 저장 경로를 생성 Job metadata에 반영합니다.
-- mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
+- SQL 결과의 처리 Job은 ETL 생성 경로를 통해 backend Catalog Dataset으로 영속화합니다. browser localStorage에 derived Dataset을 만들지 않습니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
 - `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
 - `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
@@ -2243,7 +2244,7 @@ Response `200 OK`:
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 - SQL derived dataset 생성은 `CatalogService`와 `CatalogRepository.saveDatasetPayload` 경로만 사용합니다. ETL service는 pipeline/job/run 생성과 Spark 결과 dataset 저장만 소유합니다.
-- mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
+- pipeline 생성 Dataset과 SQL 결과 처리 Job Dataset은 같은 backend Catalog persistence와 권한 계약을 사용합니다.
 
 ### 8.2 데이터셋 상세
 
@@ -2345,7 +2346,7 @@ Response 예시:
 ```
 
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
-Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
+Lineage API가 unavailable이면 화면은 오류와 재시도를 표시하며 `CatalogDataset.upstream` fixture로 실제 lineage를 가장하지 않습니다.
 
 ### 8.3 데이터셋 materialization 결과 삭제
 
@@ -3204,7 +3205,7 @@ Frontend는 published `/dashboards/{dashboardId}`에서 Continuous dataset만 po
 그 다음 actor의 dataset `query` permission과 governance를 통과한 available catalog dataset, 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI 컨텍스트로 전달한다. 제외된 dataset의 `sampleRows`와 연결 widget의 `dataSample`은 provider request에 포함하지 않는다.
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
 OpenAI 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
-OpenAI 설정이 없거나 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+Private AI Gateway 설정이 없거나 provider 호출이 실패하면 명시적인 unavailable/error 응답과 빈 action을 반환한다.
 프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
 값을 지정하면 해당 경로로 요청하며, `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
 
@@ -3285,7 +3286,7 @@ type DashboardAssistantResponse = {
 - `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 시각화 요청 위젯에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
 - `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
 - `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 시각화 요청 위젯을 실제 차트로 변환할 때 자동 적용한다.
-- `warnings`에 `mock fallback`이 포함되면 OpenAI 실제 응답이 아니라 서버 fallback 응답으로 봐야 한다.
+- provider/model과 실제 사용 근거 ID가 없는 응답은 AI 생성 성공으로 취급하지 않는다.
 
 Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema/sample rows 기준으로 검증한다. 없는 컬럼은 alias로 보정하고, 차원 컬럼만 제시된 막대/선/면 차트 요청은 `count` 집계로 보정한다. 그래도 적용 가능한 action이 없으면 `visualization_request`에 한해 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성할 수 있다.
 
@@ -3754,9 +3755,9 @@ type AuditEntry = {
 
 ## 11. 프론트 전환 순서
 
-1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
-2. 백엔드 서버를 실행합니다.
-3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
+1. 백엔드 서버와 필수 내부 서비스를 실행합니다.
+2. `frontend/.env`에 `VITE_API_BASE_URL`을 설정합니다.
+3. 실제 Dataset으로 Source/Schema 연결 테스트와 생성 플로우를 확인합니다.
 4. 프론트 dev 서버를 재시작합니다.
 5. `POST /api/etl/sources/assets`로 연결 검증과 대상 탐색을 확인한 뒤, 선택값을 포함한 `POST /api/etl/sources/test`로 Source/Schema live preview 흐름을 확인합니다.
 6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
@@ -3798,9 +3799,11 @@ type PermissionGrant = {
 
 빈 `principalId` 또는 action이 없는 grant는 `400 VALIDATION_ERROR`다. `public` principal은 `principalId`를 `public`으로 정규화한다. backend는 client가 보낸 `id`와 `source`를 신뢰하지 않고 새 ID와 `permission_ui` source를 부여한다.
 
-권한 옵션 조회는 admin actor만 허용한다. live frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막는다. `VITE_USE_MOCK_API=true`에서는 동일 response shape의 fixture를 사용하되 최종 Job request shape는 live와 동일하다.
+권한 옵션 조회는 admin actor만 허용한다. frontend는 API 오류 시 grant 화면 안에 재시도 경로를 표시하고 다음 단계 이동을 막으며 fixture 응답으로 우회하지 않는다.
 #### RAG v2 and Dashboard Assistant action application
 
 Query AI and Dashboard Assistant use a shared semantic-layer RAG resolver. `retrieval.provenance=semantic_layer_rag` means the response was authorized by a published Semantic Model and an approved serving index; `semanticModels` carries metrics, dimensions, relationships, and vocabulary, while `sources` carries retrieved source body/title evidence. If either prerequisite is missing, the response contains an explicit retrieval status and no fabricated sources.
+
+RAG approval accepts multiple title/body fields and permits only the deliberate `body+metadata` and `body+identifier` overlaps. Whole-document embedding requires an explicit PII confirmation, keeps the stable identifier role, and sends every selected field through labeled parent-document rendering and bounded chunking. Job history returns `isComplete`, nullable `progressPercent`, `progressDeterminate`, physical counts, provider/model provenance, validation evidence, and alias activation state. A job is complete only when status/stage are `ready`, validation is `passed`, activation is `committed`, and `completedAt` exists; unknown progress is never replaced with a stage-weight percentage.
 
 When a Dashboard Assistant prompt requests a widget/chart mutation, the frontend sends `visualization_request` and persists the guarded action through the draft widget create/update API. The assistant only reports success after the save callback succeeds.
