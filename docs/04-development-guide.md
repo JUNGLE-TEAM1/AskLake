@@ -1243,6 +1243,22 @@ npm run verify:control-plane-ownership
 
 이 검증은 배포를 실행하지 않으며 `backend/app/main.py`의 lifespan이나 Compose environment를 변경하지 않는다. 현재 owner 선언과 repository entrypoint marker가 어긋나거나 required control plane을 둘 이상의 workload가 claim하면 merge 전에 실패한다.
 
+### 10단계 stacked PR 순차 머지 검증
+
+현재 refactor PR은 모두 base `dev`인 누적 branch다. `stacked-pr-merge-plan.json`의 order대로 한 번에 하나만 merge하고, 매 merge 뒤 `dev`를 fetch한 다음 다음 PR의 changed files·conflict·required checks를 다시 확인한다. validator 통과는 GitHub live check나 review 승인을 대신하지 않는다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_stacked_pr_merge_plan
+python3 scripts/refactor_audit/stacked_pr_merge_plan.py
+
+cd backend
+npm run verify:stacked-pr-merge-plan
+npm run verify:refactor-release-plan
+npm run verify:refactor-release-execution  # manual evidence 전 exit 2가 정상
+```
+
+merge 중에는 배포·재시작·traffic 전환을 수행하지 않는다. 실패하거나 예상 밖 누적 diff가 보이면 다음 PR을 열지 않고 해당 단계에서 중단한다.
+
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 
 ```bash

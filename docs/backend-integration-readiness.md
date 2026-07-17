@@ -603,6 +603,17 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 이 readiness는 기존 compatibility activation, API/DB/runtime, UI와 배포 설정을 바꾸지 않는다. validator의 pass는 manifest 정합성만 뜻하며 제거 승인으로 해석하지 않는다.
 
+## Current 10-PR merge readiness
+
+- [x] issue/PR/branch/base/직전 PR dependency를 machine-readable manifest로 고정
+- [x] 정확히 10개, contiguous order, strict sequential merge와 no-deploy 규칙 검증
+- [x] backend/frontend deterministic regression과 release plan 검증 command 연결
+- [ ] PR 01부터 PR 10까지 각 단계의 review·green CI 확인 후 `dev` 순차 merge
+- [ ] 각 merge 뒤 다음 PR changed files·conflict·CI를 새 `dev` 기준으로 재검증
+- [ ] 실제 EKS/EC2 control-plane owner, isolated nightly, clean reboot, backup/restore 수동 evidence
+
+정적 plan 통과는 merge나 production 실행을 수행하지 않는다. 마지막 PR까지 merge된 뒤에도 release execution은 모든 production manual gate가 passed 되기 전 exit 2로 차단되어야 한다.
+
 ## Full-stack E2E·recovery readiness
 
 - [x] PR/release/nightly 누적 profile과 선언형 fault matrix

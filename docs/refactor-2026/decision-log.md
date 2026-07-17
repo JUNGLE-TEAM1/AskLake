@@ -139,3 +139,10 @@
 - 결정: production register 10경로와 1:1인 evidence manifest를 두고, 최소 30일 관찰·호출 0건·근거 참조·review 승인을 모두 통과한 경로만 제거 후보로 판정한다.
 - 이유: source marker와 counter가 있어도 실제 관찰 기간과 승인 기록을 기계적으로 묶지 않으면 문자열 검색이나 추정만으로 persisted compatibility reader를 삭제할 수 있다.
 - 제약: 현재 모든 경로는 `not_started`/`not_requested`로 유지하며 제거 가능 경로는 0개다. runtime source, activation flag, façade/mock/legacy 기본값, API/DB/UI와 배포 topology는 변경하지 않는다.
+
+## D-022 — 현재 10개 PR은 strict sequential merge와 단계별 재검증으로만 통합
+
+- 상태: Accepted
+- 결정: 모든 PR의 base는 `dev`로 유지하되 manifest의 직전 PR dependency 순서대로 한 번에 하나만 merge하고, 매 단계 뒤 다음 PR diff·conflict·CI를 새 `dev` 기준으로 재확인한다.
+- 이유: stacked branch의 뒤 PR은 앞 PR 변경을 포함하므로 순서를 건너뛰거나 오래된 diff를 승인하면 실제 merge 범위와 검증 근거가 달라진다.
+- 제약: validator는 GitHub live review와 check를 대신하지 않는다. 이 작업은 PR 생성·정적 release gate까지만 수행하며 merge, branch 삭제, production deploy/restart/traffic 이동은 사람 승인 전 금지한다.

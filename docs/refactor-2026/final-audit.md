@@ -4,7 +4,7 @@
 - 재감사 코드: `refactor-#847@bce18f37ceb2923531cabd8948dc27b6caacdf7d`
 - 원 감사 위험도: **7.8/10, 높음**
 - 재감사 위험도: **4.6/10, 중간**
-- 판정: **Guarded GO — canary 준비까지 허용, production 전체 전환은 3개 수동 gate 완료 전 차단**
+- 판정: **Guarded GO — canary 준비까지 허용, production 전체 전환은 현재 5개 수동 gate 완료 전 차단**
 
 정량 source of truth는 [final-audit.json](./final/artifacts/final-audit.json), [code-metrics.json](./final/artifacts/code-metrics.json), [contracts.json](./final/artifacts/contracts.json)이다. 이 문서의 점수는 해당 수치와 실행 증거를 바탕으로 한 위험 판단이며 코드 줄 수만으로 계산한 품질 점수가 아니다.
 
@@ -110,12 +110,14 @@ God Page와 실행 스크립트는 실제 경계로 분리됐고, Continuous 상
 
 아직 실행하지 않은 증거:
 
+- 현재 10개 stacked PR의 strict 순차 merge와 각 단계 next diff·CI 재검증.
+- 실제 EKS workload/replica와 EC2 Compose process의 Continuous 단일-owner 대조.
 - self-hosted 격리 Kafka/Spark/object storage/browser nightly fault suite.
 - production canary host clean reboot와 Docker daemon restart.
 - production metadata/object backup의 격리 복원 drill.
 - 24시간/72시간 production 관찰.
 
-이 네 항목은 코드 review로 대체하지 않는다. 앞의 세 항목은 [release-gates.json](./final/release-gates.json)에서 production blocker로 남는다.
+이 여섯 항목은 코드 review로 대체하지 않는다. 앞의 다섯 항목은 [release-gates.json](./final/release-gates.json)에서 production blocker로 남는다.
 
 ## 8. END_STATE_ACCEPTANCE 증거
 
@@ -169,8 +171,8 @@ God Page와 실행 스크립트는 실제 경계로 분리됐고, Continuous 상
 |---|---|
 | PR merge 및 deterministic CI | **GO** |
 | release plan·canary 준비 | **GO** |
-| production canary 실행 | **NO-GO**, 운영 승인과 3개 수동 gate 필요 |
+| production canary 실행 | **NO-GO**, 운영 승인과 현재 5개 수동 gate 필요 |
 | production 100% rollout | **NO-GO**, canary 30분·clean reboot·24h 관찰 필요 |
 | “전체 아키텍처 리팩토링 완료” 선언 | **NO-GO**, R-003/R-008/R-017 잔존 |
 
-실행 전 최종 명령은 `cd backend && npm run verify:refactor-release-execution`이다. 현재는 세 수동 증거가 없으므로 exit 2로 차단되는 것이 정상이다.
+실행 전 최종 명령은 `cd backend && npm run verify:refactor-release-execution`이다. 현재는 5개 수동 증거가 없으므로 exit 2로 차단되는 것이 정상이다.

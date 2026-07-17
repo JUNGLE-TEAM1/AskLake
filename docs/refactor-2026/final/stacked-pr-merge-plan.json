@@ -1,0 +1,116 @@
+{
+  "expectedPullRequestCount": 10,
+  "mergeMode": "strict-sequential",
+  "mergeRules": {
+    "deployDuringMerge": false,
+    "mergeOneAtATime": true,
+    "requireGreenChecks": true,
+    "requireReviewApproval": true,
+    "revalidateNextDiffAfterMerge": true
+  },
+  "productionExecution": "blocked-pending-manual-evidence",
+  "pullRequests": [
+    {
+      "base": "dev",
+      "branch": "refactor-#861",
+      "declaredReviewState": "ready-for-review",
+      "dependsOnPullRequest": null,
+      "issue": 861,
+      "order": 1,
+      "pullRequest": 863,
+      "scope": "배포 UI 무변경·compatibility façade 비활성 기준선"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#864",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 863,
+      "issue": 864,
+      "order": 2,
+      "pullRequest": 865,
+      "scope": "ETL Job 조회 application 경계"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#866",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 865,
+      "issue": 866,
+      "order": 3,
+      "pullRequest": 867,
+      "scope": "ETL Job command·delete transaction 경계"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#868",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 867,
+      "issue": 868,
+      "order": 4,
+      "pullRequest": 869,
+      "scope": "Pipeline create/update write application 경계"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#871",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 869,
+      "issue": 871,
+      "order": 5,
+      "pullRequest": 872,
+      "scope": "Airflow Spark 실행·Catalog 발행 경계"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#873",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 872,
+      "issue": 873,
+      "order": 6,
+      "pullRequest": 874,
+      "scope": "Source connector Python·Node 권위 경계"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#875",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 874,
+      "issue": 875,
+      "order": 7,
+      "pullRequest": 876,
+      "scope": "EKS·EC2 Continuous 단일-owner 계약"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#877",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 876,
+      "issue": 877,
+      "order": 8,
+      "pullRequest": 878,
+      "scope": "ETL CSS 인접 중복 cascade 무변경 정리"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#879",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 878,
+      "issue": 879,
+      "order": 9,
+      "pullRequest": 880,
+      "scope": "Legacy·fallback 제거 증거 fail-closed gate"
+    },
+    {
+      "base": "dev",
+      "branch": "refactor-#881",
+      "declaredReviewState": "draft",
+      "dependsOnPullRequest": 880,
+      "issue": 881,
+      "order": 10,
+      "pullRequest": 882,
+      "scope": "10단계 순차 머지·release audit gate"
+    }
+  ],
+  "schemaVersion": 1,
+  "targetBranch": "dev"
+}
