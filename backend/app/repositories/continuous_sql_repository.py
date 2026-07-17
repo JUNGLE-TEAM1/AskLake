@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Iterable
+from threading import Lock
+from typing import Any, Iterable
+from weakref import WeakSet
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,16 +30,20 @@ CONTINUOUS_SQL_TABLES = [
     ContinuousSqlBatchModel.__table__,
     ContinuousSqlCommandModel.__table__,
 ]
-_schema_ready_bind_ids: set[int] = set()
+_schema_ready_binds: WeakSet[Any] = WeakSet()
+_schema_ready_lock = Lock()
 
 
 def ensure_continuous_sql_schema(db: Session) -> None:
     bind = db.get_bind()
-    bind_key = id(bind)
-    if bind_key in _schema_ready_bind_ids:
-        return
-    Base.metadata.create_all(bind=bind, tables=CONTINUOUS_SQL_TABLES)
-    _schema_ready_bind_ids.add(bind_key)
+    # Cache the live bind object itself. Caching ``id(bind)`` allowed Python to
+    # reuse an Engine id after a short-lived test/database was collected, which
+    # skipped schema creation for a completely different database.
+    with _schema_ready_lock:
+        if bind in _schema_ready_binds:
+            return
+        Base.metadata.create_all(bind=bind, tables=CONTINUOUS_SQL_TABLES)
+        _schema_ready_binds.add(bind)
 
 
 class ContinuousSqlRepository:
