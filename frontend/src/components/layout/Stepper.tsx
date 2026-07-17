@@ -3,24 +3,27 @@ import { steps as defaultSteps } from "../../data/appShellData";
 
 type StepperProps = {
   activeIndex: number;
+  isStepDisabled?: (stepIndex: number) => boolean;
   onStepSelect?: (stepIndex: number) => void;
   steps?: string[];
 };
 
-export function Stepper({ activeIndex, onStepSelect, steps = defaultSteps }: StepperProps) {
+export function Stepper({ activeIndex, isStepDisabled, onStepSelect, steps = defaultSteps }: StepperProps) {
   return (
     <div className="stepper">
       <div className="stepper-inner">
         {steps.map((step, index) => {
           const complete = index < activeIndex;
           const active = index === activeIndex;
-          const stepTriggerClassName = ["step-trigger", complete ? "complete" : "", active ? "active" : ""].filter(Boolean).join(" ");
+          const disabled = isStepDisabled?.(index) ?? false;
+          const stepTriggerClassName = ["step-trigger", complete ? "complete" : "", active ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ");
           return (
             <div className="stepper-item" key={step}>
               <button
                 aria-current={active ? "step" : undefined}
-                aria-label={`${step} 단계로 이동`}
+                aria-label={disabled ? `${step} 단계 잠김` : `${step} 단계로 이동`}
                 className={stepTriggerClassName}
+                disabled={disabled}
                 onClick={() => onStepSelect?.(index)}
                 type="button"
               >

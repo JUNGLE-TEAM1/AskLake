@@ -4,7 +4,8 @@ import { AlertTriangle, ChevronDown, ChevronUp, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
-import { Panel, PanelHeader } from "@/components/ui/panel";
+import { EtlSectionHeader } from "@/components/etl/EtlSectionHeader";
+import { Panel } from "@/components/ui/panel";
 import type { QualityRuleDraft, SchemaColumnDraft } from "../../types";
 
 type SchemaResultPreviewProps = {
@@ -74,8 +75,7 @@ export function SchemaResultPreview({ columns, qualityRules, sampleRows }: Schem
 
   return (
     <Panel className="schema-result-preview mt-4" variant="plain">
-      <PanelHeader
-        className="min-h-[68px] px-5 py-3.5"
+      <EtlSectionHeader
         description={`샘플 ${Math.min(sampleRows.length, EXPANDED_ROW_LIMIT)}행 중 ${visibleRows.length}행 표시`}
         icon={<Table2 />}
         title="결과 미리보기"

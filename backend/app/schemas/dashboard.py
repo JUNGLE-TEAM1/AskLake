@@ -339,6 +339,7 @@ class DashboardRuntimeResponse(CamelModel):
     dashboard: DashboardMeta
     mode: DashboardRuntimeMode
     revision: DashboardRevision | None
+    event_cursor: int = Field(default=0, ge=0)
     pages: list[DashboardRuntimePage]
     widgets_by_page_id: dict[str, list[DashboardRuntimeWidget]]
     filters: list[DashboardFilter] = Field(default_factory=list)

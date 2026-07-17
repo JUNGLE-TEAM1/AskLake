@@ -5,7 +5,9 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.services.dashboard_physical_data import configure_duckdb_s3
+from app.core.errors import ApiError
 from app.services.object_storage import object_storage_runtime
+from app.services.s3_browser_service import allowed_buckets
 from scripts.object_storage_runtime import (
     AWS_ENV_AND_INSTANCE_PROVIDERS,
     MINIO_SIMPLE_PROVIDER,
@@ -32,8 +34,49 @@ class FakeDuckDbConnection:
 
 
 class ObjectStorageModeTest(TestCase):
+    def test_target_browser_prioritizes_the_spark_output_bucket(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ASKLAKE_OBJECT_STORAGE_PROVIDER": "aws",
+                "ASKLAKE_SPARK_OUTPUT_BUCKET": "asklake-dev-output-123-apne2",
+                "S3_ALLOWED_BUCKETS": "asklake-dev-raw-123-apne2,asklake-dev-output-123-apne2",
+            },
+            clear=True,
+        ):
+            buckets = allowed_buckets()
+
+        self.assertEqual(
+            buckets,
+            ["asklake-dev-output-123-apne2", "asklake-dev-raw-123-apne2"],
+        )
+
+    def test_target_browser_rejects_missing_aws_bucket_configuration(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"ASKLAKE_OBJECT_STORAGE_PROVIDER": "aws"},
+            clear=True,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                allowed_buckets()
+
+        self.assertEqual(raised.exception.code, "SERVICE_UNAVAILABLE")
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_target_browser_keeps_the_local_minio_default(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"ASKLAKE_OBJECT_STORAGE_PROVIDER": "minio"},
+            clear=True,
+        ):
+            buckets = allowed_buckets()
+
+        self.assertEqual(buckets, ["asklake-output"])
+
     def test_spark_etl_entrypoint_uses_provider_aware_builder(self) -> None:
-        source = (Path(__file__).parents[1] / "scripts" / "spark_job_run.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__).parents[1] / "scripts" / "runtime" / "spark_job_runtime.py"
+        ).read_text(encoding="utf-8")
         tree = parse(source)
         make_spark = next(
             node for node in tree.body if isinstance(node, FunctionDef) and node.name == "make_spark"

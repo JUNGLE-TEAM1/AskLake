@@ -5,6 +5,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.core.auth_context import ActorContext
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.config import Settings
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
@@ -138,6 +139,11 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
+        record_compatibility_path(
+            CompatibilityPath.DASHBOARD_ASSISTANT_DEGRADED,
+            reason=warning,
+            context={"mode": request.mode},
+        )
         return DashboardAssistantResponse(
             message="AI Assistant를 사용할 수 없어 요청을 실행하지 않았습니다.",
             actions=[],

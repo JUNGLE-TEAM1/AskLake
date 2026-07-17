@@ -44,6 +44,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/etl/sources/defaults") {
       sendJson(response, 200, {
         kafkaBroker: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+        kafkaTopic: process.env.ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC || process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events",
+        s3Bucket: process.env.ASKLAKE_SOURCE_DEFAULT_S3_BUCKET || process.env.ASKLAKE_RAW_BUCKET || "",
+        s3Prefix: process.env.ASKLAKE_SOURCE_DEFAULT_S3_PREFIX || "",
       });
       return;
     }

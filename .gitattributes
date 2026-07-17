@@ -1,1 +1,3 @@
 *.sh text eol=lf
+frontend/src/styles/etl/*.css whitespace=-blank-at-eof
+frontend/src/styles/layout/*.css whitespace=-blank-at-eof

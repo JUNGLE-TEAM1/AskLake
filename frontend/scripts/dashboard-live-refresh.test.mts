@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
+  dashboardLivePollingStrategy,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
   staleDashboardWidgetIds,
@@ -55,6 +56,14 @@ test("server polling hints use a safe fallback and 1-60 second bounds", () => {
   const jittered = dashboardLiveRefreshInterval(1_000, "clickstream_events");
   assert.ok(jittered >= 1_000 && jittered <= 1_100);
   assert.equal(jittered, dashboardLiveRefreshInterval(1_000, "clickstream_events"));
+});
+
+test("an open SSE stream suspends polling while hybrid keeps only a safety poll", () => {
+  assert.equal(dashboardLivePollingStrategy("polling", "open"), "normal");
+  assert.equal(dashboardLivePollingStrategy("hybrid", "open"), "safety");
+  assert.equal(dashboardLivePollingStrategy("sse", "open"), "suspended");
+  assert.equal(dashboardLivePollingStrategy("sse", "degraded"), "normal");
+  assert.equal(dashboardLivePollingStrategy("sse", "fallback_polling"), "normal");
 });
 
 test("published runtime groups each live dataset once", () => {

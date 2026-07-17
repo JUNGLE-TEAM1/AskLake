@@ -14,7 +14,10 @@ from app.schemas.permissions import PermissionGrant
 
 PermissionResourceKey = tuple[str, str]
 DELETED_SEED_SOURCE = "admin_seed_deleted"
+LEGACY_PERMISSION_SOURCE = "legacy_permission_roles"
+UI_MANAGED_SOURCES = {"permission_ui", LEGACY_PERMISSION_SOURCE}
 ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
+VIEW_DEPENDENT_ACTIONS = ALLOWED_ACTIONS - {"view"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
 ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
 
@@ -151,7 +154,7 @@ def replace_permission_ui_grants(
         select(PermissionGrantModel)
         .where(PermissionGrantModel.resource_type == normalized_resource_type)
         .where(PermissionGrantModel.resource_id == normalized_resource_id)
-        .where(PermissionGrantModel.source == "permission_ui")
+        .where(PermissionGrantModel.source.in_(UI_MANAGED_SOURCES))
     ).all()
     for row in existing_rows:
         db.delete(row)
@@ -180,6 +183,59 @@ def replace_permission_ui_grants(
     db.add_all(rows)
     db.commit()
     return [row_to_permission_grant(row) for row in rows]
+
+
+def ensure_legacy_permission_grants(
+    db: Session,
+    *,
+    resource_type: str,
+    resource_id: str,
+    grants: list[PermissionGrant],
+    created_by: str | None,
+) -> list[PermissionGrant]:
+    """Persist legacy UI roles once so authorization reads one grant store."""
+    ensure_permission_grant_table(db)
+    normalized_resource_type = validate_resource_type(resource_type)
+    normalized_resource_id = validate_required(resource_id, "resourceId")
+    existing_rows = db.scalars(
+        select(PermissionGrantModel)
+        .where(PermissionGrantModel.resource_type == normalized_resource_type)
+        .where(PermissionGrantModel.resource_id == normalized_resource_id)
+        .where(PermissionGrantModel.source.in_(UI_MANAGED_SOURCES))
+    ).all()
+    if existing_rows or not grants:
+        return list_permission_grants_by_resource(
+            db,
+            [(normalized_resource_type, normalized_resource_id)],
+        ).get((normalized_resource_type, normalized_resource_id), [])
+
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    rows: list[PermissionGrantModel] = []
+    for grant in grants:
+        principal_type = validate_principal_type(grant.principal_type)
+        principal_id = "public" if principal_type == "public" else validate_required(grant.principal_id, "principalId")
+        actions = validate_actions(list(grant.actions))
+        key = (principal_type, principal_id, tuple(actions))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(PermissionGrantModel(
+            id=f"grant_{uuid4().hex}",
+            resource_type=normalized_resource_type,
+            resource_id=normalized_resource_id,
+            principal_type=principal_type,
+            principal_id=principal_id,
+            actions=actions,
+            source=LEGACY_PERMISSION_SOURCE,
+            created_by=created_by,
+        ))
+
+    db.add_all(rows)
+    db.commit()
+    return list_permission_grants_by_resource(
+        db,
+        [(normalized_resource_type, normalized_resource_id)],
+    ).get((normalized_resource_type, normalized_resource_id), [])
 
 
 def update_permission_grant(
@@ -275,7 +331,10 @@ def validate_principal_type(value: str) -> str:
 
 
 def validate_actions(values: list[str]) -> list[str]:
-    actions = sorted({value.strip() for value in values if value.strip()})
+    normalized_actions = {value.strip() for value in values if value.strip()}
+    if normalized_actions & VIEW_DEPENDENT_ACTIONS:
+        normalized_actions.add("view")
+    actions = sorted(normalized_actions)
     if not actions:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "At least one permission action is required", status.HTTP_400_BAD_REQUEST)
     unsupported = [action for action in actions if action not in ALLOWED_ACTIONS]

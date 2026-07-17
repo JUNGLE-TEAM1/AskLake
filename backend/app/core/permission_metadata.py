@@ -1,8 +1,11 @@
 from typing import Any
 
 ACTION_LABELS = {
+    "공유": "share",
     "관리": "manage",
+    "삭제": "delete",
     "메타데이터": "view",
+    "실행": "run",
     "조회": "view",
     "쿼리 실행": "query",
 }

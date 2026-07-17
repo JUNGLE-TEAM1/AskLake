@@ -39,7 +39,86 @@ npm run build
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 단계의 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 
-`npm run verify:ui-regressions`는 timeline 상태 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+### 단계적 리팩토링 기준선
+
+2026년 단계적 리팩토링은 [리팩토링 진행 원장](./refactor-2026/progress-ledger.md)의 순서와 rollback 경계를 따른다. 코드·계약 기준선을 다시 생성할 때는 저장소 root에서 아래 명령을 실행한다.
+
+```bash
+python3 scripts/refactor_audit/collect_baseline.py
+
+# backend/requirements.txt의 mcp==1.28.1 때문에 Python 3.10 이상이 필요하다.
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+PYTHONPATH=backend backend/.venv/bin/python scripts/refactor_audit/export_openapi.py
+```
+
+수집기는 제품 코드를 import하지 않고 정량 지표와 정적 계약 JSON을 만든다. OpenAPI exporter만 FastAPI app을 import하며 network service를 시작하지 않는다. 생성물에는 timestamp, hostname, credential을 포함하지 않는다. 기준선 결과와 변경 전 실패는 [테스트 명령 지도](./refactor-2026/baseline/test-command-map.md)와 [기존 실패 목록](./refactor-2026/baseline/pre-existing-failures.md)에 기록한다.
+
+최종 재감사와 release 준비는 [최종 감사](./refactor-2026/final-audit.md)와 [단계적 rollout·rollback runbook](./refactor-2026/operations/staged-rollout-and-rollback.md)을 따른다.
+
+```bash
+cd backend
+npm run verify:refactor-final-audit
+npm run verify:refactor-release-plan
+
+# production 실행 직전 전용. 수동 증거가 없으면 exit 2가 정상이다.
+npm run verify:refactor-release-execution
+```
+
+`verify:refactor-release-plan`은 network나 production state를 변경하지 않는다. production deploy, clean reboot, traffic promotion은 별도 운영 승인 없이는 실행하지 않는다.
+
+ETL runtime 외부 I/O 경계를 변경할 때는 subprocess나 network service 없이 Port/Adapter unit과 기존 Continuous facade 회귀를 먼저 실행한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_runtime_io_ports \
+  tests.test_kafka_continuous_dashboard_sync \
+  tests.test_kafka_snapshot_iceberg \
+  tests.test_continuous_maintenance_fencing -v
+```
+
+새 subprocess, raw runtime JSON read/write, Continuous manifest boto3 호출을 `etl_service.py`에 직접 추가하지 않는다. 호출·오류·rollback 계약은 [Runtime 외부 I/O Port·Adapter 계약](./refactor-2026/contracts/runtime-io-ports.md)을 따른다.
+
+Continuous 명령 또는 reconciliation을 변경할 때는 application use case 테스트를 먼저 실행한다. durable intent commit 이전의 worker 제출, report 부재를 곧바로 `failed`로 만드는 판정, active fencing token과 다른 report 수용을 금지한다. 세부 순서와 복구 정책은 [Continuous 명령·Reconciliation Application 계약](./refactor-2026/contracts/continuous-command-reconciliation.md)을 따른다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_continuous_application_use_cases \
+  tests.test_continuous_runtime_contract \
+  tests.test_continuous_maintenance_fencing \
+  tests.test_kafka_continuous_dashboard_sync -v
+```
+
+Continuous output·manifest·Catalog·Dashboard 발행을 변경할 때는 단계별 transaction과 재시도 테스트를 먼저 실행한다. Catalog와 Dashboard를 하나의 transaction으로 합치거나, Dashboard 실패 때문에 기존 Iceberg/Catalog 성공을 실패 처리하거나, 같은 batch retry에서 Spark output을 다시 만드는 변경을 금지한다. 상세 멱등 키와 복구 표는 [Continuous Materialization·Catalog·Dashboard 발행 계약](./refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_continuous_publication_workflow \
+  tests.test_kafka_continuous_dashboard_sync \
+  tests.test_dashboard_live_repository -v
+npm run verify:continuous-runtime-contract
+npm run verify:kafka-continuous-contract
+```
+
+Pipeline create/update, Snapshot command, SQL/Catalog publication을 변경할 때는 [Pipeline·Snapshot·SQL·Catalog Application 경계](./refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 먼저 확인한다. validation과 draft mapping을 `etl_service.py`에 다시 추가하거나 Snapshot command를 Continuous 상태 머신에 합치거나 SQL service가 ETL runtime/session을 직접 변경하는 변경을 금지한다. 최소 검증은 아래와 같다.
+
+```bash
+cd backend
+.venv/bin/python -m unittest tests.test_pipeline_snapshot_catalog_boundaries -v
+.venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-dataset-identity-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
+.venv/bin/python scripts/verify-permission-create-flow-contract.py
+```
+
+`npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+
+ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
+
+ETL 화면의 표는 `DataTable`을 사용한다. 이 컴포넌트가 TanStack Table의 row/column model과 shadcn `Table` primitives를 함께 제공하므로, 미리보기·검증 결과·편집 셀도 별도 `<table>` 마크업을 만들지 않고 `ColumnDef`의 `cell` renderer로 구현한다. 화면별 스타일은 최소 너비, 말줄임, 상태 표현처럼 데이터 의미에 필요한 범위만 `tableClassName`, `viewportClassName`, column meta로 추가한다.
 `npm run test:dashboard-live-refresh`는 published runtime의 Continuous dataset ID 중복 제거, `latestRevision > appliedRevision`인 widget 선택, 서버 polling 힌트의 1~60초 범위, 성공 widget만 기존 runtime에 병합하는 계약을 확인한다. partial 응답이 실제 전진했을 때만 250ms catch-up 대상이 되고 같은 revision을 다시 받으면 일반 주기로 돌아가는지도 검증한다.
 SQL/Catalog pagination 변경 시에는 같은 script가 SQL 전체 snapshot의 페이지 조작, 편집기 단일 스크롤·빈 SQL 유지, Catalog schema/sample viewer와 새로고침·첫/마지막 page 연결을 함께 확인한다. Backend unit test는 10,000행 경계뿐 아니라 20,001행 결과의 마지막 page까지 검증해 총행 제한이 다시 생기지 않게 한다.
 
@@ -66,6 +145,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
+Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
 ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
 Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
 
@@ -80,6 +160,7 @@ npm run verify:snapshot-spark-pipeline
 npm run verify:kafka-target-projection
 npm run verify:target-mode-contract
 npm run verify:kafka-continuous-contract
+npm run verify:continuous-runtime-contract
 npm run verify:kafka-continuous-rules
 
 cd ../frontend
@@ -391,10 +472,25 @@ cd backend
 npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit 100 --rate 100
 ```
 
-배포 환경의 클릭 로그를 Kafka Continuous 입력으로 재사용할 때는 raw S3 object를 서버의 허용된 replay 디렉터리로 내려받고, 10필드 로그를 표준 replay JSONL로 변환한 뒤 기존 producer를 사용한다. 클릭 필드는 `raw.event_time`, `raw.event_id`, `raw.user_id`, `raw.session_id`, `raw.event_type`, `raw.product_id`, `raw.page_url`, `raw.device_type`, `raw.referrer`, `raw.position`에 보존된다.
+배포 환경의 클릭 로그를 Kafka Continuous 입력으로 재사용할 때는 raw S3 object를 서버의 허용된 replay 디렉터리로 내려받는다. 레코드 구조화 데모에서는 변환 CLI를 거치지 않고 `payloadMode=raw_text`로 10필드 원문 줄을 그대로 전송한다. 기존 JSON envelope 회귀 검증이 필요할 때만 아래 변환 CLI로 `raw.*` 필드를 가진 JSONL을 만든다.
 
 ```bash
 aws s3 cp s3://<raw-bucket>/commerce/click-events.log /var/lib/asklake/replay-input/click-events.log
+
+# 레코드 구조화 데모: 원문 한 줄을 Kafka value로 그대로 전송
+curl -X POST https://<asklake-host>/api/etl/kafka/replay-producer \
+  -H 'Content-Type: application/json' \
+  -b '<session-cookie>' \
+  -d '{
+    "topic": "synthetic-commerce.click-events.raw",
+    "inputPath": "click-events.log",
+    "payloadMode": "raw_text",
+    "rate": 100,
+    "batchSize": 100,
+    "loop": false
+  }'
+
+# 기존 JSON envelope 회귀 검증 경로
 cd backend
 npm run kafka:click-log:convert -- \
   --input /var/lib/asklake/replay-input/click-events.log \
@@ -460,16 +556,17 @@ Snapshot Rule 실행 변경 후에는 위 smoke와 함께 `npm run verify:snapsh
 
 Kafka Continuous Ingestion은 Issue #500 Phase 3에서 long-running Spark Structured Streaming worker까지 연결됐다. Snapshot Job은 wizard의 스케줄 단계에서 수동/반복 실행을 고르고, Continuous Job은 해당 단계를 건너뛰어 생성 후 스트림 시작/중지로 제어한다. Continuous Source 고급 설정은 시작 위치, trigger 간격, micro-batch 최대 메시지를 제공한다. production-like smoke에서는 continuous Job 시작, retained backlog 처리, 새 이벤트 자동 append, pause/resume API 호환, checkpoint restart, lag/heartbeat, conflicting consumer identity `409`을 검증한다. Snapshot smoke는 계속 유지하며 Continuous 검증으로 대체하지 않는다.
 
-`verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, PostgreSQL partition cursor의 worker 전달, start request 상태와 충돌 정책, stream publication manifest/batch identity gate, 종료 report의 stale window/S3 manifest 복구, replay Catalog 재조정, 로컬 result 유실 시 S3 replay manifest 복구와 pending replay start/resume `409` 차단을 확인한다. backend unit test는 전체·부분 offset 중복 필터, durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback과 `count`/`sum`/`avg`의 full baseline, Iceberg `_asklake_run_id` revision catch-up, backfill/legacy full fallback을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
+`verify:continuous-runtime-contract`는 command 전이표, desired/observed/public projection, command revision, worker fencing, legacy hydrate, 단계별 오류와 frontend stale polling 차단을 검증한다. 보호 범위와 아직 opt-in인 live 장애 시험은 [Characterization Test Matrix](refactor-2026/testing/characterization-matrix.md)에 기록한다. `verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, PostgreSQL partition cursor의 worker 전달, start request 상태와 충돌 정책, stream publication manifest/batch identity gate, 종료 report의 stale window/S3 manifest 복구, replay Catalog 재조정, 로컬 result 유실 시 S3 replay manifest 복구와 pending replay start/resume `409` 차단을 확인한다. backend unit test는 전체·부분 offset 중복 필터, durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback과 `count`/`sum`/`avg`의 full baseline, Iceberg `_asklake_run_id` revision catch-up, backfill/legacy full fallback을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
 
 ```bash
 cd backend
+npm run verify:continuous-runtime-contract
 npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 ```
 
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
-ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 `ASKLAKE_KAFKA_BROKER` 값을 읽는다. 로컬 backend 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. 이 값은 새 빈 Source draft에만 한 번 채우고 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. Production은 `ASKLAKE_SPARK_RUNNER=rest`로 내부 Spark Standalone REST submission을 사용하고 backend에 Docker socket/CLI를 요구하지 않는다. 로컬 개발에서만 `ASKLAKE_SPARK_RUNNER=docker`를 명시해 격리 worker/maintenance container를 실행할 수 있다. 두 경로 모두 같은 Iceberg/JDBC/warehouse package와 runtime environment 계약을 사용한다.
@@ -484,6 +581,8 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
 Backend는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+
+작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
 ```bash
 cd backend
@@ -813,10 +912,10 @@ VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
 
 Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
 
-실제 서버에서는 Compose 실행 전에 host directory와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`와 `ASKLAKE_REPLAY_HOST_INPUT_DIR`가 먼저 존재해야 한다. `spark-dir-init`가 공유 경로를 Spark image의 UID/GID `185:185`로 정규화한다.
+실제 서버에서는 Compose 실행 전에 durable host root와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` root와 별도 read-only replay 입력인 `ASKLAKE_REPLAY_HOST_INPUT_DIR`는 먼저 존재해야 한다. `spark-runtime-guard`가 root 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`를 생성하고 UID/GID `185:185`로 정규화하므로 수동 subdirectory `chown`은 필요 없다.
 
 ```bash
-mkdir -p /var/lib/asklake/{spark-ivy,spark-output,spark-runs,samples,review-text-models,replay-input}
+mkdir -p /var/lib/asklake /var/lib/asklake/replay-input
 scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
 ```
 
@@ -1036,6 +1135,8 @@ npm run verify:prefix-spark-e2e
 
 같은 클릭 이벤트를 비정형 `.log`와 조건부 `레코드 구조화` 입력으로 사용할 때는 메모리 제한형 Python 변환기를 사용한다. 로컬 기본 입력은 `backend/fixtures/synthetic-commerce/click_events.jsonl`, 기본 출력은 ignored `backend/tmp/synthetic-commerce/click-events.log`다. 입력 JSONL을 한 줄씩 읽고 헤더 없는 10필드 로그와 행 수·byte·SHA-256 manifest를 함께 만든다.
 
+레코드 구조화 화면은 File/S3와 Kafka raw text 등 소스 종류, 원본 파일명, 감지 필드 수와 무관하게 `AI 필드 자동 추론` action을 항상 노출한다. 현재 action은 향후 AI 추론과 사용자 검증·수정 흐름을 위한 UI placeholder이며 클릭 핸들러, 비활성화 조건, 하드코딩된 클릭 이벤트 schema preset을 갖지 않는다. 사용자는 기존 컬럼명·타입 입력으로 결과를 직접 검증하고 수정하며, backend preview 검증과 최종 확정 절차는 그대로 유지한다.
+
 ```bash
 cd backend
 npm run synthetic-commerce:click-log
@@ -1093,6 +1194,151 @@ ASKLAKE_POSTGRES_FULL_SOURCE_TABLE=click_events npm run verify:postgres-full-sou
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 
 This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
+
+## 14) Realtime 4-PR 개발 순서
+
+이번 전환은 다음 순서로만 merge한다.
+
+1. 계약·ADR·baseline·feature flag
+2. durable SSE backend·Dashboard frontend·proxy/observability
+3. Continuous SQL planner·runtime·publication
+4. recovery/security/E2E/CI/rollout audit
+
+각 후속 branch는 직전 branch에서 만들지만 GitHub PR base는 dev다. 앞 PR이 merge되기 전 후속 PR은 Draft로 유지한다. 상세 원장은 docs/codex-realtime-pr-pack/WORK_STATUS.md다.
+
+STACK-01 focused validation:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m unittest tests.test_realtime_feature_flags tests.test_continuous_runtime_sync_config
+.\.venv\Scripts\python.exe -m unittest tests.test_dashboard_live_repository tests.test_dashboard_live_results tests.test_kafka_continuous_dashboard_sync
+
+cd ..\frontend
+npm run test:dashboard-live-refresh
+npm run build
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+```
+
+STACK-02 focused validation:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m unittest tests.test_realtime_events tests.test_realtime_feature_flags tests.test_dashboard_live_repository
+.\.venv\Scripts\python.exe scripts\verify-realtime-proxy-contract.py
+.\.venv\Scripts\python.exe -m compileall -q app tests
+
+cd ..\frontend
+npm run test:realtime-events
+npm run test:dashboard-live-refresh
+npm run build
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+git diff --check
+```
+
+STACK-03 focused validation:
+
+```powershell
+cd backend
+npm run verify:continuous-sql-contract
+npm run verify:kafka-continuous-contract
+.\.venv\Scripts\python.exe -m unittest tests.test_query_route_compatibility tests.test_sql_run_authorization tests.test_continuous_runtime_sync_config tests.test_kafka_continuous_dashboard_sync tests.test_kafka_continuous_replay_publication
+.\.venv\Scripts\python.exe -m compileall -q app scripts\continuous_sql_runtime.py scripts\kafka_continuous_stream.py
+node --check scripts\manage-kafka-continuous.mjs
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+git diff --check
+```
+
+STACK-04 PR smoke:
+
+```powershell
+cd backend
+npm run verify:realtime-stack
+
+cd ..\frontend
+npm run test:realtime-events
+npm run test:dashboard-live-refresh
+npm run build
+
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+git diff --check
+```
+
+`Realtime Quality Gates / realtime-contracts`는 같은 계약에 disposable PostgreSQL event log/NOTIFY·publication concurrency와 Caddy/NGINX container parser를 추가한다. `realtime-live-e2e`는 매일 schedule 또는 `workflow_dispatch`의 `run_live_iceberg=true`에서 Kafka/Spark/Iceberg fault·restart harness를 실행한다. 실제 ALB와 browser, production-like Continuous SQL stream-static JOIN 증거는 operator gate이며 CI parser나 fake writer test로 대체하지 않는다.
+
+static Dataset JOIN key는 Catalog `uniqueKeySets` 또는 `uniqueKeyColumns`로 명시한다. 기존 `indexColumns`가 실제 unique index임을 보장하는 경우에만 `indexColumnsUnique=true`를 함께 저장한다. `CONTINUOUS_SQL_JOIN_ENABLED=false`가 기본이며 실제 Spark/Iceberg end-to-end, fault/restart와 soak는 STACK-04 gate다.
+
+Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 두 경로를 사용한다. cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
+
+실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 operator gate에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다. 절차와 판정은 `docs/realtime-2026/final-audit.md`, `docs/realtime-2026/production-runbook.md`를 따른다.
+
+기능을 즉시 되돌릴 때는 DASHBOARD_SYNC_MODE=polling, REALTIME_EVENTS_ENABLED=false, CONTINUOUS_SQL_JOIN_ENABLED=false로 재배포한다.
+## 15) Runtime script·Node bridge 변경 검증
+
+Spark/Kafka worker를 수정할 때는 `/scripts/spark_job_run.py`와 `/scripts/kafka_continuous_stream.py`의 경로 및 실행 의미를 유지한다. 신규 정책은 `backend/scripts/runtime/`에 추가하고 entrypoint에는 argument/environment wiring과 exit mapping만 둔다. report/checkpoint/manifest field 변경은 additive version과 backward reader를 함께 추가한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_runtime_script_contracts tests.test_runtime_io_ports tests.test_review_analysis_bridge -v
+node --test scripts/node-json-bridge.test.mjs
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:spark-schema-contract
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-continuous-contract
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:continuous-runtime-contract
+```
+
+macOS 시스템 `python3`가 Python 3.9이면 backend의 union type 문법을 읽지 못할 수 있으므로 위 production verifier에는 `.venv/bin/python`을 명시한다. live Spark/Kafka 검증은 별도 opt-in profile로 실행하고 단위·계약 테스트는 Spark 없이 통과해야 한다.
+
+Node 호출을 추가할 때 application/service에서 inline JavaScript, module URI, shell command를 직접 조립하지 않는다. allow-list operation은 `VersionedNodeBridgePort`에 추가하고 Node runner 양쪽의 version/request/error contract test를 함께 갱신한다. stdout은 protocol JSON 전용이며 secret이 포함될 수 있는 진단은 stderr redaction을 거친다.
+
+## 16) Frontend 상태·ETL Wizard 변경 검증
+
+ETL route, 단계 page, draft hydrate, Job/Catalog hydrate 또는 mutation 순서를 변경할 때는 [Frontend 상태 소유권과 ETL Wizard 경계](refactor-2026/contracts/frontend-state-etl-wizard.md)를 먼저 확인한다. `EtlPages.tsx`에 새 화면 구현을 추가하거나, 최신 요청 판정을 page마다 별도 integer ref로 만들거나, credential을 localStorage에 평문 저장하지 않는다.
+
+```bash
+cd frontend
+npm run test:request-ownership
+npm run test:etl-draft-contract
+npm run test:etl-step-registry
+npm run verify:ui-regressions
+npm run build
+```
+
+`verify-ui-regressions.mjs`의 ETL 계약은 `etlWizardFiles` 모듈 집합을 검사한다. 화면을 추가로 분리하면 새 module path를 이 목록에 포함하고 기존 positive/forbidden pattern을 유지한다. `EtlPages.tsx` compatibility export와 기존 `/etl/*` URL을 제거하는 변경은 별도 deprecation 단계 없이는 허용하지 않는다.
+
+## 17) Frontend Job 화면·데이터 controller 변경 검증
+
+Job 목록·상세·실행 이력은 `pages/ingest/jobs/`, 앱 서버 상태 조회와 mutation은 `state/asklake/`에서 변경한다. `JobsPages.tsx`와 `useAskLakeData.ts` façade에 새 구현을 직접 추가하지 않는다. 화면 module을 추가하면 `verify-ui-regressions.mjs`의 `jobsPageFiles`, 상태 module을 추가하면 `askLakeDataFiles`에 포함한다.
+
+```bash
+cd frontend
+npm run test:request-ownership
+npm run test:jobs-data-boundary
+npm run verify:ui-regressions
+npm run build
+```
+
+Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage`, `useAskLakeData` import를 제거하려면 별도 deprecation PR이 필요하다.
+
+## 18) Frontend CSS·Catalog 경계 변경 검증
+
+ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
+
+```bash
+cd frontend
+npm run test:css-catalog-boundary
+npm run verify:ui-regressions
+npm run build
+```
+
+Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다.
+
 ### ETL Permission create-flow 검증
 
 ```powershell
@@ -1107,11 +1353,13 @@ npm run build
 
 Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으면 `python` 대신 `.\.venv\Scripts\python.exe`를 사용한다. `verify:permission-job-dashboard`는 PostgreSQL metadata DB가 응답 가능한 환경을 요구한다.
 
-## 14) EKS MVP workload 검증
+## 19) EKS MVP workload 검증
 
 EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
+
+`spark_job_run.py`는 배포 경로 호환 façade이고 Kafka bounded offset·MSK IAM·fixture row-count 구현은 `backend/scripts/runtime/spark_job_runtime.py`에 있다. `scripts/verify-eks-workloads.sh`는 façade의 존재와 실제 runtime 구현을 각각 검사해야 하며, 구현 문자열을 façade에 복제해 검증을 통과시키지 않는다. EKS lease와 Kubernetes identity helper를 변경하면 realtime architecture budget과 `tests.test_eks_runtime_boundary`, `tests.test_runtime_io_ports`, `npm run test:spark-kubernetes`를 함께 실행한다.
 
 15.5 bounded 물리 조회는 호환상 `scripts/run-eks-catalog-physical-read-smoke.sh` 이름을 유지한다. Git 제외 Phase 6 image receipt와 `datasetId`, `materializationRoot`, `objectUri`만 가진 Git 제외 `*.physical-read-input.json`을 명시한다. 이 실행기는 URI root 경계만 확인하며 Catalog API를 다시 조회하지 않으므로 `datasetId`는 운영자 인수 문맥이고 결과는 Catalog provenance 증거가 아니라 `bounded-s3-parquet-object` 증거다. `--validate-only`는 AWS/Kubernetes mutation 없이 receipt·입력·AMD64 image와 임시 SparkApplication manifest를 검사한다. `--live`는 별도 confirmation과 검증된 EKS context, Established CRD, Ready controller/webhook, `asklake-spark` ServiceAccount, Ready AMD64 Spark NodePool/NodeClass, 단일 Pod Identity association과 server-side dry-run을 모두 통과해야 한다. 그 뒤 최대 100행을 제한 조회하고 실제 row나 URI 대신 column/row count와 폭 일치만 출력한다. 성공·실패·timeout·signal 모두 현재 run label과 exact name prefix의 SparkApplication·Pod·Service·ConfigMap·PVC를 정리한다. cleanup/audit API 오류는 잔여 0으로 간주하지 않고 실패하며 Spark Secret read 거부도 확인한다. timeout은 1~3600초, poll은 0.1~30초로 제한한다.
 
@@ -1248,8 +1496,56 @@ npm run test:spark-kubernetes
 npm run verify:airflow-catalog-wiring
 ```
 
-## pair1과 dev 정기 동기화
+## 20) pair1과 dev 정기 동기화
 
 다음 EKS 로드맵 날짜를 시작하기 전에는 작업 브랜치에서 `origin/pair1`과 `origin/dev`의 기준선과 예상 충돌을 먼저 계산한다. `pair1`에 직접 병합하거나 한쪽 파일을 통째로 선택하지 않는다. 기본 감사 명령은 `bash scripts/audit-pair1-dev-sync.sh`이며, Issue #857의 최초 기준점과 파일별 해결 원칙은 [pair1-dev 동기화 기준점](pair1-dev-sync-857-baseline.md)에 기록한다.
 
 실제 병합 직전에 `git fetch origin --prune`을 다시 수행한다. 기록된 SHA가 바뀌면 기준점을 갱신하고, 전용 브랜치에서 `origin/dev`를 병합한 뒤 Backend·Frontend·EKS 정적 검증과 SSOT 대조를 통과시켜 `pair1` 대상 PR로 전달한다. 아직 `dev`에 머지되지 않은 열린 PR은 암묵적으로 선반영하지 않는다.
+## 21) API·DB 하위 호환과 Legacy 경로 검증
+
+API schema, SQLAlchemy/Pydantic model, persisted Job/session/runtime document, frontend route 또는 wizard flow를 변경할 때 baseline 검증을 먼저 실행한다.
+
+```bash
+cd backend
+npm run verify:backward-compatibility
+npm run verify:legacy-paths
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_backward_compatibility_contracts \
+  tests.test_runtime_script_contracts
+
+cd ../frontend
+npm run test:compatibility-runtime
+npm run test:etl-draft-contract
+npm run verify:ui-regressions
+npm run build
+```
+
+운영에서 도달 가능한 fallback/legacy adapter를 추가할 때 `docs/refactor-2026/legacy-path-register.json`에 안정적인 ID, owner, activation, telemetry, 제거 조건과 목표 release를 등록한다. 구조화 warning과 counter 없는 production entry는 검증 실패다. 개발 mock/우회는 명시적 환경 guard가 필요하며 production에서 mock으로 조용히 전환해서는 안 된다.
+
+DB breaking change는 같은 PR에서 바로 수행하지 않는다. expand schema와 rollback reader, idempotent backfill, 호출 0 관측 기간, contract 제거를 각각 검증 가능한 단계로 나눈다. Job, session, runtime artifact, checkpoint를 테스트 편의를 위해 초기화하지 않는다.
+## 22) 관측성·품질 게이트 개발 절차 (2026-07-16)
+
+로컬 구조 ratchet은 아래 명령으로 실행한다.
+
+```bash
+cd backend
+npm run verify:quality-gates
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:backward-compatibility
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:legacy-paths
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_observability_contract tests.test_runtime_io_ports tests.test_backward_compatibility_contracts
+```
+
+API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
+
+## 23) ETL E2E·복구 프로필 실행
+
+Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
+
+```bash
+cd backend
+npm run verify:etl-e2e-recovery
+```
+
+배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
+
+시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.

@@ -42,13 +42,14 @@ assert.equal(
 
 const compose = JSON.parse(composeResult.stdout);
 const backend = requiredService(compose, "backend");
-const init = requiredService(compose, "spark-dir-init");
+const runtimeGuard = requiredService(compose, "spark-runtime-guard");
 const master = requiredService(compose, "spark-master");
 const readiness = requiredService(compose, "aws-s3-readiness");
 const worker = requiredService(compose, "spark-worker");
 const backendEnvironment = backend.environment || {};
 
 assert.equal(backendEnvironment.APP_ENV, "production");
+assert.equal(compose.services["spark-dir-init"], undefined, "Production must not depend on a one-shot Spark initializer.");
 assert.equal(backend.build?.target, "backend-runtime", "Backend must use the Docker-free runtime target.");
 assert.equal(master.build?.target, "spark-runtime", "Spark master must use the embedded-script Spark target.");
 assert.equal(worker.build?.target, "spark-runtime", "Spark worker must use the embedded-script Spark target.");
@@ -56,6 +57,8 @@ assert.equal(backendEnvironment.ASKLAKE_SPARK_RUNNER, "rest");
 assert.equal(backendEnvironment.ASKLAKE_MINIO_DOCKER_FALLBACK, "false");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_REST_URL, "http://spark-master:6066");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_MASTER_URL, "spark://spark-master:7077");
+assert.equal(backendEnvironment.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, "4");
+assert.equal(backendEnvironment.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL, "WARN");
 assert.equal(backendEnvironment.ASKLAKE_SPARK_JOB_SCRIPT, "/opt/asklake/scripts/spark_job_run.py");
 assert.equal(
   backendEnvironment.ASKLAKE_SPARK_SOURCE_INSPECT_SCRIPT,
@@ -102,11 +105,34 @@ for (const volume of backend.volumes || []) {
 }
 for (const target of sharedPaths) {
   assert(hasVolumeTarget(backend, target), `Backend is missing shared Spark path ${target}.`);
-  assert(hasVolumeTarget(init, target), `Spark directory initializer is missing ${target}.`);
+  assert(hasVolumeTarget(runtimeGuard, target), `Spark runtime guard is missing ${target}.`);
   assert(hasVolumeTarget(worker, target), `Spark worker is missing shared Spark path ${target}.`);
 }
-assert.equal(init.user, "0:0", "Spark directory initializer must be able to repair fresh bind ownership.");
-assert.match(JSON.stringify(init.command), /chown -R 185:185/);
+assert.equal(runtimeGuard.user, "0:0", "Spark runtime guard must be able to repair fresh bind ownership.");
+assert.equal(runtimeGuard.restart, "unless-stopped", "Spark runtime guard must run again after Docker daemon restart.");
+assert.deepEqual(
+  runtimeGuard.command,
+  ["python3", "/opt/asklake/scripts/ensure_spark_runtime_paths.py", "guard"],
+);
+assert.equal(runtimeGuard.environment?.ASKLAKE_SPARK_RUNTIME_UID, "185");
+assert.equal(runtimeGuard.environment?.ASKLAKE_SPARK_RUNTIME_GID, "185");
+assert.equal(runtimeGuard.environment?.ASKLAKE_SPARK_RUNTIME_DIRECTORY_MODE, "2770");
+assert.equal(runtimeGuard.environment?.ASKLAKE_SPARK_RUNTIME_FILE_MODE, "0660");
+assert.deepEqual(master.depends_on?.["spark-runtime-guard"]?.condition, "service_healthy");
+assert.deepEqual(worker.depends_on?.["spark-runtime-guard"]?.condition, "service_healthy");
+assert.deepEqual(backend.depends_on?.["spark-runtime-guard"]?.condition, "service_healthy");
+assert.deepEqual(backend.command?.slice(0, 4), [
+  "python",
+  "/app/scripts/ensure_spark_runtime_paths.py",
+  "wait-backend-exec",
+  "--",
+]);
+assert.deepEqual(worker.command?.slice(0, 4), [
+  "python3",
+  "/opt/asklake/scripts/ensure_spark_runtime_paths.py",
+  "wait-writer-exec",
+  "--",
+]);
 assert.equal(master.user, "185:185");
 assert.equal(worker.user, "185:185");
 assert.match(master.environment?.SPARK_MASTER_OPTS || "", /spark\.master\.rest\.enabled=true/);
@@ -182,6 +208,19 @@ assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
 
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const runtimePathsResult = spawnSync(pythonBin, [
+  path.join(backendDir, "scripts", "verify-spark-runtime-paths.py"),
+], {
+  cwd: backendDir,
+  encoding: "utf8",
+  maxBuffer: 4 * 1024 * 1024,
+  timeout: 30_000,
+});
+assert.equal(
+  runtimePathsResult.status,
+  0,
+  `Spark runtime path contract failed: ${runtimePathsResult.stderr || runtimePathsResult.stdout}`,
+);
 const bridgeTimeoutResult = spawnSync(pythonBin, [
   path.join(backendDir, "scripts", "verify-spark-bridge-timeout-contract.py"),
 ], {
@@ -216,7 +255,8 @@ assert.equal(
 
 console.log(continuousRestResult.stdout.trim());
 console.log(bridgeTimeoutResult.stdout.trim());
-console.log("Production Spark contract verified: REST runner, configured paths, UID 185 binds, and no backend Docker dependency.");
+console.log(runtimePathsResult.stdout.trim());
+console.log("Production Spark contract verified: REST runner, reboot-safe UID 185 paths, and no backend Docker dependency.");
 
 function requiredService(config, name) {
   const service = config.services?.[name];

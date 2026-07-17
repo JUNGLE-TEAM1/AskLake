@@ -15,7 +15,7 @@ from app.schemas.integration import (
     S3PrefixFolder,
     S3PrefixesResponse,
 )
-from app.services.object_storage import object_storage_runtime
+from app.services.object_storage import object_storage_provider, object_storage_runtime
 
 
 DEFAULT_BUCKETS = ["asklake-output"]
@@ -23,7 +23,12 @@ MAX_PREFIX_LENGTH = 1024
 
 
 def allowed_buckets() -> list[str]:
-    configured = configured_s3_buckets()
+    configured = [
+        bucket
+        for bucket in [str(os.environ.get("ASKLAKE_SPARK_OUTPUT_BUCKET") or "").strip()]
+        if bucket
+    ]
+    configured.extend(configured_s3_buckets())
     configured.extend(
         bucket.strip()
         for bucket in str(
@@ -33,7 +38,16 @@ def allowed_buckets() -> list[str]:
         ).split(",")
         if bucket.strip()
     )
-    return list(dict.fromkeys(configured)) or DEFAULT_BUCKETS.copy()
+    buckets = list(dict.fromkeys(configured))
+    if buckets:
+        return buckets
+    if object_storage_provider() == "aws":
+        raise ApiError(
+            ErrorCode.SERVICE_UNAVAILABLE,
+            "S3 target browsing requires ASKLAKE_SPARK_OUTPUT_BUCKET or S3_ALLOWED_BUCKETS",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    return DEFAULT_BUCKETS.copy()
 
 
 def list_s3_buckets() -> S3BucketsResponse:

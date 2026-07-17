@@ -7,7 +7,7 @@ const backendDir = fileURLToPath(new URL("..", import.meta.url));
 const requestedScript = process.argv[2];
 
 if (!requestedScript) {
-  console.error("Usage: node scripts/run-python-verification.mjs <script.py>");
+  console.error("Usage: node scripts/run-python-verification.mjs <script.py> [...args]");
   process.exit(2);
 }
 
@@ -19,13 +19,17 @@ const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON
   || localPython
   || (process.platform === "win32" ? "python" : "python3");
 const scriptPath = path.resolve(backendDir, requestedScript);
+const allowedScriptRoots = [
+  path.resolve(backendDir, "scripts"),
+  path.resolve(backendDir, "..", "scripts", "refactor_audit"),
+];
 
-if (!scriptPath.startsWith(`${path.resolve(backendDir, "scripts")}${path.sep}`)) {
-  console.error("Verification scripts must stay inside backend/scripts.");
+if (!allowedScriptRoots.some((root) => scriptPath.startsWith(`${root}${path.sep}`))) {
+  console.error("Verification scripts must stay inside an approved scripts directory.");
   process.exit(2);
 }
 
-const result = spawnSync(pythonBin, [scriptPath], {
+const result = spawnSync(pythonBin, [scriptPath, ...process.argv.slice(3)], {
   cwd: backendDir,
   env: {
     ...process.env,

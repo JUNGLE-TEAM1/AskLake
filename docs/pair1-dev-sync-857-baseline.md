@@ -133,3 +133,76 @@ private handoff와 live AWS/EKS 검증은 정적 통합이 통과한 뒤 기존 
 - 파일별 병합 방향과 EKS 보존 경계가 정해졌다.
 - 병합 후 실행할 Git, Backend, Frontend, EKS 검증 게이트가 정해졌다.
 - 실제 병합은 Phase 1로 분리됐다.
+
+## Phase 1 실제 병합 결과
+
+2026-07-17 KST에 병합 직전 `git fetch origin --prune`과 감사 스크립트를 다시 실행했다. `origin/pair1`, `origin/dev`, merge-base와 변경량은 Phase 0 기록에서 바뀌지 않았다.
+
+`docs-#857`의 Phase 0 commit `cc72a12496e9888d3bf3749b346edc02c6804075`에서 `git merge --no-ff origin/dev`를 실행했다. `MERGE_HEAD`는 기록된 `origin/dev`와 같은 `16110c064094c7c66149ec1564470c16f4968cda`다.
+
+Git은 352개 파일의 비충돌 변경을 index에 반영했고 Phase 0에서 예측한 14개 파일만 `UU` 상태로 남겼다. 예상 밖 충돌은 없었으며, 충돌 파일 집합도 Phase 0 목록과 정확히 일치한다. Phase 1에서는 어느 충돌도 임의 해결하지 않았고 merge commit도 만들지 않았다. 현재 merge state가 Phase 2 코드 충돌 해결의 입력이다.
+
+## Phase 2 코드 충돌 해결 결과
+
+Backend 7개와 Frontend 1개의 코드 충돌을 해결했다. `dev`의 realtime/refactor 모듈 구조를 최종 구조로 유지하면서 `pair1`의 EKS 실행 경계를 해당 구조에 이식했다.
+
+- FastAPI lifecycle은 EKS의 `external_ec2`에서 Kafka Continuous sync loop를 시작하지 않으며, dev의 realtime event dispatcher는 별도 설정에 따라 유지한다.
+- ETL command planning과 continuous reconciliation은 dev application layer를 사용한다. bounded EKS fixture, scheduler claim, Airflow source boundary, Kubernetes 실행 identity와 EC2 Continuous 차단은 유지한다.
+- Node subprocess와 progress file 처리는 `SubprocessNodeBridge` adapter로 모았다. SparkApplication UID 진행 상태는 프로세스 종료 전에 callback으로 전달되고 파일은 종료 시 정리된다.
+- `spark_job_run.py`는 dev의 compatibility facade를 사용한다. Kafka fixture boundary, IAM Kafka reader, exact row count와 Iceberg retry reuse는 `runtime/spark_job_runtime.py`와 `runtime/contracts.py`에 이식했다.
+- Kafka Source는 dev의 raw log/record parsing preview와 pair1의 MSK IAM 인증을 함께 사용한다.
+- Frontend API client는 EKS same-origin 기본값과 dev의 mock 제한·correlation diagnostic을 함께 유지한다.
+- Backend dependency와 script는 dev refactor/realtime/recovery 검증과 pair1 MSK IAM/Kubernetes 검증의 합집합이다.
+
+코드 conflict marker와 `git diff --check`는 통과했다. 대상 검증 결과는 다음과 같다.
+
+- EKS runtime boundary, Spark source identity, runtime I/O port, Kafka fixture boundary Python 테스트: 45개 통과
+- progress file adapter 보강 후 runtime I/O port 테스트: 10개 통과
+- Kubernetes Spark provider Node 테스트: 13개 통과
+- Kafka raw preview Node 테스트: 2개 통과
+- Frontend production build: 통과. 기존 대형 chunk 경고만 남음
+
+Phase 2 종료 시 unmerged 파일은 공식·상세 문서 6개뿐이다. 문서 충돌은 Phase 3에서 SSOT 우선순위로 해결하며, 아직 merge commit이나 원격 push를 수행하지 않는다.
+
+## Phase 3 문서 충돌 해결 결과
+
+공식 SSOT와 상세 계약 문서 6개의 충돌을 해결했다. 어느 한쪽 문서를 통째로 선택하지 않고 `dev`의 realtime/refactor 계약과 실제 완료된 EKS Day 14~16 계약을 같은 기준 문서 안에 통합했다.
+
+- `docs/02-architecture.md`는 EKS 애플리케이션 runtime 경계 뒤에 Realtime 2026, application/runtime/frontend 분리, 하위 호환, 관측성과 E2E 복구 경계를 순서대로 배치했다. AWS Target browser는 backend writer와 같은 Output bucket을 사용하며 AWS mode에서 local bucket으로 조용히 fallback하지 않는다.
+- `docs/03-api-reference.md`와 `docs/api-contract.md`는 EKS의 `external_ec2` Continuous ownership, Kubernetes Spark lease/identity 계약과 dev의 realtime endpoint, correlation/error/health, persisted compatibility 계약을 모두 유지했다.
+- `docs/04-development-guide.md`는 기존 1~18 절 뒤에 EKS workload 검증, pair1-dev 동기화, API/DB 호환, 관측성 품질 게이트, ETL E2E 복구 절차를 19~23 절로 정리했다.
+- `docs/backend-integration-readiness.md`는 EKS readiness와 Realtime 2026, full-stack recovery readiness를 별도 목록으로 유지해 완료 증거와 남은 live 검증을 섞지 않았다.
+- `docs/system-guardrails.md`는 EKS B workload 이미지 빌드와 기존 EC2 Compose backend 이미지 빌드를 별도 guardrail로 구분했다. 최신 realtime Compose/S3 검증과 EKS foundation·network·NodePool·Secret·Day 14~16 검증을 합집합으로 유지했다.
+
+충돌 과정에서 발견된 과거 Permission 문구의 모순도 제거했다. 신규 권한 옵션 조회와 기존 작업의 조회 권한은 현재 API 계약의 actor별 정책을 따르며, 과거의 일괄 admin-only 문구를 다시 도입하지 않았다.
+
+전체 `docs/`에서 conflict marker가 없고 `git diff --check`가 통과했다. 문서에 기록한 EKS Continuous 환경값, Spark lease/timeout, health endpoint와 오류 코드는 통합된 Backend 구현에 존재함을 대조했다. Phase 3 종료 뒤에도 merge commit과 원격 push는 수행하지 않으며, 전체 회귀 검증은 다음 페이즈에서 실행한다.
+
+## Phase 4 전체 회귀 검증 결과
+
+통합 상태에서 Backend, Frontend와 EKS 정적 검증을 실행했다. 최초 실행에서 세 가지 병합 회귀를 발견했고 gate를 완화하지 않고 원인을 보완했다.
+
+- `etl_service.py`가 realtime architecture budget을 159줄 초과했다. EKS control-plane, lease heartbeat와 Kubernetes immutable identity 계약을 `app/services/eks_execution_contract.py`로 분리해 façade를 정확히 9,550줄 상한으로 되돌렸다. 기존 import surface는 유지해 EKS runtime boundary 테스트도 호환된다.
+- 분할 CSS의 EOF separator를 제거하면 pre-split cascade byte hash가 달라졌다. 원본 separator를 복구하고 `frontend/src/styles/etl/*.css`, `frontend/src/styles/layout/*.css`에만 `blank-at-eof` whitespace 예외를 제한해 exact cascade와 Git whitespace 검사를 함께 유지했다.
+- 새 realtime 문서의 실제 EC2 식별자와 `run_` 형태의 일반 변수명이 tracked evidence scanner에 걸렸다. 실제 식별자는 redaction하고 일반 문서 변수는 `generation`으로 바꿨다.
+- Spark runtime 구현이 compatibility façade 아래 `backend/scripts/runtime/spark_job_runtime.py`로 이동했는데 EKS verifier가 예전 파일에서 구현 문자열을 찾고 있었다. verifier가 façade 존재와 실제 runtime 구현을 각각 검사하도록 수정했다.
+
+검증 결과는 다음과 같다.
+
+- Backend 기본 검증, API 하위 호환, Kubernetes Spark provider: 통과
+- Realtime stack: deterministic 69개 테스트 통과
+- EKS runtime 집중 Python 테스트: 46개 통과
+- Frontend UI regression: 136개 검사 통과
+- Frontend production build: 통과. 기존 large chunk 경고만 남음
+- EKS foundation, workload Helm/runtime contract, tracked evidence redaction, runtime Secret 25개 scenario: 통과
+- Terraform CLI가 로컬에 없어 foundation verifier의 Terraform 실명령은 문서화된 Docker 검증 대상으로 skip됐다. AWS/EKS 실환경 mutation은 수행하지 않았다.
+
+Phase 4에서도 merge commit과 push는 수행하지 않는다. 모든 보완 파일은 다음 페이즈의 최종 diff·merge commit 검토를 위해 stage한다.
+
+## Phase 5 최종 통합 감사와 merge commit
+
+commit 직전에 `git fetch origin --prune`과 `scripts/audit-pair1-dev-sync.sh`를 다시 실행했다. `origin/pair1`은 `f129dd7640a687f77b446531d623db8b786b1994`, `origin/dev`와 현재 `MERGE_HEAD`는 모두 `16110c064094c7c66149ec1564470c16f4968cda`로 Phase 0 이후 바뀌지 않았다. 감사 스크립트가 재현한 14개 예상 충돌 파일은 이번 병합에서 해결한 파일 집합과 동일하다.
+
+최종 index는 370개 파일이며 이는 `dev`의 realtime/refactor 전체 변경과 `pair1` EKS 경계의 통합 결과다. unmerged entry와 conflict marker는 0개다. `git diff --cached --check`, tracked evidence redaction과 Phase 4의 Backend·Frontend·EKS 검증 결과를 최종 gate로 사용한다.
+
+Phase 5는 현재 전용 브랜치에서 `origin/dev` merge commit을 만드는 것으로 종료한다. 원격 branch push, PR 갱신과 `pair1` 병합은 이 commit을 검토한 다음 단계에서 수행한다.
