@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { apiConfig } from "../../services/apiClient";
 import { getCatalogDataset } from "../../services/catalogApi";
 import type { AuditResult, CatalogDataset } from "../../types";
 import { canQueryDatasetAs } from "../../utils/permissions";
@@ -101,12 +100,6 @@ export function useCatalogExplorerState({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
-    if (apiConfig.useMock) {
-      setPreviewDetailError(null);
-      setPreviewDetailLoading(false);
-      return;
-    }
-
     let cancelled = false;
     const datasetId = previewDataset.id;
     setPreviewDetailError(null);

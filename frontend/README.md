@@ -1,6 +1,6 @@
 # AskLake Frontend
 
-AskLake frontend is a React/Vite app for the data lake workflow. By default it uses the live backend API. Set `VITE_USE_MOCK_API=true` only for frontend-only mock QA.
+AskLake frontend is a React/Vite app for the data lake workflow. It always uses the live backend API; runtime mock mode is disabled.
 
 In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080`; set `VITE_API_BASE_URL` only when you need to point at a different backend.
 
@@ -15,8 +15,6 @@ npm run dev
 
 Vite prints the local URL after startup.
 
-For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`.
-
 ## Build
 
 ```powershell
@@ -28,7 +26,6 @@ npm run build
 
 ```powershell
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=true # frontend-only mock QA only
 ```
 
 `VITE_API_BASE_URL` is optional in local dev. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, so no frontend env is required when using the local backend. Restart the dev server after changing environment variables.
@@ -71,4 +68,4 @@ frontend/src/
 6. The backend returns `{ job, catalogTarget }`; the UI prepends the job to ETL state.
 7. Run the job. After Spark succeeds, the command response returns `dataset` and the UI prepends it to Catalog state.
 
-In live mode, initial ETL and Catalog lists come from backend hydrate endpoints and may start empty. In mock mode, the UI uses frontend fixtures and local fallback storage.
+Initial ETL and Catalog lists come only from backend APIs and may legitimately be empty. API failures stay visible as failures; the frontend does not substitute fixtures or local fallback data.

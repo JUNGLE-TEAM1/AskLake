@@ -22,7 +22,7 @@
     "test:e2e-selectors": "node --experimental-strip-types --test scripts/e2e-selectors.test.mts",
     "test:e2e-contracts": "npm run test:continuous-runtime-contract && npm run test:e2e-selectors",
     "test:record-parsing-ai-action": "node --experimental-strip-types --test scripts/record-parsing-ai-action.test.mts",
-    "test:source-raw-preview": "node --experimental-strip-types --test scripts/source-raw-preview.test.mts",
+    "test:source-raw-preview": "node --experimental-strip-types --test scripts/source-raw-preview.test.mts scripts/source-object-navigation.test.mts",
     "test:sql-result-boundary": "node --experimental-strip-types --test scripts/sql-result-boundary.test.mts",
     "test:trino-timeline": "node --experimental-strip-types --test scripts/trino-execution-timeline.test.mts",
     "test:wizard-navigation": "node --experimental-strip-types --test scripts/wizard-navigation.test.mts",
