@@ -73,12 +73,27 @@ jq -e --slurp '
         )
     ]
     | sort
-  ) == [
-    "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON",
-    "ASKLAKE_SPARK_KUBERNETES_IMAGE"
-  ]
+  ) as $changed
+  | (
+      $changed == [
+        "ASKLAKE_SPARK_HADOOP_AWS_PACKAGE",
+        "ASKLAKE_SPARK_ICEBERG_PACKAGE",
+        "ASKLAKE_SPARK_KAFKA_PACKAGE",
+        "ASKLAKE_SPARK_KUBERNETES_IMAGE",
+        "ASKLAKE_SPARK_POSTGRES_PACKAGE"
+      ]
+      or
+      $changed == [
+        "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON",
+        "ASKLAKE_SPARK_HADOOP_AWS_PACKAGE",
+        "ASKLAKE_SPARK_ICEBERG_PACKAGE",
+        "ASKLAKE_SPARK_KAFKA_PACKAGE",
+        "ASKLAKE_SPARK_KUBERNETES_IMAGE",
+        "ASKLAKE_SPARK_POSTGRES_PACKAGE"
+      ]
+    )
 ' "$BASE_VALUES" "$CANDIDATE_VALUES" >/dev/null || \
-  fail "Day 17 runtime candidate changed more than the approved two keys"
+  fail "Day 17 runtime candidate differs from the approved baked-dependency delta"
 
 jq -e '
   .configMap.data.ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON
@@ -103,6 +118,15 @@ jq -e '
     ]
 ' "$CANDIDATE_VALUES" >/dev/null || \
   fail "Day 17 runtime candidate does not contain the exact four-slot contract"
+
+jq -e '
+  .configMap.data
+  | .ASKLAKE_SPARK_KAFKA_PACKAGE == "none"
+  and .ASKLAKE_SPARK_HADOOP_AWS_PACKAGE == "none"
+  and .ASKLAKE_SPARK_ICEBERG_PACKAGE == "none"
+  and .ASKLAKE_SPARK_POSTGRES_PACKAGE == "none"
+' "$CANDIDATE_VALUES" >/dev/null || \
+  fail "Day 17 runtime candidate must disable all four remote Spark packages"
 
 expected_spark_image="$(jq -r '.images.sparkRuntime' "$RECEIPT")"
 candidate_spark_image="$(jq -r '.configMap.data.ASKLAKE_SPARK_KUBERNETES_IMAGE' "$CANDIDATE_VALUES")"
@@ -140,7 +164,7 @@ helm upgrade --install "$RELEASE" "$CHART" -n "$NAMESPACE" \
 
 if [[ "$MODE" == "--preflight" ]]; then
   echo "day17_runtime_candidate=preflight_passed"
-  echo "day17_runtime_candidate_delta=fixture_slots_and_spark_image_only"
+  echo "day17_runtime_candidate_delta=baked_spark_image_and_remote_packages_disabled"
   echo "day17_runtime_candidate_cluster_mutation=zero"
   exit 0
 fi
@@ -156,7 +180,19 @@ git -C "$ROOT_DIR" check-ignore -q -- "$IAM_RECEIPT" || \
 jq -e '
   .contractVersion == "1.0"
   and .status == "passed"
-  and .checks.planApplySuccess == true
+  and (
+    (
+      (.changeMethod == null or .changeMethod == "terraform-plan-apply")
+      and .checks.planApplySuccess == true
+    )
+    or
+    (
+      .changeMethod == "iam-managed-policy-version"
+      and .checks.scopedChangePreviewSuccess == true
+      and .checks.managedPolicyVersionApplySuccess == true
+      and .checks.previousPolicyVersionPreserved == true
+    )
+  )
   and .checks.exactGroupResources == 4
   and .checks.groupWildcardResources == 0
   and .checks.otherIamStatementsChanged == 0
@@ -180,5 +216,5 @@ release_after="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | select(.name =
   fail "runtime ConfigMap apply unexpectedly replaced FastAPI Pods"
 
 echo "day17_runtime_config=applied"
-echo "day17_runtime_config_delta=fixture_slots_and_spark_image_only"
+echo "day17_runtime_config_delta=baked_spark_image_and_remote_packages_disabled"
 echo "day17_runtime_fastapi_restart=pending"

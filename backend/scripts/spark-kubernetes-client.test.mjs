@@ -192,6 +192,33 @@ test("persisted fixture boundary is copied into the dynamic SparkApplication", (
     JSON.parse(driverEnvironment.ASKLAKE_SPARK_JOB_MANIFEST_JSON).sourceBoundary,
     boundary,
   );
+
+  const previousPackages = {
+    kafka: process.env.ASKLAKE_SPARK_KAFKA_PACKAGE,
+    hadoop: process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE,
+    iceberg: process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE,
+    postgres: process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE,
+  };
+  try {
+    process.env.ASKLAKE_SPARK_KAFKA_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_ICEBERG_PACKAGE = "none";
+    process.env.ASKLAKE_SPARK_POSTGRES_PACKAGE = "none";
+    assert.deepEqual(
+      sparkPackages(job, source, { sparkPath: boundary.outputPath }),
+      [],
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      ASKLAKE_SPARK_KAFKA_PACKAGE: previousPackages.kafka,
+      ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: previousPackages.hadoop,
+      ASKLAKE_SPARK_ICEBERG_PACKAGE: previousPackages.iceberg,
+      ASKLAKE_SPARK_POSTGRES_PACKAGE: previousPackages.postgres,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("configured fixture slots map each exact consumer group to one Iceberg table", { concurrency: false }, () => {
