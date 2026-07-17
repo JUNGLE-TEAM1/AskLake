@@ -145,6 +145,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
 6. 로그인 뒤 목록 데이터는 현재 화면이 실제로 사용하는 범위만 조회한다. Jobs 계열은 Job 목록, Catalog·SQL·AI 계열은 Catalog 목록을 소유하며 Dashboard 목록은 자체 Dashboard 요청만 시작한다. 화면을 벗어난 늦은 응답은 현재 화면 상태에 반영하지 않는다.
+7. 일반 배치 Job의 Airflow 상태는 사용자가 화면을 열어 두었는지와 무관하게 backend가 주기적으로 DB에 저장한다. Jobs 화면은 실행 중인 여러 Job의 가벼운 상태를 한 요청으로 확인하고, 상세·전체 실행 이력은 사용자가 해당 화면을 열 때만 별도로 조회한다.
 
 ### Flow D. Continuous SQL stream-static JOIN
 

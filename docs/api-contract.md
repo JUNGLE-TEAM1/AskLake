@@ -1171,7 +1171,7 @@ type ReviewSnapshot = {
 
 작업 현황의 상태 버튼과 `실행 주기` 컬럼 필터는 이 endpoint를 사용한다. 목록을 프론트엔드에서 임의로 잘라내지 않고, live mode에서는 선택한 조건을 query parameter로 서버에 전달한다.
 
-이 endpoint는 저장된 목록 상태를 읽는 read-only 경로다. 요청 중 Kafka/Node/Spark worker 상태를 확인하거나 runtime/permission row를 갱신하지 않는다. Job, Job별 최신 Run 1개, Continuous runtime, permission/governance 자료는 종류별 일괄 조회한다. 목록의 각 `JobRowData.runHistory`는 비어 있거나 최신 Run 1개만 포함한다. 한 Job의 외부 runtime 최신화, 전체 Run history와 상세 hydrate는 `GET /api/etl/jobs/{jobId}`가 담당한다.
+이 endpoint는 저장된 목록 상태를 읽는 read-only 경로다. 요청 중 Airflow/Kafka/Node/Spark 상태를 확인하거나 runtime/permission row를 갱신하지 않는다. Job, Job별 최신 Run 1개, Continuous runtime, permission/governance 자료는 종류별 일괄 조회한다. 목록의 각 `JobRowData.runHistory`는 비어 있거나 최신 Run 1개만 포함한다. 전체 Run history와 상세 hydrate는 `GET /api/etl/jobs/{jobId}`가 담당하며 이 상세 GET도 외부 runtime 호출과 DB write를 수행하지 않는다.
 
 Query parameter:
 
@@ -1197,6 +1197,34 @@ type GetJobsResponse = {
 `facets`는 현재 선택한 filter와 무관한 전체 목록 기준이다. 따라서 소유자 한 명을 선택한 뒤에도 `owners`에는 등록된 모든 소유자가 유지되고, 현황 버튼도 전체 작업의 상태 분포를 유지한다.
 
 각 `JobRowData`는 DB timestamp 기준의 optional `createdAt`, `updatedAt`을 포함한다. 목록 소유자 셀은 `updatedAt`을 우선 표시하고, legacy row처럼 수정 시각이 없을 때만 `createdAt`을 표시한다.
+
+### 7.3.1 작업 상태 일괄 조회
+
+`GET /api/etl/jobs/statuses?jobId={jobId}&jobId={jobId}`
+
+Jobs 화면이 실행 중인 여러 Snapshot Job의 상태를 한 번에 갱신할 때 사용한다. `jobId`는 중복을 제거한 뒤 최대 100개까지 받는다. 빈 요청은 빈 배열을 반환하고, 존재하지 않거나 현재 actor가 볼 수 없는 Job은 응답에서 제외한다. 이 endpoint는 저장된 DB 상태만 읽으며 Airflow를 호출하거나 상태를 저장하지 않는다.
+
+Response `200 OK`:
+
+```ts
+type JobStatusSnapshot = {
+  id: string;
+  status: JobStatus;
+  progress: { label: string; value: number } | null;
+  lastRun: string;
+  lastState: string;
+  nextRun: string;
+  updatedAt?: string;
+  latestRun: JobRunSummary | null;
+  dagSteps: JobDagStep[];
+};
+
+type GetJobStatusesResponse = {
+  jobs: JobStatusSnapshot[];
+};
+```
+
+101개 이상을 요청하면 `422 VALIDATION_ERROR`를 반환한다. 응답 순서는 허용된 Job에 한해 요청 순서를 유지한다.
 
 ### 7.4 파이프라인 생성
 
@@ -1481,7 +1509,7 @@ Response 예시:
 - `job`을 수집/처리 목록 최상단에 추가합니다.
 - `catalogTarget`은 실행 전 대상 표시용으로만 사용합니다.
 - `selectedJob`을 응답값으로 변경합니다.
-- Catalog Dataset은 비동기 command 접수 응답에서 추가하지 않습니다. Airflow의 `publish_run_result`가 Catalog reconciliation까지 성공한 뒤 frontend polling이 terminal success를 관찰하면 Catalog 목록을 재조회해 추가합니다.
+- Catalog Dataset은 비동기 command 접수 응답에서 추가하지 않습니다. Airflow의 `publish_run_result`가 Catalog reconciliation까지 성공하면 DB의 Catalog source of truth에 저장되고, Catalog·SQL·AI route 진입 시 해당 domain loader가 최신 목록을 조회합니다.
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
 - Spark와 Catalog reconciliation 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
@@ -1628,7 +1656,7 @@ Failure contract:
 - `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 DAG Run의 성공 `sparkResult`를 재사용해 Catalog만 최대 3회 시도하고 Spark output을 다시 만들지 않는다.
 - Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
 
-최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 명시적인 failed `catalogResult`는 Airflow success보다 우선해 AskLake Run을 실패로 유지하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 행 수·경로만으로 성공 처리하지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. Backend reconciliation loop는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 명시적인 failed `catalogResult`는 Airflow success보다 우선해 AskLake Run을 실패로 유지하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 행 수·경로만으로 성공 처리하지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend의 batch status 조회는 Job/Run 상태만 반영한다. Catalog 목록은 Catalog·SQL·AI route 진입 시 별도 loader가 조회하므로 Job 상태 요청 실패와 Catalog 상태를 서로 rollback하지 않는다.
 
 프론트 함수:
 
@@ -1719,7 +1747,7 @@ Response 예시:
 | `stopSchedule` | `etl.schedule.stop_requested` | 스케줄 설정을 보존한 채 `stopped`, `nextRun: "-"`. 실행 중인 실시간 Job은 현재 Run도 `canceled`로 종료하고 `실시간 수집 중지`로 기록 |
 | `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
-`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count, Iceberg 논리 table URI와 commit evidence를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 Trino table/snapshot/data-file mapping을 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count, Iceberg 논리 table URI와 commit evidence를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 Trino table/snapshot/data-file mapping을 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. Backend reconciliation loop가 active Run을 기본 5초마다 Airflow와 동기화해 DB에 저장하고, 프론트는 `GET /api/etl/jobs/statuses` 한 요청으로 최종 `scheduled` 또는 `failed` 상태와 최신 Run·DAG 단계를 반영한다.
 
 분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
@@ -1744,7 +1772,7 @@ Response `200 OK`:
 type GetJobResponse = JobRowData;
 ```
 
-실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
+저장된 최신 `status`, 전체 `runHistory`, `dagSteps`를 포함한다. 이 endpoint는 상세 또는 실행 이력 화면 진입 시 사용하며 Airflow/Continuous runtime을 호출하거나 DB 상태를 변경하지 않는다. 주기적인 Snapshot 상태 갱신은 `GET /api/etl/jobs/statuses`를 사용한다.
 
 ### 7.7 Trino 읽기 전용 SQL 실행
 
@@ -2272,7 +2300,7 @@ Response `200 OK`:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 Catalog에 추가하지 않습니다.
-- 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. frontend polling이 `publish_run_result`까지 끝난 terminal success를 처음 관찰한 시점에 `GET /api/catalog/datasets`를 다시 호출해 dataset과 materialization history를 반영합니다.
+- 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. `publish_run_result`가 저장한 dataset과 materialization history는 Catalog·SQL·AI route 진입 시 Catalog domain loader가 `GET /api/catalog/datasets`로 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.

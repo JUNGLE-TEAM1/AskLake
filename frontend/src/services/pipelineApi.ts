@@ -1,4 +1,4 @@
-import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunResultPage, TrinoQueryValidation } from "../types";
+import type { CatalogDataset, ContinuousMaintenanceRun, ContinuousQuarantineResponse, ContinuousWorkerLogsResponse, CreateTrinoSqlJobRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, JobStatusListResult, KafkaContinuousBatch, KafkaContinuousSession, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunResultPage, TrinoQueryValidation } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -29,6 +29,13 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline): Promise
 
 export async function getJob(jobId: string): Promise<JobRowData> {
   return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function getJobStatuses(jobIds: string[]): Promise<JobStatusListResult> {
+  if (jobIds.length === 0) return { jobs: [] };
+  const query = new URLSearchParams();
+  jobIds.forEach((jobId) => query.append("jobId", jobId));
+  return apiClient.get<JobStatusListResult>(`/api/etl/jobs/statuses?${query.toString()}`);
 }
 
 export async function updatePipelineDraft(jobId: string, draftPipeline: DraftPipeline): Promise<JobRowData> {

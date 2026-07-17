@@ -17,6 +17,7 @@ RUNTIME_NAMES = {
     'EtlPipelineCreateHooks',
     'EtlPipelineUpdateHooks',
     'Exception',
+    'JobStatusListResponse',
     'LEGACY_PERMISSION_GROUP_IDS',
     'PERMISSION_GROUP_ACTIONS',
     'PermissionGrant',
@@ -57,6 +58,7 @@ RUNTIME_NAMES = {
     'has_successful_run',
     'hydrate_job_list_query',
     'hydrate_job_query',
+    'hydrate_job_statuses_query',
     'identity_name',
     'identity_profile',
     'initial_dag_steps',
@@ -85,7 +87,6 @@ RUNTIME_NAMES = {
     'reconcile_stale_continuous_maintenance_runs',
     'record_compatibility_path',
     'recover_continuous_replay_result',
-    'refresh_kafka_continuous_runtime',
     'replace_permission_ui_grants',
     'require_compiled_rules',
     'require_governed_access',
@@ -101,7 +102,6 @@ RUNTIME_NAMES = {
     'status',
     'str',
     'sum',
-    'sync_airflow_runs_for_job',
     'target_identity_changed',
     'trino_sql_job_run_as_actor',
     'validate_create_request',
@@ -302,9 +302,25 @@ def list_jobs(
         schedule_kind=schedule_kind,
         hooks=EtlJobQueryHooks(
             record_audit_event=safe_record_audit_event,
-            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
             schedule_kind=job_schedule_kind,
-            sync_airflow_runs=sync_airflow_runs_for_job,
+            with_permissions=with_job_permissions,
+            with_list_permissions=with_jobs_permissions,
+        ),
+    )
+
+
+def list_job_statuses(
+    db: Session,
+    job_ids: list[str],
+    actor: ActorContext | None = None,
+) -> JobStatusListResponse:
+    return hydrate_job_statuses_query(
+        db,
+        job_ids,
+        actor,
+        hooks=EtlJobQueryHooks(
+            record_audit_event=safe_record_audit_event,
+            schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
         ),
@@ -436,9 +452,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
         actor,
         hooks=EtlJobQueryHooks(
             record_audit_event=safe_record_audit_event,
-            refresh_continuous_runtime=refresh_kafka_continuous_runtime,
             schedule_kind=job_schedule_kind,
-            sync_airflow_runs=sync_airflow_runs_for_job,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
         ),
@@ -563,6 +577,7 @@ EXPORTED_FUNCTIONS = (
     'create_pipeline',
     'pipeline_create_mapping_context',
     'list_jobs',
+    'list_job_statuses',
     'continuous_report_has_unacknowledged_publication',
     'has_pending_continuous_replay_catalog',
     'run_due_scheduled_jobs',

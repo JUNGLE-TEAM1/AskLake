@@ -53,6 +53,7 @@ test("AskLake data facade composes domain controllers instead of owning server s
     "src/state/asklake/useJobRouteHydration.ts",
     "src/state/asklake/usePipelineMutations.ts",
     "src/state/asklake/useJobController.ts",
+    "src/state/asklake/useSnapshotJobStatusPolling.ts",
     "src/state/asklake/useCatalogController.ts",
   ]) {
     assert.ok(lineCount(path) <= 400, `${path} exceeded the controller budget`);
@@ -80,6 +81,18 @@ test("Job detail routes hydrate full history separately from the list summary", 
   assert.match(app, /useJobRouteHydration\(\{/);
   assert.match(routeHydration, /getJob as getPipelineJob/);
   assert.match(routeHydration, /flow === "jobDetail" \|\| flow === "jobRuns"/);
-  assert.match(routeHydration, /getPipelineJob\(jobId\)/);
-  assert.match(routeHydration, /setSelectedJob\(\(job\) => job\.id === normalizedDetail\.id \? normalizedDetail : job\)/);
+  assert.match(routeHydration, /getPipelineJob\(matchedJobId\)/);
+  assert.match(routeHydration, /mergeJobDetailWithCurrentStatus\(job, normalizedDetail\)/);
+  assert.match(routeHydration, /\[flow, matchedJobId, setSelectedJob\]/);
+});
+
+test("Snapshot status refresh is one page-level request and pauses for hidden tabs", () => {
+  const controller = read("src/state/asklake/useJobController.ts");
+  const polling = read("src/state/asklake/useSnapshotJobStatusPolling.ts");
+  assert.match(controller, /useSnapshotJobStatusPolling/);
+  assert.doesNotMatch(controller, /pollSnapshotJobUntilTerminal|snapshotPollIntervalMs/);
+  assert.match(polling, /getJobStatuses\(activeJobIds\)/);
+  assert.match(polling, /document\.visibilityState === "hidden"/);
+  assert.match(polling, /visibilitychange/);
+  assert.match(polling, /snapshotStatusPollDelayMs\(consecutiveErrors\)/);
 });

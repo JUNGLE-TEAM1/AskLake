@@ -2,7 +2,7 @@
 
 ## 목적
 
-최신 `dev`의 `backend/app/services/etl_service.py` 8,389줄을 공개 API와 저장 계약 변경 없이 작은 책임 모듈로 분리한다. 현재 façade는 2,178줄까지 줄였으며 Router와 기존 test/script가 import하는 `app.services.etl_service` 경로를 유지한다.
+최신 `dev`의 `backend/app/services/etl_service.py` 8,389줄을 공개 API와 저장 계약 변경 없이 작은 책임 모듈로 분리한다. 현재 façade는 2,198줄이며 Router와 기존 test/script가 import하는 `app.services.etl_service` 경로를 유지한다.
 
 ## 책임 분리
 
@@ -16,8 +16,8 @@
 | `app.application.etl_run_projection` | Airflow·Spark·Kafka Run 상태, task state, DAG projection | repository write 없음 |
 | `app.application.etl_catalog_projection` | materialization, Catalog payload, lineage, schema·quality projection | 파일 크기 조회 외 repository write 없음 |
 | `app.application.etl_pipeline_policy` | Rule compile, create/update validation, target·schedule·actor 정책 | 일부 façade transaction이 호출, 직접 외부 runtime 실행 없음 |
-| `app.services.etl.api_job_operations` / `api_review_operations` | 권한·Pipeline·Job query, command·connector·review orchestration | repository와 connector 호출 |
-| `app.services.etl.snapshot_operations` / `airflow_operations` | Kafka snapshot, Spark·Airflow 실행 조립 | Node bridge, Airflow, S3, Catalog 호출 |
+| `app.services.etl.api_job_operations` / `api_review_operations` | 권한·Pipeline·Job 목록·상태·상세 query, command·connector·review orchestration | repository와 connector 호출 |
+| `app.services.etl.snapshot_operations` / `airflow_operations` | Kafka snapshot, Spark·Airflow 실행과 active Snapshot Run 상태 동기화 조립 | Node bridge, Airflow, S3, Catalog 호출 |
 | `app.services.etl.source_runtime` | 증분 source window와 runtime document 조립 | S3와 runtime document 조회·저장 |
 | `app.services.etl.continuous_maintenance` / `continuous_session` / `continuous_publication` | Continuous worker·maintenance·session·publication 조립 | worker, repository, Catalog, Dashboard 호출 |
 | `app.services.etl.replay_schedule` | replay 경로, SQL run identity, schedule 후처리 | repository 저장 |
@@ -38,7 +38,7 @@
 - `etl_pipeline_policy.py`: 최대 460줄
 - `app/services/etl/*.py`: 파일별 최대 1,000줄, 함수별 최대 100줄
 - 추출한 함수는 `etl_service.py`에 다시 정의하지 않는다.
-- 추출한 application 함수와 runtime-bound 함수 164개의 AST digest·export 목록을 모듈별 reviewed contract로 고정한다.
+- 추출한 application 함수와 runtime-bound 함수 167개의 AST digest·export 목록을 모듈별 reviewed contract로 고정한다.
 - API path, request/response schema, DB schema, persisted Job/Run/Dataset payload를 변경하지 않는다.
 - legacy/mock 경로를 활성화하거나 새 fallback을 추가하지 않는다.
 
