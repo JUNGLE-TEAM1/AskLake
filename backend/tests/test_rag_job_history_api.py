@@ -119,6 +119,7 @@ def test_job_list_schema_is_strict_and_serializes_only_declared_camel_case_field
 
     assert set(payload) == {
         "jobId",
+        "datasetId",
         "requestedMode",
         "status",
         "stage",
@@ -156,14 +157,18 @@ def test_job_list_schema_is_strict_and_serializes_only_declared_camel_case_field
     with pytest.raises(ValidationError):
         RagJobListItem.model_validate(invalid_type)
     unexpected_field = item.model_dump()
-    unexpected_field["dataset_id"] = "reviews"
+    unexpected_field["unexpected"] = "reviews"
     with pytest.raises(ValidationError):
         RagJobListItem.model_validate(unexpected_field)
+    missing_field = item.model_dump()
+    del missing_field["embedding_provider"]
+    with pytest.raises(ValidationError):
+        RagJobListItem.model_validate(missing_field)
 
 
-def test_job_stage_projection_is_monotonic_and_progress_uses_only_actual_counts() -> None:
-    projected_stages = [
-        project_job(status=stage, stage=stage).stage
+def test_job_stage_progress_is_the_monotonic_seven_stage_ratio_not_a_time_estimate() -> None:
+    projected = [
+        project_job(status=stage, stage=stage)
         for stage in RAG_JOB_STAGES[:-1]
     ]
     completed = project_job(
@@ -174,11 +179,12 @@ def test_job_stage_projection_is_monotonic_and_progress_uses_only_actual_counts(
         completed_at=NOW,
     )
 
-    assert projected_stages == list(RAG_JOB_STAGES[:-1])
+    assert [item.stage for item in projected] == list(RAG_JOB_STAGES[:-1])
+    assert [item.progress_percent for item in projected] == [0, 16, 33, 50, 66, 83]
     assert completed.stage == "ready"
     assert completed.progress_percent == 100
-    assert project_job(status="staging", stage="staging", row_count=10, parent_count=4).progress_percent is None
-    assert project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=3).progress_percent == 37
+    assert project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=3).progress_percent == 72
+    assert project_job(status="indexing", stage="indexing", chunk_count=8, indexed_count=8).progress_percent == 83
 
 
 def test_incomplete_ready_state_never_reports_ready_or_one_hundred_percent() -> None:
@@ -207,23 +213,23 @@ def test_incomplete_ready_state_never_reports_ready_or_one_hundred_percent() -> 
 
     assert item.status == "ready"
     assert item.stage == "validating"
-    assert item.progress_percent == 99
+    assert item.progress_percent == 83
     assert item.completed_at is None
 
 
 @pytest.mark.parametrize(
     ("status", "counts", "expected_stage", "expected_progress"),
     [
-        ("failed", {"chunk_count": 8, "indexed_count": 3}, "indexing", 37),
-        ("canceled", {"row_count": 5, "parent_count": 4}, "staging", None),
-        ("failed", {"validation_status": "failed"}, "validating", None),
+        ("failed", {"chunk_count": 8, "indexed_count": 3}, "indexing", 72),
+        ("canceled", {"row_count": 5, "parent_count": 4}, "staging", 16),
+        ("failed", {"validation_status": "failed"}, "validating", 83),
     ],
 )
 def test_failed_and_canceled_jobs_show_last_evidenced_stage(
     status: str,
     counts: dict[str, object],
     expected_stage: str,
-    expected_progress: int | None,
+    expected_progress: int,
 ) -> None:
     item = project_job(status=status, stage=status, error="stopped", completed_at=NOW, **counts)
 
@@ -269,7 +275,7 @@ def test_list_jobs_checks_view_permission_and_scopes_orders_and_limits_rows(db: 
     assert [item.job_id for item in all_reviews] == ["ragjob_new", "ragjob_old"]
     assert all(item.job_id != "ragjob_other" for item in all_reviews)
     assert limited[0].requested_mode == "reindex"
-    assert limited[0].progress_percent == 40
+    assert limited[0].progress_percent == 72
     assert limited[0].fallback_count == 2
     assert permission_checks == [("reviews", "view"), ("reviews", "view")]
 
@@ -319,7 +325,7 @@ def test_jobs_endpoint_applies_default_and_max_limit_and_rejects_invalid_values(
 
     assert default_response.status_code == 200
     assert default_response.json()[0]["jobId"] == "ragjob_test"
-    assert "datasetId" not in default_response.json()[0]
+    assert default_response.json()[0]["datasetId"] == "reviews"
     assert max_response.status_code == 200
     assert [zero_response.status_code, excessive_response.status_code, invalid_response.status_code] == [422, 422, 422]
     assert observed_limits == [RAG_JOB_LIST_DEFAULT_LIMIT, RAG_JOB_LIST_MAX_LIMIT]

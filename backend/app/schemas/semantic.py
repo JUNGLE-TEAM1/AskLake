@@ -256,10 +256,11 @@ class RagJobListItem(CamelModel):
     model_config = ConfigDict(**CamelModel.model_config, extra="forbid", strict=True)
 
     job_id: str
+    dataset_id: str
     requested_mode: RagJobRequestedMode
     status: RagJobStatus
     stage: RagJobStage
-    progress_percent: int | None = Field(default=None, ge=0, le=100)
+    progress_percent: int = Field(ge=0, le=100)
     document_count: int = Field(ge=0)
     indexed_count: int = Field(ge=0)
     parent_count: int = Field(ge=0)
@@ -267,26 +268,26 @@ class RagJobListItem(CamelModel):
     failed_count: int = Field(ge=0)
     row_count: int = Field(ge=0)
     fallback_count: int = Field(ge=0)
-    embedding_provider: str | None = None
-    embedding_model: str | None = None
-    embedding_dimensions: int | None = Field(default=None, ge=1)
+    embedding_provider: str | None
+    embedding_model: str | None
+    embedding_dimensions: int | None = Field(ge=1)
     validation_status: RagJobValidationStatus
-    validated_at: datetime | None = None
-    validated_index: str | None = None
-    validated_document_count: int | None = Field(default=None, ge=0)
-    validated_parent_count: int | None = Field(default=None, ge=0)
-    validated_dimensions: int | None = Field(default=None, ge=1)
-    validation_evidence_hash: str | None = None
+    validated_at: datetime | None
+    validated_index: str | None
+    validated_document_count: int | None = Field(ge=0)
+    validated_parent_count: int | None = Field(ge=0)
+    validated_dimensions: int | None = Field(ge=1)
+    validation_evidence_hash: str | None
     activation_status: RagJobActivationStatus
-    activation_alias: str | None = None
-    activation_previous_index: str | None = None
-    activation_target_index: str | None = None
-    activation_started_at: datetime | None = None
-    activation_committed_at: datetime | None = None
-    error: str | None = None
+    activation_alias: str | None
+    activation_previous_index: str | None
+    activation_target_index: str | None
+    activation_started_at: datetime | None
+    activation_committed_at: datetime | None
+    error: str | None
     created_at: datetime
     updated_at: datetime
-    completed_at: datetime | None = None
+    completed_at: datetime | None
 
 
 class RagJobResponse(CamelModel):
