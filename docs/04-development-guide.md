@@ -846,7 +846,7 @@ export ASKLAKE_DAY17_LOAD_DURATION_SECONDS=60
 bash scripts/run-eks-day17-api-load.sh
 ```
 
-같은 `runId`의 HPA 경합 실험은 전용 runner로만 수행한다. runner는 실행 전에 HPA current/desired와 FastAPI Ready가 정확히 `6/6/6`인지 확인하고, Deployment selector에서 서로 다른 Ready Pod 6개를 골라 동일한 내부 실행 요청을 동시에 보낸다. 새 producer fixture를 만들 수 있는 기존 권한이 없으면 IAM이나 NodePool 권한을 넓히지 않는다. 이 경우 exact batch marker와 100-record count가 이미 고정된 성공 fixture만 `--prepare-reuse`로 선택하며, 안전한 fixture가 없으면 실행하지 않는다. 전용 Run의 결과와 receipt는 항상 새로 만든다.
+같은 `runId`의 HPA 경합 실험은 전용 runner로만 수행한다. runner는 실행 전에 HPA current/desired와 FastAPI Ready가 정확히 `6/6/6`인지 확인하고, Deployment selector에서 서로 다른 Ready Pod 6개를 골라 동일한 내부 실행 요청을 동시에 보낸다. 새 producer fixture를 만들 수 있는 기존 권한이 없으면 IAM이나 NodePool 권한을 넓히지 않는다. 이 경우 exact batch marker와 100-record count가 이미 고정된 성공 fixture만 `--prepare-reuse`로 선택하며, 안전한 fixture가 없으면 실행하지 않는다. fixture 선택은 기본 bounded consumer group `asklake-eks-mvp-spark-v1`과 persisted boundary의 group이 모두 정확히 일치해야 하며, `asklake-eks-mvp-spark-scale17-*` multi-Spark 후보는 같은 topic을 사용하더라도 HPA 경합 후보에서 제외한다. 전용 Run의 결과와 receipt는 항상 새로 만든다.
 
 ```bash
 export ASKLAKE_EKS_NAMESPACE=asklake-dev

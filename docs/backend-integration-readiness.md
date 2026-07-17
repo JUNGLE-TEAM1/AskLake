@@ -599,6 +599,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 설정 부재 시 기존 단일 fixture slot만 허용하고, 설정 시 기본 slot + 최대 4개 exact group/table mapping만 허용하는 fail-closed parser
 - [x] PostgreSQL group별 advisory transaction lock으로 같은 fixture slot의 두 번째 active Run을 Airflow 호출 전에 차단
 - [x] 서로 다른 세 fixture group의 Run 예약, Run별 boundary와 고유 Iceberg target 정적 회귀 테스트
+- [x] Day 17 HPA same-run 검증기가 기본 bounded consumer group만 선택하고 multi-Spark scale group 3개를 fixture 후보에서 제외하는 교차 회귀 테스트
 - [x] Node runner와 Spark driver가 canonical slot JSON, persisted group과 manifest target mapping을 각각 재검증
 - [x] FastAPI와 Spark driver least-privilege Kubernetes RBAC 계약 소비(리소스 소유자는 EKS foundation chart)
 - [x] `scripts/verify-eks-workloads.sh` Helm schema/lint/render 계약 검증
