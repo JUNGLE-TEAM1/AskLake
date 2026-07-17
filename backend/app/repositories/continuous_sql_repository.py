@@ -18,8 +18,9 @@ from app.schemas.continuous_sql import (
     ContinuousSqlJob,
     ContinuousSqlRelationBinding,
     ContinuousSqlRun,
+    continuous_sql_serving_mode,
+    continuous_sql_target,
 )
-from app.schemas.iceberg import IcebergWriterTarget
 
 
 CONTINUOUS_SQL_TABLES = [
@@ -148,6 +149,32 @@ class ContinuousSqlRepository:
             )
         ).first()
 
+    def batch_by_output_commit_id(
+        self,
+        job_id: str,
+        generation: int,
+        output_commit_id: str,
+    ) -> ContinuousSqlBatchModel | None:
+        return self.db.scalars(
+            select(ContinuousSqlBatchModel).where(
+                ContinuousSqlBatchModel.job_id == job_id,
+                ContinuousSqlBatchModel.generation == generation,
+                ContinuousSqlBatchModel.output_commit_id == output_commit_id,
+            )
+        ).first()
+
+    def next_batch_id(self, job_id: str, generation: int) -> int:
+        latest = self.db.scalars(
+            select(ContinuousSqlBatchModel.batch_id)
+            .where(
+                ContinuousSqlBatchModel.job_id == job_id,
+                ContinuousSqlBatchModel.generation == generation,
+            )
+            .order_by(ContinuousSqlBatchModel.batch_id.desc())
+            .limit(1)
+        ).first()
+        return int(latest if latest is not None else -1) + 1
+
     def stage_batch(self, batch: ContinuousSqlBatchModel) -> tuple[ContinuousSqlBatchModel, bool]:
         existing = self.get_batch(batch.job_id, batch.generation, batch.batch_id)
         if existing is None:
@@ -215,12 +242,13 @@ def job_to_schema(
         ],
         static_binding_policy=job.static_binding_policy,
         trigger_interval_seconds=int(job.trigger_interval_seconds),
+        serving_mode=continuous_sql_serving_mode(job),
         checkpoint_path=job.checkpoint_path,
         output_dataset_id=job.output_dataset_id,
         output_dataset_name=job.output_dataset_name,
         output_layer=job.output_layer,
         output_storage_path=job.output_storage_path,
-        output_target=IcebergWriterTarget.model_validate(job.output_target),
+        output_target=continuous_sql_target(job.output_target),
         desired_state=job.desired_state,
         observed_state=job.observed_state,
         generation=int(job.generation),

@@ -525,6 +525,11 @@ Spark/Iceberg commit
 - Run 시작은 static snapshot set을 DB에 먼저 저장한 뒤 worker를 시작한다. 각 batch는 generation별 durable binding manifest를 먼저 만들고, Spark/Iceberg commit 후 `output_committed -> catalog_ready -> dashboard_ready`로 전진한다.
 - Catalog Dataset revision과 durable event는 exact Iceberg snapshot 및 `_asklake_run_id` 행 수 검증 뒤 같은 transaction에 기록한다. worker ACK는 이 transaction 이후이며 ACK 실패는 publication을 되돌리지 않고 retry한다.
 - stale worker/report/publication은 plan hash, Run generation과 fencing hash가 하나라도 다르면 거절한다. fencing token 원문은 worker bridge에만 전달하고 public API에는 hash만 노출한다.
+- ClickHouse serving mode는 기존 planner·Job/Run/Batch/command table을 재사용하는 선택적 worker adapter다. `servingMode` 기본값은 `iceberg`이며 ClickHouse flag가 꺼진 배포와 기존 payload의 의미는 바뀌지 않는다.
+- ClickHouse hot path는 `Kafka Engine -> ingest Materialized View -> raw ReplacingMergeTree -> JOIN Materialized View -> output ReplacingMergeTree` 순서다. raw와 output은 `(kafka_partition, kafka_offset)` identity를 사용하고 Dashboard와 Catalog rows reader는 output을 `FINAL`로 읽는다. 따라서 INNER JOIN의 미매칭 입력도 raw offset 경계에는 남고 output에는 노출되지 않는다.
+- static relation은 Run 시작 시 고정한 Iceberg snapshot을 Trino로 bounded read해 ClickHouse local MergeTree에 적재한다. ClickHouse mode는 `PINNED_AT_START`만 허용하며 static snapshot 변경은 기존 행을 backfill하지 않고 새 Run의 이후 입력부터 적용한다.
+- ClickHouse publication은 raw input offset range와 output row count를 구분해 PostgreSQL Catalog revision/event에 기록한다. ClickHouse output은 일반 Trino SQL table로 가장하지 않고 `queryEngineStatus=unavailable`, `clickhouseTable` mapping을 사용하며 Dashboard·Catalog row API만 전용 reader로 조회한다.
+- ClickHouse 장애 시 같은 Run을 Spark로 자동 전환하지 않는다. 전용 Kafka consumer group의 offset ownership을 보존하기 위해 Job을 실패 상태로 남기고 운영자가 flag·새 generation을 명시적으로 선택한다.
 
 결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
 

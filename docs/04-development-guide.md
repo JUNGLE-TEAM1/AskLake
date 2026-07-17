@@ -565,6 +565,29 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 ```
 
+ClickHouse serving mode를 변경할 때는 기존 Spark/Iceberg 검증을 대신하지 말고 아래 실동작 smoke를 추가로 실행한다. 스크립트는 고유 Kafka topic, ClickHouse table, PostgreSQL metadata를 만들고 정확한 이름만 종료 시 정리한다. 실제 Continuous SQL Job 생성/시작, 13개 Kafka 입력 중 INNER JOIN 12개 output, Catalog revision, published Dashboard의 10개 widget type, pause/resume과 `(partition, offset)` 중복 제거를 한 번에 확인한다.
+
+```bash
+# 저장소 root
+docker compose up -d postgres redpanda clickhouse
+
+cd backend
+PYTHONPATH=. python -m unittest tests.test_clickhouse_continuous_sql tests.test_realtime_feature_flags -v
+npm run verify:clickhouse-kafka-join
+```
+
+이 smoke의 static relation은 exact snapshot reader 계약을 재현하는 bounded fixture를 사용하고 Kafka·ClickHouse·PostgreSQL·Catalog·Dashboard 경로는 실제 container와 application service를 사용한다. 실제 S3/Iceberg/Trino static snapshot round trip은 기존 Trino/Iceberg readiness와 함께 배포 환경에서 별도로 확인한다.
+
+로컬 MinIO S3에 실제 Iceberg static table을 만들고 exact snapshot을 Trino로 ClickHouse에 적재하는 전체 경계까지 확인하려면 Trino를 함께 올리고 live option을 사용한다. 고유 Iceberg table은 검증 종료 시 `DROP TABLE`로 정리한다.
+
+```bash
+# 저장소 root
+docker compose up -d --wait minio postgres trino
+
+cd backend
+CLICKHOUSE_E2E_LIVE_TRINO=true npm run verify:clickhouse-kafka-join
+```
+
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
 ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. 이 값은 새 빈 Source draft에만 한 번 채우고 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
@@ -666,6 +689,10 @@ Production에서 Trino를 켜기 전에는 TLS/auth/JDBC role, read-only query i
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
+
+ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse`를 함께 설정한다. `CLICKHOUSE_URL`은 Compose private endpoint `http://clickhouse:8123`를 사용하고 16자 이상의 전용 password를 server `deploy/.env`에만 둔다. ClickHouse port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/Trino/credential/backend-service wiring 불일치를 배포 전에 차단한다. `scripts/deploy.sh`는 enabled 배포에서 Redpanda와 ClickHouse를 먼저 기동하고 backend credential로 실제 query readiness를 확인하며, disabled 배포에서는 이전 profile의 stale ClickHouse container를 제거한다.
+
+롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
 Production은 알려진 legacy demo 계정을 기본 비활성화한다. 재시작 가능한 데모 서버에서 해당 계정을 유지하려면 server `deploy/.env`의 backend/frontend 플래그를 반드시 함께 켠다. 한쪽만 켜면 preflight가 실패한다. 이 설정은 기존 DB status를 보존하므로 이전 startup이 이미 `disabled`로 만든 계정은 opt-in 배포 전후에 한 번만 `active`로 복구하고, 이후 재시작에서는 추가 DB 수정이 없어야 한다.
 
