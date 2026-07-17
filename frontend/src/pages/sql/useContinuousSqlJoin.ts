@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { apiConfig } from "../../services/apiClient";
 import {
   commandContinuousSqlJob,
   createClickHouseContinuousSqlJob,
@@ -42,7 +41,6 @@ export function useContinuousSqlJoin({
   );
 
   useEffect(() => {
-    if (apiConfig.useMock) return;
     let active = true;
     void getRealtimeFeatureConfig()
       .then((config) => {

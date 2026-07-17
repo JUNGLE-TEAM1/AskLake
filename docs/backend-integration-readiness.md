@@ -1,6 +1,6 @@
 # AskLake Backend Integration Readiness
 
-이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 기본 live API mode에서 backend를 기준으로 검증하고, frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
+이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 모든 환경에서 live backend를 기준으로 검증한다. 브라우저 mock API fallback은 제공하지 않는다.
 FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
@@ -44,7 +44,7 @@ Rule/target 변경의 빠른 검증은 `npm run verify:dataset-identity`, `npm r
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
-Frontend baseline은 `VITE_USE_MOCK_API`가 미설정이면 live mode로 동작한다. frontend-only mock QA가 필요할 때는 `VITE_USE_MOCK_API=true`를 명시하며, 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환한다.
+Frontend baseline은 항상 live backend API로 동작한다. `frontend/src/services/sourceConnectorService.ts`도 source type별 실제 endpoint를 호출하며 브라우저 fixture fallback을 제공하지 않는다.
 
 필수 create payload:
 
@@ -376,7 +376,7 @@ MinIO/S3-backed Parquet Preview의 query-scoped cache/byte limit은 DuckDB compa
 Pair2 FastAPI 5단계 완료 기준:
 
 - `npm run verify:fastapi-pair2`가 통과한다.
-- live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
+- frontend는 별도 mode switch 없이 live Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - Catalog 상세와 스키마 상세 modal에서 `GET /api/catalog/datasets/{datasetId}/rows`로 최신 성공 materialization의 첫/중간/마지막 page를 탐색한다.
 - DuckDB compatibility 실행은 기존 `POST /api/query/runs` snapshot/offset pagination 회귀를 유지한다.
@@ -497,9 +497,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 | 순서 | 작업 | 파일 |
 | --- | --- | --- |
-| 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
+| 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` live API adapter 유지·검증 | `frontend/src/services/askLakeApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
-| 3 | dashboard list/runtime adapter와 FastAPI fallback 경로 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
+| 3 | dashboard list/runtime live adapter와 FastAPI 경로 확인 | `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
 | 4 | audit export/retention 정책 정의 | docs/admin console |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
@@ -507,7 +507,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
-- `.env`에서 `VITE_USE_MOCK_API=false`로 실행해도 앱이 정상 로딩됩니다.
+- 별도 mock 환경 변수 없이 앱이 live backend와 정상 연결됩니다.
 - 새 수집/처리 생성 후 목록과 카탈로그에 서버 응답 데이터가 표시됩니다.
 - 즉시 실행/재실행/일시정지/현재 Run 취소/스케줄 중지 버튼이 서버 상태 전이를 반영합니다.
 - SQL 실행 결과는 compatibility mode의 current snapshot page 또는 Trino signed-cursor current page 그대로 표시됩니다.

@@ -1,5 +1,7 @@
 # Discovery Result
 
+> Historical snapshot: the browser mock mode described below has since been removed. The current dashboard uses live backend APIs only.
+
 ## Framework
 
 - Frontend framework: React + Vite + TypeScript.
@@ -55,7 +57,7 @@ Frontend API boundary:
 - `frontend/src/services/apiClient.ts`
   - Common fetch wrapper.
   - Uses `VITE_API_BASE_URL`, defaulting to `http://localhost:8080`.
-  - `VITE_USE_MOCK_API === "true"` enables mock mode.
+  - At the time of discovery, an environment switch enabled browser mock mode; this path is no longer available.
 - `frontend/src/services/mockApi.ts`
   - Handles jobs, datasets, dashboard cards, job commands, SQL execution.
   - In live mode calls the Node API server.

@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 
-import { apiConfig } from "../../services/apiClient";
 import { getJobStatuses } from "../../services/pipelineApi";
 import type { JobStatusSnapshot } from "../../types";
 import { moveJobFacetCounts, upsertRunByRunId } from "./jobState";
@@ -40,7 +39,7 @@ export function useSnapshotJobStatusPolling({
   const activeJobKey = activeJobIds.join("\u0000");
 
   useEffect(() => {
-    if (!enabled || apiConfig.useMock || activeJobIds.length === 0) return;
+    if (!enabled || activeJobIds.length === 0) return;
 
     let cancelled = false;
     let consecutiveErrors = 0;

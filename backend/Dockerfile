@@ -26,6 +26,8 @@ COPY package*.json ./
 RUN npm run install:production
 
 COPY app ./app
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 COPY scripts ./scripts
 COPY fixtures ./fixtures
 COPY src ./src

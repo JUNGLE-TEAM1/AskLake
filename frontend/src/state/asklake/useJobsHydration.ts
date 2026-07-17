@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ApiError } from "../../types";
 
-import { getJobs } from "../../services/mockApi";
+import { getJobs } from "../../services/askLakeApi";
 
 import { createResourceQueryKey, LatestRequestGate } from "../../state/requestOwnership";
 import type { JobListQuery } from "../../types";

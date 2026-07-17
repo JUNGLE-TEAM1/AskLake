@@ -163,13 +163,28 @@ export function compileRuleContract(request = {}) {
     return normalized;
   });
 
+  const fullSqlTransform = rules.some((rule) => {
+    const expression = text(rule?.parameters?.expression).trim().toLowerCase();
+    return rule?.enabled !== false
+      && rule?.kind === "transform"
+      && rule?.operation === "sql_expression"
+      && (expression.startsWith("select") || expression.startsWith("with"));
+  });
+  if (fullSqlTransform && declaredTypes.size === 0) {
+    issues.push(issue(
+      "RULE_OUTPUT_SCHEMA_REQUIRED",
+      "transformOutputColumns",
+      "Full SQL transforms require a validated output schema.",
+    ));
+  }
+
   const legacy = legacyRulesFromCanonical(rules);
   return {
     qualityRules: legacy.qualityRules,
     result: {
       contractVersion: RULE_CONTRACT_VERSION,
       issues,
-      outputSchema: [...outputTypes.entries()],
+      outputSchema: [...(fullSqlTransform ? declaredTypes : outputTypes).entries()],
       rules,
       status: issues.length > 0 ? "fail" : "pass",
     },

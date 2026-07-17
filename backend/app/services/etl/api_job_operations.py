@@ -9,8 +9,6 @@ RUNTIME_NAMES = {
     'Base',
     'CompatibilityPath',
     'CreatePipelineMappingContext',
-    'DEMO_GROUPS',
-    'DEMO_USERS',
     'ErrorCode',
     'EtlJobDeleteHooks',
     'EtlJobQueryHooks',
@@ -27,7 +25,6 @@ RUNTIME_NAMES = {
     'QueryRunResponse',
     'ScheduledJobRunItem',
     'ScheduledJobRunResponse',
-    'SimpleNamespace',
     'SourceConnectorDefaults',
     'add_audit_event',
     'advance_scheduled_job_after_tick',
@@ -138,11 +135,10 @@ def legacy_permission_grants(roles: list[dict[str, Any]] | None) -> list[Permiss
         name = str(role.get("name") or "").strip()
         if not name:
             continue
-        group_id = LEGACY_PERMISSION_GROUP_IDS.get(name.casefold())
         grants.append(PermissionGrant(
             actions=normalize_actions(role.get("access")) or ["view"],
-            principal_id=group_id or name,
-            principal_type="group" if group_id else "role",
+            principal_id=name,
+            principal_type="role",
             source="legacy_permission_roles",
         ))
     if grants:
@@ -188,25 +184,26 @@ def get_permission_options(
                 resource_label="job permissions",
             )
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
-    stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
-    users = stored_users or [
-        SimpleNamespace(
-            id=value["id"],
-            display_name=value["display_name"],
-            email=value["email"],
-            role=value["role"],
-        )
-        for value in DEMO_USERS.values()
-    ]
+    users = list(db.scalars(
+        select(AuthUserModel)
+        .where(AuthUserModel.status == "active")
+        .order_by(AuthUserModel.display_name.asc(), AuthUserModel.id.asc())
+    ).all())
+    group_ids = sorted({
+        str(group_id).strip()
+        for user in users
+        for group_id in (user.groups or [])
+        if str(group_id).strip()
+    })
     return PermissionOptionsResponse(
         groups=[
             PermissionOptionGroup(
-                id=group.id,
-                name=group.name,
-                description=group.description,
-                actions=PERMISSION_GROUP_ACTIONS.get(group.id, ["view", "run"]),
+                id=group_id,
+                name=group_id,
+                description="현재 인증 사용자 디렉터리에 등록된 그룹",
+                actions=PERMISSION_GROUP_ACTIONS.get(group_id, ["view", "run"]),
             )
-            for group in DEMO_GROUPS.values()
+            for group_id in group_ids
         ],
         users=[
             PermissionOptionUser(

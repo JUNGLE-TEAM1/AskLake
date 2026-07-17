@@ -70,7 +70,7 @@ export function PermissionPage({
   const [selectedGrants, setSelectedGrants] = useState<PermissionGrant[]>(initialSelectedGrants);
   const [publicView, setPublicView] = useState(() => (
     draft.permission.grants?.some((grant) => grant.principalType === "public" && grant.actions.includes("view"))
-    ?? initialPermission.visibility === "외부 공유"
+    ?? initialPermission.visibility === "모든 인증 사용자"
   ));
   const [dataOwner, setDataOwner] = useState(initialPermission.owner);
   const [grantTab, setGrantTab] = useState<PermissionGrantTab>("groups");
@@ -105,7 +105,7 @@ export function PermissionPage({
               }));
         const nextPublicView = hasSavedGrants
           ? Boolean(draft.permission.grants?.some((grant) => grant.principalType === "public" && grant.actions.includes("view")))
-          : initialPermission.visibility === "외부 공유";
+          : initialPermission.visibility === "모든 인증 사용자";
         const firstAvailableOwner = options.users[0]?.name;
         const nextOwner = !draft.id && initialPermission.owner === DEFAULT_OWNER && firstAvailableOwner
           ? firstAvailableOwner

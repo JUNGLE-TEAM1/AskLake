@@ -1,6 +1,6 @@
 # Frontend Page UI Audit Handoff
 
-> 통합 상태 (2026-07-11): 이 문서는 페이지 감사 작업을 나눌 당시의 handoff 기록입니다. 현재 실행 기준은 live Backend가 기본이며 `VITE_USE_MOCK_API=true`를 명시할 때만 QA fixture를 사용합니다. 구현 결과와 현재 정책은 각 페이지 감사 문서, `docs/frontend-dev-integration-resolution.md`, 상위 API 문서를 함께 따릅니다.
+> 통합 상태 (2026-07-17): 이 문서는 페이지 감사 작업을 나눌 당시의 handoff 기록입니다. 브라우저 mock API와 `VITE_USE_MOCK_API`는 제거되었으며 현재 UI 검증은 live Backend 또는 외부 seed 데이터로 수행합니다. 구현 결과와 현재 정책은 `docs/frontend-dev-integration-resolution.md`와 상위 API 문서를 따릅니다.
 
 ## Purpose
 
@@ -185,12 +185,12 @@ docs/frontend-page-audit/
 
 주의할 점은 실제 서비스 코드에 임시 데이터를 무작정 박아넣지 않는 것입니다. 가능하면 dev fixture, mock data, local seed 방식으로 분리합니다.
 
-이번 handoff PR에서는 프론트엔드 mock mode 기준으로 아래를 먼저 보강했습니다. 통합 후 현재 실행 정책은 다음과 같습니다.
+이번 handoff PR에서는 당시 프론트엔드 mock mode를 기준으로 아래를 보강했습니다. 현재 실행 정책은 다음과 같습니다.
 
-- `VITE_USE_MOCK_API` 미설정 시 live Backend를 사용하고, mock QA는 `VITE_USE_MOCK_API=true`를 명시한 경우에만 사용합니다.
-- `frontend/src/data/mockData.ts`의 Job fixture에 상세 정보, 실행 이력, DAG 단계, 통계 필드를 추가합니다.
-- 따라서 `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs`를 backend 없이도 페이지별 UI 감사용으로 확인할 수 있습니다.
-- live Backend 검증은 기본 동작이며, 필요하면 `VITE_USE_MOCK_API=false`로 명시할 수 있습니다.
+- 브라우저는 항상 live Backend를 사용합니다.
+- 당시 사용한 `frontend/src/data/mockData.ts`와 `frontend/src/services/mockApi.ts`는 제거되었습니다.
+- `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs` UI 감사는 backend와 seed 데이터가 준비된 환경에서 수행합니다.
+- 테스트 fixture는 앱 runtime이 아니라 격리된 contract test에서만 사용합니다.
 
 ## Conflict Rules
 

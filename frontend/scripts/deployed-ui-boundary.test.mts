@@ -44,15 +44,13 @@ test("the application composes deployed UI modules without activating compatibil
   }
 });
 
-test("production frontend defaults keep mock and legacy demo UI disabled", () => {
+test("production frontend exposes neither mock nor legacy demo build switches", () => {
   const dockerfile = readFromRepo("frontend/Dockerfile");
   const compose = readFromRepo("deploy/docker-compose.prod.yml");
   const exampleEnv = readFromRepo("deploy/.env.example");
 
-  assert.match(dockerfile, /^ARG VITE_USE_MOCK_API=false$/m);
-  assert.match(dockerfile, /^ARG VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false$/m);
-  assert.match(compose, /VITE_USE_MOCK_API: \$\{VITE_USE_MOCK_API:-false\}/);
-  assert.match(compose, /VITE_AUTH_LEGACY_DEMO_USERS_ENABLED: \$\{VITE_AUTH_LEGACY_DEMO_USERS_ENABLED:-false\}/);
-  assert.match(exampleEnv, /^VITE_USE_MOCK_API=false$/m);
-  assert.match(exampleEnv, /^VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false$/m);
+  for (const content of [dockerfile, compose, exampleEnv]) {
+    assert.doesNotMatch(content, /VITE_USE_MOCK_API/);
+    assert.doesNotMatch(content, /VITE_AUTH_LEGACY_DEMO_USERS_ENABLED/);
+  }
 });

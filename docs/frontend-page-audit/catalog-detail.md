@@ -1,5 +1,7 @@
 # Catalog Detail
 
+> 아래 mock 검증 항목은 과거 감사 기록이며 현재 브라우저 mock API는 제거되었습니다.
+
 ## Route
 
 - `/catalog/:datasetId`
@@ -55,7 +57,7 @@
 
 ## QA Notes
 
-- process 환경에서 `VITE_USE_MOCK_API=true`로 `/catalog/ds_customer_orders_gold`를 열었을 때 detail route가 오류 없이 렌더링된다.
+- 당시 브라우저 mock 환경에서 `/catalog/ds_customer_orders_gold` detail route가 오류 없이 렌더링됨을 확인했다.
 - mock dataset에는 schema와 lineage 정보가 있어 네 탭의 구조를 감사할 수 있다.
 - raw tab의 Arrow key 동작, active focus, URL/history 보존 여부는 현재 보장되지 않으므로 후속 `Tabs` 전환 시 확인한다.
 - ReactFlow는 desktop뿐 아니라 좁은 viewport에서 node clipping, controls overlap, horizontal scroll을 확인해야 한다.

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer } from "react";
 
-import { apiConfig } from "../../services/apiClient";
 import { estimateSqlQueryRun, validateSqlQueryRun } from "../../services/sqlQueryApi";
 import type { CatalogDataset, TrinoQueryEstimate } from "../../types";
 
@@ -140,7 +139,7 @@ export function useTrinoQueryPreflight({
   usesTrinoRuntime: boolean;
 }) {
   const [state, dispatch] = useReducer(queryPreflightReducer, INITIAL_QUERY_PREFLIGHT_STATE);
-  const enabled = usesTrinoRuntime && !apiConfig.useMock;
+  const enabled = usesTrinoRuntime;
   useTrinoValidation({ baseDataset, enabled, localCanExecute, query, queryValidationKey, referenceDatasetIds }, dispatch);
   const canRunPreview = localCanExecute && (!enabled || state.validationKey === queryValidationKey);
   useTrinoEstimate({ baseDataset, canRunPreview, enabled, query, queryValidationKey, referenceDatasetIds }, dispatch);

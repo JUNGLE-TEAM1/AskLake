@@ -13,6 +13,7 @@ from app.infrastructure.runtime_io import (
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
     VersionedNodeBridge,
+    marker_payload,
 )
 from app.ports.runtime_io import JsonDocumentState
 from app.services import etl_service
@@ -75,6 +76,60 @@ class RuntimeIoPortTests(unittest.TestCase):
             ["node", str(Path("/backend/scripts/worker.mjs"))],
         )
         self.assertEqual(calls[0][1]["timeout"], 7)
+
+    def test_marker_parser_preserves_unicode_separators_and_removes_only_cr(self) -> None:
+        payload = {
+            "review": "first\u0085second\u2028third\u2029fourth\rinside",
+            "rows": 50_000,
+        }
+        output = (
+            "diagnostic\r\n"
+            f"SUCCESS={json.dumps(payload, ensure_ascii=False)}\r\n"
+        )
+
+        self.assertEqual(marker_payload(output, "SUCCESS"), payload)
+
+    def test_marker_parser_accepts_payload_larger_than_one_megabyte(self) -> None:
+        payload = {"blob": "x" * (1024 * 1024 + 8192)}
+        output = f"SUCCESS={json.dumps(payload)}\n"
+
+        parsed = marker_payload(output, "SUCCESS")
+
+        self.assertIsNotNone(parsed)
+        self.assertEqual(len(parsed["blob"]), len(payload["blob"]))
+
+    def test_marker_parser_rejects_a_truncated_marker(self) -> None:
+        output = 'noise\nSUCCESS={"blob":"unterminated\n'
+
+        self.assertIsNone(marker_payload(output, "SUCCESS"))
+
+    def test_subprocess_bridge_captures_long_naturally_flushed_node_output(self) -> None:
+        with TemporaryDirectory() as directory:
+            backend_dir = Path(directory)
+            scripts_dir = backend_dir / "scripts"
+            scripts_dir.mkdir()
+            script_path = scripts_dir / "long-output.mjs"
+            script_path.write_text(
+                'const result = { blob: "x".repeat(1024 * 1024 + 8192), '
+                'separators: "\\u0085\\u2028\\u2029" };\n'
+                'process.stdout.write(`SUCCESS=${JSON.stringify(result)}\\r\\n`);\n',
+                encoding="utf-8",
+            )
+            bridge = SubprocessNodeBridge(
+                backend_dir=backend_dir,
+                scripts_dir=scripts_dir,
+            )
+
+            result = bridge.execute(
+                script_path.name,
+                "SUCCESS",
+                {},
+                error_marker="ERROR",
+                timeout_seconds=10,
+            )
+
+        self.assertGreater(len(result["blob"]), 1024 * 1024)
+        self.assertEqual(result["separators"], "\u0085\u2028\u2029")
 
     def test_subprocess_bridge_normalizes_process_failure(self) -> None:
         bridge = SubprocessNodeBridge(

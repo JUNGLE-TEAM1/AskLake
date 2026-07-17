@@ -13,19 +13,6 @@ type DatabaseFieldProps = {
   value: string;
 };
 
-const FALLBACK_DATABASES: TargetDatabaseOption[] = [
-  { description: "기본 AskLake 카탈로그 DB", name: "asklake" },
-  { description: "정제 데이터셋 저장 DB", name: "asklake_gold" },
-  { description: "분석용 데이터 마트 DB", name: "analytics" },
-  { description: "마케팅/고객 데이터 DB", name: "marketing" },
-];
-
-function mergeCurrentDatabase(databases: TargetDatabaseOption[], currentName: string) {
-  const normalizedName = currentName.trim();
-  if (!normalizedName || databases.some((database) => database.name === normalizedName)) return databases;
-  return [{ description: "현재 설정된 DB", name: normalizedName }, ...databases];
-}
-
 export function DatabaseField({ disabled = false, onChange, useShadcnStyles = false, value }: DatabaseFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -64,11 +51,11 @@ function DatabasePicker({
   useShadcnStyles: boolean;
   value: string;
 }) {
-  const [databases, setDatabases] = useState<TargetDatabaseOption[]>(() => mergeCurrentDatabase(FALLBACK_DATABASES, value));
+  const [databases, setDatabases] = useState<TargetDatabaseOption[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [selectedName, setSelectedName] = useState(value.trim() || FALLBACK_DATABASES[0]?.name || "");
+  const [selectedName, setSelectedName] = useState("");
 
   const filteredDatabases = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -84,11 +71,19 @@ function DatabasePicker({
     setError("");
     try {
       const result = await listTargetDatabases();
-      const nextDatabases = mergeCurrentDatabase(result.databases.length > 0 ? result.databases : FALLBACK_DATABASES, value);
+      const nextDatabases = result.databases;
       setDatabases(nextDatabases);
-      setSelectedName((currentName) => currentName || nextDatabases[0]?.name || "");
+      const configuredName = value.trim();
+      const currentIsAvailable = nextDatabases.some((database) => database.name === configuredName);
+      setSelectedName(currentIsAvailable ? configuredName : nextDatabases[0]?.name ?? "");
+      if (nextDatabases.length === 0) {
+        setError("사용 가능한 대상 DB가 없습니다. 서버의 Trino/Iceberg 대상 스키마 설정을 확인하세요.");
+      } else if (configuredName && !currentIsAvailable) {
+        setError(`현재 설정된 DB '${configuredName}'는 서버의 사용 가능 목록에 없습니다.`);
+      }
     } catch (loadError) {
-      setDatabases((currentDatabases) => mergeCurrentDatabase(currentDatabases.length > 0 ? currentDatabases : FALLBACK_DATABASES, value));
+      setDatabases([]);
+      setSelectedName("");
       setError(loadError instanceof Error ? loadError.message : "DB 목록을 불러오지 못했습니다.");
     } finally {
       setLoading(false);

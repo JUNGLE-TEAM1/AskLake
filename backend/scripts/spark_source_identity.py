@@ -1,13 +1,114 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import hashlib
 import os
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 
 SOURCE_WINDOW_IDENTITY_CONTRACT_VERSION = 2
+SOURCE_SELECTION_IDENTITY_CONTRACT_VERSION = 1
 DEFAULT_IDENTITY_WORKERS = 16
 MAX_IDENTITY_WORKERS = 64
+
+
+def source_inventory_fingerprint(inventory: list[dict[str, Any]]) -> str:
+    normalized = sorted(
+        (normalize_selection_identity(item) for item in inventory),
+        key=lambda item: item["key"].encode("utf-8"),
+    )
+    payload = "".join(
+        f'{item["key"]}\t{item["size"]}\t{item["lastModifiedMs"]}\n'
+        for item in normalized
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def verify_source_selection_inventory(
+    source_collection: dict[str, Any] | None,
+    actual_inventory: list[dict[str, Any]],
+) -> dict[str, Any]:
+    collection = source_collection if isinstance(source_collection, dict) else {}
+    selection_kind = str(collection.get("selectionKind") or "").casefold()
+    expected_fingerprint = str(collection.get("expectedInventoryFingerprint") or "").strip().casefold()
+    expected_count = optional_nonnegative_integer(collection.get("expectedFileCount"), "expectedFileCount")
+    expected_bytes = optional_nonnegative_integer(collection.get("expectedTotalBytes"), "expectedTotalBytes")
+    has_contract = selection_kind in {"file", "prefix"} and any(
+        value is not None and value != ""
+        for value in (expected_count, expected_bytes, expected_fingerprint)
+    )
+    normalized = [normalize_selection_identity(item) for item in actual_inventory]
+    actual_count = len(normalized)
+    actual_bytes = sum(item["size"] for item in normalized)
+    actual_fingerprint = source_inventory_fingerprint(actual_inventory)
+    if not has_contract:
+        return {
+            "fileCount": actual_count,
+            "fingerprint": actual_fingerprint,
+            "totalBytes": actual_bytes,
+        }
+
+    mismatches = []
+    if expected_count is not None and actual_count != expected_count:
+        mismatches.append(f"fileCount expected={expected_count} actual={actual_count}")
+    if expected_bytes is not None and actual_bytes != expected_bytes:
+        mismatches.append(f"totalBytes expected={expected_bytes} actual={actual_bytes}")
+    if expected_fingerprint:
+        version = optional_nonnegative_integer(
+            collection.get("selectionIdentityContractVersion"),
+            "selectionIdentityContractVersion",
+        )
+        if version != SOURCE_SELECTION_IDENTITY_CONTRACT_VERSION:
+            raise ValueError(
+                "SOURCE_OBJECT_INVENTORY_INVALID "
+                f"selection identity contract version={version}"
+            )
+        if actual_fingerprint != expected_fingerprint:
+            mismatches.append(
+                f"fingerprint expected={expected_fingerprint} actual={actual_fingerprint}"
+            )
+    if mismatches:
+        raise ValueError("SOURCE_OBJECT_INVENTORY_MISMATCH " + "; ".join(mismatches))
+    return {
+        "fileCount": actual_count,
+        "fingerprint": actual_fingerprint,
+        "totalBytes": actual_bytes,
+    }
+
+
+def normalize_selection_identity(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID source identity must be an object")
+    key = str(value.get("key") or value.get("Key") or "").strip()
+    raw_size = value.get("size") if "size" in value else value.get("Size")
+    last_modified_ms = normalize_last_modified(value.get("lastModified") or value.get("LastModified"))
+    if isinstance(raw_size, bool):
+        raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID source object size is invalid")
+    try:
+        size = int(raw_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID source object size is invalid") from exc
+    if isinstance(raw_size, float) and not raw_size.is_integer():
+        raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID source object size is invalid")
+    if not key or size < 0 or last_modified_ms is None:
+        raise ValueError("SOURCE_OBJECT_INVENTORY_INVALID source identity is incomplete")
+    return {"key": key, "lastModifiedMs": last_modified_ms, "size": size}
+
+
+def optional_nonnegative_integer(value: Any, name: str) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"SOURCE_OBJECT_INVENTORY_INVALID {name} must be a non-negative integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"SOURCE_OBJECT_INVENTORY_INVALID {name} must be a non-negative integer") from exc
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"SOURCE_OBJECT_INVENTORY_INVALID {name} must be a non-negative integer")
+    if parsed < 0:
+        raise ValueError(f"SOURCE_OBJECT_INVENTORY_INVALID {name} must be a non-negative integer")
+    return parsed
 
 
 def source_change_detection_mode(source_collection: dict[str, Any] | None) -> str:

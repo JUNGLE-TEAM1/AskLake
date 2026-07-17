@@ -48,9 +48,33 @@ assert.equal(configValue(analysis, "__Selection Kind"), "prefix");
 assert.equal(configValue(analysis, "__Dataset Format"), "JSONL");
 assert.equal(configValue(analysis, "__Source Unit Count"), "3");
 assert.equal(configValue(analysis, "__Source Total Bytes"), "420");
+assert.match(configValue(analysis, "__Source Inventory Fingerprint"), /^[a-f0-9]{64}$/);
+assert.equal(configValue(analysis, "__Source Identity Contract Version"), "1");
 assert.equal(configValue(analysis, "__Excluded File Count"), "5");
 assert.equal(configValue(analysis, "__Sample Object"), `${prefix}part-00000.jsonl`);
 assert.equal(configValue(analysis, "__Selected Object"), "");
+
+const orderingAnalysis = await buildObjectStoragePrefixAnalysis({
+  bucket: "raw-bucket",
+  endpoint: "http://127.0.0.1:9000",
+  fields: [
+    ...fields("JSONL").filter(([label]) => label !== "Path / Prefix"),
+    ["Path / Prefix", "ordering/"],
+  ],
+  forcePathStyle: true,
+  objects: [
+    object("ordering/a.jsonl", 20),
+    object("ordering/Z.jsonl", 10),
+  ],
+  prefix: "ordering/",
+  readSample: async () => '{"id":1}\n',
+  region: "ap-northeast-2",
+});
+assert.equal(
+  configValue(orderingAnalysis, "__Source Inventory Fingerprint"),
+  "95f26f6e07f97679944da87ec1dd4ae1caee35f1a37e8bc8d440d5b2a167b395",
+  "the connector and Spark runtime must use the same UTF-8 byte ordering",
+);
 
 await assert.rejects(
   buildObjectStoragePrefixAnalysis({

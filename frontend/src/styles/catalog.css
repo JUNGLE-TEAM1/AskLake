@@ -20,6 +20,21 @@
   margin-top: 0;
 }
 
+.catalog-view-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 4px;
+}
+
+.catalog-view-button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
 .catalog-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 420px);

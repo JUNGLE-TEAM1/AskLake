@@ -174,9 +174,12 @@ required_keys=(
   ASKLAKE_REPLAY_HOST_INPUT_DIR
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
+  OPENSEARCH_INITIAL_ADMIN_PASSWORD
+  OPENSEARCH_PASSWORD
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
+  RAG_WORKER_TOKEN
   VITE_API_BASE_URL
 )
 
@@ -402,15 +405,13 @@ app_env="$(env_value_for APP_ENV)"
 backend_legacy_demo_users="$(env_value_for AUTH_LEGACY_DEMO_USERS_ENABLED)"
 frontend_legacy_demo_users="$(env_value_for VITE_AUTH_LEGACY_DEMO_USERS_ENABLED)"
 backend_legacy_demo_users="${backend_legacy_demo_users:-false}"
-frontend_legacy_demo_users="${frontend_legacy_demo_users:-false}"
-for value in "$backend_legacy_demo_users" "$frontend_legacy_demo_users"; do
-  if [[ "$value" != "true" && "$value" != "false" ]]; then
-    printf 'error: legacy demo user flags must be lowercase true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-  fi
-done
-if [[ "$backend_legacy_demo_users" != "$frontend_legacy_demo_users" ]]; then
-  printf 'error: AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match in %s\n' "$ENV_FILE" >&2
+if [[ "$backend_legacy_demo_users" != "false" || -n "$frontend_legacy_demo_users" ]]; then
+  printf 'error: legacy demo identities are test-only and must not be configured in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+frontend_mock_mode="$(env_value_for VITE_USE_MOCK_API)"
+if [[ -n "$frontend_mock_mode" ]]; then
+  printf 'error: VITE_USE_MOCK_API is no longer supported by the production frontend\n' >&2
   exit 1
 fi
 

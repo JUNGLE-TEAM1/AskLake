@@ -1,5 +1,11 @@
 import os
+from pathlib import Path
+import sys
 import uuid
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import Settings
 from app.schemas.iceberg import IcebergWriterTarget

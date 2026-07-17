@@ -8,6 +8,7 @@ const transformOperations = new Set([
   "null_guard",
   "parse_timestamp",
   "rename",
+  "sql_expression",
 ]);
 const qualityOperations = new Set(["accepted_values", "not_null", "range", "regex"]);
 
@@ -208,10 +209,122 @@ function applyTransformRule(record, rule) {
     if (!["ISO-8601", "UTC"].includes(format)) throw ruleError("unsupported_timestamp_format");
     return castValue(input, "Timestamp");
   }
+  if (operation === "sql_expression") {
+    return evaluateSqlExpression(parameters.expression, record);
+  }
   if (operation === "cast" || operation === "copy" || operation === "rename") {
     return castValue(input, outputType || parameters.targetType);
   }
   throw ruleError("unsupported_transform_operation");
+}
+
+function evaluateSqlExpression(expression, record) {
+  const normalized = String(expression || "").trim().replace(/;$/, "").trim();
+  if (!normalized || /\b(select|from|insert|update|delete|drop|alter)\b/i.test(normalized)) {
+    throw ruleError("unsupported_sql_expression");
+  }
+  const literal = parseSqlLiteral(normalized, record);
+  if (literal.matched) return literal.value;
+
+  const functionMatch = normalized.match(/^([a-z_][a-z0-9_]*)\s*\((.*)\)$/i);
+  if (!functionMatch) throw ruleError("unsupported_sql_expression");
+  const functionName = functionMatch[1].toLowerCase();
+  const args = splitSqlArguments(functionMatch[2]);
+  if (functionName === "trim" && args.length === 1) {
+    const value = evaluateSqlExpression(args[0], record);
+    return value === null || value === undefined ? null : String(value).trim();
+  }
+  if ((functionName === "lower" || functionName === "lcase") && args.length === 1) {
+    const value = evaluateSqlExpression(args[0], record);
+    return value === null || value === undefined ? null : String(value).toLowerCase();
+  }
+  if ((functionName === "upper" || functionName === "ucase") && args.length === 1) {
+    const value = evaluateSqlExpression(args[0], record);
+    return value === null || value === undefined ? null : String(value).toUpperCase();
+  }
+  if (functionName === "coalesce" && args.length > 0) {
+    for (const arg of args) {
+      const value = evaluateSqlExpression(arg, record);
+      if (!isMissing(value)) return value;
+    }
+    return null;
+  }
+  if (functionName === "abs" && args.length === 1) {
+    const value = Number(evaluateSqlExpression(args[0], record));
+    if (!Number.isFinite(value)) throw ruleError("numeric_expression_failed");
+    return Math.abs(value);
+  }
+  if (functionName === "round" && (args.length === 1 || args.length === 2)) {
+    const value = Number(evaluateSqlExpression(args[0], record));
+    const digits = args.length === 2 ? Number(evaluateSqlExpression(args[1], record)) : 0;
+    if (!Number.isFinite(value) || !Number.isInteger(digits)) throw ruleError("numeric_expression_failed");
+    const factor = 10 ** digits;
+    return Math.round(value * factor) / factor;
+  }
+  if (functionName === "replace" && args.length === 3) {
+    const value = evaluateSqlExpression(args[0], record);
+    const search = evaluateSqlExpression(args[1], record);
+    const replacement = evaluateSqlExpression(args[2], record);
+    if (value === null || value === undefined) return null;
+    return String(value).split(String(search ?? "")).join(String(replacement ?? ""));
+  }
+  if ((functionName === "substr" || functionName === "substring") && (args.length === 2 || args.length === 3)) {
+    const value = evaluateSqlExpression(args[0], record);
+    const start = Number(evaluateSqlExpression(args[1], record));
+    const length = args.length === 3 ? Number(evaluateSqlExpression(args[2], record)) : undefined;
+    if (value === null || value === undefined || !Number.isFinite(start)) return null;
+    const offset = Math.max(0, start - 1);
+    return length === undefined ? String(value).slice(offset) : String(value).slice(offset, offset + Math.max(0, length));
+  }
+  if (functionName === "cast" && args.length === 1) {
+    const castMatch = args[0].match(/^(.*)\s+as\s+([a-z0-9_()]+)$/i);
+    if (!castMatch) throw ruleError("unsupported_sql_expression");
+    return castValue(evaluateSqlExpression(castMatch[1], record), castMatch[2]);
+  }
+  throw ruleError("unsupported_sql_expression");
+}
+
+function parseSqlLiteral(expression, record) {
+  const value = String(expression || "").trim();
+  if (/^null$/i.test(value)) return { matched: true, value: null };
+  if (/^true$/i.test(value)) return { matched: true, value: true };
+  if (/^false$/i.test(value)) return { matched: true, value: false };
+  if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(value)) return { matched: true, value: Number(value) };
+  if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+    return { matched: true, value: value.slice(1, -1).replace(/''/g, "'") };
+  }
+  if (/^[a-z_][a-z0-9_.]*$/i.test(value)) return { matched: true, value: getRecordValue(record, value) };
+  return { matched: false, value: undefined };
+}
+
+function splitSqlArguments(value) {
+  const args = [];
+  let start = 0;
+  let depth = 0;
+  let quote = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index + 1] === quote) {
+        index += 1;
+      } else if (character === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+    } else if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth -= 1;
+    } else if (character === "," && depth === 0) {
+      args.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  args.push(value.slice(start).trim());
+  return args.filter(Boolean);
 }
 
 function castValue(value, targetType) {

@@ -205,7 +205,7 @@ REVIEWED_FUNCTION_DIGESTS = {
     etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
     etl_run_projection: "009ba2344a14edc775694a32163b3819a5b61eed6fd55e825aa603a6703bfbdd",
     etl_catalog_projection: "b363d72ed63532bc7636c213a27a3a447b0a93fc711ad11edb622db34dda07fe",
-    etl_pipeline_policy: "5134f1bc5d77d794671f55e2b3412df311980d3506314ce99c2cd6665c2cd510",
+    etl_pipeline_policy: "943c2caae79ffefa595c48b8bcc9ca66ceadb8626fae032516b9c87b6121bffd",
 }
 
 RUNTIME_FACADE_MODULES = (
@@ -221,11 +221,11 @@ RUNTIME_FACADE_MODULES = (
 )
 
 RUNTIME_FACADE_DIGESTS = {
-    api_job_operations: "2ca3451cf8d8191ee26007932e382e5026e3f04705a53ee71ccc1aa9db788214",
+    api_job_operations: "e24bd7cf7ef22c283dd33ffbe5044381445f03daca1e560894096f4948a09dd6",
     api_review_operations: "4d145eef5bbb4452bc7584586d9458f3bfa859cf766c6f99c2291cc6da343c11",
     snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
     airflow_operations: "3ba467762ed088581513e591e232e7bed96c0b73654541dc24844715beafec76",
-    source_runtime: "3a34808ad726099502d233e5ff94c2ee7d25fc70dc620cd30054d99aaad0883e",
+    source_runtime: "0c07dfbd9bb954063291c8329d4bf8f272e8679035e1837dc87525d8a8523be2",
     continuous_maintenance: "459e03480a7c623e6b80545aa87264f1246afe1d6ec5822dc0617143766b60a2",
     continuous_session: "218eea6f08099161193e8c75d52bdfd488f8403c0e1dea24e8b3c60d4d03a3f5",
     continuous_publication: "b5dae24b0e8c823080dc354def603e21de3e4ce88a561063b751bc6864663669",

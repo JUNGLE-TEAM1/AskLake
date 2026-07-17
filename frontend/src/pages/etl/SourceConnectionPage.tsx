@@ -9,7 +9,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
-import { getDatasets } from "../../services/mockApi";
+import { getDatasets } from "../../services/askLakeApi";
 import { getSourceConnectorDefaults, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../../types";
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
@@ -27,10 +27,12 @@ import { DataLakeDatasetList } from "./DataLakeDatasetList";
 import { SourceChoiceStage, SourceConnectStage } from "./SourceConnectionStages";
 import { buildSourceConnectionDefinitions } from "./sourceDefinitions";
 import {
+  buildSourceObjectSelectionFields,
   FALLBACK_SOURCE_DEFAULTS,
   getInitialSourceStage,
   hasSqlResultPreviewConfig,
   isInternalSourceField,
+  isSourceObjectNotFoundError,
   mergeConnectorAnalysisSourceConfig,
   mergeFieldRows,
   mergeRuntimeSourceDefaults,
@@ -42,6 +44,7 @@ import {
   publicConnectorAnalysis,
   publicSourceLog,
   requiredSourceConnectionFields,
+  resolveSourcePathNavigation,
   SOURCE_CONNECTION_STATUS_COPY,
   sourceAssetMatchesExplorer,
   sourceColumnLabel,
@@ -487,47 +490,26 @@ export function SourceConnectionPage({
     }
   };
 
-  const navigateSourceAssetPath = async () => {
-    const requestedPath = assetPathQuery.trim();
-    if (!requestedPath) {
-      onNotify("이동할 경로 또는 프리픽스를 입력하세요.");
-      return;
-    }
-    await loadSourceAssetChildren(requestedPath);
-  };
-
-  const selectSourceAsset = async (assetPath: string) => {
-    const asset = displayAssets.find(([path]) => path === assetPath);
-    if (!asset) return;
-    const [, assetMeta] = asset;
-    if (assetMeta === "folder" || assetPath.endsWith("/")) {
-      await loadSourceAssetChildren(assetPath);
-      return;
-    }
+  const probeSourceObject = async (
+    assetPath: string,
+    fallbackToFolderOnNotFound: boolean,
+  ) => {
     const currentAssets = displayAssets;
-    const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
-      fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
-        ? [fieldLabel, assetPath] as [string, string]
-        : [fieldLabel, fieldValue] as [string, string]
-    )), [
-      ["__Selection Kind", "file"],
-      ["__Selected Object", assetPath],
-      ["__Sample Object", assetPath],
-    ]);
+    const previousSelectedAssetPath = selectedAssetPath;
+    const previousConnectionStatus = connectionStatus;
+    const previousConnectionMessage = connectionMessage;
+    const nextFields = buildSourceObjectSelectionFields(editableFields, assetPath);
     const selectedTargetKind = activeSourceType === "PostgreSQL"
       ? "테이블"
       : activeSourceType === "MongoDB"
         ? "컬렉션"
-        : assetMeta === "folder"
-          ? "폴더"
-          : "파일";
+        : "오브젝트";
     const nextMessage = `${selectedTargetKind} ${assetPath} 선택됨`;
     setSelectedAssetPath(assetPath);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
     applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
-    onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
     try {
       const result = patchConnectorAnalysisSourceConfig(
@@ -549,17 +531,59 @@ export function SourceConnectionPage({
       setSourceRuntime({ ...result, assets: mergeSourceAssets(currentAssets, result.assets ?? []), message: successMessage });
       setConnectionStatus(result.status);
       setConnectionMessage(successMessage);
-      onDraftChange(result.draftPatch);
+      onDraftChange({
+        recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
+        ...result.draftPatch,
+      });
       onAction("etl.source.asset_sampled", result.actionPath, assetPath);
       onNotify(successMessage);
     } catch (error) {
+      if (fallbackToFolderOnNotFound && isSourceObjectNotFoundError(error)) {
+        setSelectedAssetPath(previousSelectedAssetPath);
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: editableFields }));
+        setConnectionStatus(previousConnectionStatus);
+        setConnectionMessage(previousConnectionMessage);
+        applySourceDraft(activeSourceType, editableFields, previousConnectionStatus, previousConnectionMessage);
+        onAction("etl.source.object_not_found_folder_fallback", "/api/etl/sources/assets", assetPath);
+        await loadSourceAssetChildren(assetPath);
+        return;
+      }
       const message = error instanceof Error ? error.message : "선택한 오브젝트의 샘플을 가져오지 못했습니다.";
       setConnectionStatus("failed");
       setConnectionMessage(message);
       applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onDraftChange({ recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false } });
       onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
       onNotify(message);
     }
+  };
+
+  const selectSourceAsset = async (assetPath: string, fallbackToFolderOnNotFound = false) => {
+    const asset = displayAssets.find(([path]) => path === assetPath);
+    if (!asset) return;
+    const [, assetMeta] = asset;
+    if (assetMeta.trim().toLowerCase() === "folder" || assetPath.endsWith("/")) {
+      await loadSourceAssetChildren(assetPath);
+      return;
+    }
+    await probeSourceObject(assetPath, fallbackToFolderOnNotFound);
+  };
+
+  const navigateSourceAssetPath = async () => {
+    const navigation = resolveSourcePathNavigation(assetPathQuery, displayAssets);
+    if (!navigation.path) {
+      onNotify("이동할 경로 또는 프리픽스를 입력하세요.");
+      return;
+    }
+    if (navigation.kind === "open-folder") {
+      await loadSourceAssetChildren(navigation.path);
+      return;
+    }
+    if (navigation.kind === "select-object") {
+      await selectSourceAsset(navigation.path, true);
+      return;
+    }
+    await probeSourceObject(navigation.path, true);
   };
 
   const selectSourceFolder = async (folderPath: string) => {

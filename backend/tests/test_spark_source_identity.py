@@ -1,12 +1,14 @@
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -14,7 +16,7 @@ try:
     try:
         spark_job_run = importlib.import_module("spark_job_run")
     except ModuleNotFoundError as exc:
-        if exc.name != "pyspark":
+        if exc.name not in {"pyspark", "py4j"}:
             raise
         pyspark_module = ModuleType("pyspark")
         sql_module = ModuleType("pyspark.sql")
@@ -37,9 +39,100 @@ finally:
     sys.path.remove(str(SCRIPTS_DIR))
 
 from scripts.spark_source_identity import (
+    source_inventory_fingerprint,
     source_change_detection_mode,
     verify_incremental_source_inventory,
+    verify_source_selection_inventory,
 )
+
+
+class FullSqlTransformSchemaTests(unittest.TestCase):
+    def test_full_select_transform_is_detected(self) -> None:
+        self.assertTrue(spark_job_run.full_select_sql_transform([{
+            "enabled": True,
+            "operation": "SQL Expression",
+            "params": "SELECT title, price FROM input",
+        }]))
+        self.assertFalse(spark_job_run.full_select_sql_transform([{
+            "enabled": True,
+            "operation": "SQL Expression",
+            "params": "upper(title)",
+        }]))
+
+    def test_rule_output_schema_replaces_final_schema_for_full_select(self) -> None:
+        self.assertEqual(
+            spark_job_run.schema_columns_from_rule_output([
+                ["title", "String"],
+                ["average_rating", "Double"],
+            ]),
+            [
+                {
+                    "included": True,
+                    "nullable": True,
+                    "sourceName": "title",
+                    "targetName": "title",
+                    "type": "String",
+                },
+                {
+                    "included": True,
+                    "nullable": True,
+                    "sourceName": "average_rating",
+                    "targetName": "average_rating",
+                    "type": "Double",
+                },
+            ],
+        )
+
+    def test_review_classification_fails_closed_when_model_is_missing(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "allowedValues": ["positive", "negative"],
+                "fallbackAllowed": True,
+                "method": "one_of_values",
+                "requireModel": False,
+                "targetName": "sentiment",
+            }],
+            "sourceField": "text",
+        })
+        with tempfile.TemporaryDirectory() as model_root, patch.dict(
+            os.environ,
+            {"ASKLAKE_REVIEW_TEXT_MODEL_ROOT": model_root},
+        ):
+            checks = spark_job_run.plan_review_row_analysis_checks([{
+                "enabled": True,
+                "id": "sentiment",
+                "input": "text",
+                "operation": "Text Row Analysis",
+                "output": "sentiment",
+                "params": params,
+            }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "missing_model_artifact")
+        self.assertTrue(checks[0]["modelRequired"])
+        self.assertFalse(checks[0]["fallbackAllowed"])
+        self.assertFalse(checks[0]["fallbackUsed"])
+
+    def test_free_form_instruction_is_preview_only_in_spark(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "instruction": "Summarize the review",
+                "method": "instruction",
+                "targetName": "summary",
+            }],
+            "sourceField": "text",
+        })
+        checks = spark_job_run.plan_review_row_analysis_checks([{
+            "enabled": True,
+            "id": "summary",
+            "input": "text",
+            "operation": "Text Row Analysis",
+            "output": "summary",
+            "params": params,
+        }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "unsupported_execution_method")
+        self.assertEqual(checks[0]["executionMode"], "preview_only")
+        self.assertIn("instruction", checks[0]["previewOnlyMethods"])
 
 
 def identity(
@@ -105,6 +198,142 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
+        frame = FakeFrame()
+        spark = SimpleNamespace(table=Mock(return_value=frame))
+
+        for source_path in (
+            "iceberg:asklake.asklake.amazon_products",
+            "iceberg://asklake/asklake/amazon_products",
+            "asklake.asklake.amazon_products",
+        ):
+            self.assertIs(
+                spark_job_run.read_source(spark, "iceberg", source_path, []),
+                frame,
+            )
+
+        self.assertEqual(
+            spark.table.call_args_list,
+            [call("`asklake`.`asklake`.`amazon_products`")] * 3,
+        )
+
+    def test_invalid_iceberg_source_manifest_path_fails_closed(self) -> None:
+        spark = SimpleNamespace(table=Mock())
+
+        with self.assertRaisesRegex(ValueError, "ICEBERG_SOURCE_INVALID"):
+            spark_job_run.read_source(spark, "iceberg", "iceberg:missing-table", [])
+
+    def test_selection_fingerprint_uses_cross_runtime_utf8_byte_order(self) -> None:
+        inventory = [
+            identity("ordering/a.jsonl", last_modified="2026-07-13T00:00:00.000Z", size=20),
+            identity("ordering/Z.jsonl", last_modified="2026-07-13T00:00:00.000Z", size=10),
+        ]
+
+        self.assertEqual(
+            source_inventory_fingerprint(inventory),
+            "95f26f6e07f97679944da87ec1dd4ae1caee35f1a37e8bc8d440d5b2a167b395",
+        )
+
+    def test_prefix_selection_contract_accepts_the_exact_preview_inventory(self) -> None:
+        inventory = [
+            identity("incoming/a.jsonl", last_modified="2026-07-12T10:15:00.000Z", size=10),
+            identity("incoming/b.jsonl", last_modified="2026-07-12T10:30:00.000Z", size=20),
+        ]
+        collection = {
+            "expectedFileCount": 2,
+            "expectedInventoryFingerprint": source_inventory_fingerprint(inventory),
+            "expectedTotalBytes": 30,
+            "selectionIdentityContractVersion": 1,
+            "selectionKind": "prefix",
+        }
+
+        verified = verify_source_selection_inventory(collection, inventory)
+
+        self.assertEqual(verified["fileCount"], 2)
+        self.assertEqual(verified["totalBytes"], 30)
+
+    def test_prefix_selection_contract_rejects_changed_count_or_size(self) -> None:
+        inventory = [identity("incoming/a.jsonl", size=10)]
+        fingerprint = source_inventory_fingerprint(inventory)
+
+        with self.assertRaises(ValueError) as count_error:
+            verify_source_selection_inventory({
+                "expectedFileCount": 2,
+                "expectedInventoryFingerprint": fingerprint,
+                "expectedTotalBytes": 10,
+                "selectionIdentityContractVersion": 1,
+                "selectionKind": "prefix",
+            }, inventory)
+        self.assertIn("SOURCE_OBJECT_INVENTORY_MISMATCH", str(count_error.exception))
+        self.assertIn("fileCount", str(count_error.exception))
+
+        with self.assertRaises(ValueError) as byte_error:
+            verify_source_selection_inventory({
+                "expectedFileCount": 1,
+                "expectedInventoryFingerprint": fingerprint,
+                "expectedTotalBytes": 11,
+                "selectionIdentityContractVersion": 1,
+                "selectionKind": "prefix",
+            }, inventory)
+        self.assertIn("totalBytes", str(byte_error.exception))
+
+    def test_selection_contract_rejects_same_size_object_replacement(self) -> None:
+        before = [identity("incoming/a.jsonl", last_modified="2026-07-12T10:15:00.000Z", size=10)]
+        after = [identity("incoming/a.jsonl", last_modified="2026-07-12T10:16:00.000Z", size=10)]
+
+        with self.assertRaises(ValueError) as raised:
+            verify_source_selection_inventory({
+                "expectedFileCount": 1,
+                "expectedInventoryFingerprint": source_inventory_fingerprint(before),
+                "expectedTotalBytes": 10,
+                "selectionIdentityContractVersion": 1,
+                "selectionKind": "file",
+            }, after)
+
+        self.assertIn("fingerprint", str(raised.exception))
+
+    def test_selection_mismatch_marks_the_spark_run_failed_before_transform(self) -> None:
+        frame = FakeFrame()
+        spark = FakeSpark(frame)
+        write_report = Mock()
+        environment = {
+            "ASKLAKE_SPARK_OUTPUT_PATH": "s3a://m3-output/run-selection-mismatch",
+            "ASKLAKE_SPARK_RUN_ID": "run-selection-mismatch",
+            "ASKLAKE_SPARK_SOURCE_FORMAT": "jsonl",
+            "ASKLAKE_SPARK_SOURCE_PATH": "s3a://m3-raw/incoming/",
+        }
+        collection = {
+            "expectedFileCount": 1,
+            "expectedTotalBytes": 10,
+            "selectionKind": "prefix",
+        }
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(spark_job_run.SparkJobConfig, "from_environment", return_value=SimpleNamespace(
+                manifest={"sourceCollection": collection},
+                output_path=environment["ASKLAKE_SPARK_OUTPUT_PATH"],
+                row_limit=0,
+                run_id=environment["ASKLAKE_SPARK_RUN_ID"],
+                source_format=environment["ASKLAKE_SPARK_SOURCE_FORMAT"],
+                source_path=environment["ASKLAKE_SPARK_SOURCE_PATH"],
+            )),
+            patch.object(spark_job_run, "make_spark", return_value=spark),
+            patch.object(spark_job_run, "verify_spark_source_inventory", return_value=[]),
+            patch.object(spark_job_run, "read_source", return_value=frame),
+            patch.object(spark_job_run, "write_report", write_report),
+            patch("builtins.print"),
+        ):
+            exit_code = spark_job_run.main()
+
+        self.assertEqual(exit_code, 1)
+        report = write_report.call_args.args[1]
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["failedStage"], "Source Inventory", report)
+        self.assertIn("SOURCE_OBJECT_INVENTORY_MISMATCH", report["error"])
+        self.assertIn("phase=before_read", report["error"])
+        spark.stop.assert_called_once_with()
+
     def test_current_iceberg_snapshot_uses_main_ref_not_newest_history(self) -> None:
         target = {
             "catalog": "iceberg",
@@ -171,6 +400,49 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["snapshotId"], "999")
         self.assertEqual(result["sourceBoundary"], boundary)
         frame.writeTo.assert_not_called()
+
+    def test_replace_mode_atomically_replaces_an_incompatible_table_schema(self) -> None:
+        writer = Mock()
+        writer.using.return_value = writer
+        writer.tableProperty.return_value = writer
+        frame = SimpleNamespace(writeTo=Mock(return_value=writer))
+        spark = SimpleNamespace(sql=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "projected_products",
+            "tableUri": "iceberg://iceberg/asklake/projected_products",
+            "writeMode": "replace",
+        }
+        previous = {
+            "committedAt": "2026-07-16T00:00:00Z",
+            "snapshotId": "100",
+            "warehouseLocation": "s3://warehouse/projected_products",
+        }
+        current = {**previous, "snapshotId": "101"}
+
+        with (
+            patch.object(spark_job_run, "iceberg_table_exists", return_value=True),
+            patch.object(spark_job_run, "latest_iceberg_snapshot", side_effect=[previous, current]),
+            patch.object(spark_job_run, "iceberg_table_schema_matches_frame", return_value=False),
+        ):
+            result = spark_job_run.commit_iceberg_table(
+                spark,
+                frame,
+                target,
+                job_id="JOB-PROJECTION",
+                run_id="RUN-PROJECTION",
+                partition_columns=[],
+                schema_fingerprint="schema-v2",
+                rule_fingerprint="rules-v2",
+                source_boundary={},
+            )
+
+        writer.replace.assert_called_once_with()
+        writer.overwrite.assert_not_called()
+        self.assertTrue(result["schemaReplaced"])
+        self.assertEqual(result["snapshotId"], "101")
 
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())

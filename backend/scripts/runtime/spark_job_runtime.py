@@ -4,6 +4,7 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote, urlparse
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -15,6 +16,7 @@ from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snap
 from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
+    verify_source_selection_inventory,
 )
 from runtime.contracts import (
     append_secondary_error,
@@ -74,7 +76,12 @@ def main():
         canonical_rules = manifest.get("rules") if "rules" in manifest else None
         canonical_snapshot = manifest.get("ruleContractVersion") == "1.0" and canonical_rules is not None
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
-        final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
+        rule_output_schema = manifest.get("ruleOutputSchema") or []
+        final_schema_columns = (
+            schema_columns_from_rule_output(rule_output_schema)
+            if full_select_sql_transform(transform_steps) and rule_output_schema
+            else merge_rule_output_schema(schema_columns, rule_output_schema)
+        )
         spark = make_spark(source_collection, iceberg_target)
         verify_spark_source_inventory(
             spark,
@@ -92,10 +99,14 @@ def main():
             transform_steps,
         )
         input_files = sorted(source_df.inputFiles())
-        input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
-        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
-            source_collection.get("expectedTotalBytes") or 0
+        input_inventory = source_file_inventory(spark, input_files)
+        verified_selection = verify_spark_source_selection_inventory(
+            source_collection,
+            input_inventory,
+            phase="before_read",
         )
+        input_file_count = verified_selection["fileCount"]
+        input_bytes = verified_selection["totalBytes"]
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
         contracted_df, input_rows = apply_schema_contract_with_count(
@@ -232,6 +243,11 @@ def main():
             spark,
             source_path,
             source_collection,
+            phase="after_read",
+        )
+        verify_spark_source_selection_inventory(
+            source_collection,
+            source_file_inventory(spark, input_files),
             phase="after_read",
         )
         if quality["status"] == "fail":
@@ -528,6 +544,25 @@ def quote_spark_identifier(value):
     return f"`{str(value).replace('`', '``')}`"
 
 
+def spark_iceberg_source_identifier(value):
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    if lowered.startswith("iceberg://"):
+        parts = raw[len("iceberg://"):].split("/")
+    elif lowered.startswith("iceberg:"):
+        parts = raw[len("iceberg:"):].split(".")
+    else:
+        parts = raw.split(".")
+    if len(parts) != 3 or any(not str(part).strip() for part in parts):
+        raise ValueError("ICEBERG_SOURCE_INVALID expected catalog.namespace.table")
+    names = (
+        required_iceberg_identifier(parts[0], "source.catalog"),
+        required_iceberg_identifier(parts[1], "source.namespace"),
+        required_iceberg_identifier(parts[2], "source.table"),
+    )
+    return ".".join(quote_spark_identifier(name) for name in names)
+
+
 def spark_iceberg_table_identifier(target):
     return ".".join(
         quote_spark_identifier(item)
@@ -543,6 +578,18 @@ def iceberg_table_exists(spark, target):
         if "TABLE_OR_VIEW_NOT_FOUND" in str(exc) or "NoSuchTableException" in str(exc):
             return False
         raise
+
+
+def spark_schema_signature(schema):
+    return tuple(
+        (str(field.name), str(field.dataType.simpleString()))
+        for field in schema.fields
+    )
+
+
+def iceberg_table_schema_matches_frame(spark, target, frame):
+    existing_schema = spark.table(spark_iceberg_table_identifier(target)).schema
+    return spark_schema_signature(existing_schema) == spark_schema_signature(frame.schema)
 
 
 def iceberg_snapshot(spark, target, snapshot_id):
@@ -640,10 +687,15 @@ def commit_iceberg_table(
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": None,
         }
+    replace_table_definition = (
+        effective_write_mode == "replace"
+        and existed_before
+        and not iceberg_table_schema_matches_frame(spark, target, frame)
+    )
     committed = False
     try:
         writer = frame.writeTo(table_identifier)
-        if not existed_before:
+        if not existed_before or replace_table_definition:
             writer = (
                 writer
                 .using("iceberg")
@@ -656,6 +708,8 @@ def commit_iceberg_table(
             writer.append()
         elif effective_write_mode == "append":
             writer.create()
+        elif replace_table_definition:
+            writer.replace()
         elif existed_before:
             writer.overwrite(F.lit(True))
         else:
@@ -677,6 +731,7 @@ def commit_iceberg_table(
             "warehouseLocation": snapshot["warehouseLocation"],
             "schemaFingerprint": schema_fingerprint,
             "ruleFingerprint": rule_fingerprint,
+            "schemaReplaced": replace_table_definition,
             "sourceBoundary": source_boundary or {},
             "_previousSnapshot": previous_snapshot,
         }
@@ -775,6 +830,30 @@ def merge_rule_output_schema(schema_columns, rule_output_schema):
     return merged
 
 
+def schema_columns_from_rule_output(rule_output_schema):
+    return [
+        {
+            "included": True,
+            "nullable": True,
+            "sourceName": str(item[0]).strip(),
+            "targetName": str(item[0]).strip(),
+            "type": str(item[1] or "String"),
+        }
+        for item in (rule_output_schema or [])
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0] or "").strip()
+    ]
+
+
+def full_select_sql_transform(transform_steps):
+    return any(
+        step
+        and step.get("enabled") is not False
+        and "sql expression" in str(step.get("operation") or "").strip().lower()
+        and str(step.get("params") or "").lstrip().lower().startswith(("select", "with"))
+        for step in (transform_steps or [])
+    )
+
+
 def snapshot_quality_report(quality):
     report = dict(quality or {})
     invalid_rows = int(report.get("invalidRowCount") or 0)
@@ -801,7 +880,7 @@ def cleanup_failed_output_paths(spark, output_path):
     return errors
 
 
-def make_spark(source_collection=None, iceberg_target=None):
+def make_spark(source_collection=None, iceberg_target=None, *, disable_speculation=False):
     change_detection_source = source_change_detection_mode(source_collection)
     builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
@@ -810,6 +889,11 @@ def make_spark(source_collection=None, iceberg_target=None):
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if disable_speculation:
+        # RAG stages perform idempotent-but-external HTTP work per partition.
+        # A speculative duplicate would waste provider calls and can race the
+        # stage callback even though the final writes are job scoped.
+        builder = builder.config("spark.speculation", "false")
     if iceberg_target:
         catalog = spark_iceberg_catalog_name()
         jdbc_url = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_URL")
@@ -845,7 +929,10 @@ def s3a_source_object_identity(spark, source_path):
     try:
         e_tag = status.getEtag()
     except Exception:
-        e_tag = status.getETag()
+        try:
+            e_tag = status.getETag()
+        except Exception:
+            e_tag = ""
     try:
         version_id = status.getVersionId()
     except Exception:
@@ -860,6 +947,23 @@ def s3a_source_object_identity(spark, source_path):
         "lastModified": last_modified,
         "size": int(status.getLen()),
     }
+
+
+def source_file_inventory(spark, paths):
+    inventory = []
+    for source_path in paths:
+        identity = s3a_source_object_identity(spark, source_path)
+        parsed = urlparse(str(source_path or ""))
+        key = unquote(parsed.path).lstrip("/") if parsed.scheme else str(source_path or "").replace("\\", "/")
+        inventory.append({"key": key, **identity})
+    return inventory
+
+
+def verify_spark_source_selection_inventory(source_collection, inventory, *, phase):
+    try:
+        return verify_source_selection_inventory(source_collection, inventory)
+    except ValueError as exc:
+        raise ValueError(f"{exc} phase={phase}") from exc
 
 
 def verify_spark_source_inventory(spark, source_path, source_collection, *, phase):
@@ -895,6 +999,8 @@ def read_source(
     transform_steps=None,
 ):
     source_collection = source_collection or {}
+    if source_format == "iceberg":
+        return spark.table(spark_iceberg_source_identifier(source_path))
     exact_paths = incremental_source_paths(source_path, source_collection)
     if exact_paths == []:
         return empty_source_frame(spark, schema_columns)
@@ -919,8 +1025,6 @@ def read_source(
         return (reader.schema(source_schema) if source_schema is not None else reader).json(read_path)
     if source_format == "parquet":
         return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
-    if source_format == "iceberg":
-        return spark.table(source_path)
     if source_format in {"txt", "text"}:
         if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
             return read_whitespace_records(spark, read_path, record_parsing)

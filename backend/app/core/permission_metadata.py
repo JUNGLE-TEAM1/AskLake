@@ -24,21 +24,22 @@ def permission_grants_from_roles(
         grants.append({
             "actions": actions,
             "principalId": owner_name,
-            "principalType": "group",
+            "principalType": "user",
             "source": "owner",
         })
 
     for role in roles or []:
         if not isinstance(role, dict) or role.get("checked") is False:
             continue
-        name = str(role.get("name") or "").strip()
-        if not name:
+        principal_id = str(role.get("principalId") or role.get("principal_id") or role.get("name") or "").strip()
+        principal_type = str(role.get("principalType") or role.get("principal_type") or "role").strip()
+        if not principal_id or principal_type not in {"user", "group", "role", "public"}:
             continue
         role_actions = normalize_actions(role.get("access"))
         grants.append({
             "actions": role_actions or actions,
-            "principalId": name,
-            "principalType": "role",
+            "principalId": principal_id,
+            "principalType": principal_type,
             "source": "permissionRoles",
         })
 
@@ -47,7 +48,7 @@ def permission_grants_from_roles(
 
 def resource_permissions(
     *,
-    actor: str = "demo-user",
+    actor: str = "system",
     can_query: bool = False,
     can_run: bool = False,
     can_manage: bool = False,
@@ -61,7 +62,8 @@ def resource_permissions(
         "canManage": can_manage,
         "canDelete": can_delete,
         "canShare": can_share,
-        "computedFor": actor or "demo-user",
+        "canPublish": False,
+        "computedFor": actor or "system",
         "enforced": False,
     }
 
@@ -69,7 +71,7 @@ def resource_permissions(
 def normalize_actions(value: Any) -> list[str]:
     raw_actions = value if isinstance(value, list) else []
     actions = [ACTION_LABELS.get(str(action), str(action)) for action in raw_actions]
-    return sorted({action for action in actions if action in {"view", "query", "run", "manage", "delete", "share"}})
+    return sorted({action for action in actions if action in {"view", "query", "run", "manage", "delete", "share", "publish"}})
 
 
 def dedupe_grants(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:

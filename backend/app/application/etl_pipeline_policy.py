@@ -362,15 +362,48 @@ def apply_update_request(
         ),
     )
 
-def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
+def trino_sql_job_permission_roles(
+    access_scope: str,
+    owner: str,
+    principal_id: str | None = None,
+) -> list[dict[str, Any]]:
     access = ["조회", "쿼리 실행", "메타데이터", "관리"]
     if access_scope == "private":
-        return [{"access": access, "checked": True, "name": owner}]
-    return [
-        {"access": access, "checked": True, "name": "Data Engineer Group"},
-        {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
-        {"access": access, "checked": access_scope == "project", "name": "Project Members"},
-    ]
+        return []
+    if access_scope == "organization":
+        return [{
+            "access": access,
+            "checked": True,
+            "name": "모든 인증 사용자",
+            "principalId": "authenticated-users",
+            "principalType": "public",
+        }]
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_principal:
+        raise ApiError(
+            "VALIDATION_ERROR",
+            "Project access requires a real group principal",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    return [{
+        "access": access,
+        "checked": True,
+        "name": normalized_principal,
+        "principalId": normalized_principal,
+        "principalType": "group",
+    }]
+
+
+def trino_sql_job_permission_summary(
+    access_scope: str,
+    owner: str,
+    principal_id: str | None = None,
+) -> str:
+    if access_scope == "organization":
+        return "모든 인증 사용자 · 조직 내부"
+    if access_scope == "project":
+        return f"그룹 {str(principal_id or '').strip()} · 프로젝트 멤버"
+    return f"{owner.strip()} · 소유자 전용"
 
 def trino_query_run_belongs_to_actor(payload: dict[str, Any], actor: ActorContext) -> bool:
     submitted_user_id = str(payload.get("submittedByUserId") or "").strip()

@@ -1,22 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveMockApiMode } from "../src/services/apiRuntimeMode.ts";
 import {
   getCompatibilityPathCounts,
   recordCompatibilityPath,
   resetCompatibilityPathCountsForTest,
 } from "../src/services/compatibilityTelemetry.ts";
-
-test("mock API is allowed only in a development build", () => {
-  assert.equal(resolveMockApiMode(false, false), false);
-  assert.equal(resolveMockApiMode(false, true), false);
-  assert.equal(resolveMockApiMode(true, true), true);
-  assert.throws(
-    () => resolveMockApiMode(true, false),
-    /development-only/,
-  );
-});
 
 test("frontend compatibility paths emit a warning and increment a stable counter", () => {
   resetCompatibilityPathCountsForTest();

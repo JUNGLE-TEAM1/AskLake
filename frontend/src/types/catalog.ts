@@ -178,6 +178,11 @@ export type CatalogModelArtifact = {
   };
   modelArtifact?: string;
   modelKind?: string;
+  provenance?: {
+    labelModels?: string[];
+    labelSource?: string;
+    source?: Record<string, unknown>;
+  };
   outputColumn?: string;
   outputDistribution?: Array<{ count: number; value: string }>;
   runId?: string;

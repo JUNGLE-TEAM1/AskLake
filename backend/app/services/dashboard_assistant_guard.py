@@ -145,6 +145,9 @@ def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResp
         message=str(payload.get("message") or "Assistant 응답을 받았습니다."),
         actions=actions,
         warnings=warnings,
+        model=str(payload.get("model") or "") or None,
+        provider=_bounded_provider(payload.get("provider")),
+        used_evidence_ids=_string_list(payload.get("usedEvidenceIds")),
     )
 
 
@@ -170,6 +173,13 @@ def _normalize_update_widget_action(raw_action: dict[str, Any]) -> dict[str, Any
             if value is not None
         },
     }
+
+
+def _bounded_provider(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized[:100] or None
 
 
 def guard_assistant_response(
@@ -214,8 +224,15 @@ def guard_assistant_response(
         message=message,
         actions=guarded_actions,
         warnings=warnings,
+        model=response.model,
+        provider=response.provider,
         config_patch=_config_patch_from_actions(guarded_actions),
         widget_patch=_widget_patch_from_actions(guarded_actions),
+        used_evidence_ids=list(dict.fromkeys(
+            evidence_id
+            for action in guarded_actions
+            for evidence_id in action.used_evidence_ids
+        )),
     )
 
 
@@ -250,11 +267,16 @@ def _guard_update_widget_action(
 
     patch = action.patch
     target_type = _widget_type_enum(patch.type or widget.type)
-    dataset_id = patch.dataset_id or widget.dataset_id
+    dataset_id = patch.dataset_id if patch.dataset_id is not None else widget.dataset_id
     if target_type not in WIDGET_OPTIONS:
         return None, [f"update_widget type {target_type!r}는 지원하지 않는 위젯 타입이어서 제외했습니다."]
 
-    if patch.config is not None:
+    render_contract_changed = any((
+        patch.config is not None,
+        patch.dataset_id is not None,
+        patch.type is not None,
+    ))
+    if render_contract_changed:
         if dataset_id is None:
             return None, [f"update_widget {action.widget_id!r}는 datasetId가 없어 config를 검증할 수 없습니다."]
         dataset = datasets.get(dataset_id)
@@ -263,7 +285,11 @@ def _guard_update_widget_action(
                 f"update_widget datasetId {dataset_id!r}는 대시보드에서 사용할 수 있는 데이터셋이 아니어서 제외했습니다. "
                 f"사용 가능한 datasetId: {_available_dataset_ids(datasets)}",
             ]
-        config, warnings = _validate_config(target_type, patch.config, dataset)
+        merged_config = {
+            **_config_to_dict(widget.config),
+            **_config_to_dict(patch.config),
+        }
+        config, warnings = _validate_config(target_type, merged_config, dataset)
         if config is None:
             return None, warnings
         config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -276,6 +302,7 @@ def _guard_update_widget_action(
             dataset_id=patch.dataset_id,
             config=config_payload,
         )
+        return action, warnings
 
     return action, []
 

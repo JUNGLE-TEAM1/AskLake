@@ -25,7 +25,7 @@ import {
   updateDraftWidget,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
-import { saveDashboardCard } from "../../services/mockApi";
+import { saveDashboardCard } from "../../services/askLakeApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
@@ -101,7 +101,7 @@ export function DashboardPage({
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
   const [runtimeSelection, setRuntimeSelection] = useState<{ dashboardId: string; mode: DashboardRuntimeMode }>(() => ({
-    dashboardId: entry.dashboardId ?? "dash_sales_demo",
+    dashboardId: entry.dashboardId ?? "",
     mode: entry.runtimeMode ?? "published",
   }));
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
@@ -555,7 +555,7 @@ export function DashboardPage({
   };
 
   const updateRuntimeWidget = async (widgetId: string, input: UpdateDraftWidgetFormInput) => {
-    if (runtimeSelection.mode !== "draft" || updatingRuntimeWidgetId) return;
+    if (runtimeSelection.mode !== "draft" || updatingRuntimeWidgetId) return false;
 
     setUpdatingRuntimeWidgetId(widgetId);
     setDraftError(null);
@@ -567,11 +567,13 @@ export function DashboardPage({
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
       onAction("dashboard.widget.updated", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update the draft widget.";
       setDraftError(message);
       setRuntimeNotice({ message: "위젯 변경사항을 저장하지 못했습니다.", tone: "error" });
       onAction("dashboard.widget.update_failed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId, "failed");
+      return false;
     } finally {
       setUpdatingRuntimeWidgetId(null);
     }

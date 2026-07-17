@@ -252,10 +252,24 @@ export function compileRuleContract({
       ...(severity ? { severity: severity as CanonicalRuleDraft["severity"] } : {}),
     } satisfies CanonicalRuleDraft;
   });
+  const fullSqlTransform = normalizedRules.some((rule) => {
+    const expression = String(rule.parameters.expression ?? "").trim().toLowerCase();
+    return rule.enabled
+      && rule.kind === "transform"
+      && rule.operation === "sql_expression"
+      && (expression.startsWith("select") || expression.startsWith("with"));
+  });
+  if (fullSqlTransform && declaredTypes.size === 0) {
+    issues.push(issue(
+      "RULE_OUTPUT_SCHEMA_REQUIRED",
+      "transformOutputColumns",
+      "Full SQL transforms require a validated output schema.",
+    ));
+  }
   return {
     contractVersion: RULE_CONTRACT_VERSION,
     issues,
-    outputSchema: Array.from(outputTypes.entries()),
+    outputSchema: Array.from((fullSqlTransform ? declaredTypes : outputTypes).entries()),
     rules: normalizedRules,
     status: issues.length > 0 ? "fail" : "pass",
   };

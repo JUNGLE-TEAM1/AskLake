@@ -102,7 +102,7 @@ class SubprocessNodeBridge:
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         if result.returncode != 0:
-            error_payload = _marker_payload(stdout, error_marker) or {}
+            error_payload = marker_payload(stdout, error_marker) or {}
             raise ApiError(
                 error_payload.get("code") or "BACKEND_BRIDGE_FAILED",
                 _redact_diagnostic(
@@ -117,7 +117,7 @@ class SubprocessNodeBridge:
                 },
             )
 
-        payload_result = _marker_payload(stdout, success_marker)
+        payload_result = marker_payload(stdout, success_marker)
         if payload_result is None:
             raise ApiError(
                 "BACKEND_BRIDGE_BAD_RESPONSE",
@@ -361,9 +361,18 @@ class Boto3ObjectManifestAdapter:
         return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw or "")
 
 
-def _marker_payload(output: str, marker: str) -> dict[str, Any] | None:
+def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
+    """Read the last ASCII-newline-delimited JSON object for ``marker``.
+
+    ``str.splitlines`` also treats Unicode separators inside valid JSON strings
+    as line boundaries.  Bridge output is an ASCII ``\n`` protocol, so only
+    split on that byte-equivalent character and remove a trailing CR from
+    CRLF output.
+    """
+
     prefix = f"{marker}="
-    for line in reversed(str(output or "").splitlines()):
+    for raw_line in reversed(str(output or "").split("\n")):
+        line = raw_line.removesuffix("\r")
         if not line.startswith(prefix):
             continue
         try:

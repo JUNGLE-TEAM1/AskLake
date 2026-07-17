@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.infrastructure.runtime_io import marker_payload
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -63,16 +64,3 @@ def run_node_bridge(
     response.setdefault("stdout", stdout)
     response.setdefault("stderr", stderr)
     return response
-
-
-def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
-    prefix = f"{marker}="
-    for line in reversed(str(output or "").splitlines()):
-        if not line.startswith(prefix):
-            continue
-        try:
-            value = json.loads(line[len(prefix):])
-        except json.JSONDecodeError:
-            return None
-        return value if isinstance(value, dict) else None
-    return None

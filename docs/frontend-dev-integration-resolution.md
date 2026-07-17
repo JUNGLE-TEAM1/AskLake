@@ -221,7 +221,7 @@
 1. Airflow `spark_process_write`와 `publish_run_result`, token-authenticated FastAPI execution endpoint, physical Parquet 검증, 멱등 Catalog reconciliation과 frontend terminal-success refresh를 모두 보존했다.
 2. 기존 Job 목록의 server filter request ordering과 새 Catalog refresh Run dedup/active tracking ref를 함께 유지했다.
 3. FastAPI ETL/Catalog verifier는 새 target storage 계약과 기존 `customer_id/amount` 다중 partition 검증을 동시에 사용한다.
-4. frontend-only mock은 계속 `VITE_USE_MOCK_API=true` 명시적 opt-in이며, live 모드의 Job 생성 시 Catalog row는 만들지 않고 Airflow 최종 publish가 검증된 Dataset을 확정한다.
+4. frontend는 live backend만 사용하며, Job 생성 시 Catalog row는 만들지 않고 Airflow 최종 publish가 검증된 Dataset을 확정한다.
 
 ### 추가 작은 커밋
 

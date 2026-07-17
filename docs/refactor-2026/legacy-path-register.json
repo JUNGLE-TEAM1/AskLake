@@ -121,18 +121,6 @@
       "telemetry": "structured_warning+counter"
     },
     {
-      "activation": "VITE_USE_MOCK_API=true and import.meta.env.DEV=true; production requests fail closed",
-      "classification": "dev_demo",
-      "id": "frontend.mock-api",
-      "marker": "resolveMockApiMode",
-      "owner": "frontend-platform",
-      "paths": ["frontend/src/services/apiClient.ts", "frontend/src/services/apiRuntimeMode.ts", "frontend/src/services/mockApi.ts"],
-      "reachability": "development_only",
-      "removalCondition": "Local integration fixtures cover all demo flows without a browser mock API",
-      "targetRelease": "backlog",
-      "telemetry": "development_only"
-    },
-    {
       "activation": "import.meta.env.DEV and the proxied source endpoint is unreachable or missing",
       "classification": "dev_demo",
       "id": "frontend.source-direct-backend",

@@ -12,12 +12,15 @@ const PASSWORD_HASH_SCHEME = "pbkdf2_sha256";
 export function authRuntimePolicy(environment = process.env) {
   const appEnvironment = String(environment.APP_ENV || "local").trim().toLowerCase();
   const allowsDevelopmentAuth = ["local", "development", "dev", "test", "testing"].includes(appEnvironment);
+  const allowsTestAuth = ["test", "testing"].includes(appEnvironment);
+  const demoUsersExplicitlyEnabled = String(environment.AUTH_LEGACY_DEMO_USERS_ENABLED || "false").trim().toLowerCase() === "true";
+  const memoryFallbackExplicitlyEnabled = String(environment.ASKLAKE_AUTH_MEMORY_FALLBACK || "false").trim().toLowerCase() === "true";
   return {
-    allowsDemoUsers: allowsDevelopmentAuth,
-    allowsMemoryFallback: allowsDevelopmentAuth
-      && String(environment.ASKLAKE_AUTH_MEMORY_FALLBACK || "true").trim().toLowerCase() !== "false",
+    allowsDemoUsers: allowsTestAuth && demoUsersExplicitlyEnabled,
+    allowsMemoryFallback: allowsTestAuth && memoryFallbackExplicitlyEnabled,
     allowsPublicSignup: allowsDevelopmentAuth
       || String(environment.AUTH_PUBLIC_SIGNUP_ENABLED || "false").trim().toLowerCase() === "true",
+    requiresBootstrapAdmin: !allowsDevelopmentAuth,
     secureCookies: !allowsDevelopmentAuth,
   };
 }
@@ -170,13 +173,13 @@ async function ensureAuthSchema() {
       `);
       if (runtimePolicy.allowsDemoUsers) {
         await ensureDemoUsers();
-      } else {
+      } else if (runtimePolicy.requiresBootstrapAdmin || process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.BOOTSTRAP_ADMIN_PASSWORD) {
         await ensureBootstrapAdmin();
       }
     })().catch((error) => {
       if (!runtimePolicy.allowsMemoryFallback) throw error;
       useMemoryAuth = true;
-      seedMemoryDemoUsers();
+      if (runtimePolicy.allowsDemoUsers) seedMemoryDemoUsers();
       console.warn(`AskLake auth DB unavailable; using in-memory auth store. ${error.message}`);
     });
   }
@@ -250,7 +253,7 @@ async function signup(body) {
     const user = {
       display_name: displayName,
       email,
-      groups: ["analytics"],
+      groups: [],
       id: uniqueUserId(displayName),
       password_hash: hashPassword(password, salt),
       password_salt: salt,
@@ -272,7 +275,7 @@ async function signup(body) {
       INSERT INTO auth_users (id, email, display_name, role, groups, password_hash, password_salt, status, title)
       VALUES ($1, $2, $3, 'viewer', $4::jsonb, $5, $6, 'active', 'AskLake User')
     `,
-    [id, email, displayName, JSON.stringify(["analytics"]), hashPassword(password, salt), salt],
+    [id, email, displayName, JSON.stringify([]), hashPassword(password, salt), salt],
   );
   const user = await findUserByEmail(email);
   return createSession(user);

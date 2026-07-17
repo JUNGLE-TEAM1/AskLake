@@ -7,14 +7,13 @@ const sourceConfig = Array.isArray(payload.sourceConfig) ? payload.sourceConfig 
 
 try {
   const result = await testSourceConnector(sourceType, sourceConfig);
-  console.log(`ASKLAKE_SOURCE_CONNECTOR_RESULT=${JSON.stringify(result)}`);
-  process.exit(0);
+  process.stdout.write(`ASKLAKE_SOURCE_CONNECTOR_RESULT=${JSON.stringify(result)}\n`);
 } catch (error) {
-  console.log(`ASKLAKE_SOURCE_CONNECTOR_ERROR=${JSON.stringify({
+  process.stdout.write(`ASKLAKE_SOURCE_CONNECTOR_ERROR=${JSON.stringify({
     code: error?.code || "SOURCE_CONNECTOR_FAILED",
     message: error?.message || "Source connector failed.",
     status: error?.status || 502,
-  })}`);
+  })}\n`);
   console.error(error?.stack || error?.message || error);
-  process.exit(1);
+  process.exitCode = 1;
 }

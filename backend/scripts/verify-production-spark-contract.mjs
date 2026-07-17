@@ -91,6 +91,20 @@ for (const name of [
   assert.equal(backendEnvironment[name], undefined, `Backend must not receive static credential ${name}.`);
   assert.equal(worker.environment?.[name], undefined, `Spark worker must not receive static credential ${name}.`);
 }
+for (const name of [
+  "AI_GATEWAY_BASE_URL",
+  "AI_GATEWAY_SERVICE_TOKEN",
+  "AI_GATEWAY_TIMEOUT_SECONDS",
+  "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
+  "ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS",
+]) {
+  assert.equal(worker.environment?.[name], undefined, `Spark worker must not receive AI control-plane value ${name}.`);
+}
+assert.equal(
+  backendEnvironment.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR,
+  "/var/lib/asklake/review-text-models",
+  "Spark submissions must point at the published portable model directory.",
+);
 
 const sharedPaths = [
   "/var/lib/asklake/spark-ivy",
@@ -206,6 +220,12 @@ const dockerfile = readFileSync(path.join(backendDir, "Dockerfile"), "utf8");
 assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must not install Docker CLI.");
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
+const sparkRunnerSource = readFileSync(path.join(backendDir, "src", "sparkRunner.mjs"), "utf8");
+assert.doesNotMatch(
+  sparkRunnerSource,
+  /AI_GATEWAY|ASKLAKE_REVIEW_ANALYSIS_RUNTIME|ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS/,
+  "Spark submissions must never receive AI Gateway credentials or invoke per-row LLM analysis.",
+);
 
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
 const runtimePathsResult = spawnSync(pythonBin, [

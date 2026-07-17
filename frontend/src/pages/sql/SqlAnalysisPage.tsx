@@ -14,15 +14,14 @@ import {
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
-import { apiConfig } from "../../services/apiClient";
-import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
+import { executeQueryPreview, getQueryPreviewPage } from "../../services/askLakeApi";
 import {
   estimateSqlQueryRun,
   isTrinoQueryRun,
   submitSqlQueryRun,
 } from "../../services/sqlQueryApi";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
 import { ContinuousSqlJoinDialog } from "./ContinuousSqlJoinDialog";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
@@ -67,6 +66,7 @@ function createClientRequestId() {
 export function SqlAnalysisPage({
   cachedResult,
   createPending,
+  currentUser: _currentUser,
   dataset,
   datasets,
   onAction,
@@ -76,6 +76,7 @@ export function SqlAnalysisPage({
 }: {
   cachedResult?: SqlResultDraft | null;
   createPending: boolean;
+  currentUser: CurrentUserResponse;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -326,7 +327,7 @@ export function SqlAnalysisPage({
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     clearTrinoState();
-    if (cachedResult.engine === "trino" && cachedTrinoRuntime && !apiConfig.useMock) {
+    if (cachedResult.engine === "trino" && cachedTrinoRuntime) {
       setResultDraft(null);
       restoreTrinoPreview(cachedTrinoRuntime);
     } else {
@@ -472,7 +473,7 @@ export function SqlAnalysisPage({
     };
     setTrinoSubmissionError(null);
     setQueryPending(true);
-    if (usesTrinoRuntime && !apiConfig.useMock) {
+    if (usesTrinoRuntime) {
       if (!confirmationContinuation) {
         setResultDraft(null);
         setDialogResultDraft(null);
@@ -488,7 +489,7 @@ export function SqlAnalysisPage({
     }
 
     try {
-      if (usesTrinoRuntime && !apiConfig.useMock) {
+      if (usesTrinoRuntime) {
         if (!confirmationToken) {
           const estimate = activeQueryEstimate ?? await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           if (!isCurrentRequest()) return;
@@ -541,7 +542,7 @@ export function SqlAnalysisPage({
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch (error) {
       if (!isCurrentRequest()) return;
-      if (usesTrinoRuntime && !apiConfig.useMock && error instanceof ApiError && error.code === "QUERY_CONFIRMATION_REQUIRED") {
+      if (usesTrinoRuntime && error instanceof ApiError && error.code === "QUERY_CONFIRMATION_REQUIRED") {
         try {
           const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           if (!isCurrentRequest()) return;

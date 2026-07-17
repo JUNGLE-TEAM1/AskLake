@@ -1,8 +1,5 @@
 
 
-import { etlJobs } from "../../data/mockData";
-import { apiConfig } from "../../services/apiClient";
-
 import { normalizeJobStatus } from "../../utils/statusMeta";
 
 import type { DagStepsByRunId, JobCommand, JobExecutionEvidence, JobListFacets, JobRowData, JobRunOutcome, JobRunSummary, RunsByJobId, SelectedRunIdByJobId } from "../../types";
@@ -31,8 +28,8 @@ export const emptySelectedJob: JobRowData = {
   target: "-",
 };
 
-export function getInitialJobs() {
-  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+export function getInitialJobs(): JobRowData[] {
+  return [];
 }
 
 export function normalizeJobRow(job: JobRowData): JobRowData {

@@ -5,6 +5,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -15,13 +16,14 @@ from .llm_client import (
     LLMClient,
     ProviderConfigurationError,
     ProviderError,
+    ProviderGeneration,
     ProviderResponseError,
     ProviderTimeoutError,
     ProviderUnavailableError,
     create_llm_client,
 )
 from .mcp_client import McpContextClient, McpContextError
-from .schemas import GenerateRequest, GenerateResponse, compact_json_size
+from .schemas import EmbeddingRequest, EmbeddingResponse, GenerateRequest, GenerateResponse, GenerationUsage, compact_json_size
 
 
 logger = logging.getLogger(__name__)
@@ -104,9 +106,10 @@ class BodySizeLimitMiddleware:
 class ContextReplayGuard:
     """Consumes one signed context per generation request in this gateway instance."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_entries: int) -> None:
         self._seen: dict[str, float] = {}
         self._lock = asyncio.Lock()
+        self._max_entries = max_entries
 
     async def consume(self, context_token: str, request_id: str, ttl_seconds: int) -> bool:
         now = time.monotonic()
@@ -115,6 +118,12 @@ class ContextReplayGuard:
             self._seen = {item: expires for item, expires in self._seen.items() if expires > now}
             if key in self._seen:
                 return False
+            if len(self._seen) >= self._max_entries:
+                # The database-backed MCP consumption table remains the
+                # authoritative cross-replica replay control. Evict only this
+                # instance's earliest optimization entry to keep memory bounded.
+                earliest = min(self._seen, key=self._seen.__getitem__)
+                self._seen.pop(earliest, None)
             self._seen[key] = now + ttl_seconds
             return True
 
@@ -162,21 +171,75 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
     app.state.settings = app_settings
     app.state.llm_client = client
     app.state.mcp_client = McpContextClient(app_settings)
-    app.state.context_replay_guard = ContextReplayGuard()
+    app.state.context_replay_guard = ContextReplayGuard(app_settings.context_replay_max_entries)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=app_settings.max_request_bytes)
 
     @app.get("/health")
     async def health(response: Response) -> dict[str, object]:
-        provider_ready = app_settings.provider == "mock" or bool(
+        primary_provider_configured = bool(
             app_settings.provider_api_key and app_settings.provider_api_key.get_secret_value()
         )
-        mcp_ready = (
-            not app_settings.mcp_enabled
-            or bool(app_settings.mcp_server_url and app_settings.mcp_service_token and app_settings.mcp_service_token.get_secret_value())
+        fallback_provider_configured = bool(
+            app_settings.provider_fallback_base_url
+            and app_settings.provider_fallback_api_key
+            and app_settings.provider_fallback_api_key.get_secret_value()
+        )
+        provider_configured = (
+            app_settings.provider == "mock"
+            or primary_provider_configured
+            or fallback_provider_configured
+        )
+        configured_default_model = (
+            app_settings.provider_model
+            if app_settings.provider == "mock" or primary_provider_configured
+            else app_settings.provider_fallback_model or app_settings.provider_model
+        )
+        provider_probe = getattr(app.state.llm_client, "healthcheck", None)
+        provider_ready = provider_configured and (
+            bool(await provider_probe()) if callable(provider_probe) else True
+        )
+        mcp_configured = bool(
+            app_settings.mcp_server_url
+            and app_settings.mcp_service_token
+            and app_settings.mcp_service_token.get_secret_value()
+        )
+        mcp_ready = not app_settings.mcp_enabled or (
+            mcp_configured and await app.state.mcp_client.healthcheck()
         )
         ready = bool(app_settings.internal_auth_token and app_settings.internal_auth_token.get_secret_value()) and provider_ready and mcp_ready
         response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "ok" if ready else "unavailable", "service": "ai-gateway"}
+        return {
+            "status": "ok" if ready else "unavailable",
+            "service": "ai-gateway",
+            "provider": app_settings.provider,
+            "model": configured_default_model,
+            "mcp": "ready" if mcp_ready and app_settings.mcp_enabled else "disabled" if not app_settings.mcp_enabled else "unavailable",
+            "checks": {
+                "internalAuth": "ready" if app_settings.internal_auth_token and app_settings.internal_auth_token.get_secret_value() else "unavailable",
+                "provider": "ready" if provider_ready else "unavailable" if provider_configured else "unconfigured",
+                "mcp": "ready" if mcp_ready and app_settings.mcp_enabled else "disabled" if not app_settings.mcp_enabled else "unavailable",
+            },
+            "routing": {
+                mode: (
+                    app_settings.model_for_mode(mode)
+                    if app_settings.provider == "mock" or primary_provider_configured
+                    else app_settings.provider_fallback_model or app_settings.model_for_mode(mode)
+                )
+                for mode in ["query_sql", "dashboard_assistant", "etl_transform", "rag_query_plan", "review_row"]
+            },
+            "capabilities": [
+                "query_sql",
+                "classify_dataset",
+                "segment_document",
+                "etl_transform",
+                "dashboard_assistant",
+                "review_schema",
+                "review_row",
+                "rag_query_plan",
+                "rag_relevance",
+                "embeddings",
+            ],
+        }
 
     @app.post("/v1/generate", response_model=GenerateResponse, dependencies=[Depends(require_internal_bearer)])
     async def generate(request: GenerateRequest, response: Response, request_context: Request) -> GenerateResponse:
@@ -186,9 +249,14 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
         request_started = time.perf_counter()
         mcp_duration_ms = 0.0
         context_token = request_context.headers.get("X-AskLake-AI-Context", "")
-        if app_settings.mcp_enabled and not context_token:
+        requires_catalog_context = (
+            app_settings.mcp_enabled
+            and request.mode in {"query_sql", "dashboard_assistant"}
+            and bool(request.selected_dataset_ids)
+        )
+        if requires_catalog_context and not context_token:
             raise HTTPException(status_code=401, detail="AI context is required")
-        if app_settings.mcp_enabled:
+        if requires_catalog_context:
             if not request.request_id:
                 raise HTTPException(status_code=422, detail="request_id is required with MCP context")
             if not await app.state.context_replay_guard.consume(
@@ -208,10 +276,23 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
             except McpContextError as exc:
                 raise HTTPException(status_code=502, detail="MCP catalog context request failed") from exc
             mcp_duration_ms = (time.perf_counter() - mcp_started) * 1000
-            request = request.model_copy(update={"context": catalog_context})
+            resolved_context = (
+                {**catalog_context, "ragContext": request.rag_context}
+                if request.mode == "query_sql"
+                else {
+                    **request.context,
+                    "catalogContext": catalog_context,
+                    "ragContext": request.rag_context,
+                }
+            )
+            request = request.model_copy(update={"context": resolved_context})
             validate_request_limits(request, app_settings)
+        elif request.rag_context:
+            request = request.model_copy(update={"context": {**request.context, "ragContext": request.rag_context}})
+            validate_request_limits(request, app_settings)
+        generation_started = time.perf_counter()
         try:
-            output = await app.state.llm_client.generate(request)
+            generated = await app.state.llm_client.generate(request)
         except ProviderError as exc:
             logger.warning(
                 "ai_generation_failed request_id=%s provider=%s reason=%s",
@@ -220,25 +301,69 @@ def create_app(settings: Settings | None = None, llm_client: LLMClient | None = 
                 exc.__class__.__name__,
             )
             raise provider_http_exception(exc) from exc
-        generation_duration_ms = (time.perf_counter() - request_started) * 1000
+        if isinstance(generated, ProviderGeneration):
+            output = generated.output
+            provider_name = generated.provider
+            model_name = generated.model
+            usage = generated.usage
+        else:
+            output = generated
+            provider_name = app.state.llm_client.provider_name
+            model_name = app.state.llm_client.model_name
+            usage = GenerationUsage()
+        generation_duration_ms = (time.perf_counter() - generation_started) * 1000
+        total_duration_ms = (time.perf_counter() - request_started) * 1000
         response.headers["X-AI-MCP-Duration-MS"] = f"{mcp_duration_ms:.2f}"
         response.headers["X-AI-Generation-Duration-MS"] = f"{generation_duration_ms:.2f}"
-        response.headers["Server-Timing"] = f"mcp;dur={mcp_duration_ms:.2f}, generation;dur={generation_duration_ms:.2f}"
+        response.headers["X-AI-Total-Duration-MS"] = f"{total_duration_ms:.2f}"
+        response.headers["Server-Timing"] = (
+            f"mcp;dur={mcp_duration_ms:.2f}, "
+            f"generation;dur={generation_duration_ms:.2f}, "
+            f"total;dur={total_duration_ms:.2f}"
+        )
         logger.info(
-            "ai_generation_completed request_id=%s provider=%s model=%s mcp=%s duration_ms=%.2f",
+            "ai_generation_completed request_id=%s provider=%s model=%s mcp=%s generation_duration_ms=%.2f total_duration_ms=%.2f input_tokens=%s output_tokens=%s estimated_cost_usd=%.8f",
             request_id,
-            app.state.llm_client.provider_name,
-            app.state.llm_client.model_name,
+            provider_name,
+            model_name,
             app_settings.mcp_enabled,
             generation_duration_ms,
+            total_duration_ms,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.estimated_cost_usd,
         )
         return GenerateResponse(
             request_id=request_id,
             mode=request.mode,
             output=output,
-            provider=app.state.llm_client.provider_name,
-            model=app.state.llm_client.model_name,
+            provider=provider_name,
+            model=model_name,
+            usage=usage,
         )
+
+    @app.post("/v1/embeddings", response_model=EmbeddingResponse, dependencies=[Depends(require_internal_bearer)])
+    async def embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
+        if len(request.input) > app_settings.embedding_batch_size:
+            raise HTTPException(status_code=422, detail="Embedding batch exceeds the configured limit")
+        if app_settings.provider == "mock":
+            vectors = []
+            for value in request.input:
+                digest = hashlib.sha256(value.encode("utf-8")).digest()
+                vectors.append([((digest[index % len(digest)] / 255.0) * 2) - 1 for index in range(app_settings.embedding_dimensions)])
+            return EmbeddingResponse(
+                provider="mock",
+                model=request.model,
+                dimensions=app_settings.embedding_dimensions,
+                data=vectors,
+            )
+        try:
+            create_embeddings = getattr(app.state.llm_client, "create_embeddings", None)
+            if not callable(create_embeddings):
+                raise ProviderConfigurationError("Provider embeddings are not configured")
+            return await create_embeddings(request)
+        except ProviderError as exc:
+            raise provider_http_exception(exc) from exc
 
     return app
 

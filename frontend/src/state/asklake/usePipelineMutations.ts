@@ -1,16 +1,13 @@
 import { useRef } from "react";
 import { ApiError } from "../../types";
 
-import { apiConfig } from "../../services/apiClient";
-
 import { applyDraftPipelinePatch } from "../../services/draftPipelineContract";
 
-import { createPipelineDraft as createMockPipelineDraft, updatePipelineDraft as updateMockPipelineDraft } from "../../services/mockApi";
 import { createPipelineDraft as createLivePipelineDraft, createTrinoSqlJob as createLiveTrinoSqlJob, updatePipelineDraft as updateLivePipelineDraft } from "../../services/pipelineApi";
 
 import { transitionMutation } from "../../state/requestOwnership";
 import type { CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, DraftPipeline, DraftPipelinePatch, FlowId } from "../../types";
-import { normalizeDatasetRow, saveStoredCatalogDataset } from "./catalogState";
+import { normalizeDatasetRow } from "./catalogState";
 import { WriteAuditLog } from "./contracts";
 import { initialDraftPipeline } from "./etlDraftState";
 
@@ -85,15 +82,11 @@ export function usePipelineMutations({
     try {
       const activeEditJobId = editingJobId === pipelineDraft.id ? editingJobId : null;
       const updatedJob = activeEditJobId
-        ? await (apiConfig.useMock
-          ? updateMockPipelineDraft(activeEditJobId, pipelineDraft)
-          : updateLivePipelineDraft(activeEditJobId, pipelineDraft))
+        ? await updateLivePipelineDraft(activeEditJobId, pipelineDraft)
         : null;
       const result = updatedJob
         ? { job: updatedJob }
-        : apiConfig.useMock
-          ? await createMockPipelineDraft(pipelineDraft, jobs.length)
-          : await createLivePipelineDraft(pipelineDraft);
+        : await createLivePipelineDraft(pipelineDraft);
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = "dataset" in result && result.dataset ? normalizeDatasetRow(result.dataset) : null;
       setCreateMutationState((state) => transitionMutation(state, "accepted"));
@@ -102,7 +95,6 @@ export function usePipelineMutations({
       setSelectedJob(normalizedJob);
       setEditingJobId(null);
       if (normalizedDataset) {
-        saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
@@ -151,10 +143,6 @@ export function usePipelineMutations({
   const createTrinoSqlJob = async (request: CreateTrinoSqlJobRequest) => {
     if (createPendingRef.current) {
       showToast("이미 생성 요청이 처리 중입니다.", "info");
-      return false;
-    }
-    if (apiConfig.useMock) {
-      showToast("Trino SQL Job은 실제 API 모드에서 생성할 수 있습니다.", "info");
       return false;
     }
 

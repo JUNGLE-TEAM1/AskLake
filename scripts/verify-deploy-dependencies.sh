@@ -91,7 +91,6 @@ if [[ "$FRONTEND_API_BASE_URL" =~ ^https?://(localhost|127\.0\.0\.1)(:|/|$) ]]; 
 fi
 docker build \
   --build-arg VITE_API_BASE_URL="$FRONTEND_API_BASE_URL" \
-  --build-arg VITE_USE_MOCK_API="${VITE_USE_MOCK_API:-false}" \
   --build-arg VITE_DASHBOARD_ASSISTANT_API_PATH="${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
   --build-arg VITE_OBJECT_STORAGE_PROVIDER="${VITE_OBJECT_STORAGE_PROVIDER:-aws}" \
   --build-arg VITE_S3_REGION="${VITE_S3_REGION:-ap-northeast-2}" \

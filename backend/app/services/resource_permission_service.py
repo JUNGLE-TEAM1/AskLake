@@ -147,6 +147,7 @@ def permissions_for_actor_with_governance_state(
             "can_manage": False,
             "can_delete": False,
             "can_share": False,
+            "can_publish": False,
         })
     if not resource_locked:
         return permissions
@@ -156,4 +157,5 @@ def permissions_for_actor_with_governance_state(
         "can_manage": False,
         "can_delete": False,
         "can_share": False,
+        "can_publish": False,
     })

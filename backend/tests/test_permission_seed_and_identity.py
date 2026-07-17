@@ -1,24 +1,17 @@
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.models.identity import AuthSessionModel, AuthUserModel, PermissionGrantModel
-from app.repositories.permission_repository import (
-    create_permission_grant,
-    delete_permission_grant,
-    ensure_demo_permission_grants,
-    list_permission_grants_by_resource,
-)
+from app.repositories.permission_repository import create_permission_grant, list_permission_grants_by_resource
 from app.schemas.identity import PermissionSummary
-from app.services import identity_service
 from app.services.identity_service import IdentityService
 
 
-class DemoPermissionSeedTests(unittest.TestCase):
+class LegacyPermissionSeedTests(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite:///:memory:")
         PermissionGrantModel.metadata.create_all(bind=self.engine, tables=[PermissionGrantModel.__table__])
@@ -28,68 +21,31 @@ class DemoPermissionSeedTests(unittest.TestCase):
         self.db.close()
         self.engine.dispose()
 
-    def test_existing_admin_grant_does_not_block_demo_seed(self) -> None:
-        create_permission_grant(
-            self.db,
-            resource_type="dataset",
-            resource_id="dataset-existing",
-            principal_type="user",
-            principal_id="existing@example.com",
-            actions=["view"],
-            created_by="admin",
-        )
+    def test_legacy_demo_grants_are_never_returned_as_permissions(self) -> None:
+        self.db.add_all([
+            PermissionGrantModel(
+                id="legacy-active-seed",
+                resource_type="dataset",
+                resource_id="dataset-demo",
+                principal_type="group",
+                principal_id="analytics",
+                actions=["view", "query"],
+                source="admin_seed",
+                created_by="system",
+            ),
+            PermissionGrantModel(
+                id="legacy-deleted-seed",
+                resource_type="dataset",
+                resource_id="dataset-demo",
+                principal_type="group",
+                principal_id="analytics",
+                actions=[],
+                source="admin_seed_deleted",
+                created_by="system",
+            ),
+        ])
+        self.db.commit()
 
-        created = ensure_demo_permission_grants(
-            self.db,
-            dataset_ids=["dataset-demo"],
-            job_ids=["job-demo"],
-            dashboard_ids=["dashboard-demo"],
-        )
-
-        self.assertEqual(created, 3)
-        seeds = list(self.db.scalars(
-            select(PermissionGrantModel).where(PermissionGrantModel.source == "admin_seed")
-        ))
-        self.assertEqual({(row.resource_type, row.resource_id) for row in seeds}, {
-            ("dataset", "dataset-demo"),
-            ("etl_job", "job-demo"),
-            ("dashboard", "dashboard-demo"),
-        })
-
-    def test_demo_seed_is_idempotent(self) -> None:
-        args = {
-            "dataset_ids": ["dataset-demo"],
-            "job_ids": ["job-demo"],
-            "dashboard_ids": ["dashboard-demo"],
-        }
-        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 3)
-        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 0)
-        seeds = list(self.db.scalars(
-            select(PermissionGrantModel).where(PermissionGrantModel.source == "admin_seed")
-        ))
-        self.assertEqual(len(seeds), 3)
-
-    def test_deleted_demo_grant_is_not_recreated(self) -> None:
-        args = {
-            "dataset_ids": ["dataset-demo"],
-            "job_ids": ["job-demo"],
-            "dashboard_ids": ["dashboard-demo"],
-        }
-        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 3)
-        dataset_grant = self.db.scalar(
-            select(PermissionGrantModel)
-            .where(PermissionGrantModel.source == "admin_seed")
-            .where(PermissionGrantModel.resource_type == "dataset")
-        )
-        assert dataset_grant is not None
-        delete_permission_grant(self.db, dataset_grant.id)
-
-        self.assertEqual(ensure_demo_permission_grants(self.db, **args), 0)
-        remaining_seed_types = set(self.db.scalars(
-            select(PermissionGrantModel.resource_type)
-            .where(PermissionGrantModel.source == "admin_seed")
-        ))
-        self.assertEqual(remaining_seed_types, {"etl_job", "dashboard"})
         self.assertEqual(
             list_permission_grants_by_resource(self.db, [("dataset", "dataset-demo")]),
             {("dataset", "dataset-demo"): []},
@@ -159,10 +115,7 @@ class IdentityDatabaseSourceTests(unittest.TestCase):
     def test_admin_users_and_groups_come_from_auth_database(self) -> None:
         service = IdentityService(self.db)
         actor = ActorContext(name="Production Owner", role="admin")
-        production_settings = SimpleNamespace(allows_header_auth_fallback=False)
         with (
-            patch.object(identity_service, "settings", production_settings),
-            patch.object(identity_service, "AuthService"),
             patch.object(service, "_permission_summary", return_value=PermissionSummary()),
         ):
             users = service.list_admin_users(actor).users
@@ -182,6 +135,24 @@ class IdentityDatabaseSourceTests(unittest.TestCase):
         self.assertIn(("user", "production-admin"), actor.principal_ids)
         self.assertIn(("user", "owner@example.com"), actor.principal_ids)
         self.assertIn(("user", "Production Owner"), actor.principal_ids)
+
+    def test_current_user_uses_authenticated_identity_without_demo_profile_reconstruction(self) -> None:
+        service = IdentityService(self.db)
+        actor = ActorContext(
+            id="real-user-42",
+            email="real.user@example.com",
+            name="Real User",
+            role="viewer",
+            groups=("research",),
+            title="Research Analyst",
+        )
+        with patch.object(service, "_permission_summary", return_value=PermissionSummary()):
+            current = service.get_current_user(actor)
+
+        self.assertEqual(current.id, "real-user-42")
+        self.assertEqual(current.email, "real.user@example.com")
+        self.assertEqual([group.id for group in current.groups], ["research"])
+        self.assertEqual(current.profile.title, "Research Analyst")
 
 
 if __name__ == "__main__":

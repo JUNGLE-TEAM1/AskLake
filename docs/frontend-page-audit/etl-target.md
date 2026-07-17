@@ -1,6 +1,6 @@
 # ETL Target
 
-> 통합 상태 (2026-07-11): 아래 mock 관찰 기록은 당시 UI 감사 이력입니다. 현재 앱은 live Backend가 기본이고 `VITE_USE_MOCK_API=true`에서만 mock fixture를 사용합니다. Target payload와 저장 동작은 `docs/03-api-reference.md`와 `docs/api-contract.md`를 우선합니다.
+> 통합 상태 (2026-07-17): 아래 mock 관찰 기록은 당시 UI 감사 이력입니다. 현재 앱은 live Backend만 사용하며 브라우저 mock fixture는 제거되었습니다. Target payload와 저장 동작은 `docs/03-api-reference.md`와 `docs/api-contract.md`를 우선합니다.
 
 ## Route
 
@@ -78,7 +78,7 @@
 
 ## QA Notes
 
-- 당시 fixture 확인: `VITE_USE_MOCK_API=true`에서 Job fixture 4개, Catalog dataset 11개, Dashboard card 15개가 존재했다. 현재 기본값은 live Backend다.
+- 당시 브라우저 mock fixture에는 Job 4개, Catalog dataset 11개, Dashboard card 15개가 존재했다. 현재는 이 runtime fixture가 제거되었다.
 - 최소 route 확인: 감사 대상 16개 route가 Vite dev server `http://127.0.0.1:5175`에서 200으로 응답했다.
 - Target 화면 확인 포인트:
   - 좁은 화면에서는 `.target-config-form-grid`와 `.target-config-split`이 `responsive.css`에서 1열로 내려간다.
