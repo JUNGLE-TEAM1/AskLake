@@ -36,7 +36,7 @@ node "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs" --ready "$RUNTIME" >/dev
 deploy_readiness_args=(--delivery "$HANDOFF" --runtime-secrets "$RUNTIME")
 [[ "$MODE" == "--ready" ]] && deploy_readiness_args=(--ready "${deploy_readiness_args[@]}")
 node "$ROOT_DIR/scripts/verify-eks-deploy-readiness.mjs" "${deploy_readiness_args[@]}" >/dev/null
-backend_scope="bounded"
+backend_scope="$(jq -r '.runtimeProfiles.backend.active // "bounded"' "$RUNTIME")"
 [[ "$MODE" == "--ready" ]] && backend_scope="full-service"
 ASKLAKE_BACKEND_RUNTIME_SCOPE="$backend_scope" \
   bash "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh" >/dev/null

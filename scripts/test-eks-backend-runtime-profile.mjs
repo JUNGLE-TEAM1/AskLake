@@ -24,13 +24,13 @@ try {
   if (result.status !== 0 || result.keys.length !== 12 || !result.keys.includes('AIRFLOW_PASSWORD')) {
     throw new Error('bounded profile changed unexpectedly');
   }
-  result = resolve('full-service');
+  result = resolve('full-service', (contract) => {
+    contract.runtimeDecisions.aiRuntime = {...contract.runtimeDecisions.aiRuntime, status: 'learning-required', selected: null};
+  });
   if (result.status === 0 || !result.error.includes('aiRuntime is unresolved')) {
     throw new Error('unresolved AI runtime opened the full-service profile');
   }
-  result = resolve('full-service', (contract) => {
-    contract.runtimeDecisions.aiRuntime = {...contract.runtimeDecisions.aiRuntime, status: 'selected', selected: 'direct'};
-  });
+  result = resolve('full-service');
   if (result.status !== 0 || result.keys.length !== 13 || !result.keys.includes('OPENAI_API_KEY') || result.keys.includes('AI_GATEWAY_SERVICE_TOKEN') || result.keys.includes('AIRFLOW_API_TOKEN')) {
     throw new Error('direct username/password profile is not decision-aware');
   }

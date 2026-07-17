@@ -43,7 +43,10 @@ try {
     sourcePrefix: '/asklake/dev/runtime',
   };
   run('workflow-ready', workflow, ['--ready'], true);
-  run('workflow-unresolved-full-service', workflow, ['--full-service-ready'], false);
+  const workflowUnresolved = structuredClone(workflow);
+  workflowUnresolved.runtimeDecisions.aiRuntime.status = 'learning-required';
+  workflowUnresolved.runtimeDecisions.aiRuntime.selected = null;
+  run('workflow-unresolved-full-service', workflowUnresolved, ['--full-service-ready'], false);
 
   const workflowFull = structuredClone(workflow);
   workflowFull.runtimeDecisions.airflowApiAuth.status = 'selected';
@@ -76,7 +79,11 @@ try {
     ['bounded-profile-drift', (value) => { value.runtimeProfiles.backend.boundedKeys.pop(); }],
     ['bounded-profile-unknown-key', (value) => { value.runtimeProfiles.backend.boundedKeys.push('UNKNOWN'); }],
     ['bounded-profile-active-drift', (value) => { value.runtimeProfiles.backend.active = 'unknown'; }],
-    ['full-service-active-unresolved', (value) => { value.runtimeProfiles.backend.active = 'full-service'; }],
+    ['full-service-active-unresolved', (value) => {
+      value.runtimeProfiles.backend.active = 'full-service';
+      value.runtimeDecisions.aiRuntime.status = 'learning-required';
+      value.runtimeDecisions.aiRuntime.selected = null;
+    }],
     ['shared-binding-drift', (value) => { value.sharedBindings[0].bindings.pop(); }],
     ['file-mount-drift', (value) => { value.fileMounts[0].mountPath = '/tmp/ca.pem'; }],
     ['env-binding-drift', (value) => { value.envBindings[0].binding = 'backend:UNKNOWN'; }],

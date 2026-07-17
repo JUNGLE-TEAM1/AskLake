@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "configMap"],
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "const": "asklake-dev"
+    },
+    "configMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "data"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "asklake-runtime"
+        },
+        "data": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" }
+        }
+      }
+    }
+  }
+}
