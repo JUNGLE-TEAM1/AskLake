@@ -146,3 +146,24 @@
 - 결정: 모든 PR의 base는 `dev`로 유지하되 manifest의 직전 PR dependency 순서대로 한 번에 하나만 merge하고, 매 단계 뒤 다음 PR diff·conflict·CI를 새 `dev` 기준으로 재확인한다.
 - 이유: stacked branch의 뒤 PR은 앞 PR 변경을 포함하므로 순서를 건너뛰거나 오래된 diff를 승인하면 실제 merge 범위와 검증 근거가 달라진다.
 - 제약: validator는 GitHub live review와 check를 대신하지 않는다. 이 작업은 PR 생성·정적 release gate까지만 수행하며 merge, branch 삭제, production deploy/restart/traffic 이동은 사람 승인 전 금지한다.
+
+## D-023 — ETL 정책·projection 추출 뒤 기존 service import를 façade로 유지
+
+- 상태: Accepted
+- 결정: schedule 계산, Job/Run projection·정규화, whitespace record preview를 세 application module로 옮기고 `app.services.etl_service`는 동일 함수 객체를 기존 이름으로 re-export한다.
+- 이유: Router, 검증 script와 테스트의 공개 import를 한 번에 바꾸지 않으면서 단일 서비스 파일의 변경 집중도를 낮출 수 있다. 모듈별 LOC budget과 역방향 façade import 금지를 자동 검사해 단순 파일 이동이 순환 의존성으로 퇴행하는 것도 막는다.
+- 제약: API path·schema, DB와 persisted payload, runtime side effect·transaction 순서, legacy/mock 활성 상태를 바꾸지 않는다. façade 1,200줄 목표는 아직 미달이므로 남은 SQL Job·snapshot/continuous composition은 독립 PR에서 계속 추출한다.
+
+## D-024 — ETL runtime projection·policy를 추가 책임 모듈로 분리
+
+- 상태: Accepted
+- 결정: 증분 source identity, Airflow·Spark·Kafka Run projection, Catalog·lineage projection, Pipeline policy와 공통 runtime helper 93개 함수를 다섯 application module로 추가 분리한다.
+- 이유: `etl_service.py`를 5,895줄의 compatibility façade·transaction 조립 경계로 줄이면서 API, DB schema, persisted payload와 기존 import 경로를 그대로 유지하기 위해서다.
+- 제약: 새 모듈은 façade를 역참조하지 않고 800줄 이하 budget을 갖는다. 추출 함수의 AST digest와 re-export identity를 구조 테스트로 고정한다.
+
+## D-025 — ETL side-effect orchestration은 runtime-bound service fragment로 분리
+
+- 상태: Accepted
+- 결정: 100줄 이하의 API·snapshot·Airflow·source runtime·Continuous·replay orchestration 함수 164개를 `app.services.etl`의 아홉 책임 모듈로 옮기고, `etl_service.py`에는 signature-preserving compatibility binding과 100줄 초과 핵심 transaction 함수만 남긴다.
+- 이유: 기존 router·script import와 테스트 monkeypatch 지점을 깨지 않으면서 façade를 5,895줄에서 2,178줄로 줄이고, 기능별 변경 범위와 파일 소유권을 분리하기 위해서다.
+- 제약: runtime fragment는 façade를 역참조하지 않으며 파일별 1,000줄·함수별 100줄 budget을 지킨다. binding은 호출 시 기존 façade dependency를 동기화할 뿐 API, DB schema, persisted payload, transaction·외부 side-effect 순서, legacy/mock 활성 상태를 변경하지 않는다. 남은 100줄 초과 함수는 hook 계약을 명시한 뒤 후속 단계에서 분리한다.
