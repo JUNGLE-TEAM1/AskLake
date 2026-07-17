@@ -12,6 +12,7 @@ from app.api.internal_mcp import create_internal_mcp_app, internal_mcp_mount_pat
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
+from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.core.observability import CorrelationIdMiddleware
 from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
 from app.repositories.continuous_sql_repository import ensure_continuous_sql_schema
@@ -68,6 +69,7 @@ def initialize_auth_on_startup() -> None:
         # Some operational tests inject an auth-only session sentinel. Real
         # SQLAlchemy sessions always expose get_bind().
         if hasattr(db, "get_bind"):
+            migrate_dashboard_schema(db)
             ensure_dashboard_live_schema(db)
             ensure_realtime_event_schema(db)
             ensure_continuous_sql_schema(db)
