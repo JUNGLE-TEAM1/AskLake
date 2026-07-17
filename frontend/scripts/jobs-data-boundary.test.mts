@@ -96,3 +96,14 @@ test("Snapshot status refresh is one page-level request and pauses for hidden ta
   assert.match(polling, /visibilitychange/);
   assert.match(polling, /snapshotStatusPollDelayMs\(consecutiveErrors\)/);
 });
+
+test("Jobs failure alert follows current Job status instead of the latest Run outcome", () => {
+  const landingPage = read("src/pages/ingest/jobs/JobsLandingPage.tsx");
+
+  assert.match(landingPage, /const failureFilterActive = hasSameStatuses\(jobQuery\.statuses, \["failed"\]\);/);
+  assert.match(landingPage, /const failedJobCount = jobListFacets\.statusCounts\.failed;/);
+  assert.match(landingPage, /statuses: \["failed"\]/);
+  assert.doesNotMatch(landingPage, /const failureFilterActive = jobQuery\.lastRunOutcome === "failed";/);
+  assert.doesNotMatch(landingPage, /const failedRunCount = jobListFacets\.latestRunOutcomeCounts\.failed;/);
+  assert.doesNotMatch(landingPage, /lastRunOutcome: "failed"/);
+});
