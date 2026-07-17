@@ -113,6 +113,8 @@ X-Request-Id: req_20260703_000001
 
 Production startup은 알려진 legacy demo 계정을 기본적으로 `disabled`로 바꾸고 해당 세션을 폐기합니다. 데모 운영에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 명시하면 기존 demo 계정의 저장된 상태와 세션을 재시작 후에도 보존하며, 누락된 demo 계정은 초기 `active` 상태로 생성합니다. 이 모드도 `BOOTSTRAP_ADMIN_*` 설정, Secure session cookie, client header fallback 차단을 유지합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 같은 배포의 로그인 UI에 demo 기본값을 표시하는 build-time 짝이며 두 플래그는 `scripts/verify-deploy-env.sh`에서 동일해야 합니다. Opt-in은 이미 저장된 `disabled`를 자동으로 되돌리지 않습니다.
 
+운영 세션 쿠키는 기본적으로 `Secure`, `HttpOnly`, `SameSite=Lax`를 사용합니다. HTTPS가 아직 없는 제한된 dev HTTP ALB는 `AUTH_SESSION_COOKIE_SECURE=false`를 명시할 수 있지만 `HttpOnly`와 `SameSite=Lax`는 유지되며, 이 예외는 header-auth fallback, public signup, legacy demo 계정 정책을 변경하지 않습니다. HTTPS 전환 뒤에는 반드시 `true`로 복구합니다.
+
 Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
 
 ### Permission/Governance Phase 0 용어
