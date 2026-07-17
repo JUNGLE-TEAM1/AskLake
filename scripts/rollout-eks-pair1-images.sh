@@ -116,7 +116,7 @@ cp "$RUNTIME_VALUES" "$RUNTIME_VALUES_BACKUP"
 chmod 600 "$HANDOFF_BACKUP" "$TRINO_VALUES_BACKUP" "$RUNTIME_VALUES_BACKUP"
 [[ ! -e "$TRINO_PRIVATE_CANDIDATE" ]] || fail "stale Trino rollout candidate exists"
 
-export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value' "$STATE")}" 
+export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value' "$STATE")}"
 verify_asklake_eks_context
 
 receipt_revision="$(jq -r '.gitRevision' "$RECEIPT")"
