@@ -51,7 +51,7 @@ Phase 2 baseline 수집은 live resource를 변경하지 않고 실행했다.
 - 첫 baseline에는 unrelated terminating Pod 1개가 있었지만 재관찰에서 0으로 수렴해 exclusive-window gate는 열렸다.
 - 실제 run resource를 만들지 않았으므로 cleanup은 아직 검증 대상이 아니다.
 
-따라서 Phase 2 하네스 구현과 읽기 전용 검증은 완료했지만 Phase 3 부하 진입은 허용하지 않는다. 현재 직접 차단 조건은 placement ownership이며, 실제 시작 직전 exclusive window도 다시 확인해야 한다. 두 조건을 만족한 뒤 새 run token과 새 baseline으로 시작한다. 현재 private evidence는 Git에서 제외한다.
+Phase 2 당시에는 통합 workload 부하 진입을 차단했다. 이후 Phase 3은 `isolated` scope를 추가해 Airflow/Trino placement와 무관한 A 소유 NodePool만 별도 검증했고, General/Spark scale-out·scale-in과 cleanup을 통과했다. 결과는 [Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)에 남긴다. `integrated` scope는 계속 placement 일치를 요구한다.
 
 ## 정적 회귀
 

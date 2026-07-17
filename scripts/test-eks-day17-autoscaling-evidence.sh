@@ -71,7 +71,8 @@ write("deployments.json", { items: [{
 write("hpas.json", { items: [{ metadata: { name: "fastapi", generation: 1 }, spec: { minReplicas: 2, maxReplicas: 6, metrics: [{ resource: { name: "cpu", target: { averageUtilization: 60 } } }] }, status: { currentReplicas: 2, desiredReplicas: 2 } }] });
 write("jobs.json", { items: [] });
 write("sparkapplications.json", { items: [] });
-write("endpointslices.json", { items: [{ endpoints: [{ conditions: { ready: true, terminating: false } }] }] });
+  write("endpointslices.json", { items: [{ endpoints: [{ conditions: { ready: true, terminating: false } }] }] });
+  write("events.json", { items: [] });
 write("helm-releases.json", [{ name: "asklake-web", namespace: "asklake-dev", revision: "1", chart: "asklake-web-0.3.0", status: "deployed" }]);
 NODE
 }
@@ -128,6 +129,28 @@ ASKLAKE_DAY17_RUN_TOKEN=test-run-token node "$ROOT_DIR/scripts/build-eks-day17-a
 node - "$TEMP_DIR/unclean.json" <<'NODE'
 const evidence = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
 if (evidence.cleanup.verified) process.exit(1);
+NODE
+
+write_fixtures 1 false
+ASKLAKE_DAY17_SCOPE=isolated ASKLAKE_DAY17_RUN_TOKEN=test-run-token node "$ROOT_DIR/scripts/build-eks-day17-autoscaling-snapshot.mjs" "$INPUT_DIR" "$TEMP_DIR/isolated.json" baseline
+cp "$TEMP_DIR/isolated.json" "$INPUT_DIR/existing-evidence.json"
+node - "$INPUT_DIR/nodes.json" <<'NODE'
+const fs = require("fs");
+const path = process.argv[2];
+const value = JSON.parse(fs.readFileSync(path, "utf8"));
+value.items.push(
+  { metadata: { name: "node-private-c", labels: { "karpenter.sh/nodepool": "asklake-general" } }, status: { allocatable: { cpu: "2", memory: "8Gi" } } },
+  { metadata: { name: "node-private-d", labels: { "karpenter.sh/nodepool": "asklake-spark" } }, status: { allocatable: { cpu: "4", memory: "16Gi" } } },
+);
+fs.writeFileSync(path, `${JSON.stringify(value)}\n`);
+NODE
+ASKLAKE_DAY17_SCOPE=isolated ASKLAKE_DAY17_RUN_TOKEN=test-run-token node "$ROOT_DIR/scripts/build-eks-day17-autoscaling-snapshot.mjs" "$INPUT_DIR" "$TEMP_DIR/isolated.json" sample
+write_fixtures 1 false
+cp "$TEMP_DIR/isolated.json" "$INPUT_DIR/existing-evidence.json"
+ASKLAKE_DAY17_SCOPE=isolated ASKLAKE_DAY17_RUN_TOKEN=test-run-token node "$ROOT_DIR/scripts/build-eks-day17-autoscaling-snapshot.mjs" "$INPUT_DIR" "$TEMP_DIR/isolated.json" final
+node - "$TEMP_DIR/isolated.json" <<'NODE'
+const evidence = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+if (!evidence.finalGatePassed || !evidence.scaleTransitions.general.scaleOutObserved || !evidence.scaleTransitions.spark.scaleInObserved) process.exit(1);
 NODE
 
 echo "EKS Day 17 autoscaling evidence tests passed."

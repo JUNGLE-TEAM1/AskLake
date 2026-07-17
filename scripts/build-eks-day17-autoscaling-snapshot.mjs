@@ -21,6 +21,9 @@ const readJson = (name, fallback = undefined) => {
 const items = (name) => readJson(name, { items: [] }).items ?? [];
 const fingerprint = createHash("sha256").update(runToken).digest("hex").slice(0, 16);
 const labelKey = "asklake.io/day17-run";
+const scope = process.env.ASKLAKE_DAY17_SCOPE ?? "integrated";
+if (!["integrated", "isolated"].includes(scope)) throw new Error("ASKLAKE_DAY17_SCOPE must be integrated or isolated");
+const owned = (resource) => resource.metadata?.labels?.[labelKey] === fingerprint;
 
 const quantity = (value, cpu = false) => {
   if (!value) return 0;
@@ -157,20 +160,20 @@ const hpas = items("hpas.json").map((hpa) => ({
   cpuTargets: (hpa.spec?.metrics ?? []).filter((metric) => metric.resource?.name === "cpu").map((metric) => metric.resource?.target?.averageUtilization ?? null),
   behavior: hpa.spec?.behavior ?? null,
 }));
-const helmReleases = readJson("helm-releases.json", []).filter((release) => release.namespace === process.env.ASKLAKE_EKS_NAMESPACE).map((release) => ({
+const helmReleases = readJson("helm-releases.json", []).filter((release) =>
+  release.namespace === process.env.ASKLAKE_EKS_NAMESPACE && release.name !== "asklake-day17-nodepool-smoke").map((release) => ({
   name: release.name,
   revision: Number(release.revision),
   chart: release.chart,
   status: release.status,
 })).sort((a, b) => a.name.localeCompare(b.name));
 const identities = {
-  deployments: deployments.map((deployment) => ({ name: deployment.metadata?.name, generation: deployment.metadata?.generation ?? 0 })).sort((a, b) => a.name.localeCompare(b.name)),
+  deployments: deployments.filter((deployment) => !owned(deployment)).map((deployment) => ({ name: deployment.metadata?.name, generation: deployment.metadata?.generation ?? 0 })).sort((a, b) => a.name.localeCompare(b.name)),
   hpas: hpas.map(({ currentReplicas: _current, desiredReplicas: _desired, ...identity }) => identity),
   helmReleases,
 };
 const identityHash = createHash("sha256").update(JSON.stringify(identities)).digest("hex").slice(0, 16);
 
-const owned = (resource) => resource.metadata?.labels?.[labelKey] === fingerprint;
 const jobs = items("jobs.json");
 const activeJobs = jobs.filter((job) => Number(job.status?.active ?? 0) > 0);
 const activeSpark = sparkApplications.filter((application) => !["COMPLETED", "FAILED"].includes(application.status?.applicationState?.state ?? ""));
@@ -190,6 +193,12 @@ const controlledResources = {
   activeSparkApplications: activeSpark.filter(owned).length,
   nonTerminalPods: nonTerminalPods.filter(owned).length,
 };
+const controlledUids = new Set([...deployments, ...pods, ...jobs, ...sparkApplications].filter(owned).map((resource) => resource.metadata?.uid).filter(Boolean));
+const controlledEvents = Object.entries(items("events.json").filter((event) => controlledUids.has(event.involvedObject?.uid)).reduce((counts, event) => {
+  const reason = event.reason ?? "Unknown";
+  counts[reason] = (counts[reason] ?? 0) + Number(event.count ?? 1);
+  return counts;
+}, {})).sort(([left], [right]) => left.localeCompare(right)).map(([reason, count]) => ({ reason, count }));
 const placementReady = placements.every((placement) => placement.selectorMatches && placement.scheduledPoolMatches) &&
   sparkPlacement.every((placement) => placement.driver.selectorMatches && placement.driver.tolerationMatches && placement.executor.selectorMatches && placement.executor.tolerationMatches);
 const poolReady = Object.values(pools).every((pool) => pool.sourceMatchesLive && pool.live?.ready);
@@ -211,11 +220,13 @@ const snapshot = {
   identityHash,
   blockers,
   controlledResources,
+  controlledEvents,
   gates: { poolReady, placementReady, exclusiveWindowReady },
 };
 if (phase === "baseline") {
-  evidence = { contractVersion: "1.0", runFingerprint: fingerprint, labelContract: `${labelKey}=<run-fingerprint>`, baselineIdentityHash: identityHash, snapshots: [snapshot], cleanup: { verified: false } };
+  evidence = { contractVersion: "1.0", scope, runFingerprint: fingerprint, labelContract: `${labelKey}=<run-fingerprint>`, baselineIdentityHash: identityHash, snapshots: [snapshot], cleanup: { verified: false } };
 } else {
+  if (evidence.scope !== scope) throw new Error("observation scope does not match the existing evidence");
   snapshot.identityMatchesBaseline = identityHash === evidence.baselineIdentityHash;
   snapshot.gates.identityMatchesBaseline = snapshot.identityMatchesBaseline;
   evidence.snapshots.push(snapshot);
@@ -225,7 +236,15 @@ if (phase === "baseline") {
       controlledResources,
       verifiedAt: new Date().toISOString(),
     };
-    evidence.finalGatePassed = evidence.cleanup.verified && snapshot.identityMatchesBaseline && poolReady && placementReady && exclusiveWindowReady;
+    const baseline = evidence.snapshots[0];
+    const peak = (pool) => Math.max(...evidence.snapshots.map((entry) => entry.capacity?.[pool]?.nodes ?? 0));
+    evidence.scaleTransitions = Object.fromEntries(["general", "spark"].map((pool) => [pool, {
+      scaleOutObserved: peak(pool) > (baseline.capacity?.[pool]?.nodes ?? 0),
+      scaleInObserved: (snapshot.capacity?.[pool]?.nodes ?? 0) <= (baseline.capacity?.[pool]?.nodes ?? 0),
+    }]));
+    const scaleTransitionsPassed = Object.values(evidence.scaleTransitions).every((transition) => transition.scaleOutObserved && transition.scaleInObserved);
+    const scopeGate = scope === "isolated" ? true : placementReady;
+    evidence.finalGatePassed = evidence.cleanup.verified && snapshot.identityMatchesBaseline && poolReady && scopeGate && exclusiveWindowReady && scaleTransitionsPassed;
   }
 }
 writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });

@@ -12,6 +12,8 @@ if [[ ! "$PHASE" =~ ^(baseline|sample|final)$ ]] || [[ -z "$EVIDENCE_FILE" ]]; t
 fi
 : "${ASKLAKE_DAY17_RUN_TOKEN:?ASKLAKE_DAY17_RUN_TOKEN is required}"
 : "${ASKLAKE_EKS_NAMESPACE:=asklake-dev}"
+: "${ASKLAKE_DAY17_SCOPE:=integrated}"
+[[ "$ASKLAKE_DAY17_SCOPE" =~ ^(integrated|isolated)$ ]] || { echo "ASKLAKE_DAY17_SCOPE must be integrated or isolated" >&2; exit 1; }
 
 for command in aws kubectl helm node git; do
   command -v "$command" >/dev/null 2>&1 || { echo "missing required command: $command" >&2; exit 1; }
@@ -51,6 +53,7 @@ kubectl get deployments -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directo
 kubectl get horizontalpodautoscalers -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/hpas.json"
 kubectl get jobs -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/jobs.json"
 kubectl get endpointslices.discovery.k8s.io -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/endpointslices.json"
+kubectl get events -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/events.json"
 if ! kubectl get sparkapplications.sparkoperator.k8s.io -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/sparkapplications.json" 2>/dev/null; then
   printf '{"items":[]}\n' >"$temporary_directory/sparkapplications.json"
 fi
@@ -62,7 +65,7 @@ fi
 
 temporary_evidence="$(mktemp "$evidence_directory/.day17-autoscaling.XXXXXX")"
 chmod 600 "$temporary_evidence"
-ASKLAKE_EKS_NAMESPACE="$ASKLAKE_EKS_NAMESPACE" ASKLAKE_DAY17_RUN_TOKEN="$ASKLAKE_DAY17_RUN_TOKEN" node \
+ASKLAKE_EKS_NAMESPACE="$ASKLAKE_EKS_NAMESPACE" ASKLAKE_DAY17_RUN_TOKEN="$ASKLAKE_DAY17_RUN_TOKEN" ASKLAKE_DAY17_SCOPE="$ASKLAKE_DAY17_SCOPE" node \
   "$ROOT_DIR/scripts/build-eks-day17-autoscaling-snapshot.mjs" \
   "$temporary_directory" "$temporary_evidence" "$PHASE"
 mv "$temporary_evidence" "$evidence_absolute"
