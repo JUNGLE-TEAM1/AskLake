@@ -63,6 +63,8 @@ async function manage(request) {
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(ivyDir, { recursive: true });
 
+  if (action === "ack") return acknowledgeCatalog(jobId, request.batchId, containerName, mode);
+
   if (mode === "rest") {
     if (action === "start") return startWorkerRest(request, containerName);
     if (action === "pause" || action === "stop") return stopWorkerRest(jobId, action, containerName);
@@ -89,10 +91,12 @@ function continuousExecutionMode() {
 
 async function startWorkerRest(request, containerName) {
   const jobId = required(request.jobId, "jobId");
+  const continuousSqlContract = continuousSqlWorkerContract(request);
   const previous = readWorkerState(jobId);
   if (previous) {
     const existing = await refreshWorkerState(jobId, previous);
     if (!isTerminalSparkDriverState(existing.driverState)) {
+      requireMatchingContinuousSqlWorker(existing, continuousSqlContract);
       return restWorkerResult(jobId, containerName, existing, { started: false });
     }
   }
@@ -104,7 +108,7 @@ async function startWorkerRest(request, containerName) {
   const workerAttemptId = randomUUID();
   const runtime = continuousRestRuntime();
   const submission = createSparkRestSubmission({
-    appName: `asklake-kafka-continuous-${safeSegment(jobId)}`,
+    appName: `${continuousSqlContract ? "asklake-continuous-sql" : "asklake-kafka-continuous"}-${safeSegment(jobId)}`,
     environmentVariables: continuousEnvironment(request, workerAttemptId, runtime.reportRuntimeDir, false),
     packages: continuousSparkPackages(request.outputPath, requiredObject(request.icebergTarget, "icebergTarget")),
     scriptPath: runtime.scriptPath,
@@ -128,6 +132,8 @@ async function startWorkerRest(request, containerName) {
     updatedAt: now,
     version: 1,
     workerAttemptId,
+    continuousSqlPlanHash: continuousSqlContract?.planHash || null,
+    continuousSqlRunGeneration: continuousSqlContract?.runGeneration || null,
   }, "submitted", `Spark submission ${created.submissionId} was accepted.`);
   try {
     state = replaceWorkerState(jobId, state, previous?.workerAttemptId || null);
@@ -325,6 +331,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_INITIAL_METRICS: JSON.stringify(request.initialMetrics || {}),
     ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE: JSON.stringify(request.initialSchemaState || {}),
     ASKLAKE_CONTINUOUS_STREAM_PARTITION_CURSORS: JSON.stringify(request.streamPartitionCursors || []),
+    ASKLAKE_CONTINUOUS_SQL_PLAN: JSON.stringify(request.continuousSqlPlan || {}),
     ASKLAKE_CONTINUOUS_ICEBERG_TARGET: JSON.stringify(icebergTarget),
     ASKLAKE_CONTINUOUS_EXPECTED_SCHEMA_FINGERPRINT: String(request.schemaFingerprint || ""),
     ASKLAKE_CONTINUOUS_RULE_CONTRACT_VERSION: request.ruleContractVersion || "1.0",
@@ -406,8 +413,13 @@ function writeJsonAtomic(file, value) {
 
 async function startWorkerDocker(request, containerName) {
   const jobId = required(request.jobId, "jobId");
+  const continuousSqlContract = continuousSqlWorkerContract(request);
   const existing = inspectContainer(containerName);
   if (existing?.State?.Running) {
+    requireMatchingContinuousSqlWorker({
+      continuousSqlPlanHash: existing.Config?.Labels?.["asklake.continuous-sql-plan-hash"] || null,
+      continuousSqlRunGeneration: existing.Config?.Labels?.["asklake.continuous-sql-generation"] || null,
+    }, continuousSqlContract);
     return {
       containerId: existing.Id,
       containerName,
@@ -435,6 +447,10 @@ async function startWorkerDocker(request, containerName) {
     "--label", "asklake.role=kafka-continuous-worker",
     "--label", `asklake.job-id=${jobId}`,
     "--label", `asklake.worker-attempt-id=${workerAttemptId}`,
+    ...(continuousSqlContract ? [
+      "--label", `asklake.continuous-sql-plan-hash=${continuousSqlContract.planHash}`,
+      "--label", `asklake.continuous-sql-generation=${continuousSqlContract.runGeneration}`,
+    ] : []),
     "-v", `${scriptsDir}:/work/scripts:ro`,
     "-v", `${ivyDir}:/tmp/.ivy2`,
     "-v", `${reportDir}:${reportContainerDir}`,
@@ -641,6 +657,7 @@ function stateFileName(jobId) { return `kafka-continuous-${safeSegment(jobId)}.s
 function reportFile(jobId) { return path.join(reportDir, reportFileName(jobId)); }
 function commandFile(jobId) { return path.join(reportDir, commandFileName(jobId)); }
 function stateFile(jobId) { return path.join(reportDir, stateFileName(jobId)); }
+function catalogAckFile(jobId) { return path.join(reportDir, `kafka-continuous-${safeSegment(jobId)}.catalog-ack.json`); }
 function clearCommand(jobId) { if (existsSync(commandFile(jobId))) writeFileSync(commandFile(jobId), "", "utf8"); }
 function writeCommand(jobId, action) {
   writeFileSync(commandFile(jobId), `${JSON.stringify({ action, requestedAt: new Date().toISOString() })}\n`, "utf8");
@@ -659,6 +676,26 @@ function readCommand(jobId) {
     return null;
   }
 }
+function acknowledgeCatalog(jobId, batchId, containerName, mode) {
+  const parsed = Number.parseInt(batchId, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error("batchId must be a non-negative integer");
+  let current = -1;
+  try {
+    current = Number.parseInt(JSON.parse(readFileSync(catalogAckFile(jobId), "utf8")).batchId, 10);
+  } catch {
+    current = -1;
+  }
+  const acknowledged = Math.max(Number.isFinite(current) ? current : -1, parsed);
+  writeJsonAtomic(catalogAckFile(jobId), { batchId: acknowledged, updatedAt: new Date().toISOString() });
+  return {
+    acknowledgedBatchId: acknowledged,
+    containerName,
+    containerState: mode === "rest"
+      ? (readWorkerState(jobId) ? "running" : "missing")
+      : workerStatusDocker(jobId, containerName).containerState,
+    jobId,
+  };
+}
 function workerName(jobId) { return `asklake-kafka-stream-${safeSegment(jobId)}`; }
 function safeSegment(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "job";
@@ -672,6 +709,29 @@ function requiredObject(value, name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+function continuousSqlWorkerContract(request) {
+  const plan = request.continuousSqlPlan;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan) || Object.keys(plan).length === 0) return null;
+  const planHash = required(plan.planHash, "continuousSqlPlan.planHash");
+  const runGeneration = positiveInt(plan.runGeneration, 0);
+  if (runGeneration < 1) throw new Error("continuousSqlPlan.runGeneration must be a positive integer");
+  return { planHash, runGeneration };
+}
+function requireMatchingContinuousSqlWorker(existing, expected) {
+  const existingHash = String(existing?.continuousSqlPlanHash || "");
+  const existingGeneration = Number.parseInt(existing?.continuousSqlRunGeneration, 10);
+  if (!expected) {
+    if (existingHash || Number.isFinite(existingGeneration)) {
+      throw new Error("Existing worker belongs to a Continuous SQL generation.");
+    }
+    return;
+  }
+  if (existingHash !== expected.planHash || existingGeneration !== expected.runGeneration) {
+    throw new Error(
+      "Existing worker belongs to a different Continuous SQL plan or generation; terminate it before retrying.",
+    );
+  }
 }
 function continuousSparkShufflePartitions() {
   return positiveInt(process.env.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, 4);

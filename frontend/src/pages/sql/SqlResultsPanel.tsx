@@ -48,14 +48,22 @@ type SqlResultsPanelProps = {
   chartConfig: SqlChartConfig | null;
   dialogResultDraft: SqlResultDraft | null;
   dialogOpen: boolean;
+  dialogPageError?: string | null;
+  dialogPagePending?: boolean;
+  dialogRemotePagination?: SqlRemoteResultPagination;
   downloadDisabled?: boolean;
+  downloadPending?: boolean;
   executionWorkspaceEnabled?: boolean;
   executionInfo?: ReactNode;
+  fullViewDisabled?: boolean;
+  fullViewPending?: boolean;
   jobCreationDisabled?: boolean;
   pageError: string | null;
   pagePending: boolean;
   onDialogOpenChange: (open: boolean) => void;
+  onDialogPageRetry?: () => void;
   onDownloadCsv: () => void;
+  onOpenFullView: () => void;
   onOpenJobWizard: () => void;
   onPageChange: (offset: number) => void;
   onPageRetry?: () => void;
@@ -153,20 +161,63 @@ function getResultRange(resultDraft: SqlResultDraft) {
   };
 }
 
+function SqlResultActions({
+  downloadDisabled,
+  downloadPending,
+  fullViewDisabled,
+  fullViewPending,
+  jobCreationDisabled,
+  onDownloadCsv,
+  onOpenFullView,
+  onOpenJobWizard,
+}: Pick<
+  SqlResultsPanelProps,
+  | "downloadDisabled"
+  | "downloadPending"
+  | "fullViewDisabled"
+  | "fullViewPending"
+  | "jobCreationDisabled"
+  | "onDownloadCsv"
+  | "onOpenFullView"
+  | "onOpenJobWizard"
+>) {
+  return (
+    <ActionGroup className={styles.resultActions} density="compact" wrap="wrap">
+      <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
+        <Download data-icon="inline-start" /> {downloadPending ? "CSV 준비 중" : "CSV 다운로드"}
+      </Button>
+      <Button disabled={jobCreationDisabled} type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
+        <Database data-icon="inline-start" /> 처리 Job 생성
+      </Button>
+      <Button disabled={fullViewDisabled} type="button" onClick={onOpenFullView} size="sm" variant="outline">
+        <Maximize2 data-icon="inline-start" /> {fullViewPending ? "전체 결과 준비 중" : "전체 보기"}
+      </Button>
+    </ActionGroup>
+  );
+}
+
 export function SqlResultsPanel({
   activeChartSource,
   baseDatasetSelected,
   chartConfig,
   dialogResultDraft,
   dialogOpen,
+  dialogPageError,
+  dialogPagePending = false,
+  dialogRemotePagination,
   downloadDisabled = false,
+  downloadPending = false,
   executionWorkspaceEnabled = false,
   executionInfo,
+  fullViewDisabled = false,
+  fullViewPending = false,
   jobCreationDisabled = false,
   pageError,
   pagePending,
   onDialogOpenChange,
+  onDialogPageRetry,
   onDownloadCsv,
+  onOpenFullView,
   onOpenJobWizard,
   onPageChange,
   onPageRetry,
@@ -178,6 +229,7 @@ export function SqlResultsPanel({
   const previewRange = resultDraft ? getResultRange(resultDraft) : null;
   const dialogDraft = dialogResultDraft ?? resultDraft;
   const dialogRange = dialogDraft ? getResultRange(dialogDraft) : null;
+  const activeDialogPagination = dialogRemotePagination ?? remotePagination;
   const showResultWorkspace = Boolean(resultDraft || executionWorkspaceEnabled);
   const isTableView = resultView === "table";
   const isCompactTableResult = Boolean(isTableView && resultDraft && resultDraft.rows.length <= 8);
@@ -216,17 +268,16 @@ export function SqlResultsPanel({
                 </strong>
               ) : null}
               {resultDraft && resultView !== "execution" ? (
-                <ActionGroup className={styles.resultActions} density="compact" wrap="wrap">
-                  <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
-                    <Download data-icon="inline-start" /> CSV 다운로드
-                  </Button>
-                  <Button disabled={jobCreationDisabled} type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
-                    <Database data-icon="inline-start" /> 처리 Job 생성
-                  </Button>
-                  <Button type="button" onClick={() => onDialogOpenChange(true)} size="sm" variant="outline">
-                    <Maximize2 data-icon="inline-start" /> 전체 보기
-                  </Button>
-                </ActionGroup>
+                <SqlResultActions
+                  downloadDisabled={downloadDisabled}
+                  downloadPending={downloadPending}
+                  fullViewDisabled={fullViewDisabled}
+                  fullViewPending={fullViewPending}
+                  jobCreationDisabled={jobCreationDisabled}
+                  onDownloadCsv={onDownloadCsv}
+                  onOpenFullView={onOpenFullView}
+                  onOpenJobWizard={onOpenJobWizard}
+                />
               ) : null}
             </div>
             <div className={`${styles.resultBody} ${isCompactTableResult ? styles.resultBodyCompact : ""}`}>
@@ -281,15 +332,15 @@ export function SqlResultsPanel({
               {resultView === "table" ? (
                 <>
                   <div className={styles.resultDialogControls}>
-                    {remotePagination ? (
-                      <SqlRemotePaginationControls pagination={remotePagination} />
+                    {activeDialogPagination ? (
+                      <SqlRemotePaginationControls pagination={activeDialogPagination} />
                     ) : <div className={styles.resultPagination} aria-label="SQL 결과 페이지 탐색">
                       <strong>
                         {dialogRange.start.toLocaleString()}–{dialogRange.end.toLocaleString()} / {dialogRange.total.toLocaleString()}행
                       </strong>
                       <div className={styles.resultPaginationActions}>
                       <Button
-                        disabled={dialogRange.currentPage <= 1 || pagePending}
+                        disabled={dialogRange.currentPage <= 1 || dialogPagePending}
                         onClick={() => onPageChange(0)}
                         size="sm"
                         type="button"
@@ -298,7 +349,7 @@ export function SqlResultsPanel({
                         처음
                       </Button>
                       <Button
-                        disabled={dialogRange.currentPage <= 1 || pagePending}
+                        disabled={dialogRange.currentPage <= 1 || dialogPagePending}
                         onClick={() => onPageChange(Math.max(0, dialogRange.offset - dialogRange.limit))}
                         size="sm"
                         type="button"
@@ -308,7 +359,7 @@ export function SqlResultsPanel({
                       </Button>
                       <NativeSelect
                         aria-label="SQL 결과 페이지"
-                        disabled={pagePending}
+                        disabled={dialogPagePending}
                         onChange={(event) => onPageChange((Number(event.target.value) - 1) * dialogRange.limit)}
                         size="sm"
                         value={dialogRange.currentPage}
@@ -319,7 +370,7 @@ export function SqlResultsPanel({
                         ))}
                       </NativeSelect>
                       <Button
-                        disabled={dialogRange.currentPage >= dialogRange.totalPages || pagePending}
+                        disabled={dialogRange.currentPage >= dialogRange.totalPages || dialogPagePending}
                         onClick={() => onPageChange(dialogRange.offset + dialogRange.limit)}
                         size="sm"
                         type="button"
@@ -328,7 +379,7 @@ export function SqlResultsPanel({
                         다음
                       </Button>
                       <Button
-                        disabled={dialogRange.currentPage >= dialogRange.totalPages || pagePending}
+                        disabled={dialogRange.currentPage >= dialogRange.totalPages || dialogPagePending}
                         onClick={() => onPageChange((dialogRange.totalPages - 1) * dialogRange.limit)}
                         size="sm"
                         type="button"
@@ -338,7 +389,7 @@ export function SqlResultsPanel({
                       </Button>
                       </div>
                     </div>}
-                    {pageError ? <SqlResultPageError message={pageError} onRetry={remotePagination ? onPageRetry : undefined} /> : null}
+                    {dialogPageError ? <SqlResultPageError message={dialogPageError} onRetry={activeDialogPagination ? onDialogPageRetry : undefined} /> : null}
                   </div>
                   <ScrollArea className="min-h-0" scrollbars="both" type="always">
                     <div className="min-w-0 px-4 pb-4 pt-6">
@@ -346,7 +397,7 @@ export function SqlResultsPanel({
                         activeChartSource={activeChartSource}
                         chartConfig={chartConfig}
                         executionInfo={executionInfo}
-                        isLoading={pagePending}
+                        isLoading={dialogPagePending}
                         resultDraft={dialogDraft}
                         resultView={resultView}
                       />

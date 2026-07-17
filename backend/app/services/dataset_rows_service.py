@@ -4,6 +4,12 @@ from tempfile import TemporaryDirectory
 import duckdb
 
 from app.schemas.catalog import CatalogDatasetResponse, CatalogDatasetRowsResponse
+from app.services.clickhouse_client import (
+    ClickHouseClient,
+    ClickHouseError,
+    qualified_clickhouse_table,
+    quote_clickhouse_identifier,
+)
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
     iceberg_dataset_table,
@@ -30,8 +36,17 @@ def read_dataset_rows(
     limit: int,
     offset: int,
     trino_client: TrinoClient | None = None,
+    clickhouse_client: ClickHouseClient | None = None,
 ) -> CatalogDatasetRowsResponse:
     """Read one bounded page from the dataset's current materialization."""
+
+    if str(dataset.storage_format or "").strip().casefold() == "clickhouse":
+        return read_clickhouse_dataset_rows(
+            dataset,
+            limit=limit,
+            offset=offset,
+            client=clickhouse_client,
+        )
 
     try:
         iceberg_table = iceberg_dataset_table(dataset)
@@ -88,6 +103,61 @@ def read_dataset_rows(
     finally:
         connection.close()
 
+    return CatalogDatasetRowsResponse(
+        columns=columns,
+        dataset_id=dataset.id,
+        dataset_name=dataset.name,
+        has_next=offset + len(rows) < row_count,
+        limit=limit,
+        offset=offset,
+        returned_rows=len(rows),
+        row_count=row_count,
+        rows=rows,
+    )
+
+
+def read_clickhouse_dataset_rows(
+    dataset: CatalogDatasetResponse,
+    *,
+    limit: int,
+    offset: int,
+    client: ClickHouseClient | None = None,
+) -> CatalogDatasetRowsResponse:
+    target = dataset.clickhouse_table
+    if target is None:
+        raise sql_storage_error(
+            "Catalog ClickHouse dataset mapping is unavailable",
+            {"datasetId": dataset.id},
+        )
+    table = qualified_clickhouse_table(target.database, target.table)
+    columns = [
+        str(item[0])
+        for item in dataset.schema_
+        if isinstance(item, (list, tuple)) and item and str(item[0]).strip()
+    ]
+    if not columns:
+        raise sql_storage_error(
+            "Catalog ClickHouse dataset schema is unavailable",
+            {"datasetId": dataset.id},
+        )
+    resolved_client = client or ClickHouseClient()
+    owns_client = client is None
+    projection = ", ".join(quote_clickhouse_identifier(item) for item in columns)
+    try:
+        count_result = resolved_client.query(f"SELECT count() AS row_count FROM {table} FINAL")
+        row_count = int(count_result.rows[0][0]) if count_result.rows else 0
+        page = resolved_client.query(
+            f"SELECT {projection} FROM {table} FINAL LIMIT {int(limit)} OFFSET {int(offset)}"
+        )
+    except (ClickHouseError, RuntimeError, TypeError, ValueError) as error:
+        raise sql_storage_error(
+            "Catalog ClickHouse dataset rows could not be read",
+            {"datasetId": dataset.id, "reason": str(error)[:500]},
+        ) from error
+    finally:
+        if owns_client:
+            resolved_client.close()
+    rows = [[format_sql_cell(cell) for cell in row] for row in page.rows]
     return CatalogDatasetRowsResponse(
         columns=columns,
         dataset_id=dataset.id,

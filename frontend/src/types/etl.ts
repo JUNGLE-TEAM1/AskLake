@@ -6,6 +6,20 @@ export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "non
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
 export type KafkaExecutionMode = "snapshot" | "continuous";
 export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
+export type ContinuousDesiredRuntimeState = "running" | "paused" | "stopped";
+export type ContinuousObservedRuntimeState = "unknown" | "starting" | "running" | "stopping" | "stopped" | "failed";
+export type ContinuousRuntimeErrorStage = "validation" | "runtime_storage" | "submission" | "execution" | "report" | "checkpoint" | "materialization" | "catalog" | "dashboard_publication" | "reconciliation";
+
+export type ContinuousRuntimeErrorDetail = {
+  stage: ContinuousRuntimeErrorStage;
+  code: string;
+  message: string;
+  retryable: boolean;
+  context?: Record<string, unknown> | null;
+  diagnosticId?: string | null;
+  operatorMessage?: string | null;
+  userMessage?: string | null;
+};
 
 export type KafkaSchemaEvolutionPolicy = {
   additiveNullable: "allow" | "quarantine" | "pause";
@@ -23,6 +37,11 @@ export type KafkaContinuousConfigDraft = {
 
 export type KafkaContinuousRuntime = {
   status: ContinuousRuntimeStatus;
+  desiredState?: ContinuousDesiredRuntimeState;
+  observedState?: ContinuousObservedRuntimeState;
+  stateRevision?: number;
+  fencingToken?: string | null;
+  errorDetail?: ContinuousRuntimeErrorDetail | null;
   checkpointPath: string;
   heartbeatAt?: string | null;
   lastFlushAt?: string | null;
@@ -182,7 +201,7 @@ export type JobRowData = {
   tag: string;
   source: string;
   target: string;
-  updatedAt?: string;
+  updatedAt?: string | null;
   schedule: string;
   schedulePolicy?: SchedulePolicyDraft;
   scheduleSummary?: string;
@@ -257,6 +276,25 @@ export type JobListFacets = {
 export type JobListResult = {
   facets: JobListFacets;
   jobs: JobRowData[];
+};
+
+export type JobStatusSnapshot = {
+  id: string;
+  status: JobStatus;
+  progress?: {
+    label: string;
+    value: number;
+  } | null;
+  lastRun: string;
+  lastState: string;
+  nextRun: string;
+  updatedAt?: string | null;
+  latestRun?: JobRunSummary | null;
+  dagSteps: JobDagStep[];
+};
+
+export type JobStatusListResult = {
+  jobs: JobStatusSnapshot[];
 };
 
 export type JobStats = {

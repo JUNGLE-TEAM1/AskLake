@@ -258,6 +258,7 @@ export type DashboardFilter = {
 
 export type DashboardRuntimeResponse = {
   dashboard: DashboardMeta;
+  eventCursor: number;
   filters: DashboardFilter[];
   mode: DashboardRuntimeMode;
   pages: DashboardRuntimePage[];

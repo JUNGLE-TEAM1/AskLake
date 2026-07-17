@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.common import CamelModel, to_camel
+from app.schemas.common import CamelModel, DiagnosticFields, to_camel
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
 
@@ -20,6 +20,20 @@ CanonicalRuleKind = Literal["transform", "quality"]
 CanonicalRuleErrorPolicy = Literal["fail_batch", "quarantine", "warn"]
 CanonicalRuleFailureDisposition = Literal["keep", "drop_row", "set_null"]
 ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
+ContinuousDesiredRuntimeState = Literal["running", "paused", "stopped"]
+ContinuousObservedRuntimeState = Literal["unknown", "starting", "running", "stopping", "stopped", "failed"]
+ContinuousRuntimeErrorStage = Literal[
+    "validation",
+    "runtime_storage",
+    "submission",
+    "execution",
+    "report",
+    "checkpoint",
+    "materialization",
+    "catalog",
+    "dashboard_publication",
+    "reconciliation",
+]
 JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
 SourceFieldRows = list[tuple[str, str]]
@@ -181,8 +195,21 @@ class KafkaContinuousConfigDraft(CamelModel):
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 
 
+class ContinuousRuntimeErrorDetail(DiagnosticFields):
+    stage: ContinuousRuntimeErrorStage
+    code: str
+    message: str
+    retryable: bool
+    context: dict[str, Any] | None = None
+
+
 class KafkaContinuousRuntime(CamelModel):
     status: ContinuousRuntimeStatus
+    desired_state: ContinuousDesiredRuntimeState
+    observed_state: ContinuousObservedRuntimeState
+    state_revision: int = 0
+    fencing_token: str | None = None
+    error_detail: ContinuousRuntimeErrorDetail | None = None
     checkpoint_path: str
     heartbeat_at: str | None = None
     last_flush_at: str | None = None

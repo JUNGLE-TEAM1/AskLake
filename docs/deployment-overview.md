@@ -298,12 +298,12 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - Airflow metadata `postgres:16-alpine`
 - `redpandadata/redpanda:v24.3.1`
 - one-shot `aws-s3-readiness`, built from `backend/Dockerfile`
-- `spark-master`, `spark-worker`, and `spark-dir-init`, built from the `spark-runtime` target
+- `spark-master`, `spark-worker`, and restart-safe `spark-runtime-guard`, built from the `spark-runtime` target
 
 Airflow orchestration dependencies:
 
 - Production compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.
-- The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, and `AIRFLOW_REQUEST_TIMEOUT_SECONDS`.
+- The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_REQUEST_TIMEOUT_SECONDS`, and `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`. The last value defaults to 5 seconds and controls server-owned active Snapshot Run reconciliation.
 - ETL `run` and `retry` commands require a reachable Airflow API. The default prod value is `http://airflow-apiserver:8080`, the internal Compose service URL.
 - The smoke DAG is committed at `airflow/dags/asklake_etl_job.py`; it uses only packages included in the Airflow image.
 
@@ -333,3 +333,20 @@ scripts/verify-deploy-dependencies.sh
 ```
 
 This renders the production and local Airflow Compose configs, builds backend/frontend/Spark runtime images, checks backend Python and Node imports, verifies Docker CLI is absent from backend, verifies UID 185 and embedded Spark scripts, checks Spark/Airflow image availability, and imports the Airflow DAG inside the Airflow image. 실제 AWS bucket/IAM 검증은 EC2에서 one-shot `aws-s3-readiness`가 수행한다.
+
+## Realtime SSE deployment
+
+- Production Caddy는 `/api/realtime/events` exact path를 compression에서 제외하고 `flush_interval -1`로 backend chunk를 즉시 전달한다.
+- legacy EC2 NGINX 설정은 같은 exact path에서 buffering/cache/gzip을 끄고 75초 read/send timeout을 사용한다.
+- backend 기본 heartbeat는 15초다. 외부 ALB/CDN idle timeout은 heartbeat보다 충분히 길어야 하며 현재 저장소에는 해당 ALB IaC가 없으므로 배포 환경에서 별도 확인한다.
+- 일반 `/api/health`는 전체 backend readiness이고 `/api/health/realtime`은 event dispatcher/listener 진단이다. SSE stream 자체를 healthcheck로 호출하지 않는다.
+- `DASHBOARD_SYNC_MODE=polling`, `REALTIME_EVENTS_ENABLED=false`가 rollback 기본값이다.
+
+정적 배포 계약 검증:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\verify-realtime-proxy-contract.py
+cd ..
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+```

@@ -314,6 +314,54 @@ try {
   assert.equal(cleanup.submissionId, orphanSubmissionId);
   assert.equal(killRequests.at(-1), orphanSubmissionId);
 
+  const continuousSqlPlan = {
+    fencingToken: "fence-rest-contract",
+    planHash: "a".repeat(64),
+    planVersion: "continuous-sql-v1",
+    runGeneration: 4,
+    staticBindings: [{ datasetId: "dataset-users", snapshotId: "101" }],
+  };
+  const continuousSqlRequest = {
+    ...workerRequest,
+    jobId: "continuous-sql-rest-contract",
+    continuousSqlPlan,
+  };
+  const continuousSqlStarted = await runManager(
+    continuousScript,
+    continuousSqlRequest,
+    environment,
+    "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
+  );
+  assert.equal(continuousSqlStarted.containerId, "continuous-4");
+  const continuousSqlSubmission = createRequests.at(-1);
+  assert.equal(
+    continuousSqlSubmission.sparkProperties["spark.app.name"],
+    "asklake-continuous-sql-continuous-sql-rest-contract",
+  );
+  assert.deepEqual(
+    JSON.parse(continuousSqlSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SQL_PLAN),
+    continuousSqlPlan,
+  );
+  await assert.rejects(
+    runManager(
+      continuousScript,
+      {
+        ...continuousSqlRequest,
+        continuousSqlPlan: { ...continuousSqlPlan, runGeneration: 5 },
+      },
+      environment,
+      "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
+    ),
+    /different Continuous SQL plan or generation/,
+  );
+  const acknowledged = await continuousAction(
+    "ack",
+    { ...continuousSqlRequest, batchId: 9 },
+    environment,
+  );
+  assert.equal(acknowledged.acknowledgedBatchId, 9);
+  await continuousAction("terminate", continuousSqlRequest, environment);
+
   const invalidProductionEnvironment = { ...environment, ASKLAKE_SPARK_RUNNER: "docker" };
   await assert.rejects(
     runManager(
@@ -335,7 +383,7 @@ try {
   );
 
   assert.equal(existsSync(dockerCallMarker), false, "Production continuous and maintenance paths must make zero Docker calls.");
-  assert.equal(createRequests.filter((item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py")).length, 3);
+  assert.equal(createRequests.filter((item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py")).length, 4);
   assert.equal(createRequests.filter((item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_maintenance.py")).length, 1);
   for (const request of createRequests) {
     const serialized = JSON.stringify(request);
@@ -345,7 +393,7 @@ try {
     assert.equal(request.environmentVariables?.MINIO_SECRET_KEY, undefined);
   }
 
-  console.log("Kafka continuous REST verified: lifecycle, restart state, maintenance cleanup, credential-free bodies, and zero Docker calls.");
+  console.log("Kafka continuous REST verified: lifecycle, Continuous SQL fencing/ACK, restart state, maintenance cleanup, credential-free bodies, and zero Docker calls.");
 } finally {
   await new Promise((resolve) => server.close(resolve));
   rmSync(temporaryDir, { force: true, recursive: true });

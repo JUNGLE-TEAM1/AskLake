@@ -108,13 +108,38 @@ def permissions_for_actor_with_governance(
     resource_id: str,
     resource_type: str,
 ) -> ResourcePermissions:
+    return permissions_for_actor_with_governance_state(
+        actor,
+        grants=grants,
+        owner=owner,
+        principal_blocked=blocked_principal_for_actor(db, actor) is not None,
+        resource_locked=(
+            resource_lock_for_action(
+                db,
+                action="query",
+                resource_id=resource_id,
+                resource_type=resource_type,
+            )
+            is not None
+        ),
+    )
+
+
+def permissions_for_actor_with_governance_state(
+    actor: ActorContext,
+    *,
+    grants: list[dict[str, Any]],
+    owner: str | None,
+    principal_blocked: bool,
+    resource_locked: bool,
+) -> ResourcePermissions:
     permissions = permissions_for_actor(
         actor,
         owner=owner,
         grants=grants,
         enforced=True,
     )
-    if blocked_principal_for_actor(db, actor) is not None:
+    if principal_blocked:
         return permissions.model_copy(update={
             "can_view": False,
             "can_query": False,
@@ -123,7 +148,7 @@ def permissions_for_actor_with_governance(
             "can_delete": False,
             "can_share": False,
         })
-    if resource_lock_for_action(db, action="query", resource_id=resource_id, resource_type=resource_type) is None:
+    if not resource_locked:
         return permissions
     return permissions.model_copy(update={
         "can_query": False,

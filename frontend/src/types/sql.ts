@@ -65,6 +65,7 @@ export type TrinoQueryRun = {
   engine: "trino";
   estimate?: TrinoQueryRunEstimate | null;
   error?: { code: string; message: string };
+  mode: "preview" | "run";
   query: string;
   referenceDatasetIds: string[];
   result?: {
@@ -108,6 +109,7 @@ export type TrinoQueryRun = {
     totalSplits?: number;
   };
   status: TrinoQueryRunStatus;
+  sourceRunId?: string;
   submittedAt: string;
   trinoQueryId?: string;
 };

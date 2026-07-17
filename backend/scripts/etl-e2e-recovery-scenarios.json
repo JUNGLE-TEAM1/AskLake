@@ -1,0 +1,403 @@
+{
+  "schemaVersion": 1,
+  "profiles": ["pr", "release", "nightly"],
+  "checks": {
+    "application-vertical-slice": {
+      "minimumProfile": "pr",
+      "cwd": "backend",
+      "command": ["{python}", "-m", "unittest", "tests.test_pipeline_snapshot_catalog_boundaries", "tests.test_continuous_application_use_cases", "tests.test_continuous_publication_workflow", "tests.test_kafka_continuous_dashboard_sync"],
+      "timeoutSeconds": 240
+    },
+    "runtime-recovery-contract": {
+      "minimumProfile": "pr",
+      "cwd": "backend",
+      "command": ["{python}", "-m", "unittest", "tests.test_continuous_runtime_contract", "tests.test_continuous_maintenance_fencing", "tests.test_kafka_continuous_operational_harness", "tests.test_runtime_io_ports"],
+      "timeoutSeconds": 180
+    },
+    "frontend-ordering-contract": {
+      "minimumProfile": "pr",
+      "cwd": "frontend",
+      "command": ["npm", "run", "test:e2e-contracts"],
+      "timeoutSeconds": 90
+    },
+    "backward-compatibility": {
+      "minimumProfile": "pr",
+      "cwd": "backend",
+      "command": ["{python}", "scripts/verify-backward-compatibility.py"],
+      "environment": {"PYTHONPATH": "."},
+      "timeoutSeconds": 180
+    },
+    "spark-rest-process-boundary": {
+      "minimumProfile": "release",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-rest.mjs"],
+      "timeoutSeconds": 180
+    },
+    "production-runtime-contract": {
+      "minimumProfile": "release",
+      "cwd": "backend",
+      "command": ["npm", "run", "verify:production-spark"],
+      "timeoutSeconds": 180
+    },
+    "spark-runtime-container": {
+      "minimumProfile": "release",
+      "cwd": "backend",
+      "command": ["npm", "run", "verify:spark-runtime-paths:container"],
+      "timeoutSeconds": 300
+    },
+    "browser-shell": {
+      "minimumProfile": "nightly",
+      "cwd": "frontend",
+      "command": ["node", "scripts/verify-etl-browser-smoke.mjs"],
+      "timeoutSeconds": 90
+    },
+    "live-kafka-e2e": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-e2e.mjs"],
+      "environment": {"ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E": "true"},
+      "timeoutSeconds": 900
+    },
+    "live-publication-fault": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-e2e.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_E2E_PUBLICATION_FAULT": "true", "ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E": "true"},
+      "timeoutSeconds": 900
+    },
+    "live-backend-restart": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-e2e.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_E2E_BACKEND_RESTART": "true", "ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E": "true"},
+      "timeoutSeconds": 900
+    },
+    "soak-worker": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-soak.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_SOAK_FAULT": "worker", "ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK": "true"},
+      "timeoutSeconds": 1200
+    },
+    "soak-backend": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-soak.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_SOAK_FAULT": "backend", "ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK": "true"},
+      "timeoutSeconds": 1200
+    },
+    "soak-kafka": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-soak.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_SOAK_FAULT": "kafka", "ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK": "true"},
+      "timeoutSeconds": 1200
+    },
+    "soak-object-storage": {
+      "minimumProfile": "nightly",
+      "cwd": "backend",
+      "command": ["node", "scripts/verify-kafka-continuous-soak.mjs"],
+      "environment": {"ASKLAKE_CONTINUOUS_SOAK_FAULT": "minio", "ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK": "true"},
+      "timeoutSeconds": 1200
+    }
+  },
+  "scenarios": [
+    {
+      "id": "vertical-happy-path",
+      "minimumProfile": "pr",
+      "initialState": "빈 ephemeral 저장소와 유효한 ETL draft",
+      "injection": "source부터 review, Job 생성, Continuous publication, Catalog와 Dashboard 계약을 순서대로 실행",
+      "expectedState": "동일 run identity로 output, manifest, Catalog, Dashboard가 한 번씩 완료",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice"],
+      "evidence": ["publicationWorkflow", "catalog run identity", "dashboard publication identity"]
+    },
+    {
+      "id": "duplicate-submit-refresh-edit",
+      "minimumProfile": "pr",
+      "initialState": "동일 Job과 최신 runtime revision",
+      "injection": "중복 start, 새로고침, 편집 round-trip을 반복",
+      "expectedState": "한 worker attempt만 존재하고 최신 서버 revision이 UI를 소유",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["runtime-recovery-contract", "frontend-ordering-contract"],
+      "evidence": ["workerAttemptId", "stateRevision", "commandRevision"]
+    },
+    {
+      "id": "command-failure-visible",
+      "minimumProfile": "pr",
+      "initialState": "실행 가능한 Continuous Job",
+      "injection": "worker command failure와 응답 유실",
+      "expectedState": "안전한 diagnostic ID와 retryable stage가 보이며 destructive 추정은 하지 않음",
+      "timeoutSeconds": 180,
+      "recovery": "operator",
+      "checks": ["runtime-recovery-contract", "frontend-ordering-contract"],
+      "evidence": ["diagnosticId", "lastError.stage", "lastReconciliation"]
+    },
+    {
+      "id": "clean-boot",
+      "minimumProfile": "release",
+      "initialState": "비어 있는 Spark runtime bind mount",
+      "injection": "runtime guard와 writer/backend probe 시작",
+      "expectedState": "UID/GID 185 writer와 backend reader가 필요한 경로를 사용 가능",
+      "timeoutSeconds": 300,
+      "recovery": "automatic",
+      "checks": ["spark-runtime-container"],
+      "evidence": ["path metadata", "UID 185 write probe"]
+    },
+    {
+      "id": "compose-host-reboot",
+      "minimumProfile": "release",
+      "initialState": "report와 checkpoint가 있는 runtime volume",
+      "injection": "restart policy와 동등한 runtime guard container restart",
+      "expectedState": "경로 권한이 복구되고 기존 report/checkpoint byte가 보존",
+      "timeoutSeconds": 300,
+      "recovery": "automatic",
+      "checks": ["spark-runtime-container", "production-runtime-contract"],
+      "evidence": ["existing_data_preserved", "guard_process_restart"]
+    },
+    {
+      "id": "docker-stack-restart",
+      "minimumProfile": "release",
+      "initialState": "runtime guard, Spark service와 persisted volume이 있는 stack",
+      "injection": "Docker daemon restart policy와 같은 container stop/start 경계",
+      "expectedState": "one-shot init 없이 guard가 다시 실행되고 backend/worker readiness가 복구",
+      "timeoutSeconds": 300,
+      "recovery": "automatic",
+      "checks": ["spark-runtime-container", "production-runtime-contract"],
+      "evidence": ["restart=unless-stopped", "service_healthy", "path metadata"]
+    },
+    {
+      "id": "backend-restart",
+      "minimumProfile": "nightly",
+      "initialState": "published batch와 running desired state",
+      "injection": "backend process restart",
+      "expectedState": "stored/quarantine counters와 worker identity가 유지되고 runtime이 running으로 수렴",
+      "timeoutSeconds": 900,
+      "recovery": "automatic",
+      "checks": ["live-backend-restart"],
+      "evidence": ["storedCount", "quarantinedCount", "workerAttemptId"]
+    },
+    {
+      "id": "spark-worker-restart",
+      "minimumProfile": "nightly",
+      "initialState": "running worker와 committed checkpoint",
+      "injection": "Spark worker 종료",
+      "expectedState": "failed 관측 뒤 checkpoint에서 새 attempt로 재개하며 row 중복 없음",
+      "timeoutSeconds": 900,
+      "recovery": "operator",
+      "checks": ["live-kafka-e2e", "soak-worker"],
+      "evidence": ["checkpoint", "workerAttemptId", "duplicateCount"]
+    },
+    {
+      "id": "duplicate-start",
+      "minimumProfile": "release",
+      "initialState": "Spark submission이 UNKNOWN인 starting worker",
+      "injection": "같은 start command를 두 번 전송",
+      "expectedState": "두 번째 명령은 기존 submission을 재사용하고 새 driver를 만들지 않음",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["spark-rest-process-boundary", "runtime-recovery-contract"],
+      "evidence": ["submissionId", "workerAttemptId", "createCount"]
+    },
+    {
+      "id": "db-commit-process-death",
+      "minimumProfile": "pr",
+      "initialState": "stopped Job과 DB transaction",
+      "injection": "desired state commit 직후 worker 호출 경계에서 process death를 가정",
+      "expectedState": "reconciler가 persisted intent를 기준으로 한 번만 worker를 재시작",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["desiredState", "stateRevision", "lastReconciliation"]
+    },
+    {
+      "id": "submission-response-loss",
+      "minimumProfile": "pr",
+      "initialState": "start intent가 DB에 기록된 Job",
+      "injection": "Spark create 응답만 유실",
+      "expectedState": "status observation으로 기존 submission을 복구하고 중복 제출하지 않음",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["runtime-recovery-contract", "spark-rest-process-boundary"],
+      "evidence": ["submissionRecovered", "submissionId"]
+    },
+    {
+      "id": "report-missing",
+      "minimumProfile": "pr",
+      "initialState": "running desired state와 초기화된 report store",
+      "injection": "worker report 파일을 찾지 못함",
+      "expectedState": "missing을 failed와 구분하고 worker 관측 전까지 destructive cleanup을 하지 않음",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["JsonDocumentState.MISSING", "WAIT_FOR_REPORT"]
+    },
+    {
+      "id": "report-corrupt",
+      "minimumProfile": "pr",
+      "initialState": "running desired state와 기존 report path",
+      "injection": "invalid JSON 또는 잘린 report를 읽음",
+      "expectedState": "invalid evidence를 별도 진단하고 마지막 확정 상태를 보존",
+      "timeoutSeconds": 180,
+      "recovery": "operator",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["JsonDocumentState.INVALID", "diagnosticId"]
+    },
+    {
+      "id": "report-permission-denied",
+      "minimumProfile": "pr",
+      "initialState": "UID 185 worker와 backend가 공유하는 report path",
+      "injection": "report read/write permission denied",
+      "expectedState": "permission failure를 missing으로 축소하지 않고 operator action과 path evidence를 남김",
+      "timeoutSeconds": 180,
+      "recovery": "operator",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["JsonDocumentState.PERMISSION_DENIED", "operatorMessage"]
+    },
+    {
+      "id": "output-verification-failure",
+      "minimumProfile": "pr",
+      "initialState": "batch 처리가 끝났지만 output commit이 검증되지 않은 publication",
+      "injection": "output verify 단계 실패",
+      "expectedState": "manifest/Catalog/Dashboard를 실행하지 않고 output 단계 failure만 기록",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice"],
+      "evidence": ["publicationWorkflow.stages.output", "materialization error stage"]
+    },
+    {
+      "id": "manifest-write-failure",
+      "minimumProfile": "pr",
+      "initialState": "output write가 끝난 미완료 publication",
+      "injection": "manifest write 실패",
+      "expectedState": "output 성공 증거를 유지하고 재시도에서 output/Catalog를 중복 생성하지 않음",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice", "live-publication-fault"],
+      "evidence": ["publicationWorkflow.stages.output", "manifest fingerprint"]
+    },
+    {
+      "id": "catalog-timeout-after-manifest",
+      "minimumProfile": "pr",
+      "initialState": "output과 manifest가 검증된 publication",
+      "injection": "Catalog registration timeout",
+      "expectedState": "Dashboard를 실행하지 않고 같은 run identity로 Catalog부터 재개",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice"],
+      "evidence": ["catalogRuns", "publicationWorkflow.stages.catalog"]
+    },
+    {
+      "id": "dashboard-timeout-after-catalog",
+      "minimumProfile": "pr",
+      "initialState": "Catalog까지 성공한 publication",
+      "injection": "Dashboard publication timeout",
+      "expectedState": "Catalog run을 재생성하지 않고 같은 run identity로 Dashboard만 재개",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice"],
+      "evidence": ["dashboardRuns", "publicationWorkflow.stages.dashboard.attempts"]
+    },
+    {
+      "id": "stale-worker-report",
+      "minimumProfile": "pr",
+      "initialState": "새 worker attempt와 이전 report",
+      "injection": "이전 workerAttemptId의 늦은 heartbeat/report 도착",
+      "expectedState": "stale report를 무시하고 새 attempt 상태를 유지",
+      "timeoutSeconds": 180,
+      "recovery": "automatic",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["worker fence", "IGNORE_STALE_REPORT"]
+    },
+    {
+      "id": "reconcile-idempotent-convergence",
+      "minimumProfile": "pr",
+      "initialState": "같은 desired/observed/report/publication evidence",
+      "injection": "reconcile과 같은 batch publication을 반복 호출",
+      "expectedState": "결정과 canonical state가 같고 worker/Catalog/Dashboard side effect가 한 번만 발생",
+      "timeoutSeconds": 240,
+      "recovery": "automatic",
+      "checks": ["application-vertical-slice", "runtime-recovery-contract"],
+      "evidence": ["same decision", "single run identity", "attempt counters"]
+    },
+    {
+      "id": "pause-maintenance-race",
+      "minimumProfile": "pr",
+      "initialState": "worker와 maintenance 모두 시작 가능한 Job",
+      "injection": "start/pause와 replay/compaction을 동시에 요청",
+      "expectedState": "DB fence 소유자 하나만 실행되고 다른 요청은 409로 거절",
+      "timeoutSeconds": 180,
+      "recovery": "operator",
+      "checks": ["runtime-recovery-contract"],
+      "evidence": ["maintenance lease", "HTTP 409"]
+    },
+    {
+      "id": "partition-growth",
+      "minimumProfile": "nightly",
+      "initialState": "기존 partition cursor가 있는 running stream",
+      "injection": "새 partition과 추가 offset을 생산",
+      "expectedState": "기존 cursor는 회귀하지 않고 새 partition이 progress에 추가",
+      "timeoutSeconds": 1200,
+      "recovery": "automatic",
+      "checks": ["live-kafka-e2e", "soak-kafka"],
+      "evidence": ["partitionProgress", "missingCount", "duplicateCount"]
+    },
+    {
+      "id": "checkpoint-schema-mismatch",
+      "minimumProfile": "nightly",
+      "initialState": "기존 checkpoint와 canonical schema/rule fingerprint",
+      "injection": "schema change와 incompatible checkpoint evidence 주입",
+      "expectedState": "정책에 따라 additive field를 수용하거나 quarantine하고 checkpoint를 뒤로 돌리지 않음",
+      "timeoutSeconds": 1200,
+      "recovery": "operator",
+      "checks": ["runtime-recovery-contract", "soak-object-storage"],
+      "evidence": ["schemaVersion", "schemaChanges", "quarantinedCount"]
+    },
+    {
+      "id": "frontend-two-tab-reversed-polling",
+      "minimumProfile": "pr",
+      "initialState": "두 탭에 같은 Job의 서로 다른 revision",
+      "injection": "더 오래된 polling 응답을 최신 응답 뒤에 전달",
+      "expectedState": "오래된 revision이 현재 runtime과 편집 draft를 덮지 않음",
+      "timeoutSeconds": 90,
+      "recovery": "automatic",
+      "checks": ["frontend-ordering-contract"],
+      "evidence": ["stateRevision", "updatedAt", "request lease"]
+    },
+    {
+      "id": "old-backend-rollback",
+      "minimumProfile": "pr",
+      "initialState": "새 additive runtime/error field가 저장된 데이터",
+      "injection": "baseline API/model reader와 versionless fixture로 rollback 호환 검사",
+      "expectedState": "이전 public field와 persisted shape가 유지되고 새 field는 안전하게 무시 가능",
+      "timeoutSeconds": 180,
+      "recovery": "operator",
+      "checks": ["backward-compatibility"],
+      "evidence": ["breakingChanges=0", "versionless fixture"]
+    },
+    {
+      "id": "backend-kafka-object-storage-outage",
+      "minimumProfile": "nightly",
+      "initialState": "지속 생산 중인 isolated stack",
+      "injection": "backend, Kafka, object storage를 각각 일시 중단 후 복구",
+      "expectedState": "각 서비스 복구 뒤 consumed=stored+quarantined-replayed이고 missing/duplicate가 0",
+      "timeoutSeconds": 1200,
+      "recovery": "automatic",
+      "checks": ["soak-backend", "soak-kafka", "soak-object-storage"],
+      "evidence": ["missingCount", "duplicateCount", "recoveryMs"]
+    },
+    {
+      "id": "actual-browser-shell",
+      "minimumProfile": "nightly",
+      "initialState": "isolated AskLake frontend/backend stack",
+      "injection": "headless Chromium으로 login shell과 stable selector를 로드",
+      "expectedState": "실제 browser process가 앱을 렌더링하고 auth form selector를 노출",
+      "timeoutSeconds": 90,
+      "recovery": "operator",
+      "checks": ["browser-shell"],
+      "evidence": ["data-testid=auth-login-form", "browser DOM"]
+    }
+  ]
+}

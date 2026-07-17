@@ -16,6 +16,12 @@ function collectSourceFiles(directory: URL): SourceFile[] {
   });
 }
 
+function readEtlPageSources(): string {
+  return collectSourceFiles(new URL("../src/pages/etl/", import.meta.url))
+    .map(({ source }) => source)
+    .join("\n");
+}
+
 function extractEtlSectionHeaderTags(source: string): string[] {
   const tags: string[] = [];
   let current: string[] | null = null;
@@ -36,7 +42,7 @@ function extractEtlSectionHeaderTags(source: string): string[] {
 }
 
 test("record parsing always renders the AI inference placeholder without preset logic", () => {
-  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const etlPagesSource = readEtlPageSources();
 
   assert.match(etlPagesSource, /data-testid="record-parsing-ai-button"/);
   assert.match(etlPagesSource, /AI 필드 자동 추론/);
@@ -48,7 +54,7 @@ test("record parsing always renders the AI inference placeholder without preset 
 });
 
 test("record parsing keeps content focused and makes large previews collapsible", () => {
-  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const etlPagesSource = readEtlPageSources();
 
   assert.doesNotMatch(etlPagesSource, /record-parsing-source-strip/);
   assert.doesNotMatch(etlPagesSource, /record-parsing-count/);
@@ -62,7 +68,7 @@ test("record parsing keeps content focused and makes large previews collapsible"
 });
 
 test("ETL section headers share one typography and icon treatment", () => {
-  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const etlPagesSource = readEtlPageSources();
   const schemaSummarySource = readFileSync(new URL("../src/pages/etl/SchemaRuleSummary.tsx", import.meta.url), "utf8");
   const sectionHeaderSource = readFileSync(new URL("../src/components/etl/EtlSectionHeader.tsx", import.meta.url), "utf8");
   const etlSurfaceFiles = [
@@ -90,7 +96,7 @@ test("ETL section headers share one typography and icon treatment", () => {
 });
 
 test("ETL pages use shared headers and the TanStack plus shadcn table renderer", () => {
-  const etlPagesSource = readFileSync(new URL("../src/pages/etl/EtlPages.tsx", import.meta.url), "utf8");
+  const etlPagesSource = readEtlPageSources();
   const schemaEditorSource = readFileSync(new URL("../src/components/etl/SchemaTransformEditor.jsx", import.meta.url), "utf8");
   const dataTableSource = readFileSync(new URL("../src/components/ui/data-table.tsx", import.meta.url), "utf8");
 

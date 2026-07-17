@@ -12,7 +12,7 @@ DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
-MaterializationSourceKind = Literal["etl", "sql", "kafka"]
+MaterializationSourceKind = Literal["etl", "sql", "kafka", "continuous_sql"]
 MaterializationMode = Literal["snapshot", "delta"]
 QueryEngineTableFormat = Literal["iceberg", "parquet"]
 QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
@@ -51,6 +51,11 @@ class QueryEngineTableRef(CamelModel):
     table: str
     format: QueryEngineTableFormat
     partition_columns: list[str] = Field(default_factory=list)
+
+
+class ClickHouseTableRef(CamelModel):
+    database: str
+    table: str
 
 
 class DatasetMaterializationRun(CamelModel):
@@ -113,8 +118,17 @@ class CatalogDatasetResponse(CamelModel):
     query_engine_table: QueryEngineTableRef | None = None
     query_engine_status: QueryEngineStatus = "unavailable"
     query_engine_error: str | None = None
+    clickhouse_table: ClickHouseTableRef | None = None
     query_engine_required: bool = False
     index_columns: list[str] | None = None
+    index_columns_unique: bool = False
+    unique_key_columns: list[str] = Field(default_factory=list)
+    unique_key_sets: list[list[str]] = Field(default_factory=list)
+    relation_mode: Literal["streaming", "static"] | None = None
+    streaming_source: dict[str, Any] | None = None
+    iceberg_snapshot_id: str | None = None
+    schema_fingerprint: str | None = None
+    estimated_row_count: int | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
 

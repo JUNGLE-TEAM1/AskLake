@@ -109,6 +109,20 @@ case "$trino_enabled_value" in
     ;;
 esac
 
+clickhouse_enabled_value="$(printf '%s' "$(env_value_for CLICKHOUSE_CONTINUOUS_JOIN_ENABLED)" | tr '[:upper:]' '[:lower:]')"
+case "$clickhouse_enabled_value" in
+  true|1|yes)
+    clickhouse_enabled=true
+    ;;
+  ""|false|0|no)
+    clickhouse_enabled=false
+    ;;
+  *)
+    printf 'error: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
+
 has_compose_profile() {
   local requested_profile="$1"
   local configured_profiles
@@ -124,6 +138,21 @@ if [[ "$trino_enabled" == "true" ]]; then
   }
 elif has_compose_profile trino; then
   printf 'error: COMPOSE_PROFILES must not include trino when TRINO_ENABLED=false\n' >&2
+  exit 1
+fi
+
+
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  [[ "$trino_enabled" == "true" ]] || {
+    printf 'error: TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
+    exit 1
+  }
+  has_compose_profile clickhouse || {
+    printf 'error: COMPOSE_PROFILES must include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
+    exit 1
+  }
+elif has_compose_profile clickhouse; then
+  printf 'error: COMPOSE_PROFILES must not include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false\n' >&2
   exit 1
 fi
 
@@ -204,6 +233,15 @@ if [[ "$trino_enabled" == "true" ]]; then
   )
 fi
 
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  required_keys+=(
+    CLICKHOUSE_DATABASE
+    CLICKHOUSE_PASSWORD
+    CLICKHOUSE_URL
+    CLICKHOUSE_USER
+  )
+fi
+
 for key in "${required_keys[@]}"; do
   key_count="$(env_count_for "$key")"
   if (( key_count > 1 )); then
@@ -280,6 +318,28 @@ if [[ "$trino_enabled" == "true" ]]; then
       exit 1
     fi
   done
+fi
+
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  [[ "$(env_value_for CLICKHOUSE_URL)" == "http://clickhouse:8123" ]] || {
+    printf 'error: CLICKHOUSE_URL must be http://clickhouse:8123 for the production Compose service\n' >&2
+    exit 1
+  }
+  clickhouse_password="$(env_value_for CLICKHOUSE_PASSWORD)"
+  if (( ${#clickhouse_password} < 16 )) || [[ "$clickhouse_password" == *replace-with-* ]]; then
+    printf 'error: CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters\n' >&2
+    exit 1
+  fi
+  clickhouse_database="$(env_value_for CLICKHOUSE_DATABASE)"
+  clickhouse_user="$(env_value_for CLICKHOUSE_USER)"
+  [[ "$clickhouse_database" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    printf 'error: CLICKHOUSE_DATABASE must be a safe identifier\n' >&2
+    exit 1
+  }
+  [[ "$clickhouse_user" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    printf 'error: CLICKHOUSE_USER must be a safe identifier\n' >&2
+    exit 1
+  }
 fi
 
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
@@ -402,11 +462,6 @@ spark_host_data_dir="$(env_value_for ASKLAKE_HOST_DATA_DIR)"
 spark_replay_input_dir="$(env_value_for ASKLAKE_REPLAY_HOST_INPUT_DIR)"
 
 require_host_directory ASKLAKE_HOST_DATA_DIR "$spark_host_data_dir"
-for spark_data_subdirectory in spark-ivy spark-output spark-runs samples review-text-models; do
-  require_host_directory \
-    "ASKLAKE_HOST_DATA_DIR/$spark_data_subdirectory" \
-    "$spark_host_data_dir/$spark_data_subdirectory"
-done
 require_host_directory ASKLAKE_REPLAY_HOST_INPUT_DIR "$spark_replay_input_dir"
 
 if [[ "$trino_enabled" == "true" ]]; then
@@ -435,6 +490,7 @@ export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUC
 export ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
+export ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED="$clickhouse_enabled"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -452,6 +508,7 @@ try:
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
     trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
+    clickhouse_enabled = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED"] == "true"
     profiled_trino_services = {
         "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
     }
@@ -459,6 +516,9 @@ try:
         profiled_trino_services.issubset(services)
         if trino_enabled
         else profiled_trino_services.isdisjoint(services)
+    )
+    profile_wiring_valid = profile_wiring_valid and (
+        ("clickhouse" in services) if clickhouse_enabled else ("clickhouse" not in services)
     )
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
@@ -509,6 +569,16 @@ try:
             ))
         else:
             valid = valid and backend.get("TRINO_ENABLED") == "false"
+        if clickhouse_enabled:
+            clickhouse = services["clickhouse"]["environment"]
+            valid = valid and all((
+                backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "true",
+                backend.get("CLICKHOUSE_URL") == "http://clickhouse:8123",
+                backend.get("CLICKHOUSE_USER") == clickhouse.get("CLICKHOUSE_USER"),
+                backend.get("CLICKHOUSE_PASSWORD") == clickhouse.get("CLICKHOUSE_PASSWORD"),
+            ))
+        else:
+            valid = valid and backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "false"
     else:
         minio = services["minio"]["environment"]
         minio_init = services["minio-init"]["environment"]
@@ -548,6 +618,7 @@ unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
+unset ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED
 
 if (( compose_wiring_status != 0 )); then
   printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2
