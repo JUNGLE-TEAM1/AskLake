@@ -88,15 +88,17 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
             runtime_settings=Settings(_env_file=None, trino_enabled=True),
         )
         context_dataset = SimpleNamespace(id="dataset-1", name="Events")
-        service._resolve_context = Mock(return_value=[context_dataset])  # type: ignore[method-assign]
-        service._require_query_access = Mock()  # type: ignore[method-assign]
-        service._build_query_estimate = Mock(return_value=TrinoQueryEstimate(riskLevel="low"))  # type: ignore[method-assign]
-        service._save_response = Mock()  # type: ignore[method-assign]
+        service.access_service.resolve_context = Mock(return_value=[context_dataset])  # type: ignore[method-assign]
+        service.access_service.require_query_access = Mock()  # type: ignore[method-assign]
+        service.submission_service.build_query_estimate = Mock(  # type: ignore[method-assign]
+            return_value=TrinoQueryEstimate(riskLevel="low"),
+        )
+        service.run_store.save = Mock()  # type: ignore[method-assign]
         compiled_query = 'SELECT * FROM "iceberg"."asklake"."events"'
 
         with (
-            patch("app.services.trino_query_run_service.compile_trino_read_query", return_value=(compiled_query, [])),
-            patch("app.services.trino_query_run_service.safe_record_audit_event"),
+            patch("app.services.trino_query_submission.compile_trino_read_query", return_value=(compiled_query, [])),
+            patch("app.services.trino_query_submission.safe_record_audit_event"),
         ):
             service.submit(SubmitTrinoQueryRunRequest(
                 baseDatasetId="dataset-1",
@@ -106,7 +108,7 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
 
         executed_query = client.submit.call_args.args[0]
         self.assertIn('AS "_asklake_preview" LIMIT 100', executed_query)
-        self.assertEqual(service._save_response.call_args.kwargs["compiled_query"], compiled_query)  # type: ignore[attr-defined]
+        self.assertEqual(service.run_store.save.call_args.kwargs["compiled_query"], compiled_query)  # type: ignore[attr-defined]
 
     def test_preview_page_is_bounded_and_saved_inline(self) -> None:
         repository = InlineResultRepository()
@@ -164,9 +166,10 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
             submittedByUserId="user-1",
         )
         expected = preview.model_copy(update={"mode": "run", "run_id": "trino-full", "source_run_id": preview.run_id})
-        service.get = Mock(return_value=preview)  # type: ignore[method-assign]
-        service._resolve_context = Mock(return_value=[SimpleNamespace(id="dataset-1")])  # type: ignore[method-assign]
-        service.submit = Mock(return_value=expected)  # type: ignore[method-assign]
+        service.run_store.load = Mock(return_value=preview)  # type: ignore[method-assign]
+        service.access_service.require_access_for_response = Mock()  # type: ignore[method-assign]
+        service.access_service.resolve_context = Mock(return_value=[SimpleNamespace(id="dataset-1")])  # type: ignore[method-assign]
+        service.submission_service.submit = Mock(return_value=expected)  # type: ignore[method-assign]
 
         result = service.create_full_result_run(
             preview.run_id,
@@ -175,7 +178,7 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(result.run_id, "trino-full")
-        submitted_request = service.submit.call_args.args[0]  # type: ignore[attr-defined]
+        submitted_request = service.submission_service.submit.call_args.args[0]  # type: ignore[attr-defined]
         self.assertEqual(submitted_request.mode, "run")
         self.assertEqual(submitted_request.source_run_id, preview.run_id)
         self.assertEqual(submitted_request.query, preview.query)
@@ -215,9 +218,9 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
             result_storage=SimpleNamespace(),  # type: ignore[arg-type]
             runtime_settings=Settings(_env_file=None, trino_enabled=True),
         )
-        service.get = Mock(return_value=preview)  # type: ignore[method-assign]
-        service._require_access_for_response = Mock()  # type: ignore[method-assign]
-        service.submit = Mock()  # type: ignore[method-assign]
+        service.run_store.load = Mock(return_value=preview)  # type: ignore[method-assign]
+        service.access_service.require_access_for_response = Mock()  # type: ignore[method-assign]
+        service.submission_service.submit = Mock()  # type: ignore[method-assign]
 
         result = service.create_full_result_run(
             preview.run_id,
@@ -226,7 +229,7 @@ class TrinoPreviewFullFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(result.run_id, active_full_run.run_id)
-        service.submit.assert_not_called()  # type: ignore[attr-defined]
+        service.submission_service.submit.assert_not_called()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":
