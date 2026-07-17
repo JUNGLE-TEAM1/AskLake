@@ -67,5 +67,6 @@ Phase 2에서는 다음을 구현한다.
 - General/Spark scale-out, scale-in과 cleanup을 같은 run token으로 추적하는 harness
 - 식별자와 비용 민감값을 Git evidence에서 제거하는 redaction
 
-실제 부하 단계는 Airflow/Trino placement ownership, Pair B HPA source, 동시 Spark Job 격리 계약과 shared-cluster exclusive window가 모두 준비된 뒤 시작한다.
+Phase 2 구현과 읽기 전용 live baseline 결과는 [autoscaling 관찰 하네스](eks-day17-a-autoscaling-observer.md)에 기록했다. 하네스 자체는 완료했고 unrelated terminating Pod는 재관찰에서 사라졌지만 Airflow/Trino placement gate가 남아 실제 부하 단계는 아직 차단된다.
 
+실제 부하 단계는 Airflow/Trino placement ownership, Pair B HPA source, 동시 Spark Job 격리 계약과 shared-cluster exclusive window가 모두 준비된 뒤 시작한다.
