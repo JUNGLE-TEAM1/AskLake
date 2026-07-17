@@ -65,7 +65,7 @@ fail-closed 검증은 운영 Secret이나 권한을 변경하지 않는 격리 p
 
 마지막 정리에서 active Job과 active SparkApplication은 0개였고, Issue #860의 임시 fixture EC2, host IAM role/profile, security group, S3 versioned smoke object와 검증 Pod/Secret residue도 모두 0이었다. 완료 SparkApplication은 7일 evidence TTL 정책에 따라 보존한다.
 
-로컬 최종 회귀에서는 Backend verify, Frontend production build, Helm/EKS foundation와 web workload 계약, validation hardening, tracked evidence redaction을 통과했다. Terraform 1.15.8 컨테이너에서 format·init·validate와 45개 test도 모두 통과했다. GitHub Actions 결과는 이 브랜치 push 뒤 별도로 확인한다.
+로컬 최종 회귀에서는 Backend verify, Frontend production build, Helm/EKS foundation와 web workload 계약, validation hardening, tracked evidence redaction을 통과했다. Terraform 1.15.8 컨테이너에서 format·init·validate와 45개 test도 모두 통과했다. GitHub Actions 수동 실행에서는 EKS B Workload Checks, Frontend UI Checks, Realtime Quality Gates와 Refactor E2E Recovery가 성공했다. Refactor Quality Gates만 실패했으며, 원인은 이번 branch diff에 없는 `origin/pair1` 기존 Backend 대형 파일들이 dev 기준 structural baseline보다 증가한 상태이기 때문이다. 이 gate는 pair1 baseline 갱신 또는 해당 Backend 구조 개선 없이 통과하지 않으므로 Issue #860 완료와 분리해 남긴다.
 
 ## 아직 통과해야 하는 gate
 
