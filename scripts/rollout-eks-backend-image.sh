@@ -53,7 +53,8 @@ rollback_on_error() {
         sleep 5
       done
       if [[ "$rollback_steady" == "true" ]] \
-        && [[ "$(kubectl get deployment fastapi -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="fastapi")].image}')" == "$old_backend_image" ]]; then
+        && [[ "$(kubectl get deployment fastapi -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="fastapi")].image}')" == "$old_backend_image" ]] \
+        && [[ "$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="trino-result-collector")].image}')" == "$old_collector_image" ]]; then
         echo "backend_rollout_rollback=completed_and_steady" >&2
       else
         echo "backend_rollout_rollback=workload_restored_but_postcheck_failed" >&2
@@ -107,12 +108,15 @@ RELEASE_REVISION_BEFORE="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | sele
 [[ "$RELEASE_REVISION_BEFORE" =~ ^[0-9]+$ ]] || fail "the current Helm release revision is unavailable"
 
 backend_before="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
+collector_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
 frontend_before="$(kubectl get deployment frontend -n "$NAMESPACE" -o json)"
 old_backend_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | .image' <<<"$backend_before")"
+old_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_before")"
 frontend_image_before="$(jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image' <<<"$frontend_before")"
 frontend_generation_before="$(jq -r '.metadata.generation' <<<"$frontend_before")"
 frontend_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=frontend -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
 [[ "$old_backend_image" != "$new_backend_image" ]] || fail "the new Backend image is already deployed"
+[[ "$old_collector_image" == "$old_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
 
 target_secret_before="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json)"
 secret_keys_before="$(jq -c '.data | keys | sort' <<<"$target_secret_before")"
@@ -161,6 +165,7 @@ helm upgrade --install asklake-web "$CHART_DIR" \
   -f "$CANDIDATE_VALUES" --rollback-on-failure --wait --timeout 10m >/dev/null
 
 kubectl rollout status deployment/fastapi -n "$NAMESPACE" --timeout=10m >/dev/null
+kubectl rollout status deployment/trino-result-collector -n "$NAMESPACE" --timeout=10m >/dev/null
 
 steady_deadline=$((SECONDS + 420))
 steady_ready=false
@@ -196,6 +201,18 @@ jq -e --arg image "$new_backend_image" '
   and ([.spec.template.spec.containers[] | select(.name == "fastapi") | .image] == [$image])
 ' <<<"$backend_after" >/dev/null || fail "Backend Deployment did not converge on the new image"
 
+collector_after="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
+jq -e --arg image "$new_backend_image" '
+  (.spec.replicas // 0) == 1
+  and (.status.readyReplicas // 0) == 1
+  and (.status.updatedReplicas // 0) == 1
+  and (.status.availableReplicas // 0) == 1
+  and (.status.unavailableReplicas // 0) == 0
+  and .spec.template.spec.serviceAccountName == "asklake-backend"
+  and .spec.template.spec.automountServiceAccountToken == false
+  and ([.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image] == [$image])
+' <<<"$collector_after" >/dev/null || fail "Trino result collector Deployment did not converge on the new image"
+
 pods_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
 jq -e --arg digest "$new_backend_digest" '
   (.items | length) == 2
@@ -214,6 +231,20 @@ jq -e --arg digest "$new_backend_digest" '
     )
   )
 ' <<<"$pods_after" >/dev/null || fail "Backend Pods do not match the new immutable digest"
+
+collector_pods_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json)"
+jq -e --arg digest "$new_backend_digest" '
+  (.items | length) == 1
+  and all(.items[];
+    .status.phase == "Running"
+    and any(.status.containerStatuses[]?;
+      .name == "trino-result-collector"
+      and .ready == true
+      and .restartCount == 0
+      and (.imageID | endswith($digest))
+    )
+  )
+' <<<"$collector_pods_after" >/dev/null || fail "Trino result collector Pod does not match the new immutable digest"
 
 frontend_after="$(kubectl get deployment frontend -n "$NAMESPACE" -o json)"
 frontend_image_after="$(jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image' <<<"$frontend_after")"
@@ -246,6 +277,8 @@ echo "backend_rollout_values_change=backend_image_only"
 echo "backend_rollout_atomic_upgrade=passed"
 echo "backend_rollout_replicas=2_of_2"
 echo "backend_rollout_pod_digest=verified"
+echo "backend_rollout_collector_replicas=1_of_1"
+echo "backend_rollout_collector_digest=verified"
 echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"
