@@ -753,25 +753,12 @@ function VisualizationRequestWidget({
       });
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
       const configPatch = widgetPatch?.config ?? response.configPatch;
-      const isSafeFallback = responseUsesSafeFallback(response);
       if (widgetPatch && onApplyWidgetPatch) {
         if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
-          await onPatchConfig({ prompt: nextPrompt, ...(widgetPatch.config ?? {}) });
-          setRequestTone(isSafeFallback ? "info" : "success");
-          setMessage(
-            isSafeFallback
-              ? "AI Gateway를 사용할 수 없어 검증된 로컬 차트 구성을 적용했습니다."
-              : response.message?.trim() || "요청 내용을 저장했습니다.",
-          );
-          setIsPromptEditing(false);
-          return;
+          throw new Error("AI가 시각화 위젯으로 변환할 type 또는 datasetId를 만들지 못했습니다.");
         }
         if (!patchCanRenderVisualization(widget, widgetPatch, assistantContext?.activeDatasetId)) {
-          await onPatchConfig({ prompt: nextPrompt });
-          setRequestTone("info");
-          setMessage(response.message?.trim() || "데이터셋이나 필드를 먼저 선택한 뒤 시각화를 요청해 주세요.");
-          setIsPromptEditing(false);
-          return;
+          throw new Error("데이터셋이나 필드가 없어 생성된 시각화를 렌더링할 수 없습니다.");
         }
         await onApplyWidgetPatch({
           ...widgetPatch,
@@ -782,13 +769,11 @@ function VisualizationRequestWidget({
         });
       } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+      } else {
+        throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
-      setRequestTone(isSafeFallback ? "info" : "success");
-      setMessage(
-        isSafeFallback
-          ? "AI Gateway를 사용할 수 없어 검증된 로컬 차트 구성을 적용했습니다."
-          : response.message?.trim() || "Assistant 요청을 보냈습니다.",
-      );
+      setRequestTone("success");
+      setMessage("AI가 생성한 시각화 변경을 편집기에 적용했습니다.");
       setIsPromptEditing(false);
     } catch (error) {
       setRequestTone("error");
@@ -867,11 +852,6 @@ function patchCanRenderVisualization(
 function patchConvertsVisualizationRequest(widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) {
   if (widget.config.placeholderKind !== "visualization_request") return true;
   return Boolean(patch.type || patch.datasetId);
-}
-
-function responseUsesSafeFallback(response: DashboardAssistantResponse) {
-  return response.warnings.some((warning) => warning.includes("로컬 안전 대체"))
-    || response.message.includes("로컬 안전 대체");
 }
 
 function TextPlaceholderWidget({

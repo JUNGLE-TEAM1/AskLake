@@ -53,7 +53,14 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 403)
 
     def test_legacy_demo_accounts_are_disabled_and_sessions_revoked(self) -> None:
-        local = SimpleNamespace(allows_header_auth_fallback=True)
+        local = SimpleNamespace(
+            allows_header_auth_fallback=True,
+            auth_legacy_demo_users_enabled=True,
+            is_test_runtime=True,
+            bootstrap_admin_email=None,
+            bootstrap_admin_password=None,
+            bootstrap_admin_display_name="AskLake Administrator",
+        )
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
             local_service = AuthService(self.db)
@@ -81,22 +88,30 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             initialize_auth(self.db)
         commit.assert_not_called()
 
-    def test_production_demo_opt_in_preserves_active_accounts_and_sessions_across_restart(self) -> None:
-        local = SimpleNamespace(allows_header_auth_fallback=True)
+    def test_test_runtime_demo_opt_in_preserves_active_accounts_and_sessions_across_restart(self) -> None:
+        local = SimpleNamespace(
+            allows_header_auth_fallback=True,
+            auth_legacy_demo_users_enabled=True,
+            is_test_runtime=True,
+            bootstrap_admin_email=None,
+            bootstrap_admin_password=None,
+            bootstrap_admin_display_name="AskLake Administrator",
+        )
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None
             session = AuthService(self.db).create_session(admin)
 
-        production_demo = SimpleNamespace(
-            allows_header_auth_fallback=False,
+        test_demo = SimpleNamespace(
+            allows_header_auth_fallback=True,
             auth_legacy_demo_users_enabled=True,
-            bootstrap_admin_email="owner@example.com",
-            bootstrap_admin_password="strong-bootstrap-password",
-            bootstrap_admin_display_name="Production Owner",
+            is_test_runtime=True,
+            bootstrap_admin_email=None,
+            bootstrap_admin_password=None,
+            bootstrap_admin_display_name="AskLake Administrator",
         )
-        with patch.object(auth_service, "settings", production_demo):
+        with patch.object(auth_service, "settings", test_demo):
             initialize_auth(self.db)
             initialize_auth(self.db)
 
@@ -104,8 +119,15 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "active")
         self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
 
-    def test_production_demo_opt_in_preserves_an_explicitly_disabled_account(self) -> None:
-        local = SimpleNamespace(allows_header_auth_fallback=True)
+    def test_test_runtime_demo_opt_in_preserves_an_explicitly_disabled_account(self) -> None:
+        local = SimpleNamespace(
+            allows_header_auth_fallback=True,
+            auth_legacy_demo_users_enabled=True,
+            is_test_runtime=True,
+            bootstrap_admin_email=None,
+            bootstrap_admin_password=None,
+            bootstrap_admin_display_name="AskLake Administrator",
+        )
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
 
@@ -114,14 +136,15 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         admin.status = "disabled"
         self.db.commit()
 
-        production_demo = SimpleNamespace(
-            allows_header_auth_fallback=False,
+        test_demo = SimpleNamespace(
+            allows_header_auth_fallback=True,
             auth_legacy_demo_users_enabled=True,
-            bootstrap_admin_email="owner@example.com",
-            bootstrap_admin_password="strong-bootstrap-password",
-            bootstrap_admin_display_name="Production Owner",
+            is_test_runtime=True,
+            bootstrap_admin_email=None,
+            bootstrap_admin_password=None,
+            bootstrap_admin_display_name="AskLake Administrator",
         )
-        with patch.object(auth_service, "settings", production_demo):
+        with patch.object(auth_service, "settings", test_demo):
             initialize_auth(self.db)
 
         self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
@@ -202,12 +225,23 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         self.assertEqual(limited.exception.status_code, 429)
 
     def test_rate_limit_blocks_the_same_client_but_not_a_different_client(self) -> None:
-        local = SimpleNamespace(allows_header_auth_fallback=True)
-        with patch.object(auth_service, "settings", local):
-            initialize_auth(self.db)
-            service = AuthService(self.db)
-            admin = self.db.get(AuthUserModel, "admin-user")
-            assert admin is not None
+        password = "real-account-password"
+        salt = "real-account-salt"
+        admin = AuthUserModel(
+            id="real-admin",
+            email="real.admin@example.com",
+            display_name="Real Admin",
+            password_salt=salt,
+            password_hash=auth_service.hash_password(password, salt),
+            role="admin",
+            groups=[],
+            status="active",
+            title="Platform Admin",
+        )
+        self.db.add(admin)
+        self.db.commit()
+        service = AuthService(self.db)
+        with patch.object(auth_service, "settings", SimpleNamespace()):
             first_client = auth_service.login_failure_key(admin.email, "203.0.113.10")
             second_client = auth_service.login_failure_key(admin.email, "203.0.113.11")
             for _attempt in range(auth_service.LOGIN_FAILURE_LIMIT + 1):
@@ -221,12 +255,12 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             with self.assertRaises(ApiError) as limited:
                 service.login(
                     email=admin.email,
-                    password="asklake-admin",
+                    password=password,
                     rate_limit_key=first_client,
                 )
             session = service.login(
                 email=admin.email,
-                password="asklake-admin",
+                password=password,
                 rate_limit_key=second_client,
             )
 
@@ -278,7 +312,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
-    def test_production_legacy_demo_users_require_an_explicit_opt_in(self) -> None:
+    def test_legacy_demo_users_are_rejected_outside_tests(self) -> None:
         default_settings = Settings(
             ai_assistant_enabled=False,
             app_env="production",
@@ -286,17 +320,30 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
             bootstrap_admin_password="strong-bootstrap-password",
             backend_cors_origins=[],
         )
-        opted_in_settings = Settings(
-            ai_assistant_enabled=False,
-            app_env="production",
-            auth_legacy_demo_users_enabled=True,
-            bootstrap_admin_email="owner@example.com",
-            bootstrap_admin_password="strong-bootstrap-password",
-            backend_cors_origins=[],
-        )
-
         self.assertFalse(default_settings.auth_legacy_demo_users_enabled)
-        self.assertTrue(opted_in_settings.auth_legacy_demo_users_enabled)
+        with self.assertRaises(ValueError):
+            Settings(
+                ai_assistant_enabled=False,
+                app_env="production",
+                auth_legacy_demo_users_enabled=True,
+                bootstrap_admin_email="owner@example.com",
+                bootstrap_admin_password="strong-bootstrap-password",
+                backend_cors_origins=[],
+            )
+        test_settings = Settings(
+            app_env="test",
+            auth_legacy_demo_users_enabled=True,
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+        self.assertTrue(test_settings.auth_legacy_demo_users_enabled)
+
+    def test_local_runtime_requires_real_session_instead_of_header_impersonation(self) -> None:
+        local = Settings(app_env="local", backend_cors_origins=[], _env_file=None)
+        testing = Settings(app_env="test", backend_cors_origins=[], _env_file=None)
+
+        self.assertFalse(local.allows_header_auth_fallback)
+        self.assertTrue(testing.allows_header_auth_fallback)
 
     def test_production_rejects_wildcard_or_insecure_cors_origins(self) -> None:
         for origins in (["*"], ["http://app.example.com"]):

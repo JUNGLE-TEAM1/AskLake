@@ -8,8 +8,8 @@ from app.models.dashboard_live import (
     DatasetRevisionCommitModel,
 )
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
-from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
-from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
+from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel, ReviewAnalysisRunModel
+from app.models.identity import AiContextConsumptionModel, AiGenerationUsageModel, AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
 from app.models.semantic_rag import (
     RagClassificationRunModel,
@@ -37,12 +37,15 @@ __all__ = [
     "DashboardWidget",
     "ETLJobModel",
     "ETLRunModel",
+    "ReviewAnalysisRunModel",
     "KafkaContinuousRuntimeModel",
     "KafkaContinuousSessionModel",
     "KafkaContinuousBatchModel",
     "KafkaContinuousMaintenanceRunModel",
     "KafkaSnapshotModel",
     "AuditEventModel",
+    "AiGenerationUsageModel",
+    "AiContextConsumptionModel",
     "PermissionGrantModel",
     "PrincipalControlModel",
     "ResourceLockModel",

@@ -72,8 +72,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getCatalogDataset, getCatalogDatasetRows } from "../../services/catalogApi";
-import { apiConfig } from "../../services/apiClient";
-import { getDatasetLineageGraph } from "../../services/mockApi";
+import { getDatasetLineageGraph } from "../../services/askLakeApi";
 import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -226,7 +225,7 @@ function materializationRunStatusLabel(status: DatasetMaterializationRun["status
 }
 
 function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
-  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
+  if (fallbackUsed || executionMode === "fallback_rule") return "지원 중단된 기존 규칙 실행";
   if (executionMode === "selected_model") return "선택 모델";
   if (executionMode === "auto_model") return "자동 모델";
   if (executionMode === "missing_model") return "모델 없음";
@@ -407,12 +406,6 @@ export function CatalogPage({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
-    if (apiConfig.useMock) {
-      setPreviewDetailError(null);
-      setPreviewDetailLoading(false);
-      return;
-    }
-
     let cancelled = false;
     const datasetId = previewDataset.id;
     if (!datasetId || datasetId === "dataset_not_selected") {

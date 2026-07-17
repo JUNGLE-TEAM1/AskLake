@@ -85,7 +85,15 @@ def main() -> int:
         indexed_count = sum(int(item.get("indexedCount") or 0) for item in results)
         skipped_existing_count = sum(int(item.get("skippedExistingCount") or 0) for item in results)
         dimensions = next((int(item["dimensions"]) for item in results if item.get("dimensions") is not None), None)
-        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": CHUNKING_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "durationMs": int((time.time() - started) * 1000)}
+        embedding_providers = {
+            str(item.get("embeddingProvider"))
+            for item in results
+            if str(item.get("embeddingProvider") or "").strip()
+        }
+        if len(embedding_providers) > 1:
+            raise RuntimeError("Embedding provider changed across Spark index partitions")
+        embedding_provider = next(iter(embedding_providers), None)
+        result = {"status": "validating", "datasetId": dataset_id, "jobId": manifest.get("jobId"), "indexedCount": document_count, "embeddedCount": indexed_count, "skippedExistingCount": skipped_existing_count, "documentCount": document_count, "chunkCount": document_count, "parentCount": parent_count, "dimensions": dimensions, "embeddingProvider": embedding_provider, "embeddingModel": manifest.get("embeddingModel"), "activeIndex": target_index, "chunkingVersion": CHUNKING_VERSION, "embeddingInputVersion": EMBEDDING_INPUT_VERSION, "fieldRenderingVersion": FIELD_RENDERING_VERSION, "durationMs": int((time.time() - started) * 1000)}
         print(f"ASKLAKE_RAG_INDEX_RESULT={canonical_json(result)}")
         callback(manifest, result)
         chunks.unpersist()

@@ -1,4 +1,4 @@
-import { apiClient } from "./apiClient";
+import { apiClient, type ApiRequestOptions } from "./apiClient";
 
 export type SemanticSchemaColumn = {
   name: string;
@@ -94,6 +94,7 @@ export type RagProfile = {
   targetAlias?: string | null;
   activeIndex?: string | null;
   activeSourceFingerprint?: string | null;
+  activeEmbeddingProvider?: string | null;
   activeEmbeddingModel?: string | null;
   activeEmbeddingDimensions?: number | null;
   activeChunkingVersion?: string | null;
@@ -101,6 +102,30 @@ export type RagProfile = {
   physicalColumnMapping?: Record<string, string>;
   semanticBindings: Record<string, Array<Record<string, unknown>>>;
   recommendations: RagRecommendation[];
+};
+
+export type RagJob = {
+  jobId: string;
+  datasetId: string;
+  requestedMode: string;
+  status: string;
+  stage: string;
+  progressPercent: number;
+  documentCount: number;
+  indexedCount: number;
+  parentCount: number;
+  chunkCount: number;
+  failedCount: number;
+  fallbackCount: number;
+  embeddingProvider: string | null;
+  embeddingModel: string | null;
+  embeddingDimensions: number | null;
+  validationStatus: string;
+  activationStatus: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 };
 
 export type RagDocument = {
@@ -148,8 +173,21 @@ export type RagSearchSource = {
   sourceFields: Array<string | { logicalField?: string; physicalField?: string; role?: string }>;
   chunkIndex?: number | null;
   chunkCount?: number | null;
+  chunkingStrategy?: string | null;
+  chunkingStrategies?: string[];
+  chunkingVersion?: string | null;
+  embeddingModel?: string | null;
+  embeddingProvider?: string | null;
+  embeddingDimensions?: number | null;
+  embeddingInputVersion?: string | null;
+  fieldRenderingVersion?: string | null;
+  fallbackApplied?: boolean;
+  fallbackReason?: string | null;
+  fallbackReasons?: string[];
   retrievalAlias?: string | null;
   score?: number | null;
+  retrievalScore?: number | null;
+  relevanceReason?: string | null;
 };
 
 export type RagSearchResponse = {
@@ -162,6 +200,14 @@ export type RagSearchResponse = {
     buildStatus?: string;
     servingStatus?: string;
     servingIndex?: string | null;
+    fallbackEvidenceCount?: number;
+    fallbackReasons?: string[];
+    degradationReasons?: string[];
+    queryPlannerProvider?: string | null;
+    queryPlannerModel?: string | null;
+    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
+    relevanceProvider?: string | null;
+    relevanceModel?: string | null;
     [key: string]: unknown;
   };
 };
@@ -216,6 +262,10 @@ export async function previewRagDocuments(datasetId: string): Promise<RagPreview
 
 export async function indexRagDataset(datasetId: string, mode: "index" | "reindex" = "index"): Promise<{ jobId: string; datasetId: string; status: string; targetIndex?: string | null }> {
   return apiClient.post(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/rag/${mode}`, { idempotencyKey: `${datasetId}-${Date.now()}` });
+}
+
+export async function listRagJobs(datasetId: string, options: ApiRequestOptions = {}): Promise<RagJob[]> {
+  return apiClient.get<RagJob[]>(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/rag/jobs?limit=30`, options);
 }
 
 export async function searchRagDataset(datasetId: string, query: string, filters: Record<string, unknown> = {}): Promise<RagSearchResponse> {

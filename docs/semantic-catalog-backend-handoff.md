@@ -41,7 +41,7 @@
 /semantic-layer                기존 링크 호환용 → /catalog?view=semantic
 ```
 
-Semantic Layer는 별도 최상위 탭이 아니라 Catalog 안의 보기 모드다. Dataset 검색 결과에서 업무 모델 연결 여부를 확인하고, 업무 모델 보기에서는 연결 Dataset과 정의된 분석 항목을 관리한다. 현재는 mock state로 동작하며 서버 저장은 아직 연결되지 않았다.
+Semantic Layer는 별도 최상위 탭이 아니라 Catalog 안의 보기 모드다. Dataset 검색 결과에서 업무 모델 연결 여부를 확인하고, 업무 모델 보기에서는 연결 Dataset과 정의된 분석 항목을 관리한다. 현재 구현은 FastAPI의 영속 Semantic Model/RAG API를 사용하며 프론트 mock state는 제거되었다.
 
 ## 4. 백엔드가 먼저 제공할 계약
 

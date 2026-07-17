@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.schemas.common import CamelModel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -13,6 +13,11 @@ RagIndexStatus = Literal["not_indexed", "stale", "queued", "staging", "chunking"
 RagEmbeddingStatus = Literal["not_started", "pending", "generating", "ready", "failed"]
 RagServingStatus = Literal["not_serving", "serving", "stale", "unavailable"]
 RagFilterOperator = Literal["eq", "gte", "gt", "lte", "lt"]
+RagJobRequestedMode = Literal["index", "reindex"]
+RagJobStatus = Literal["queued", "staging", "chunking", "embedding", "indexing", "validating", "ready", "failed", "canceled"]
+RagJobStage = Literal["queued", "staging", "chunking", "embedding", "indexing", "validating", "ready"]
+RagJobValidationStatus = Literal["pending", "passed", "failed"]
+RagJobActivationStatus = Literal["none", "pending", "committed", "failed"]
 
 
 class SemanticDatasetInput(CamelModel):
@@ -103,7 +108,7 @@ class SemanticDataset(CamelModel):
     description: str = ""
     layer: str | None = None
     rows: str | None = None
-    schema: list[SemanticSchemaColumn] = Field(default_factory=list)
+    schema_: list[SemanticSchemaColumn] = Field(default_factory=list, alias="schema")
     schema_fingerprint: str | None = None
 
 
@@ -151,7 +156,7 @@ class RagProfileResponse(CamelModel):
     build_status: RagIndexStatus
     serving_status: RagServingStatus
     embedding_status: RagEmbeddingStatus
-    schema: list[SemanticSchemaColumn] = Field(default_factory=list)
+    schema_: list[SemanticSchemaColumn] = Field(default_factory=list, alias="schema")
     schema_fingerprint: str | None = None
     body_columns: list[str] = Field(default_factory=list)
     title_columns: list[str] = Field(default_factory=list)
@@ -163,6 +168,7 @@ class RagProfileResponse(CamelModel):
     target_alias: str | None = None
     active_index: str | None = None
     active_source_fingerprint: str | None = None
+    active_embedding_provider: str | None = None
     active_embedding_model: str | None = None
     active_embedding_dimensions: int | None = None
     active_chunking_version: str | None = None
@@ -246,6 +252,43 @@ class RagIndexRequest(CamelModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
 
 
+class RagJobListItem(CamelModel):
+    model_config = ConfigDict(**CamelModel.model_config, extra="forbid", strict=True)
+
+    job_id: str
+    requested_mode: RagJobRequestedMode
+    status: RagJobStatus
+    stage: RagJobStage
+    progress_percent: int | None = Field(default=None, ge=0, le=100)
+    document_count: int = Field(ge=0)
+    indexed_count: int = Field(ge=0)
+    parent_count: int = Field(ge=0)
+    chunk_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    row_count: int = Field(ge=0)
+    fallback_count: int = Field(ge=0)
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = Field(default=None, ge=1)
+    validation_status: RagJobValidationStatus
+    validated_at: datetime | None = None
+    validated_index: str | None = None
+    validated_document_count: int | None = Field(default=None, ge=0)
+    validated_parent_count: int | None = Field(default=None, ge=0)
+    validated_dimensions: int | None = Field(default=None, ge=1)
+    validation_evidence_hash: str | None = None
+    activation_status: RagJobActivationStatus
+    activation_alias: str | None = None
+    activation_previous_index: str | None = None
+    activation_target_index: str | None = None
+    activation_started_at: datetime | None = None
+    activation_committed_at: datetime | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
 class RagJobResponse(CamelModel):
     job_id: str
     dataset_id: str
@@ -266,6 +309,7 @@ class RagJobResponse(CamelModel):
     stage: str = "queued"
     source_fingerprint: str | None = None
     policy_fingerprint: str | None = None
+    embedding_provider: str | None = None
     embedding_model: str | None = None
     embedding_dimensions: int | None = None
     parent_table: str | None = None

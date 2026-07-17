@@ -53,7 +53,7 @@ import {
 import { Field, PageTitle } from "../../components/common";
 import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/SourceBrand";
 import { getCatalogDataset } from "../../services/catalogApi";
-import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
+import { getLatestReviewAnalysis, getReviewAnalysisRun, reviewAnalysisRunSummary, startReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
 import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousSessionBatches, getContinuousSessions, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
 import type { ContinuousMaintenanceRun, ContinuousQuarantineRecord, KafkaContinuousBatch, KafkaContinuousSession, KafkaContinuousSessionStatus } from "../../types";
 import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
@@ -546,9 +546,9 @@ function ReviewAnalysisPanel({
 
   useEffect(() => {
     let active = true;
-    void getCellphonesReviewAnalysis()
+    void getLatestReviewAnalysis()
       .then((result) => {
-        if (active) setSummary(result);
+        if (active) setSummary(reviewAnalysisRunSummary(result));
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "리뷰 분석 상태를 불러오지 못했습니다.");
@@ -563,12 +563,18 @@ function ReviewAnalysisPanel({
     setRunning(true);
     setError(null);
     try {
-      const result = await runCellphonesReviewAnalysis(5, undefined, "gateway");
-      setSummary(result);
-      onAction("review.analysis.completed", "/api/review-analysis/cellphones/run", result.runId ?? "cellphones", "success");
+      let run = await startReviewAnalysis(100, undefined, "gateway", undefined, true);
+      setSummary(reviewAnalysisRunSummary(run));
+      while (run.runId && (run.status === "queued" || run.status === "running")) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        run = await getReviewAnalysisRun(run.runId);
+        setSummary(reviewAnalysisRunSummary(run));
+      }
+      if (run.status !== "success") throw new Error(run.error || "Amazon 리뷰 AI 분석 작업이 실패했습니다.");
+      onAction("review.analysis.completed", "/api/review-analysis/runs", run.runId ?? "review", "success");
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Amazon 리뷰 AI 분석에 실패했습니다.");
-      onAction("review.analysis.failed", "/api/review-analysis/cellphones/run", "cellphones", "failed");
+      onAction("review.analysis.failed", "/api/review-analysis/runs", "review", "failed");
     } finally {
       setRunning(false);
     }
@@ -581,12 +587,12 @@ function ReviewAnalysisPanel({
     <Panel aria-label="Amazon 리뷰 AI 분석">
       <PanelHeader
         actions={(
-          <Button aria-label="실제 Amazon 리뷰 5건 AI 분석" disabled={running} type="button" onClick={() => void runAnalysis()}>
+          <Button aria-label="실제 Amazon 리뷰 100건 AI 분석 및 모델 학습" disabled={running} type="button" onClick={() => void runAnalysis()}>
             <RefreshCw className={running ? "animate-spin" : undefined} size={16} />
-            {running ? "AI Gateway 분석 중" : "실제 리뷰 5건 분석"}
+            {running ? "AI 분석·모델 검증 중" : "실제 리뷰 100건 분석·학습"}
           </Button>
         )}
-        description="MinIO의 실제 Amazon Cell Phones 리뷰 원문을 AI Gateway가 감성·문제 유형·심각도·근거로 구조화합니다."
+        description="실제 Amazon Cell Phones 리뷰 원문을 AI Gateway가 구조화하고, 클래스·정확도 기준을 통과한 모델만 Spark용으로 게시합니다."
         icon={<Bot size={18} />}
         iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
         size="section"
@@ -604,10 +610,15 @@ function ReviewAnalysisPanel({
         {!loading && summary && (
           <>
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-              <Badge variant={summary.status === "success" ? "success" : "secondary"}>{summary.status === "success" ? "실제 분석 완료" : "실행 전"}</Badge>
+              <Badge variant={summary.status === "success" ? "success" : "secondary"}>{summary.status === "success" ? "실제 분석 완료" : summary.status === "running" ? "AI 분석 중" : summary.status === "queued" ? "실행 대기" : summary.status === "failed" ? "실패" : "실행 전"}</Badge>
               {summary.runId && <code>{summary.runId}</code>}
               {summary.processedRows !== undefined && <span>{summary.processedRows}건 처리 · 오류 {summary.invalidRows ?? 0}건</span>}
               {summary.source?.object && <code>{summary.source.object}</code>}
+              {summary.analysis?.providers?.length ? <span>Provider: {summary.analysis.providers.join(", ")}</span> : null}
+              {summary.analysis?.models?.length ? <span>Model: {summary.analysis.models.join(", ")}</span> : null}
+              {summary.analysis?.schemaSource && (
+                <span>Schema: {summary.analysis.schemaSource === "user_defined" ? "사용자 정의" : `내장 템플릿 ${summary.analysis.schemaTemplateId ?? ""}`.trim()}</span>
+              )}
             </div>
             {metrics && (
               <dl className="grid grid-cols-2 gap-3 lg:grid-cols-6">
@@ -625,6 +636,18 @@ function ReviewAnalysisPanel({
                   </div>
                 ))}
               </dl>
+            )}
+            {summary.modelTraining && (
+              <Alert className={summary.modelTraining.status === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}>
+                <ShieldCheck />
+                <AlertTitle>{summary.modelTraining.status === "success" ? "Spark 분류 모델 게시 완료" : "모델 품질 확인 필요"}</AlertTitle>
+                <AlertDescription>
+                  {summary.modelTraining.message}
+                  {summary.modelTraining.artifacts.length > 0
+                    ? ` ${summary.modelTraining.artifacts.map((artifact) => `${artifact.targetColumn}: ${artifact.status}`).join(" · ")}`
+                    : ""}
+                </AlertDescription>
+              </Alert>
             )}
             {rows.length > 0 && (
               <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -1621,23 +1644,18 @@ function OwnerIdentity({
   );
 }
 
-function fallbackJobStats(job: JobRowData): JobStats {
-  const runs = job.runHistory ?? [];
-  const successRuns = runs.filter((run) => run.status === "success").length;
-  const latestRun = runs[0];
-  const lastSuccess = runs.find((run) => run.status === "success");
-
+function emptyJobStats(job: JobRowData): JobStats {
   return {
-    averageDuration: latestRun?.duration ?? "-",
+    averageDuration: "-",
     currentStage: job.progress?.label ?? jobStatusMeta[job.status].summaryLabel,
-    inputRows: latestRun?.inputRows ?? "-",
-    lastSuccess: lastSuccess?.endedAt ?? "-",
-    outputRows: latestRun?.outputRows ?? "-",
+    inputRows: "-",
+    lastSuccess: "-",
+    outputRows: "-",
     sampleScope: "-",
     schemaColumns: "-",
     sourceUnits: "-",
-    successRate: runs.length > 0 ? `${Math.round((successRuns / runs.length) * 100)}%` : "-",
-    totalRuns: String(runs.length),
+    successRate: "-",
+    totalRuns: "-",
   };
 }
 
@@ -2199,20 +2217,20 @@ export function JobDetailPage({
   const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
   const sourceType = getSourceBrandMeta(rawSourceType).label;
   const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
-  const stats = { ...fallbackJobStats(job), ...(job.stats ?? {}) };
+  const stats = { ...emptyJobStats(job), ...(job.stats ?? {}) };
   const realtime = isRealtimeJob(job);
   const totalRuns = String(stats.totalRuns ?? "-");
   const totalRunsLabel = totalRuns === "-" || totalRuns.endsWith("회") ? totalRuns : `${totalRuns}회`;
   const realtimeMetrics = job.operationalMetrics?.metricType === "realtime" ? job.operationalMetrics : undefined;
   const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
-  const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
+  const physicalOutputPath = job.targetPath ?? stats.outputPath ?? job.storagePath ?? "-";
   const executionDisplay = getJobExecutionDisplay(job);
   const latestRun = job.runHistory?.[0];
   const activeRun = latestRun?.status === "running" ? latestRun : undefined;
   const latestRunTimestamp = latestRun?.endedAt || latestRun?.startedAt || job.lastRun;
   const processSummary = job.transformSteps?.length
     ? `${job.transformSteps.length}개 변환 규칙`
-    : "처리 설정 적용";
+    : "변환 규칙 없음";
   const currentStatusTone = job.status === "failed"
     ? "danger"
     : job.status === "running"
@@ -2228,7 +2246,7 @@ export function JobDetailPage({
           ? realtime ? "실시간 수집 중지" : "스케줄 일시중지"
           : job.status === "canceled"
             ? "최근 실행 취소"
-            : "자동 실행 활성";
+            : getJobScheduleKind(job) === "none" ? "수동 실행 대기" : "스케줄 실행 대기";
   const outputSchemaRows: OutputSchemaRow[] = (job.transformOutputColumns ?? []).map(([field, type], index) => ({
     field,
     index: index + 1,

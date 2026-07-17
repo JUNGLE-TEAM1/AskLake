@@ -26,3 +26,4 @@ class AiSqlGenerationResponse(CamelModel):
     sql: str = Field(min_length=1)
     schema_context: str = ""
     model: str | None = None
+    provider: str | None = None

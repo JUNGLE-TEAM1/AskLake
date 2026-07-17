@@ -146,7 +146,8 @@ def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResp
         actions=actions,
         warnings=warnings,
         model=str(payload.get("model") or "") or None,
-        provider=payload.get("provider") if payload.get("provider") in {"ai-gateway", "local-input-guard", "unavailable"} else None,
+        provider=_bounded_provider(payload.get("provider")),
+        used_evidence_ids=_string_list(payload.get("usedEvidenceIds")),
     )
 
 
@@ -172,6 +173,13 @@ def _normalize_update_widget_action(raw_action: dict[str, Any]) -> dict[str, Any
             if value is not None
         },
     }
+
+
+def _bounded_provider(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized[:100] or None
 
 
 def guard_assistant_response(
@@ -220,6 +228,7 @@ def guard_assistant_response(
         provider=response.provider,
         config_patch=_config_patch_from_actions(guarded_actions),
         widget_patch=_widget_patch_from_actions(guarded_actions),
+        used_evidence_ids=response.used_evidence_ids,
     )
 
 

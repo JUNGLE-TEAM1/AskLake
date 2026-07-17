@@ -21,21 +21,22 @@ def permission_grants_from_roles(
         grants.append({
             "actions": actions,
             "principalId": owner_name,
-            "principalType": "group",
+            "principalType": "user",
             "source": "owner",
         })
 
     for role in roles or []:
         if not isinstance(role, dict) or role.get("checked") is False:
             continue
-        name = str(role.get("name") or "").strip()
-        if not name:
+        principal_id = str(role.get("principalId") or role.get("principal_id") or role.get("name") or "").strip()
+        principal_type = str(role.get("principalType") or role.get("principal_type") or "role").strip()
+        if not principal_id or principal_type not in {"user", "group", "role", "public"}:
             continue
         role_actions = normalize_actions(role.get("access"))
         grants.append({
             "actions": role_actions or actions,
-            "principalId": name,
-            "principalType": "role",
+            "principalId": principal_id,
+            "principalType": principal_type,
             "source": "permissionRoles",
         })
 
@@ -44,7 +45,7 @@ def permission_grants_from_roles(
 
 def resource_permissions(
     *,
-    actor: str = "demo-user",
+    actor: str = "system",
     can_query: bool = False,
     can_run: bool = False,
     can_manage: bool = False,
@@ -59,7 +60,7 @@ def resource_permissions(
         "canDelete": can_delete,
         "canShare": can_share,
         "canPublish": False,
-        "computedFor": actor or "demo-user",
+        "computedFor": actor or "system",
         "enforced": False,
     }
 

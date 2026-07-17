@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -6,6 +6,8 @@ from app.schemas.common import CamelModel
 
 
 PermissionName = Literal["view", "query", "run", "manage", "delete", "share", "publish"]
+AiContextShortText = Annotated[str, Field(max_length=255)]
+AiContextSampleValue = Annotated[str, Field(max_length=256)]
 
 
 class AiContextActor(CamelModel):
@@ -33,26 +35,29 @@ class AiContextClaims(CamelModel):
 
 
 class AiContextColumn(CamelModel):
-    name: str
-    type: str
+    name: str = Field(max_length=255)
+    type: str = Field(max_length=128)
 
 
 class CatalogDatasetContext(CamelModel):
     """Safe, allowlisted catalog context returned to the internal AI server."""
 
-    dataset_id: str
-    dataset_name: str
-    description: str
-    layer: str
-    freshness: str
-    last_updated: str
-    quality: str
-    row_count: str
-    schema_: list[AiContextColumn] = Field(alias="schema")
-    tags: list[str] = Field(default_factory=list)
-    upstream: list[str] = Field(default_factory=list)
-    downstream: list[str] = Field(default_factory=list)
-    sample_rows: list[list[str]] = Field(default_factory=list)
+    dataset_id: str = Field(max_length=255)
+    dataset_name: str = Field(max_length=255)
+    description: str = Field(max_length=2_000)
+    layer: str = Field(max_length=64)
+    freshness: str = Field(max_length=64)
+    last_updated: str = Field(max_length=128)
+    quality: str = Field(max_length=128)
+    row_count: str = Field(max_length=64)
+    schema_: list[AiContextColumn] = Field(alias="schema", max_length=256)
+    schema_truncated: bool = False
+    tags: list[AiContextShortText] = Field(default_factory=list, max_length=64)
+    upstream: list[AiContextShortText] = Field(default_factory=list, max_length=64)
+    downstream: list[AiContextShortText] = Field(default_factory=list, max_length=64)
+    sample_column_names: list[AiContextShortText] = Field(default_factory=list, max_length=64)
+    sample_rows: list[list[AiContextSampleValue]] = Field(default_factory=list, max_length=20)
+    sample_rows_truncated: bool = False
 
 
 class AiGatewayQueryRequest(CamelModel):

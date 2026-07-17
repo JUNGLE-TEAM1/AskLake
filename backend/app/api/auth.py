@@ -32,7 +32,7 @@ def session_cookie_options() -> dict[str, Any]:
         "httponly": True,
         "path": SESSION_COOKIE_PATH,
         "samesite": SESSION_COOKIE_SAMESITE,
-        "secure": not settings.allows_header_auth_fallback,
+        "secure": not settings.is_development_runtime,
     }
 
 
@@ -132,7 +132,7 @@ def get_session(
     if session_actor is None:
         return AuthSessionResponse(authenticated=False, user=None)
     actor = ActorContext(
-        name=str(session_actor.get("name") or "demo-user"),
+        name=str(session_actor.get("name") or session_actor.get("email") or session_actor.get("id") or "authenticated-user"),
         role=str(session_actor.get("role") or "viewer"),
         groups=tuple(str(group) for group in session_actor.get("groups") or []),
         id=str(session_actor.get("id") or "") or None,
@@ -155,7 +155,7 @@ def logout(
     session_actor = service.actor_for_session(session_token)
     actor = (
         ActorContext(
-            name=str(session_actor.get("name") or "demo-user"),
+            name=str(session_actor.get("name") or session_actor.get("email") or session_actor.get("id") or "authenticated-user"),
             role=str(session_actor.get("role") or "viewer"),
             groups=tuple(str(group) for group in session_actor.get("groups") or []),
             id=str(session_actor.get("id") or "") or None,
@@ -188,7 +188,7 @@ def actor_context_from_session(session: dict[str, object]) -> ActorContext:
     if not isinstance(actor, dict):
         return ActorContext()
     return ActorContext(
-        name=str(actor.get("name") or "demo-user"),
+        name=str(actor.get("name") or actor.get("email") or actor.get("id") or "authenticated-user"),
         role=str(actor.get("role") or "viewer"),
         groups=tuple(str(group) for group in actor.get("groups") or []),
         id=str(actor.get("id") or "") or None,

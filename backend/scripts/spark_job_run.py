@@ -5,8 +5,6 @@ import re
 import sys
 import time
 import hashlib
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession
@@ -26,6 +24,10 @@ REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
     "copy",
     "one_of_values",
     "instruction",
+}
+REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS = {
+    "copy",
+    "one_of_values",
 }
 REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
     "copy_or_extract_field": "copy",
@@ -49,7 +51,6 @@ REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
     "extractive_summary": "instruction",
     "evidence_span": "instruction",
 }
-REVIEW_ROW_ANALYSIS_LLM_CACHE = {}
 REVIEW_TEXT_MODEL_CACHE = {}
 
 
@@ -128,7 +129,13 @@ def main():
         blocking_text_model_checks = [
             check
             for check in review_analysis_preflight
-            if check.get("runtimeStatus") == "missing_model_artifact" and check.get("modelRequired")
+            if (
+                check.get("runtimeStatus") == "unsupported_execution_method"
+                or (
+                    check.get("runtimeStatus") == "missing_model_artifact"
+                    and check.get("modelRequired")
+                )
+            )
         ]
         if blocking_text_model_checks:
             ended_at = now_iso()
@@ -141,7 +148,10 @@ def main():
                 "sampleRows": input_rows,
                 "score": 0.0,
                 "status": "fail",
-                "summary": "Text structuring requires a trained compatible model for one or more columns.",
+                "summary": (
+                    "Text structuring cannot execute one or more columns: use a trained compatible "
+                    "classification model or a deterministic copy transform."
+                ),
             }
             text_structuring = text_structuring_manifest(transform_steps, review_analysis_preflight)
             quality["textStructuringExecution"] = text_structuring.get("execution", {})
@@ -1496,11 +1506,6 @@ def apply_transform_steps(spark, frame, steps):
         elif "sql expression" in operation and params.strip():
             expression = F.expr(params)
         elif is_row_analysis_operation(operation):
-            if review_row_analysis_uses_gateway():
-                group = contiguous_review_row_analysis_group(steps, index)
-                current = apply_review_row_analysis_group(current, group)
-                index += len(group)
-                continue
             expression = review_row_analysis_expression(current, output_column, params)
         elif "custom csv classifier" in operation or "csv classifier" in operation:
             expression = custom_csv_classifier_expression(source, params)
@@ -1521,90 +1526,12 @@ def apply_transform_steps(spark, frame, steps):
     return current
 
 
-def contiguous_review_row_analysis_group(steps, start_index):
-    first = steps[start_index]
-    first_input = str(first.get("input") or "")
-    first_params = str(first.get("params") or "")
-    group = []
-    for step in steps[start_index:]:
-        if not step or step.get("enabled") is False or not is_review_row_analysis_step(step):
-            break
-        if str(step.get("input") or "") != first_input or str(step.get("params") or "") != first_params:
-            break
-        group.append(step)
-    return group or [first]
-
-
-def apply_review_row_analysis_group(frame, group):
-    first = group[0]
-    config = parse_review_row_analysis_config(str(first.get("params") or ""))
-    columns = review_row_analysis_group_columns(group, config)
-    payload_column = unique_temp_column(frame, "__asklake_review_analysis_payload")
-    current = frame.withColumn(payload_column, gateway_review_row_analysis_payload_expression(frame, config, columns))
-    for step in group:
-        output_column = normalize_column_name(step.get("output") or "")
-        if not output_column:
-            continue
-        current = current.withColumn(
-            output_column,
-            F.get_json_object(F.col(quote_identifier(payload_column)), f"$.{output_column}"),
-        )
-    return current.drop(payload_column)
-
-
-def review_row_analysis_group_columns(group, config):
-    raw_columns = config.get("columns")
-    columns = []
-    seen = set()
-    if isinstance(raw_columns, list):
-        for raw_column in raw_columns:
-            if not isinstance(raw_column, dict):
-                continue
-            target = normalize_column_name(raw_column.get("targetName") or raw_column.get("name") or "")
-            if not target or target in seen:
-                continue
-            method = normalize_review_row_analysis_method(raw_column.get("method") or raw_column.get("analysisMethod")) or "copy"
-            seen.add(target)
-            columns.append({
-                "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(raw_column, config)),
-                "instruction": str(raw_column.get("instruction") or raw_column.get("description") or ""),
-                "method": method,
-                "targetName": target,
-                "type": str(raw_column.get("type") or "String"),
-            })
-    for step in group:
-        target = normalize_column_name(step.get("output") or "")
-        if not target or target in seen:
-            continue
-        seen.add(target)
-        columns.append({
-            "allowedValues": [],
-            "instruction": "",
-            "method": "copy",
-            "targetName": target,
-            "type": "String",
-        })
-    return columns
-
-
-def unique_temp_column(frame, prefix):
-    candidate = prefix
-    suffix = 2
-    existing = set(frame.columns)
-    while candidate in existing:
-        candidate = f"{prefix}_{suffix}"
-        suffix += 1
-    return candidate
-
-
 def review_row_analysis_expression(frame, output_column, params):
     config = parse_review_row_analysis_config(params)
     target = normalize_column_name(config.get("outputColumn") or output_column)
     column_config = review_row_analysis_column_config(config, target)
     method = review_row_analysis_method(column_config, config)
     source_field = column_config.get("sourceField") or config.get("sourceField") or "text"
-    if review_row_analysis_uses_gateway():
-        return gateway_review_row_analysis_expression(frame, target, config, column_config, source_field, method)
     rating = try_cast_double(frame, config.get("ratingField") or "rating")
     asin = safe_col(frame, config.get("asinField") or "asin").cast("string")
     parent_asin = safe_col(frame, config.get("parentAsinField") or "parent_asin").cast("string")
@@ -1614,25 +1541,6 @@ def review_row_analysis_expression(frame, output_column, params):
     timestamp = safe_col(frame, config.get("timestampField") or "timestamp").cast("string")
     title = safe_col(frame, config.get("titleField") or "title").cast("string")
     text = safe_col(frame, config.get("textField") or source_field).cast("string")
-    source_text_present = review_source_text_present(title, text)
-    haystack = F.lower(F.concat_ws(" ", title, text))
-    negative_signal = haystack.rlike("bad|broken|defective|refund|return|stopped|dead|disappointed|waste|not working")
-    safety_signal = haystack.rlike("fire|smoke|explode|burn|hot|overheat|unsafe|danger|battery")
-    charging_signal = haystack.rlike("charge|charging|charger|power|cable|usb|plug")
-    screen_signal = haystack.rlike("screen|display|glass|crack|touch|protector")
-    shipping_signal = haystack.rlike("shipping|delivery|package|arrived|late|box")
-    listing_signal = haystack.rlike("fake|wrong|not as described|different|missing")
-    boolean_signal = haystack.rlike("click|clicked|tap|tapped|pressed|selected|subscribe|subscribed|buy|bought|purchase|purchased")
-    issue_signal = negative_signal | safety_signal | charging_signal | screen_signal | shipping_signal | listing_signal
-    action_signal = (
-        (rating <= 2)
-        | safety_signal
-        | haystack.rlike(
-            "refund|return|replace|replacement|not working|doesn't work|does not work|didn't work|stopped working|"
-            "broken|broke|cracked|shattered|dead|defective|failed|missing|wrong|fake|never arrived|not fit|doesn't fit|"
-            "does not fit|won't charge|does not charge|doesn't charge"
-        )
-    )
 
     if method == "copy":
         return review_copy_expression(
@@ -1661,35 +1569,22 @@ def review_row_analysis_expression(frame, output_column, params):
             column_config,
             source_field,
         )
-        if portable_expression is not None:
-            return F.when(source_text_present, portable_expression).otherwise(F.lit(None).cast("string"))
-        if review_text_model_required(config, column_config):
+        if portable_expression is None:
             raise ValueError(
-                f"Portable review text model artifact is required but was not found for column '{target}'."
+                f"Validated portable review text model artifact is required for column '{target}'."
             )
-        fallback_expression = review_one_of_values_expression(
-            frame,
-            target,
-            allowed_values,
-            rating,
-            haystack,
-            {
-                "action": action_signal,
-                "boolean": boolean_signal,
-                "charging": charging_signal,
-                "issue": issue_signal,
-                "listing": listing_signal,
-                "negative": negative_signal,
-                "safety": safety_signal,
-                "screen": screen_signal,
-                "shipping": shipping_signal,
-            },
+        return F.when(
+            review_source_text_present(title, text),
+            portable_expression,
+        ).otherwise(
+            F.lit(None).cast("string")
         )
-        return F.when(source_text_present, fallback_expression).otherwise(F.lit(None).cast("string"))
     if method == "instruction":
-        instruction_expression = review_instruction_expression(target, column_config, title, text)
-        return F.when(source_text_present, instruction_expression).otherwise(F.lit(None).cast("string"))
-    return F.lit("")
+        raise ValueError(
+            "Free-form AI instruction output is available in the bounded AI preview only. "
+            "Spark ETL requires an explicitly supported portable model and never substitutes substring rules."
+        )
+    raise ValueError(f"Unsupported text row analysis method for column '{target}': {method or 'missing'}")
 
 
 def review_source_text_present(title, text):
@@ -1697,242 +1592,11 @@ def review_source_text_present(title, text):
     return combined.isNotNull() & (F.length(combined) > 0)
 
 
-def review_instruction_expression(target, column_config, title, text):
-    instruction = str(column_config.get("instruction") or column_config.get("description") or "").lower()
-    normalized_target = normalize_column_name(target)
-    combined = F.trim(F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " "))
-    if "summary" in normalized_target or "summar" in instruction or "요약" in instruction:
-        return F.substring(combined, 1, 180)
-    if (
-        "evidence" in normalized_target
-        or "reason" in normalized_target
-        or "evidence" in instruction
-        or "reason" in instruction
-        or "근거" in instruction
-    ):
-        return F.substring(combined, 1, 240)
-    return F.substring(combined, 1, 240)
-
-
-def review_row_analysis_uses_gateway():
-    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "gateway").strip().lower() in {
-        "gateway",
-        "ai_gateway",
-        "llm",
-        "row_llm",
-    }
-
-
-def gateway_review_row_analysis_expression(frame, target, config, column_config, source_field, method):
-    columns = normalize_review_analysis_llm_columns(config, target, column_config, method)
-    schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
-    row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
-
-    def analyze_target(raw_row_json):
-        return gateway_review_row_target(raw_row_json, target, schema_json, source_field)
-
-    return F.udf(analyze_target, T.StringType())(row_json)
-
-
-def gateway_review_row_analysis_payload_expression(frame, config, columns):
-    schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
-    row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
-
-    def analyze_payload(raw_row_json):
-        row = parse_json_object(raw_row_json)
-        cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
-        if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_review_ai_gateway(
-                row,
-                parse_json_array(schema_json),
-                config.get("sourceField") or "text",
-            )
-        analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
-        payload = {}
-        for column in parse_json_array(schema_json):
-            target = column.get("targetName") or ""
-            value = analyzed.get(target)
-            if value in (None, "") and column.get("method") == "copy":
-                value = local_copy_or_extract_value(row, target, config.get("sourceField") or "text")
-            allowed_values = column.get("allowedValues") or []
-            if allowed_values:
-                value = canonical_allowed_value(value, allowed_values)
-            payload[target] = "" if value is None else value
-        return json.dumps(payload, ensure_ascii=False)
-
-    return F.udf(analyze_payload, T.StringType())(row_json)
-
-
-def normalize_review_analysis_llm_columns(config, target, column_config, method):
-    raw_columns = config.get("columns")
-    if not isinstance(raw_columns, list) or not raw_columns:
-        raw_columns = [{**column_config, "targetName": target, "method": method}]
-    columns = []
-    seen = set()
-    for raw_column in raw_columns:
-        if not isinstance(raw_column, dict):
-            continue
-        target_name = normalize_column_name(raw_column.get("targetName") or raw_column.get("name") or "")
-        if not target_name or target_name in seen:
-            continue
-        seen.add(target_name)
-        column_method = normalize_review_row_analysis_method(
-            raw_column.get("method") or raw_column.get("analysisMethod") or method
-        ) or "copy"
-        columns.append({
-            "allowedValues": review_row_analysis_expected_values(
-                column_method,
-                review_row_analysis_allowed_values(raw_column, config),
-            ),
-            "instruction": str(raw_column.get("instruction") or raw_column.get("description") or ""),
-            "method": column_method,
-            "targetName": target_name,
-            "type": str(raw_column.get("type") or "String"),
-        })
-    if target not in {column["targetName"] for column in columns}:
-        columns.append({
-            "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(column_config, config)),
-            "instruction": str(column_config.get("instruction") or column_config.get("description") or ""),
-            "method": method or "copy",
-            "targetName": target,
-            "type": str(column_config.get("type") or "String"),
-        })
-    return columns
-
-
-def gateway_review_row_target(raw_row_json, target, schema_json, source_field):
-    row = parse_json_object(raw_row_json)
-    columns = parse_json_array(schema_json)
-    cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
-    if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_review_ai_gateway(row, columns, source_field)
-    analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
-    column = next((item for item in columns if item.get("targetName") == target), {})
-    value = analyzed.get(target)
-    if value in (None, "") and column.get("method") == "copy":
-        value = local_copy_or_extract_value(row, target, source_field)
-    allowed_values = column.get("allowedValues") or []
-    if allowed_values:
-        value = canonical_allowed_value(value, allowed_values)
-    if value is None:
-        return ""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def call_review_ai_gateway(row, columns, source_field="text"):
-    base_url = (os.environ.get("AI_GATEWAY_BASE_URL") or "http://ai-server:8090").rstrip("/")
-    token = os.environ.get("AI_GATEWAY_SERVICE_TOKEN") or ""
-    timeout_seconds = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "120") or "120")
-    max_chars = int(os.environ.get("ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS", "9000") or "9000")
-    if not token:
-        raise RuntimeError("AI Gateway service token is not configured for review analysis.")
-    request_id = hashlib.sha256(
-        f"{source_field}\n{json.dumps(columns, sort_keys=True)}\n{json.dumps(row, sort_keys=True)}".encode("utf-8", "ignore")
-    ).hexdigest()
-    payload = {
-        "context": {
-            "requestedColumns": columns,
-            "sourceField": source_field,
-            "sourceRow": truncate_text(json.dumps(row, ensure_ascii=False), max_chars),
-            "sourceText": truncate_text(local_copy_or_extract_value(row, source_field, source_field), max_chars),
-        },
-        "mode": "review_row",
-        "prompt": "Analyze one source review row into the requested structured columns.",
-        "request_id": request_id,
-        "selected_dataset_ids": [],
-    }
-    request = urllib.request.Request(
-        f"{base_url}/v1/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "X-Request-ID": request_id,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", "replace")
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"AI Gateway review analysis failed: {exc}") from exc
-    parsed = parse_json_object(body)
-    output = parsed.get("output") if isinstance(parsed, dict) else None
-    values = output.get("values") if isinstance(output, dict) else None
-    if parsed.get("mode") != "review_row" or not isinstance(values, list):
-        raise RuntimeError("AI Gateway review analysis returned an invalid response.")
-    return {
-        str(item.get("targetName") or ""): item.get("value")
-        for item in values
-        if isinstance(item, dict) and str(item.get("targetName") or "")
-    }
-
-
-def parse_json_object(value):
-    if isinstance(value, dict):
-        return value
-    try:
-        parsed = json.loads(value or "{}")
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        text = str(value or "")
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(text[start:end + 1])
-                return parsed if isinstance(parsed, dict) else {}
-            except Exception:
-                return {}
-    return {}
-
-
-def parse_json_array(value):
-    try:
-        parsed = json.loads(value or "[]")
-        return parsed if isinstance(parsed, list) else []
-    except Exception:
-        return []
-
-
 def canonical_allowed_value(value, allowed_values):
     normalized_value = str(value or "").strip().lower()
     for allowed_value in allowed_values:
         if str(allowed_value).strip().lower() == normalized_value:
             return str(allowed_value)
-    return ""
-
-
-def local_copy_or_extract_value(row, target, source_field):
-    normalized_target = normalize_column_name(target)
-    normalized_source = normalize_column_name(source_field)
-    for key, value in row.items():
-        if normalize_column_name(key) in {normalized_target, normalized_source} and value is not None:
-            return value
-    if normalized_target in {"review_id", "id"}:
-        seed = "|".join(str(row.get(key, "")) for key in ["asin", "parent_asin", "user_id", "timestamp", "title", "text"])
-        return hashlib.sha1(seed.encode("utf-8", "ignore")).hexdigest()[:16]
-    aliases = {
-        "body": "text",
-        "content": "text",
-        "event_time": "timestamp",
-        "helpful": "helpful_vote",
-        "message": "text",
-        "review_text": "text",
-        "score": "rating",
-        "user": "user_id",
-        "value": "text",
-    }
-    alias = aliases.get(normalized_target)
-    if alias:
-        for key, value in row.items():
-            if normalize_column_name(key) == alias and value is not None:
-                return value
-    for key, value in row.items():
-        if normalize_column_name(key) == normalized_source and value is not None:
-            return value
     return ""
 
 
@@ -2030,39 +1694,22 @@ def review_portable_text_model_expression(frame, target, allowed_values, config,
     def predict_with_model(title, text, rating):
         predicted = portable_review_text_predict(model_path, title, text, rating)
         if normalized_allowed:
-            return canonical_allowed_value(predicted, normalized_allowed) or normalized_allowed[0]
+            return canonical_allowed_value(predicted, normalized_allowed) or None
         return predicted or ""
 
     return F.udf(predict_with_model, T.StringType())(title_col, text_col, rating_col)
 
 
 def review_text_model_required(config, column_config):
-    if review_row_analysis_fallback_allowed(config, column_config):
-        return False
-    value = column_config.get("requireModel")
-    if value is None:
-        value = column_config.get("requirePortableModel")
-    if value is None:
-        value = config.get("requireModel")
-    if value is None:
-        value = config.get("requirePortableModel")
-    if value is None:
-        value = os.environ.get("ASKLAKE_REVIEW_TEXT_MODEL_REQUIRED", "")
-    if value is None or str(value).strip() == "":
-        return True
-    return truthy(value)
+    # Classification output written to a production dataset must always have
+    # a validated portable model. Request payloads cannot opt into keyword
+    # rules or turn this guard off.
+    return True
 
 
 def review_row_analysis_fallback_allowed(config, column_config):
-    for source in [column_config, config]:
-        if not isinstance(source, dict):
-            continue
-        for key in ["fallbackAllowed", "allowFallback"]:
-            if key in source:
-                return truthy(source.get(key))
-        policy = str(source.get("fallbackPolicy") or "").strip().lower()
-        if policy in {"rule", "rules", "fallback_rule", "allow"}:
-            return True
+    # Retained for manifest compatibility with historical runs. New runs are
+    # fail-closed and never execute a rule substitute for an AI/ML classifier.
     return False
 
 
@@ -2083,50 +1730,92 @@ def resolve_review_text_model_path(target, allowed_values, preferred_artifact=""
     if not root or not os.path.isdir(root):
         return ""
     normalized_target = normalize_column_name(target)
-    direct = os.path.join(root, f"{normalized_target}.portable_linear_svc.json")
-    candidates = [direct]
+    manifest = load_review_text_model_manifest(root)
+    if not manifest:
+        return ""
+    trained_models = manifest.get("trainedModels") if isinstance(manifest.get("trainedModels"), dict) else {}
+    published = trained_models.get(normalized_target) if isinstance(trained_models.get(normalized_target), dict) else {}
+    artifact_name = os.path.basename(str(published.get("artifact") or ""))
+    expected_digest = str((manifest.get("artifactSha256s") or {}).get(artifact_name) or "").strip().lower()
+    if published.get("status") != "trained" or not artifact_name or not expected_digest:
+        return ""
     preferred = str(preferred_artifact or "").strip()
-    if preferred:
-        preferred_path = preferred if os.path.isabs(preferred) else os.path.join(root, os.path.basename(preferred))
-        candidates.insert(0, preferred_path)
-        if not os.path.exists(preferred_path):
-            preferred_name = os.path.basename(preferred)
-            for current_root, _dirs, files in os.walk(root):
-                if preferred_name in files:
-                    candidates.insert(0, os.path.join(current_root, preferred_name))
-                    break
-    if not os.path.exists(direct):
-        for current_root, _dirs, files in os.walk(root):
-            filename = f"{normalized_target}.portable_linear_svc.json"
-            if filename in files:
-                candidates.append(os.path.join(current_root, filename))
-                break
-    for candidate in candidates:
-        if not os.path.exists(candidate):
-            continue
-        try:
-            model = load_review_text_model(candidate)
-        except Exception:
-            continue
-        model_target = normalize_column_name(model.get("targetName") or model.get("targetColumn") or normalized_target)
-        if model_target and model_target != normalized_target:
-            continue
-        classes = [str(value) for value in model.get("classes") or []]
-        model_allowed_values = [str(value) for value in model.get("allowedValues") or []]
-        if not classes:
-            continue
-        if allowed_values:
-            allowed_normalized = {str(value).strip().lower() for value in allowed_values}
-            if model_allowed_values:
-                model_allowed_normalized = {value.strip().lower() for value in model_allowed_values}
-                if model_allowed_normalized != allowed_normalized:
-                    continue
-            else:
-                class_normalized = {value.strip().lower() for value in classes}
-                if not class_normalized.issubset(allowed_normalized):
-                    continue
-        return candidate
-    return ""
+    if preferred and os.path.basename(preferred) != artifact_name:
+        return ""
+    candidate = os.path.realpath(os.path.join(root, artifact_name))
+    if os.path.dirname(candidate) != os.path.realpath(root) or not os.path.isfile(candidate):
+        return ""
+    if file_sha256(candidate) != expected_digest:
+        return ""
+    try:
+        model = load_review_text_model(candidate)
+    except Exception:
+        return ""
+    if not review_text_model_is_deployable(model):
+        return ""
+    model_target = normalize_column_name(model.get("targetName") or model.get("targetColumn") or normalized_target)
+    if model_target and model_target != normalized_target:
+        return ""
+    classes = [str(value) for value in model.get("classes") or []]
+    model_allowed_values = [str(value) for value in model.get("allowedValues") or []]
+    class_set = {value.strip().lower() for value in classes}
+    model_allowed_set = {value.strip().lower() for value in model_allowed_values}
+    if not classes or class_set != model_allowed_set:
+        return ""
+    if allowed_values and model_allowed_set != {str(value).strip().lower() for value in allowed_values}:
+        return ""
+    return candidate
+
+
+def load_review_text_model_manifest(root):
+    manifest_path = os.path.join(root, "manifest.json")
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(manifest, dict) or manifest.get("promotionStatus") != "promoted":
+        return {}
+    if not isinstance(manifest.get("artifactSha256s"), dict):
+        return {}
+    return manifest
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def review_text_model_is_deployable(model):
+    if not isinstance(model, dict):
+        return False
+    provenance = model.get("provenance") if isinstance(model.get("provenance"), dict) else {}
+    label_source = str(provenance.get("labelSource") or "").strip().lower()
+    if label_source not in {"ai_gateway", "human_labeled"}:
+        return False
+    if label_source == "ai_gateway" and not [value for value in provenance.get("labelModels") or [] if str(value).strip()]:
+        return False
+    if not isinstance(provenance.get("source"), dict) or not provenance.get("source"):
+        return False
+    metrics = model.get("metrics") if isinstance(model.get("metrics"), dict) else {}
+    classes = [str(value) for value in model.get("classes") or []]
+    validation_counts = metrics.get("validationLabelCounts") if isinstance(metrics.get("validationLabelCounts"), dict) else {}
+    try:
+        accuracy = float(metrics.get("accuracy"))
+        macro_f1 = float(metrics.get("macroF1"))
+        validation_rows = int(metrics.get("validationRows"))
+        minimum_quality = float(os.environ.get("ASKLAKE_REVIEW_MODEL_MINIMUM_QUALITY", "0.75"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        accuracy >= minimum_quality
+        and macro_f1 >= minimum_quality
+        and validation_rows >= len(classes) > 0
+        and all(int(validation_counts.get(value) or 0) > 0 for value in classes)
+    )
 
 
 def review_row_analysis_model_artifact(column_config, config):
@@ -2268,71 +1957,6 @@ def truthy(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def review_one_of_values_expression(frame, target, allowed_values, rating, haystack, signals):
-    if not allowed_values:
-        return F.lit("")
-    fallback = allowed_values[0]
-    expression = None
-    for allowed_value in allowed_values:
-        condition = review_allowed_value_condition(allowed_value, rating, haystack, signals)
-        if condition is None:
-            continue
-        expression = F.when(condition, F.lit(allowed_value)) if expression is None else expression.when(condition, F.lit(allowed_value))
-    classified = expression.otherwise(F.lit(fallback)) if expression is not None else F.lit(fallback)
-    raw_target = first_matching_column(frame, target)
-    if not raw_target:
-        return classified
-    raw_value = safe_col(frame, raw_target).cast("string")
-    return F.when(raw_value.isin(*allowed_values), raw_value).otherwise(classified)
-
-
-def review_allowed_value_condition(value, rating, haystack, signals):
-    key = normalize_column_name(value)
-    if not key:
-        return None
-    positive_signal = (rating >= 4) & ~signals["negative"]
-    if key in {"y", "yes", "true"}:
-        return signals["boolean"]
-    if key in {"n", "no", "false"}:
-        return ~signals["boolean"]
-    if "negative" in key or key == "neg":
-        return (rating <= 2) | signals["negative"]
-    if "mixed" in key or "neutral" in key:
-        return rating == 3
-    if "positive" in key:
-        return positive_signal
-    if "critical" in key:
-        return signals["safety"]
-    if "high" in key:
-        return (rating <= 2) | signals["negative"]
-    if "medium" in key:
-        return rating == 3
-    if "low" in key:
-        return positive_signal
-    if any(token in key for token in ["battery", "safety", "fire", "smoke", "overheat"]):
-        return signals["safety"] | signals["charging"]
-    if any(token in key for token in ["charge", "charging", "charger", "power", "cable", "usb", "plug"]):
-        return signals["charging"]
-    if any(token in key for token in ["screen", "display", "glass", "touch"]):
-        return signals["screen"]
-    if any(token in key for token in ["shipping", "delivery", "package", "arrived", "box"]):
-        return signals["shipping"]
-    if any(token in key for token in ["listing", "mismatch", "accuracy", "description", "wrong", "missing"]):
-        return signals["listing"]
-    if any(token in key for token in ["durability", "quality", "defective", "broken", "general_issue"]):
-        return signals["negative"]
-    tokens = [
-        token
-        for token in key.split("_")
-        if len(token) > 2 and token not in {"and", "for", "from", "not", "one", "the", "with"}
-    ]
-    condition = None
-    for token in tokens:
-        token_condition = haystack.contains(token)
-        condition = token_condition if condition is None else condition | token_condition
-    return condition
-
-
 def review_row_analysis_column_config(config, target):
     columns = config.get("columns")
     if isinstance(columns, list):
@@ -2436,6 +2060,13 @@ def plan_review_row_analysis_checks(steps):
                 "validRows": 0,
                 "validationStatus": "needs_review",
             })
+        elif method not in REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS:
+            check.update({
+                "invalidRows": 0,
+                "runtimeStatus": "unsupported_execution_method",
+                "validRows": 0,
+                "validationStatus": "preview_only",
+            })
         elif method == "one_of_values" and not allowed_values:
             check.update({
                 "invalidRows": 0,
@@ -2443,7 +2074,7 @@ def plan_review_row_analysis_checks(steps):
                 "validRows": 0,
                 "validationStatus": "needs_review",
             })
-        elif method == "one_of_values" and model_required and not portable_model_path:
+        elif method == "one_of_values" and not portable_model_path:
             check.update({
                 "invalidRows": 0,
                 "runtimeStatus": "missing_model_artifact",
@@ -2454,12 +2085,6 @@ def plan_review_row_analysis_checks(steps):
             check.update({
                 "runtimeStatus": "portable_text_model_planned",
                 "validationStatus": "model_runtime_planned",
-            })
-        elif method == "one_of_values":
-            check.update({
-                "fallbackUsed": True,
-                "runtimeStatus": "rule_fallback_planned",
-                "validationStatus": "fallback_structural_check_only",
             })
         else:
             check.update({
@@ -2492,7 +2117,7 @@ def review_row_analysis_check_payload(
             portable_model_path,
             model_required,
         ),
-        "fallbackUsed": method == "one_of_values" and not portable_model_path and not model_required,
+        "fallbackUsed": False,
         "id": id_value,
         "method": method,
         "metrics": metrics,
@@ -2502,7 +2127,8 @@ def review_row_analysis_check_payload(
         "rawMethod": raw_method,
         "runtimeStatus": "recorded",
         "selectedModelArtifact": selected_model_artifact,
-        "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS),
+        "previewOnlyMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS - REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
+        "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
         "target": target,
         "totalRows": total_rows,
         "validationRows": int(metrics.get("validationRows") or 0) if isinstance(metrics, dict) else 0,
@@ -2510,13 +2136,15 @@ def review_row_analysis_check_payload(
 
 
 def review_row_analysis_execution_mode(method, selected_model_artifact, portable_model_path, model_required):
-    if method in {"copy", "instruction"}:
-        return method
+    if method == "copy":
+        return "copy"
+    if method == "instruction":
+        return "preview_only"
     if method != "one_of_values":
         return ""
     if portable_model_path:
         return "selected_model" if selected_model_artifact else "auto_model"
-    return "missing_model" if model_required else "fallback_rule"
+    return "missing_model"
 
 
 def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
@@ -2569,7 +2197,8 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
             "output": step_output or target,
             "rawMethod": raw_method,
             "runtimeStatus": "recorded",
-            "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS),
+            "previewOnlyMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS - REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
+            "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS),
             "target": target,
             "totalRows": total_rows,
             "validationRows": int(model_metrics.get("validationRows") or 0) if model_metrics else 0,
@@ -2583,6 +2212,16 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
             })
             checks.append(check)
             continue
+        if method not in REVIEW_ROW_ANALYSIS_EXECUTABLE_METHODS:
+            check.update({
+                "executionMode": "preview_only",
+                "invalidRows": total_rows,
+                "runtimeStatus": "unsupported_execution_method",
+                "validRows": 0,
+                "validationStatus": "preview_only",
+            })
+            checks.append(check)
+            continue
         if method == "one_of_values" and not allowed_values:
             check.update({
                 "invalidRows": total_rows,
@@ -2592,7 +2231,7 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
             })
             checks.append(check)
             continue
-        if method == "one_of_values" and model_required and not portable_model_path:
+        if method == "one_of_values" and not portable_model_path:
             check.update({
                 "executionMode": "missing_model",
                 "invalidRows": total_rows,
@@ -2643,21 +2282,17 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
                 for item in output_distribution
                 if item.get("value") in expected_values
             ])
-        if method == "one_of_values" and portable_model_path:
+        if method == "one_of_values":
             runtime_status = "portable_text_model_output"
-        elif method == "one_of_values":
-            runtime_status = "rule_fallback_output"
         elif invalid_rows != 0:
             runtime_status = "needs_review"
         else:
             runtime_status = "valid_output"
-        if portable_model_path:
+        if method == "one_of_values":
             validation_status = "model_runtime_check"
-        elif method == "one_of_values":
-            validation_status = "fallback_structural_check_only"
         else:
             validation_status = "structural_check_only"
-        if method == "one_of_values" and portable_model_path:
+        if method == "one_of_values":
             execution_mode = review_row_analysis_execution_mode(
                 method,
                 selected_model_artifact,
@@ -2665,9 +2300,6 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
                 model_required,
             )
             fallback_used = False
-        elif method == "one_of_values":
-            execution_mode = "fallback_rule"
-            fallback_used = True
         else:
             execution_mode = method or "unsupported"
             fallback_used = False
@@ -2679,7 +2311,7 @@ def evaluate_review_row_analysis_checks(frame, steps, total_rows=None):
             and distinct_output_values < 2
         ):
             distribution_warning = "single_value_output"
-            runtime_status = "degenerate_model_output" if portable_model_path else "degenerate_fallback_output"
+            runtime_status = "degenerate_model_output"
             validation_status = "distribution_check_failed"
         check.update({
             "distinctOutputValues": distinct_output_values,
@@ -3215,13 +2847,6 @@ def normalize_column_name(value):
     while "__" in text:
         text = text.replace("__", "_")
     return text.strip("_")
-
-
-def truncate_text(value, length):
-    text = str(value or "")
-    if len(text) <= length:
-        return text
-    return text[: max(length - 1, 0)] + "..."
 
 
 def required_env(name):

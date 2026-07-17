@@ -119,7 +119,7 @@ def test_visualization_request_does_not_synthesize_a_local_chart() -> None:
                 "actions": [],
                 "message": "The model returned no valid chart action.",
                 "model": "gpt-test",
-                "provider": "ai-gateway",
+                "provider": "openai_compatible",
                 "warnings": [],
             },
         ),
@@ -127,5 +127,7 @@ def test_visualization_request_does_not_synthesize_a_local_chart() -> None:
         response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
 
     assert response.actions == []
-    assert response.provider == "ai-gateway"
+    assert response.provider == "openai_compatible"
     assert "기본 차트" not in response.message
+    assert "대시보드를 수정하지 않았습니다" in response.message
+    assert any("action" in warning for warning in response.warnings)

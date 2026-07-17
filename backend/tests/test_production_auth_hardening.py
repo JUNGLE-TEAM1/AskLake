@@ -93,7 +93,7 @@ class ActorContextProductionTests(unittest.TestCase):
         self.assertEqual(actor.name, "Authenticated User")
         self.assertEqual(actor.role, "viewer")
 
-    def test_local_mode_keeps_header_fallback(self) -> None:
+    def test_isolated_test_mode_keeps_header_fallback(self) -> None:
         with patch("app.core.auth_context.settings", SimpleNamespace(allows_header_auth_fallback=True)):
             actor = get_actor_context(actor_name="Smoke User", actor_role="admin", db=None)
 

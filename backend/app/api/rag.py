@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
-from app.schemas.semantic import RagApproveRequest, RagClassifyResponse, RagDocumentPreviewResponse, RagIndexRequest, RagIndexResponse, RagJobResponse, RagProfileResponse, RagSearchRequest, RagSearchResponse
-from app.services.rag_service import RagService
+from app.schemas.semantic import RagApproveRequest, RagClassifyResponse, RagDocumentPreviewResponse, RagIndexRequest, RagIndexResponse, RagJobListItem, RagJobResponse, RagProfileResponse, RagSearchRequest, RagSearchResponse
+from app.services.rag_service import RAG_JOB_LIST_DEFAULT_LIMIT, RAG_JOB_LIST_MAX_LIMIT, RagService
 from app.services.rag_search_service import RagSearchService
 
 router = APIRouter(prefix="/catalog/datasets", tags=["rag"])
@@ -52,7 +52,9 @@ def search_rag_dataset(dataset_id: str, request: RagSearchRequest, db: Session =
         query=request.query,
         aliases=[profile.target_alias],
         targets=[{
+            **service.search_target_context(dataset_id, actor, profile=profile),
             "alias": profile.target_alias,
+            "embeddingProvider": profile.active_embedding_provider,
             "embeddingModel": profile.active_embedding_model,
             "embeddingDimensions": profile.active_embedding_dimensions,
         }],
@@ -72,6 +74,11 @@ def index_rag_dataset(dataset_id: str, request: RagIndexRequest | None = None, m
 @router.post("/{dataset_id}/rag/reindex", response_model=RagIndexResponse, status_code=status.HTTP_202_ACCEPTED)
 def reindex_rag_dataset(dataset_id: str, request: RagIndexRequest | None = None, db: Session = Depends(get_db), actor: ActorContext = Depends(get_actor_context)) -> RagIndexResponse:
     return RagService(db).index(dataset_id, actor, mode="reindex", idempotency_key=request.idempotency_key if request else None)
+
+
+@router.get("/{dataset_id}/rag/jobs", response_model=list[RagJobListItem])
+def list_rag_jobs(dataset_id: str, limit: int = Query(default=RAG_JOB_LIST_DEFAULT_LIMIT, ge=1, le=RAG_JOB_LIST_MAX_LIMIT), db: Session = Depends(get_db), actor: ActorContext = Depends(get_actor_context)) -> list[RagJobListItem]:
+    return RagService(db).list_jobs(dataset_id, actor, limit=limit)
 
 
 @router.get("/{dataset_id}/rag/jobs/{job_id}", response_model=RagJobResponse)

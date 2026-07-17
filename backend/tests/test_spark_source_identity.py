@@ -1,7 +1,9 @@
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
@@ -14,7 +16,7 @@ try:
     try:
         spark_job_run = importlib.import_module("spark_job_run")
     except ModuleNotFoundError as exc:
-        if exc.name != "pyspark":
+        if exc.name not in {"pyspark", "py4j"}:
             raise
         pyspark_module = ModuleType("pyspark")
         sql_module = ModuleType("pyspark.sql")
@@ -78,6 +80,57 @@ class FullSqlTransformSchemaTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_review_classification_fails_closed_when_model_is_missing(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "allowedValues": ["positive", "negative"],
+                "fallbackAllowed": True,
+                "method": "one_of_values",
+                "requireModel": False,
+                "targetName": "sentiment",
+            }],
+            "sourceField": "text",
+        })
+        with tempfile.TemporaryDirectory() as model_root, patch.dict(
+            os.environ,
+            {"ASKLAKE_REVIEW_TEXT_MODEL_ROOT": model_root},
+        ):
+            checks = spark_job_run.plan_review_row_analysis_checks([{
+                "enabled": True,
+                "id": "sentiment",
+                "input": "text",
+                "operation": "Text Row Analysis",
+                "output": "sentiment",
+                "params": params,
+            }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "missing_model_artifact")
+        self.assertTrue(checks[0]["modelRequired"])
+        self.assertFalse(checks[0]["fallbackAllowed"])
+        self.assertFalse(checks[0]["fallbackUsed"])
+
+    def test_free_form_instruction_is_preview_only_in_spark(self) -> None:
+        params = json.dumps({
+            "columns": [{
+                "instruction": "Summarize the review",
+                "method": "instruction",
+                "targetName": "summary",
+            }],
+            "sourceField": "text",
+        })
+        checks = spark_job_run.plan_review_row_analysis_checks([{
+            "enabled": True,
+            "id": "summary",
+            "input": "text",
+            "operation": "Text Row Analysis",
+            "output": "summary",
+            "params": params,
+        }])
+
+        self.assertEqual(checks[0]["runtimeStatus"], "unsupported_execution_method")
+        self.assertEqual(checks[0]["executionMode"], "preview_only")
+        self.assertIn("instruction", checks[0]["previewOnlyMethods"])
 
 
 def identity(

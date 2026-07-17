@@ -76,16 +76,22 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
-import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
+import {
+  isReviewAnalysisStep,
+  parseReviewAnalysisConfig,
+  reviewAnalysisRuntimeKey,
+  runTransformQualitySamplePreview,
+} from "../../data/transformQualityPreview";
 import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { normalizeRetryPolicy, retryFailureActionLabels, scheduleOverlapPolicyLabels, toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import { getDatasets } from "../../services/mockApi";
+import { getDatasets } from "../../services/askLakeApi";
 import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
+import { previewReviewAnalysis } from "../../services/reviewAnalysisApi";
 import { fetchPermissionOptions } from "../../services/permissionApi";
 import { getSourceConnectorDefaults, listSourceAssets, previewRecordParsing, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, PermissionAction, PermissionOptionsResponse, RecordParsingDraft, RecordParsingPreviewResponse, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
-import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
+import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualityRuntimeOutputs, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
 import { SourcePreviewDataTable } from "./SourcePreviewDataTable";
@@ -687,16 +693,16 @@ function normalizeCronExpression(value: string) {
   return isValidCronExpression(sanitized) ? sanitized : DEFAULT_CUSTOM_CRON;
 }
 
-const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
-const DEFAULT_VISIBILITY = "조직 내부";
-const DEFAULT_OWNER = "data-team-01";
+const DEFAULT_PERMISSION_TEMPLATE = "직접 선택";
+const DEFAULT_VISIBILITY = "소유자 전용";
+const DEFAULT_OWNER = "";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
 const DEFAULT_TARGET_TAGS: string[] = [];
 const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
-const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
+const VISIBILITY_OPTIONS = ["소유자 전용", "선택한 주체", "모든 인증 사용자"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER"];
 const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
@@ -1370,7 +1376,7 @@ export function SourceConnectionPage({
       description: "원격 데이터를 수집할 REST 엔드포인트를 설정합니다.",
       fields: [
         ["Method", "GET"],
-        ["Endpoint URL", "http://localhost:8080/api/harness/rest-sample"],
+        ["Endpoint URL", ""],
         ["Authentication Type", "None"],
         ["Token / Secret", ""],
         ["Accept", "application/json"],
@@ -3357,6 +3363,17 @@ type RecipeStep = RuleStepDraft & {
   id: string;
 };
 type QualityRule = QualityRuleOption;
+type ReviewPreviewRuntimeStatus = {
+  error?: string;
+  model?: string;
+  provider?: string;
+  status: "loading" | "success" | "failed" | "blocked" | "empty";
+};
+type ReviewPreviewRuntimeState = {
+  outputs: TransformQualityRuntimeOutputs;
+  signature: string;
+  statuses: Record<string, ReviewPreviewRuntimeStatus>;
+};
 
 type TransformQualityPreviewCache = {
   datasetId: string;
@@ -3869,21 +3886,118 @@ export function RuleApplicationPage({
   const [editingTransformStepId, setEditingTransformStepId] = useState<string | null>(null);
   const [editingQualityRuleId, setEditingQualityRuleId] = useState<string | null>(null);
   const [showInvalidRows, setShowInvalidRows] = useState(false);
+  const activePreviewSteps = useMemo(() => (
+    draftPreviewStep?.id === selectedPreviewStepId ? replaceOrAppendById(recipeSteps, draftPreviewStep) : recipeSteps
+  ), [draftPreviewStep, recipeSteps, selectedPreviewStepId]);
+  const reviewPreviewSignature = useMemo(() => JSON.stringify({
+    rows: ruleSampleRows,
+    steps: activePreviewSteps.filter(isReviewAnalysisStep),
+  }), [activePreviewSteps, ruleSampleRows]);
+  const [reviewPreviewRuntime, setReviewPreviewRuntime] = useState<ReviewPreviewRuntimeState>({
+    outputs: {},
+    signature: "",
+    statuses: {},
+  });
+  const activeRuntimeOutputs = reviewPreviewRuntime.signature === reviewPreviewSignature ? reviewPreviewRuntime.outputs : {};
+  const activeRuntimeStatuses = reviewPreviewRuntime.signature === reviewPreviewSignature ? reviewPreviewRuntime.statuses : {};
+
+  useEffect(() => {
+    let cancelled = false;
+    const reviewSteps = activePreviewSteps
+      .map((step, index) => ({ column: parseReviewAnalysisConfig(step), index, key: reviewAnalysisRuntimeKey(step), step }))
+      .filter(({ step }) => isReviewAnalysisStep(step));
+    const reviewGroups = reviewSteps.reduce<Array<typeof reviewSteps>>((groups, current) => {
+      const previousGroup = groups.at(-1);
+      const previous = previousGroup?.at(-1);
+      const dependsOnPreviousOutput = previousGroup?.some(({ step }) => step.output === current.column.sourceField) ?? false;
+      if (previous && previous.index === current.index - 1 && !dependsOnPreviousOutput) {
+        previousGroup?.push(current);
+      } else {
+        groups.push([current]);
+      }
+      return groups;
+    }, []);
+    const initialStatuses = Object.fromEntries(reviewSteps.map(({ key }) => [
+      key,
+      { status: ruleSampleRows.length > 0 ? "loading" : "empty" } satisfies ReviewPreviewRuntimeStatus,
+    ]));
+
+    setReviewPreviewRuntime({ outputs: {}, signature: reviewPreviewSignature, statuses: initialStatuses });
+    if (reviewSteps.length === 0 || ruleSampleRows.length === 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const executeGatewayPreviews = async () => {
+      const outputs: TransformQualityRuntimeOutputs = {};
+      const statuses: Record<string, ReviewPreviewRuntimeStatus> = { ...initialStatuses };
+      for (let groupIndex = 0; groupIndex < reviewGroups.length; groupIndex += 1) {
+        const group = reviewGroups[groupIndex];
+        const firstStep = group[0];
+        const rowsBeforeStep = runTransformQualitySamplePreview(
+          activePreviewSteps.slice(0, firstStep.index),
+          [],
+          ruleSampleRows,
+          outputs,
+        ).transformedRows.slice(0, 10);
+        try {
+          const response = await previewReviewAnalysis({ columns: group.map(({ column }) => column), rows: rowsBeforeStep });
+          if (response.rows.length !== rowsBeforeStep.length) {
+            throw new Error("AI Gateway가 요청한 샘플 행 수와 다른 결과를 반환했습니다.");
+          }
+          group.forEach(({ column, key, step }) => {
+            outputs[key] = response.rows.map((row) => {
+              if (!Object.prototype.hasOwnProperty.call(row, column.targetName)) {
+                throw new Error(`AI Gateway 결과에 ${column.targetName} 컬럼이 없습니다.`);
+              }
+              return { [step.output]: String(row[column.targetName] ?? "") };
+            });
+            statuses[key] = { model: response.model, provider: response.provider, status: "success" };
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "AI Gateway 미리보기에 실패했습니다.";
+          group.forEach(({ key }) => {
+            statuses[key] = { error: message, status: "failed" };
+          });
+          reviewGroups.slice(groupIndex + 1).flat().forEach(({ key: blockedKey }) => {
+            statuses[blockedKey] = { error: "앞선 AI 분석 단계가 실패했습니다.", status: "blocked" };
+          });
+          if (!cancelled) {
+            setReviewPreviewRuntime({ outputs: { ...outputs }, signature: reviewPreviewSignature, statuses: { ...statuses } });
+          }
+          return;
+        }
+        if (!cancelled) {
+          setReviewPreviewRuntime({ outputs: { ...outputs }, signature: reviewPreviewSignature, statuses: { ...statuses } });
+        }
+      }
+    };
+
+    void executeGatewayPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePreviewSteps, reviewPreviewSignature, ruleSampleRows]);
+
   const workingColumns = useMemo(() => getWorkingColumns(recipeSteps, sourceColumns), [recipeSteps, sourceColumns]);
   const derivedColumns = useMemo(() => getDerivedColumns(recipeSteps, sourceColumnSet), [recipeSteps, sourceColumnSet]);
-  const runnerResult = useMemo(() => runTransformQualitySamplePreview(recipeSteps, qualityRules, ruleSampleRows), [qualityRules, recipeSteps, ruleSampleRows]);
-  const previewRunnerResult = useMemo(() => {
-    const previewSteps = draftPreviewStep?.id === selectedPreviewStepId ? replaceOrAppendById(recipeSteps, draftPreviewStep) : recipeSteps;
-    return runTransformQualitySamplePreview(previewSteps, qualityRules, ruleSampleRows);
-  }, [draftPreviewStep, qualityRules, recipeSteps, ruleSampleRows, selectedPreviewStepId]);
+  const runnerResult = useMemo(
+    () => runTransformQualitySamplePreview(recipeSteps, qualityRules, ruleSampleRows, activeRuntimeOutputs),
+    [activeRuntimeOutputs, qualityRules, recipeSteps, ruleSampleRows],
+  );
+  const previewRunnerResult = useMemo(
+    () => runTransformQualitySamplePreview(activePreviewSteps, qualityRules, ruleSampleRows, activeRuntimeOutputs),
+    [activePreviewSteps, activeRuntimeOutputs, qualityRules, ruleSampleRows],
+  );
   const qualityPreviewRules = useMemo(() => (
     draftPreviewQualityRule?.id === selectedQualityRuleId ? replaceOrAppendById(qualityRules, draftPreviewQualityRule) : qualityRules
   ), [draftPreviewQualityRule, qualityRules, selectedQualityRuleId]);
   const qualityPreviewRunnerResult = useMemo(() => (
     draftPreviewQualityRule?.id === selectedQualityRuleId
-      ? runTransformQualitySamplePreview(recipeSteps, qualityPreviewRules, ruleSampleRows)
+      ? runTransformQualitySamplePreview(recipeSteps, qualityPreviewRules, ruleSampleRows, activeRuntimeOutputs)
       : runnerResult
-  ), [draftPreviewQualityRule, qualityPreviewRules, recipeSteps, ruleSampleRows, runnerResult, selectedQualityRuleId]);
+  ), [activeRuntimeOutputs, draftPreviewQualityRule, qualityPreviewRules, recipeSteps, ruleSampleRows, runnerResult, selectedQualityRuleId]);
   const validationResult = runnerResult.validation;
   const invalidRows = validationResult.failedRows;
   const invalidRowCount = validationResult.invalidRowCount;
@@ -3920,6 +4034,8 @@ export function RuleApplicationPage({
     }
     return undefined;
   }, [editingQualityRule, editingTransformStep, qualityRules, recipeSteps, selectedRuleCategory]);
+  const reviewPreviewStepKeys = activePreviewSteps.filter(isReviewAnalysisStep).map(reviewAnalysisRuntimeKey);
+  const reviewPreviewReady = reviewPreviewStepKeys.every((key) => activeRuntimeStatuses[key]?.status === "success");
 
   useEffect(() => {
     writeTransformQualityPreviewCache({
@@ -3936,7 +4052,9 @@ export function RuleApplicationPage({
   }, [cachedSelectedQualityRuleId, datasetId, invalidRows, qualityRules, recipeSteps, selectedPreviewStepId, validationResult]);
 
   const buildRuleDraftPatch = (steps: RecipeStep[] = recipeSteps, rules: QualityRule[] = qualityRules): DraftPipelinePatch => {
-    const nextRunnerResult = steps === recipeSteps && rules === qualityRules ? runnerResult : runTransformQualitySamplePreview(steps, rules, ruleSampleRows);
+    const nextRunnerResult = steps === recipeSteps && rules === qualityRules
+      ? runnerResult
+      : runTransformQualitySamplePreview(steps, rules, ruleSampleRows, activeRuntimeOutputs);
     const nextValidation = nextRunnerResult.validation;
     const nextStats = getRuleStats(steps, rules, nextValidation.invalidRowCount, sourceColumns.length);
     return {
@@ -3959,7 +4077,17 @@ export function RuleApplicationPage({
     onDraftChange(buildRuleDraftPatch(steps, rules));
   };
 
+  const ensureReviewPreviewReady = () => {
+    if (reviewPreviewStepKeys.length === 0 || reviewPreviewReady) return true;
+    const failedStatus = reviewPreviewStepKeys
+      .map((key) => activeRuntimeStatuses[key])
+      .find((runtime) => runtime?.status === "failed" || runtime?.status === "blocked");
+    onNotify(failedStatus?.error || "실제 AI Gateway 샘플 분석이 끝날 때까지 기다려 주세요.");
+    return false;
+  };
+
   const testRules = () => {
+    if (!ensureReviewPreviewReady()) return;
     onAction("etl.transform.tested", "/api/etl/transform-rules/test", draft.source.sourceLabel || draft.target.datasetName || "rule-preview");
     applyRuleDraft();
     onNotify(`${ruleStats.totalRules}개 rule 샘플 테스트가 완료되었습니다.`);
@@ -3970,11 +4098,13 @@ export function RuleApplicationPage({
   };
 
   const saveRuleDraft = () => {
+    if (!ensureReviewPreviewReady()) return;
     applyRuleDraft();
     onSave();
   };
 
   const goNext = () => {
+    if (!ensureReviewPreviewReady()) return;
     applyRuleDraft();
     onNext();
   };
@@ -4191,6 +4321,7 @@ export function RuleApplicationPage({
           ) : (
             <StepPreviewAnalysis
               preview={previewRunnerResult.previewByStepId[selectedPreviewStep.id]}
+              runtimeStatus={activeRuntimeStatuses[reviewAnalysisRuntimeKey(selectedPreviewStep)]}
               step={selectedPreviewStep}
               onAction={ruleAction}
             />
@@ -5027,18 +5158,23 @@ function FinalDatasetPreviewPanel({
 function StepPreviewAnalysis({
   onAction,
   preview,
+  runtimeStatus,
   step,
 }: {
   onAction: RuleActionHandler;
   preview?: TransformQualityPreviewSample | TransformQualityStepPreview;
+  runtimeStatus?: ReviewPreviewRuntimeStatus;
   step: RecipeStep;
 }) {
-  const hasPreview = Boolean(preview);
+  const aiAnalysisStep = isReviewAnalysisStep(step);
+  const hasPreview = Boolean(preview) && (!aiAnalysisStep || runtimeStatus?.status === "success");
   const inputValue = preview?.inputValue ?? "";
   const outputValue = preview?.outputValue ?? "";
   const failedRows = preview?.failedRows ?? 0;
   const previewStatus = preview?.status ?? "Preview pending";
-  const previewStatusLabel = previewStatus === "Success" ? "성공" : previewStatus === "Review" ? "검토 필요" : "미리보기 대기";
+  const previewStatusLabel = aiAnalysisStep
+    ? reviewPreviewRuntimeLabel(runtimeStatus)
+    : previewStatus === "Success" ? "성공" : previewStatus === "Review" ? "검토 필요" : "미리보기 대기";
   const beforeRows = preview && "beforeRows" in preview ? preview.beforeRows : [];
   const afterRows = preview && "afterRows" in preview ? preview.afterRows : [];
   const matchedRows = preview?.matchedRows ?? beforeRows.length;
@@ -5057,6 +5193,18 @@ function StepPreviewAnalysis({
         <strong>{step.id}. {transformOperationLabel(step.operation)}</strong>
         <em>{step.input} {"->"} {step.output}</em>
       </div>
+      {aiAnalysisStep && (
+        <Alert variant={runtimeStatus?.status === "failed" || runtimeStatus?.status === "blocked" ? "destructive" : "default"}>
+          <Bot />
+          <AlertTitle>{previewStatusLabel}</AlertTitle>
+          <AlertDescription>
+            {runtimeStatus?.error
+              || (runtimeStatus?.status === "success"
+                ? `${[runtimeStatus.provider, runtimeStatus.model].filter(Boolean).join(" · ") || "설정 모델"}이 실제 샘플 행을 분석한 결과입니다.`
+                : "로컬 규칙이나 고정값을 사용하지 않고 AI Gateway 응답을 기다립니다.")}
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="hegun-preview-grid">
         <div className="hegun-preview-column">
           <h3>단계 상세</h3>
@@ -5075,7 +5223,7 @@ function StepPreviewAnalysis({
         </div>
         <div className="hegun-preview-column">
           <h3>샘플 통계</h3>
-          <StatusTile label="샘플 행" value={sampleRows.toLocaleString()} status="테스트 완료" />
+          <StatusTile label="샘플 행" value={sampleRows.toLocaleString()} status={aiAnalysisStep ? previewStatusLabel : "테스트 완료"} />
           <StatusTile label="일치 행" value={matchedRows.toLocaleString()} status="일치" />
           <StatusTile label="실패 행" value={String(failedRows)} status={failedRows > 0 ? "검토" : hasPreview ? "정상" : "대기"} />
           <StatusTile label="영향 컬럼" value={preview?.affectedColumn ?? step.output} status={hasPreview ? "출력" : "대기"} />
@@ -5091,6 +5239,14 @@ function StepPreviewAnalysis({
       <StepImpactRowsTable rows={impactRows} step={step} />
     </section>
   );
+}
+
+function reviewPreviewRuntimeLabel(runtimeStatus?: ReviewPreviewRuntimeStatus) {
+  if (runtimeStatus?.status === "success") return "AI Gateway 완료";
+  if (runtimeStatus?.status === "failed") return "AI Gateway 실패";
+  if (runtimeStatus?.status === "blocked") return "앞 단계 실패로 대기";
+  if (runtimeStatus?.status === "empty") return "분석할 샘플 없음";
+  return "AI Gateway 실행 중";
 }
 
 function StepImpactRowsTable({
@@ -5964,17 +6120,16 @@ export function PermissionPage({
         );
         const savedRoles = new Map((draft.permission.roles ?? []).map((role) => [role.name, role.checked]));
         const hasSavedGrants = draft.permission.grants !== undefined;
-        const nextRoleChecks = Object.fromEntries(options.groups.map((group, index) => [
+        const nextRoleChecks = Object.fromEntries(options.groups.map((group) => [
           group.id,
-          hasSavedGrants ? savedGroupGrants.has(group.id) : savedRoles.get(group.name) ?? index === 0,
+          hasSavedGrants ? savedGroupGrants.has(group.id) : savedRoles.get(group.name) ?? false,
         ]));
         const nextUserChecks = Object.fromEntries(options.users.map((user) => [user.id, savedUserGrants.has(user.id)]));
         const selectedTemplate = options.groups.find((group) => group.name === initialPermission.permissionTemplate)
-          ?? options.groups.find((group) => nextRoleChecks[group.id])
-          ?? options.groups[0];
+          ?? options.groups.find((group) => nextRoleChecks[group.id]);
         setPermissionOptions(options);
         setPermissionActionError("");
-        setPermissionTemplate(selectedTemplate?.name ?? initialPermission.permissionTemplate);
+        setPermissionTemplate(selectedTemplate?.name ?? DEFAULT_PERMISSION_TEMPLATE);
         setRoleChecks(nextRoleChecks);
         setUserChecks(nextUserChecks);
       })
@@ -6002,34 +6157,36 @@ export function PermissionPage({
     const requestedTemplate = patch.permissionTemplate ?? permissionTemplate;
     const nextPermissionTemplate = permissionOptions.groups.some((group) => group.name === requestedTemplate)
       ? requestedTemplate
-      : permissionOptions.groups[0]?.name ?? DEFAULT_PERMISSION_TEMPLATE;
+      : DEFAULT_PERMISSION_TEMPLATE;
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
     const permissionRoles = permissionOptions.groups.map((group) => ({
       access: group.actions.map((action) => PERMISSION_ACTION_LABELS[action]),
-      checked: Boolean(nextRoleChecks[group.id]),
+      checked: nextVisibility === "선택한 주체" && Boolean(nextRoleChecks[group.id]),
       name: group.name,
+      principalId: group.id,
+      principalType: "group" as const,
     }));
     const permissionGrants = [
-      ...permissionOptions.groups
+      ...(nextVisibility === "선택한 주체" ? permissionOptions.groups
         .filter((group) => nextRoleChecks[group.id])
         .map((group) => ({
           actions: group.actions,
           principalId: group.id,
           principalType: "group" as const,
           source: "permission_ui",
-        })),
-      ...permissionOptions.users
+        })) : []),
+      ...(nextVisibility === "선택한 주체" ? permissionOptions.users
         .filter((user) => nextUserChecks[user.id])
         .map((user) => ({
           actions: ["view", "run"] as PermissionAction[],
           principalId: user.id,
           principalType: "user" as const,
           source: "permission_ui",
-        })),
-      ...(nextVisibility === "외부 공유" ? [{
+        })) : []),
+      ...(nextVisibility === "모든 인증 사용자" ? [{
         actions: ["view"] as PermissionAction[],
-        principalId: "public",
+        principalId: "authenticated-users",
         principalType: "public" as const,
         source: "permission_ui",
       }] : []),
@@ -6056,8 +6213,16 @@ export function PermissionPage({
       setPermissionActionError("권한 대상 목록을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
       return;
     }
-    if (permissionOptionsError || !permissionOptions || permissionOptions.groups.length === 0) {
-      setPermissionActionError(permissionOptionsError || "사용 가능한 권한 그룹이 없어 다음 단계로 이동할 수 없습니다.");
+    if (permissionOptionsError || !permissionOptions) {
+      setPermissionActionError(permissionOptionsError || "권한 대상 목록을 확인할 수 없어 다음 단계로 이동할 수 없습니다.");
+      return;
+    }
+    if (!dataOwner.trim()) {
+      setPermissionActionError("실제 데이터 오너를 입력해 주세요.");
+      return;
+    }
+    if (visibility === "선택한 주체" && !Object.values(roleChecks).some(Boolean) && !Object.values(userChecks).some(Boolean)) {
+      setPermissionActionError("선택한 주체 범위에는 실제 그룹 또는 사용자가 한 명 이상 필요합니다.");
       return;
     }
     setPermissionActionError("");
@@ -6066,13 +6231,15 @@ export function PermissionPage({
   };
   const updateRoleCheck = (roleId: string, checked: boolean) => {
     const nextRoleChecks = { ...roleChecks, [roleId]: checked };
+    setVisibility("선택한 주체");
     setRoleChecks(nextRoleChecks);
-    applyPermissionDraft({}, nextRoleChecks);
+    applyPermissionDraft({ visibility: "선택한 주체" }, nextRoleChecks);
   };
   const updateUserCheck = (userId: string, checked: boolean) => {
     const nextUserChecks = { ...userChecks, [userId]: checked };
+    setVisibility("선택한 주체");
     setUserChecks(nextUserChecks);
-    applyPermissionDraft({}, roleChecks, nextUserChecks);
+    applyPermissionDraft({ visibility: "선택한 주체" }, roleChecks, nextUserChecks);
   };
   const normalizedGrantSearch = grantSearch.trim().toLocaleLowerCase();
   const filteredRoles = (permissionOptions?.groups ?? []).filter((role) => (
@@ -6085,7 +6252,7 @@ export function PermissionPage({
     /(email|phone|address|review_text|customer|user_name|이메일|전화|주소|주민)/i.test(`${column.sourceName} ${column.targetName}`)
   )).length;
   const governanceChecks = [
-    { icon: <Database size={18} />, label: "공유 범위", status: visibility === "외부 공유" ? "검토 필요" : "안전", value: visibility },
+    { icon: <Database size={18} />, label: "공유 범위", status: visibility === "모든 인증 사용자" ? "검토 필요" : "안전", value: visibility },
     { icon: <FileText size={18} />, label: "민감 데이터", status: sensitiveColumnCount > 0 ? "검토 필요" : "안전", value: sensitiveColumnCount > 0 ? `${sensitiveColumnCount}개 필드 감지` : "감지 없음" },
   ];
 
@@ -6143,12 +6310,18 @@ export function PermissionPage({
                   disabled={!permissionOptions}
                   value={permissionTemplate}
                   onValueChange={(value) => {
+                    if (value === DEFAULT_PERMISSION_TEMPLATE) {
+                      setPermissionTemplate(DEFAULT_PERMISSION_TEMPLATE);
+                      applyPermissionDraft({ permissionTemplate: DEFAULT_PERMISSION_TEMPLATE });
+                      return;
+                    }
                     const group = permissionOptions?.groups.find((candidate) => candidate.name === value);
                     if (!group) return;
                     const nextRoleChecks = { ...roleChecks, [group.id]: true };
                     setPermissionTemplate(group.name);
+                    setVisibility("선택한 주체");
                     setRoleChecks(nextRoleChecks);
-                    applyPermissionDraft({ permissionTemplate: group.name }, nextRoleChecks);
+                    applyPermissionDraft({ permissionTemplate: group.name, visibility: "선택한 주체" }, nextRoleChecks);
                   }}
                 >
                   <SelectTrigger aria-label="권한 템플릿" id="permission-template" size="sm">
@@ -6156,6 +6329,7 @@ export function PermissionPage({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
+                      <SelectItem value={DEFAULT_PERMISSION_TEMPLATE}>{DEFAULT_PERMISSION_TEMPLATE}</SelectItem>
                       {(permissionOptions?.groups ?? []).map((group) => <SelectItem key={group.id} value={group.name}>{group.name}</SelectItem>)}
                     </SelectGroup>
                   </SelectContent>

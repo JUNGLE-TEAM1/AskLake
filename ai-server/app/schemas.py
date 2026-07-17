@@ -1,7 +1,7 @@
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 GenerationMode = Literal[
@@ -12,23 +12,35 @@ GenerationMode = Literal[
     "dashboard_assistant",
     "review_schema",
     "review_row",
+    "rag_query_plan",
+    "rag_relevance",
 ]
 
 
 class QuerySqlOutput(BaseModel):
     """The only provider output accepted by the gateway contract."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
 
     query_sql: str = Field(min_length=1, max_length=20_000)
     explanation: str = Field(max_length=4_000)
     warnings: list[str] = Field(max_length=8)
+    used_evidence_ids: list[str] = Field(alias="usedEvidenceIds", max_length=24)
 
     @field_validator("warnings")
     @classmethod
     def validate_warnings(cls, value: list[str]) -> list[str]:
         if any(len(warning) > 500 for warning in value):
             raise ValueError("Each warning must be at most 500 characters")
+        return value
+
+    @field_validator("used_evidence_ids")
+    @classmethod
+    def validate_used_evidence_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 255 for item in value):
+            raise ValueError("Used evidence IDs must be non-empty and at most 255 characters")
+        if len(set(value)) != len(value):
+            raise ValueError("Used evidence IDs must be unique")
         return value
 
 
@@ -96,9 +108,16 @@ class EtlTransformOutput(BaseModel):
 class DashboardColorOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    colors: list[str] | None
-    palette_id: str | None = Field(alias="paletteId")
-    custom_colors: list[str] | None = Field(alias="customColors")
+    colors: list[str] | None = Field(max_length=32)
+    palette_id: str | None = Field(alias="paletteId", max_length=100)
+    custom_colors: list[str] | None = Field(alias="customColors", max_length=32)
+
+    @field_validator("colors", "custom_colors")
+    @classmethod
+    def validate_colors(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(len(color) > 64 for color in value):
+            raise ValueError("Dashboard color values must be at most 64 characters")
+        return value
 
 
 class DashboardWidgetConfigOutput(BaseModel):
@@ -107,31 +126,38 @@ class DashboardWidgetConfigOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     aggregation: Literal["sum", "avg", "count", "min", "max"] | None
-    body: str | None
+    body: str | None = Field(max_length=8_000)
     center_label: str | None = Field(alias="centerLabel")
     color: DashboardColorOutput | None
-    columns: list[str] | None
+    columns: list[str] | None = Field(max_length=64)
     curve: Literal["smooth", "straight", "stepline"] | None
     date_unit: Literal["day", "month", "year"] | None = Field(alias="dateUnit")
-    description: str | None
-    error: str | None
-    error_message: str | None = Field(alias="errorMessage")
+    description: str | None = Field(max_length=2_000)
+    error: str | None = Field(max_length=1_000)
+    error_message: str | None = Field(alias="errorMessage", max_length=1_000)
     format: Literal["number", "currency", "percent"] | None
-    group_key: str | None = Field(alias="groupKey")
-    label_key: str | None = Field(alias="labelKey")
-    limit: int | None
+    group_key: str | None = Field(alias="groupKey", max_length=255)
+    label_key: str | None = Field(alias="labelKey", max_length=255)
+    limit: int | None = Field(ge=1, le=10_000)
     max: float | None
     min: float | None
     orientation: Literal["vertical", "horizontal"] | None
-    placeholder_kind: str | None = Field(alias="placeholderKind")
-    prompt: str | None
-    series_key: str | None = Field(alias="seriesKey")
+    placeholder_kind: str | None = Field(alias="placeholderKind", max_length=100)
+    prompt: str | None = Field(max_length=2_000)
+    series_key: str | None = Field(alias="seriesKey", max_length=255)
     sort_direction: Literal["asc", "desc"] | None = Field(alias="sortDirection")
     sort_key: str | None = Field(alias="sortKey")
     stacked: bool | None
-    value_key: str | None = Field(alias="valueKey")
-    x_key: str | None = Field(alias="xKey")
-    y_key: str | None = Field(alias="yKey")
+    value_key: str | None = Field(alias="valueKey", max_length=255)
+    x_key: str | None = Field(alias="xKey", max_length=255)
+    y_key: str | None = Field(alias="yKey", max_length=255)
+
+    @field_validator("columns")
+    @classmethod
+    def validate_columns(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(not column.strip() or len(column) > 255 for column in value):
+            raise ValueError("Dashboard columns must be non-empty and at most 255 characters")
+        return value
 
 
 DashboardWidgetType = Literal[
@@ -151,9 +177,9 @@ DashboardWidgetType = Literal[
 class DashboardWidgetOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    title: str | None
+    title: str | None = Field(max_length=255)
     type: DashboardWidgetType | None
-    dataset_id: str | None = Field(alias="datasetId")
+    dataset_id: str | None = Field(alias="datasetId", max_length=255)
     config: DashboardWidgetConfigOutput | None
 
 
@@ -161,18 +187,48 @@ class DashboardActionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     type: Literal["create_widget", "update_widget", "report"]
-    widget_id: str | None = Field(alias="widgetId")
-    markdown: str | None
+    widget_id: str | None = Field(alias="widgetId", max_length=255)
+    markdown: str | None = Field(max_length=8_000)
     widget: DashboardWidgetOutput | None
     patch: DashboardWidgetOutput | None
 
+    @model_validator(mode="after")
+    def validate_action_shape(self) -> "DashboardActionOutput":
+        if self.type == "report":
+            if not self.markdown or self.widget is not None or self.patch is not None or self.widget_id is not None:
+                raise ValueError("Report actions must contain only markdown")
+        elif self.type == "create_widget":
+            if self.widget is None or self.patch is not None or self.widget_id is not None or self.markdown is not None:
+                raise ValueError("Create actions must contain only widget")
+        elif self.type == "update_widget":
+            if not self.widget_id or self.patch is None or self.widget is not None or self.markdown is not None:
+                raise ValueError("Update actions must contain widgetId and patch")
+        return self
+
 
 class DashboardAssistantOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
 
     message: str = Field(max_length=8_000)
     actions: list[DashboardActionOutput] = Field(max_length=8)
     warnings: list[str] = Field(max_length=16)
+    used_evidence_ids: list[str] = Field(alias="usedEvidenceIds", max_length=24)
+
+    @field_validator("warnings")
+    @classmethod
+    def validate_warnings(cls, value: list[str]) -> list[str]:
+        if any(len(warning) > 500 for warning in value):
+            raise ValueError("Dashboard warnings must be at most 500 characters")
+        return value
+
+    @field_validator("used_evidence_ids")
+    @classmethod
+    def validate_used_evidence_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 255 for item in value):
+            raise ValueError("Used evidence IDs must be non-empty and at most 255 characters")
+        if len(set(value)) != len(value):
+            raise ValueError("Used evidence IDs must be unique")
+        return value
 
 
 class ReviewSchemaColumnOutput(BaseModel):
@@ -183,8 +239,19 @@ class ReviewSchemaColumnOutput(BaseModel):
     type: Literal["String", "Integer", "Long", "Double", "Boolean", "Timestamp"]
     nullable: bool
     method: Literal["copy", "one_of_values", "instruction"]
-    allowed_values: list[str] | None = Field(alias="allowedValues")
-    instruction: str | None
+    allowed_values: list[str] | None = Field(alias="allowedValues", max_length=64)
+    instruction: str | None = Field(max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_method_contract(self) -> "ReviewSchemaColumnOutput":
+        values = self.allowed_values or []
+        if any(not value.strip() or len(value) > 255 for value in values):
+            raise ValueError("Review allowedValues must be non-empty and at most 255 characters")
+        if self.method == "one_of_values" and not values:
+            raise ValueError("one_of_values requires allowedValues")
+        if self.method != "one_of_values" and self.allowed_values not in (None, []):
+            raise ValueError("allowedValues is supported only for one_of_values")
+        return self
 
 
 class ReviewSchemaOutput(BaseModel):
@@ -199,11 +266,61 @@ class ReviewRowValueOutput(BaseModel):
     target_name: str = Field(min_length=1, max_length=255, alias="targetName")
     value: str | int | float | bool | None
 
+    @field_validator("value")
+    @classmethod
+    def validate_value(cls, value: str | int | float | bool | None) -> str | int | float | bool | None:
+        if isinstance(value, str) and len(value) > 8_000:
+            raise ValueError("Review values must be at most 8000 characters")
+        return value
+
 
 class ReviewRowOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     values: list[ReviewRowValueOutput] = Field(min_length=1, max_length=64)
+
+
+class RagQueryFilterOutput(BaseModel):
+    """One typed metadata predicate proposed for a known Dataset field."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
+
+    field: str = Field(min_length=1, max_length=255)
+    operator: Literal["eq", "gte", "gt", "lte", "lt"]
+    value: str | int | float | bool
+
+
+class RagDatasetQueryPlanOutput(BaseModel):
+    """Dataset-scoped search plan; backend validation remains authoritative."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
+
+    dataset_id: str = Field(min_length=1, max_length=255, alias="datasetId")
+    semantic_query: str = Field(min_length=1, max_length=2_000, alias="semanticQuery")
+    in_domain: bool = Field(alias="inDomain")
+    reason: str = Field(max_length=500)
+    filters: list[RagQueryFilterOutput] = Field(max_length=32)
+
+
+class RagQueryPlanOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plans: list[RagDatasetQueryPlanOutput] = Field(min_length=1, max_length=100)
+
+
+class RagRelevanceJudgmentOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, str_strip_whitespace=True)
+
+    document_id: str = Field(min_length=1, max_length=255, alias="documentId")
+    relevant: bool
+    score: float = Field(ge=0, le=1)
+    reason: str = Field(max_length=500)
+
+
+class RagRelevanceOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    judgments: list[RagRelevanceJudgmentOutput] = Field(max_length=24)
 
 
 GenerationOutput = (
@@ -214,6 +331,8 @@ GenerationOutput = (
     | DashboardAssistantOutput
     | ReviewSchemaOutput
     | ReviewRowOutput
+    | RagQueryPlanOutput
+    | RagRelevanceOutput
 )
 
 
@@ -237,6 +356,24 @@ class GenerateRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     tools: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
 
+    @field_validator("selected_dataset_ids")
+    @classmethod
+    def validate_selected_dataset_ids(cls, value: list[str]) -> list[str]:
+        if any(not dataset_id.strip() or len(dataset_id) > 255 for dataset_id in value):
+            raise ValueError("Selected Dataset IDs must be non-empty and at most 255 characters")
+        if len(set(value)) != len(value):
+            raise ValueError("Selected Dataset IDs must be unique")
+        return value
+
+
+class GenerationUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, allow_inf_nan=False)
+
+    input_tokens: int = Field(default=0, ge=0, alias="inputTokens")
+    output_tokens: int = Field(default=0, ge=0, alias="outputTokens")
+    total_tokens: int = Field(default=0, ge=0, alias="totalTokens")
+    estimated_cost_usd: float = Field(default=0, ge=0, alias="estimatedCostUsd")
+
 
 class GenerateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -244,8 +381,9 @@ class GenerateResponse(BaseModel):
     request_id: str
     mode: GenerationMode = "query_sql"
     output: GenerationOutput
-    provider: str
-    model: str
+    provider: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=200)
+    usage: GenerationUsage = Field(default_factory=GenerationUsage)
 
 
 class EmbeddingRequest(BaseModel):
@@ -254,11 +392,23 @@ class EmbeddingRequest(BaseModel):
     model: str = Field(default="text-embedding-3-small", min_length=1, max_length=200)
     input: list[str] = Field(min_length=1, max_length=256)
 
+    @field_validator("input")
+    @classmethod
+    def validate_input_items(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value):
+            raise ValueError("Embedding input items must not be blank")
+        if any(len(item) > 32_000 for item in value):
+            raise ValueError("Each embedding input item must be at most 32000 characters")
+        return value
+
 
 class EmbeddingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    provider: str = Field(min_length=1, max_length=100)
     model: str
-    dimensions: int = Field(ge=1)
-    data: list[list[float]]
+    dimensions: int = Field(ge=1, le=8192)
+    data: list[list[float]] = Field(min_length=1, max_length=256)
 
 
 def compact_json_size(value: Any) -> int:

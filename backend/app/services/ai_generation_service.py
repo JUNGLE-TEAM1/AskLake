@@ -11,6 +11,16 @@ from app.services.ai_gateway_client import AiGatewayClient
 from app.services.sql_service import validate_read_only_query
 
 
+FORBIDDEN_SPARK_FUNCTIONS = {
+    "input_file_block_length",
+    "input_file_block_start",
+    "input_file_name",
+    "java_method",
+    "reflect",
+    "reflect2",
+}
+
+
 class AiGenerationService:
     def generate_sql(self, request: AiSqlGenerationRequest) -> AiSqlGenerationResponse:
         result = AiGatewayClient().generate_etl_transform(
@@ -33,6 +43,7 @@ class AiGenerationService:
             sql=sql,
             schema_context=str(result.get("schemaContext") or result.get("schema_context") or ""),
             model=str(result.get("model") or "") or None,
+            provider=str(result.get("provider") or "") or None,
         )
 
 
@@ -41,11 +52,15 @@ def _validate_generated_transform(sql: str, request: AiSqlGenerationRequest) -> 
     dialect = "spark" if request.engine.strip().lower() in {"spark", "spark_sql", "pyspark"} else "trino"
     is_select = normalized_sql.lower().startswith(("select", "with"))
 
+    if request.prompt_type == "field_transform" and is_select:
+        _invalid_gateway_sql("AI gateway must return a scalar SQL expression for a field transform")
+
     if request.prompt_type == "sql_transform" or is_select:
         statement = validate_read_only_query(normalized_sql)
         expression = _parse_generated_sql(statement, dialect)
         if not isinstance(expression, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
             _invalid_gateway_sql("AI gateway must return one read-only SELECT transform")
+        _validate_transform_safety(expression)
         _validate_transform_relations(expression)
         _validate_transform_columns(expression, _metadata_columns(request.metadata))
         return statement
@@ -54,6 +69,9 @@ def _validate_generated_transform(sql: str, request: AiSqlGenerationRequest) -> 
     expression = _parse_generated_sql(wrapped, dialect)
     if not isinstance(expression, exp.Select) or len(expression.expressions) != 1:
         _invalid_gateway_sql("AI gateway must return one scalar SQL expression")
+    if expression.find(exp.Star):
+        _invalid_gateway_sql("AI gateway field transforms cannot return a wildcard")
+    _validate_transform_safety(expression)
     _validate_transform_relations(expression)
     _validate_transform_columns(expression, _metadata_columns(request.metadata))
     return normalized_sql
@@ -79,6 +97,21 @@ def _validate_transform_relations(expression: exp.Expression) -> None:
     for table in expression.find_all(exp.Table):
         if table.catalog or table.db or table.name.casefold() not in allowed_relations:
             _invalid_gateway_sql("AI gateway referenced a relation outside the ETL input")
+
+
+def _validate_transform_safety(expression: exp.Expression) -> None:
+    if expression.find(exp.QueryTransform):
+        _invalid_gateway_sql("AI gateway cannot use Spark script transforms")
+    forbidden = sorted({
+        function.name.casefold()
+        for function in expression.find_all(exp.Anonymous)
+        if function.name.casefold() in FORBIDDEN_SPARK_FUNCTIONS
+    })
+    if forbidden:
+        _invalid_gateway_sql(
+            "AI gateway returned a forbidden Spark function",
+            {"functions": forbidden},
+        )
 
 
 def _validate_transform_columns(expression: exp.Expression, allowed_columns: set[str]) -> None:

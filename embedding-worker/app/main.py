@@ -1,13 +1,21 @@
-import os
+import hashlib
 import json
 import logging
+import os
+import re
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .worker import EmbeddingWorker
+from .worker import (
+    DEFAULT_GATEWAY_MAX_RESPONSE_BYTES,
+    EmbeddingWorker,
+    parse_bounded_gateway_json,
+    parse_embedding_response,
+    validate_generation_response,
+)
 from .chunker import chunk_parent_document
 from .rag_core import CHUNKING_VERSION
 from .idempotency import IdempotencyStore, LeaseHeartbeat
@@ -44,6 +52,17 @@ class IndexBatchRequest(BaseModel):
     source_manifest: dict[str, Any] | None = None
     chunks: list[dict[str, Any]] | None = Field(default=None, max_length=5_000)
 
+    @field_validator("target_index")
+    @classmethod
+    def validate_target_index(cls, value: str) -> str:
+        normalized = value.strip()
+        if (
+            normalized in {".", ".."}
+            or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,254}", normalized) is None
+        ):
+            raise ValueError("targetIndex must be a safe lowercase OpenSearch index name")
+        return normalized
+
     @model_validator(mode="after")
     def require_rows_or_manifest(self) -> "IndexBatchRequest":
         if not self.rows and not self.source_manifest and not self.chunks:
@@ -63,10 +82,18 @@ class ChunkBatchRequest(BaseModel):
     embedding_dimensions: int | None = Field(default=None, ge=1, le=16_384)
 
 
+def gateway_max_response_bytes() -> int:
+    try:
+        value = int(os.environ.get("AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES", DEFAULT_GATEWAY_MAX_RESPONSE_BYTES))
+    except (TypeError, ValueError):
+        value = DEFAULT_GATEWAY_MAX_RESPONSE_BYTES
+    return max(64 * 1024, min(value, 128 * 1024 * 1024))
+
+
 def worker_from_env() -> EmbeddingWorker:
     username = os.environ.get("OPENSEARCH_USERNAME")
     password = os.environ.get("OPENSEARCH_PASSWORD", "")
-    return EmbeddingWorker(gateway_url=os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-gateway:8080"), gateway_token=os.environ.get("AI_GATEWAY_SERVICE_TOKEN", ""), opensearch_url=os.environ.get("OPENSEARCH_BASE_URL", "http://opensearch:9200"), opensearch_auth=(username, password) if username else None, embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small"), verify_tls=os.environ.get("OPENSEARCH_CA_CERT") or os.environ.get("OPENSEARCH_VERIFY_TLS", "true").casefold() in {"1", "true", "yes"})
+    return EmbeddingWorker(gateway_url=os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-server:8090"), gateway_token=os.environ.get("AI_GATEWAY_SERVICE_TOKEN", ""), opensearch_url=os.environ.get("OPENSEARCH_BASE_URL", "http://opensearch:9200"), opensearch_auth=(username, password) if username else None, embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small"), timeout=float(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "60")), verify_tls=os.environ.get("OPENSEARCH_CA_CERT") or os.environ.get("OPENSEARCH_VERIFY_TLS", "true").casefold() in {"1", "true", "yes"}, gateway_max_response_bytes=gateway_max_response_bytes())
 
 
 def gateway_headers() -> dict[str, str]:
@@ -74,7 +101,7 @@ def gateway_headers() -> dict[str, str]:
 
 
 def chunk_with_gateway(request: ChunkBatchRequest) -> list[dict[str, Any]]:
-    gateway_url = os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-gateway:8080").rstrip("/")
+    gateway_url = os.environ.get("AI_GATEWAY_BASE_URL", "http://ai-server:8090").rstrip("/")
     timeout = float(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "60"))
     model = request.embedding_model or os.environ.get("RAG_EMBEDDING_MODEL", "text-embedding-3-small")
 
@@ -84,9 +111,14 @@ def chunk_with_gateway(request: ChunkBatchRequest) -> list[dict[str, Any]]:
             for offset in range(0, len(inputs), 64):
                 response = client.post(f"{gateway_url}/v1/embeddings", headers=gateway_headers(), json={"model": model, "input": inputs[offset:offset + 64]})
                 response.raise_for_status()
-                vectors.extend(response.json().get("data") or [])
-        if len(vectors) != len(inputs):
-            raise RuntimeError("Sentence embedding count does not match sentence count")
+                batch = inputs[offset:offset + 64]
+                parsed, _dimensions, _provider = parse_embedding_response(
+                    parse_bounded_gateway_json(response, max_bytes=gateway_max_response_bytes()),
+                    expected_count=len(batch),
+                    expected_model=model,
+                    expected_dimensions=request.embedding_dimensions,
+                )
+                vectors.extend(parsed)
         return vectors
 
     def refine(sentences: list[dict[str, Any]], boundaries: list[int], parent: dict[str, Any]) -> list[dict[str, int]]:
@@ -94,9 +126,12 @@ def chunk_with_gateway(request: ChunkBatchRequest) -> list[dict[str, Any]]:
             raise ValueError("Document segmentation context exceeds the bounded AI Gateway refinement budget")
         with httpx.Client(timeout=timeout) as client:
             parent_key = str(parent.get("parent_document_id") or "")
-            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": f"chunk-boundary:{parent_key}:{request.target_tokens}:{request.overlap_tokens}:{request.max_tokens}", "prompt": "Refine only the proposed sentence boundaries.", "context": {"parentDocumentId": parent.get("parent_document_id"), "title": parent.get("title"), "targetTokens": request.target_tokens, "overlapTokens": request.overlap_tokens, "maxTokens": request.max_tokens, "sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
+            parent_digest = hashlib.sha256(parent_key.encode("utf-8")).hexdigest()[:24]
+            request_id = f"chunk-boundary:{parent_digest}:{request.target_tokens}:{request.overlap_tokens}:{request.max_tokens}"
+            response = client.post(f"{gateway_url}/v1/generate", headers=gateway_headers(), json={"mode": "segment_document", "request_id": request_id, "prompt": "Refine only the proposed sentence boundaries.", "context": {"parentDocumentId": parent.get("parent_document_id"), "title": parent.get("title"), "targetTokens": request.target_tokens, "overlapTokens": request.overlap_tokens, "maxTokens": request.max_tokens, "sentences": sentences, "candidateBoundaries": boundaries}, "selected_dataset_ids": []})
             response.raise_for_status()
-            output = response.json().get("output") or {}
+            payload = parse_bounded_gateway_json(response, max_bytes=min(gateway_max_response_bytes(), 1024 * 1024))
+            output = validate_generation_response(payload, request_id=request_id, mode="segment_document")["output"]
             return list(output.get("segments") or [])
 
     chunks = []
@@ -120,6 +155,8 @@ def ready() -> dict[str, str]:
     with httpx.Client(timeout=5, verify=worker.verify_tls) as client:
         opensearch = client.get(f"{worker.opensearch_url}/_cluster/health", auth=auth)
         opensearch.raise_for_status()
+        if str(opensearch.json().get("status") or "").casefold() not in {"yellow", "green"}:
+            raise HTTPException(status_code=503, detail="OpenSearch cluster is not ready")
         gateway = client.get(f"{worker.gateway_url}/health", headers=gateway_headers())
         gateway.raise_for_status()
     return {"status": "ready", "service": "embedding-worker"}

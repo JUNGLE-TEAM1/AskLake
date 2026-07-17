@@ -83,7 +83,7 @@ class AuthService:
             password_salt=secrets.token_hex(16),
             password_hash="",
             role="viewer",
-            groups=["analytics"],
+            groups=[],
             status="active",
             title="AskLake User",
         )
@@ -280,9 +280,9 @@ def initialize_auth(db: Session) -> None:
     service = AuthService(db)
     try:
         service._ensure_tables()
-        if settings.allows_header_auth_fallback:
-            service._ensure_demo_users()
-        elif getattr(settings, "auth_legacy_demo_users_enabled", False):
+        if getattr(settings, "auth_legacy_demo_users_enabled", False):
+            if not getattr(settings, "is_test_runtime", False):
+                raise RuntimeError("Legacy demo identities are restricted to test environments")
             service._ensure_demo_users(preserve_existing_status=True)
             service._ensure_bootstrap_admin()
         else:

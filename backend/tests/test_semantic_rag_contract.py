@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, permissions_for_actor
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
@@ -69,8 +70,11 @@ def test_policy_fingerprint_preserves_approved_field_order():
 def test_policy_fingerprint_and_manifest_reuse_include_filter_contract_versions():
     dataset = {"schema": [{"name": "review_text", "dataType": "string"}, {"name": "rating", "dataType": "integer"}], "sourceManifest": {"fingerprint": "fp"}}
     profile = RagDatasetProfileModel(dataset_id="reviews", metadata_columns=["rating"], physical_column_mapping={"rating": "rating"})
-    manifest = RagIndexManifestModel(id="manifest-contract", dataset_id="reviews", index_name="reviews-v1", alias_name="reviews", embedding_model="model", dimensions=2, parent_schema_version="rag-parent-v3", filter_contract_version="typed-filter-v1", metadata_columns=["rating"], metadata_types={"rating": "integer"}, physical_column_mapping={"rating": "rating"})
+    manifest = RagIndexManifestModel(id="manifest-contract", dataset_id="reviews", index_name="reviews-v1", alias_name="reviews", embedding_provider="openai_compatible", embedding_model=settings.rag_embedding_model, dimensions=settings.rag_embedding_dimensions, parent_schema_version="rag-parent-v3", embedding_input_version="title_body_fields_v2", chunking_version="rag-chunk-v3", filter_contract_version="typed-filter-v1", semantic_bindings_fingerprint=RagService._semantic_bindings_fingerprint({}), metadata_columns=["rating"], metadata_types={"rating": "integer"}, physical_column_mapping={"rating": "rating"})
     assert RagService._manifest_contract_matches(dataset, profile, manifest)
+    manifest.embedding_provider = None
+    assert not RagService._manifest_contract_matches(dataset, profile, manifest)
+    manifest.embedding_provider = "openai_compatible"
     manifest.filter_contract_version = "old-filter"
     assert not RagService._manifest_contract_matches(dataset, profile, manifest)
     manifest.filter_contract_version = "typed-filter-v1"
@@ -342,10 +346,43 @@ def test_invalid_ai_rag_roles_are_discarded_and_old_recommendations_replaced() -
         service._apply_classification(run, profile, {"classification": "review", "confidence": 0.9, "roles": [{"columnName": "review_text", "role": "body", "confidence": 0.9, "reason": "text"}, {"columnName": "not_in_schema", "role": "body", "confidence": 0.9, "reason": "invalid"}, {"columnName": "rating", "role": "unsupported", "confidence": 0.9, "reason": "invalid"}]})
         db.commit()
         assert profile.body_columns == ["review_text"]
-        assert profile.review_state == "candidate"
+        assert profile.review_state == "needs_review"
         assert run.error is not None
         recommendations = db.query(RagColumnRecommendationModel).filter_by(dataset_id="reviews").all()
         assert [item.column_name for item in recommendations] == ["review_text"]
+
+
+def test_complete_ai_rag_roles_are_candidate_for_human_approval() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=RAG_TABLES)
+    with Session(engine) as db:
+        service = RagService(db)
+        run = RagClassificationRunModel(
+            id="ragcr_complete",
+            dataset_id="products",
+            status="running",
+            model="test",
+            input_snapshot={"schema": [{"name": "product_id"}, {"name": "product_name"}, {"name": "description"}]},
+        )
+        profile = RagDatasetProfileModel(dataset_id="products")
+        db.add_all([run, profile])
+        db.flush()
+
+        service._apply_classification(run, profile, {
+            "classification": "product_catalog",
+            "confidence": 0.95,
+            "roles": [
+                {"columnName": "product_id", "role": "identifier", "confidence": 0.99, "reason": "stable key"},
+                {"columnName": "product_name", "role": "title", "confidence": 0.97, "reason": "document title"},
+                {"columnName": "description", "role": "body", "confidence": 0.96, "reason": "searchable details"},
+            ],
+        })
+
+        assert run.error is None
+        assert profile.review_state == "candidate"
+        assert profile.title_columns == ["product_name"]
+        assert profile.body_columns == ["description"]
+        assert profile.identifier_columns == ["product_id"]
 
 
 def test_failed_job_records_completion_and_keeps_activation_guard(monkeypatch):
@@ -420,7 +457,7 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
     with Session(engine) as db:
         service = RagService(db)
         profile = RagDatasetProfileModel(dataset_id="reviews", review_state="approved", target_alias="rag-reviews")
-        job = RagIndexJobModel(id="ragjob_validated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", status="validating", stage="validating", indexed_count=1, chunk_count=1, parent_count=1, embedding_dimensions=2, filter_contract_version=FILTER_CONTRACT_VERSION)
+        job = RagIndexJobModel(id="ragjob_validated", dataset_id="reviews", requested_by="admin", target_index="rag-reviews-v2", status="validating", stage="validating", indexed_count=1, chunk_count=1, parent_count=1, embedding_provider="openai", embedding_model="text-embedding-3-small", embedding_dimensions=2, filter_contract_version=FILTER_CONTRACT_VERSION)
         db.add_all([profile, job])
         db.commit()
 
@@ -433,11 +470,11 @@ def test_validation_evidence_is_persisted_and_required_for_activation(monkeypatc
 
             def mapping(self, index):
                 return {index: {"mappings": {"properties": {
-                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2}, "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                    "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2}, "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_provider": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
                 }}}}
 
             def search_raw(self, index, query):
-                return {"hits": {"hits": [{"_source": {"body_vector": [0.1, 0.2], "metadata_filter": {}, "source_fields": [], "parent_source_fields": [], "embedding_input_version": "title_body_fields_v2", "field_rendering_version": "field_blocks_v1", "chunking_version": "rag-chunk-v3"}}]}}
+                return {"hits": {"hits": [{"_source": {"body_vector": [0.1, 0.2], "metadata_filter": {}, "embedding_provider": "openai", "embedding_model": "text-embedding-3-small", "embedding_dimensions": 2, "source_fields": [], "parent_source_fields": [], "embedding_input_version": "title_body_fields_v2", "field_rendering_version": "field_blocks_v1", "chunking_version": "rag-chunk-v3"}}]}}
 
             def search(self, index, query):
                 return []
@@ -490,6 +527,8 @@ def test_validation_smoke_checks_every_approved_metadata_field(monkeypatch):
             indexed_count=1,
             chunk_count=1,
             parent_count=1,
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
             embedding_dimensions=2,
             metadata_columns=metadata_columns,
             metadata_types=metadata_types,
@@ -513,6 +552,9 @@ def test_validation_smoke_checks_every_approved_metadata_field(monkeypatch):
         sample_source = {
             "document_id": "doc-1",
             "body_vector": [0.1, 0.2],
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+            "embedding_dimensions": 2,
             "metadata_filter": {
                 "review_rating": {"type": "number", "number": 4.0},
                 "created_at": {"type": "date", "date": "2026-07-15"},
@@ -540,7 +582,7 @@ def test_validation_smoke_checks_every_approved_metadata_field(monkeypatch):
                 return {index: {"mappings": {"properties": {
                     "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2},
                     "metadata_filter": {"type": "object", "properties": metadata_properties}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {},
-                    "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
+                    "embedding_provider": {}, "embedding_model": {}, "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
                 }}}}
 
             def search_raw(self, index, query):
@@ -599,7 +641,7 @@ def test_validation_rejects_approved_metadata_when_index_has_no_documents(monkey
             def mapping(self, index):
                 return {index: {"mappings": {"properties": {
                     "document_id": {}, "parent_document_id": {}, "body": {}, "embedding_text": {}, "body_vector": {"dimension": 2},
-                    "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_model": {},
+                    "metadata_filter": {}, "chunk_index": {}, "chunk_count": {}, "char_start": {}, "char_end": {}, "embedding_provider": {}, "embedding_model": {},
                     "embedding_dimensions": {}, "source_fields": {}, "parent_source_fields": {}, "embedding_input_version": {}, "field_rendering_version": {},
                 }}}}
 

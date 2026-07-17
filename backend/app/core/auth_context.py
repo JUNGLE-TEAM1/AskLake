@@ -15,7 +15,7 @@ from app.services.auth_service import SESSION_COOKIE_NAME, load_session_actor
 
 @dataclass(frozen=True)
 class ActorContext:
-    name: str = "demo-user"
+    name: str = "anonymous"
     role: str = "viewer"
     groups: tuple[str, ...] = field(default_factory=tuple)
     id: str | None = None
@@ -39,8 +39,8 @@ class ActorContext:
 
 
 def get_actor_context(
-    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "Admin User",
-    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "admin",
+    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "anonymous",
+    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "viewer",
     actor_groups: Annotated[str | None, Header(alias="X-AskLake-Groups")] = None,
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
     db: Annotated[Session, Depends(get_db)] = None,
@@ -49,7 +49,7 @@ def get_actor_context(
         session_actor = load_session_actor(db, session_token)
         if session_actor is not None:
             return ActorContext(
-                name=str(session_actor.get("name") or "demo-user"),
+                name=str(session_actor.get("name") or session_actor.get("email") or session_actor.get("id") or "authenticated-user"),
                 role=str(session_actor.get("role") or "viewer"),
                 groups=tuple(str(group) for group in session_actor.get("groups") or []),
                 id=str(session_actor.get("id") or "") or None,
@@ -63,7 +63,7 @@ def get_actor_context(
             status.HTTP_401_UNAUTHORIZED,
         )
     return ActorContext(
-        name=(actor_name or "").strip() or "demo-user",
+        name=(actor_name or "").strip() or "anonymous",
         role=(actor_role or "").strip() or "viewer",
         groups=tuple(
             group.strip()

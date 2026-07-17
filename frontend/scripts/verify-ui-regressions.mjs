@@ -45,7 +45,6 @@ const checks = [
       /source\.documentId/,
       /source\.body/,
       /ragEvidenceTitle\(source\.title, source\.body\)/,
-      /match\(\/\(\?:\^\|\\n\)\\s\*title:/,
       /source\.metadata/,
       /source\.sourceFields\.map\(ragSourceFieldLabel\)/,
       /result\.retrieval\.servingIndex/,
@@ -53,6 +52,7 @@ const checks = [
     forbiddenPatterns: [
       /mockRagSearch/,
       /가짜 근거/,
+      /match\(\/\(\?:\^\|\\n\)\\s\*title:/,
     ],
   },
   {
@@ -60,9 +60,9 @@ const checks = [
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
       /<ReviewAnalysisPanel onAction=\{onAction\} \/>/,
-      /runCellphonesReviewAnalysis\(5, undefined, "gateway"\)/,
-      /aria-label="실제 Amazon 리뷰 5건 AI 분석"/,
-      /감성·문제 유형·심각도·근거/,
+      /startReviewAnalysis\(100, undefined, "gateway", undefined, true\)/,
+      /aria-label="실제 Amazon 리뷰 100건 AI 분석 및 모델 학습"/,
+      /AI Gateway가 구조화하고, 클래스·정확도 기준을 통과한 모델만 Spark용으로 게시/,
       /row\.issue_category/,
       /row\.evidence/,
     ],
@@ -131,14 +131,19 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
+    name: "Login never embeds demo credentials and signup stays explicitly environment-controlled",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
-      /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
       /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
-      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
+      /const \[email, setEmail\] = useState\(""\);/,
+      /const \[password, setPassword\] = useState\(""\);/,
       /\{publicSignupEnabled && \(/,
-      /demoDefaultsEnabled\s*\? <small>Admin/,
+    ],
+    forbiddenPatterns: [
+      /VITE_AUTH_LEGACY_DEMO_USERS_ENABLED/,
+      /admin\.user@asklake\.local/,
+      /asklake-admin/,
+      /demoDefaultsEnabled/,
     ],
   },
   {
@@ -482,7 +487,7 @@ const checks = [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
       /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
-      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner\)/,
+      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
       /rag: false/,
@@ -510,10 +515,14 @@ const checks = [
     name: "SQL Job governance keeps access scope and permission summary aligned",
     file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [
-      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
-      /accessScope,\s*owner:[\s\S]*permissionSummary: buildPermissionSummary\(accessScope\)/s,
+      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope, principalLabel = ""\)/,
+      /const accessScope: SqlJobWizardAccessScope = "private";/,
+      /permissionSummary: buildPermissionSummary\(accessScope, owner\)/,
+      /principalId: owner/,
     ],
     forbiddenPatterns: [
+      /Data Engineer Group/,
+      /data-team-01/,
       /eyebrow="처리 작업"/,
       /SQL 결과를 기준으로 스케줄, 권한, 저장 위치를 확인한 뒤 Job을 생성합니다\./,
       />SQL Result</,
@@ -584,22 +593,6 @@ const checks = [
       /format: targetFormat/,
       /partitionColumns,/,
       /tags: request\.job\?\.tags/,
-    ],
-  },
-  {
-    name: "Mock SQL Job creation preserves wizard schedule, governance, and storage settings",
-    file: "src/services/mockApi.ts",
-    patterns: [
-      /permissionSummary: draftPipeline\.permission\.summary/,
-      /schedulePolicy: \{/,
-      /scheduleSummary: draftPipeline\.schedule\.summary/,
-      /compression: draftPipeline\.target\.compression/,
-      /partitionColumns: draftPipeline\.target\.partitionColumns/,
-      /storagePath: draftPipeline\.target\.storagePath/,
-      /targetDatabase: draftPipeline\.target\.databaseName/,
-      /targetFormat: draftPipeline\.target\.format/,
-      /targetTags: draftPipeline\.target\.tags/,
-      /description: draftPipeline\.target\.description\?\.trim\(\)/,
     ],
   },
   {
@@ -799,19 +792,20 @@ const checks = [
     ],
   },
   {
-    name: "Job detail tolerates partial stats so delete remains reachable",
+    name: "Job detail tolerates partial stats without inventing run metrics",
     file: "src/pages/ingest/JobsPages.tsx",
     patterns: [
-      /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
+      /const stats = \{ \.\.\.emptyJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
       /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
+      /const physicalOutputPath = job\.targetPath \?\? stats\.outputPath \?\? job\.storagePath \?\? "-";/,
     ],
+    forbiddenPatterns: [/Math\.round\(\(successRuns \/ runs\.length\) \* 100\)/, /`lake\/\$\{job\.target\}`/],
   },
   {
     name: "Live Job deletion updates persisted rows and list facets together",
     file: "src/hooks/useAskLakeData.ts",
     patterns: [
-      /deletePipelineJob as deleteLivePipelineJob/,
-      /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
+      /await deletePipelineJob\(job\.id\);/,
       /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
       /writeAuditLog\("etl\.job\.delete_failed"/,
     ],
@@ -1347,12 +1341,13 @@ const checks = [
     ],
   },
   {
-    name: "Frontend runtime mock mode stays disabled",
+    name: "Frontend uses one relative live API entrypoint without runtime mock switches",
     file: "src/services/apiClient.ts",
     patterns: [
-      /useMock: false/,
+      /const defaultApiBaseUrl = "";/,
+      /baseUrl: import\.meta\.env\.VITE_API_BASE_URL \|\| defaultApiBaseUrl/,
     ],
-    forbiddenPatterns: [/VITE_USE_MOCK_API/],
+    forbiddenPatterns: [/VITE_USE_MOCK_API/, /useMock/],
   },
   {
     name: "Dashboard status labels stay Korean",
@@ -1538,15 +1533,14 @@ const checks = [
     ],
   },
   {
-    name: "ETL review accepts no-rule pass-through and reports compiler issues",
+    name: "ETL review is evaluated by the canonical backend instead of a browser-side compiler",
     file: "src/services/reviewApi.ts",
     patterns: [
-      /const ruleCompilation = compileRuleContract\(\{/,
-      /const processingReady = ruleCompilation\.status === "pass"/,
-      /ruleCompilation,/,
-      /"규칙 없음 · 원본 스키마 그대로 통과"/,
-      /ruleCompilation\.issues\[0\]\?\.message/,
+      /toCreatePipelineRequest\(draft\)/,
+      /sourceConnectionStatus: draft\.source\.connectionStatus/,
+      /apiClient\.post<ReviewSnapshot>\("\/api\/etl\/review", request\)/,
     ],
+    forbiddenPatterns: [/compileRuleContract/, /processingReady\s*=/, /규칙 없음 · 원본 스키마 그대로 통과/],
     forbiddenPatterns: [
       /Boolean\(request\.ruleSummary\.trim\(\)\)/,
       /Continuous에서는 transform\/quality rule을 제거하세요/,
@@ -1598,12 +1592,12 @@ const checks = [
     ],
   },
   {
-    name: "Catalog materialization totals stop at the newest snapshot",
+    name: "Catalog materialization history comes from the canonical backend payload",
     file: "src/hooks/useAskLakeData.ts",
     patterns: [
-      /activeDatasetMaterializationRuns\(materializationRuns\)/,
-      /if \(run\.materializationMode !== "delta"\) break;/,
+      /materializationRuns: dataset\.materializationRuns \?\? \[\]/,
     ],
+    forbiddenPatterns: [/activeDatasetMaterializationRuns/, /materializationMode !== "delta"/],
   },
   {
     name: "Authenticated routes share the compact global app shell",

@@ -38,7 +38,6 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { apiConfig } from "@/services/apiClient";
 import { schemaTransformApi } from "@/services/schemaTransformApi";
 import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
 
@@ -539,7 +538,7 @@ export default function SchemaTransformEditor({
           .map((column, columnIndex) => {
             const method = column.method || "copy";
             const isOneOfValues = method === "one_of_values";
-            const fallbackAllowed = isOneOfValues && Boolean(column.fallbackAllowed || column.allowFallback);
+            const fallbackAllowed = false;
             const modelArtifact = isOneOfValues ? column.modelArtifact || column.selectedModelArtifact || "" : "";
             const modelId = isOneOfValues ? column.modelId || column.selectedModelId || "" : "";
             return {
@@ -551,7 +550,7 @@ export default function SchemaTransformEditor({
               modelId,
               modelSelectionPolicy: isOneOfValues ? (column.modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
               nullable: column.nullable !== false,
-              requireModel: isOneOfValues && !fallbackAllowed,
+              requireModel: isOneOfValues,
               targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
               type: column.type || "String",
             };
@@ -1113,7 +1112,7 @@ export default function SchemaTransformEditor({
                     </label>
                   </div>
                   <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-3 py-2 text-[11px] font-bold text-slate-500">
-                <span>{apiConfig.useMock ? `확인용 ${String(allSources?.[0]?.name || sourceName).toUpperCase()}` : String(allSources?.[0]?.name || sourceName).toUpperCase()}</span>
+                    <span>{String(allSources?.[0]?.name || sourceName).toUpperCase()}</span>
                     <span>{filteredSqlSources.length}개 필드</span>
                   </div>
                   <div className="flex-1 overflow-y-auto">

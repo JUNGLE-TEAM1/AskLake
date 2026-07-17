@@ -613,7 +613,7 @@ def normalize_derived_dataset_tags(tags: list[str]) -> list[str]:
 
 def created_by_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> str:
     previous_created_by = previous_payload.get("createdBy") if previous_payload else None
-    return str(previous_created_by or actor_name or "demo-user").strip() or "demo-user"
+    return str(previous_created_by or actor_name or "system").strip() or "system"
 
 
 def created_by_profile_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> dict[str, str]:

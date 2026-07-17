@@ -59,8 +59,10 @@ class QueryAiSuggestionResponse(CamelModel):
     body: str
     mode: QueryAiMode = "draft_sql"
     model: str | None = None
+    provider: str | None = None
     notices: list[str] = Field(default_factory=list)
     retrieval: dict[str, object] | None = None
     sources: list[dict[str, object]] = Field(default_factory=list)
     sql: str
     title: str
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)

@@ -8,7 +8,11 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.sql import QueryAiSuggestionRequest
-from app.services.query_ai_service import QueryAiService, validate_selected_dataset_scope
+from app.services.query_ai_service import (
+    QueryAiService,
+    ensure_preview_limit,
+    validate_selected_dataset_scope,
+)
 
 
 def catalog_dataset(dataset_id: str = "reviews") -> CatalogDatasetResponse:
@@ -34,6 +38,21 @@ def catalog_dataset(dataset_id: str = "reviews") -> CatalogDatasetResponse:
 
 
 class QueryAiContractTests(unittest.TestCase):
+    def test_preview_limit_is_applied_to_the_outer_query_not_a_nested_subquery(self) -> None:
+        sql = ensure_preview_limit(
+            "SELECT * FROM (SELECT * FROM review_gold LIMIT 5) nested_reviews"
+        )
+
+        self.assertIn("LIMIT 5", sql)
+        self.assertTrue(sql.endswith("LIMIT 100;"))
+
+    def test_preview_limit_preserves_safe_root_limit_and_caps_unsafe_root_limit(self) -> None:
+        safe = "SELECT * FROM review_gold LIMIT 10"
+
+        self.assertEqual(ensure_preview_limit(safe), safe)
+        self.assertTrue(ensure_preview_limit("SELECT * FROM review_gold LIMIT 500").endswith("LIMIT 100;"))
+        self.assertTrue(ensure_preview_limit("SELECT * FROM review_gold LIMIT ALL").endswith("LIMIT 100;"))
+
     def test_public_query_ai_request_matches_gateway_input_limits(self) -> None:
         with self.assertRaises(ValidationError):
             QueryAiSuggestionRequest(prompt="x" * 8_001, selected_dataset_ids=["reviews"])
@@ -131,10 +150,12 @@ class QueryAiContractTests(unittest.TestCase):
                 "sql": "SELECT review_id FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "provider": "openai_compatible",
             }
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
         self.assertEqual(response.model, "gateway-test-model")
+        self.assertEqual(response.provider, "openai_compatible")
         self.assertEqual(response.sql, "SELECT review_id FROM review_gold LIMIT 10")
         self.assertEqual(generate.call_args.kwargs["selected_dataset_ids"], [dataset.id])
         self.assertTrue(generate.call_args.kwargs["context_token"])
@@ -149,7 +170,7 @@ class QueryAiContractTests(unittest.TestCase):
             selected_dataset_ids=[dataset.id],
         )
         rag_context = {
-            "sources": [{"datasetId": dataset.id, "parentDocumentId": "parent-1", "title": "review_text"}],
+            "sources": [{"documentId": "doc-1", "datasetId": dataset.id, "parentDocumentId": "parent-1", "title": "review_text"}],
             "retrieval": {
                 "provenance": "semantic_layer_rag",
                 "semanticModelIds": ["sm_reviews"],
@@ -172,12 +193,15 @@ class QueryAiContractTests(unittest.TestCase):
                 "sql": "SELECT count(*) FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "usedEvidenceIds": ["doc-1"],
             }) as generate,
         ):
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
         self.assertEqual(response.retrieval["provenance"], "semantic_layer_rag")
+        self.assertEqual(response.retrieval["evidenceStatus"], "used")
         self.assertEqual(response.sources[0]["parentDocumentId"], "parent-1")
+        self.assertEqual(response.used_evidence_ids, ["doc-1"])
         self.assertEqual(generate.call_args.kwargs["rag_context"], rag_context)
 
     def test_gateway_receives_semantic_layer_rag_context(self) -> None:
@@ -204,10 +228,13 @@ class QueryAiContractTests(unittest.TestCase):
                 "sql": "SELECT review_id FROM review_gold LIMIT 10",
                 "notices": [],
                 "model": "gateway-test-model",
+                "usedEvidenceIds": [],
             }
             response = service.create_suggestion(request, ActorContext(name="analyst", role="admin"))
 
         self.assertEqual(response.retrieval["provenance"], "semantic_layer_rag")
+        self.assertEqual(response.retrieval["evidenceStatus"], "not_used")
+        self.assertEqual(response.sources, [])
         self.assertEqual(generate.call_args.kwargs["rag_context"], rag_context)
 
 

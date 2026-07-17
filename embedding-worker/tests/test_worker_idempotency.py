@@ -1,4 +1,12 @@
-from app.worker import EmbeddingWorker
+import httpx
+import pytest
+
+from app.worker import (
+    EmbeddingWorker,
+    parse_bounded_gateway_json,
+    parse_embedding_response,
+    validate_generation_response,
+)
 from fastapi import HTTPException
 
 from app.main import IndexBatchRequest, index_batch
@@ -8,6 +16,76 @@ from app.errors import PermanentRagContractError
 
 def make_worker() -> EmbeddingWorker:
     return EmbeddingWorker(gateway_url="http://gateway", gateway_token="token", opensearch_url="http://opensearch", verify_tls=False)
+
+
+def test_embedding_response_requires_exact_model_count_dimensions_and_finite_values() -> None:
+    vectors, dimensions, provider = parse_embedding_response(
+        {"provider": "openai_compatible", "model": "embed-model", "dimensions": 2, "data": [[0.1, 0.2], [0.3, 0.4]]},
+        expected_count=2,
+        expected_model="embed-model",
+        expected_dimensions=2,
+    )
+    assert vectors == [[0.1, 0.2], [0.3, 0.4]]
+    assert dimensions == 2
+    assert provider == "openai_compatible"
+
+    invalid_payloads = [
+        {"provider": "openai_compatible", "model": "wrong", "dimensions": 2, "data": [[0.1, 0.2]]},
+        {"provider": "openai_compatible", "model": "embed-model", "dimensions": 2, "data": []},
+        {"provider": "openai_compatible", "model": "embed-model", "dimensions": 2, "data": [[0.1]]},
+        {"provider": "openai_compatible", "model": "embed-model", "dimensions": 2, "data": [[float("nan"), 0.2]]},
+    ]
+    for payload in invalid_payloads:
+        with pytest.raises(ValueError):
+            parse_embedding_response(
+                payload,
+                expected_count=1,
+                expected_model="embed-model",
+                expected_dimensions=2,
+            )
+
+
+def test_gateway_response_size_and_generation_identity_are_validated() -> None:
+    request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
+    oversized = httpx.Response(200, request=request, content=b"{}" + b" " * 128)
+    with pytest.raises(ValueError, match="size limit"):
+        parse_bounded_gateway_json(oversized, max_bytes=64)
+
+    payload = {
+        "request_id": "segment-1",
+        "mode": "segment_document",
+        "output": {"segments": []},
+        "provider": "openai_compatible",
+        "model": "segment-model",
+        "usage": {"inputTokens": 10, "outputTokens": 2, "totalTokens": 12, "estimatedCostUsd": 0.001},
+    }
+    assert validate_generation_response(payload, request_id="segment-1", mode="segment_document") is payload
+    with pytest.raises(ValueError, match="identity"):
+        validate_generation_response(payload, request_id="other", mode="segment_document")
+
+
+def test_index_contract_rejects_unsafe_target_and_duplicate_chunk_ids(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="safe lowercase"):
+        IndexBatchRequest.model_validate({
+            "dataset_id": "d",
+            "dataset_name": "d",
+            "body_columns": ["text"],
+            "target_index": "../_cat/indices",
+            "chunks": [{"chunk_document_id": "c1", "parent_document_id": "p1", "text": "body"}],
+        })
+
+    worker = make_worker()
+    monkeypatch.setattr(worker, "existing_document_ids", lambda *_args: set())
+    with pytest.raises(PermanentRagContractError, match="duplicate"):
+        worker.index_chunks(
+            dataset_id="reviews",
+            dataset_name="reviews",
+            target_index="reviews-v1",
+            chunks=[
+                {"chunk_document_id": "same", "parent_document_id": "p1", "embedding_text": "first"},
+                {"chunk_document_id": "same", "parent_document_id": "p2", "embedding_text": "second"},
+            ],
+        )
 
 
 def test_index_api_contract_rejects_direct_rows_without_explicit_legacy_flag(monkeypatch):
@@ -115,7 +193,7 @@ def test_existing_target_index_rejects_embedding_dimension_mismatch():
             raise AssertionError("dimension mismatch must fail before document inspection")
 
     try:
-        worker.assert_target_index_compatibility(Client(), "reviews-v1", "model-a", 2)
+        worker.assert_target_index_compatibility(Client(), "reviews-v1", "model-a", 2, "openai_compatible")
     except PermanentRagContractError as exc:
         assert "dimensions" in str(exc)
     else:

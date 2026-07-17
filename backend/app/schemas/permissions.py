@@ -24,5 +24,5 @@ class ResourcePermissions(CamelModel):
     can_delete: bool = False
     can_share: bool = False
     can_publish: bool = False
-    computed_for: str = "demo-user"
+    computed_for: str = "system"
     enforced: bool = False

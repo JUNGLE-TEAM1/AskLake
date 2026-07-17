@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
@@ -91,14 +92,18 @@ export async function listDatasets() {
 export async function listModelArtifacts() {
   const stored = await listStoredModelArtifacts();
   const discovered = discoverReviewTextModelArtifacts();
-  const byId = new Map();
-  for (const artifact of discovered) {
-    byId.set(artifact.id, artifact);
-  }
-  for (const artifact of stored) {
-    byId.set(artifact.id, { ...(byId.get(artifact.id) ?? {}), ...artifact });
-  }
-  return dedupeModelArtifacts([...byId.values()])
+  const verified = discovered.map((artifact) => {
+    const metadata = stored.find((candidate) => (
+      candidate.modelArtifact === artifact.modelArtifact
+      && normalizeColumnName(candidate.targetColumn || candidate.targetName || "") === normalizeColumnName(artifact.targetColumn)
+    ));
+    return {
+      ...(metadata ?? {}),
+      ...artifact,
+      id: metadata?.id || artifact.id,
+    };
+  });
+  return dedupeModelArtifacts(verified)
     .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
 }
 
@@ -146,8 +151,18 @@ function dedupeModelArtifacts(artifacts) {
 export async function createTextStructuringTrainingRun(request) {
   const columns = Array.isArray(request?.columns) ? request.columns : [];
   const trainRows = Array.isArray(request?.trainRows) ? request.trainRows : [];
+  const labelSource = String(request?.labelSource || "").trim().toLowerCase();
   if (columns.length === 0) throw validationError("Text structuring training requires at least one output column.");
   if (trainRows.length < 2) throw validationError("Text structuring training requires labeled trainRows.");
+  if (!["ai_gateway", "human_labeled"].includes(labelSource)) {
+    throw validationError("Text structuring training requires a verifiable ai_gateway or human_labeled labelSource.");
+  }
+  if (labelSource === "ai_gateway" && (!Array.isArray(request?.labelModels) || request.labelModels.length === 0)) {
+    throw validationError("AI Gateway labeled rows require the provider model identifier.");
+  }
+  if (!request?.source || typeof request.source !== "object" || Array.isArray(request.source) || Object.keys(request.source).length === 0) {
+    throw validationError("Text structuring training requires source provenance.");
+  }
   const runId = `text_model_${Date.now().toString(36)}`;
   const outputDir = path.join(backendDir, "..", "output", "nlp-eval", "text-structuring", "runtime", runId);
   const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || process.env.PYTHON || "python";
@@ -181,6 +196,18 @@ export async function createTextStructuringTrainingRun(request) {
   }
   const trainedModels = manifest.trainedModels && typeof manifest.trainedModels === "object" ? manifest.trainedModels : {};
   const savedArtifacts = [];
+  if (manifest.promotionStatus !== "promoted") {
+    return {
+      artifacts: [],
+      manifest,
+      run: {
+        id: runId,
+        outputDir,
+        status: "quality_gate_failed",
+        trainedModelCount: 0,
+      },
+    };
+  }
   for (const [targetColumn, model] of Object.entries(trainedModels)) {
     if (!model || model.status !== "trained" || !model.artifact) continue;
     const artifact = {
@@ -195,6 +222,11 @@ export async function createTextStructuringTrainingRun(request) {
       modelArtifact: model.artifact,
       modelKind: model.modelKind || "portable_tfidf_linear_svc",
       modelPath: path.join(manifest.latestRuntimeDir || "", model.artifact),
+      provenance: {
+        labelModels: manifest.labelModels ?? [],
+        labelSource: manifest.labelSource,
+        source: manifest.source ?? {},
+      },
       runId,
       runtimeStatus: "portable_text_model_available",
       source: "training_run",
@@ -228,26 +260,68 @@ function isCatalogModelArtifact(dataset) {
 function discoverReviewTextModelArtifacts() {
   const root = path.resolve(
     process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-      || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+      || path.join(backendDir, "tmp", "review-text-models", "latest"),
   );
   if (!existsSync(root)) return [];
-  const files = findPortableReviewTextModels(root);
-  return files.map((filePath) => {
-    const filename = path.basename(filePath);
-    const targetColumn = normalizeColumnName(filename.replace(/\.portable_linear_svc\.json$/i, ""));
-    let allowedValues = [];
-    let metrics = {};
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(root, "manifest.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  if (manifest?.promotionStatus !== "promoted" || !manifest.artifactSha256s || typeof manifest.artifactSha256s !== "object") {
+    return [];
+  }
+  const trainedModels = manifest.trainedModels && typeof manifest.trainedModels === "object" ? manifest.trainedModels : {};
+  const minimumQuality = Number(process.env.ASKLAKE_REVIEW_MODEL_MINIMUM_QUALITY || 0.75);
+  return Object.entries(trainedModels).flatMap(([manifestTarget, published]) => {
+    if (!published || published.status !== "trained") return [];
+    const filename = path.basename(String(published.artifact || ""));
+    const filePath = path.resolve(root, filename);
+    if (!filename || path.dirname(filePath) !== root || !existsSync(filePath)) return [];
+    const expectedDigest = String(manifest.artifactSha256s[filename] || "").toLowerCase();
+    if (!expectedDigest) return [];
+    const fileBuffer = readFileSync(filePath);
+    if (createHash("sha256").update(fileBuffer).digest("hex") !== expectedDigest) return [];
+    let payload;
     try {
-      const payload = JSON.parse(readFileSync(filePath, "utf8"));
-      const rawAllowedValues = Array.isArray(payload.allowedValues) && payload.allowedValues.length > 0
-        ? payload.allowedValues
-        : payload.classes;
-      allowedValues = Array.isArray(rawAllowedValues) ? rawAllowedValues.map((value) => String(value)) : [];
-      metrics = payload.metrics && typeof payload.metrics === "object" ? payload.metrics : {};
+      payload = JSON.parse(fileBuffer.toString("utf8"));
     } catch {
-      allowedValues = [];
-      metrics = {};
+      return [];
     }
+    const targetColumn = normalizeColumnName(payload.targetName || payload.targetColumn || "");
+    const allowedValues = Array.isArray(payload.allowedValues) ? payload.allowedValues.map(String) : [];
+    const classes = Array.isArray(payload.classes) ? payload.classes.map(String) : [];
+    const metrics = payload.metrics && typeof payload.metrics === "object" ? payload.metrics : {};
+    const provenance = payload.provenance && typeof payload.provenance === "object" ? payload.provenance : {};
+    const labelSource = String(provenance.labelSource || "").toLowerCase();
+    const labelModels = Array.isArray(provenance.labelModels) ? provenance.labelModels.filter((value) => String(value).trim()) : [];
+    const validationCounts = metrics.validationLabelCounts && typeof metrics.validationLabelCounts === "object" ? metrics.validationLabelCounts : {};
+    const accuracy = Number(metrics.accuracy);
+    const macroF1 = Number(metrics.macroF1);
+    const validationRows = Number(metrics.validationRows);
+    const normalizedClasses = new Set(classes.map((value) => value.trim().toLowerCase()));
+    const normalizedAllowed = new Set(allowedValues.map((value) => value.trim().toLowerCase()));
+    const sameClasses = normalizedClasses.size === normalizedAllowed.size
+      && [...normalizedClasses].every((value) => normalizedAllowed.has(value));
+    if (
+      !targetColumn
+      || targetColumn !== normalizeColumnName(manifestTarget)
+      || classes.length === 0
+      || allowedValues.length === 0
+      || !sameClasses
+      || !["ai_gateway", "human_labeled"].includes(labelSource)
+      || (labelSource === "ai_gateway" && labelModels.length === 0)
+      || !provenance.source
+      || typeof provenance.source !== "object"
+      || !Number.isFinite(accuracy)
+      || !Number.isFinite(macroF1)
+      || !Number.isFinite(validationRows)
+      || accuracy < minimumQuality
+      || macroF1 < minimumQuality
+      || validationRows < classes.length
+      || classes.some((value) => Number(validationCounts[value] || 0) <= 0)
+    ) return [];
     let updatedAt = new Date().toISOString();
     try {
       updatedAt = statSync(filePath).mtime.toISOString();
@@ -265,6 +339,7 @@ function discoverReviewTextModelArtifacts() {
       modelArtifact: filename,
       modelKind: "portable_linear_svc",
       modelPath: filePath,
+      provenance,
       runtimeStatus: "portable_text_model_available",
       source: "filesystem",
       status: "available",
@@ -273,31 +348,8 @@ function discoverReviewTextModelArtifacts() {
       updatedAt,
       validationRows: metrics.validationRows,
       validationStatus: "available_for_selection",
-    };
+    }];
   });
-}
-
-function findPortableReviewTextModels(root) {
-  const found = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    let entries = [];
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-      } else if (/\.portable_linear_svc\.json$/i.test(entry.name)) {
-        found.push(fullPath);
-      }
-    }
-  }
-  return found;
 }
 
 export async function createPipeline(request) {
@@ -1133,7 +1185,7 @@ function textStructuringExecutionFromSparkResult(result) {
 function executionModeFromRuntimeStatus(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized.includes("missing_model")) return "missing_model";
-  if (normalized.includes("fallback")) return "fallback_rule";
+  if (normalized.includes("fallback")) return "legacy_rule_fallback";
   if (normalized.includes("portable_text_model")) return "auto_model";
   return "";
 }
@@ -1273,8 +1325,8 @@ async function saveReviewRowModelArtifacts(job, result, dataset) {
       createdAt: result.endedAt ?? new Date().toISOString(),
       datasetName: dataset.name,
       executionMode: check.executionMode || executionModeFromRuntimeStatus(check.runtimeStatus),
-      fallbackAllowed: Boolean(check.fallbackAllowed),
-      fallbackUsed: Boolean(check.fallbackUsed || check.runtimeStatus === "rule_fallback_output" || check.runtimeStatus === "rule_fallback_planned"),
+      fallbackAllowed: false,
+      fallbackUsed: false,
       id: `model_${normalizeColumnName(dataset.id)}_${target}`,
       jobId: job.id,
       method: check.method || "",
@@ -1290,7 +1342,7 @@ async function saveReviewRowModelArtifacts(job, result, dataset) {
       runtimeStatus: check.runtimeStatus || "",
       outputDistribution: Array.isArray(check.outputDistribution) ? check.outputDistribution : [],
       selectedModelArtifact: check.selectedModelArtifact || "",
-      status: check.modelArtifact ? "available" : check.runtimeStatus === "missing_model_artifact" ? "missing" : "fallback",
+      status: "available",
       supportedMethods: Array.isArray(check.supportedMethods) ? check.supportedMethods : [],
       targetColumn: target,
       targetDatasetId: dataset.id,

@@ -216,7 +216,7 @@ class DashboardAssistantAccessTests(unittest.TestCase):
 
         def fake_gateway(_request, context, _actor, _rag_context=None):
             captured_context.update(context.to_prompt_payload())
-            return {"actions": [], "message": "ok", "warnings": [], "model": "gpt-test", "provider": "ai-gateway"}
+            return {"actions": [], "message": "ok", "warnings": [], "model": "gpt-test", "provider": "openai_compatible"}
 
         def enforce_governance(*_args, **kwargs):
             if kwargs.get("resource_id") == "dataset-locked":
@@ -239,7 +239,7 @@ class DashboardAssistantAccessTests(unittest.TestCase):
         serialized_context = json.dumps(captured_context, ensure_ascii=False)
         self.assertEqual(response.message, "ok")
         self.assertEqual(response.model, "gpt-test")
-        self.assertEqual(response.provider, "ai-gateway")
+        self.assertEqual(response.provider, "openai_compatible")
         self.assertEqual(
             [dataset["id"] for dataset in captured_context["availableDatasets"]],
             ["dataset-allowed"],

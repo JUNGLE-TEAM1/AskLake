@@ -40,11 +40,25 @@ def build_semantic_rag_context(
             empty["retrieval"].update({"status": "semantic_model_not_available", "semanticModelId": semantic_model_id})
             return empty
         resolved_models = [model]
+        model_dataset_ids = {
+            str(item)
+            for item in model.get("datasetIds", [])
+            if str(item).strip()
+        }
         if not requested_dataset_ids:
-            requested_dataset_ids = list(dict.fromkeys(str(item) for item in model.get("datasetIds", []) if str(item).strip()))
+            requested_dataset_ids = list(model_dataset_ids)
             empty["retrieval"]["datasetIds"] = requested_dataset_ids
-        if requested_dataset_ids and not set(requested_dataset_ids).intersection(model.get("datasetIds", [])):
-            empty["retrieval"].update({"status": "semantic_model_dataset_mismatch", "semanticModelId": semantic_model_id})
+        missing_dataset_ids = [
+            dataset_id
+            for dataset_id in requested_dataset_ids
+            if dataset_id not in model_dataset_ids
+        ]
+        if missing_dataset_ids:
+            empty["retrieval"].update({
+                "status": "semantic_model_dataset_mismatch",
+                "semanticModelId": semantic_model_id,
+                "missingDatasetIds": missing_dataset_ids,
+            })
             return empty
     else:
         if not requested_dataset_ids:
@@ -55,10 +69,30 @@ def build_semantic_rag_context(
         empty["retrieval"]["status"] = "no_published_semantic_model"
         return empty
 
-    resolved_dataset_ids = list(dict.fromkeys([
-        *requested_dataset_ids,
-        *(dataset_id for model in resolved_models for dataset_id in model.get("datasetIds", [])),
-    ]))
+    bound_dataset_ids = {
+        str(dataset_id)
+        for model in resolved_models
+        for dataset_id in model.get("datasetIds", [])
+        if str(dataset_id).strip()
+    }
+    unbound_dataset_ids = [
+        dataset_id
+        for dataset_id in requested_dataset_ids
+        if dataset_id not in bound_dataset_ids
+    ]
+    if unbound_dataset_ids:
+        empty["retrieval"].update({
+            "status": "dataset_without_published_semantic_model",
+            "missingDatasetIds": unbound_dataset_ids,
+            "semanticModels": resolved_models,
+            "semanticModelIds": [str(model["id"]) for model in resolved_models],
+        })
+        return empty
+
+    # Retrieval is intentionally scoped to the exact Dataset selection. A
+    # published model may contain additional Datasets, but selecting one of
+    # them must not silently pull evidence from all of its siblings.
+    resolved_dataset_ids = requested_dataset_ids
     rag_service = RagService(db)
     aliases: list[str] = []
     targets: list[dict[str, Any]] = []
@@ -72,20 +106,29 @@ def build_semantic_rag_context(
         if profile.review_state != "approved" or profile.serving_status not in {"serving", "stale"} or not profile.target_alias:
             continue
         alias = profile.target_alias
-        if alias in aliases:
-            continue
-        aliases.append(alias)
         model_ids = [
             str(model["id"])
             for model in resolved_models
             if dataset_id in model.get("datasetIds", [])
         ]
+        if not model_ids:
+            continue
+        if alias in aliases:
+            alias_model_ids[alias] = list(dict.fromkeys([*alias_model_ids[alias], *model_ids]))
+            continue
+        aliases.append(alias)
         alias_model_ids[alias] = model_ids
-        targets.append({
+        target = {
+            **rag_service.search_target_context(dataset_id, actor, profile=profile),
             "alias": alias,
-            "embeddingModel": profile.active_embedding_model,
-            "embeddingDimensions": profile.active_embedding_dimensions,
-        })
+        }
+        # search_target_context is the canonical source.  The profile fallback
+        # keeps older callers/test doubles from crashing while a pre-provider
+        # manifest is being surfaced as unavailable/degraded instead.
+        target.setdefault("embeddingProvider", getattr(profile, "active_embedding_provider", None))
+        target.setdefault("embeddingModel", getattr(profile, "active_embedding_model", None))
+        target.setdefault("embeddingDimensions", getattr(profile, "active_embedding_dimensions", None))
+        targets.append(target)
 
     retrieval_base = {
         "provenance": "semantic_layer_rag",
@@ -116,9 +159,16 @@ def build_semantic_rag_context(
     for source in result.get("sources") or []:
         enriched = dict(source)
         source_alias = str(enriched.get("retrievalAlias") or "")
-        model_ids = alias_model_ids.get(source_alias) or retrieval["semanticModelIds"]
+        model_ids = alias_model_ids.get(source_alias, [])
+        if not model_ids:
+            # Fail closed if a search transport returns evidence from an alias
+            # that was not bound to one of the resolved Semantic Models.
+            continue
         enriched["semanticModelIds"] = model_ids
         enriched["semanticModels"] = [model for model in resolved_models if str(model["id"]) in model_ids]
         sources.append(enriched)
     retrieval["resultCount"] = len(sources)
+    if result.get("sources") and not sources:
+        retrieval["status"] = "evidence_scope_mismatch"
+        retrieval["reason"] = "Search evidence was not bound to the resolved semantic model aliases"
     return {"sources": sources, "retrieval": retrieval}

@@ -25,7 +25,7 @@ import {
   updateDraftWidget,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
-import { saveDashboardCard } from "../../services/mockApi";
+import { saveDashboardCard } from "../../services/askLakeApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
@@ -102,7 +102,7 @@ export function DashboardPage({
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
   const [runtimeSelection, setRuntimeSelection] = useState<{ dashboardId: string; mode: DashboardRuntimeMode }>(() => ({
-    dashboardId: entry.dashboardId ?? "dash_sales_demo",
+    dashboardId: entry.dashboardId ?? "",
     mode: entry.runtimeMode ?? "published",
   }));
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);

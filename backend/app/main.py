@@ -17,6 +17,7 @@ from app.schemas.etl import ScheduledJobRunRequest
 from app.services.auth_service import initialize_auth
 from app.services.etl_service import run_due_scheduled_jobs, sync_active_kafka_continuous_runtimes
 from app.services.rag_service import RagService
+from app.services.review_analysis_service import ReviewAnalysisService
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,17 @@ async def scheduled_job_tick_loop() -> None:
         await asyncio.sleep(settings.scheduled_job_tick_interval_seconds)
 
 
+async def review_analysis_worker_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(ReviewAnalysisService.fail_stale_runs)
+            processed = await asyncio.to_thread(ReviewAnalysisService.process_next_queued_run)
+        except Exception:  # A failed queue tick must not stop later persisted runs.
+            logger.exception("Review analysis worker tick failed")
+            processed = False
+        await asyncio.sleep(0 if processed else 2)
+
+
 def initialize_auth_on_startup() -> None:
     with SessionLocal() as db:
         # Some operational tests inject an auth-only session sentinel. Real
@@ -61,13 +73,14 @@ async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
     continuous_task = asyncio.create_task(continuous_runtime_sync_loop())
     scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
+    review_analysis_task = asyncio.create_task(review_analysis_worker_loop())
     async with _app.state.internal_mcp_lifespan():
         try:
             yield
         finally:
-            for task in (continuous_task, scheduled_task):
+            for task in (continuous_task, scheduled_task, review_analysis_task):
                 task.cancel()
-            for task in (continuous_task, scheduled_task):
+            for task in (continuous_task, scheduled_task, review_analysis_task):
                 with suppress(asyncio.CancelledError):
                     await task
 

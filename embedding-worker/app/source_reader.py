@@ -58,7 +58,16 @@ def validate_manifest(manifest: dict[str, Any], *, dataset_id: str) -> None:
         raise PermanentRagContractError("Catalog source manifest has expired")
     parsed = urlparse(str(manifest.get("readUrl") or ""))
     allowed_hosts = {host.strip().casefold() for host in os.environ.get("RAG_SOURCE_ALLOWED_HOSTS", "").split(",") if host.strip()}
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or (allowed_hosts and (parsed.hostname or "").casefold() not in allowed_hosts):
+    if not allowed_hosts:
+        raise PermanentRagContractError("RAG source host allowlist is not configured")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or (parsed.hostname or "").casefold() not in allowed_hosts
+    ):
         raise PermanentRagContractError("Catalog source manifest readUrl is not allowed")
 
 

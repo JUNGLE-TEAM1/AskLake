@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, Database, FileText, Loader2, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, Database, FileText, Loader2, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 import type { AuditResult } from "../../types/audit";
 import { apiClient } from "../../services/apiClient";
@@ -30,12 +30,13 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
+import { RagJobHistory } from "../../components/semantic/RagJobHistory";
 import { RagServingStatus } from "../../components/semantic/RagServingStatus";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
 import "../../styles/semantic-layer-real.css";
 
-type Tab = "datasets" | "metrics" | "dimensions" | "rag" | "access";
+type Tab = "datasets" | "analysis" | "rag" | "access";
 type Notice = { tone: "success" | "error" | "info"; message: string };
 type RagRolePayload = Pick<RagProfile, "bodyColumns" | "titleColumns" | "metadataColumns" | "identifierColumns" | "excludedColumns">;
 
@@ -76,6 +77,12 @@ function statusLabel(status: string) {
     stale: "재색인 필요",
     not_serving: "검색 불가",
     failed: "실패",
+    no_matches: "검색 결과 없음",
+    no_relevant_evidence: "관련 근거 없음",
+    query_planning_unavailable: "검색 계획 실패",
+    relevance_unavailable: "관련성 검증 실패",
+    degraded: "일부 검색만 사용",
+    degraded_no_matches: "임베딩 검색 저하 · 결과 없음",
   };
   return labels[status] ?? status;
 }
@@ -111,6 +118,7 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [ragJobsRefreshToken, setRagJobsRefreshToken] = useState(0);
 
   const load = async () => {
     setLoading(true);
@@ -237,6 +245,7 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
     await run("index", async () => {
       const hasServingIndex = ragProfile?.servingStatus === "serving" || ragProfile?.servingStatus === "stale";
       const accepted = await indexRagDataset(ragDatasetId, hasServingIndex ? "reindex" : "index");
+      setRagJobsRefreshToken((current) => current + 1);
       if (accepted.status === "ready") {
         await refreshProfile(ragDatasetId);
         setNotice({ tone: "success", message: "현재 Dataset과 RAG 정의에 맞는 활성 색인을 확인했습니다. 실제 근거 검색을 바로 사용할 수 있습니다." });
@@ -285,11 +294,10 @@ export function SemanticLayerPage({ onAction }: SemanticPageProps) {
           </aside>
           <main className="semantic-real-editor">
             <ModelHeader model={selected} busy={busy === "model"} onSave={saveModelInfo} onValidate={() => void run("validate", async () => { const result = await validateSemanticModel(selected.id); setNotice({ tone: result.valid ? "success" : "error", message: result.valid ? "게시 검증을 통과했습니다." : result.errors.join(" / ") }); })} onPublish={() => void run("publish", async () => { const result = await publishSemanticModel(selected.id); setModels((current) => current.map((model) => model.id === result.model.id ? result.model : model)); setNotice({ tone: "success", message: `업무 모델 v${result.publishedVersion}를 게시했습니다.` }); })} />
-            <nav className="semantic-real-tabs" aria-label="업무 모델 편집 탭">{([ ["datasets", "데이터 연결"], ["metrics", "지표"], ["dimensions", "분석 기준"], ["rag", "RAG 검색"], ["access", "접근 권한"]] as Array<[Tab, string]>).map(([id, label]) => <button type="button" key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}{id === "datasets" && <em>{selected.datasets.length}</em>}{id === "metrics" && <em>{selected.metrics.length}</em>}{id === "dimensions" && <em>{selected.dimensions.length}</em>}{id === "rag" && <em>{Object.values(profiles).filter((profile) => profile.servingStatus === "serving").length}</em>}</button>)}</nav>
+            <nav className="semantic-real-tabs" aria-label="업무 모델 편집 탭">{([ ["datasets", "데이터 연결"], ["analysis", "분석 기준"], ["rag", "RAG 검색"], ["access", "접근 권한"]] as Array<[Tab, string]>).map(([id, label]) => <button type="button" key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}{id === "datasets" && <em>{selected.datasets.length}</em>}{id === "analysis" && <em>{selected.metrics.length + selected.dimensions.length}</em>}{id === "rag" && <em>{Object.values(profiles).filter((profile) => profile.servingStatus === "serving").length}</em>}</button>)}</nav>
             {activeTab === "datasets" && <DatasetsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDatasets} />}
-            {activeTab === "metrics" && <MetricsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveMetrics} />}
-            {activeTab === "dimensions" && <DimensionsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDimensions} />}
-            {activeTab === "rag" && <><RagServingStatus profile={ragProfile} /><RagTab model={selected} selectedDatasetId={ragDatasetId} profile={ragProfile} previewDocuments={previews[ragDatasetId] ?? []} onDatasetChange={setSelectedRagDatasetId} onRefresh={() => void run("profile", async () => refreshProfile(ragDatasetId))} onClassify={classify} onApprove={approve} onIndex={index} busy={busy} /></>}
+            {activeTab === "analysis" && <AnalysisDefinitionsTab model={selected} catalogDatasets={catalogDatasets} onSaveMetrics={saveMetrics} onSaveDimensions={saveDimensions} />}
+            {activeTab === "rag" && <><RagServingStatus profile={ragProfile} /><RagTab model={selected} selectedDatasetId={ragDatasetId} profile={ragProfile} previewDocuments={previews[ragDatasetId] ?? []} jobsRefreshToken={ragJobsRefreshToken} onDatasetChange={setSelectedRagDatasetId} onRefresh={() => void run("profile", async () => refreshProfile(ragDatasetId))} onClassify={classify} onApprove={approve} onIndex={index} busy={busy} /></>}
             {activeTab === "access" && <AccessTab model={selected} />}
           </main>
         </div>
@@ -317,45 +325,211 @@ function SchemaCard({ dataset, catalogDatasets }: { dataset: SemanticDataset; ca
   return <Card className="semantic-real-schema-card" size="none"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">{dataset.layer ?? "CATALOG"} · {dataset.rows ?? "행 수 미상"}</span><h3>{dataset.name ?? dataset.datasetId}</h3><p>{dataset.description || "Catalog Dataset schema"}</p></div><code>{dataset.schemaFingerprint?.slice(0, 12) ?? "schema"}</code></div><div className="semantic-real-schema-table"><div className="header"><span>컬럼</span><span>타입</span><span>샘플</span></div>{schema.map((column) => <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{column.sampleValues.slice(0, 2).join(" · ") || "샘플 없음"}</small></div>)}</div></Card>;
 }
 
-function MetricsTab({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (metrics: SemanticMetric[]) => Promise<void> }) {
+function draftDefinitionId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function technicalName(value: string, fallback: string) {
+  const normalized = value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  return normalized || fallback;
+}
+
+function uniqueDefinitionName(base: string, existingNames: string[]) {
+  const names = new Set(existingNames);
+  if (!names.has(base)) return base;
+  let suffix = 2;
+  while (names.has(`${base}_${suffix}`)) suffix += 1;
+  return `${base}_${suffix}`;
+}
+
+function isNumericSemanticType(dataType: string) {
+  return /(^|\b)(tinyint|smallint|int|integer|bigint|float|double|decimal|numeric|number|real)(\b|\()/i.test(dataType);
+}
+
+function quoteSemanticColumn(columnName: string) {
+  return `"${columnName.replace(/"/g, '""')}"`;
+}
+
+function firstDefinitionColumn(
+  model: SemanticModel,
+  catalogDatasets: CatalogDataset[],
+  usedColumns: Set<string>,
+  predicate: (column: SemanticSchemaColumn) => boolean = () => true,
+) {
+  for (const dataset of model.datasets) {
+    const column = schemaFor(dataset, catalogDatasets)
+      .find((item) => predicate(item) && !usedColumns.has(`${dataset.datasetId}:${item.name}`));
+    if (column) return { dataset, column };
+  }
+  return null;
+}
+
+function AnalysisDefinitionsTab({ model, catalogDatasets, onSaveMetrics, onSaveDimensions }: {
+  model: SemanticModel;
+  catalogDatasets: CatalogDataset[];
+  onSaveMetrics: (metrics: SemanticMetric[]) => Promise<void>;
+  onSaveDimensions: (dimensions: SemanticDimension[]) => Promise<void>;
+}) {
+  return (
+    <div className="semantic-real-tab-content">
+      <Card size="none" className="semantic-real-analysis-guide">
+        <div>
+          <span className="semantic-real-eyebrow">ANALYSIS DEFINITIONS</span>
+          <h2>무엇을 계산하고, 어떤 기준으로 나눠볼지 정합니다.</h2>
+          <p><strong>계산할 값</strong>은 매출 합계·평균 평점처럼 숫자로 계산할 항목이고, <strong>나눠볼 기준</strong>은 상품·카테고리·날짜처럼 결과를 묶거나 필터링할 항목입니다.</p>
+        </div>
+        <div className="semantic-real-analysis-counts">
+          <span><strong>{model.metrics.length}</strong>개 계산 값</span>
+          <span><strong>{model.dimensions.length}</strong>개 나눠볼 기준</span>
+        </div>
+      </Card>
+      <MetricsSection model={model} catalogDatasets={catalogDatasets} onSave={onSaveMetrics} />
+      <DimensionsSection model={model} catalogDatasets={catalogDatasets} onSave={onSaveDimensions} />
+    </div>
+  );
+}
+
+function MetricsSection({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (metrics: SemanticMetric[]) => Promise<void> }) {
   const [metrics, setMetrics] = useState(model.metrics);
   useEffect(() => setMetrics(model.metrics), [model.id, model.metrics]);
   const update = (id: string, patch: Partial<SemanticMetric>) => setMetrics((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="METRICS" title="지표의 실제 원본 컬럼" description="계산식과 함께 어떤 Catalog schema 컬럼을 사용하는지 저장합니다." action={<Button type="button" onClick={() => void onSave(metrics)}><Save /> 지표 저장</Button>} /><div className="semantic-real-definition-list">{metrics.map((metric) => <Card key={metric.id} className="semantic-real-definition-card" size="none"><div className="semantic-real-definition-main"><Input value={metric.label} onChange={(event) => update(metric.id, { label: event.target.value })} aria-label={`${metric.name} 표시명`} /><code>{metric.name}</code><Input value={metric.expression} onChange={(event) => update(metric.id, { expression: event.target.value })} aria-label={`${metric.name} 계산식`} /></div><PhysicalColumnPicker model={model} catalogDatasets={catalogDatasets} datasetId={metric.datasetId ?? ""} selectedColumns={metric.sourceColumns} onDatasetChange={(datasetId) => update(metric.id, { datasetId, sourceColumns: [] })} onColumnsChange={(sourceColumns) => update(metric.id, { sourceColumns })} /></Card>)}</div></div>;
+  const add = () => {
+    const usedColumns = new Set(metrics.flatMap((item) => item.sourceColumns.map((column) => `${item.datasetId}:${column}`)));
+    const candidate = firstDefinitionColumn(model, catalogDatasets, usedColumns, (column) => isNumericSemanticType(column.dataType));
+    const baseName = candidate ? technicalName(`${candidate.column.name}_sum`, "calculated_value") : "row_count";
+    const name = uniqueDefinitionName(baseName, metrics.map((item) => item.name));
+    setMetrics((current) => [...current, {
+      id: draftDefinitionId("metric"),
+      name,
+      label: candidate ? `${candidate.column.name} 합계` : "행 개수",
+      description: candidate ? `${candidate.column.name} 컬럼의 합계입니다.` : "Dataset의 전체 행 개수입니다.",
+      expression: candidate ? `SUM(${quoteSemanticColumn(candidate.column.name)})` : "COUNT(*)",
+      datasetId: candidate?.dataset.datasetId ?? model.datasets[0]?.datasetId ?? null,
+      sourceColumns: candidate ? [candidate.column.name] : [],
+      format: null,
+    }]);
+  };
+  const remove = (id: string) => setMetrics((current) => current.filter((item) => item.id !== id));
+  return (
+    <section className="semantic-real-definition-section" aria-labelledby="semantic-calculated-values-title">
+      <SectionTitle
+        eyebrow="CALCULATED VALUES"
+        title="계산할 값"
+        titleId="semantic-calculated-values-title"
+        description="예: 상품 가격 합계, 평균 평점, 전체 상품 수. 실제 Catalog 컬럼과 계산식을 함께 저장합니다."
+        action={<div className="semantic-real-definition-actions"><Button variant="outline" type="button" onClick={add}><Plus /> 계산 값 추가</Button><Button type="button" onClick={() => void onSave(metrics)}><Save /> 계산 값 저장</Button></div>}
+      />
+      {metrics.length === 0 ? <DefinitionEmptyState title="아직 계산할 값이 없습니다." description="계산 값 추가를 누르면 연결된 Dataset의 숫자 컬럼으로 실제 항목을 만들 수 있습니다." onAdd={add} buttonLabel="첫 계산 값 추가" /> : <div className="semantic-real-definition-list">{metrics.map((metric) => <Card key={metric.id} className="semantic-real-definition-card" size="none">
+        <div className="semantic-real-definition-card-header"><strong>{metric.label || "이름 없는 계산 값"}</strong><Button variant="ghost" type="button" aria-label={`${metric.label || metric.name} 삭제`} onClick={() => remove(metric.id)}><Trash2 /> 삭제</Button></div>
+        <div className="semantic-real-definition-main">
+          <label>화면에 보일 이름<Input value={metric.label} onChange={(event) => update(metric.id, { label: event.target.value })} aria-label={`${metric.name} 표시명`} /></label>
+          <label>내부 이름<Input value={metric.name} onChange={(event) => update(metric.id, { name: technicalName(event.target.value, metric.name) })} aria-label={`${metric.name} 내부 이름`} /></label>
+          <label>계산식<Input value={metric.expression} onChange={(event) => update(metric.id, { expression: event.target.value })} aria-label={`${metric.name} 계산식`} /></label>
+        </div>
+        <PhysicalColumnPicker model={model} catalogDatasets={catalogDatasets} datasetId={metric.datasetId ?? ""} selectedColumns={metric.sourceColumns} onDatasetChange={(datasetId) => update(metric.id, { datasetId, sourceColumns: [] })} onColumnsChange={(sourceColumns) => update(metric.id, { sourceColumns })} />
+      </Card>)}</div>}
+    </section>
+  );
 }
 
-function DimensionsTab({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (dimensions: SemanticDimension[]) => Promise<void> }) {
+function DimensionsSection({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (dimensions: SemanticDimension[]) => Promise<void> }) {
   const [dimensions, setDimensions] = useState(model.dimensions);
   useEffect(() => setDimensions(model.dimensions), [model.id, model.dimensions]);
   const update = (id: string, patch: Partial<SemanticDimension>) => setDimensions((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="DIMENSIONS" title="분석 기준의 실제 schema 컬럼" description="분석 기준을 만들 때 실제 Catalog Dataset과 컬럼을 선택합니다." action={<Button type="button" onClick={() => void onSave(dimensions)}><Save /> 분석 기준 저장</Button>} /><div className="semantic-real-definition-list">{dimensions.map((dimension) => <Card key={dimension.id} className="semantic-real-definition-card" size="none"><div className="semantic-real-definition-main"><Input value={dimension.label} onChange={(event) => update(dimension.id, { label: event.target.value })} aria-label={`${dimension.name} 표시명`} /><code>{dimension.name}</code><Input value={dimension.description} onChange={(event) => update(dimension.id, { description: event.target.value })} aria-label={`${dimension.name} 설명`} /></div><PhysicalColumnPicker model={model} catalogDatasets={catalogDatasets} datasetId={dimension.datasetId ?? ""} selectedColumns={dimension.columnName ? [dimension.columnName] : []} single onDatasetChange={(datasetId) => update(dimension.id, { datasetId, columnName: "", dataType: "" })} onColumnsChange={(columns) => { const column = schemaFor(modelDataset(model, dimension.datasetId), catalogDatasets).find((item) => item.name === columns[0]); update(dimension.id, { columnName: columns[0] ?? "", dataType: column?.dataType ?? "" }); }} /></Card>)}</div></div>;
+  const add = () => {
+    const usedColumns = new Set(dimensions.map((item) => `${item.datasetId}:${item.columnName}`));
+    const candidate = firstDefinitionColumn(model, catalogDatasets, usedColumns);
+    if (!candidate) return;
+    const name = uniqueDefinitionName(technicalName(candidate.column.name, "grouping_field"), dimensions.map((item) => item.name));
+    setDimensions((current) => [...current, {
+      id: draftDefinitionId("dimension"),
+      name,
+      label: candidate.column.name,
+      description: `${candidate.dataset.name ?? candidate.dataset.datasetId}의 ${candidate.column.name} 컬럼으로 결과를 나눕니다.`,
+      datasetId: candidate.dataset.datasetId,
+      columnName: candidate.column.name,
+      dataType: candidate.column.dataType,
+    }]);
+  };
+  const remove = (id: string) => setDimensions((current) => current.filter((item) => item.id !== id));
+  const hasAvailableColumn = Boolean(firstDefinitionColumn(
+    model,
+    catalogDatasets,
+    new Set(dimensions.map((item) => `${item.datasetId}:${item.columnName}`)),
+  ));
+  return (
+    <section className="semantic-real-definition-section" aria-labelledby="semantic-grouping-fields-title">
+      <SectionTitle
+        eyebrow="GROUPING AND FILTERING"
+        title="나눠볼 기준"
+        titleId="semantic-grouping-fields-title"
+        description="예: 상품명별, 카테고리별, 등록일별. 그룹·필터에 사용할 실제 Catalog 컬럼을 연결합니다."
+        action={<div className="semantic-real-definition-actions"><Button variant="outline" type="button" disabled={!hasAvailableColumn} onClick={add}><Plus /> 기준 추가</Button><Button type="button" onClick={() => void onSave(dimensions)}><Save /> 기준 저장</Button></div>}
+      />
+      {dimensions.length === 0 ? <DefinitionEmptyState title="아직 나눠볼 기준이 없습니다." description={hasAvailableColumn ? "기준 추가를 누르면 실제 Catalog 컬럼이 연결된 항목을 만듭니다." : "먼저 데이터 연결 탭에서 schema가 있는 Dataset을 연결하세요."} onAdd={add} buttonLabel="첫 기준 추가" disabled={!hasAvailableColumn} /> : <div className="semantic-real-definition-list">{dimensions.map((dimension) => <Card key={dimension.id} className="semantic-real-definition-card" size="none">
+        <div className="semantic-real-definition-card-header"><strong>{dimension.label || "이름 없는 기준"}</strong><Button variant="ghost" type="button" aria-label={`${dimension.label || dimension.name} 삭제`} onClick={() => remove(dimension.id)}><Trash2 /> 삭제</Button></div>
+        <div className="semantic-real-definition-main">
+          <label>화면에 보일 이름<Input value={dimension.label} onChange={(event) => update(dimension.id, { label: event.target.value })} aria-label={`${dimension.name} 표시명`} /></label>
+          <label>내부 이름<Input value={dimension.name} onChange={(event) => update(dimension.id, { name: technicalName(event.target.value, dimension.name) })} aria-label={`${dimension.name} 내부 이름`} /></label>
+          <label>설명<Input value={dimension.description} onChange={(event) => update(dimension.id, { description: event.target.value })} aria-label={`${dimension.name} 설명`} /></label>
+        </div>
+        <PhysicalColumnPicker model={model} catalogDatasets={catalogDatasets} datasetId={dimension.datasetId ?? ""} selectedColumns={dimension.columnName ? [dimension.columnName] : []} single inputName={`dimension-schema-${dimension.id}`} onDatasetChange={(datasetId) => update(dimension.id, { datasetId, columnName: "", dataType: "" })} onColumnsChange={(columns) => { const column = schemaFor(modelDataset(model, dimension.datasetId), catalogDatasets).find((item) => item.name === columns[0]); update(dimension.id, { columnName: columns[0] ?? "", dataType: column?.dataType ?? "" }); }} />
+      </Card>)}</div>}
+    </section>
+  );
 }
 
-function PhysicalColumnPicker({ model, catalogDatasets, datasetId, selectedColumns, single = false, onDatasetChange, onColumnsChange }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; datasetId: string; selectedColumns: string[]; single?: boolean; onDatasetChange: (datasetId: string) => void; onColumnsChange: (columns: string[]) => void }) {
+function DefinitionEmptyState({ title, description, onAdd, buttonLabel, disabled = false }: { title: string; description: string; onAdd: () => void; buttonLabel: string; disabled?: boolean }) {
+  return <Card size="none" className="semantic-real-definition-empty"><Plus /><strong>{title}</strong><p>{description}</p><Button variant="outline" type="button" disabled={disabled} onClick={onAdd}><Plus /> {buttonLabel}</Button></Card>;
+}
+
+function PhysicalColumnPicker({ model, catalogDatasets, datasetId, selectedColumns, single = false, inputName, onDatasetChange, onColumnsChange }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; datasetId: string; selectedColumns: string[]; single?: boolean; inputName?: string; onDatasetChange: (datasetId: string) => void; onColumnsChange: (columns: string[]) => void }) {
   const dataset = modelDataset(model, datasetId);
   const schema = schemaFor(dataset, catalogDatasets);
-  return <div className="semantic-real-binding"><label>원본 Dataset<select value={datasetId} onChange={(event) => onDatasetChange(event.target.value)}><option value="">선택하세요</option>{model.datasets.map((item) => <option key={item.datasetId} value={item.datasetId}>{item.name ?? item.datasetId}</option>)}</select></label><div><span>실제 schema 컬럼</span><div className="semantic-real-column-options">{schema.map((column) => <label key={column.name}><input type={single ? "radio" : "checkbox"} name={single ? `schema-${datasetId}` : undefined} checked={selectedColumns.includes(column.name)} onChange={(event) => onColumnsChange(single ? [column.name] : event.target.checked ? [...selectedColumns, column.name] : selectedColumns.filter((item) => item !== column.name))} /><code>{schemaColumnLabel(column)}</code></label>)}</div></div></div>;
+  return <div className="semantic-real-binding"><label>원본 Dataset<select value={datasetId} onChange={(event) => onDatasetChange(event.target.value)}><option value="">선택하세요</option>{model.datasets.map((item) => <option key={item.datasetId} value={item.datasetId}>{item.name ?? item.datasetId}</option>)}</select></label><div><span>실제 schema 컬럼</span><div className="semantic-real-column-options">{schema.map((column) => <label key={column.name}><input type={single ? "radio" : "checkbox"} name={single ? inputName ?? `schema-${datasetId}` : undefined} checked={selectedColumns.includes(column.name)} onChange={(event) => onColumnsChange(single ? [column.name] : event.target.checked ? [...selectedColumns, column.name] : selectedColumns.filter((item) => item !== column.name))} /><code>{schemaColumnLabel(column)}</code></label>)}</div></div></div>;
 }
 
-function RagTab({ model, selectedDatasetId, profile, previewDocuments, onDatasetChange, onRefresh, onClassify, onApprove, onIndex, busy }: { model: SemanticModel; selectedDatasetId: string; profile?: RagProfile; previewDocuments: RagDocument[]; onDatasetChange: (id: string) => void; onRefresh: () => void; onClassify: () => void; onApprove: (roles: RagRolePayload) => void; onIndex: () => void; busy: string | null }) {
+function RagTab({ model, selectedDatasetId, profile, previewDocuments, jobsRefreshToken, onDatasetChange, onRefresh, onClassify, onApprove, onIndex, busy }: { model: SemanticModel; selectedDatasetId: string; profile?: RagProfile; previewDocuments: RagDocument[]; jobsRefreshToken: number; onDatasetChange: (id: string) => void; onRefresh: () => void; onClassify: () => void; onApprove: (roles: RagRolePayload) => void; onIndex: () => void; busy: string | null }) {
   const [roles, setRoles] = useState<Record<string, string>>({});
+  const [embeddedColumns, setEmbeddedColumns] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (!profile) return;
     const next: Record<string, string> = {};
+    const nextEmbedded: Record<string, boolean> = {};
     profile.bodyColumns.forEach((column) => { next[column] = "body"; });
     profile.titleColumns.forEach((column) => { next[column] = "title"; });
     profile.metadataColumns.forEach((column) => { next[column] = "metadata"; });
     profile.identifierColumns.forEach((column) => { next[column] = "identifier"; });
     profile.excludedColumns.forEach((column) => { next[column] = "excluded"; });
     profile.recommendations.forEach((item) => { if (!next[item.columnName]) next[item.columnName] = item.role; });
+    [...profile.bodyColumns, ...profile.titleColumns].forEach((column) => { nextEmbedded[column] = true; });
     setRoles(next);
+    setEmbeddedColumns(nextEmbedded);
   }, [profile]);
   const schema = profile?.schema ?? modelDataset(model, selectedDatasetId)?.schema ?? [];
-  const selectRole = (column: string, role: string) => setRoles((current) => ({ ...current, [column]: role }));
+  const selectRole = (column: string, role: string) => {
+    setRoles((current) => ({ ...current, [column]: role }));
+    setEmbeddedColumns((current) => ({
+      ...current,
+      [column]: role === "body" || role === "title" ? true : role === "excluded" ? false : Boolean(current[column]),
+    }));
+  };
+  const includeWholeDocument = () => setEmbeddedColumns(Object.fromEntries(
+    schema.map((column) => [column.name, roles[column.name] !== "excluded"]),
+  ));
   const approveWithRoles = () => {
     if (!profile) return;
     onApprove({
-      bodyColumns: schema.filter((column) => roles[column.name] === "body").map((column) => column.name),
+      bodyColumns: schema.filter((column) => {
+        const role = roles[column.name];
+        return role === "body" || (embeddedColumns[column.name] && role !== "title" && role !== "excluded");
+      }).map((column) => column.name),
       titleColumns: schema.filter((column) => roles[column.name] === "title").map((column) => column.name),
       metadataColumns: schema.filter((column) => roles[column.name] === "metadata").map((column) => column.name),
       identifierColumns: schema.filter((column) => roles[column.name] === "identifier").map((column) => column.name),
@@ -363,7 +537,12 @@ function RagTab({ model, selectedDatasetId, profile, previewDocuments, onDataset
     });
   };
   const hasServingIndex = profile?.servingStatus === "serving" || profile?.servingStatus === "stale";
-  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 근거 검색" description="선택한 Semantic Model의 실제 schema·지표·분석 기준으로 문서를 만들고, 색인된 원문 근거를 직접 검색합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 지표·분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{hasServingIndex ? statusLabel(profile.servingStatus ?? "serving") : statusLabel(profile.indexStatus)}</strong></span><Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>역할을 선택하면 아래 문서 미리보기에 실제 반영됩니다.</p></div><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge></div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>RAG 역할</span></div>{schema.map((column) => { const recommendation = profile.recommendations.find((item) => item.columnName === column.name); return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={roles[column.name] ?? "excluded"} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select></div>; })}</div><div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !profile.bodyColumns.length && !Object.values(roles).includes("body")} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{hasServingIndex ? <RefreshCw /> : <Check />} {hasServingIndex ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><RagSearchPanel datasetId={selectedDatasetId} profile={profile} /><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
+  const hasEmbeddingBody = schema.some((column) => {
+    const role = roles[column.name];
+    return role === "body" || (embeddedColumns[column.name] && role !== "title" && role !== "excluded");
+  });
+  const embeddedFieldCount = schema.filter((column) => roles[column.name] === "title" || embeddedColumns[column.name]).length;
+  return <div className="semantic-real-tab-content"><SectionTitle eyebrow="RAG SEARCH" title="RAG 역할 분석과 실제 근거 검색" description="선택한 Semantic Model의 실제 schema·분석 기준으로 문서를 만들고, 색인된 원문 근거를 직접 검색합니다." action={<Button variant="outline" type="button" disabled={!selectedDatasetId || busy !== null} onClick={onRefresh}><RefreshCw /> profile 새로고침</Button>} /><div className="semantic-real-rag-dataset-switcher">{model.datasets.map((dataset) => <button type="button" key={dataset.datasetId} className={dataset.datasetId === selectedDatasetId ? "active" : ""} onClick={() => onDatasetChange(dataset.datasetId)}><Database size={16} /><span><strong>{dataset.name ?? dataset.datasetId}</strong><small>{statusLabel(profile?.datasetId === dataset.datasetId ? profile.reviewState : "not_configured")}</small></span></button>)}</div>{!profile ? <Card size="none" className="semantic-real-rag-empty"><Sparkles /><strong>아직 RAG 분석 결과가 없습니다.</strong><p>Catalog schema와 선택된 분석 기준을 AI에 전달해 컬럼 역할을 추천합니다.</p><Button type="button" disabled={busy !== null} onClick={onClassify}><Sparkles /> AI 컬럼 분석 시작</Button></Card> : <><div className="semantic-real-rag-summary"><span><strong>{profile.schema.length}</strong>개 schema 컬럼</span><span><strong>{embeddedFieldCount}</strong>개 임베딩 포함</span><span><strong>{profile.recommendations.length}</strong>개 추천</span><span><strong>{statusLabel(profile.reviewState)}</strong></span><span><strong>{hasServingIndex ? statusLabel(profile.servingStatus ?? "serving") : statusLabel(profile.indexStatus)}</strong></span>{profile.activeEmbeddingModel && <span><strong>{[profile.activeEmbeddingProvider, profile.activeEmbeddingModel, profile.activeEmbeddingDimensions ? `${profile.activeEmbeddingDimensions}차원` : null].filter(Boolean).join(" · ")}</strong></span>}<Button type="button" disabled={busy !== null} onClick={onClassify}><RefreshCw /> AI 재분석</Button></div><Card size="none" className="semantic-real-rag-role-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">SCHEMA → RAG ROLE</span><h3>전체 schema와 검색 역할</h3><p>제목과 본문은 여러 컬럼을 선택할 수 있으며, 선택된 모든 값이 필드명과 함께 하나의 문서로 합쳐져 청킹·임베딩됩니다.</p></div><div className="semantic-real-role-heading-actions"><Badge variant={profile.classifierConfidence && profile.classifierConfidence >= 0.8 ? "success" : "warning"}>{profile.classifier ? `${profile.classifier} · ${Math.round((profile.classifierConfidence ?? 0) * 100)}%` : "분석 결과"}</Badge><Button variant="outline" type="button" onClick={includeWholeDocument}><FileText /> 제외 필드 빼고 전체 포함</Button></div></div><div className="semantic-real-embedding-guide"><strong>실제 임베딩 입력: {embeddedFieldCount}개 필드</strong><span>문서 제목은 항상 포함됩니다. 필터 메타데이터와 식별자도 아래 체크를 켜면 원래 역할을 유지하면서 본문 임베딩에 함께 들어갑니다.</span></div><div className="semantic-real-role-table"><div className="header"><span>실제 컬럼</span><span>데이터 타입</span><span>AI 추천 이유</span><span>주 역할</span><span>임베딩 포함</span></div>{schema.map((column) => { const role = roles[column.name] ?? "excluded"; const recommendation = profile.recommendations.find((item) => item.columnName === column.name); const alwaysEmbedded = role === "body" || role === "title"; const cannotEmbed = role === "excluded"; return <div key={column.name}><code>{column.name}</code><span>{column.dataType}</span><small>{recommendation?.reason ?? "Semantic 바인딩 또는 사용자 선택"}</small><select value={role} onChange={(event) => selectRole(column.name, event.target.value)}><option value="body">검색 본문</option><option value="title">문서 제목</option><option value="metadata">필터 메타데이터</option><option value="identifier">문서 식별자</option><option value="excluded">제외</option></select><label className="semantic-real-embedding-toggle"><input type="checkbox" checked={alwaysEmbedded || Boolean(embeddedColumns[column.name])} disabled={alwaysEmbedded || cannotEmbed} onChange={(event) => setEmbeddedColumns((current) => ({ ...current, [column.name]: event.target.checked }))} /><span>{cannotEmbed ? "제외됨" : alwaysEmbedded ? "자동 포함" : "본문에도 포함"}</span></label></div>; })}</div><div className="semantic-real-rag-actions"><Button variant="outline" type="button" disabled={busy !== null || !hasEmbeddingBody} onClick={approveWithRoles}><ShieldCheck /> 역할 승인 및 문서 미리보기</Button><Button type="button" disabled={busy !== null || profile.reviewState !== "approved"} onClick={onIndex}>{hasServingIndex ? <RefreshCw /> : <Check />} {hasServingIndex ? "다시 색인" : "VectorDB 색인"}</Button></div></Card><RagJobHistory datasetId={selectedDatasetId} refreshToken={jobsRefreshToken} /><RagSearchPanel datasetId={selectedDatasetId} profile={profile} /><DocumentPreview profile={profile} documents={previewDocuments} /></>}</div>;
 }
 
 function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: RagProfile }) {
@@ -418,6 +597,7 @@ function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: Ra
         </Button>
       </form>
       {!searchReady && <p className="semantic-real-rag-search-guidance">현재 색인의 serving 상태가 아닙니다. 역할을 승인하고 VectorDB 색인을 완료하면 검색할 수 있습니다.</p>}
+      {profile.servingStatus === "stale" && <div className="semantic-real-rag-search-error" role="status"><AlertTriangle />현재 근거는 이전 Dataset 버전의 색인입니다. 검색은 가능하지만 다시 색인해야 최신 데이터가 반영됩니다.</div>}
       {searchError && <div className="semantic-real-rag-search-error" role="alert"><AlertTriangle />{searchError}</div>}
       {result && <RagSearchResults result={result} />}
     </Card>
@@ -427,24 +607,40 @@ function RagSearchPanel({ datasetId, profile }: { datasetId: string; profile: Ra
 function RagSearchResults({ result }: { result: RagSearchResponse }) {
   const resultCount = typeof result.retrieval.resultCount === "number" ? result.retrieval.resultCount : result.sources.length;
   const aliases = Array.isArray(result.retrieval.aliases) ? result.retrieval.aliases.join(", ") : "";
+  const retrievalStatus = String(result.retrieval.status ?? "complete");
+  const filterLabels = ragAppliedFilterLabels(result.retrieval.filters);
+  const fallbackEvidenceCount = typeof result.retrieval.fallbackEvidenceCount === "number"
+    ? result.retrieval.fallbackEvidenceCount
+    : result.sources.filter((source) => source.fallbackApplied).length;
+  const queryEmbeddings = Object.entries(result.retrieval.queryEmbeddings ?? {});
   return (
     <div className="semantic-real-rag-search-results" aria-live="polite">
       <div className="semantic-real-rag-retrieval-summary">
         <strong>{resultCount}개 실제 근거</strong>
-        <span>{result.retrieval.mode ?? "hybrid"} · {result.retrieval.status ?? "complete"}</span>
+        <span>{result.retrieval.mode ?? "hybrid"} · {statusLabel(retrievalStatus)}</span>
         {aliases && <code>{aliases}</code>}
         {result.retrieval.servingIndex && <code>{String(result.retrieval.servingIndex)}</code>}
+        {(result.retrieval.queryPlannerProvider || result.retrieval.queryPlannerModel) && <code>검색 계획 {[result.retrieval.queryPlannerProvider, result.retrieval.queryPlannerModel].filter(Boolean).join(" · ")}</code>}
+        {queryEmbeddings.map(([datasetId, embedding]) => <code key={`query-embedding-${datasetId}`}>쿼리 임베딩 {datasetId} · {[embedding.provider, embedding.model, embedding.dimensions ? `${embedding.dimensions}차원` : null].filter(Boolean).join(" · ")}</code>)}
+        {(result.retrieval.relevanceProvider || result.retrieval.relevanceModel) && <code>관련성 검증 {[result.retrieval.relevanceProvider, result.retrieval.relevanceModel].filter(Boolean).join(" · ")}</code>}
+        {filterLabels.map((label) => <code key={label}>{label}</code>)}
+        {fallbackEvidenceCount > 0 && <Badge variant="warning">임베딩 전용 청킹 {fallbackEvidenceCount}건</Badge>}
       </div>
-      {result.sources.length === 0 ? <div className="semantic-real-rag-search-empty">검색어와 일치하는 실제 근거가 없습니다.</div> : <div className="semantic-real-rag-search-sources">
+      {result.sources.length === 0 ? <div className="semantic-real-rag-search-empty">{ragRetrievalEmptyMessage(retrievalStatus)}</div> : <div className="semantic-real-rag-search-sources">
         {result.sources.map((source, index) => (
           <article key={`${source.documentId}-${index}`}>
             <div className="semantic-real-rag-source-head">
               <div><span>근거 {index + 1}</span><h4>{ragEvidenceTitle(source.title, source.body)}</h4></div>
-              {typeof source.score === "number" && <Badge variant="secondary">점수 {source.score.toFixed(4)}</Badge>}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {source.fallbackApplied && <Badge variant="warning">LLM 경계 조정 폴백</Badge>}
+                {typeof source.score === "number" && <Badge variant="secondary">관련성 {Math.round(source.score * 100)}%</Badge>}
+              </div>
             </div>
             <p>{source.body || "본문이 비어 있습니다."}</p>
+            {source.relevanceReason && <small>{source.relevanceReason}</small>}
+            {source.fallbackApplied && <small>청킹 방식: {(source.chunkingStrategies ?? [source.chunkingStrategy]).filter(Boolean).join(", ") || "semantic_embedding_fallback"} · 사유: {(source.fallbackReasons ?? [source.fallbackReason]).filter(Boolean).join(", ") || "경계 조정 응답 검증 실패"}</small>}
             {Object.keys(source.metadata ?? {}).length > 0 && <dl>{Object.entries(source.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>}
-            <footer><code>{source.documentId}</code>{source.sourceRowId && <span>원본 행 {source.sourceRowId}</span>}{source.sourceFields?.length > 0 && <span>필드 {source.sourceFields.map(ragSourceFieldLabel).join(", ")}</span>}</footer>
+            <footer><code>{source.documentId}</code>{source.sourceRowId && <span>원본 행 {source.sourceRowId}</span>}{(source.embeddingProvider || source.embeddingModel) && <span>임베딩 {[source.embeddingProvider, source.embeddingModel, source.embeddingDimensions ? `${source.embeddingDimensions}차원` : null].filter(Boolean).join(" · ")}</span>}{source.chunkingVersion && <span>청킹 {source.chunkingVersion}</span>}{source.sourceFields?.length > 0 && <span>필드 {source.sourceFields.map(ragSourceFieldLabel).join(", ")}</span>}</footer>
           </article>
         ))}
       </div>}
@@ -452,19 +648,34 @@ function RagSearchResults({ result }: { result: RagSearchResponse }) {
   );
 }
 
-function ragEvidenceTitle(value: string | null | undefined, body?: string | null) {
+function ragRetrievalEmptyMessage(status: string) {
+  if (status === "query_planning_unavailable") return "질문의 검색 조건을 안전하게 해석하지 못해 근거 검색을 중단했습니다.";
+  if (status === "relevance_unavailable") return "검색 후보의 관련성을 검증하지 못해 근거를 표시하지 않았습니다.";
+  if (status === "no_relevant_evidence") return "질문을 직접 뒷받침하는 근거가 없어 결과를 표시하지 않았습니다.";
+  if (status === "degraded_no_matches") return "쿼리 임베딩을 사용할 수 없어 키워드 검색만 수행했지만 일치하는 근거가 없었습니다.";
+  return "검색어와 일치하는 실제 근거가 없습니다.";
+}
+
+function ragAppliedFilterLabels(value: unknown) {
+  if (!value || typeof value !== "object") return [];
+  const labels: string[] = [];
+  Object.entries(value as Record<string, unknown>).forEach(([datasetId, datasetFilters]) => {
+    if (!datasetFilters || typeof datasetFilters !== "object") return;
+    Object.entries(datasetFilters as Record<string, unknown>).forEach(([field, predicate]) => {
+      if (!predicate || typeof predicate !== "object") return;
+      const item = predicate as Record<string, unknown>;
+      if (item.operator && item.value !== undefined) labels.push(`${datasetId} · ${field} ${String(item.operator)} ${String(item.value)}`);
+    });
+  });
+  return labels;
+}
+
+function ragEvidenceTitle(value: string | null | undefined, _body?: string | null) {
   const title = String(value ?? "")
     .replace(/\[\/?TITLE\]/gi, "")
-    .trim()
-    .replace(/^[^:\n]+:\s*/, "")
     .trim();
   if (title) return title;
-
-  const bodyTitle = String(body ?? "")
-    .replace(/\[\/?BODY\]/gi, "")
-    .match(/(?:^|\n)\s*title:\s*([^\r\n]+)/i)?.[1]
-    ?.trim();
-  return bodyTitle || "제목 없는 문서";
+  return "제목 없는 문서";
 }
 
 function ragSourceFieldLabel(field: string | { logicalField?: string; physicalField?: string; role?: string }) {
@@ -477,15 +688,15 @@ function ragSourceFieldLabel(field: string | { logicalField?: string; physicalFi
 
 function DocumentPreview({ profile, documents }: { profile: RagProfile; documents: RagDocument[] }) {
   const servingReady = profile.servingStatus === "serving" || profile.servingStatus === "stale";
-  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어간 실제 문서</h3><p>임베딩 숫자 배열은 숨기고, 검색 본문·메타데이터·원본 schema만 표시합니다.</p></div><Badge variant={servingReady ? "success" : "muted"}>{statusLabel(servingReady ? profile.servingStatus ?? "serving" : profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div><small>{document.sourceDataset} · {document.sourceColumns.join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
+  return <Card size="none" className="semantic-real-document-card"><div className="semantic-real-card-heading"><div><span className="semantic-real-eyebrow">DOCUMENT PREVIEW</span><h3>VectorDB에 들어간 실제 문서</h3><p>임베딩 숫자 배열 대신, 어떤 필드가 어떤 문자열로 합쳐져 임베딩되는지 직접 확인합니다.</p></div><Badge variant={servingReady ? "success" : "muted"}>{statusLabel(servingReady ? profile.servingStatus ?? "serving" : profile.embeddingStatus)}</Badge></div>{documents.length === 0 ? <div className="semantic-real-document-empty"><FileText /><span>승인 후 실제 적재 문서가 표시됩니다.</span></div> : <div className="semantic-real-documents">{documents.map((document) => <article key={document.documentId}><div className="semantic-real-document-head"><code>{document.sourceRowId}</code><Badge size="sm">{statusLabel(document.embeddingStatus)}</Badge></div>{document.title && <strong>{document.title}</strong>}<p>{document.body}</p><div>{Object.entries(document.metadataDisplay).map(([key, value]) => <span key={key}><code>{key}</code>{String(value)}</span>)}</div>{document.embeddingText && <details className="semantic-real-embedding-preview"><summary>실제 임베딩 입력 보기</summary><pre>{document.embeddingText}</pre></details>}<small>{document.sourceDataset} · {document.sourceColumns.join(", ")} → {document.targetIndex}</small></article>)}</div>}</Card>;
 }
 
 function AccessTab({ model }: { model: SemanticModel }) {
   return <div className="semantic-real-tab-content"><SectionTitle eyebrow="MODEL ACCESS" title="접근 권한" description="실제 요청마다 서버가 업무 모델과 Dataset 권한을 다시 확인합니다." /><Card size="none" className="semantic-real-access-card">{model.permissionGrants.length ? model.permissionGrants.map((grant) => <div key={`${grant.principalType}-${grant.principalId}`}><ShieldCheck /><strong>{grant.principalId}</strong><span>{grant.principalType}</span><div>{grant.actions.map((action) => <Badge key={action} size="sm">{action}</Badge>)}</div></div>) : <p>등록된 권한 규칙이 없습니다.</p>}</Card></div>;
 }
 
-function SectionTitle({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
-  return <div className="semantic-real-section-title"><div><span className="semantic-real-eyebrow">{eyebrow}</span><h2>{title}</h2><p>{description}</p></div>{action}</div>;
+function SectionTitle({ eyebrow, title, titleId, description, action }: { eyebrow: string; title: string; titleId?: string; description: string; action?: ReactNode }) {
+  return <div className="semantic-real-section-title"><div><span className="semantic-real-eyebrow">{eyebrow}</span><h2 id={titleId}>{title}</h2><p>{description}</p></div>{action}</div>;
 }
 
 function CreateModelPanel({ datasets, busy, onCancel, onCreate }: { datasets: CatalogDataset[]; busy: boolean; onCancel: () => void; onCreate: (name: string, description: string, datasetIds: string[]) => void }) {
@@ -496,5 +707,5 @@ function CreateModelPanel({ datasets, busy, onCancel, onCreate }: { datasets: Ca
 }
 
 function EmptyModelState({ onCreate }: { onCreate: () => void }) {
-  return <Card size="none" className="semantic-real-empty-model"><Database /><h2>실제 업무 모델이 없습니다.</h2><p>Mock 데이터는 사용하지 않습니다. Catalog Dataset을 선택해 첫 업무 모델을 실제 DB에 생성하세요.</p><Button type="button" onClick={onCreate}><Plus /> 업무 모델 생성</Button></Card>;
+  return <Card size="none" className="semantic-real-empty-model"><Database /><h2>실제 업무 모델이 없습니다.</h2><p>Catalog Dataset을 선택해 첫 업무 모델을 실제 DB에 생성하세요.</p><Button type="button" onClick={onCreate}><Plus /> 업무 모델 생성</Button></Card>;
 }

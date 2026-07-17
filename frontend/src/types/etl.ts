@@ -502,10 +502,12 @@ export type PermissionDraft = {
     access: string[];
     checked: boolean;
     name: string;
+    principalId?: string;
+    principalType?: "group" | "public" | "role" | "user";
   }>;
   summary: string;
   template?: string;
-  visibility?: "조직 내부" | "프로젝트 멤버" | "외부 공유";
+  visibility?: "소유자 전용" | "선택한 주체" | "모든 인증 사용자";
 };
 
 export type TargetDraft = {

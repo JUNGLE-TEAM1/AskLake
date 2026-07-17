@@ -21,11 +21,20 @@ export type QueryAiSuggestion = {
   body: string;
   mode: QueryAiMode;
   model?: string | null;
+  provider?: string | null;
   notices: string[];
   retrieval?: {
     datasetIds?: string[];
     provenance?: string;
     resultCount?: number;
+    fallbackEvidenceCount?: number;
+    fallbackReasons?: string[];
+    degradationReasons?: string[];
+    queryPlannerProvider?: string | null;
+    queryPlannerModel?: string | null;
+    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
+    relevanceProvider?: string | null;
+    relevanceModel?: string | null;
     semanticModelNames?: string[];
     semanticModelVersions?: Array<number | null>;
     status?: string;
@@ -33,13 +42,21 @@ export type QueryAiSuggestion = {
   sources?: Array<{
     body?: string;
     chunkIndex?: number;
+    chunkingStrategy?: string;
     datasetId?: string;
+    documentId?: string;
+    embeddingModel?: string;
+    embeddingProvider?: string;
+    fallbackApplied?: boolean;
+    fallbackReason?: string;
+    fallbackReasons?: string[];
     parentDocumentId?: string;
     semanticModelIds?: string[];
     title?: string;
   }>;
   sql?: string;
   title: string;
+  usedEvidenceIds?: string[];
 };
 
 export type QueryAiRequestOptions = {

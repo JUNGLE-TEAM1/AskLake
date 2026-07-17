@@ -64,12 +64,20 @@ export type DashboardAssistantResponse = {
   configPatch?: Record<string, unknown>;
   message: string;
   model?: string | null;
-  provider?: "ai-gateway" | "local-input-guard" | "unavailable" | null;
+  provider?: string | null;
   retrieval?: {
     aliases?: string[];
     datasetIds?: string[];
     provenance?: string;
     resultCount?: number;
+    fallbackEvidenceCount?: number;
+    fallbackReasons?: string[];
+    degradationReasons?: string[];
+    queryPlannerProvider?: string | null;
+    queryPlannerModel?: string | null;
+    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
+    relevanceProvider?: string | null;
+    relevanceModel?: string | null;
     semanticModelNames?: string[];
     semanticModelVersions?: Array<number | null>;
     status?: string;
@@ -77,7 +85,14 @@ export type DashboardAssistantResponse = {
   sources?: Array<{
     body?: string;
     chunkIndex?: number;
+    chunkingStrategy?: string;
     datasetId?: string;
+    documentId?: string;
+    embeddingModel?: string;
+    embeddingProvider?: string;
+    fallbackApplied?: boolean;
+    fallbackReason?: string;
+    fallbackReasons?: string[];
     metadata?: Record<string, unknown>;
     parentDocumentId?: string;
     semanticModelIds?: string[];
@@ -85,6 +100,7 @@ export type DashboardAssistantResponse = {
   }>;
   warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
+  usedEvidenceIds?: string[];
 };
 
 export class DashboardAssistantNotConfiguredError extends Error {

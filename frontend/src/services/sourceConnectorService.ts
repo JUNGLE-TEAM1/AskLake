@@ -1,11 +1,5 @@
-import { apiClient, apiConfig } from "./apiClient";
+import { apiClient } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
-
-const directBackendBaseUrl = String(
-  import.meta.env.VITE_BACKEND_DIRECT_URL
-    || import.meta.env.VITE_API_BASE_URL
-    || "http://127.0.0.1:8080",
-).replace(/\/$/, "");
 
 type SourceFieldRows = Array<[string, string]>;
 
@@ -48,13 +42,11 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
-  if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
   return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  if (apiConfig.useMock) return { kafkaBroker: "127.0.0.1:19092" };
-  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
+  return apiClient.get<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
@@ -62,140 +54,17 @@ export async function listSourceAssets(sourceType: string, fields: SourceFieldRo
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
-  if (apiConfig.useMock) return resolveMockConnectorAnalysis(sourceType, fields);
   const body = { sourceConfig: fields, sourceType };
-  return postWithDevFallback<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
+  return apiClient.post<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
 }
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
-  if (apiConfig.useMock) {
-    const assets = mockSourceAssets(sourceType, prefix);
-    return { assets, count: assets.length, limit: assets.length, prefix };
-  }
   const body = { prefix, sourceConfig: fields, sourceType };
-  return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
-}
-
-function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRows): BackendSourceConnectorResponse {
-  const sourceLabel = fieldValue(fields, "Source Dataset")
-    || fieldValue(fields, "Bucket / Stage Name")
-    || fieldValue(fields, "Database Name")
-    || sourceType;
-  const previewColumns = ["review_id", "product_id", "rating", "review_text", "updated_at"];
-  const previewRows = [
-    ["r-1001", "p-100", "5", "배송이 빨라요", "2026-07-10T09:00:00Z"],
-    ["r-1002", "p-101", "4", "상품 상태가 좋아요", "2026-07-10T09:05:00Z"],
-  ];
-
-  return {
-    actionPath: "/api/etl/sources/test",
-    assets: mockSourceAssets(sourceType, ""),
-    draftPatch: {
-      source: {
-        connectionMessage: "mock 소스 연결 확인이 완료되었습니다.",
-        connectionStatus: "success",
-        sourceConfig: fields,
-        sourceLabel,
-        sourceType,
-      },
-    },
-    logs: ["mock connector fixture applied", "sample schema is ready"],
-    message: "mock 소스 연결 확인이 완료되었습니다.",
-    previewColumns,
-    previewNote: "mock 샘플",
-    previewRows,
-    status: "success",
-    testItems: [["소스 연결", "성공"], ["샘플 조회", "성공"], ["스키마 추론", "준비됨"]],
-  };
-}
-
-function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
-  if (sourceType === "PostgreSQL") {
-    return [
-      ["customer_reviews", prefix.trim() || "public", "detected"],
-      ["product_metadata", prefix.trim() || "public", "detected"],
-    ];
-  }
-  if (sourceType === "MongoDB") {
-    return [
-      ["app_events", prefix.trim() || "asklake_sources", "detected"],
-      ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
-    ];
-  }
-  const basePath = prefix.trim() || "sample";
-  return [
-    [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
-    [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
-  ];
-}
-
-async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
-  if (import.meta.env.DEV) {
-    try {
-      return await postBackendDirect<T>(path, body);
-    } catch (error) {
-      if (!isNetworkError(error) && !isNotFoundError(error)) {
-        throw error;
-      }
-    }
-  }
-
-  try {
-    return await apiClient.post<T>(path, body);
-  } catch (error) {
-    if (import.meta.env.DEV && isNotFoundError(error)) {
-      return postBackendDirect<T>(path, body);
-    }
-    throw error;
-  }
-}
-
-async function getWithDevFallback<T>(path: string): Promise<T> {
-  if (import.meta.env.DEV) {
-    try {
-      return await getBackendDirect<T>(path);
-    } catch (error) {
-      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
-    }
-  }
-
-  return apiClient.get<T>(path);
-}
-
-async function getBackendDirect<T>(path: string): Promise<T> {
-  const response = await fetch(`${directBackendBaseUrl}${path}`);
-  if (response.ok) return await response.json() as T;
-  const text = await response.text().catch(() => "");
-  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
-}
-
-async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${directBackendBaseUrl}${path}`, {
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  });
-  if (response.ok) {
-    return await response.json() as T;
-  }
-  const text = await response.text().catch(() => "");
-  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
-}
-
-function isNetworkError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /failed to fetch|networkerror|load failed/i.test(message);
+  return apiClient.post<SourceAssetsResponse>("/api/etl/sources/assets", body);
 }
 
 function normalizeSourceType(sourceType: string) {
   return sourceType === "Database" ? "PostgreSQL" : sourceType;
-}
-
-function isNotFoundError(error: unknown) {
-  const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) : 0;
-  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return status === 404 || /404|not found/i.test(`${code} ${message}`);
 }
 
 function normalizeConnectorAnalysis(
@@ -283,41 +152,6 @@ function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fiel
         requiresRecordParsing,
       },
     },
-  };
-}
-
-function buildMockRecordParsingPreview(rawLines: string[], recordParsing: RecordParsingDraft): RecordParsingPreviewResponse {
-  const indexed = rawLines.map((line, index) => ({ line, lineNumber: index + 1 })).filter(({ line }) => line.trim());
-  const rows = indexed.map(({ line, lineNumber }) => ({ line, lineNumber, values: line.trim().split(/\s+/) }));
-  const dataRows = recordParsing.header ? rows.slice(1) : rows;
-  const counts = new Map<number, number>();
-  dataRows.forEach(({ values }) => counts.set(values.length, (counts.get(values.length) ?? 0) + 1));
-  const maxCount = Math.max(0, ...counts.values());
-  const dominant = Array.from(counts.entries()).filter(([, count]) => count === maxCount).map(([count]) => count);
-  const expectedFieldCount = recordParsing.expectedFieldCount || recordParsing.columns.length || (dominant.length === 1 ? dominant[0] : 0);
-  const valid = dataRows.filter(({ values }) => values.length === expectedFieldCount);
-  const columns = Array.from({ length: expectedFieldCount }, (_, position) => {
-    const current = recordParsing.columns[position];
-    const values = valid.map((row) => row.values[position] ?? "");
-    const inferredType = current?.inferredType ?? inferPreviewColumnType(values);
-    const name = current?.name || `field_${position + 1}`;
-    return { confidence: 90, nullable: false, sourceName: name, targetName: name, type: inferredType };
-  });
-  const normalizedColumns = columns.map((column, position) => ({ position, name: column.targetName, inferredType: column.type as RecordParsingDraft["columns"][number]["inferredType"] }));
-  const invalidRows = dataRows.filter(({ values }) => values.length !== expectedFieldCount).slice(0, 20).map(({ line, lineNumber, values }) => ({
-    actualFieldCount: values.length,
-    expectedFieldCount,
-    lineNumber,
-    rawPreview: line.slice(0, 200),
-  }));
-  return {
-    canApply: expectedFieldCount > 0 && dataRows.length > 0 && invalidRows.length === 0,
-    columns,
-    invalidRows,
-    recordParsing: { ...recordParsing, columns: normalizedColumns, enabled: true, expectedFieldCount },
-    sampleRows: valid.map(({ values }) => values),
-    totalRows: dataRows.length,
-    validRows: valid.length,
   };
 }
 

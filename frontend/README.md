@@ -68,4 +68,4 @@ frontend/src/
 6. The backend returns `{ job, catalogTarget }`; the UI prepends the job to ETL state.
 7. Run the job. After Spark succeeds, the command response returns `dataset` and the UI prepends it to Catalog state.
 
-In live mode, initial ETL and Catalog lists come from backend hydrate endpoints and may start empty. In mock mode, the UI uses frontend fixtures and local fallback storage.
+Initial ETL and Catalog lists come only from backend APIs and may legitimately be empty. API failures stay visible as failures; the frontend does not substitute fixtures or local fallback data.

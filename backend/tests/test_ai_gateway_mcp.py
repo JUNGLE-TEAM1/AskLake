@@ -5,12 +5,15 @@ from unittest.mock import Mock, call, patch
 import httpx
 from fastapi import status
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.mcp.catalog import get_dataset_context, get_datasets_context
-from app.mcp.context import issue_ai_context_token, verify_ai_context_token
+from app.mcp.context import consume_ai_context_token, issue_ai_context_token, verify_ai_context_token
+from app.models.identity import AiContextConsumptionModel
 from app.mcp.server import create_mcp_components
 from app.schemas.catalog import CatalogDatasetResponse
 from app.services.ai_gateway_client import AiGatewayClient
@@ -67,6 +70,18 @@ class FakeSession:
     def __exit__(self, *_args: object) -> None:
         return None
 
+    def add(self, _value: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    def execute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def rollback(self) -> None:
+        return None
+
 
 class AiContextSecurityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -98,6 +113,25 @@ class AiContextSecurityTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertIn("expired", raised.exception.message)
+
+    def test_context_token_ttl_cannot_exceed_configured_maximum(self) -> None:
+        with self.assertRaises(ApiError) as raised:
+            context_token(ttl_seconds=301)
+
+        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    def test_context_token_is_consumed_once_across_database_sessions(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        AiContextConsumptionModel.__table__.create(bind=engine)
+        token = context_token()
+        claims = verify_ai_context_token(token, secret=SECRET)
+
+        with Session(engine) as first_session:
+            consume_ai_context_token(first_session, token, claims)
+        with Session(engine) as second_session, self.assertRaises(ApiError) as raised:
+            consume_ai_context_token(second_session, token, claims)
+
+        self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
 
     def test_dataset_outside_signed_scope_is_denied(self) -> None:
         token = context_token(dataset_ids=["other-dataset"])
@@ -145,6 +179,30 @@ class AiContextSecurityTests(unittest.TestCase):
         self.assertNotIn("storage", result.model_dump_json().lower())
         self.assertNotIn("credential", result.model_dump_json().lower())
 
+    def test_catalog_context_bounds_wide_schema_and_sample_values_transparently(self) -> None:
+        token = context_token()
+        wide_schema = [(f"column_{index}", "string") for index in range(300)]
+        wide_dataset = self.dataset.model_copy(update={
+            "schema_": wide_schema,
+            "sample_rows": [["x" * 1_000 for _ in range(300)]],
+        })
+        with (
+            patch("app.mcp.catalog.settings.ai_context_signing_secret", SECRET),
+            patch("app.mcp.catalog.SessionLocal", return_value=FakeSession()),
+            patch("app.mcp.catalog.CatalogRepository", return_value=self.repository),
+            patch("app.mcp.catalog.dataset_with_persisted_permission_grants", return_value=wide_dataset),
+            patch("app.mcp.catalog.require_governed_access"),
+            patch("app.mcp.catalog.require_permission"),
+        ):
+            result = get_dataset_context("dataset-1", context_token=token)
+
+        self.assertEqual(len(result.schema_), 256)
+        self.assertTrue(result.schema_truncated)
+        self.assertEqual(len(result.sample_column_names), 64)
+        self.assertEqual(len(result.sample_rows[0]), 64)
+        self.assertEqual(len(result.sample_rows[0][0]), 256)
+        self.assertTrue(result.sample_rows_truncated)
+
     def test_catalog_context_redacts_credential_like_sample_columns(self) -> None:
         token = context_token()
         sensitive_dataset = self.dataset.model_copy(update={
@@ -165,6 +223,30 @@ class AiContextSecurityTests(unittest.TestCase):
             result = get_dataset_context("dataset-1", context_token=token)
 
         self.assertEqual(result.sample_rows[0], ["[REDACTED]", "ok"])
+
+    def test_catalog_context_redacts_common_pii_columns_and_values(self) -> None:
+        token = context_token()
+        sensitive_dataset = self.dataset.model_copy(update={
+            "schema_": [("customer_id", "string"), ("comment", "string")],
+            "sample_rows": [["customer-42", "contact me at person@example.com or 010-1234-5678"]],
+        })
+        with (
+            patch("app.mcp.catalog.settings.ai_context_signing_secret", SECRET),
+            patch("app.mcp.catalog.SessionLocal", return_value=FakeSession()),
+            patch("app.mcp.catalog.CatalogRepository", return_value=self.repository),
+            patch(
+                "app.mcp.catalog.dataset_with_persisted_permission_grants",
+                return_value=sensitive_dataset,
+            ),
+            patch("app.mcp.catalog.require_governed_access"),
+            patch("app.mcp.catalog.require_permission"),
+        ):
+            result = get_dataset_context("dataset-1", context_token=token)
+
+        self.assertEqual(
+            result.sample_rows[0],
+            ["[REDACTED]", "contact me at [REDACTED_EMAIL] or [REDACTED_PHONE]"],
+        )
 
     def test_batch_catalog_context_returns_multiple_authorized_datasets_in_one_session(self) -> None:
         token = context_token(dataset_ids=["dataset-1", "dataset-2"])
@@ -342,7 +424,7 @@ class AiGatewayClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runtime_settings = Settings(
             ai_gateway_base_url="http://ai-server:8090",
-            ai_gateway_generate_path="/v1/query-sql",
+            ai_gateway_generate_path="/v1/generate",
             ai_gateway_service_token="service-secret",
             ai_gateway_timeout_seconds=2,
         )
@@ -359,7 +441,7 @@ class AiGatewayClientTests(unittest.TestCase):
         self.assertNotIn("context-secret", str(raised.exception))
 
     def test_gateway_auth_and_upstream_statuses_are_mapped(self) -> None:
-        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
         for code, expected_status in (
             (401, status.HTTP_401_UNAUTHORIZED),
             (502, status.HTTP_502_BAD_GATEWAY),
@@ -375,8 +457,8 @@ class AiGatewayClientTests(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.status_code, expected_status)
 
-    def test_gateway_response_has_stable_typed_contract(self) -> None:
-        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+    def test_gateway_rejects_removed_flat_legacy_contract(self) -> None:
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
         response = httpx.Response(
             200,
             request=request,
@@ -388,18 +470,16 @@ class AiGatewayClientTests(unittest.TestCase):
                 "model": "internal-model",
             },
         )
-        with patch("app.services.ai_gateway_client.httpx.post", return_value=response) as post:
-            result = self.client.generate_query_sql(
-                "request-1", "count rows", "", "dataset-1", ["dataset-1"], "context-secret"
-            )
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=response):
+            with self.assertRaises(ApiError) as raised:
+                self.client.generate_query_sql(
+                    "request-1", "count rows", "", "dataset-1", ["dataset-1"], "context-secret"
+                )
 
-        self.assertEqual(set(result), {"title", "body", "sql", "notices", "model"})
-        self.assertEqual(post.call_args.kwargs["headers"]["X-Request-ID"], "request-1")
-        self.assertEqual(post.call_args.kwargs["headers"]["X-AskLake-AI-Context"], "context-secret")
-        self.assertEqual(post.call_args.args[0], "http://ai-server:8090/v1/query-sql")
+        self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
 
     def test_gateway_maps_current_nested_internal_server_response(self) -> None:
-        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
         response = httpx.Response(
             200,
             request=request,
@@ -410,12 +490,17 @@ class AiGatewayClientTests(unittest.TestCase):
                     "query_sql": "SELECT count(*) FROM customer_events",
                     "explanation": "Counts the selected events.",
                     "warnings": ["Review before execution."],
+                    "usedEvidenceIds": [],
                 },
-                "provider": "mock",
-                "model": "mock-query-sql",
+                "provider": "openai_compatible",
+                "model": "sql-model",
+                "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15, "estimatedCostUsd": 0.0},
             },
         )
-        with patch("app.services.ai_gateway_client.httpx.post", return_value=response):
+        with (
+            patch("app.services.ai_gateway_client.httpx.post", return_value=response) as post,
+            patch.object(self.client, "_persist_generation_usage") as persist,
+        ):
             result = self.client.generate_query_sql(
                 "request-1", "count rows", "", "dataset-1", ["dataset-1"], "context-secret"
             )
@@ -424,10 +509,18 @@ class AiGatewayClientTests(unittest.TestCase):
         self.assertEqual(result["body"], "Counts the selected events.")
         self.assertEqual(result["sql"], "SELECT count(*) FROM customer_events")
         self.assertEqual(result["notices"], ["Review before execution."])
-        self.assertEqual(result["model"], "mock-query-sql")
+        self.assertEqual(result["model"], "sql-model")
+        self.assertEqual(result["provider"], "openai_compatible")
+        self.assertEqual(result["usedEvidenceIds"], [])
+        self.assertEqual(post.call_args.kwargs["headers"]["X-Request-ID"], "request-1")
+        self.assertEqual(post.call_args.kwargs["headers"]["X-AskLake-AI-Context"], "context-secret")
+        self.assertEqual(post.call_args.args[0], "http://ai-server:8090/v1/generate")
+        self.assertEqual(post.call_args.kwargs["json"]["current_query"], "")
+        self.assertEqual(post.call_args.kwargs["json"]["base_dataset_id"], "dataset-1")
+        persist.assert_called_once()
 
     def test_etl_transform_uses_the_unified_generation_contract(self) -> None:
-        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
         response = httpx.Response(200, request=request, json={
             "request_id": "request-etl",
             "mode": "etl_transform",
@@ -450,12 +543,62 @@ class AiGatewayClientTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["json"]["mode"], "etl_transform")
         self.assertNotIn("X-AskLake-AI-Context", post.call_args.kwargs["headers"])
 
+    def test_sql_generation_returns_only_evidence_from_supplied_rag_candidates(self) -> None:
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
+        rag_context = {
+            "sources": [{"documentId": "doc-allowed", "body": "relevant fact"}],
+            "retrieval": {"provenance": "semantic_layer_rag", "resultCount": 1},
+        }
+        payload = {
+            "request_id": "request-evidence",
+            "mode": "query_sql",
+            "output": {
+                "query_sql": "SELECT count(*) FROM customer_events",
+                "explanation": "Uses the relevant fact.",
+                "warnings": [],
+                "usedEvidenceIds": ["doc-allowed"],
+            },
+            "provider": "openai_compatible",
+            "model": "sql-model",
+            "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15, "estimatedCostUsd": 0.0},
+        }
+        with patch(
+            "app.services.ai_gateway_client.httpx.post",
+            return_value=httpx.Response(200, request=request, json=payload),
+        ):
+            result = self.client.generate_query_sql(
+                "request-evidence",
+                "count rows",
+                "",
+                "dataset-1",
+                ["dataset-1"],
+                "context-secret",
+                rag_context,
+            )
+        self.assertEqual(result["usedEvidenceIds"], ["doc-allowed"])
+
+        payload["output"]["usedEvidenceIds"] = ["doc-invented"]
+        with patch(
+            "app.services.ai_gateway_client.httpx.post",
+            return_value=httpx.Response(200, request=request, json=payload),
+        ), self.assertRaises(ApiError) as raised:
+            self.client.generate_query_sql(
+                "request-evidence",
+                "count rows",
+                "",
+                "dataset-1",
+                ["dataset-1"],
+                "context-secret",
+                rag_context,
+            )
+        self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
+
     def test_dashboard_generation_forwards_signed_mcp_scope(self) -> None:
-        request = httpx.Request("POST", "http://ai-server:8090/v1/query-sql")
+        request = httpx.Request("POST", "http://ai-server:8090/v1/generate")
         response = httpx.Response(200, request=request, json={
             "request_id": "request-dashboard",
             "mode": "dashboard_assistant",
-            "output": {"message": "차트를 만들었습니다.", "actions": [], "warnings": []},
+            "output": {"message": "차트를 만들었습니다.", "actions": [], "warnings": [], "usedEvidenceIds": []},
             "provider": "openai_compatible",
             "model": "gpt-test",
         })
@@ -470,9 +613,65 @@ class AiGatewayClientTests(unittest.TestCase):
 
         self.assertEqual(result["message"], "차트를 만들었습니다.")
         self.assertEqual(result["model"], "gpt-test")
-        self.assertEqual(result["provider"], "ai-gateway")
+        self.assertEqual(result["provider"], "openai_compatible")
         self.assertEqual(post.call_args.kwargs["headers"]["X-AskLake-AI-Context"], "signed-dashboard-context")
         self.assertEqual(post.call_args.kwargs["json"]["selected_dataset_ids"], ["sales"])
+
+    def test_embeddings_validate_gateway_contract_and_numeric_values(self) -> None:
+        runtime_settings = Settings(
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="service-secret",
+            rag_embedding_model="embedding-model",
+            rag_embedding_dimensions=2,
+            rag_embedding_batch_size=2,
+        )
+        client = AiGatewayClient(runtime_settings)
+        request = httpx.Request("POST", "http://ai-server:8090/v1/embeddings")
+        valid_response = httpx.Response(200, request=request, json={
+            "provider": "openai_compatible",
+            "model": "embedding-model",
+            "dimensions": 2,
+            "data": [[0.1, 0.2], [0.3, 0.4]],
+        })
+
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=valid_response) as post:
+            result = client.create_embeddings(["camera", "speaker"])
+
+        self.assertEqual(result, [[0.1, 0.2], [0.3, 0.4]])
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "embedding-model")
+
+        invalid_payloads = (
+            {"provider": "openai_compatible", "model": "other-model", "dimensions": 2, "data": [[0.1, 0.2]]},
+            {"provider": "openai_compatible", "model": "embedding-model", "dimensions": 3, "data": [[0.1, 0.2, 0.3]]},
+            {"provider": "openai_compatible", "model": "embedding-model", "dimensions": 2, "data": []},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), patch(
+                "app.services.ai_gateway_client.httpx.post",
+                return_value=httpx.Response(200, request=request, json=payload),
+            ):
+                with self.assertRaises(ApiError) as raised:
+                    client.create_embeddings(["camera"])
+                self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
+
+        nonfinite_response = httpx.Response(
+            200,
+            request=request,
+            content=b'{"provider":"openai_compatible","model":"embedding-model","dimensions":2,"data":[[NaN,0.2]]}',
+            headers={"content-type": "application/json"},
+        )
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=nonfinite_response):
+            with self.assertRaises(ApiError) as raised:
+                client.create_embeddings(["camera"])
+        self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
+
+    def test_embeddings_reject_invalid_input_without_calling_gateway(self) -> None:
+        with patch("app.services.ai_gateway_client.httpx.post") as post:
+            with self.assertRaises(ApiError) as raised:
+                self.client.create_embeddings(["   "])
+
+        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        post.assert_not_called()
 
 
 class AiGatewaySettingsTests(unittest.TestCase):
@@ -487,6 +686,8 @@ class AiGatewaySettingsTests(unittest.TestCase):
             Settings(ai_gateway_generate_path="https://external.example/v1/generate")
         with self.assertRaises(ValueError):
             Settings(ai_mcp_path="/internal/mcp?target=external")
+        with self.assertRaises(ValueError):
+            Settings(ai_gateway_embeddings_path="https://external.example/v1/embeddings")
 
 
 if __name__ == "__main__":

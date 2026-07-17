@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
-from types import SimpleNamespace
 from typing import Any, Callable
 import unicodedata
 from urllib.parse import urlparse
@@ -122,7 +121,6 @@ from app.services.governance_enforcement import require_governed_access
 from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
 from app.services.trino_sql_job_service import TrinoSqlJobService
-from app.services.identity_service import DEMO_GROUPS, DEMO_USERS
 from app.services.iceberg_writer_service import (
     IcebergWriterError,
     IcebergWriterService,
@@ -176,24 +174,21 @@ def get_permission_options(db: Session, actor: ActorContext) -> PermissionOption
         raise ApiError(ErrorCode.FORBIDDEN, "Admin role is required", status.HTTP_403_FORBIDDEN)
     Base.metadata.create_all(bind=db.get_bind(), tables=[AuthUserModel.__table__])
     stored_users = list(db.scalars(select(AuthUserModel).order_by(AuthUserModel.display_name.asc())).all())
-    users = stored_users or [
-        SimpleNamespace(
-            id=value["id"],
-            display_name=value["display_name"],
-            email=value["email"],
-            role=value["role"],
-        )
-        for value in DEMO_USERS.values()
-    ]
+    group_ids = sorted({
+        str(group_id).strip()
+        for user in stored_users
+        for group_id in (user.groups or [])
+        if str(group_id).strip()
+    })
     return PermissionOptionsResponse(
         groups=[
             PermissionOptionGroup(
-                id=group.id,
-                name=group.name,
-                description=group.description,
-                actions=PERMISSION_GROUP_ACTIONS.get(group.id, ["view", "run"]),
+                id=group_id,
+                name=group_id,
+                description="현재 인증 사용자 디렉터리에 등록된 그룹",
+                actions=PERMISSION_GROUP_ACTIONS.get(group_id, ["view", "run"]),
             )
-            for group in DEMO_GROUPS.values()
+            for group_id in group_ids
         ],
         users=[
             PermissionOptionUser(
@@ -203,7 +198,7 @@ def get_permission_options(db: Session, actor: ActorContext) -> PermissionOption
                 initials="".join(part[0] for part in user.display_name.split()[:2]).upper() or user.display_name[:2].upper(),
                 role=user.role,
             )
-            for user in users
+            for user in stored_users
         ],
     )
 
@@ -211,7 +206,7 @@ def get_permission_options(db: Session, actor: ActorContext) -> PermissionOption
 def create_pipeline(
     db: Session,
     request: CreatePipelineRequest,
-    actor: ActorContext | str = "demo-user",
+    actor: ActorContext | str = "system",
 ) -> CreatePipelineResponse:
     compiled_rules = compile_pipeline_rules(request)
     require_compiled_rules(compiled_rules)
@@ -437,6 +432,12 @@ def create_trino_sql_job(
     permission_roles = trino_sql_job_permission_roles(
         request.governance.access_scope,
         request.governance.owner,
+        request.governance.principal_id,
+    )
+    permission_summary = trino_sql_job_permission_summary(
+        request.governance.access_scope,
+        request.governance.owner,
+        request.governance.principal_id,
     )
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
@@ -499,7 +500,7 @@ def create_trino_sql_job(
         schema_sample_rows=[],
         schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
         rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
-        permission_summary=request.governance.permission_summary,
+        permission_summary=permission_summary,
         permission_roles=permission_roles,
         storage_type="Iceberg",
         partition=request.target.partition_column,
@@ -5027,7 +5028,7 @@ def normalize_source_object_inventory(value: Any) -> list[dict[str, Any]] | None
 
 
 def identity_name(value: str | None) -> str:
-    return (value or "").strip() or "demo-user"
+    return (value or "").strip() or "system"
 
 
 def identity_profile(name: str) -> dict[str, str]:
@@ -8232,15 +8233,44 @@ def schedule_next_run_label(schedule_label: str | None, fallback: str | None = N
     return fallback_label if fallback_label and fallback_label != "-" else schedule
 
 
-def trino_sql_job_permission_roles(access_scope: str, owner: str) -> list[dict[str, Any]]:
+def trino_sql_job_permission_roles(
+    access_scope: str,
+    owner: str,
+    principal_id: str | None = None,
+) -> list[dict[str, Any]]:
     access = ["조회", "쿼리 실행", "메타데이터", "관리"]
     if access_scope == "private":
-        return [{"access": access, "checked": True, "name": owner}]
-    return [
-        {"access": access, "checked": True, "name": "Data Engineer Group"},
-        {"access": access, "checked": access_scope != "project", "name": "Data Analyst Group"},
-        {"access": access, "checked": access_scope == "project", "name": "Project Members"},
-    ]
+        return []
+    if access_scope == "organization":
+        return [{
+            "access": access,
+            "checked": True,
+            "name": "모든 인증 사용자",
+            "principalId": "authenticated-users",
+            "principalType": "public",
+        }]
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_principal:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Project access requires a real group principal",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    return [{
+        "access": access,
+        "checked": True,
+        "name": normalized_principal,
+        "principalId": normalized_principal,
+        "principalType": "group",
+    }]
+
+
+def trino_sql_job_permission_summary(access_scope: str, owner: str, principal_id: str | None = None) -> str:
+    if access_scope == "organization":
+        return "모든 인증 사용자 · 조직 내부"
+    if access_scope == "project":
+        return f"그룹 {str(principal_id or '').strip()} · 프로젝트 멤버"
+    return f"{owner.strip()} · 소유자 전용"
 
 
 def trino_sql_job_schedule_label(request: CreateTrinoSqlJobRequest) -> str:

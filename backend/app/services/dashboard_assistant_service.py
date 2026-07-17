@@ -23,6 +23,7 @@ from app.services.dashboard_assistant_guard import (
     guard_assistant_response,
 )
 from app.services.ai_gateway_client import AiGatewayClient
+from app.services.ai_evidence import retain_used_rag_evidence
 from app.services.semantic_rag_context import build_semantic_rag_context
 
 LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
@@ -71,6 +72,7 @@ class DashboardAssistantService:
             raw_payload = self._request_gateway(request, context, actor, rag_context)
             coerced_response = coerce_assistant_response(raw_payload)
             guarded_response = guard_assistant_response(coerced_response, context)
+            guarded_response = _require_visualization_action(request, guarded_response)
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
             return self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
         except (ApiError, TimeoutError, ValueError, OSError) as exc:
@@ -154,8 +156,9 @@ class DashboardAssistantService:
     @staticmethod
     def _attach_rag(response: DashboardAssistantResponse, rag_context: dict[str, Any] | None) -> DashboardAssistantResponse:
         if rag_context:
-            response.sources = list(rag_context.get("sources") or [])
-            response.retrieval = rag_context.get("retrieval") or {}
+            used_context = retain_used_rag_evidence(rag_context, response.used_evidence_ids)
+            response.sources = list((used_context or {}).get("sources") or [])
+            response.retrieval = (used_context or {}).get("retrieval") or {}
         return response
 
     @staticmethod
@@ -196,5 +199,21 @@ def _normalize_visualization_success_message(
     if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST or not response.actions:
         return response
     if any(action.type in {"create_widget", "update_widget"} for action in response.actions):
-        response.message = "시각화 요청을 대시보드에 적용했습니다."
+        response.message = "대시보드 편집기에 적용할 시각화 변경을 생성했습니다."
+    return response
+
+
+def _require_visualization_action(
+    request: DashboardAssistantRequest,
+    response: DashboardAssistantResponse,
+) -> DashboardAssistantResponse:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
+        return response
+    if any(action.type in {"create_widget", "update_widget"} for action in response.actions):
+        return response
+
+    warning = "AI가 검증 가능한 위젯 생성·수정 action을 만들지 못했습니다. 대시보드는 변경되지 않았습니다."
+    response.message = "시각화 변경 작업을 생성하지 못해 대시보드를 수정하지 않았습니다."
+    if warning not in response.warnings:
+        response.warnings.append(warning)
     return response

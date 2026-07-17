@@ -27,7 +27,7 @@ const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const reviewTextModelHostDir = path.resolve(
   process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
-    || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+    || path.join(backendDir, "tmp", "review-text-models", "latest"),
 );
 const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
@@ -60,12 +60,6 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
   const packages = sparkPackages(job, source, output);
   const packageArgs = sparkPackageArgs(packages);
-  const aiGatewayBaseUrl = process.env.AI_GATEWAY_BASE_URL_IN_DOCKER
-    || process.env.AI_GATEWAY_BASE_URL
-    || "http://ai-server:8090";
-  const aiGatewayServiceToken = process.env.AI_GATEWAY_SERVICE_TOKEN || "";
-  const aiGatewayTimeoutSeconds = process.env.AI_GATEWAY_TIMEOUT_SECONDS || "120";
-  const reviewAnalysisRuntime = process.env.ASKLAKE_SPARK_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
@@ -100,22 +94,12 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE: dockerManifestPath,
     ASKLAKE_SPARK_REPORT_FILE: dockerReportPath,
     ASKLAKE_SPARK_APP_NAME: `asklake-${command}-${job.id}`,
-    AI_GATEWAY_BASE_URL: aiGatewayBaseUrl,
-    AI_GATEWAY_TIMEOUT_SECONDS: aiGatewayTimeoutSeconds,
-    ...(executionMode === "docker" ? { AI_GATEWAY_SERVICE_TOKEN: aiGatewayServiceToken } : {}),
-    ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS: process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000",
-    ASKLAKE_REVIEW_ANALYSIS_RUNTIME: reviewAnalysisRuntime,
     ASKLAKE_REVIEW_TEXT_MODEL_ROOT: reviewTextModelContainerDir,
     ...icebergEnvironment,
     HOME: "/tmp",
   };
   const sparkExecutorProperties = Object.fromEntries(
     [
-      "AI_GATEWAY_BASE_URL",
-      "AI_GATEWAY_TIMEOUT_SECONDS",
-      ...(executionMode === "docker" ? ["AI_GATEWAY_SERVICE_TOKEN"] : []),
-      "ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS",
-      "ASKLAKE_REVIEW_ANALYSIS_RUNTIME",
       "ASKLAKE_REVIEW_TEXT_MODEL_ROOT",
     ].map((name) => [`spark.executorEnv.${name}`, sparkEnvironment[name]]),
   );
@@ -158,16 +142,6 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
     "-e",
-    `AI_GATEWAY_BASE_URL=${aiGatewayBaseUrl}`,
-    "-e",
-    `AI_GATEWAY_SERVICE_TOKEN=${aiGatewayServiceToken}`,
-    "-e",
-    `AI_GATEWAY_TIMEOUT_SECONDS=${aiGatewayTimeoutSeconds}`,
-    "-e",
-    `ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS=${process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000"}`,
-    "-e",
-    `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
-    "-e",
     `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...Object.entries(icebergEnvironment).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     "-e",
@@ -189,16 +163,6 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     `spark.cores.max=${process.env.ASKLAKE_SPARK_CORES_MAX || "4"}`,
     "--conf",
     `spark.sql.shuffle.partitions=${process.env.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"}`,
-    "--conf",
-    `spark.executorEnv.AI_GATEWAY_BASE_URL=${aiGatewayBaseUrl}`,
-    "--conf",
-    `spark.executorEnv.AI_GATEWAY_SERVICE_TOKEN=${aiGatewayServiceToken}`,
-    "--conf",
-    `spark.executorEnv.AI_GATEWAY_TIMEOUT_SECONDS=${aiGatewayTimeoutSeconds}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS=${process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS || "9000"}`,
-    "--conf",
-    `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "--conf",
     `spark.executorEnv.ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...packageArgs,

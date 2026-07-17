@@ -1,7 +1,8 @@
-import re
 from uuid import uuid4
 
 from fastapi import status
+from sqlglot import exp, parse_one
+from sqlglot.errors import ParseError
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
@@ -12,6 +13,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
 from app.services.governance_enforcement import require_governed_access
 from app.services.ai_gateway_client import AiGatewayClient
+from app.services.ai_evidence import retain_used_rag_evidence
 from app.mcp.context import issue_ai_context_token
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
@@ -119,16 +121,23 @@ class QueryAiService:
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
         validate_selected_dataset_scope(statement, datasets)
+        used_evidence_ids = [str(item) for item in suggestion.get("usedEvidenceIds") or []]
+        used_rag_context = retain_used_rag_evidence(rag_context, used_evidence_ids) or {
+            "sources": [],
+            "retrieval": None,
+        }
 
         return QueryAiSuggestionResponse(
             body=suggestion.get("body")
             or "Read-only SQL draft generated from the selected dataset context.",
-            model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else "ai-gateway"),
+            model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else None),
+            provider=(str(raw_suggestion.get("provider")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("provider") else None),
             notices=normalize_notices(suggestion.get("notices")),
-            retrieval=rag_context.get("retrieval"),
-            sources=list(rag_context.get("sources") or []),
+            retrieval=used_rag_context.get("retrieval"),
+            sources=list(used_rag_context.get("sources") or []),
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
+            used_evidence_ids=used_evidence_ids,
         )
 
     def get_catalog_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
@@ -166,17 +175,25 @@ def ensure_preview_limit(sql: str) -> str:
             status.HTTP_502_BAD_GATEWAY,
         )
 
-    trailing_limit_match = re.search(r"\blimit\s+(\d+)\s*;?\s*$", cleaned_sql, re.IGNORECASE)
-    if trailing_limit_match:
-        limit_value = int(trailing_limit_match.group(1))
-        if limit_value <= PREVIEW_LIMIT:
-            return cleaned_sql
-        return f"{cleaned_sql[:trailing_limit_match.start()].rstrip().rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+    statement = validate_read_only_query(cleaned_sql)
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError as exc:
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "AI returned SQL that could not be parsed",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
 
-    if re.search(r"\blimit\s+\d+\b", cleaned_sql, re.IGNORECASE):
-        return cleaned_sql
+    root_limit = expression.args.get("limit")
+    if isinstance(root_limit, exp.Limit):
+        limit_expression = root_limit.expression
+        if isinstance(limit_expression, exp.Literal) and limit_expression.is_int:
+            if int(limit_expression.this) <= PREVIEW_LIMIT:
+                return cleaned_sql
 
-    return f"{cleaned_sql.rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+    bounded = expression.limit(PREVIEW_LIMIT, copy=True)
+    return f"{bounded.sql(dialect='trino')};"
 
 
 def validate_selected_dataset_scope(
