@@ -816,6 +816,8 @@ Phase 14 web/collector workload와 FastAPI HPA 변경은 `bash scripts/verify-ek
 
 Day 17 A/B 최종 통합 campaign은 반드시 최신 `pair1` merge SHA를 고정한 read-only baseline 뒤에 시작한다. baseline에서 다른 active Job/SparkApplication/Pending·terminating Pod, EndpointSlice drain, stale smoke release를 확인하고 General/Spark placement와 canonical image receipt를 함께 검사한다. exclusive window만 열려 있고 placement나 receipt가 닫혀 있으면 정적 검증은 계속할 수 있지만 API load와 Spark 제출은 시작하지 않는다. 2026-07-17 최초 통합 baseline은 live Airflow·Trino General selector 미반영과 canonical Day 17 receipt 부재를 확인해 live campaign을 차단했다. 상세 상태와 복구 순서는 [Day 17 A/B 최종 통합 검증 기준점](eks-day17-final-integration-baseline.md)을 따른다.
 
+통합 baseline 뒤 정적 검증은 A NodePool/evidence, B workload/HPA/multi-Spark, Backend 집중 회귀, receipt sanitizer와 Terraform을 모두 포함한다. Python 집중 테스트는 CI와 같은 Python 3.13 계열 또는 `backend/.venv/bin/python`으로 실행한다. 프로젝트 dependency가 없는 system Python의 import 실패를 source regression으로 판정하지 않으며 올바른 interpreter로 재실행한 결과를 함께 기록한다. 로컬 Terraform CLI가 없으면 이 문서의 `hashicorp/terraform:1.15.8` Docker 명령으로 `fmt`, `init -backend=false`, `validate`, `test`를 보완한다. Issue #909의 실제 통과 범위는 [Day 17 A/B 최종 통합 정적 검증](eks-day17-final-integration-static-verification.md)을 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
