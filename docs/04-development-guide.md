@@ -1138,6 +1138,8 @@ npm run build
 
 Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage` export 또는 compatibility façade 파일을 제거하려면 별도 deprecation PR이 필요하다.
 
+`test:jobs-data-boundary`는 `runHistory`가 비어 있어도 현재 `status=failed`인 Kafka Continuous Job을 실패 경고와 `status=failed` 필터가 포함하도록 보호한다. 실패 현황 UI를 최근 Run 결과인 `latestRunOutcomeCounts` 또는 `lastRunOutcome` 기준으로 되돌리지 않는다.
+
 `route-data-loading`은 `/jobs*`가 Catalog 목록을 요청하지 않고, `/catalog*`·`/sql`·`/ai`가 Job 목록을 요청하지 않으며, Dashboard 목록이 workspace Catalog hydrate를 시작하지 않는지 검사한다. `refreshData` 호환 함수도 Job과 Catalog를 동시에 요청하지 않고 현재 route domain만 갱신해야 한다. route를 벗어나면 해당 `LatestRequestGate`를 무효화하고 Job/Catalog 오류 상태를 서로 공유하지 않는다.
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증

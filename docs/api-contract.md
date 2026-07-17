@@ -1198,6 +1198,8 @@ type GetJobsResponse = {
 
 `facets`는 현재 선택한 filter와 무관한 전체 목록 기준이다. 따라서 소유자 한 명을 선택한 뒤에도 `owners`에는 등록된 모든 소유자가 유지되고, 현황 버튼도 전체 작업의 상태 분포를 유지한다.
 
+Jobs 화면의 실패 작업 경고와 `실패 작업 보기`는 최근 Run 결과가 아니라 현재 Job 상태를 기준으로 한다. 경고 개수는 `statusCounts.failed`, 필터 요청은 `status=failed`를 사용한다. `latestRunOutcomeCounts.failed`와 `lastRunOutcome=failed`는 Snapshot 실행 이력이 있는 작업의 최근 실행 결과를 다룰 때만 사용하며, Run 이력이 없을 수 있는 Kafka Continuous 실패 작업의 현재 상태 집계에는 사용하지 않는다.
+
 각 `JobRowData`는 DB timestamp 기준의 optional `createdAt`, `updatedAt`을 포함한다. 목록 소유자 셀은 `updatedAt`을 우선 표시하고, legacy row처럼 수정 시각이 없을 때만 `createdAt`을 표시한다.
 
 ### 7.3.1 작업 상태 일괄 조회

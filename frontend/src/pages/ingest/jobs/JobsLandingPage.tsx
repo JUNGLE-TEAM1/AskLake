@@ -53,8 +53,8 @@ export function JobsLandingPage({
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
   const [latestRunModalSelection, setLatestRunModalSelection] = useState<LatestRunModalSelection | null>(null);
   const metrics = getJobMetrics(jobListFacets);
-  const failureFilterActive = jobQuery.lastRunOutcome === "failed";
-  const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
+  const failureFilterActive = hasSameStatuses(jobQuery.statuses, ["failed"]);
+  const failedJobCount = jobListFacets.statusCounts.failed;
   const filteredJobs = useMemo(
     () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
     [excludedJobIds, jobs, searchQuery],
@@ -107,7 +107,8 @@ export function JobsLandingPage({
     }
     updateJobQuery({
       ...jobQuery,
-      lastRunOutcome: "failed",
+      lastRunOutcome: undefined,
+      statuses: ["failed"],
     });
   };
 
@@ -148,11 +149,11 @@ export function JobsLandingPage({
               />
             ))}
           </div>
-          {(failedRunCount > 0 || failureFilterActive) && (
+          {(failedJobCount > 0 || failureFilterActive) && (
             <div className="px-5 pb-5">
               <JobFailureAlert
                 active={failureFilterActive}
-                count={failedRunCount}
+                count={failedJobCount}
                 onToggle={toggleFailureFilter}
               />
             </div>
@@ -245,10 +246,10 @@ export function JobFailureAlert({
       <AlertCircle className="!size-5 shrink-0" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <AlertTitle className="text-base">
-          {hasFailures ? `마지막 실행이 실패한 작업이 ${count}개 있습니다.` : "현재 마지막 실행이 실패한 작업이 없습니다."}
+          {hasFailures ? `현재 실패 상태인 작업이 ${count}개 있습니다.` : "현재 실패 상태인 작업이 없습니다."}
         </AlertTitle>
         <AlertDescription>
-          {hasFailures ? "실행 이력에서 실패 원인을 확인하거나 작업을 재실행할 수 있습니다." : "필터를 해제하면 전체 작업을 다시 볼 수 있습니다."}
+          {hasFailures ? "작업 상세와 실행 이력에서 실패 원인을 확인하거나 작업을 재실행할 수 있습니다." : "필터를 해제하면 전체 작업을 다시 볼 수 있습니다."}
         </AlertDescription>
       </div>
       <Button
