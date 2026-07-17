@@ -216,6 +216,46 @@ while ((SECONDS < steady_deadline)); do
 done
 [[ "$steady_ready" == "true" ]] || fail "ALB did not return to exact steady targets after Backend rollout"
 
+pod_cleanup_deadline=$((SECONDS + 420))
+pod_cleanup_ready=false
+while ((SECONDS < pod_cleanup_deadline)); do
+  backend_pods_cleanup="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
+  collector_pods_cleanup="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json)"
+  if jq -e --arg digest "$new_backend_digest" '
+      (.items | length) == 2
+      and all(.items[];
+        .metadata.deletionTimestamp == null
+        and .status.phase == "Running"
+        and any(.status.containerStatuses[]?;
+          .name == "fastapi"
+          and .ready == true
+          and .restartCount == 0
+          and (.imageID | endswith($digest))
+        )
+      )
+    ' <<<"$backend_pods_cleanup" >/dev/null \
+    && jq -e --arg digest "$new_backend_digest" '
+      (.items | length) == 1
+      and all(.items[];
+        .metadata.deletionTimestamp == null
+        and .status.phase == "Running"
+        and any(.status.containerStatuses[]?;
+          .name == "trino-result-collector"
+          and .ready == true
+          and .restartCount == 0
+          and (.imageID | endswith($digest))
+        )
+      )
+    ' <<<"$collector_pods_cleanup" >/dev/null; then
+    pod_cleanup_ready=true
+    break
+  fi
+  sleep 5
+done
+unset backend_pods_cleanup collector_pods_cleanup
+[[ "$pod_cleanup_ready" == "true" ]] || \
+  fail "old terminating Backend Pods did not drain before the digest postcheck"
+
 stop_monitor
 sample_count="$(wc -l <"$MONITOR_FILE" | tr -d ' ')"
 failure_count="$(awk '$1 != "200" {count++} END {print count+0}' "$MONITOR_FILE")"

@@ -132,6 +132,34 @@ done
   exit 1
 }
 
+pod_cleanup_deadline=$((SECONDS + 420))
+pod_cleanup_ready=false
+while ((SECONDS < pod_cleanup_deadline)); do
+  pods_cleanup="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
+  if jq -e --arg digest "$digest" '
+    (.items | length) == 2
+    and all(.items[];
+      .metadata.deletionTimestamp == null
+      and .status.phase == "Running"
+      and any(.status.containerStatuses[]?;
+        .name == "fastapi"
+        and .ready == true
+        and .restartCount == 0
+        and (.imageID | endswith($digest))
+      )
+    )
+  ' <<<"$pods_cleanup" >/dev/null; then
+    pod_cleanup_ready=true
+    break
+  fi
+  sleep 5
+done
+unset pods_cleanup
+[[ "$pod_cleanup_ready" == "true" ]] || {
+  echo "old terminating FastAPI Pods did not drain before the postcheck" >&2
+  exit 1
+}
+
 kill "$MONITOR_PID" >/dev/null 2>&1 || true
 wait "$MONITOR_PID" 2>/dev/null || true
 MONITOR_PID=""
