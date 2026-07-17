@@ -12,7 +12,9 @@ import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
 import { AiChatPage } from "./pages/ai/AiChatPage";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
-import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
+import { JobDetailPage } from "./pages/ingest/jobs/JobDetailPage";
+import { JobRunsPage } from "./pages/ingest/jobs/JobRunsPage";
+import { JobsLandingPage } from "./pages/ingest/jobs/JobsLandingPage";
 import { PermissionPage } from "./pages/etl/PermissionPage";
 import { RecordParsingPage } from "./pages/etl/RecordParsingPage";
 import { ReviewPage } from "./pages/etl/ReviewPage";
@@ -23,7 +25,7 @@ import { SourceConnectionPage } from "./pages/etl/SourceConnectionPage";
 import { TargetPage } from "./pages/etl/TargetPage";
 import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath } from "./pages/etl/stepRegistry";
 import { useAuditLogs } from "./hooks/useAuditLogs";
-import { useAskLakeData } from "./hooks/useAskLakeData";
+import { useAskLakeWorkspace } from "./state/asklake/useAskLakeWorkspace";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
 import { canNavigateToWizardStep } from "./utils/wizardNavigation";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
@@ -267,7 +269,7 @@ export function App() {
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
-  } = useAskLakeData({ enabled: Boolean(currentUser), onFlowChange: changeFlowFromData, showToast, writeAuditLog });
+  } = useAskLakeWorkspace({ enabled: Boolean(currentUser), onFlowChange: changeFlowFromData, showToast, writeAuditLog });
   const canAccessAdmin = currentUser?.role?.toLowerCase() === "admin";
   const activeNavId = useMemo<NavId | null>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
