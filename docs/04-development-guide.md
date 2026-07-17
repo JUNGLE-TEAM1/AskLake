@@ -1002,6 +1002,15 @@ node scripts/watch-eks-day17-scale.mjs --once --no-clear
 
 7/17 General/Spark 통합 관찰은 `scripts/capture-eks-day17-autoscaling-evidence.sh`의 `baseline → sample → final` 순서를 사용한다. 동일한 비공개 run token을 유지하고 evidence는 저장소 밖 또는 `infra/eks/delivery/*.day17-autoscaling-evidence.json`에 mode `0600`으로 보관한다. request 여유는 cluster 전체 namespace Pod를 합산하되 placement와 blocker는 대상 namespace에서 판정한다. baseline은 blocker를 기록만 하지만 sample의 release identity drift와 final의 placement/blocker/cleanup 미충족은 실패한다. cleanup은 완료 Pod와 0-replica Deployment를 포함한 run 소유 전체 Kubernetes resource와 Helm release 0을 요구한다. 하네스는 조회 전용이며 실제 부하 생성과 cleanup은 별도 승인된 phase가 소유한다. 세부 계약은 [Day 17 autoscaling 관찰 하네스](eks-day17-a-autoscaling-observer.md)를 따른다.
 
+7/18 Pair A 작업은 `scripts/capture-eks-day18-a-baseline.sh --capture`로 읽기 전용
+기준선을 먼저 고정한다. receipt는 저장소 밖 `/private/tmp` 또는 Git ignore 대상
+`infra/eks/delivery/*.day18-baseline.json`에 mode `0600`으로만 둔다. 이 단계는
+EKS·workload steady state, event 조회 가능성, 기존 CloudWatch/collector 상태,
+immutable image, Helm/EC2 rollback과 Continuous 경계를 집계할 뿐 어떤 resource도
+변경하지 않는다. Application log 전달 방식은 기준선 결과를 바탕으로 Observability
+add-on, Fluent Bit, ADOT을 별도 비교한 뒤 선택하며 RDS log export나 control-plane
+log만으로 완료 처리하지 않는다. 상세 계약은 [Day 18 Pair A Phase 0 기준점](eks-day18-a-phase0-baseline.md)을 따른다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
