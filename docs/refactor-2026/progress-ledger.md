@@ -11,9 +11,9 @@
 - PR 03 검증: backend unit 490건(1 opt-in skip), 신규 command와 기존 delete/동시성 unit 24건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
 - PR 04: `#868` / `#869` / `refactor-#868` — 일반 Pipeline create/update validation·identity·mapping·permission·repository write application 경계, `#867` 머지 대기 Draft
 - PR 04 검증: backend unit 496건(1 opt-in skip), 신규 write unit 6건, update·permission create·Rule persistence·dataset identity·Continuous verifier, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
-- 현재 PR 05: `#871` / `refactor-#871` — persisted Airflow Run identity, Spark execution lease/finalize와 Catalog reconciliation transaction application 경계
+- PR 05: `#871` / `#872` / `refactor-#871` — persisted Airflow Run identity, Spark execution lease/finalize와 Catalog reconciliation transaction application 경계, `#869` 머지 대기 Draft
 - PR 05 검증: backend unit 506건(1 opt-in skip), 신규 execution/publication unit 10건, Airflow lease concurrency·DAG Catalog wiring·Iceberg reconciliation, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. live PostgreSQL reconciliation script는 local Docker/PostgreSQL 미기동으로 Draft 후 수동 gate에 유지
-- 다음 단계: PR 05 Draft 생성 후 Node/Python connector 권한을 PR 06으로 분리
+- 다음 단계: Node/Python connector 권한을 PR 06으로 분리
 
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 
