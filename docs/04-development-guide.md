@@ -1247,3 +1247,9 @@ npm run test:spark-kubernetes
   tests.test_eks_runtime_boundary
 npm run verify:airflow-catalog-wiring
 ```
+
+## pair1과 dev 정기 동기화
+
+다음 EKS 로드맵 날짜를 시작하기 전에는 작업 브랜치에서 `origin/pair1`과 `origin/dev`의 기준선과 예상 충돌을 먼저 계산한다. `pair1`에 직접 병합하거나 한쪽 파일을 통째로 선택하지 않는다. 기본 감사 명령은 `bash scripts/audit-pair1-dev-sync.sh`이며, Issue #857의 최초 기준점과 파일별 해결 원칙은 [pair1-dev 동기화 기준점](pair1-dev-sync-857-baseline.md)에 기록한다.
+
+실제 병합 직전에 `git fetch origin --prune`을 다시 수행한다. 기록된 SHA가 바뀌면 기준점을 갱신하고, 전용 브랜치에서 `origin/dev`를 병합한 뒤 Backend·Frontend·EKS 정적 검증과 SSOT 대조를 통과시켜 `pair1` 대상 PR로 전달한다. 아직 `dev`에 머지되지 않은 열린 PR은 암묵적으로 선반영하지 않는다.
