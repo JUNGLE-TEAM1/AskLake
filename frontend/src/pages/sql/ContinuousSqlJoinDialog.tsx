@@ -23,6 +23,7 @@ export function ContinuousSqlJoinDialog({
   open,
   outputName,
   pending,
+  progressMessage,
   result,
   staticDatasets,
   streamingDataset,
@@ -37,6 +38,7 @@ export function ContinuousSqlJoinDialog({
   open: boolean;
   outputName: string;
   pending: boolean;
+  progressMessage: string | null;
   result: ContinuousSqlJob | null;
   staticDatasets: CatalogDataset[];
   streamingDataset: CatalogDataset;
@@ -92,6 +94,11 @@ export function ContinuousSqlJoinDialog({
               <FieldDescription>기본 1초입니다. 실제 대시보드 반영 시간에는 JOIN과 게시 처리 시간이 추가됩니다.</FieldDescription>
             </Field>
             {!featureEnabled && <FieldError>서버의 Continuous SQL 또는 ClickHouse 기능이 비활성화되어 있습니다.</FieldError>}
+            {pending && progressMessage && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+                {progressMessage}
+              </div>
+            )}
             {error && <FieldError>{error}</FieldError>}
           </div>
         )}
@@ -105,7 +112,7 @@ export function ContinuousSqlJoinDialog({
               type="button"
               variant="primary"
             >
-              {pending ? "검증 및 시작 중…" : "카탈로그 만들고 시작"}
+              {pending ? "자동 검증 및 시작 중…" : "카탈로그 만들고 시작"}
             </Button>
           )}
         </DialogFooter>

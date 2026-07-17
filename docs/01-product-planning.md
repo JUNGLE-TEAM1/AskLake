@@ -153,6 +153,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 1. 사용자는 query 가능한 Catalog Dataset 중 Kafka Continuous streaming relation 1개와 static Iceberg relation 1개 이상을 선택한다.
 2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key type과 static unique-key evidence를 실행 전에 검사한다.
+   유일키 증적만 없는 경우 사용자가 SQL이나 Catalog metadata를 직접 수정하지 않는다. JOIN 생성 UI가 정적 Iceberg 원본의 null·빈 값·중복을 정확히 검사해 증적을 등록하고 검증부터 Job 시작까지 자동 재시도한다.
 3. 생성된 Job은 기본적으로 stopped 상태이며 명시적 start command에서 Run generation, fencing, checkpoint와 static snapshot set을 고정한다.
 4. 기본 Iceberg mode에서는 각 Kafka micro-batch가 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 Iceberg mode에서만 허용한다.
 5. ClickHouse mode에서는 Kafka Engine의 전용 consumer group이 원문을 raw MergeTree에 먼저 기록하고, cascading Materialized View가 `PINNED_AT_START` static snapshot과 JOIN해 output ReplacingMergeTree에 쓴다. raw와 output은 `partition + offset`으로 중복을 제거하며 `INNER JOIN`에서 결과가 없는 입력도 raw offset lineage에는 남는다.

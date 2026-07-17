@@ -613,3 +613,6 @@ FastAPI ingress는 `X-Correlation-ID`를 요청 단위 ContextVar에 바인딩�
 ETL 수직 흐름은 제품 service에 테스트 분기를 추가하지 않고 application fake/ephemeral 계약, 실제 Node Spark REST process, Docker UID 185 runtime mount, 격리 Kafka/Spark/object storage stack을 `pr → release → nightly` 프로필로 누적 검증한다. 선언형 시나리오는 초기 상태·fault·기대 canonical state·timeout·복구 주체를 가진다.
 
 결과는 동일 correlation ID의 JSON/JUnit/Markdown artifact로 남긴다. public status 하나가 아니라 desired/observed revision, worker fence, checkpoint/cursor, immutable manifest, Catalog/Dashboard idempotency가 함께 수렴해야 성공이다. 자세한 경계는 [ETL Full-stack E2E·장애 복구 하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)을 따른다.
+# Continuous SQL 유일키 자동 등록
+
+Continuous SQL JOIN 생성 UI는 검증 응답의 `CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE`를 구조화된 오류로 처리한다. Backend Catalog API가 Trino로 정적 Iceberg snapshot의 전체 key count, invalid count, distinct count를 정확히 비교하고 통과한 key set만 Catalog에 저장한다. UI는 검증을 다시 수행한 뒤 ClickHouse Job 생성·시작까지 이어간다. Trino는 이 사전 검증과 고정 snapshot 로딩에만 사용되며 실시간 JOIN과 Dashboard serving은 ClickHouse가 담당한다.

@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   buildClickHouseOutputIdentity,
+  getContinuousSqlUniqueKeyIssue,
   getContinuousSqlRelationMix,
   isStreamingCatalogDataset,
 } from "../src/pages/sql/continuousSqlUi.ts";
+import { ApiError } from "../src/types/audit.ts";
 
 function dataset(overrides: Record<string, unknown>) {
   return {
@@ -64,4 +66,18 @@ test("creates safe unique ClickHouse output identifiers", () => {
   assert.match(first.datasetId, /^continuous-\d+-[a-z0-9]+$/);
   assert.match(first.table, /^live_join_\d+_[a-z0-9]+$/);
   assert.notEqual(first.table, second.table);
+});
+
+test("extracts the static JOIN key issue needed for automatic registration", () => {
+  const error = new ApiError({
+    code: "CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE",
+    details: { datasetId: "dataset-users", joinColumns: ["user_id"] },
+    message: "missing uniqueness evidence",
+    status: 422,
+  });
+
+  assert.deepEqual(getContinuousSqlUniqueKeyIssue(error), {
+    columns: ["user_id"],
+    datasetId: "dataset-users",
+  });
 });

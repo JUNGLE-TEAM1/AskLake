@@ -1113,3 +1113,8 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 - `details`는 secret key를 재귀적으로 redaction하며 validation input 원문과 unhandled stack을 반환하지 않는다.
 - `GET /api/health/live`는 process liveness, `GET /api/health/ready`는 DB readiness, 기존 `GET /api/health`는 호환 readiness다.
 - `GET /api/health/metrics`는 현재 backend process의 진단 counter snapshot을 반환한다.
+# Catalog unique-key verification
+
+`POST /api/catalog/datasets/{datasetId}/unique-keys/verify-and-register`
+
+정적 Iceberg Dataset의 요청 key columns를 전체 스캔해 null/빈 값과 중복이 없을 때만 `uniqueKeySets`에 등록한다. Dataset `manage` 권한이 필요하다. 요청은 `{ "columns": ["user_id"] }`, 응답은 `verified`, `totalRows`, `invalidKeyRows`, `distinctKeys`, 갱신된 `dataset`을 포함한다.

@@ -53,6 +53,22 @@ export function validateContinuousSqlPlan(request: ContinuousSqlPlanRequest) {
   return apiClient.post<ContinuousSqlPlan>("/api/query/continuous-jobs/validate", request);
 }
 
+export type VerifyCatalogUniqueKeyResponse = {
+  columns: string[];
+  distinctKeys: number;
+  invalidKeyRows: number;
+  totalRows: number;
+  verified: true;
+};
+
+export function verifyAndRegisterCatalogUniqueKey(datasetId: string, columns: string[]) {
+  return apiClient.post<VerifyCatalogUniqueKeyResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/unique-keys/verify-and-register`,
+    { columns },
+    { timeoutMs: 620_000 },
+  );
+}
+
 export function createClickHouseContinuousSqlJob(request: CreateClickHouseContinuousSqlRequest) {
   return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
 }
