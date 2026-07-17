@@ -24,7 +24,8 @@ Job 목록, 상세, 실행 이력과 앱 전체 서버 상태를 각각 독립�
 - `useJobsHydration`: Jobs route 진입 hydrate, 현재 route refresh, Job filter의 latest-request ownership
 - `useCatalogHydration`: Catalog·SQL·AI route 진입 hydrate와 현재 route refresh의 latest-request ownership
 - `usePipelineMutations`: ETL create/update와 SQL Job 생성 lifecycle
-- `useJobController`: Job command, optimistic Run, Continuous/Snapshot polling, Job navigation
+- `useJobController`: Job command, optimistic Run, Continuous polling, Job navigation
+- `useSnapshotJobStatusPolling`: Jobs 계열 route의 active Snapshot 상태 일괄 조회
 - `useCatalogController`: materialization 삭제와 Catalog/SQL navigation
 - `useAskLakeWorkspace`: 위 도메인 controller를 기존 public shape로 조합
 
@@ -42,7 +43,9 @@ Browser localStorage는 versioned ETL 편집 복구와 mock Catalog 호환에만
 - optimistic rollback은 `MutationRevisionGate`가 발급한 같은 Job revision을 여전히 소유할 때만 실행한다.
 - edit/delete가 시작되거나 더 최신 command가 시작되면 이전 rollback lease는 무효다.
 - Continuous polling은 server runtime revision·updated time 정책을 통과한 관측만 반영한다.
-- Snapshot polling은 실제 server Run ID만 추적한다. terminal success 뒤 전체 Catalog 목록을 자동 조회하지 않고 Catalog route 진입 시 최신 목록을 읽는다.
+- Snapshot 상태 조회는 가장 최근의 실제 server Run이 `queued`/`running`인 Job ID를 모아 `GET /api/etl/jobs/statuses` 한 번으로 요청한다. Job 개수만큼 요청을 만들지 않는다.
+- 기본 간격은 5초다. hidden tab, Jobs 계열 route 이탈, active Job 부재 시 중지하고 연속 실패는 10·20·30초까지 backoff한 뒤 성공 시 5초로 복구한다. 요청은 겹치지 않는다.
+- `updatedAt`이 오래된 응답과 같은 Run의 terminal-to-active 역행은 버린다. terminal success 뒤 전체 Catalog 목록을 자동 조회하지 않고 Catalog route 진입 시 최신 목록을 읽는다.
 
 ## 호환·rollback
 
@@ -58,8 +61,9 @@ cd frontend
 npm run test:request-ownership
 npm run test:route-data-loading
 npm run test:jobs-data-boundary
+npm run test:snapshot-status-polling
 npm run verify:ui-regressions
 npm run build
 ```
 
-`route-data-loading`은 route별 domain 선택, Job/Catalog API import 격리, stale response 차단, Dashboard 조건부 Dataset 조회를 고정한다. `jobs-data-boundary`는 façade export, 모듈 크기 예산, controller 조합과 revision-gated rollback을 고정한다.
+`route-data-loading`은 route별 domain 선택, Job/Catalog API import 격리, stale response 차단, Dashboard 조건부 Dataset 조회를 고정한다. `jobs-data-boundary`는 façade export, 모듈 크기 예산, controller 조합과 revision-gated rollback을 고정한다. `snapshot-status-polling`은 active ID 선택, 이력 보존 merge, stale/역행 차단과 5~30초 backoff를 고정한다.
