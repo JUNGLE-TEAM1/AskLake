@@ -52,6 +52,8 @@ bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /priva
 
 실환경 완료는 별도다. Frontend/FastAPI 2/2와 Collector 1/1, `/`와 `/api/health`, EKS FastAPI의 EC2 Continuous 격리를 확인한다. Collector 부재 중 남은 `queued`/`running` Run은 삭제하지 않고 인증된 cancel API로 명시적으로 종료하거나 새 Collector가 terminal로 회수하는지 기록한다. 새 bounded `SELECT count(*)`가 `succeeded`와 기대값 100으로 끝나고 actor의 동시 실행 slot이 반환돼야 한다. Collector Pod 삭제 뒤 새 Pod가 생성되고, 이후 같은 지속 상태에서 새 Query Run이 terminal로 끝나는 것도 확인한다.
 
+2026-07-17 dev 환경에서 위 조건을 모두 통과했다. FastAPI/Collector 동일 digest rollout, 외부 health 318표본 non-200 0개, 연속 count query scalar 100, active slot 0, Collector `0 -> 1` 교체 뒤 같은 `runId` terminal 복구와 result page 1개를 [Day 17 Collector live evidence](eks-day17-trino-result-collector-evidence.md)에 기록한다.
+
 ## 삭제와 rollback
 
 ALB Ingress가 남아 있는 동안 Service를 먼저 삭제하지 않는다. Phase 13 Ingress와 ALB finalizer를 먼저 정리한 뒤 workload만 제거한다.

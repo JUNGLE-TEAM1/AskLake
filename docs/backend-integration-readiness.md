@@ -606,7 +606,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 운영 전 Spark driver/executor ServiceAccount와 Kubernetes API token/RBAC 분리
 - [ ] 통합 환경에서 MSK metadata → bounded Spark output → Trino query live smoke
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
-- [ ] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증
+- [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
 ## Realtime 2026 foundation readiness
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
