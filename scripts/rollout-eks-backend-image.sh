@@ -96,11 +96,27 @@ bash "$ROOT_DIR/scripts/preflight-eks-backend-image-rollout.sh" "$RECEIPT_PATH" 
 namespace_json="$(kubectl get namespace "$NAMESPACE" -o json)"
 jq -e '.metadata.labels["eks.amazonaws.com/pod-readiness-gate-inject"] == "enabled"' \
   <<<"$namespace_json" >/dev/null || fail "the namespace does not enable ALB Pod readiness gate injection"
-target_group_bindings="$(kubectl get targetgroupbindings -n "$NAMESPACE" -o json)"
-jq -e '
-  [.items[] | select(.spec.serviceRef.name == "fastapi" and .spec.targetType == "ip")] | length == 1
-' <<<"$target_group_bindings" >/dev/null || fail "FastAPI must have exactly one IP TargetGroupBinding for readiness gates"
-unset namespace_json target_group_bindings
+target_group_binding_check="pod_readiness_gate"
+if [[ "$(kubectl auth can-i list targetgroupbindings.eks.amazonaws.com -n "$NAMESPACE")" == "yes" ]]; then
+  target_group_bindings="$(kubectl get targetgroupbindings -n "$NAMESPACE" -o json)"
+  jq -e '
+    [.items[] | select(.spec.serviceRef.name == "fastapi" and .spec.targetType == "ip")] | length == 1
+  ' <<<"$target_group_bindings" >/dev/null || fail "FastAPI must have exactly one IP TargetGroupBinding for readiness gates"
+  target_group_binding_check="live_crd"
+else
+  backend_readiness_pods="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
+  jq -e '
+    (.items | length) == 2
+    and all(.items[];
+      ([.spec.readinessGates[]?.conditionType | select(startswith("target-health."))] | length) >= 1
+      and any(.status.conditions[]?;
+        (.type | startswith("target-health."))
+        and .status == "True"
+      )
+    )
+  ' <<<"$backend_readiness_pods" >/dev/null || fail "FastAPI Pods do not prove the managed ALB readiness-gate contract"
+fi
+unset namespace_json target_group_bindings backend_readiness_pods
 
 receipt_commit="$(jq -r '.gitRevision' "$RECEIPT_PATH")"
 new_backend_image="$(jq -r '.images.backend' "$RECEIPT_PATH")"
@@ -303,6 +319,7 @@ echo "backend_rollout_collector_replicas=1_of_1"
 echo "backend_rollout_collector_digest=verified"
 echo "backend_rollout_collector_baseline=$([[ "$old_collector_present" == "true" ]] && echo present || echo absent)"
 echo "backend_rollout_release_values_images=normalized_to_live"
+echo "backend_rollout_target_group_binding=$target_group_binding_check"
 echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"
