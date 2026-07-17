@@ -1,15 +1,12 @@
 import { useEffect, useRef } from "react";
 
-import { apiConfig } from "../../services/apiClient";
-
 import { hydrateDraftPipelineFromJob } from "../../services/draftPipelineContract";
 import { isContinuousRuntimeTransition, shouldAcceptContinuousRuntimeUpdate } from "../../services/continuousRuntimeContract";
-import { runJobCommand as runMockJobCommand } from "../../services/mockApi";
 import { deletePipelineJob as deleteLivePipelineJob, getJob as getLiveJob, runJobCommand as runLiveJobCommand } from "../../services/pipelineApi";
 
 import { MutationRevisionGate } from "../../state/requestOwnership";
 import type { FlowId, JobCommand, JobRowData } from "../../types";
-import { normalizeDatasetRow, saveStoredCatalogDataset } from "./catalogState";
+import { normalizeDatasetRow } from "./catalogState";
 import { WriteAuditLog } from "./contracts";
 import { initialDraftPipeline } from "./etlDraftState";
 
@@ -67,7 +64,7 @@ export function useJobController({
   };
 
   const pollContinuousRuntimeUntilStable = async (initialJob: JobRowData) => {
-    if (apiConfig.useMock || !isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
+    if (!isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
 
     continuousPollingRef.current.add(initialJob.id);
     let currentJob = initialJob;
@@ -89,7 +86,7 @@ export function useJobController({
   };
 
   const pollSnapshotJobUntilTerminal = async (initialJob: JobRowData, runId: string) => {
-    if (apiConfig.useMock || initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
+    if (initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
 
     snapshotPollingRef.current.add(runId);
     let currentJob = initialJob;
@@ -140,7 +137,7 @@ export function useJobController({
   };
 
   useEffect(() => {
-    if (!enabled || apiConfig.useMock) return;
+    if (!enabled) return;
 
     jobs.forEach((job) => {
       if (job.executionMode === "continuous") return;
@@ -167,13 +164,11 @@ export function useJobController({
       mutationRevisions.current.invalidate(job.id);
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
       let editableJob = job;
-      if (!apiConfig.useMock) {
-        try {
-          editableJob = normalizeJobRow(await getLiveJob(job.id));
-          updateJobState(job.id, () => editableJob);
-        } catch {
-          // The list payload is still a valid fallback when the detail refresh fails.
-        }
+      try {
+        editableJob = normalizeJobRow(await getLiveJob(job.id));
+        updateJobState(job.id, () => editableJob);
+      } catch {
+        // The list payload is still a valid fallback when the detail refresh fails.
       }
       setSelectedJob(editableJob);
       setDraftPipeline(hydrateDraftPipelineFromJob(editableJob, initialDraftPipeline));
@@ -192,7 +187,7 @@ export function useJobController({
       setApiPending(true);
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       try {
-        if (!apiConfig.useMock) await deleteLivePipelineJob(job.id);
+        await deleteLivePipelineJob(job.id);
         const remaining = jobs.filter((item) => item.id !== job.id);
         const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
         setJobs(remaining);
@@ -254,9 +249,7 @@ export function useJobController({
     }));
     setApiPending(true);
     try {
-      const { action, apiPath, dagSteps, dataset, job: updatedJob, run } = apiConfig.useMock
-        ? await runMockJobCommand(job, command)
-        : await runLiveJobCommand(job, command);
+      const { action, apiPath, dagSteps, dataset, job: updatedJob, run } = await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       let normalizedUpdatedJob: JobRowData | undefined;
       if (updatedJob) {
@@ -291,7 +284,6 @@ export function useJobController({
       }
       if (dataset) {
         const normalizedDataset = normalizeDatasetRow(dataset);
-        saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }

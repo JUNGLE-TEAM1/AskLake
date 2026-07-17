@@ -376,6 +376,63 @@ export function mergeSourceAssets(currentAssets: Array<[string, string, string]>
   return Array.from(merged.values());
 }
 
+export type SourcePathNavigation = {
+  kind: "open-folder" | "probe-object" | "select-object";
+  path: string;
+};
+
+export function resolveSourcePathNavigation(
+  requestedPath: string,
+  assets: Array<[string, string, string]>,
+): SourcePathNavigation {
+  const path = requestedPath.trim();
+  const exactAsset = assets.find(([assetPath]) => assetPath === path);
+  const isExplicitFolder = path.endsWith("/") || exactAsset?.[1].trim().toLowerCase() === "folder";
+  if (isExplicitFolder) return { kind: "open-folder", path };
+  if (exactAsset) return { kind: "select-object", path };
+  return { kind: "probe-object", path };
+}
+
+export function buildSourceObjectSelectionFields(
+  fields: Array<[string, string]>,
+  requestedPath: string,
+) {
+  const objectPath = requestedPath.trim();
+  const nextFields = fields.map(([fieldLabel, fieldValue]) => (
+    fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
+      ? [fieldLabel, objectPath] as [string, string]
+      : [fieldLabel, fieldValue] as [string, string]
+  ));
+  const patches: Array<[string, string]> = [
+    ["__Selection Kind", "file"],
+    ["__Selected Object", objectPath],
+    ["__Sample Object", objectPath],
+  ];
+  patches.forEach(([label, value]) => {
+    const index = nextFields.findIndex(([fieldLabel]) => fieldLabel === label);
+    if (index >= 0) nextFields[index] = [label, value];
+    else nextFields.push([label, value]);
+  });
+  return nextFields;
+}
+
+export function isSourceObjectNotFoundError(error: unknown) {
+  if (error && typeof error === "object" && "code" in error) {
+    const candidate = error as { code?: unknown; status?: unknown };
+    return String(candidate.code ?? "") === "SOURCE_OBJECT_NOT_FOUND"
+      && (candidate.status === undefined || Number(candidate.status) === 404);
+  }
+
+  const message = error instanceof Error ? error.message : "";
+  if (!message.trim().startsWith("{")) return false;
+  try {
+    const payload = JSON.parse(message) as { error?: { code?: unknown }; };
+    return String(payload.error?.code ?? "") === "SOURCE_OBJECT_NOT_FOUND";
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeFolderPrefix(path: string) {
   const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
   return cleanPath ? `${cleanPath}/` : "";

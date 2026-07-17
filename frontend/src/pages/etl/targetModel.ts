@@ -6,7 +6,7 @@ import {
 } from "./sourceModel";
 
 export const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
-export const DEFAULT_VISIBILITY = "조직 내부";
+export const DEFAULT_VISIBILITY = "선택한 주체";
 export const DEFAULT_OWNER = "data-team-01";
 export const DEFAULT_TARGET_DATASET = "customer_review_gold";
 export const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
@@ -14,7 +14,7 @@ export const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
 export const DEFAULT_TARGET_TAGS: string[] = [];
 export const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
-export const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
+export const VISIBILITY_OPTIONS = ["소유자 전용", "선택한 주체", "모든 인증 사용자"] as const;
 export const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 export const KAFKA_SNAPSHOT_TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER"];
 export const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
@@ -508,7 +508,7 @@ export function buildPermissionDraftPatch({
     name: group.name,
   }));
   const presetLabel = PERMISSION_PRESETS.find((candidate) => candidate.id === preset)?.label ?? "직접 설정";
-  const visibility = publicView ? "외부 공유" : "조직 내부";
+  const visibility = publicView ? "모든 인증 사용자" : selectedGrants.length > 0 ? "선택한 주체" : "소유자 전용";
   const permissionSummary = `담당자 + ${selectedGrants.length}개 대상 · ${publicView ? "모든 사용자 조회 허용" : "지정 대상만 조회"}`;
 
   return {

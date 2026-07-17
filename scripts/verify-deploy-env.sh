@@ -350,7 +350,7 @@ if [[ "$backend_legacy_demo_users" != "false" || -n "$frontend_legacy_demo_users
   exit 1
 fi
 frontend_mock_mode="$(env_value_for VITE_USE_MOCK_API)"
-if [[ -n "$frontend_mock_mode" && "$frontend_mock_mode" != "false" ]]; then
+if [[ -n "$frontend_mock_mode" ]]; then
   printf 'error: VITE_USE_MOCK_API is no longer supported by the production frontend\n' >&2
   exit 1
 fi

@@ -14,8 +14,8 @@
 
 ## Production activation
 
-- production build의 `VITE_USE_MOCK_API` 기본값은 `false`다. production에서 `true`를 요청하면 `resolveMockApiMode`가 fail closed 한다.
-- `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED` 기본값은 Dockerfile, Compose와 배포 예시 환경 모두 `false`다.
+- browser mock API와 `VITE_USE_MOCK_API` build switch는 제거되어 production·development 모두 live API만 사용한다.
+- frontend의 legacy demo identity build switch는 Dockerfile, Compose와 배포 예시 환경에서 제거한다.
 - 후속 리팩토링은 mock source, legacy demo identity, compatibility UI를 편의를 위해 활성화하지 않는다.
 
 ## UI 불변 범위
@@ -34,4 +34,4 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-`deployed-ui-boundary.test.mts`는 compatibility façade의 source consumer가 다시 생기거나 production mock/legacy 기본값이 활성화되면 실패한다. 기존 CSS hash, route, wizard와 화면 계약은 나머지 UI regression suite가 계속 검증한다.
+`deployed-ui-boundary.test.mts`는 compatibility façade의 source consumer가 다시 생기거나 mock/legacy build switch가 다시 추가되면 실패한다. 기존 CSS hash, route, wizard와 화면 계약은 나머지 UI regression suite가 계속 검증한다.

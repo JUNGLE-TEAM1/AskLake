@@ -1,4 +1,5 @@
-import { apiClient, apiConfig } from "./apiClient";
+import { apiClient } from "./apiClient";
+import { ApiError } from "../types";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
 import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
@@ -65,19 +66,10 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
-  if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
   return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  if (apiConfig.useMock) {
-    return {
-      kafkaBroker: "127.0.0.1:19092",
-      kafkaTopic: "asklake-source-events",
-      s3Bucket: "m3-raw",
-      s3Prefix: "",
-    };
-  }
   return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
@@ -87,90 +79,13 @@ export async function listSourceAssets(sourceType: string, fields: SourceFieldRo
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
-  if (apiConfig.useMock) return resolveMockConnectorAnalysis(sourceType, fields);
   const body = { sourceConfig: fields, sourceType };
-  return postWithDevFallback<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
+  return apiClient.post<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
 }
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
-  if (apiConfig.useMock) {
-    const assets = mockSourceAssets(sourceType, prefix);
-    return { assets, count: assets.length, limit: assets.length, prefix };
-  }
   const body = { prefix, sourceConfig: fields, sourceType };
   return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
-}
-
-function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRows): BackendSourceConnectorResponse {
-  const sourceLabel = fieldValue(fields, "Source Dataset")
-    || fieldValue(fields, "Bucket / Stage Name")
-    || fieldValue(fields, "Database Name")
-    || sourceType;
-  const previewColumns = ["review_id", "product_id", "rating", "review_text", "updated_at"];
-  const previewRows = [
-    ["r-1001", "p-100", "5", "배송이 빨라요", "2026-07-10T09:00:00Z"],
-    ["r-1002", "p-101", "4", "상품 상태가 좋아요", "2026-07-10T09:05:00Z"],
-  ];
-
-  const selectedPrefix = fieldValue(fields, "__Selection Kind").toLowerCase() === "prefix"
-    ? normalizePrefix(fieldValue(fields, "Path / Prefix"))
-    : "";
-  const datasetSummary: SourceDatasetSummary | undefined = selectedPrefix
-    ? {
-        bucket: fieldValue(fields, "Bucket / Stage Name") || "mock-bucket",
-        excludedFileCount: 0,
-        fileCount: 2,
-        format: fieldValue(fields, "File Type") === "auto" ? "JSONL" : fieldValue(fields, "File Type").toUpperCase(),
-        prefix: selectedPrefix,
-        representativeObject: `${selectedPrefix}part-00000.jsonl`,
-        schemaCompatible: true,
-        schemaFingerprint: "review_id:string|product_id:string|rating:integer|review_text:string|updated_at:timestamp",
-        selectionKind: "prefix",
-        totalBytes: 128 * 1024 * 1024,
-      }
-    : undefined;
-
-  return {
-    actionPath: "/api/etl/sources/test",
-    assets: mockSourceAssets(sourceType, ""),
-    datasetSummary,
-    draftPatch: {
-      source: {
-        connectionMessage: "mock 소스 연결 확인이 완료되었습니다.",
-        connectionStatus: "success",
-        sourceConfig: fields,
-        sourceLabel,
-        sourceType,
-      },
-    },
-    logs: ["mock connector fixture applied", "sample schema is ready"],
-    message: "mock 소스 연결 확인이 완료되었습니다.",
-    previewColumns,
-    previewNote: "mock 샘플",
-    previewRows,
-    status: "success",
-    testItems: [["소스 연결", "성공"], ["샘플 조회", "성공"], ["스키마 추론", "준비됨"]],
-  };
-}
-
-function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
-  if (sourceType === "PostgreSQL") {
-    return [
-      ["customer_reviews", prefix.trim() || "public", "detected"],
-      ["product_metadata", prefix.trim() || "public", "detected"],
-    ];
-  }
-  if (sourceType === "MongoDB") {
-    return [
-      ["app_events", prefix.trim() || "asklake_sources", "detected"],
-      ["customer_profiles", prefix.trim() || "asklake_sources", "detected"],
-    ];
-  }
-  const basePath = normalizePrefix(prefix) || "sample/";
-  return [
-    [`${basePath}customer_reviews.parquet`, "Parquet", "준비됨"],
-    [`${basePath}customer_reviews.csv`, "CSV", "준비됨"],
-  ];
 }
 
 async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
@@ -231,15 +146,12 @@ function isNetworkError(error: unknown) {
   return /failed to fetch|networkerror|load failed/i.test(message);
 }
 
-function normalizeSourceType(sourceType: string) {
-  return sourceType === "Database" ? "PostgreSQL" : sourceType;
+function isNotFoundError(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
 }
 
-function isNotFoundError(error: unknown) {
-  const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) : 0;
-  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return status === 404 || /404|not found/i.test(`${code} ${message}`);
+function normalizeSourceType(sourceType: string) {
+  return sourceType === "Database" ? "PostgreSQL" : sourceType;
 }
 
 function normalizeConnectorAnalysis(
@@ -360,41 +272,6 @@ function withUnselectedTargetSchema(analysis: SourceConnectorAnalysis): SourceCo
   };
 }
 
-function buildMockRecordParsingPreview(rawLines: string[], recordParsing: RecordParsingDraft): RecordParsingPreviewResponse {
-  const indexed = rawLines.map((line, index) => ({ line, lineNumber: index + 1 })).filter(({ line }) => line.trim());
-  const rows = indexed.map(({ line, lineNumber }) => ({ line, lineNumber, values: line.trim().split(/\s+/) }));
-  const dataRows = recordParsing.header ? rows.slice(1) : rows;
-  const counts = new Map<number, number>();
-  dataRows.forEach(({ values }) => counts.set(values.length, (counts.get(values.length) ?? 0) + 1));
-  const maxCount = Math.max(0, ...counts.values());
-  const dominant = Array.from(counts.entries()).filter(([, count]) => count === maxCount).map(([count]) => count);
-  const expectedFieldCount = recordParsing.expectedFieldCount || recordParsing.columns.length || (dominant.length === 1 ? dominant[0] : 0);
-  const valid = dataRows.filter(({ values }) => values.length === expectedFieldCount);
-  const columns = Array.from({ length: expectedFieldCount }, (_, position) => {
-    const current = recordParsing.columns[position];
-    const values = valid.map((row) => row.values[position] ?? "");
-    const inferredType = current?.inferredType ?? inferPreviewColumnType(values);
-    const name = current?.name || `field_${position + 1}`;
-    return { confidence: 90, nullable: false, sourceName: name, targetName: name, type: inferredType };
-  });
-  const normalizedColumns = columns.map((column, position) => ({ position, name: column.targetName, inferredType: column.type as RecordParsingDraft["columns"][number]["inferredType"] }));
-  const invalidRows = dataRows.filter(({ values }) => values.length !== expectedFieldCount).slice(0, 20).map(({ line, lineNumber, values }) => ({
-    actualFieldCount: values.length,
-    expectedFieldCount,
-    lineNumber,
-    rawPreview: line.slice(0, 200),
-  }));
-  return {
-    canApply: expectedFieldCount > 0 && dataRows.length > 0 && invalidRows.length === 0,
-    columns,
-    invalidRows,
-    recordParsing: { ...recordParsing, columns: normalizedColumns, enabled: true, expectedFieldCount },
-    sampleRows: valid.map(({ values }) => values),
-    totalRows: dataRows.length,
-    validRows: valid.length,
-  };
-}
-
 function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): SchemaColumnDraft[] {
   return columns.map((column, columnIndex) => {
     const values = rows.map((row) => row[columnIndex] ?? "");
@@ -468,9 +345,4 @@ function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnect
 
 function fieldValue(fields: SourceFieldRows, label: string) {
   return fields.find(([fieldLabel]) => fieldLabel === label)?.[1]?.trim() ?? "";
-}
-
-function normalizePrefix(value: string) {
-  const normalized = value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  return normalized ? `${normalized}/` : "";
 }

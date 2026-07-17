@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 
-import { apiConfig } from "../../services/apiClient";
-import { getDatasets } from "../../services/mockApi";
+import { getDatasets } from "../../services/askLakeApi";
 
 import { createResourceQueryKey, LatestRequestGate } from "../../state/requestOwnership";
-import { emptySelectedDataset, loadStoredCatalogDatasets, mergeCatalogDatasets, normalizeDatasetRow } from "./catalogState";
+import { emptySelectedDataset, normalizeDatasetRow } from "./catalogState";
 import { getInitialReadErrorMessage, readInitialResource } from "./initialRead";
 
 import type { AskLakeWorkspaceState } from "./useAskLakeWorkspaceState";
@@ -27,10 +26,7 @@ export function useCatalogHydration({
   const requests = useRef(new LatestRequestGate());
 
   const applyHydratedDatasets = (datasets: Awaited<ReturnType<typeof getDatasets>>) => {
-    const mergedDatasets = apiConfig.useMock
-      ? mergeCatalogDatasets(datasets, loadStoredCatalogDatasets())
-      : datasets;
-    const normalizedDatasets = mergedDatasets.map(normalizeDatasetRow);
+    const normalizedDatasets = datasets.map(normalizeDatasetRow);
     setDatasets(normalizedDatasets);
     setSelectedDataset((current) => normalizedDatasets.find((dataset) => dataset.id === current.id) ?? normalizedDatasets[0] ?? emptySelectedDataset);
   };

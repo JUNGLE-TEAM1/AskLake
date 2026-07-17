@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
-import { apiConfig } from "../../services/apiClient";
 import { getJob as getPipelineJob } from "../../services/pipelineApi";
 import type { FlowId, JobRowData } from "../../types";
 import { normalizeJobRow } from "./jobState";
@@ -30,7 +29,6 @@ export function useJobRouteHydration({
     ));
 
     const needsFullJobDetail = matchedJob
-      && !apiConfig.useMock
       && (flow === "jobDetail" || flow === "jobRuns");
     if (needsFullJobDetail) {
       void getPipelineJob(jobId)

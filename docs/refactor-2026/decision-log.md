@@ -62,7 +62,7 @@
 - 상태: Accepted
 - 결정: 기존 Job·session·checkpoint·draft reader는 migration window 동안 유지하되 production 도달 시 안정적인 path ID의 구조화 warning과 counter를 남긴다.
 - 이유: 문자열 검색 결과를 일괄 삭제하면 운영 데이터를 깨뜨리고, 무음 fallback을 유지하면 실제 경로와 제거 시점을 판단할 수 없기 때문이다.
-- 제약: 운영 빌드에서 `VITE_USE_MOCK_API=true`는 fail closed 한다. adapter 제거는 등록부의 owner·제거 조건과 30일 0-call 근거를 충족한 별도 PR에서 수행한다.
+- 제약: 브라우저 mock API adapter와 build switch는 제거되었고 다시 추가하지 않는다. persisted-data adapter 제거는 등록부의 owner·제거 조건과 관측 근거를 충족한 별도 PR에서 수행한다.
 
 ## D-011 — 최종 판정은 guarded GO, production은 fail-closed
 

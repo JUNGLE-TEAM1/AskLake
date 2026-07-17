@@ -1,10 +1,9 @@
 
 
-import { apiConfig } from "../../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../../services/catalogApi";
 
 import type { CatalogDataset, FlowId } from "../../types";
-import { normalizeDatasetRow, recalculateDatasetFromMaterializationRuns } from "./catalogState";
+import { normalizeDatasetRow } from "./catalogState";
 import { WriteAuditLog } from "./contracts";
 
 import type { AskLakeWorkspaceState } from "./useAskLakeWorkspaceState";
@@ -66,12 +65,7 @@ export function useCatalogController({
     };
 
     try {
-      const nextDataset = apiConfig.useMock
-        ? recalculateDatasetFromMaterializationRuns({
-            ...targetDataset,
-            materializationRuns: (targetDataset.materializationRuns ?? []).filter((run) => run.runId !== runId),
-          })
-        : normalizeDatasetRow((await deleteDatasetMaterializationRun(datasetId, runId)).dataset);
+      const nextDataset = normalizeDatasetRow((await deleteDatasetMaterializationRun(datasetId, runId)).dataset);
 
       applyDataset(nextDataset);
       writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });

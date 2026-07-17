@@ -41,7 +41,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { apiConfig } from "@/services/apiClient";
+import { schemaTransformApi } from "@/services/schemaTransformApi";
 import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
 
 /**
@@ -172,6 +172,7 @@ export default function SchemaTransformEditor({
   onQualityRulesChange,
   onTestStatusChange,
   onSqlChange,
+  onSqlPreview,
   initialTargetSchema = [],
   initialCustomSql = "",
   sourceTabs = null,
@@ -201,6 +202,8 @@ export default function SchemaTransformEditor({
   const [showSqlAssistant, setShowSqlAssistant] = useState(false);
   const [sqlPreviewVisible, setSqlPreviewVisible] = useState(false);
   const [sqlPreviewPanelOpen, setSqlPreviewPanelOpen] = useState(true);
+  const [sqlPreviewLoading, setSqlPreviewLoading] = useState(false);
+  const [sqlPreviewResult, setSqlPreviewResult] = useState(null);
   const [sqlValidation, setSqlValidation] = useState({ tone: "idle", message: "SQL 입력 후 문법 검증을 실행하세요." });
   const sqlLineNumberRef = useRef(null);
   const lastVisualSqlRef = useRef("");
@@ -219,6 +222,10 @@ export default function SchemaTransformEditor({
     const name = String(column.name || column.field || "");
     return name.toLowerCase().includes(sqlSourceQuery.trim().toLowerCase());
   });
+  const sqlPreviewColumnNames = Array.isArray(sqlPreviewResult?.schema)
+    ? sqlPreviewResult.schema.map((column) => String(column.name || "")).filter(Boolean)
+    : [];
+  const sqlPreviewResultRows = Array.isArray(sqlPreviewResult?.sample_rows) ? sqlPreviewResult.sample_rows : [];
   const sqlLineNumbers = Array.from(
     { length: Math.max(customSql.split("\n").length, 7) },
     (_, index) => index + 1,
@@ -257,9 +264,36 @@ export default function SchemaTransformEditor({
     });
   };
 
-  const runSqlPreview = () => {
+  const runSqlPreview = async () => {
     if (!validateCustomSql()) return;
-    setSqlPreviewVisible(true);
+    setSqlPreviewLoading(true);
+    setSqlPreviewVisible(false);
+    try {
+      const result = await schemaTransformApi.testSqlTransform([{
+        source_dataset_id: sourceDatasetId,
+        source_name: sourceName,
+        columns: sourceSchema.map((column) => column.name || column.field),
+        column_types: Object.fromEntries(sourceSchema.map((column) => [column.name || column.field, column.type || "string"])),
+        sample_rows: sourceSampleRows.slice(0, 100),
+      }], customSql);
+      onSqlPreview?.({ ...result, sql: customSql });
+      setSqlPreviewResult(result);
+      setSqlPreviewVisible(true);
+      setSqlValidation({
+        tone: "success",
+        message: result.preview_origin === "catalog"
+          ? `Catalog 실제 데이터 ${Number(result.dataset_row_count || 0).toLocaleString()}행에서 SQL 결과를 확인했습니다.`
+          : "연결 소스의 실제 샘플에서 SQL 결과를 확인했습니다.",
+      });
+    } catch (error) {
+      setSqlPreviewResult(null);
+      setSqlValidation({
+        tone: "error",
+        message: error instanceof Error ? error.message : "SQL Preview 실행에 실패했습니다.",
+      });
+    } finally {
+      setSqlPreviewLoading(false);
+    }
   };
 
   // Initialize beforeColumns when sourceSchema changes (source tab switches)
@@ -507,7 +541,7 @@ export default function SchemaTransformEditor({
           .map((column, columnIndex) => {
             const method = column.method || "copy";
             const isOneOfValues = method === "one_of_values";
-            const fallbackAllowed = isOneOfValues && Boolean(column.fallbackAllowed || column.allowFallback);
+            const fallbackAllowed = false;
             const modelArtifact = isOneOfValues ? column.modelArtifact || column.selectedModelArtifact || "" : "";
             const modelId = isOneOfValues ? column.modelId || column.selectedModelId || "" : "";
             return {
@@ -519,7 +553,7 @@ export default function SchemaTransformEditor({
               modelId,
               modelSelectionPolicy: isOneOfValues ? (column.modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
               nullable: column.nullable !== false,
-              requireModel: isOneOfValues && !fallbackAllowed,
+              requireModel: isOneOfValues,
               targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
               type: column.type || "String",
             };
@@ -738,22 +772,22 @@ export default function SchemaTransformEditor({
       onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
-  const sqlPreviewRows = useMemo(
-    () => sourceSampleRows.slice(0, 10).map((values, index) => ({ id: `schema-sql-preview-${index}`, values })),
-    [sourceSampleRows],
+  const sqlPreviewTableRows = useMemo(
+    () => sqlPreviewResultRows.slice(0, 10).map((values, index) => ({ id: `schema-sql-preview-${index}`, values })),
+    [sqlPreviewResultRows],
   );
-  const sqlPreviewColumns = useMemo(
-    () => sourceSchema.map((column, columnIndex) => ({
+  const sqlPreviewTableColumns = useMemo(
+    () => sqlPreviewColumnNames.map((columnName, columnIndex) => ({
       cell: ({ row }) => {
         const value = String(row.original.values[columnIndex] ?? "-");
         return <span className="block max-w-64 truncate" title={value}>{value}</span>;
       },
       enableSorting: false,
-      header: column.name || column.field,
+      header: columnName,
       id: `schema-sql-preview-${columnIndex}`,
       meta: { widthClassName: "min-w-40" },
     })),
-    [sourceSchema],
+    [sqlPreviewColumnNames],
   );
 
   return (
@@ -1098,7 +1132,7 @@ export default function SchemaTransformEditor({
                     </label>
                   </div>
                   <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-3 py-2 text-[11px] font-bold text-slate-500">
-                <span>{apiConfig.useMock ? `확인용 ${String(allSources?.[0]?.name || sourceName).toUpperCase()}` : String(allSources?.[0]?.name || sourceName).toUpperCase()}</span>
+                    <span>{String(allSources?.[0]?.name || sourceName).toUpperCase()}</span>
                     <span>{filteredSqlSources.length}개 필드</span>
                   </div>
                   <div className="flex-1 overflow-y-auto">
@@ -1149,9 +1183,10 @@ export default function SchemaTransformEditor({
                   <button
                     type="button"
                     onClick={runSqlPreview}
+                    disabled={sqlPreviewLoading}
                     className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700"
                   >
-                    <Play className="size-4" /> 미리보기 실행
+                    <Play className="size-4" /> {sqlPreviewLoading ? "실행 중..." : "미리보기 실행"}
                   </button>
                 </div>
               </div>
@@ -1171,6 +1206,8 @@ export default function SchemaTransformEditor({
                       onApply={(sql) => {
                         setCustomSql(sql);
                         setShowSqlAssistant(false);
+                        setSqlPreviewVisible(false);
+                        setSqlPreviewResult(null);
                         setSqlValidation({ tone: "idle", message: "Nessie가 작성한 SQL을 검증해 주세요." });
                       }}
                       onCancel={() => setShowSqlAssistant(false)}
@@ -1192,6 +1229,7 @@ export default function SchemaTransformEditor({
                       onChange={(event) => {
                         setCustomSql(event.target.value);
                         setSqlPreviewVisible(false);
+                        setSqlPreviewResult(null);
                         setSqlValidation({ tone: "idle", message: "변경된 SQL을 다시 검증하세요." });
                       }}
                       onScroll={syncSqlLineNumberScroll}
@@ -1226,12 +1264,12 @@ export default function SchemaTransformEditor({
               icon={<Table2 />}
               title="결과 미리보기"
             />
-            {sqlPreviewPanelOpen && (sqlPreviewVisible && sourceSampleRows.length > 0 ? (
+            {sqlPreviewPanelOpen && (sqlPreviewVisible && sqlPreviewResultRows.length > 0 ? (
               <DataTable
                 aria-label="SQL 변환 결과 미리보기 표"
                 cellClassName="text-sm font-medium text-slate-800"
-                columns={sqlPreviewColumns}
-                data={sqlPreviewRows}
+                columns={sqlPreviewTableColumns}
+                data={sqlPreviewTableRows}
                 enableSorting={false}
                 getRowId={(row) => row.id}
                 pagination={false}
@@ -1240,7 +1278,7 @@ export default function SchemaTransformEditor({
               />
             ) : (
               <div className="grid min-h-[150px] place-items-center px-6 py-8 text-center text-sm font-semibold text-slate-400">
-                <span>{sqlPreviewVisible ? "표시할 샘플 행이 없습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>
+                <span>{sqlPreviewLoading ? "Catalog 실제 데이터에서 SQL을 실행하고 있습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>
               </div>
             ))}
           </section>
