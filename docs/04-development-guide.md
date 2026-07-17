@@ -1011,6 +1011,14 @@ immutable image, Helm/EC2 rollback과 Continuous 경계를 집계할 뿐 어떤 
 add-on, Fluent Bit, ADOT을 별도 비교한 뒤 선택하며 RDS log export나 control-plane
 log만으로 완료 처리하지 않는다. 상세 계약은 [Day 18 Pair A Phase 0 기준점](eks-day18-a-phase0-baseline.md)을 따른다.
 
+Phase 1 선택은 `infra/eks/observability/day18-observability-decision.json`에 고정하고
+`bash scripts/verify-eks-day18-observability-decision.sh`로 검사한다. 선택은 관리형
+CloudWatch Observability add-on의 OTel Container Insights, Application Signals와
+Classic/dual publish 비활성, 전용 Pod Identity다. exact add-on version/schema,
+최소 IAM, log group ownership과 retention은 Phase 2 apply 전에 다시 검증한다. 별도
+Fluent Bit/ADOT을 설치하거나 AWS managed policy를 조용히 broad 예외로 사용하지
+않는다. 상세 근거와 비용 경계는 [Day 18 관찰 방식 결정](eks-day18-observability-decision.md)을 따른다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
