@@ -62,6 +62,7 @@ from app.application.etl_job_queries import (
     EtlJobQueryHooks,
     get_job as hydrate_job_query,
     list_jobs as hydrate_job_list_query,
+    list_job_statuses as hydrate_job_statuses_query,
 )
 from app.application.etl_job_projection import (
     apply_job_command,
@@ -134,6 +135,10 @@ from app.application.snapshot_commands import (
     SnapshotCommandViolation,
     SnapshotExecutionPath,
     plan_snapshot_command,
+)
+from app.application.snapshot_reconciliation import (
+    SnapshotReconciliationHooks,
+    reconcile_active_airflow_runs,
 )
 from app.application.etl_catalog_projection import (
     append_materialization_run,
@@ -299,7 +304,7 @@ from app.ports.runtime_io import (
     RuntimeDocumentStore,
 )
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
-from app.repositories import etl_repository
+from app.repositories import etl_repository, snapshot_status_repository
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
@@ -366,6 +371,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.job_status import JobStatusListResponse
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionGrant
 from app.services.etl import (
@@ -2030,6 +2036,7 @@ get_permission_options = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['g
 create_pipeline = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['create_pipeline'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 pipeline_create_mapping_context = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['pipeline_create_mapping_context'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 list_jobs = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['list_jobs'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
+list_job_statuses = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['list_job_statuses'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 continuous_report_has_unacknowledged_publication = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['continuous_report_has_unacknowledged_publication'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 has_pending_continuous_replay_catalog = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['has_pending_continuous_replay_catalog'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
 run_due_scheduled_jobs = bind_runtime(_etl_api_job_operations.IMPLEMENTATIONS['run_due_scheduled_jobs'], globals(), runtime_names=_etl_api_job_operations.RUNTIME_NAMES)
@@ -2067,6 +2074,7 @@ kafka_offset_policy = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['kaf
 parse_kafka_target_path = bind_runtime(_etl_snapshot_operations.IMPLEMENTATIONS['parse_kafka_target_path'], globals(), runtime_names=_etl_snapshot_operations.RUNTIME_NAMES)
 run_spark_job = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['run_spark_job'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 ensure_batch_iceberg_target = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['ensure_batch_iceberg_target'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
+sync_active_airflow_snapshot_runs = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['sync_active_airflow_snapshot_runs'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 execute_airflow_spark_run = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['execute_airflow_spark_run'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 airflow_spark_execution_hooks = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['airflow_spark_execution_hooks'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)
 spark_execution_lease_is_active = bind_runtime(_etl_airflow_operations.IMPLEMENTATIONS['spark_execution_lease_is_active'], globals(), runtime_names=_etl_airflow_operations.RUNTIME_NAMES)

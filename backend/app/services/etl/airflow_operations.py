@@ -15,6 +15,7 @@ RUNTIME_NAMES = {
     'ImportError',
     'Path',
     'SOURCE_WINDOW_CONTRACT_VERSION',
+    'SnapshotReconciliationHooks',
     'UTC',
     'ValueError',
     'airflow_catalog_reconciliation_hooks',
@@ -67,6 +68,7 @@ RUNTIME_NAMES = {
     'parse_optional_integer',
     're',
     'record_airflow_catalog_failure',
+    'reconcile_active_airflow_runs',
     'recover_spark_rest_submission',
     'require_airflow_internal_token',
     'require_compiled_rules',
@@ -89,12 +91,14 @@ RUNTIME_NAMES = {
     'spark_rest_poll_timeout_ms',
     'spark_rest_submission_state_file',
     'spark_result_manifest',
+    'snapshot_status_repository',
     'stable_id',
     'stats_from_runs',
     'status',
     'str',
     'submit_airflow_job_run',
     'sum',
+    'sync_airflow_runs_for_job',
     'timedelta',
     'urlparse',
     'validate_catalog_output_identity',
@@ -828,9 +832,33 @@ def job_payload_for_spark(
     }
 
 
+def sync_active_airflow_snapshot_runs() -> int:
+    """Persist finite Airflow Run state without depending on browser reads."""
+    import logging
+
+    from app.core.database import SessionLocal
+
+    logger = logging.getLogger(__name__)
+    return reconcile_active_airflow_runs(
+        SessionLocal,
+        hooks=SnapshotReconciliationHooks(
+            acquire_sync_owner=snapshot_status_repository.try_acquire_snapshot_airflow_sync,
+            get_job=etl_repository.get_job,
+            list_active_job_ids=snapshot_status_repository.list_active_airflow_job_ids,
+            on_job_error=lambda job_id, _error: logger.exception(
+                "Snapshot Airflow synchronization failed for Job %s",
+                job_id,
+            ),
+            release_sync_owner=snapshot_status_repository.release_snapshot_airflow_sync,
+            sync_job=sync_airflow_runs_for_job,
+        ),
+    )
+
+
 EXPORTED_FUNCTIONS = (
     'run_spark_job',
     'ensure_batch_iceberg_target',
+    'sync_active_airflow_snapshot_runs',
     'execute_airflow_spark_run',
     'airflow_spark_execution_hooks',
     'spark_execution_lease_is_active',

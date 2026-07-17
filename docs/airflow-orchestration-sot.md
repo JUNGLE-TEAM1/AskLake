@@ -30,8 +30,8 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
 - Phase 3 — Catalog reconciliation: contract, FastAPI backend slice, and Airflow
   final-task wiring are complete on the current branch. The real
   Airflow/Spark/MinIO/Catalog success and Spark-failure paths are verified, and
-  frontend polling refreshes Catalog once after observing the same Run move
-  from active to successful. For real Spark execution, the final
+  Catalog route loading reads the persisted result independently from Job
+  status polling. For real Spark execution, the final
   `publish_run_result` task reconciles the persisted successful Spark manifest
   into Catalog before the Airflow DAG Run can become successful. Synthetic
   `smoke` execution continues to skip the physical Catalog call.
@@ -295,17 +295,22 @@ Acceptance criteria:
 - DAG view reflects task state transitions.
 - Polling stops on `success`, `failed`, or `canceled`.
 
-Phase 6 output:
+Phase 6 output (current ownership):
 
-- `GET /api/etl/jobs/{jobId}` now syncs active Airflow DAG Run and Task
-  Instance state into persisted `JobRunSummary`, `taskStates`, and
-  `dagStepsByRunId` before returning the job.
-- Frontend live mode polls jobs with `queued` or `running` runs through
-  `GET /api/etl/jobs/{jobId}` and reconciles the result into
-  `runsByJobId`, `selectedRunIdByJobId`, and `dagStepsByRunId`.
-- Polling stops naturally when no job has an active `queued` or `running` run.
-- Airflow sync failures are preserved in run `syncError` and surfaced through
-  frontend sync-failure feedback without breaking the whole job hydrate.
+- A backend lifespan loop syncs active Airflow DAG Run and Task Instance state
+  into persisted `JobRunSummary`, `taskStates`, and `dagStepsByRunId` every
+  `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS` (default 5 seconds).
+- PostgreSQL advisory locking allows one backend process to own each sync
+  cycle, while a separate transaction per Job keeps one Airflow failure from
+  blocking the remaining Jobs.
+- Frontend live mode collects Jobs whose latest server Run is `queued` or
+  `running`, then polls all of them with one `GET /api/etl/jobs/statuses`
+  request. Full history is loaded only from `GET /api/etl/jobs/{jobId}` when a
+  detail or run-history route is opened.
+- Polling stops naturally when no Job has an active Run, the tab is hidden, or
+  the Jobs route is left. Temporary failures back off and recover.
+- All public Job GET endpoints only read persisted state. Airflow sync failures
+  remain in run `syncError` without turning a read request into a write.
 
 ### Phase 7. Local Runtime And Verification
 
@@ -377,6 +382,7 @@ AIRFLOW_API_TOKEN=
 AIRFLOW_USERNAME=
 AIRFLOW_PASSWORD=
 AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
+AIRFLOW_RUN_SYNC_INTERVAL_SECONDS=5
 AIRFLOW_EXECUTION_API_TOKEN=
 ```
 
@@ -387,8 +393,9 @@ Manual smoke once Airflow is reachable:
 3. Start the frontend in live mode.
 4. Create or select an ETL job and run it.
 5. Confirm the new run appears immediately in Run History.
-6. Confirm `GET /api/etl/jobs/{jobId}` polling updates the selected run and DAG
-   modal from Airflow DAG Run and Task Instance state.
+6. Confirm the backend keeps updating the Run while the Jobs page is closed,
+   then confirm `GET /api/etl/jobs/statuses` returns the selected Run and DAG
+   modal state without calling Airflow from the request.
 7. Confirm polling stops after `success`, `failed`, or `canceled`.
 8. After a successful Run, open Catalog without reloading the page and confirm
    the target dataset's latest Run, aggregate rows, size, and append count.
@@ -461,16 +468,16 @@ POST /api/etl/jobs/{jobId}/commands
 For `run` and `retry`, the endpoint should submit work to Airflow and return
 quickly with a non-terminal run state.
 
-Polling can start with:
+Lightweight polling uses repeated `jobId` query parameters:
+
+```text
+GET /api/etl/jobs/statuses?jobId={jobId}&jobId={jobId}
+```
+
+Full persisted Job details and Run history remain available through:
 
 ```text
 GET /api/etl/jobs/{jobId}
-```
-
-A run-specific endpoint may be added if the frontend needs narrower polling:
-
-```text
-GET /api/etl/jobs/{jobId}/runs/{runId}
 ```
 
 ## 7. Commit Guidance

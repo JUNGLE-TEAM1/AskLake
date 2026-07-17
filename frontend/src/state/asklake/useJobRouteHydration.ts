@@ -5,6 +5,7 @@ import { apiConfig } from "../../services/apiClient";
 import { getJob as getPipelineJob } from "../../services/pipelineApi";
 import type { FlowId, JobRowData } from "../../types";
 import { normalizeJobRow } from "./jobState";
+import { mergeJobDetailWithCurrentStatus } from "./snapshotStatusState";
 
 
 export function useJobRouteHydration({
@@ -18,26 +19,34 @@ export function useJobRouteHydration({
   jobs: JobRowData[];
   setSelectedJob: Dispatch<SetStateAction<JobRowData>>;
 }) {
+  const matchedJob = jobId ? jobs.find((job) => job.id === jobId) : undefined;
+  const matchedJobId = matchedJob?.id;
+
   useEffect(() => {
     if (!jobId) return;
-    let cancelled = false;
-    const matchedJob = jobs.find((job) => job.id === jobId);
     const nextJob = matchedJob ?? buildMissingJobFromRoute(jobId);
     setSelectedJob((job) => (
-      job === nextJob || (job.id === nextJob.id && job.name === nextJob.name && job.lastState === nextJob.lastState)
+      job === nextJob || (job.id === nextJob.id && job.tag !== "Missing")
         ? job
         : nextJob
     ));
+  }, [jobId, jobs, matchedJob, setSelectedJob]);
 
-    const needsFullJobDetail = matchedJob
+  useEffect(() => {
+    let cancelled = false;
+    const needsFullJobDetail = matchedJobId
       && !apiConfig.useMock
       && (flow === "jobDetail" || flow === "jobRuns");
     if (needsFullJobDetail) {
-      void getPipelineJob(jobId)
+      void getPipelineJob(matchedJobId)
         .then((detail) => {
           if (cancelled) return;
           const normalizedDetail = normalizeJobRow(detail);
-          setSelectedJob((job) => job.id === normalizedDetail.id ? normalizedDetail : job);
+          setSelectedJob((job) => (
+            job.id === normalizedDetail.id
+              ? mergeJobDetailWithCurrentStatus(job, normalizedDetail)
+              : job
+          ));
         })
         .catch(() => {
           // Keep the list summary visible; an explicit edit or refresh can retry detail hydration.
@@ -47,7 +56,7 @@ export function useJobRouteHydration({
     return () => {
       cancelled = true;
     };
-  }, [flow, jobId, jobs, setSelectedJob]);
+  }, [flow, matchedJobId, setSelectedJob]);
 }
 
 

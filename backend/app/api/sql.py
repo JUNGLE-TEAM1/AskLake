@@ -19,7 +19,7 @@ from app.schemas.sql import (
     QueryRunResponse,
 )
 from app.schemas.common import ErrorCode
-from app.schemas.trino import QueryRunSubmitRequest, TrinoQueryEstimate, TrinoQueryEstimateRequest, TrinoQueryRunListResponse, TrinoQueryRunResponse, TrinoQueryRunResultPage, TrinoQueryValidationRequest, TrinoQueryValidationResponse
+from app.schemas.trino import CreateTrinoFullResultRequest, QueryRunSubmitRequest, TrinoQueryEstimate, TrinoQueryEstimateRequest, TrinoQueryRunListResponse, TrinoQueryRunResponse, TrinoQueryRunResultPage, TrinoQueryValidationRequest, TrinoQueryValidationResponse
 from app.services.query_ai_service import QueryAiService
 from app.services.sql_service import SqlService
 from app.services.trino_query_run_service import TrinoQueryRunService
@@ -120,6 +120,16 @@ def get_trino_query_run_results(
     cursor: str | None = None,
 ) -> TrinoQueryRunResultPage:
     return trino_service.get_result_page(run_id, cursor, actor)
+
+
+@router.post("/runs/{run_id}/full-results", response_model=TrinoQueryRunResponse, status_code=status.HTTP_202_ACCEPTED)
+def create_trino_query_full_results(
+    run_id: str,
+    request: CreateTrinoFullResultRequest,
+    trino_service: Annotated[TrinoQueryRunService, Depends(get_trino_query_run_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> TrinoQueryRunResponse:
+    return trino_service.create_full_result_run(run_id, request, actor)
 
 
 @router.get("/runs/{run_id}/exports/csv")

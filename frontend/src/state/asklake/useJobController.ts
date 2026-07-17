@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 
 import { apiConfig } from "../../services/apiClient";
 
@@ -13,9 +13,10 @@ import { normalizeDatasetRow, saveStoredCatalogDataset } from "./catalogState";
 import { WriteAuditLog } from "./contracts";
 import { initialDraftPipeline } from "./etlDraftState";
 
-import { buildClientRunId, buildOptimisticJob, buildOptimisticRun, buildRunStateFromJobs, commandSuccessMessage, emptySelectedJob, isOptimisticRunCommand, isTerminalRunStatus, moveJobFacetCounts, normalizeJobRow, removeJobFacetCounts, replaceJobById, replaceTempRunByRunId, restoreRecordEntry, snapshotPollIntervalMs, snapshotPollMaxAttempts, snapshotPollMaxConsecutiveErrors, upsertRunByRunId, withoutRecordKey } from "./jobState";
+import { buildClientRunId, buildOptimisticJob, buildOptimisticRun, commandSuccessMessage, emptySelectedJob, isOptimisticRunCommand, moveJobFacetCounts, normalizeJobRow, removeJobFacetCounts, replaceJobById, replaceTempRunByRunId, restoreRecordEntry, upsertRunByRunId, withoutRecordKey } from "./jobState";
 
 import type { AskLakeWorkspaceState } from "./useAskLakeWorkspaceState";
+import { useSnapshotJobStatusPolling } from "./useSnapshotJobStatusPolling";
 
 export function useJobController({
   enabled,
@@ -59,7 +60,8 @@ export function useJobController({
   const commandPendingRef = useRef<Set<string>>(new Set());
   const continuousPollingRef = useRef<Set<string>>(new Set());
   const mutationRevisions = useRef(new MutationRevisionGate());
-  const snapshotPollingRef = useRef<Set<string>>(new Set());
+
+  useSnapshotJobStatusPolling({ enabled, showToast, state });
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => replaceJobById(items, jobId, updater));
@@ -87,69 +89,6 @@ export function useJobController({
       continuousPollingRef.current.delete(initialJob.id);
     }
   };
-
-  const pollSnapshotJobUntilTerminal = async (initialJob: JobRowData, runId: string) => {
-    if (apiConfig.useMock || initialJob.executionMode === "continuous" || snapshotPollingRef.current.has(runId)) return;
-
-    snapshotPollingRef.current.add(runId);
-    let currentJob = initialJob;
-    let consecutiveErrors = 0;
-    try {
-      for (let attempt = 0; attempt < snapshotPollMaxAttempts; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, snapshotPollIntervalMs));
-
-        let nextJob: JobRowData;
-        try {
-          nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
-          consecutiveErrors = 0;
-        } catch (error) {
-          consecutiveErrors += 1;
-          if (consecutiveErrors >= snapshotPollMaxConsecutiveErrors) throw error;
-          continue;
-        }
-
-        updateJobState(initialJob.id, () => nextJob);
-        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
-        currentJob = nextJob;
-
-        const hydratedRunState = buildRunStateFromJobs([nextJob]);
-        const nextRuns = hydratedRunState.runsByJobId[nextJob.id];
-        if (nextRuns) {
-          setRunsByJobId((state) => ({
-            ...state,
-            [nextJob.id]: nextRuns,
-          }));
-        }
-        setDagStepsByRunId((state) => ({
-          ...state,
-          ...hydratedRunState.dagStepsByRunId,
-        }));
-
-        const nextRun = nextJob.runHistory?.find((candidate) => candidate.runId === runId);
-        if (!nextRun || !isTerminalRunStatus(nextRun.status)) continue;
-
-        return;
-      }
-
-      showToast("작업이 제한 시간 안에 끝나지 않아 자동 상태 갱신을 중단했습니다.", "info");
-    } catch {
-      showToast("작업 상태 자동 갱신에 실패했습니다. 잠시 후 다시 확인해 주세요.", "info");
-    } finally {
-      snapshotPollingRef.current.delete(runId);
-    }
-  };
-
-  useEffect(() => {
-    if (!enabled || apiConfig.useMock) return;
-
-    jobs.forEach((job) => {
-      if (job.executionMode === "continuous") return;
-      const activeRun = (runsByJobId[job.id] ?? job.runHistory ?? []).find(
-        (run) => !run.runId.startsWith("client:") && (run.status === "queued" || run.status === "running"),
-      );
-      if (activeRun) void pollSnapshotJobUntilTerminal(job, activeRun.runId);
-    });
-  }, [enabled, jobs, runsByJobId]);
 
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
@@ -294,9 +233,6 @@ export function useJobController({
         saveStoredCatalogDataset(normalizedDataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
-      }
-      if (run && normalizedUpdatedJob && isOptimisticRunCommand(command)) {
-        void pollSnapshotJobUntilTerminal(normalizedUpdatedJob, run.runId);
       }
       showToast(commandSuccessMessage(command, job));
       return normalizedUpdatedJob;

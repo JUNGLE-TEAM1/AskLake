@@ -46,6 +46,7 @@ from app.schemas.etl import (
     SourceConnectorRequest,
     UpdatePipelineRequest,
 )
+from app.schemas.job_status import JobStatusListResponse
 from app.services import etl_service
 from app.services.kafka_replay_producer_service import replay_producer_manager
 
@@ -201,6 +202,15 @@ def list_jobs(
         statuses=status_filter,
         schedule_kind=schedule_kind,
     )
+
+
+@router.get("/jobs/statuses", response_model=JobStatusListResponse)
+def list_job_statuses(
+    job_ids: list[str] = Query(default_factory=list, alias="jobId"),
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobStatusListResponse:
+    return etl_service.list_job_statuses(db, job_ids, actor)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRowData)
