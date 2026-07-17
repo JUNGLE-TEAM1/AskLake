@@ -76,3 +76,10 @@
 - 상태: Accepted
 - 결정: 현재 release는 하위 호환 구조 개선 release로 취급하고 “전체 아키텍처 리팩토링 완료”로 선언하지 않는다.
 - 이유: 5,000줄 이상 파일은 3→1로 줄었지만 `etl_service.py`가 8,822줄이며 END_STATE 1,200줄 목표와 얇은 façade 조건을 충족하지 못한다.
+
+## D-013 — 배포 UI를 유지하고 compatibility façade를 활성 composition에서 제외
+
+- 상태: Accepted
+- 결정: 최신 `dev`와 현재 배포 UI의 route·DOM·CSS·API 동작을 유지하면서 `App.tsx`는 Job과 workspace canonical module을 직접 import한다.
+- 이유: 후속 backend/runtime 모듈화가 과거 façade 구현을 다시 활성화하거나 UI 변경과 섞이지 않도록 하기 위해서다.
+- 제약: `EtlPages.tsx`, `JobsPages.tsx`, `useAskLakeData.ts`는 이전 import reader로만 보존하며 신규 source import를 CI에서 차단한다. production mock과 legacy demo UI 기본값은 계속 `false`다.

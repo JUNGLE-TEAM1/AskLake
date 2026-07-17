@@ -544,7 +544,7 @@ production control-plane과 metadata의 권위는 FastAPI/Python이다. Node는 
 
 ## 17) Frontend 상태 소유권과 ETL Wizard 경계
 
-Frontend 서버 상태는 `useAskLakeData`의 기존 façade를 유지하되 요청 순서는 `LatestRequestGate`가 소유한다. resource/session/version/params 기반 query key와 revision lease로 초기 hydrate, 수동 refresh, Job filter의 stale completion을 차단한다. 생성 mutation은 `idle`, `pending`, `accepted`, `reconciled`, `failed` 단계를 additive 상태로 노출하며 API 응답과 후속 목록 reconciliation을 구분한다.
+Frontend 서버 상태의 application composition은 `useAskLakeWorkspace`를 직접 사용하며 요청 순서는 `LatestRequestGate`가 소유한다. `useAskLakeData`는 이전 import reader를 위한 비활성 re-export façade로만 유지한다. resource/session/version/params 기반 query key와 revision lease로 초기 hydrate, 수동 refresh, Job filter의 stale completion을 차단한다. 생성 mutation은 `idle`, `pending`, `accepted`, `reconciled`, `failed` 단계를 additive 상태로 노출하며 API 응답과 후속 목록 reconciliation을 구분한다.
 
 ETL 편집 draft는 versioned browser document로 normalize·serialize·hydrate한다. legacy unversioned 문서는 읽되 credential 계열 값은 평문으로 저장하지 않는다. 이 draft는 편집 복구용이며 backend Job, API validation, Catalog 상태를 대체하지 않는다.
 
@@ -552,9 +552,11 @@ ETL 화면은 단계별 page와 model/panel module로 분리하고 `EtlPages.tsx
 
 ## 18) Frontend Job 화면과 데이터 Hook 경계
 
-`JobsPages.tsx`는 기존 세 public page export만 유지하는 compatibility façade다. 목록, 상세, Continuous session/batch, Snapshot Run/DAG를 `pages/ingest/jobs/`의 독립 feature module로 분리한다. route, query/filter 의미, class name과 접근성 계약은 유지하며 화면 모듈이 backend fetch ownership을 새로 만들지 않는다.
+`JobsPages.tsx`는 기존 세 public page export만 유지하는 비활성 compatibility façade다. `App.tsx`와 신규 source는 `pages/ingest/jobs/`의 독립 feature module을 직접 import한다. 목록, 상세, Continuous session/batch, Snapshot Run/DAG의 route, query/filter 의미, class name과 접근성 계약은 유지하며 화면 모듈이 backend fetch ownership을 새로 만들지 않는다.
 
-`useAskLakeData.ts`도 `App.tsx` 호환 façade로 유지한다. 서버 상태는 `useAskLakeWorkspaceState`, 초기/필터 조회는 `useWorkspaceHydration`, ETL·SQL 생성은 `usePipelineMutations`, Job command와 polling은 `useJobController`, Catalog mutation/navigation은 `useCatalogController`가 소유하고 `useAskLakeWorkspace`가 기존 반환 shape로 조합한다. Job optimistic rollback은 entity revision lease가 최신일 때만 허용한다.
+`useAskLakeData.ts`는 이전 import 호환만 위한 비활성 façade로 유지하고 `App.tsx`는 `useAskLakeWorkspace`를 직접 사용한다. 서버 상태는 `useAskLakeWorkspaceState`, 초기/필터 조회는 `useWorkspaceHydration`, ETL·SQL 생성은 `usePipelineMutations`, Job command와 polling은 `useJobController`, Catalog mutation/navigation은 `useCatalogController`가 소유하고 `useAskLakeWorkspace`가 기존 반환 shape로 조합한다. Job optimistic rollback은 entity revision lease가 최신일 때만 허용한다.
+
+배포 UI의 route·DOM·CSS와 production mock/legacy 기본값을 유지하는 상세 계약은 [배포 UI 무변경·호환 façade 비활성 계약](refactor-2026/contracts/deployed-ui-no-reactivation.md)을 따른다.
 
 상세 모듈 책임, localStorage 분류, 동시성·rollback과 검증은 [Frontend Job 화면·데이터 Hook 경계](refactor-2026/contracts/frontend-jobs-data-hooks.md)를 따른다.
 

@@ -1080,15 +1080,18 @@ npm run build
 
 Job 목록·상세·실행 이력은 `pages/ingest/jobs/`, 앱 서버 상태 조회와 mutation은 `state/asklake/`에서 변경한다. `JobsPages.tsx`와 `useAskLakeData.ts` façade에 새 구현을 직접 추가하지 않는다. 화면 module을 추가하면 `verify-ui-regressions.mjs`의 `jobsPageFiles`, 상태 module을 추가하면 `askLakeDataFiles`에 포함한다.
 
+`App.tsx`와 신규 source는 façade를 import하지 않고 `pages/ingest/jobs/`와 `useAskLakeWorkspace.ts`의 canonical module을 직접 사용한다. 배포 UI 무변경 리팩토링에서는 아래 guard가 façade의 재활성화와 production mock/legacy 기본값 변경을 차단한다.
+
 ```bash
 cd frontend
 npm run test:request-ownership
 npm run test:jobs-data-boundary
+npm run test:deployed-ui-boundary
 npm run verify:ui-regressions
 npm run build
 ```
 
-Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage`, `useAskLakeData` import를 제거하려면 별도 deprecation PR이 필요하다.
+Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage` export 또는 compatibility façade 파일을 제거하려면 별도 deprecation PR이 필요하다.
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증
 
