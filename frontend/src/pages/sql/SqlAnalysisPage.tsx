@@ -15,7 +15,7 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
-import { executeQueryPreview, getQueryPreviewPage } from "../../services/askLakeApi";
+import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
 import {
   cancelTrinoQueryRun,
   estimateSqlQueryRun,
@@ -26,7 +26,7 @@ import {
   validateSqlQueryRun,
 } from "../../services/pipelineApi";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, SqlResultDraft, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
 import { SqlExecutionInfo } from "./SqlExecutionInfo";
@@ -81,7 +81,6 @@ function isTrinoResultReady(run: TrinoQueryRun | null | undefined): run is Trino
 export function SqlAnalysisPage({
   cachedResult,
   createPending,
-  currentUser,
   dataset,
   datasets,
   onAction,
@@ -91,7 +90,6 @@ export function SqlAnalysisPage({
 }: {
   cachedResult?: SqlResultDraft | null;
   createPending: boolean;
-  currentUser: CurrentUserResponse;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -238,7 +236,7 @@ export function SqlAnalysisPage({
     baseDataset
       && preflightResult?.canExecute === true
       && preflightResult.key === queryValidationKey
-      && (!usesTrinoRuntime || trinoValidationKey === queryValidationKey),
+      && (!usesTrinoRuntime || apiConfig.useMock || trinoValidationKey === queryValidationKey),
   );
   const activeQueryEstimate = queryEstimateKey === queryValidationKey ? queryEstimate : null;
   const lineNumbers = useMemo(() => {
@@ -362,7 +360,7 @@ export function SqlAnalysisPage({
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     clearTrinoState();
-    if (cachedResult.engine === "trino" && cachedTrinoRuntime) {
+    if (cachedResult.engine === "trino" && cachedTrinoRuntime && !apiConfig.useMock) {
       setResultDraft(null);
       setTrinoRun(cachedTrinoRuntime.run);
       setTrinoResultPage(cachedTrinoRuntime.page);
@@ -414,6 +412,7 @@ export function SqlAnalysisPage({
   useEffect(() => {
     if (
       !usesTrinoRuntime
+      || apiConfig.useMock
       || !baseDataset
       || preflightResult?.key !== queryValidationKey
       || !preflightResult.canExecute
@@ -450,7 +449,7 @@ export function SqlAnalysisPage({
   }, [baseDataset, preflightResult, query, queryValidationKey, referenceDatasetIds, usesTrinoRuntime]);
 
   useEffect(() => {
-    if (!usesTrinoRuntime || !baseDataset || !canRunPreview) {
+    if (!usesTrinoRuntime || apiConfig.useMock || !baseDataset || !canRunPreview) {
       setQueryEstimatePending(false);
       return;
     }
@@ -667,7 +666,7 @@ export function SqlAnalysisPage({
     };
     setTrinoSubmissionError(null);
     setQueryPending(true);
-    if (usesTrinoRuntime) {
+    if (usesTrinoRuntime && !apiConfig.useMock) {
       if (!confirmationContinuation) {
         setResultDraft(null);
         setDialogResultDraft(null);
@@ -693,7 +692,7 @@ export function SqlAnalysisPage({
     }
 
     try {
-      if (usesTrinoRuntime) {
+      if (usesTrinoRuntime && !apiConfig.useMock) {
         if (!confirmationToken) {
           const estimate = activeQueryEstimate ?? await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           if (!isCurrentRequest()) return;
@@ -759,7 +758,7 @@ export function SqlAnalysisPage({
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch (error) {
       if (!isCurrentRequest()) return;
-      if (usesTrinoRuntime && error instanceof ApiError && error.code === "QUERY_CONFIRMATION_REQUIRED") {
+      if (usesTrinoRuntime && !apiConfig.useMock && error instanceof ApiError && error.code === "QUERY_CONFIRMATION_REQUIRED") {
         try {
           const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           if (!isCurrentRequest()) return;
@@ -1080,7 +1079,6 @@ export function SqlAnalysisPage({
           accessScope: configuration.governance.accessScope,
           owner: configuration.governance.owner.trim(),
           permissionSummary: configuration.governance.permissionSummary.trim(),
-          principalId: configuration.governance.principalId || undefined,
         },
         jobName: `${configuration.dataset.name.trim()} SQL Job`,
         query: context.query,
@@ -1118,7 +1116,6 @@ export function SqlAnalysisPage({
         databaseName: configuration.target.databaseName.trim(),
         fileFormat: configuration.target.fileFormat,
         owner: configuration.governance.owner.trim(),
-        principalId: configuration.governance.principalId || undefined,
         overlapPolicy: configuration.schedule.overlapPolicy,
         partitionColumn: configuration.target.partitionColumns[0] || undefined,
         partitionColumns: configuration.target.partitionColumns,
@@ -1323,8 +1320,6 @@ export function SqlAnalysisPage({
           defaultMetadata={{
             description: buildDefaultDerivedDatasetDescription(baseDataset),
             name: buildDefaultDerivedDatasetName(baseDataset),
-            owner: currentUser.displayName,
-            projectGroups: currentUser.groups.map((group) => ({ id: group.id, name: group.name })),
           }}
           onClose={() => setMaterializeDialogOpen(false)}
           onCreate={createDerivedDatasetJob}

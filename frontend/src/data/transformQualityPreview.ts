@@ -8,7 +8,6 @@ export type TransformQualityPreviewSample = {
   matchedRows: number;
   outputValue: string;
   status: "Success" | "Review";
-  runtime: "local" | "gateway" | "pending";
 };
 
 export type RecommendedTransformStep = {
@@ -40,8 +39,6 @@ export type TransformQualityInvalidRow = {
 };
 
 export type TransformQualitySampleRow = Record<string, string>;
-
-export type TransformQualityRuntimeOutputs = Record<string, TransformQualitySampleRow[]>;
 
 export type TransformQualityRecipeStepInput = {
   id: string;
@@ -95,12 +92,12 @@ type CustomCsvClassifierConfig = {
   sourceField: string;
 };
 
-export type ReviewAnalysisMethod =
+type ReviewAnalysisMethod =
   | "copy"
   | "one_of_values"
   | "instruction";
 
-export type ReviewAnalysisColumnConfig = {
+type ReviewAnalysisColumnConfig = {
   allowedValues: string[];
   instruction: string;
   method: ReviewAnalysisMethod;
@@ -118,7 +115,6 @@ export function runTransformQualitySamplePreview(
   recipeSteps: TransformQualityRecipeStepInput[],
   qualityRules: TransformQualityRuleInput[],
   sampleRows: TransformQualitySampleRow[] = [],
-  runtimeOutputs: TransformQualityRuntimeOutputs = {},
 ): TransformQualityRunnerResult {
   const previewByStepId: Record<string, TransformQualityStepPreview> = {};
   let transformedRows = sampleRows.map((row) => ({ ...row }));
@@ -127,11 +123,9 @@ export function runTransformQualitySamplePreview(
     const beforeRows = transformedRows.map((row) => ({ ...row }));
     let failedRows = 0;
     const failedIndexes: number[] = [];
-    const reviewAnalysisStep = isReviewAnalysisStep(step);
-    const runtimeRows = reviewAnalysisStep ? runtimeOutputs[reviewAnalysisRuntimeKey(step)] : undefined;
 
     transformedRows = transformedRows.map((row, rowIndex) => {
-      const { failed, value } = applyTransformStep(row, step, rowIndex, runtimeRows);
+      const { failed, value } = applyTransformStep(row, step);
       if (failed) {
         failedRows += 1;
         failedIndexes.push(rowIndex);
@@ -153,8 +147,7 @@ export function runTransformQualitySamplePreview(
       inputValue: firstBefore[step.input] ?? "",
       matchedRows: Math.max(0, sampleRows.length - failedRows),
       outputValue: firstAfter[step.output] ?? "",
-      runtime: reviewAnalysisStep ? runtimeRows ? "gateway" : "pending" : "local",
-      status: failedRows > 0 || (reviewAnalysisStep && !runtimeRows) ? "Review" : "Success",
+      status: failedRows > 0 ? "Review" : "Success",
     };
   });
 
@@ -168,12 +161,7 @@ export function runTransformQualitySamplePreview(
   };
 }
 
-function applyTransformStep(
-  row: TransformQualitySampleRow,
-  step: TransformQualityRecipeStepInput,
-  rowIndex: number,
-  runtimeRows?: TransformQualitySampleRow[],
-) {
+function applyTransformStep(row: TransformQualitySampleRow, step: TransformQualityRecipeStepInput) {
   const inputValue = row[step.input] ?? "";
   const operation = step.operation.toLowerCase();
 
@@ -190,12 +178,13 @@ function applyTransformStep(
     if (operation.includes("custom csv classifier") || operation.includes("csv classifier")) {
       return { failed: false, value: classifyCustomCsvValue(row, step, inputValue) };
     }
-    if (isReviewAnalysisStep(step)) {
-      const runtimeRow = runtimeRows?.[rowIndex];
-      if (!runtimeRow || !(step.output in runtimeRow)) {
-        return { failed: true, value: "" };
-      }
-      return { failed: false, value: runtimeRow[step.output] ?? "" };
+    if (
+      operation.includes("review row analysis")
+      || operation.includes("text row analysis")
+      || operation.includes("review_analyze")
+      || operation.includes("text_analyze")
+    ) {
+      return { failed: false, value: reviewRowAnalysisPreviewValue(row, step) };
     }
     if (operation.includes("json")) {
       return { failed: false, value: readJsonPath(inputValue, step.params) };
@@ -220,25 +209,27 @@ function applyTransformStep(
   }
 }
 
-export function isReviewAnalysisStep(step: TransformQualityRecipeStepInput) {
-  const operation = step.operation.toLowerCase();
-  return operation.includes("review row analysis")
-    || operation.includes("text row analysis")
-    || operation.includes("review_analyze")
-    || operation.includes("text_analyze");
+function reviewRowAnalysisPreviewValue(row: TransformQualitySampleRow, step: TransformQualityRecipeStepInput) {
+  const config = parseReviewAnalysisConfig(step);
+  const text = getReviewText(row, config.sourceField);
+  const rating = getReviewRating(row);
+
+  if (looksLikeConfidenceOrScore(config.targetName) && config.method !== "copy") {
+    return runtimeAnalysisPlaceholder(config.method);
+  }
+  switch (config.method) {
+    case "copy":
+      return copyOrExtractReviewField(row, config, step);
+    case "instruction":
+      return reviewCustomInstructionPreviewValue(text, config);
+    case "one_of_values":
+      return config.allowedValues[0] ?? runtimeAnalysisPlaceholder(config.method);
+    default:
+      return runtimeAnalysisPlaceholder(config.method);
+  }
 }
 
-export function reviewAnalysisRuntimeKey(step: TransformQualityRecipeStepInput) {
-  return JSON.stringify({
-    id: step.id,
-    input: step.input,
-    operation: step.operation,
-    output: step.output,
-    params: step.params,
-  });
-}
-
-export function parseReviewAnalysisConfig(step: TransformQualityRecipeStepInput): ReviewAnalysisColumnConfig {
+function parseReviewAnalysisConfig(step: TransformQualityRecipeStepInput): ReviewAnalysisColumnConfig {
   const targetName = normalizePreviewName(step.output);
   const fallbackMethod = inferReviewAnalysisMethod(targetName);
   const legacyFields = parseReviewAnalyzeFields(step.params);
@@ -328,6 +319,122 @@ function parseReviewAnalyzeFields(params: string) {
 
 function findPreferredSourceField(fields: string[]) {
   return fields.find((field) => ["text", "review_text", "body"].includes(field)) || fields[0] || "";
+}
+
+function copyOrExtractReviewField(row: TransformQualitySampleRow, config: ReviewAnalysisColumnConfig, step: TransformQualityRecipeStepInput) {
+  const target = normalizePreviewName(config.targetName);
+  const rating = Number(row.rating ?? row.stars ?? row.score ?? 0) || 0;
+  const asin = String(row.asin ?? row.product_id ?? "");
+  const userId = String(row.user_id ?? row.reviewer_id ?? row.customer_id ?? "");
+  const timestamp = String(row.timestamp ?? row.event_time ?? "");
+  if (target === "review_id") return [asin, userId, timestamp].filter(Boolean).join("_") || "review_sample";
+  if (target === "asin") return asin;
+  if (target === "parent_asin") return String(row.parent_asin ?? "");
+  if (target === "rating") return String(rating || "");
+  if (target === "title") return String(row.title ?? row.review_title ?? "");
+  if (target === "text" || target === "review_text") return String(row.text ?? row.review_text ?? row.body ?? row[config.sourceField] ?? "");
+  if (target === "timestamp" || target === "event_time") return timestamp;
+  if (target === "user_id") return userId;
+  if (target === "verified_purchase") return String(row.verified_purchase ?? row.verified ?? "");
+  if (target === "helpful_vote") return String(row.helpful_vote ?? row.helpful_votes ?? "");
+  return String(row[target] ?? row[config.sourceField] ?? row[step.input] ?? "");
+}
+
+function getReviewText(row: TransformQualitySampleRow, sourceField: string) {
+  return String(row.text ?? row.review_text ?? row.body ?? row[sourceField] ?? "");
+}
+
+function getReviewRating(row: TransformQualitySampleRow) {
+  const rating = Number(row.rating ?? row.stars ?? row.score ?? 0);
+  return Number.isFinite(rating) ? rating : 0;
+}
+
+function hasReviewAnalysisSignal(text: string, rating: number) {
+  return text.trim().length > 0 || rating > 0;
+}
+
+function reviewSentimentForText(text: string, rating: number, category: string) {
+  if (rating > 0 && rating <= 2) return "negative";
+  if (/(refund|broken|defect|wrong|missing|overheat|danger|fail|bad|poor|terrible|not work)/i.test(text)) return "negative";
+  if (rating === 3 || category !== "positive_feedback") return "mixed";
+  return "positive";
+}
+
+function reviewIssueCategoryForText(text: string, rating: number) {
+  const rules = [
+    { id: "battery_or_power", label: "battery_power", pattern: /(battery|charge|charging|charger|power|cable|usb|plug|overheat|hot)/i },
+    { id: "screen_or_display", label: "screen_display", pattern: /(screen|display|glass|crack|touch|protector)/i },
+    { id: "shipping_or_package", label: "shipping_package", pattern: /(shipping|delivery|package|packaging|arrived|box)/i },
+    { id: "listing_mismatch", label: "listing_accuracy", pattern: /(not as described|wrong|fake|different|missing|picture|listing)/i },
+    { id: "durability_quality", label: "durability_quality", pattern: /(broke|broken|defect|quality|cheap|scratch|stopped|fail)/i },
+  ];
+  const matched = rules.find((rule) => rule.pattern.test(text));
+  if (matched) return matched;
+  if (rating > 0 && rating <= 2) return { id: "general_issue", label: "general_negative" };
+  return { id: "positive_feedback", label: "positive_value" };
+}
+
+function reviewSeverityForText(text: string, rating: number, category: string) {
+  if (/(explode|fire|burn|smoke|danger|injury)/i.test(text)) return "critical";
+  if (category === "battery_or_power" && /(overheat|hot|danger|smoke)/i.test(text)) return "high";
+  if (rating === 1) return "high";
+  if (rating === 2 || /(broken|defect|stopped|fail|wrong|missing)/i.test(text)) return "medium";
+  return "low";
+}
+
+function reviewActionNeededForText(text: string, rating: number) {
+  if (rating > 0 && rating <= 2) return "action_needed";
+  return /(refund|return|replacement|replace|not working|doesn.?t work|does not work|didn.?t work|stopped working|broken|broke|cracked|shattered|dead|defective|failed|wrong|fake|missing|never arrived|doesn.?t fit|does not fit|won.?t charge|does not charge|doesn.?t charge|fire|smoke|explode|overheat|unsafe|danger)/i.test(text)
+    ? "action_needed"
+    : "low_or_none";
+}
+
+function reviewBooleanForText(text: string, config: ReviewAnalysisColumnConfig) {
+  const target = normalizePreviewName(config.targetName);
+  if (target.includes("negative") || target.includes("issue") || target.includes("complaint")) {
+    return /(refund|broken|defect|wrong|missing|overheat|danger|fail|bad|poor|terrible|not work)/i.test(text) ? "Y" : "N";
+  }
+  return text.trim() ? "Y" : "N";
+}
+
+function reviewCustomInstructionPreviewValue(text: string, config: ReviewAnalysisColumnConfig) {
+  const target = normalizePreviewName(config.targetName);
+  const instruction = String(config.instruction || "").toLowerCase();
+  if (target.includes("summary") || instruction.includes("summar") || instruction.includes("요약")) {
+    return reviewExtractiveSummary(text);
+  }
+  if (
+    target.includes("evidence")
+    || target.includes("reason")
+    || instruction.includes("evidence")
+    || instruction.includes("reason")
+    || instruction.includes("근거")
+  ) {
+    return reviewEvidenceSpan(text);
+  }
+  return reviewEvidenceSpan(text) || reviewExtractiveSummary(text);
+}
+
+function reviewExtractiveSummary(text: string) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return runtimeAnalysisPlaceholder("instruction");
+  const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
+  return sentence.length > 96 ? `${sentence.slice(0, 93)}...` : sentence;
+}
+
+function reviewEvidenceSpan(text: string) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return runtimeAnalysisPlaceholder("instruction");
+  const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
+  return sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+}
+
+function looksLikeConfidenceOrScore(targetName: string) {
+  return /(^|_)(confidence|quality|score|probability|prob|performance|accuracy)(_|$)/i.test(targetName);
+}
+
+function runtimeAnalysisPlaceholder(method: ReviewAnalysisMethod) {
+  return `${method}: runtime output`;
 }
 
 function parseReviewSourceField(params: string) {

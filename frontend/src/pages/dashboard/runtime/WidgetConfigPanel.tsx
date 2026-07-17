@@ -521,10 +521,10 @@ export function WidgetConfigPanel({
   initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
   isUpdating?: boolean;
-  onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onPreviewWidgetChange?: (widget: DashboardRuntimeWidget | null) => void;
   onSelectDataset?: (datasetId: string) => void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
 }) {

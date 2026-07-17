@@ -8,6 +8,7 @@ const useMockApi = resolveMockApiMode(mockApiRequested, import.meta.env.DEV);
 
 export const apiConfig = {
   baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
+  useMock: useMockApi,
 };
 
 export type ApiRequestOptions = {

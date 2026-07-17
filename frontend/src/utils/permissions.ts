@@ -3,7 +3,7 @@ import type { CatalogDataset, CurrentUserResponse, DashboardMeta, JobCommand, Jo
 type PermissionResource = CatalogDataset | DashboardMeta | JobRowData | SavedDashboardCard;
 
 export function canQueryDataset(dataset: CatalogDataset | null | undefined) {
-  return permissionValue(dataset, "canQuery", false);
+  return permissionValue(dataset, "canQuery", true);
 }
 
 export function isAdminUser(user: CurrentUserResponse | null | undefined) {
@@ -23,13 +23,13 @@ export function canDeleteDatasetMaterializationRun(dataset: CatalogDataset | nul
 }
 
 export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard | null | undefined) {
-  return permissionValue(dashboard, "canManage", false);
+  return permissionValue(dashboard, "canManage", true);
 }
 
 export function canRunJobCommand(job: JobRowData, command: JobCommand) {
   if (command === "edit") return permissionValue(job, "canManage", false);
   if (command === "delete") return permissionValue(job, "canDelete", false);
-  if (command === "run" || command === "retry" || command === "startContinuous" || command === "resumeContinuous") return permissionValue(job, "canRun", false);
+  if (command === "run" || command === "retry" || command === "startContinuous" || command === "resumeContinuous") return permissionValue(job, "canRun", true);
   return permissionValue(job, "canManage", false);
 }
 

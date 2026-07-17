@@ -136,7 +136,7 @@ export function useDraftWidgetCreator({
   const [isCreatingToolbarWidget, setIsCreatingToolbarWidget] = useState(false);
 
   const createDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
-    if (mode !== "draft" || !selectedPageId || isCreatingDatasetWidget) return false;
+    if (mode !== "draft" || !selectedPageId || isCreatingDatasetWidget) return;
     const layout = findNextAvailableLayout(
       toCollisionLayout(selectedWidgets),
       defaultLayouts[input.type],
@@ -158,11 +158,9 @@ export function useDraftWidgetCreator({
       setWidgetScrollTargetId?.(widget.id);
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
       onAction("dashboard.widget.dataset_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId);
-      return true;
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
-      return false;
     } finally {
       setIsCreatingDatasetWidget(false);
     }

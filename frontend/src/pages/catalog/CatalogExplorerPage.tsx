@@ -1,5 +1,6 @@
 import type React from "react";
 import "@xyflow/react/dist/style.css";
+import { useLocation, useNavigate } from "react-router";
 import { AlertCircle, ArrowUpDown, BookOpen, Database, ExternalLink, Filter, LayoutGrid, PanelRight, Pin, Star, Search, Share2, TerminalSquare, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -26,6 +27,7 @@ import { type CatalogSortMode, type CatalogStatusFilter, catalogSortOptions, cat
 import { CatalogDatasetViewer, CatalogMiniMetric, CatalogSchemaTable, DatasetStatusBadge } from "./CatalogDetailPage";
 import { CatalogLineage } from "./CatalogLineage";
 import { useCatalogExplorerState } from "./useCatalogExplorerState";
+import { SemanticLayerPage } from "../semantic/SemanticLayerPage";
 export function CatalogPage({
   datasets,
   error = null,
@@ -43,6 +45,9 @@ export function CatalogPage({
   onRefresh?: () => void;
   selectedDataset: CatalogDataset;
 }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const catalogView = new URLSearchParams(location.search).get("view") === "semantic" ? "semantic" : "catalog";
   const {
     activeModal,
     activeStatusFilter,
@@ -75,6 +80,55 @@ export function CatalogPage({
     updateSortMode,
     updateStatusFilter,
   } = useCatalogExplorerState({ datasets, onAction, onOpenSql, selectedDataset });
+
+  const changeCatalogView = (view: "catalog" | "semantic") => {
+    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
+    onAction("catalog.view_changed", nextPath, view);
+    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
+  };
+
+  const viewSwitcher = (
+    <div aria-label="카탈로그 보기 모드" className="catalog-view-switcher" role="tablist">
+      <Button
+        aria-selected={catalogView === "catalog"}
+        className="catalog-view-button"
+        role="tab"
+        size="sm"
+        type="button"
+        variant={catalogView === "catalog" ? "primary" : "outline"}
+        onClick={() => changeCatalogView("catalog")}
+      >
+        데이터 카탈로그
+      </Button>
+      <Button
+        aria-selected={catalogView === "semantic"}
+        className="catalog-view-button"
+        role="tab"
+        size="sm"
+        type="button"
+        variant={catalogView === "semantic" ? "primary" : "outline"}
+        onClick={() => changeCatalogView("semantic")}
+      >
+        시맨틱 레이어
+      </Button>
+    </div>
+  );
+
+  if (catalogView === "semantic") {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="catalog-page catalog-semantic-page">
+          <PageHeader
+            actions={viewSwitcher}
+            className="catalog-page-header"
+            icon={<Search size={18} />}
+            title="검색/카탈로그"
+          />
+          <SemanticLayerPage datasets={datasets} onAction={onAction} />
+        </div>
+      </TooltipProvider>
+    );
+  }
 
   const renderPreviewContent = (fromMobileSheet = false) => (
     <>
@@ -181,6 +235,7 @@ export function CatalogPage({
     <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
       <PageHeader
+        actions={viewSwitcher}
         className="catalog-page-header"
         icon={<Search size={18} />}
         title="검색/카탈로그"

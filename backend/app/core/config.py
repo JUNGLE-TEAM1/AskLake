@@ -380,6 +380,14 @@ class Settings(BaseSettings):
         return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
 
     @property
+    def is_test_runtime(self) -> bool:
+        return self.is_development_runtime
+
+    @property
+    def allows_header_auth_fallback(self) -> bool:
+        return self.is_development_runtime
+
+    @property
     def uses_secure_session_cookie(self) -> bool:
         if self.auth_session_cookie_secure is not None:
             return self.auth_session_cookie_secure

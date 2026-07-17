@@ -348,7 +348,7 @@ function discoverReviewTextModelArtifacts() {
       updatedAt,
       validationRows: metrics.validationRows,
       validationStatus: "available_for_selection",
-    }];
+    };
   });
 }
 

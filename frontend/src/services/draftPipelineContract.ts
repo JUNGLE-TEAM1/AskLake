@@ -227,20 +227,6 @@ function normalizeStringList(values: string[] | undefined): string[] {
 }
 
 function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {
-  const hasFullSqlTransform = draft.transform.steps.some((step) => (
-    step.enabled !== false
-    && step.operation.trim().toLowerCase().includes("sql expression")
-    && ["select", "with"].some((keyword) => step.params.trim().toLowerCase().startsWith(keyword))
-  ));
-  if (hasFullSqlTransform) {
-    const seen = new Set<string>();
-    return draft.transform.outputColumns.filter(([name]) => {
-      const normalized = name.trim().toLowerCase();
-      if (!normalized || seen.has(normalized)) return false;
-      seen.add(normalized);
-      return true;
-    });
-  }
   const includedBaseColumns = new Set(
     draft.schema.columns
       .filter((column) => column.included !== false)

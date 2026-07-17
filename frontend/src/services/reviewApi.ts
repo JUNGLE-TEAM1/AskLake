@@ -1,6 +1,7 @@
 import type { CreatePipelineRequest, DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
+import { compileRuleContract } from "./ruleContract";
 
 export type ReviewEntry = {
   label: string;

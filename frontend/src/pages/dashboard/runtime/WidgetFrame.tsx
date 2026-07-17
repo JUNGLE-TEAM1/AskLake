@@ -47,7 +47,7 @@ export function WidgetFrame({
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
-  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void | boolean> | void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
   onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;

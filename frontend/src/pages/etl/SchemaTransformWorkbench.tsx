@@ -28,17 +28,11 @@ type SchemaTransformColumn = {
   type: string;
 };
 
-type SqlTransformPreviewResult = {
-  schema?: Array<{ name?: string; type?: string }>;
-  sql: string;
-};
-
 type SchemaTransformWorkbenchProps = {
   columns: SchemaColumnDraft[];
   executionMode?: KafkaExecutionMode;
   sampleRows: string[][];
   selectedIndex: number;
-  sourceDatasetId?: string;
   sourceFormat: string;
   sourceType: string;
   qualityRules?: QualityRuleDraft[];
@@ -58,7 +52,6 @@ export function SchemaTransformWorkbench({
   executionMode = "snapshot",
   sampleRows,
   selectedIndex,
-  sourceDatasetId,
   sourceFormat,
   sourceType,
   qualityRules = [],
@@ -70,7 +63,6 @@ export function SchemaTransformWorkbench({
 }: SchemaTransformWorkbenchProps) {
   const isKafka = sourceType.toLowerCase().includes("kafka");
   const continuous = executionMode === "continuous";
-  const effectiveSourceDatasetId = sourceDatasetId?.trim() || SCHEMA_TRANSFORM_DATASET_ID;
 
   const sourceSchema = useMemo(() => columns.map((column) => ({
     field: column.sourceName,
@@ -92,12 +84,12 @@ export function SchemaTransformWorkbench({
   );
 
   const allSources = useMemo(() => [{
-    datasetId: effectiveSourceDatasetId,
+    datasetId: SCHEMA_TRANSFORM_DATASET_ID,
     id: SCHEMA_TRANSFORM_SOURCE_ID,
     name: sourceFormat || "Source",
     schema: sourceSchema,
     sourceType: sourceFormat?.toLowerCase?.() ?? "source",
-  }], [effectiveSourceDatasetId, sourceFormat, sourceSchema]);
+  }], [sourceFormat, sourceSchema]);
 
   useEffect(() => {
     if (effectiveTransformSteps === transformSteps) return;
@@ -112,11 +104,12 @@ export function SchemaTransformWorkbench({
     onTransformStepsChange?.(nextSteps, outputColumnsFromTargetSchema(nextTargetSchema));
   };
 
-  const sqlTransformSteps = (sql: string) => {
+  const handleSqlChange = (sql: string, mode?: string) => {
+    if (mode !== "sql" || !sql.trim() || continuous || isKafka) return;
     const firstColumn = columns.find((column) => column.included !== false);
-    if (!firstColumn) return [];
+    if (!firstColumn) return;
     const output = firstColumn.targetName || firstColumn.sourceName;
-    return ensureRequiredFieldTransformSteps(targetSchema, [
+    onTransformStepsChange?.(ensureRequiredFieldTransformSteps(targetSchema, [
       {
         canonicalParameters: { expression: sql },
         enabled: true,
@@ -129,24 +122,7 @@ export function SchemaTransformWorkbench({
         output,
         params: sql,
       },
-    ]);
-  };
-
-  const handleSqlChange = (sql: string, mode?: string) => {
-    if (mode !== "sql" || !sql.trim() || continuous || isKafka) return;
-    const steps = sqlTransformSteps(sql);
-    if (steps.length === 0) return;
-    onTransformStepsChange?.(steps, outputColumnsFromTargetSchema(targetSchema));
-  };
-
-  const handleSqlPreview = (result: SqlTransformPreviewResult) => {
-    if (!result.sql.trim() || continuous || isKafka) return;
-    const outputColumns = (result.schema ?? [])
-      .map((column) => [String(column.name ?? "").trim(), canonicalType(String(column.type ?? "String"))] as [string, string])
-      .filter(([name]) => Boolean(name));
-    const steps = sqlTransformSteps(result.sql);
-    if (steps.length === 0 || outputColumns.length === 0) return;
-    onTransformStepsChange?.(steps, outputColumns);
+    ]), outputColumnsFromTargetSchema(targetSchema));
   };
 
   return (
@@ -161,10 +137,9 @@ export function SchemaTransformWorkbench({
           onSchemaChange={handleSchemaChange}
           onQualityRulesChange={onQualityRulesChange}
           onSqlChange={handleSqlChange}
-          onSqlPreview={handleSqlPreview}
           onTestStatusChange={() => undefined}
           portableTransforms={continuous || isKafka}
-          sourceDatasetId={effectiveSourceDatasetId}
+          sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
           sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
           sourceSampleRows={sampleRows}

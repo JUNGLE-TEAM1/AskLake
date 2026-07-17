@@ -31,7 +31,6 @@ export type SqlJobWizardGovernance = {
   accessScope: SqlJobWizardAccessScope;
   owner: string;
   permissionSummary: string;
-  principalId: string;
 };
 
 export type SqlJobWizardTarget = {
@@ -70,11 +69,7 @@ export type SqlJobWizardCreateRequest = {
   context: SqlJobWizardSourceContext;
 };
 
-export type SqlJobWizardProjectGroup = { id: string; name: string };
-export type SqlJobWizardDefaultMetadata = Partial<SqlJobWizardDatasetInfo> & {
-  owner?: string;
-  projectGroups?: SqlJobWizardProjectGroup[];
-};
+export type SqlJobWizardDefaultMetadata = Partial<SqlJobWizardDatasetInfo>;
 export type SqlJobWizardBaseDataset = Pick<CatalogDataset, "id" | "name" | "owner" | "schema">;
 
 export type SqlJobWizardPartitionOption = {
@@ -166,10 +161,8 @@ export function buildSqlJobPartitionOptions(
   }));
 }
 
-export function buildPermissionSummary(accessScope: SqlJobWizardAccessScope, principalLabel = "") {
-  if (accessScope === "organization") return "모든 인증 사용자 · 조직 내부";
-  if (accessScope === "project") return `${principalLabel || "그룹 선택 필요"} · 프로젝트 멤버`;
-  return `${principalLabel || "소유자"} · 소유자 전용`;
+export function buildPermissionSummary(accessScope: SqlJobWizardAccessScope) {
+  return `Data Engineer Group · ${accessScopeLabels[accessScope]} · 승인 검토`;
 }
 
 export function buildInitialSqlJobConfiguration(
@@ -182,16 +175,14 @@ export function buildInitialSqlJobConfiguration(
     layer: defaults?.layer ?? "GOLD",
     name: defaults?.name ?? `${baseDataset.name}_analysis`,
   };
-  const accessScope: SqlJobWizardAccessScope = "private";
-  const owner = defaults?.owner?.trim() || baseDataset.owner.trim();
+  const accessScope: SqlJobWizardAccessScope = "organization";
 
   return {
     dataset,
     governance: {
       accessScope,
-      owner,
-      permissionSummary: buildPermissionSummary(accessScope, owner),
-      principalId: owner,
+      owner: baseDataset.owner || "data-team-01",
+      permissionSummary: buildPermissionSummary(accessScope),
     },
     schedule: {
       mode: "manual",
@@ -239,9 +230,6 @@ export function validateSqlJobStep(step: SqlJobWizardStepId, configuration: SqlJ
   if (step === "governance") {
     if (!configuration.governance.owner.trim()) errors.push("데이터 오너를 입력해 주세요.");
     if (!configuration.governance.permissionSummary.trim()) errors.push("권한 정책 요약을 입력해 주세요.");
-    if (configuration.governance.accessScope === "project" && !configuration.governance.principalId.trim()) {
-      errors.push("프로젝트 접근에 사용할 실제 그룹을 선택해 주세요.");
-    }
   }
   if (step === "review") {
     if (!configuration.target.storagePath.trim()) errors.push("저장 경로를 입력해 주세요.");

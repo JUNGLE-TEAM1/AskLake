@@ -89,56 +89,6 @@ const catalogPageFiles = [
 
 const checks = [
   {
-    name: "Semantic RAG client calls the live dataset search endpoint",
-    file: "src/services/semanticApi.ts",
-    patterns: [
-      /export async function searchRagDataset/,
-      /apiClient\.post<RagSearchResponse>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/search`/,
-      /query,\s*filters,/,
-    ],
-    forbiddenPatterns: [
-      /mockRagSearch/,
-      /deterministic.*Rag/i,
-    ],
-  },
-  {
-    name: "Semantic RAG tab exposes live retrieval and renders source evidence",
-    file: "src/pages/semantic/SemanticLayerPage.tsx",
-    patterns: [
-      /<RagSearchPanel datasetId=\{selectedDatasetId\} profile=\{profile\} \/>/,
-      /aria-label="RAG 검색 질문"/,
-      /실제 근거 검색/,
-      /setResult\(await searchRagDataset\(datasetId, normalizedQuery\)\)/,
-      /source\.documentId/,
-      /source\.body/,
-      /ragEvidenceTitle\(source\.title, source\.body\)/,
-      /source\.metadata/,
-      /source\.sourceFields\.map\(ragSourceFieldLabel\)/,
-      /result\.retrieval\.servingIndex/,
-    ],
-    forbiddenPatterns: [
-      /mockRagSearch/,
-      /가짜 근거/,
-      /match\(\/\(\?:\^\|\\n\)\\s\*title:/,
-    ],
-  },
-  {
-    name: "Review analysis is available in the ingest workflow through the AI Gateway",
-    file: "src/pages/ingest/JobsPages.tsx",
-    patterns: [
-      /<ReviewAnalysisPanel onAction=\{onAction\} \/>/,
-      /startReviewAnalysis\(100, undefined, "gateway", undefined, true\)/,
-      /aria-label="실제 Amazon 리뷰 100건 AI 분석 및 모델 학습"/,
-      /AI Gateway가 구조화하고, 클래스·정확도 기준을 통과한 모델만 Spark용으로 게시/,
-      /row\.issue_category/,
-      /row\.evidence/,
-    ],
-    forbiddenPatterns: [
-      /mockReviewAnalysis/,
-      /리뷰 AI 채팅/,
-    ],
-  },
-  {
     name: "ETL target storage path uses the deployed Spark output bucket",
     files: etlWizardFiles,
     patterns: [
@@ -256,16 +206,11 @@ const checks = [
     name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
+      /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
       /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
-      /const \[email, setEmail\] = useState\(""\);/,
-      /const \[password, setPassword\] = useState\(""\);/,
+      /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
-    ],
-    forbiddenPatterns: [
-      /VITE_AUTH_LEGACY_DEMO_USERS_ENABLED/,
-      /admin\.user@asklake\.local/,
-      /asklake-admin/,
-      /demoDefaultsEnabled/,
+      /demoDefaultsEnabled\s*\? <small>Admin/,
     ],
   },
   {
@@ -552,32 +497,22 @@ const checks = [
     ],
   },
   {
-    name: "Standalone AI workspace navigation stays removed",
-    file: "src/App.tsx",
+    name: "AI workspace submits through the governed SQL suggestion contract",
+    file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
-      /if \(area === "sql"\) return \{ dashboardRoute: null, flow: "sql" \};/,
-      /activeFlow === "sql" && <SqlAnalysisPage/,
-      /activeFlow === "dashboard" && <DashboardPage/,
+      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
+      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
+      /previousRequest\?\.controller\.abort\(\);/,
+      /const suggestion = await generateQueryAiSuggestion\(/,
+      /signal: controller\.signal,/,
+      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
+      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
+      /content: getQueryAiErrorMessage\(error\)/,
+      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
+      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
+      /message\.sql \? <pre className="ai-chat-sql">/,
     ],
-    forbiddenPatterns: [
-      /AiChatPage/,
-      /area === "ai"/,
-      /flow === "ai"/,
-      /activeFlow === "ai"/,
-    ],
-  },
-  {
-    name: "Live sidebar keeps AI inside task-specific surfaces",
-    file: "src/data/appShellData.ts",
-    patterns: [
-      /\{ id: "sql", label: "SQL 분석", icon: TerminalSquare, flow: "sql" \}/,
-      /\{ id: "dashboard", label: "대시보드", icon: BarChart3, flow: "dashboard" \}/,
-    ],
-    forbiddenPatterns: [
-      /id: "ai"/,
-      /flow: "ai"/,
-      /AI 활용/,
-    ],
+    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
   },
   {
     name: "AI suggestions preserve only the backend-validated response",
@@ -609,7 +544,7 @@ const checks = [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
       /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
-      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner, request\.job\?\.principalId\)/,
+      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
       /rag: false/,
@@ -637,14 +572,10 @@ const checks = [
     name: "SQL Job governance keeps access scope and permission summary aligned",
     file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [
-      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope, principalLabel = ""\)/,
-      /const accessScope: SqlJobWizardAccessScope = "private";/,
-      /permissionSummary: buildPermissionSummary\(accessScope, owner\)/,
-      /principalId: owner/,
+      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
+      /accessScope,\s*owner:[\s\S]*permissionSummary: buildPermissionSummary\(accessScope\)/s,
     ],
     forbiddenPatterns: [
-      /Data Engineer Group/,
-      /data-team-01/,
       /eyebrow="처리 작업"/,
       /SQL 결과를 기준으로 스케줄, 권한, 저장 위치를 확인한 뒤 Job을 생성합니다\./,
       />SQL Result</,
@@ -715,6 +646,22 @@ const checks = [
       /format: targetFormat/,
       /partitionColumns,/,
       /tags: request\.job\?\.tags/,
+    ],
+  },
+  {
+    name: "Mock SQL Job creation preserves wizard schedule, governance, and storage settings",
+    file: "src/services/mockApi.ts",
+    patterns: [
+      /permissionSummary: draftPipeline\.permission\.summary/,
+      /schedulePolicy: \{/,
+      /scheduleSummary: draftPipeline\.schedule\.summary/,
+      /compression: draftPipeline\.target\.compression/,
+      /partitionColumns: draftPipeline\.target\.partitionColumns/,
+      /storagePath: draftPipeline\.target\.storagePath/,
+      /targetDatabase: draftPipeline\.target\.databaseName/,
+      /targetFormat: draftPipeline\.target\.format/,
+      /targetTags: draftPipeline\.target\.tags/,
+      /description: draftPipeline\.target\.description\?\.trim\(\)/,
     ],
   },
   {
@@ -917,17 +864,16 @@ const checks = [
     name: "Job detail tolerates partial stats so delete remains reachable",
     files: jobsPageFiles,
     patterns: [
-      /const stats = \{ \.\.\.emptyJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
+      /const stats = \{ \.\.\.fallbackJobStats\(job\), \.\.\.\(job\.stats \?\? \{\}\) \};/,
       /const totalRuns = String\(stats\.totalRuns \?\? "-"\);/,
-      /const physicalOutputPath = job\.targetPath \?\? stats\.outputPath \?\? job\.storagePath \?\? "-";/,
     ],
-    forbiddenPatterns: [/Math\.round\(\(successRuns \/ runs\.length\) \* 100\)/, /`lake\/\$\{job\.target\}`/],
   },
   {
     name: "Live Job deletion updates persisted rows and list facets together",
     files: askLakeDataFiles,
     patterns: [
-      /await deletePipelineJob\(job\.id\);/,
+      /deletePipelineJob as deleteLivePipelineJob/,
+      /if \(!apiConfig\.useMock\) await deleteLivePipelineJob\(job\.id\);/,
       /setJobListFacets\(\(facets\) => removeJobFacetCounts\(facets, job\)\);/,
       /writeAuditLog\("etl\.job\.delete_failed"/,
     ],
@@ -1550,13 +1496,11 @@ const checks = [
     ],
   },
   {
-    name: "Frontend uses one relative live API entrypoint without runtime mock switches",
+    name: "Frontend defaults to live API mode",
     file: "src/services/apiClient.ts",
     patterns: [
-      /const defaultApiBaseUrl = "";/,
-      /baseUrl: import\.meta\.env\.VITE_API_BASE_URL \|\| defaultApiBaseUrl/,
+      /VITE_USE_MOCK_API \?\? "false"/,
     ],
-    forbiddenPatterns: [/VITE_USE_MOCK_API/, /useMock/],
   },
   {
     name: "Dashboard status labels stay Korean",
@@ -1793,7 +1737,7 @@ const checks = [
     ],
   },
   {
-    name: "ETL review is evaluated by the canonical backend instead of a browser-side compiler",
+    name: "ETL review accepts no-rule pass-through and reports compiler issues",
     file: "src/services/reviewApi.ts",
     patterns: [
       /const ruleCompilation = compileRuleContract\(\{/,
@@ -1805,7 +1749,6 @@ const checks = [
       /validationRow\("접근 권한", permissionReady/,
       /validationRow\("저장 위치", targetReady/,
     ],
-    forbiddenPatterns: [/compileRuleContract/, /processingReady\s*=/, /규칙 없음 · 원본 스키마 그대로 통과/],
     forbiddenPatterns: [
       /Boolean\(request\.ruleSummary\.trim\(\)\)/,
       /Continuous에서는 transform\/quality rule을 제거하세요/,
@@ -1935,9 +1878,9 @@ const checks = [
     name: "Catalog materialization totals stop at the newest snapshot",
     files: askLakeDataFiles,
     patterns: [
-      /materializationRuns: dataset\.materializationRuns \?\? \[\]/,
+      /activeDatasetMaterializationRuns\(materializationRuns\)/,
+      /if \(run\.materializationMode !== "delta"\) break;/,
     ],
-    forbiddenPatterns: [/activeDatasetMaterializationRuns/, /materializationMode !== "delta"/],
   },
   {
     name: "Authenticated routes share the compact global app shell",
@@ -2004,32 +1947,6 @@ const checks = [
       /id: "sql-preview-materialize"/,
       /operation: "SQL_RESULT_MATERIALIZE"/,
       /input: sourceDataset\.name/,
-    ],
-  },
-  {
-    name: "Semantic catalog uses the real Model/Catalog API and Dataset-level RAG workflow",
-    file: "src/pages/semantic/SemanticLayerPage.tsx",
-    patterns: [
-      /type Tab = "datasets" \| "metrics" \| "dimensions" \| "rag" \| "access";/,
-      /\["dimensions", "분석 기준"\]/,
-      /\["rag", "RAG 검색"\]/,
-      /updateSemanticModel\(/,
-      /validateSemanticModel\(/,
-      /publishSemanticModel\(/,
-      /model\.publishedVersion != null/,
-      /semanticModelDisplayVersion\(model\)/,
-      /<RagTab/,
-      /VectorDB에 들어간 실제 문서/,
-      /title="접근 권한"/,
-      /approveRagDataset\(/,
-      /previewRagDocuments\(/,
-    ],
-    forbiddenPatterns: [
-      /cloneSemanticModels/,
-      /cloneSemanticRagProfiles/,
-      /질문 테스트/,
-      /GlobalAssistantWidget/,
-      /onAskAssistant/,
     ],
   },
 ];

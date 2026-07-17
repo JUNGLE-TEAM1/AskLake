@@ -5,10 +5,11 @@ import { wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
-import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
+import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
+import { AiChatPage } from "./pages/ai/AiChatPage";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage } from "./pages/ingest/jobs/JobDetailPage";
@@ -52,7 +53,6 @@ type DashboardRouteState =
   | { view: "list" };
 
 type AppRouteState = {
-  catalogView?: CatalogView;
   dashboardRoute: DashboardRouteState | null;
   datasetId?: string;
   flow: FlowId;
@@ -62,7 +62,6 @@ type AppRouteState = {
 
 type FlowPathContext = {
   dashboardEntry?: DashboardEntry;
-  catalogView?: CatalogView;
   lastScheduleFlow?: ScheduleFlowId;
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
@@ -110,11 +109,7 @@ function encodePathSegment(segment: string) {
   return encodeURIComponent(segment);
 }
 
-function parseCatalogView(search: string): CatalogView {
-  return new URLSearchParams(search).get("view") === "semantic" ? "semantic" : "catalog";
-}
-
-function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow, search = ""): AppRouteState {
+function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow): AppRouteState {
   const dashboardRoute = parseDashboardRoute(pathname);
   if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
 
@@ -137,10 +132,10 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (area === "catalog") {
     const datasetId = decodePathSegment(id);
     if (datasetId) return { dashboardRoute: null, datasetId, flow: "catalogDetail" };
-    return { catalogView: parseCatalogView(search), dashboardRoute: null, flow: "catalog" };
+    return { dashboardRoute: null, flow: "catalog" };
   }
   if (area === "sql") return { dashboardRoute: null, flow: "sql" };
-  if (area === "semantic-layer") return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
+  if (area === "ai") return { dashboardRoute: null, flow: "ai" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
@@ -162,7 +157,7 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
     if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
     return "/dashboards";
   }
-  if (flow === "semantic") return "/semantic-layer";
+  if (flow === "ai") return "/ai";
   if (flow === "admin") return "/admin";
   if (flow === "profile") return "/profile";
   if (flow === "login") return "/login";
@@ -205,7 +200,7 @@ function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow, window.location.search);
+  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [completedWizardFlows, setCompletedWizardFlows] = useState<Set<FlowId>>(() => new Set());
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
@@ -216,7 +211,7 @@ export function App() {
     initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
-  const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs(currentUser?.email);
+  const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs();
   const changeFlowFromData = (flow: FlowId) => {
     const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
     const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
@@ -267,7 +262,7 @@ export function App() {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
     if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "semantic") return "semantic";
+    if (activeFlow === "ai") return "ai";
     if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
@@ -311,8 +306,8 @@ export function App() {
     [completedWizardFlows, wizardActiveIndex, wizardStepFlows],
   );
   const routeState = useMemo(
-    () => parseAppRoute(location.pathname, lastScheduleFlow, location.search),
-    [lastScheduleFlow, location.pathname, location.search],
+    () => parseAppRoute(location.pathname, lastScheduleFlow),
+    [lastScheduleFlow, location.pathname],
   );
   useJobRouteHydration({
     flow: routeState.flow,
@@ -320,18 +315,6 @@ export function App() {
     jobs,
     setSelectedJob,
   });
-
-  const changeCatalogView = (view: CatalogView) => {
-    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
-    writeAuditLog("catalog.view_changed", nextPath, view);
-    setActiveFlow("catalog");
-    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
-  };
-
-  useEffect(() => {
-    if (location.pathname !== "/semantic-layer") return;
-    navigate("/catalog?view=semantic", { replace: true });
-  }, [location.pathname, navigate]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });

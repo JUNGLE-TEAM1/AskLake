@@ -1,4 +1,4 @@
-import { apiClient } from "./apiClient";
+import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
 import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
@@ -65,6 +65,7 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
+  if (apiConfig.useMock) return buildMockRecordParsingPreview(rawLines, recordParsing);
   return apiClient.post<RecordParsingPreviewResponse>("/api/etl/record-parsing/preview", { rawLines, recordParsing });
 }
 
@@ -86,11 +87,16 @@ export async function listSourceAssets(sourceType: string, fields: SourceFieldRo
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
+  if (apiConfig.useMock) return resolveMockConnectorAnalysis(sourceType, fields);
   const body = { sourceConfig: fields, sourceType };
-  return apiClient.post<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
+  return postWithDevFallback<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
 }
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
+  if (apiConfig.useMock) {
+    const assets = mockSourceAssets(sourceType, prefix);
+    return { assets, count: assets.length, limit: assets.length, prefix };
+  }
   const body = { prefix, sourceConfig: fields, sourceType };
   return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
 }
@@ -227,6 +233,13 @@ function isNetworkError(error: unknown) {
 
 function normalizeSourceType(sourceType: string) {
   return sourceType === "Database" ? "PostgreSQL" : sourceType;
+}
+
+function isNotFoundError(error: unknown) {
+  const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) : 0;
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return status === 404 || /404|not found/i.test(`${code} ${message}`);
 }
 
 function normalizeConnectorAnalysis(

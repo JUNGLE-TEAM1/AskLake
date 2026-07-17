@@ -51,8 +51,8 @@ export function isTrinoResultCollectionActive(run: TrinoQueryRun) {
   return run.result?.storageStatus === "collecting" && isTrinoQueryExecutionComplete(run);
 }
 
-export function shouldShowTrinoSubmissionTimeline(usesTrinoRuntime: boolean) {
-  return usesTrinoRuntime;
+export function shouldShowTrinoSubmissionTimeline(usesTrinoRuntime: boolean, useMock: boolean) {
+  return usesTrinoRuntime && !useMock;
 }
 
 function getRunProgressPercentage(run: TrinoQueryRun) {

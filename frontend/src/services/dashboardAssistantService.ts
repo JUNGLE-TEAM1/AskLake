@@ -17,7 +17,6 @@ export type DashboardAssistantWidgetContext = {
 
 export type DashboardAssistantRequest = {
   dashboardId?: string;
-  currentDatasetId?: string | null;
   mode: DashboardAssistantMode;
   pageId?: string | null;
   prompt: string;
@@ -63,44 +62,8 @@ export type DashboardAssistantResponse = {
   actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
   message: string;
-  model?: string | null;
-  provider?: string | null;
-  retrieval?: {
-    aliases?: string[];
-    datasetIds?: string[];
-    provenance?: string;
-    resultCount?: number;
-    fallbackEvidenceCount?: number;
-    fallbackReasons?: string[];
-    degradationReasons?: string[];
-    queryPlannerProvider?: string | null;
-    queryPlannerModel?: string | null;
-    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
-    relevanceProvider?: string | null;
-    relevanceModel?: string | null;
-    semanticModelNames?: string[];
-    semanticModelVersions?: Array<number | null>;
-    status?: string;
-  };
-  sources?: Array<{
-    body?: string;
-    chunkIndex?: number;
-    chunkingStrategy?: string;
-    datasetId?: string;
-    documentId?: string;
-    embeddingModel?: string;
-    embeddingProvider?: string;
-    fallbackApplied?: boolean;
-    fallbackReason?: string;
-    fallbackReasons?: string[];
-    metadata?: Record<string, unknown>;
-    parentDocumentId?: string;
-    semanticModelIds?: string[];
-    title?: string;
-  }>;
   warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
-  usedEvidenceIds?: string[];
 };
 
 export class DashboardAssistantNotConfiguredError extends Error {

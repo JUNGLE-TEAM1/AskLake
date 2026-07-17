@@ -12,8 +12,8 @@ export type DashboardSortOptionMeta = {
 };
 
 export const dashboardPageSize = 10;
-export const fallbackDashboardDate = "-";
-export const fallbackDashboardDateValue = "";
+export const fallbackDashboardDate = "2026-06-26 22:04";
+export const fallbackDashboardDateValue = "2026-06-26T22:04:00";
 
 export const dashboardSortOptions: DashboardSortOptionMeta[] = [
   { id: "name-asc", label: "알파벳순", direction: "asc", ariaLabel: "알파벳순 오름차순" },
@@ -63,8 +63,7 @@ export function formatDashboardTimestamp(date: Date) {
 }
 
 export function formatDashboardDateLabel(value?: string) {
-  if (!value) return "시간 정보 없음";
-  const parsedDate = new Date(value);
+  const parsedDate = new Date(value ?? fallbackDashboardDateValue);
   if (Number.isNaN(parsedDate.getTime())) return fallbackDashboardDate;
   const minute = String(parsedDate.getMinutes()).padStart(2, "0");
   return `${parsedDate.getFullYear()}년 ${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일 ${parsedDate.getHours()}시 ${minute}분`;

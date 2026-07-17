@@ -13,11 +13,12 @@ type AuthPageProps = {
 };
 
 export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
+  const demoDefaultsEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";
   const publicSignupEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_PUBLIC_SIGNUP === "true";
   const [mode, setMode] = useState<AuthMode>("login");
   const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState(demoDefaultsEnabled ? "admin.user@asklake.local" : "");
+  const [password, setPassword] = useState(demoDefaultsEnabled ? "asklake-admin" : "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,7 +92,9 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
 
         <div className="login-account-help">
           {mode === "login" ? (
-            <small>AskLake 관리자가 발급한 실제 계정으로 로그인하세요.</small>
+            demoDefaultsEnabled
+              ? <small>Admin · admin.user@asklake.local / asklake-admin</small>
+              : <small>AskLake 관리자가 발급한 계정으로 로그인하세요.</small>
           ) : (
             <small>비밀번호는 8자 이상 입력하세요. 가입이 완료되면 바로 로그인됩니다.</small>
           )}

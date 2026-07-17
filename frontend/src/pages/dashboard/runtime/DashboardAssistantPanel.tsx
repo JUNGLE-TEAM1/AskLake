@@ -18,11 +18,10 @@ import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWid
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
-  currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;
@@ -40,41 +39,6 @@ type AssistantMessage = {
   text: string;
 };
 
-function isWidgetMutationPrompt(prompt: string) {
-  const hasWidgetTarget = /(위젯|차트|그래프|시각화|막대|꺾은선|선형|영역|도넛|원형|파이|트리맵|히트맵|지표|메트릭|표|테이블|widget|chart|graph|visuali[sz]|bar|line|area|donut|pie|treemap|heatmap|metric|table)/i.test(prompt);
-  const hasMutationVerb = /(바꿔|변경|수정|만들|추가|생성|업데이트|전환|구성|설정|그려|해줘|보여|change|update|create|add|make|draw|show)/i.test(prompt);
-  return hasWidgetTarget && hasMutationVerb;
-}
-
-function semanticRetrievalSummary(response: DashboardAssistantResponse) {
-  const retrieval = response.retrieval;
-  if (!retrieval || (response.sources?.length ?? 0) === 0) return "";
-  const resultCount = retrieval.resultCount ?? response.sources?.length ?? 0;
-  const modelNames = retrieval.semanticModelNames ?? [];
-  const modelVersions = retrieval.semanticModelVersions ?? [];
-  const modelSummary = modelNames.map((name, index) => `${name}${modelVersions[index] ? ` v${modelVersions[index]}` : ""}`).join(", ");
-  const datasetSummary = (retrieval.datasetIds ?? []).slice(0, 3).join(", ");
-  const sourceTitles = (response.sources ?? [])
-    .map((source) => source.title || source.body?.trim().slice(0, 120) || source.datasetId)
-    .filter((title): title is string => Boolean(title))
-    .slice(0, 3);
-  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(" / ")}` : "";
-  const fallback = (retrieval.fallbackEvidenceCount ?? 0) > 0
-    ? ` · 임베딩 전용 청킹 폴백 ${retrieval.fallbackEvidenceCount}건`
-    : "";
-  const planner = retrieval.queryPlannerProvider || retrieval.queryPlannerModel
-    ? ` · 계획: ${[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}`
-    : "";
-  const embeddings = Object.values(retrieval.queryEmbeddings ?? {})
-    .map((item) => [item.provider, item.model, item.dimensions ? `${item.dimensions}차원` : null].filter(Boolean).join(" · "))
-    .filter(Boolean);
-  const embedding = embeddings.length > 0 ? ` · 임베딩: ${Array.from(new Set(embeddings)).join(", ")}` : "";
-  const relevance = retrieval.relevanceProvider || retrieval.relevanceModel
-    ? ` · 관련성: ${[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}`
-    : "";
-  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${fallback}${evidence}`;
-}
-
 function AskLakeAssistantMark() {
   return <img alt="" aria-hidden="true" className="asklake-assistant-mark" src={askLakeNessiIconUrl} />;
 }
@@ -88,7 +52,6 @@ function appendPromptText(currentPrompt: string, nextText: string) {
 }
 
 export function DashboardAssistantPanel({
-  currentDatasetId,
   dashboardId,
   datasets,
   onCreateWidget,
@@ -135,19 +98,14 @@ export function DashboardAssistantPanel({
 
     setIsSubmitting(true);
     try {
-      const mode = isWidgetMutationPrompt(nextPrompt) ? "visualization_request" : "dashboard_question";
       const response = await requestDashboardAssistant({
         dashboardId,
-        currentDatasetId,
-        mode,
+        mode: "dashboard_question",
         pageId,
         prompt: nextPrompt,
         selectedWidgetId: selectedWidget?.id ?? null,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       });
-      if (mode === "visualization_request" && !hasWidgetMutationAction(response)) {
-        throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
-      }
       const reportAction = response.actions.find(
         (action): action is DashboardAssistantReportAction => action.type === "report",
       );
@@ -158,10 +116,6 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      const retrievalMessage = semanticRetrievalSummary(response);
-      const provenanceMessage = response.provider && !["local-input-guard", "unavailable"].includes(response.provider)
-        ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
-        : "";
       const warningMessage = response.warnings.length > 0
         ? `경고: ${response.warnings.join(" / ")}`
         : "";
@@ -173,8 +127,6 @@ export function DashboardAssistantPanel({
           text: [
             reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
             ...actionMessages,
-            provenanceMessage,
-            retrievalMessage,
             warningMessage,
           ].filter(Boolean).join("\n\n"),
         },
@@ -182,6 +134,10 @@ export function DashboardAssistantPanel({
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Assistant 요청에 실패했습니다.";
       setError(message);
+      setMessages((current) => [
+        ...current,
+        { id: `assistant-error-${Date.now()}`, role: "assistant", text: message },
+      ]);
     } finally {
       setIsSubmitting(false);
     }
@@ -284,8 +240,8 @@ async function applyAssistantWidgetActions({
   widgets,
 }: {
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   response: DashboardAssistantResponse;
   widgets: DashboardRuntimeWidget[];
 }) {
@@ -313,22 +269,17 @@ async function applyAssistantWidgetActions({
   return messages;
 }
 
-function hasWidgetMutationAction(response: DashboardAssistantResponse) {
-  return response.actions.some((action) => action.type === "create_widget" || action.type === "update_widget");
-}
-
 async function applyCreateWidgetAction(
   action: DashboardAssistantCreateWidgetAction,
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void,
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void,
 ) {
-  if (!onCreateWidget) throw new Error("위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.");
-  const applied = await onCreateWidget({
+  if (!onCreateWidget) return "위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.";
+  await onCreateWidget({
     config: action.widget.config,
     datasetId: action.widget.datasetId,
     title: action.widget.title || "AI 추천 위젯",
     type: action.widget.type,
   });
-  if (applied === false) throw new Error("위젯 생성 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
   return "AI가 제안한 위젯을 추가했습니다.";
 }
 
@@ -336,19 +287,19 @@ async function applyUpdateWidgetAction(
   action: DashboardAssistantUpdateWidgetAction,
   datasets: DashboardDatasetOption[],
   widgets: DashboardRuntimeWidget[],
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void,
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void,
 ) {
-  if (!onUpdateWidget) throw new Error("위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.");
+  if (!onUpdateWidget) return "위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.";
 
   const currentWidget = widgets.find((widget) => widget.id === action.widgetId);
   if (!currentWidget && (!action.patch.type || !action.patch.config)) {
-    throw new Error("수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.");
+    return "수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.";
   }
 
   const nextDatasetId = action.patch.datasetId ?? currentWidget?.datasetId ?? null;
   const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
 
-  const applied = await onUpdateWidget(action.widgetId, {
+  await onUpdateWidget(action.widgetId, {
     config: {
       ...(currentWidget?.config ?? {}),
       ...(action.patch.config ?? {}),
@@ -358,6 +309,5 @@ async function applyUpdateWidgetAction(
     title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
     type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
   });
-  if (applied === false) throw new Error("위젯 변경사항 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
   return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }

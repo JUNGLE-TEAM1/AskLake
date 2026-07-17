@@ -85,7 +85,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetScrollTarget: () => void;
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
-  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
@@ -108,7 +108,7 @@ type DashboardRuntimeViewActions = {
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
-  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
 };
 
 type DashboardRuntimeViewProps = {
@@ -240,7 +240,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     datasetId: widget.datasetId ?? null,
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
-  }); };
+  });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {
@@ -250,6 +250,12 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
 
     if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
+      if (typeof nextConfig.description === "string" && nextConfig.description.includes("mock fallback")) {
+        delete nextConfig.description;
+      }
+      if (typeof nextConfig.body === "string" && nextConfig.body.includes("mock fallback")) {
+        delete nextConfig.body;
+      }
     }
 
     return nextConfig as UpdateDraftWidgetFormInput["config"];
@@ -467,7 +473,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         inspector={isAssistantInspectorOpen ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
-              currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
               pageId={selectedPageId}

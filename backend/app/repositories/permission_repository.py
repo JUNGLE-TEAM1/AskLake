@@ -60,6 +60,68 @@ def list_permission_grants_by_resource(
     return dict(grouped)
 
 
+def ensure_demo_permission_grants(
+    db: Session,
+    *,
+    dataset_ids: list[str],
+    job_ids: list[str],
+    dashboard_ids: list[str],
+) -> int:
+    ensure_permission_grant_table(db)
+    desired_rows: list[PermissionGrantModel] = []
+    if dataset_ids:
+        desired_rows.append(build_grant_row(
+            resource_type="dataset",
+            resource_id=dataset_ids[0],
+            principal_type="group",
+            principal_id="analytics",
+            actions=["view", "query"],
+        ))
+    if job_ids:
+        desired_rows.append(build_grant_row(
+            resource_type="etl_job",
+            resource_id=job_ids[0],
+            principal_type="group",
+            principal_id="ops",
+            actions=["view", "run"],
+        ))
+    if dashboard_ids:
+        desired_rows.append(build_grant_row(
+            resource_type="dashboard",
+            resource_id=dashboard_ids[0],
+            principal_type="group",
+            principal_id="analytics",
+            actions=["view"],
+        ))
+
+    if not desired_rows:
+        return 0
+
+    existing_keys = {
+        (
+            row.resource_type,
+            row.resource_id,
+            row.principal_type,
+            row.principal_id,
+        )
+        for row in db.scalars(
+            select(PermissionGrantModel).where(
+                PermissionGrantModel.source.in_(["admin_seed", DELETED_SEED_SOURCE])
+            )
+        )
+    }
+    rows = [
+        row
+        for row in desired_rows
+        if (row.resource_type, row.resource_id, row.principal_type, row.principal_id) not in existing_keys
+    ]
+    if not rows:
+        return 0
+    db.add_all(rows)
+    db.commit()
+    return len(rows)
+
+
 def create_permission_grant(
     db: Session,
     *,
@@ -227,6 +289,26 @@ def delete_permission_grant(db: Session, grant_id: str) -> PermissionGrantModel:
         db.delete(row)
     db.commit()
     return row
+
+
+def build_grant_row(
+    *,
+    resource_type: str,
+    resource_id: str,
+    principal_type: str,
+    principal_id: str,
+    actions: list[str],
+) -> PermissionGrantModel:
+    return PermissionGrantModel(
+        id=f"grant_{uuid4().hex}",
+        resource_type=resource_type,
+        resource_id=resource_id,
+        principal_type=principal_type,
+        principal_id=principal_id,
+        actions=actions,
+        source="admin_seed",
+        created_by="system",
+    )
 
 
 def row_to_permission_grant(row: PermissionGrantModel) -> PermissionGrant:
