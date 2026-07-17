@@ -117,7 +117,7 @@ EKS MVP fixture Run은 Airflow 외부 호출 전에 `etl_runs.task_states.eksMvp
 
 `asklake-runtime` ConfigMap은 workload chart와 분리된 `asklake-runtime-config` Helm release가 단독 소유한다. 전환은 기존 live data와 새 render의 canonical hash가 정확히 같은 경우에만 Helm ownership annotation을 인수하며, workload release가 같은 ConfigMap을 다시 렌더하거나 별도 field manager가 수정하는 것을 금지한다. 이 분리는 이미지·endpoint 같은 공용 non-secret runtime 값의 변경 수명주기를 Frontend/FastAPI/Airflow/Trino release와 분리한다.
 
-EKS MVP의 AI runtime 선택은 `direct`다. FastAPI가 기존 Query AI 호환 경로에서 `OPENAI_API_KEY`를 직접 소비하며, 이는 private AI Gateway를 구축하기 전까지의 MVP 경로다. 실제 key가 Secrets Manager source에 없으면 빈 값이나 placeholder를 만들지 않고 full-service Secret 전달과 Backend rollout을 차단한다. Gateway/MCP는 별도 후속 아키텍처 변경으로 다룬다.
+EKS MVP의 AI runtime 선택은 `direct`다. FastAPI가 기존 Query AI 호환 경로에서 `OPENAI_API_KEY`를 직접 소비하며, 이는 private AI Gateway를 구축하기 전까지의 MVP 경로다. 실제 key가 Secrets Manager source에 없으면 빈 값이나 placeholder를 만들지 않고 full-service Secret 전달과 Backend rollout을 차단한다. dev에서는 프로젝트 서비스 계정 key를 exact 13-key ExternalSecret으로 전달하고 Pod 인증을 검증했다. key 자동 TTL은 지원되지 않아 운영 폐기일에 revoke하고 bounded 12-key profile로 되돌린다. Gateway/MCP는 별도 후속 아키텍처 변경으로 다룬다.
 
 EKS MVP fixture의 동적 Spark 실행은 다른 Kafka Job과 달리 전용 `iceberg.asklake.eks_mvp_fixture` target을 `replace` mode로 고정한다. Spark는 Kafka를 읽은 뒤 `raw.fixture_batch_id`가 RDS boundary의 값인 행만 남기고, 그 행 수가 `expectedCount`와 다르면 Iceberg commit 전에 실패한다. 성공 report를 받은 FastAPI도 `sourceBoundary`, input/output count, Job/Run identity, target, snapshot ID와 commit boundary를 다시 대조한 뒤에만 `sparkResult` 성공을 RDS에 저장한다. 따라서 driver Pod의 `Succeeded`만으로 데이터 처리 성공을 인정하지 않는다.
 

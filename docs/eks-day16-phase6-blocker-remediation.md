@@ -2,7 +2,7 @@
 
 ## 결과
 
-세 blocker 중 runtime ConfigMap ownership과 Spark 실행 증거는 해결했다. AI runtime은 `direct`로 선택하고 계약·실패 경로 검증까지 완료했지만, 실제 OpenAI key가 Secrets Manager source에 없어 full-service Secret 적용과 Backend rollout, 최종 promotion은 의도적으로 실행하지 않았다.
+runtime ConfigMap ownership, Spark 실행 증거와 AI direct runtime의 세 blocker를 모두 해결했다. 최종 private handoff도 `ready-for-deploy`로 promotion했다.
 
 ## Runtime ConfigMap ownership
 
@@ -14,7 +14,11 @@
 
 MVP AI runtime은 `direct`다. full-service Backend profile은 기존 bounded 12개 key에 `OPENAI_API_KEY`를 추가한 exact 13-key 계약이다. 정적 contract, unresolved decision 실패 경로와 direct profile 검증은 통과했다.
 
-현재 AWS source에는 실제 OpenAI key가 없다. 따라서 빈 문자열, 임의 token 또는 placeholder를 만들지 않았고 live ExternalSecret과 Backend Deployment도 변경하지 않았다. 실제 key가 준비되면 source exact set, staged target hash, canonical target handover, FastAPI 2 replica rollout과 ALB/RDS/Trino/AI health를 순서대로 검증해야 한다.
+OpenAI Platform의 프로젝트 전용 서비스 계정 key를 생성해 AWS Secrets Manager source에 추가했다. tracked base manifest는 bounded 12-key fail-closed 상태로 유지하고, confirmation-gated promotion 실행기가 direct profile용 mapping을 추가한다. 임시 ExternalSecret의 source/target 전체 hash를 먼저 대조한 뒤 canonical target을 exact 13-key로 전환하고 FastAPI 두 replica를 재시작했다.
+
+첫 전환은 Backend가 정상이어도 old ALB target이 draining인 순간을 steady 실패로 처리해 자동 rollback됐다. source, ExternalSecret과 Backend가 bounded 상태로 복구된 것을 확인한 뒤, 30초 연속 steady 조건으로 실행기를 강화해 다시 적용했다. 최종적으로 source/target 13-key, ExternalSecret owner/Ready, FastAPI 2/2, ALB/RDS/Trino health와 EKS Pod의 OpenAI API 인증 HTTP 200을 확인했다.
+
+OpenAI key UI에는 자동 TTL 옵션이 없으므로 서비스 key 이름에 운영 폐기일을 표시했다. 2주 운영 폐기일은 2026-07-31이며, 해당 날짜에 key revoke와 AWS/Kubernetes bounded rollback을 수행해야 한다. 실제 key 값과 tracking identifier는 문서나 Git에 기록하지 않는다.
 
 ## Spark 증거 복구와 보존
 
@@ -30,7 +34,8 @@ MVP AI runtime은 `direct`다. full-service Backend profile은 기존 bounded 12
 - runtime ConfigMap selection/ownership/image: ready
 - new bounded E2E and idempotent retry: passed
 - AI decision: direct
-- AI source/target delivery: blocked by missing real key
-- Backend full-service rollout and promotion: not run
+- AI source/target delivery: exact 13-key ready
+- Backend full-service rollout: 2/2 and provider authentication passed
+- final handoff promotion: ready-for-deploy
 
-EC2 Continuous와 기존 rollback 원본은 변경하지 않았다. 남은 작업은 실제 key 제공 권한이 있는 담당자가 Secrets Manager source를 채운 뒤 Secret 전달, Backend rollout과 final ready/promotion을 실행하는 것이다.
+EC2 Continuous와 기존 rollback 원본은 변경하지 않았다. 남은 운영 항목은 2026-07-31 key 폐기와 bounded rollback이다.
