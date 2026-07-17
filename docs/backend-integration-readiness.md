@@ -588,7 +588,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] ECR digest-only image, ConfigMap 일반 설정, 기존 Secret key 참조 계약
 - [x] A Secret contract의 backend/Airflow/Spark/Trino exact key와 file mount 반영
 - [x] FastAPI `/api/health` startup/readiness와 DB 장애에서 재시작하지 않는 TCP liveness probe
-- [x] FastAPI rolling 종료 전 60초 ALB drain `preStop`과 120초 termination grace 계약
+- [x] dev ALB 300초 deregistration을 포함하는 FastAPI `preStop` 310초와 termination grace 360초 계약
 - [x] EKS의 Kafka Continuous 생성·조회·변경·freshness/widget read·background sync fail-closed 경계
 - [x] `etl_runs` owner/expiry/generation 기반 singleton lease와 중복 요청 `409`
 - [x] 기본 60초 lease와 20초 heartbeat를 Spark run timeout에서 분리

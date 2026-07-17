@@ -161,8 +161,8 @@
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
-        "terminationGracePeriodSeconds": { "type": "integer", "const": 120 },
-        "preStopDelaySeconds": { "type": "integer", "const": 60 },
+        "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
+        "preStopDelaySeconds": { "type": "integer", "const": 310 },
         "serviceAccountName": { "type": "string", "const": "asklake-backend" },
         "service": { "$ref": "#/$defs/backendService" },
         "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
