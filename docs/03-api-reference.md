@@ -12,7 +12,7 @@ Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-m
 - 기본 live API mode에서는 Source/Schema/Create/Run이 live backend API를 호출한다.
 - mock mode(`VITE_USE_MOCK_API=true`)에서는 Source/Schema 연결 테스트도 backend 없이 mock `SourceConnectorAnalysis`를 반환한다.
 - `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
-- `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
+- `frontend/src/services/pipelineApi.ts`가 ETL create/run 호출 진입점이고, `frontend/src/services/sqlQueryApi.ts`가 SQL Query Run·검증·estimate·result 호출 진입점이다. `pipelineApi.ts`의 기존 SQL export는 import 호환을 위해 재수출한다.
 - live backend mode에서 ETL job, catalog dataset과 SQL run metadata는 PostgreSQL에 저장된다. Trino 결과 행은 private S3-compatible page object에 두고 PostgreSQL에는 manifest/page metadata만 저장한다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
 - Issue #488은 local Compose의 Trino 482 + Iceberg JDBC catalog baseline, canonical Query Run, signed-cursor result storage와 Iceberg CTAS Dataset 등록을 제공한다. `/api/query/runs`는 `TRINO_ENABLED`에 따라 Trino runtime과 DuckDB compatibility runtime을 전환한다.
@@ -81,7 +81,7 @@ REALTIME_CLEANUP_INTERVAL_SECONDS=3600
 REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 ```
 
-로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 일반 Trino 결과는 private gzip page object로 저장하고 PostgreSQL에는 manifest/page metadata만 둔다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
+로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 최대 100행 Trino preview는 PostgreSQL inline page로 저장하고, 사용자 요청형 full result만 private gzip page object와 PostgreSQL manifest/page metadata로 저장한다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false` 또는 미설정: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
@@ -109,7 +109,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며, 브라우저 env에는 provider key를 두지 않는다. `AI_QUERY_PROVIDER=direct`는 롤백 호환 모드다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
-- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고 실행 이력, 상태, cursor 결과, CSV export, cancel lifecycle을 사용한다. `POST /api/query/estimates`는 Iceberg metadata 또는 plan/Catalog fallback으로 스캔량을 추정하고 `POST /api/query/validate`가 canonical Trino 문법·Dataset context·권한을 판정한다.
+- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 최대 100행 Trino preview Query Run을 `202 Accepted`로 접수한다. 전체 보기/CSV는 `/api/query/runs/{previewRunId}/full-results`의 별도 full run, cursor 결과, CSV export lifecycle을 사용한다. `POST /api/query/estimates`는 Iceberg metadata 또는 plan/Catalog fallback으로 스캔량을 추정하고 `POST /api/query/validate`가 canonical Trino 문법·Dataset context·권한을 판정한다.
 - Trino 전환 시 backend만 coordinator continuation URL을 보관한다. `trino-result-collector`만 continuation을 소비하고 상태/결과 API는 persisted state만 읽는다. QueryInfo 샘플링은 진행 통계를 보강하되 result page를 소비하지 않는다.
 - `clientRequestId`는 actor 범위 idempotency key다. 같은 key/fingerprint는 기존 run을 반환하고 다른 요청에 같은 key를 쓰면 `409`, actor별 동시 실행 slot을 넘으면 `429`다.
 - signed cursor는 storage page index와 row offset을 숨기고 submit 시 고정한 API page size를 유지한다. run 재열기, 결과 조회, 취소, materialization은 현재 Dataset 권한과 governance control을 다시 검사한다.
@@ -514,7 +514,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | Trino Query Run 제출, 상태 polling, signed-cursor 결과 page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
+| SQL 분석 | 최대 100행 Trino preview Query Run 제출, 상태 polling, on-demand 전체 결과 run, signed-cursor page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 SQL 내부 다단계 모달에서 스케줄·거버넌스·저장 설정을 완료하고 `createSqlDatasetJob`으로 명시적 draft를 제출; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
@@ -524,7 +524,7 @@ SQL 화면은 한국어/공백 dataset·column 표시명을 금지하지 않는�
 
 Schedule UI는 `직접 실행`과 `반복 실행` 두 선택지만 사용하며, `직접 실행`은 payload의 `스케줄링 건너뛰기` label로 정규화한다. 스케줄링을 건너뛰면 사용자가 `POST /api/etl/jobs/{jobId}/commands`의 `run` command action으로 필요할 때 1회 Run을 만든다. 반복 실행을 선택한 때만 반복 주기, 실행 시각, IANA `timezone`, `overlapPolicy`를 노출하며 재시도 상세값은 재시도 사용 시에만 표시한다. `startDate`, `endDate`, `nextRunUtc`, `watermarkPolicy`는 create request에 보존하되 UI에서는 기본값을 사용한다. 기본 `overlapPolicy`는 `skip_if_running`이며, 재시도는 다음 예약 시각 계산을 밀지 않고 현재 Run 안에서 2배 지수 백오프 정책으로 처리한다.
 
-SQL 분석 UI의 SQL editor 높이·toolbar·textarea scroll은 기존 계약을 유지한다. Trino 실행 평가와 timeline은 editor 아래에 새 block을 만들지 않고 결과 panel의 세 번째 `실행 정보` view에 표시한다. `실행 정보`는 `차트 보기`, `데이터 미리보기`와 같은 panel 높이 안에서 scroll하며 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집`을 서로 다른 실제 분모로 표시한다. DuckDB compatibility mode만 Preview `limit`와 기존 snapshot pagination을 유지한다.
+SQL 분석 UI의 SQL editor 높이·toolbar·textarea scroll은 기존 계약을 유지한다. Trino 기본 실행은 `mode=preview`, `limit=100`이며 실행 평가와 `쿼리 실행`, `첫 결과 준비` timeline은 결과 panel의 세 번째 `실행 정보` view에 표시한다. `전체 보기`/`CSV 다운로드`는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 전체 결과 run을 시작하거나 재사용한다. DuckDB compatibility mode는 기존 snapshot pagination을 유지한다.
 
 Catalog의 `storageLocation`이 `s3://` 또는 `s3a://` Parquet이면 `POST /api/query/runs`는 backend S3/MinIO credential로 object를 query-scoped 임시 cache에 읽어 DuckDB에 등록한다. 원격 파일 합계는 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES` 기본 512 MiB로 제한하며, 연결·인증·object 오류를 빈 Preview로 숨기지 않고 `SQL_STORAGE_ERROR`로 반환한다.
 
