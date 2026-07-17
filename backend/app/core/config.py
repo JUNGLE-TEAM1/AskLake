@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     rag_query_intelligence_enabled: bool = True
     rag_relevance_min_score: float = Field(default=0.6, ge=0.0, le=1.0)
     rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    rag_job_stale_seconds: int = Field(default=7_200, ge=300, le=604_800)
     rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
     rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
     rag_runtime_create_schema: bool = False
