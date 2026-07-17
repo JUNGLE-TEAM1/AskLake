@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import re
+import shutil
 import sys
+import time
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 from scipy.sparse import csr_matrix, hstack
@@ -21,7 +27,7 @@ from sklearn.svm import LinearSVC
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNTIME_ROOT = REPO_ROOT / "output" / "nlp-eval" / "text-structuring" / "runtime"
-DEFAULT_LATEST_ROOT = REPO_ROOT / "output" / "nlp-eval" / "template-model-validation" / "runtime" / "latest"
+DEFAULT_LATEST_ROOT = REPO_ROOT / "backend" / "tmp" / "review-text-models" / "latest"
 
 DENSE_PATTERNS = [
     ("negative_word", r"\b(bad|terrible|awful|broken|defective|disappointed|waste|poor|horrible)\b"),
@@ -52,16 +58,52 @@ def main() -> int:
     eval_rows = request.get("evalRows") or []
     if not isinstance(train_rows, list) or len(train_rows) < 2:
         raise ValueError("trainRows must contain at least two labeled rows.")
+    label_source = str(request.get("labelSource") or "").strip().lower()
+    if label_source not in {"ai_gateway", "human_labeled"}:
+        raise ValueError("labelSource must be ai_gateway or human_labeled.")
+    label_models = [str(value).strip() for value in request.get("labelModels") or [] if str(value).strip()]
+    if label_source == "ai_gateway" and not label_models:
+        raise ValueError("AI Gateway labeled training rows require at least one provider model identifier.")
 
     trained = {}
+    required_targets = []
     minimum_quality = float(request.get("minimumQuality") or request.get("minimumMacroF1") or 0.75)
+    minimum_class_rows = max(2, int(request.get("minimumClassRows") or 2))
+    require_all_allowed_values = request.get("requireAllAllowedValues") is not False
     for column in columns:
         target = normalize_name(column.get("targetName") or column.get("name") or column.get("outputColumn"))
         allowed_values = [str(value) for value in column.get("allowedValues") or [] if str(value).strip()]
         if not target or not allowed_values:
             continue
-        train_payload = labeled_examples(train_rows, target, allowed_values, request)
-        eval_payload = labeled_examples(eval_rows, target, allowed_values, request) if eval_rows else None
+        required_targets.append(target)
+        try:
+            train_payload = labeled_examples(train_rows, target, allowed_values, request)
+            eval_payload = labeled_examples(eval_rows, target, allowed_values, request) if eval_rows else None
+        except ValueError as exc:
+            trained[target] = {
+                "allowedValues": allowed_values,
+                "reason": str(exc),
+                "status": "failed_label_data",
+                "trainRows": 0,
+            }
+            continue
+        label_counts = Counter(train_payload["labels"])
+        insufficient_classes = [
+            value
+            for value in allowed_values
+            if label_counts.get(value, 0) < minimum_class_rows
+        ]
+        if require_all_allowed_values and insufficient_classes:
+            trained[target] = {
+                "allowedValues": allowed_values,
+                "classCounts": {str(key): int(value) for key, value in label_counts.items()},
+                "missingOrSparseClasses": insufficient_classes,
+                "minimumClassRows": minimum_class_rows,
+                "reason": "all_allowed_value_classes_require_minimum_rows",
+                "status": "failed_class_coverage",
+                "trainRows": len(train_payload["labels"]),
+            }
+            continue
         if len(set(train_payload["labels"])) < 2:
             trained[target] = {
                 "status": "skipped",
@@ -72,9 +114,13 @@ def main() -> int:
         artifact, metrics, candidate_evaluations = train_column_model(target, allowed_values, train_payload, eval_payload, request)
         artifact_name = f"{target}.portable_linear_svc.json"
         (output_dir / artifact_name).write_text(json.dumps(artifact, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        quality_passed = metrics["accuracy"] >= minimum_quality and metrics["macroF1"] >= minimum_quality
-        if quality_passed:
-            (latest_dir / artifact_name).write_text(json.dumps(artifact, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        validation_counts = metrics.get("validationLabelCounts") or {}
+        validation_covers_all_classes = all(int(validation_counts.get(value) or 0) > 0 for value in allowed_values)
+        quality_passed = (
+            metrics["accuracy"] >= minimum_quality
+            and metrics["macroF1"] >= minimum_quality
+            and validation_covers_all_classes
+        )
         trained[target] = {
             "allowedValues": allowed_values,
             "artifact": artifact_name if quality_passed else "",
@@ -86,19 +132,47 @@ def main() -> int:
             "selectedCandidate": metrics.get("candidate"),
             "status": "trained" if quality_passed else "failed_quality_gate",
             "trainRows": metrics["trainRows"],
+            "validationCoversAllClasses": validation_covers_all_classes,
             "validationRows": metrics["validationRows"],
         }
 
+    promoted = bool(required_targets) and all(
+        isinstance(trained.get(target), dict) and trained[target].get("status") == "trained"
+        for target in required_targets
+    )
     manifest = {
         "createdAt": utc_now(),
+        "labelModels": label_models,
+        "labelSource": label_source,
         "latestRuntimeDir": str(latest_dir),
         "modelKind": "portable_text_structuring_models",
         "outputDir": str(output_dir),
+        "promotionStatus": "promoted" if promoted else "not_promoted",
+        "source": request.get("source") if isinstance(request.get("source"), dict) else {},
         "templateName": str(request.get("templateName") or request.get("name") or "text_structuring_template"),
         "trainedModels": trained,
     }
-    for target_dir in (output_dir, latest_dir):
-        (target_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    if promoted:
+        artifact_digests = {}
+        for target in required_targets:
+            artifact_name = str(trained[target]["artifact"])
+            artifact_digests[artifact_name] = sha256_file(output_dir / artifact_name)
+            trained[target]["artifactSha256"] = artifact_digests[artifact_name]
+        manifest["artifactSha256s"] = artifact_digests
+        (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        with publication_lock(latest_dir):
+            staged_paths = []
+            for target in required_targets:
+                artifact_name = str(trained[target]["artifact"])
+                temporary_path = latest_dir / f".{artifact_name}.{uuid4().hex}.tmp"
+                shutil.copyfile(output_dir / artifact_name, temporary_path)
+                staged_paths.append((temporary_path, latest_dir / artifact_name))
+            for temporary_path, destination_path in staged_paths:
+                os.replace(temporary_path, destination_path)
+            manifest_temp = latest_dir / f".manifest.{uuid4().hex}.tmp"
+            manifest_temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(manifest_temp, latest_dir / "manifest.json")
     print(json.dumps(manifest, ensure_ascii=False))
     return 0
 
@@ -136,8 +210,24 @@ def train_column_model(
         fit_rows = train_rows
         fit_labels = train_labels
     else:
-        stratify = train_labels if min(Counter(train_labels).values()) >= 2 else None
-        split = train_test_split(train_rows, train_texts, train_labels, test_size=0.25, random_state=11, stratify=stratify)
+        label_counts = Counter(train_labels)
+        class_count = len(label_counts)
+        stratify = train_labels if min(label_counts.values()) >= 2 else None
+        requested_validation_rows = max(class_count, int(math.ceil(len(train_labels) * 0.25)))
+        maximum_validation_rows = len(train_labels) - class_count
+        validation_rows = min(requested_validation_rows, maximum_validation_rows)
+        if stratify is None or validation_rows < class_count:
+            raise ValueError(
+                f"Target '{target}' requires at least two rows per class for class-covered validation."
+            )
+        split = train_test_split(
+            train_rows,
+            train_texts,
+            train_labels,
+            test_size=validation_rows,
+            random_state=11,
+            stratify=stratify,
+        )
         fit_rows, eval_rows, fit_texts, eval_texts, fit_labels, eval_labels = split
 
     vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=int(request.get("maxFeatures") or 12000), sublinear_tf=True, min_df=1)
@@ -197,6 +287,7 @@ def train_column_model(
         best["metrics"],
         dense_scale,
         best["candidate"]["modelKind"],
+        request,
     )
     artifact["candidateEvaluations"] = candidate_evaluations
     return artifact, best["metrics"], candidate_evaluations
@@ -292,6 +383,7 @@ def portable_artifact(
     metrics: dict[str, Any],
     dense_scale: float,
     model_kind: str,
+    request: dict[str, Any],
 ) -> dict[str, Any]:
     vocabulary = vectorizer.vocabulary_
     ordered_vocab = sorted(vocabulary, key=vocabulary.get)
@@ -315,6 +407,11 @@ def portable_artifact(
         "intercept": [float(value) for value in np.asarray(model.intercept_, dtype=float).tolist()],
         "metrics": metrics,
         "modelKind": model_kind,
+        "provenance": {
+            "labelModels": [str(value) for value in request.get("labelModels") or []],
+            "labelSource": str(request.get("labelSource") or "unknown"),
+            "source": request.get("source") if isinstance(request.get("source"), dict) else {},
+        },
         "targetName": target,
         "trainedAt": utc_now(),
         "vectorizer": {
@@ -335,6 +432,45 @@ def canonical_allowed_value(value: Any, allowed_values: list[str]) -> str:
         if str(allowed).strip().lower() == normalized:
             return str(allowed)
     return ""
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@contextmanager
+def publication_lock(latest_dir: Path):
+    lock_dir = latest_dir.parent / ".review-model-publish.lock"
+    deadline = time.monotonic() + 30.0
+    while True:
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            try:
+                stale = time.time() - lock_dir.stat().st_mtime > 900
+            except OSError:
+                stale = False
+            if stale:
+                try:
+                    lock_dir.rmdir()
+                except OSError:
+                    pass
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Timed out waiting for the review model publication lock.")
+            time.sleep(0.1)
+    try:
+        yield
+    finally:
+        try:
+            lock_dir.rmdir()
+        except OSError:
+            pass
 
 
 def text_method(column: dict[str, Any]) -> str:
