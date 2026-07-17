@@ -818,6 +818,8 @@ Day 17 A/B 최종 통합 campaign은 반드시 최신 `pair1` merge SHA를 고�
 
 통합 baseline 뒤 정적 검증은 A NodePool/evidence, B workload/HPA/multi-Spark, Backend 집중 회귀, receipt sanitizer와 Terraform을 모두 포함한다. Python 집중 테스트는 CI와 같은 Python 3.13 계열 또는 `backend/.venv/bin/python`으로 실행한다. 프로젝트 dependency가 없는 system Python의 import 실패를 source regression으로 판정하지 않으며 올바른 interpreter로 재실행한 결과를 함께 기록한다. 로컬 Terraform CLI가 없으면 이 문서의 `hashicorp/terraform:1.15.8` Docker 명령으로 `fmt`, `init -backend=false`, `validate`, `test`를 보완한다. Issue #909의 실제 통과 범위는 [Day 17 A/B 최종 통합 정적 검증](eks-day17-final-integration-static-verification.md)을 따른다.
 
+병합된 placement를 기존 component release에 반영할 때는 먼저 `helm get values`를 mode `0600` 임시 파일에 저장하고 현재 manifest와 새 render를 구조 비교한다. image, env, Secret reference, Service, ConfigMap, resource와 probe가 동일하고 nodeSelector delta만 존재할 때 release별 `helm upgrade --install --dry-run=server`를 실행한다. Airflow의 placement-only upgrade는 migration hook을 다시 실행할 이유가 없으므로 `--no-hooks`를 사용한다. Issue #909에서는 Airflow revision `17→18`, Trino `15→16`을 component ownership 그대로 적용했고 모든 대상 Pod의 General 배치, EndpointSlice, ALB/RDS steady를 통과했다. 적용 결과와 rollback 기준은 [Day 17 A/B 최종 통합 placement 적용](eks-day17-final-integration-placement.md)을 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
