@@ -1,8 +1,1 @@
-@import "./etl/01-source-shared.css";
-@import "./etl/02-schema.css";
-@import "./etl/03-rules.css";
-@import "./etl/04-permission.css";
-@import "./etl/05-review.css";
-@import "./etl/06-target-shared.css";
-@import "./etl/07-schema-target-overrides.css";
-@import "./etl/08-record-parsing.css";
+@import "./etl/facade.css";
