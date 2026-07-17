@@ -347,12 +347,15 @@ const checks = [
   },
   {
     name: "SQL Trino execution separates preview, full view, CSV, and SQL Job boundaries",
-    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    files: [
+      "src/pages/sql/SqlAnalysisPage.tsx",
+      "src/pages/sql/useTrinoFullResult.ts",
+    ],
     patterns: [
       /requestTrinoFullResults/,
-      /const startFullResult = async \(intent: "csv" \| "view"\)/,
+      /const start = async \(intent: Exclude<FullResultIntent, null>\)/,
       /previewRun\.mode !== "preview"/,
-      /triggerFullResultCsvDownload\(fullResultRun\)/,
+      /triggerCsvDownload\(state\.run\)/,
       /fullTrinoDisplayResult/,
       /jobCreationDisabled=\{!trinoPreviewReady \|\| !materializationResult\}/,
     ],

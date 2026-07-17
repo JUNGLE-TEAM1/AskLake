@@ -161,6 +161,41 @@ function getResultRange(resultDraft: SqlResultDraft) {
   };
 }
 
+function SqlResultActions({
+  downloadDisabled,
+  downloadPending,
+  fullViewDisabled,
+  fullViewPending,
+  jobCreationDisabled,
+  onDownloadCsv,
+  onOpenFullView,
+  onOpenJobWizard,
+}: Pick<
+  SqlResultsPanelProps,
+  | "downloadDisabled"
+  | "downloadPending"
+  | "fullViewDisabled"
+  | "fullViewPending"
+  | "jobCreationDisabled"
+  | "onDownloadCsv"
+  | "onOpenFullView"
+  | "onOpenJobWizard"
+>) {
+  return (
+    <ActionGroup className={styles.resultActions} density="compact" wrap="wrap">
+      <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
+        <Download data-icon="inline-start" /> {downloadPending ? "CSV 준비 중" : "CSV 다운로드"}
+      </Button>
+      <Button disabled={jobCreationDisabled} type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
+        <Database data-icon="inline-start" /> 처리 Job 생성
+      </Button>
+      <Button disabled={fullViewDisabled} type="button" onClick={onOpenFullView} size="sm" variant="outline">
+        <Maximize2 data-icon="inline-start" /> {fullViewPending ? "전체 결과 준비 중" : "전체 보기"}
+      </Button>
+    </ActionGroup>
+  );
+}
+
 export function SqlResultsPanel({
   activeChartSource,
   baseDatasetSelected,
@@ -233,17 +268,16 @@ export function SqlResultsPanel({
                 </strong>
               ) : null}
               {resultDraft && resultView !== "execution" ? (
-                <ActionGroup className={styles.resultActions} density="compact" wrap="wrap">
-                  <Button disabled={downloadDisabled} type="button" onClick={onDownloadCsv} size="sm" variant="outline">
-                    <Download data-icon="inline-start" /> {downloadPending ? "CSV 준비 중" : "CSV 다운로드"}
-                  </Button>
-                  <Button disabled={jobCreationDisabled} type="button" onClick={onOpenJobWizard} size="sm" variant="outline">
-                    <Database data-icon="inline-start" /> 처리 Job 생성
-                  </Button>
-                  <Button disabled={fullViewDisabled} type="button" onClick={onOpenFullView} size="sm" variant="outline">
-                    <Maximize2 data-icon="inline-start" /> {fullViewPending ? "전체 결과 준비 중" : "전체 보기"}
-                  </Button>
-                </ActionGroup>
+                <SqlResultActions
+                  downloadDisabled={downloadDisabled}
+                  downloadPending={downloadPending}
+                  fullViewDisabled={fullViewDisabled}
+                  fullViewPending={fullViewPending}
+                  jobCreationDisabled={jobCreationDisabled}
+                  onDownloadCsv={onDownloadCsv}
+                  onOpenFullView={onOpenFullView}
+                  onOpenJobWizard={onOpenJobWizard}
+                />
               ) : null}
             </div>
             <div className={`${styles.resultBody} ${isCompactTableResult ? styles.resultBodyCompact : ""}`}>
