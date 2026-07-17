@@ -63,6 +63,7 @@ mode `0600`을 다시 확인했다.
 
 ## 남은 gate
 
-Phase 7은 최종 evidence 조립까지 닫았다. Phase 8에서는 tracked diff, 관련 정적
-검증과 테스트, private evidence 비추적 여부를 검수하고 merge 준비 상태를
-판정한다. 새 부하나 Spark Run을 다시 만들 필요는 없다.
+Phase 7은 최종 evidence 조립까지 닫았다. Phase 8의 tracked diff, 관련 정적 검증,
+private evidence 비추적, 비용·rollback 검수 결과는
+[최종 merge readiness](eks-day17-final-integration-merge-readiness.md)를 따른다. 새
+부하나 Spark Run은 다시 만들지 않는다.
