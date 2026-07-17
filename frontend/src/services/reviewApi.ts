@@ -1,4 +1,4 @@
-import type { DraftPipeline, RuleCompilationResult } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, RuleCompilationResult } from "../types";
 import { apiClient } from "./apiClient";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 
@@ -30,11 +30,36 @@ export type ReviewSnapshot = {
   validation: ReviewValidationRow[];
 };
 
-export async function getReviewSnapshot(draft: DraftPipeline): Promise<ReviewSnapshot> {
-  const request = {
+export type ReviewSnapshotRequest = CreatePipelineRequest & {
+  sourceConnectionStatus: DraftPipeline["source"]["connectionStatus"];
+};
+
+const inFlightReviewRequests = new Map<string, Promise<ReviewSnapshot>>();
+
+export function buildReviewSnapshotRequest(draft: DraftPipeline): ReviewSnapshotRequest {
+  return {
     ...toCreatePipelineRequest(draft),
     sourceConnectionStatus: draft.source.connectionStatus,
   };
+}
 
-  return apiClient.post<ReviewSnapshot>("/api/etl/review", request);
+export function getReviewSnapshotRequestKey(request: ReviewSnapshotRequest) {
+  return JSON.stringify(request);
+}
+
+export function getReviewSnapshot(request: ReviewSnapshotRequest): Promise<ReviewSnapshot> {
+  const requestKey = getReviewSnapshotRequestKey(request);
+  const inFlightRequest = inFlightReviewRequests.get(requestKey);
+  if (inFlightRequest) return inFlightRequest;
+
+  const requestPromise = apiClient.post<ReviewSnapshot>("/api/etl/review", request);
+
+  let trackedRequest: Promise<ReviewSnapshot>;
+  trackedRequest = requestPromise.finally(() => {
+    if (inFlightReviewRequests.get(requestKey) === trackedRequest) {
+      inFlightReviewRequests.delete(requestKey);
+    }
+  });
+  inFlightReviewRequests.set(requestKey, trackedRequest);
+  return trackedRequest;
 }

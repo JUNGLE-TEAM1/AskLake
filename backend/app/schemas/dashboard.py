@@ -339,6 +339,7 @@ class DashboardRuntimeResponse(CamelModel):
     dashboard: DashboardMeta
     mode: DashboardRuntimeMode
     revision: DashboardRevision | None
+    event_cursor: int = Field(default=0, ge=0)
     pages: list[DashboardRuntimePage]
     widgets_by_page_id: dict[str, list[DashboardRuntimeWidget]]
     filters: list[DashboardFilter] = Field(default_factory=list)
@@ -353,7 +354,7 @@ class DatasetFreshnessResponse(CamelModel):
     is_continuous: bool
     latest_revision: int = Field(ge=0)
     updated_at: str | None = None
-    next_check_after_ms: int = Field(ge=5_000, le=60_000)
+    next_check_after_ms: int = Field(ge=1_000, le=60_000)
 
 
 class DatasetFreshnessQueryResponse(CamelModel):
@@ -471,17 +472,20 @@ class DashboardAssistantCreateWidgetInput(CamelModel):
 class DashboardAssistantCreateWidgetAction(CamelModel):
     type: Literal["create_widget"] = "create_widget"
     widget: DashboardAssistantCreateWidgetInput
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 class DashboardAssistantUpdateWidgetAction(CamelModel):
     type: Literal["update_widget"] = "update_widget"
     widget_id: str = Field(max_length=255)
     patch: DashboardAssistantWidgetPatch
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 class DashboardAssistantReportAction(CamelModel):
     type: Literal["report"] = "report"
     markdown: str = Field(max_length=8_000)
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 DashboardAssistantAction = (
@@ -493,6 +497,7 @@ DashboardAssistantAction = (
 
 class DashboardAssistantResponse(CamelModel):
     message: str = Field(max_length=8_000)
+    request_id: str | None = Field(default=None, max_length=255)
     actions: list[DashboardAssistantAction] = Field(default_factory=list, max_length=8)
     warnings: list[str] = Field(default_factory=list, max_length=16)
     model: str | None = Field(default=None, max_length=200)

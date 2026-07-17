@@ -16,6 +16,70 @@ from app.services.ai_evidence import validate_used_evidence_ids
 logger = logging.getLogger(__name__)
 
 
+_GENERATION_PROVENANCE_METADATA_KEYS = (
+    "metadata",
+    "providerMetadata",
+    "provider_metadata",
+    "provenance",
+    "routing",
+)
+_FALLBACK_FLAG_KEYS = {
+    "fallback",
+    "fallbackapplied",
+    "fallbackused",
+    "isfallback",
+    "isfailover",
+    "routedtofallback",
+    "usedfallback",
+}
+
+
+def _normalized_provenance_key(value: object) -> str:
+    return "".join(character for character in str(value).casefold() if character.isalnum())
+
+
+def _metadata_indicates_fallback(value: object, *, key: object = "") -> bool:
+    """Recognize explicit fallback/failover routing provenance without reading model output."""
+
+    normalized_key = _normalized_provenance_key(key)
+    if normalized_key in _FALLBACK_FLAG_KEYS:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().casefold() not in {"", "0", "false", "no", "none", "null", "primary"}
+        return True
+
+    if isinstance(value, str):
+        normalized_value = value.strip().casefold()
+        return normalized_value == "mock" or "fallback" in normalized_value or "failover" in normalized_value
+    if isinstance(value, dict):
+        return any(_metadata_indicates_fallback(item, key=item_key) for item_key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_metadata_indicates_fallback(item, key=key) for item in value)
+    return False
+
+
+def _has_untrusted_generation_provenance(body: dict[str, Any]) -> bool:
+    provider = str(body.get("provider") or "").strip().casefold()
+    if provider == "mock" or "fallback" in provider or "failover" in provider:
+        return True
+    if any(
+        _metadata_indicates_fallback(body.get(key), key=key)
+        for key in _GENERATION_PROVENANCE_METADATA_KEYS
+        if key in body
+    ):
+        return True
+    return any(
+        _metadata_indicates_fallback(body.get(key), key=key)
+        for key in ("fallbackApplied", "fallback_applied", "usedFallback", "used_fallback")
+        if key in body
+    )
+
+
 class AiGatewayClient:
     """Synchronous client for the private internal AI server."""
 
@@ -320,6 +384,12 @@ class AiGatewayClient:
             raise ApiError(
                 ErrorCode.INTERNAL_ERROR,
                 "AI gateway returned an invalid response",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+        if _has_untrusted_generation_provenance(body):
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "AI gateway returned untrusted generation provenance",
                 status.HTTP_502_BAD_GATEWAY,
             )
         self._persist_generation_usage(body, request_id=request_id, mode=mode)

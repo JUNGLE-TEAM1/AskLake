@@ -54,7 +54,7 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
       </Link>
       <p className="login-tagline">The Complete Data Pipeline Platform</p>
 
-      <form className="login-card" onSubmit={submit}>
+      <form className="login-card" data-testid="auth-login-form" onSubmit={submit}>
         <h1>{mode === "login" ? "Sign In" : "Create Account"}</h1>
         <p className="login-card-description">
           {mode === "login"

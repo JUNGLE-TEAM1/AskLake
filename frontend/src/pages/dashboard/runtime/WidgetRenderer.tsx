@@ -21,6 +21,7 @@ import {
   type DashboardAssistantCreateWidgetAction,
   type DashboardAssistantResponse,
   type DashboardAssistantUpdateWidgetAction,
+  dashboardEvidenceSummary,
   type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
@@ -48,6 +49,7 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
 };
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
+const DASHBOARD_CHART_ANIMATION_MS = 600;
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -414,8 +416,12 @@ function buildBaseChartOptions(color: string): ApexOptions {
   return {
     chart: {
       animations: {
+        dynamicAnimation: {
+          enabled: true,
+          speed: DASHBOARD_CHART_ANIMATION_MS,
+        },
         enabled: true,
-        speed: 450,
+        speed: DASHBOARD_CHART_ANIMATION_MS,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",
@@ -529,8 +535,12 @@ function buildCircularChartOptions(color: string): ApexOptions {
   return {
     chart: {
       animations: {
+        dynamicAnimation: {
+          enabled: true,
+          speed: DASHBOARD_CHART_ANIMATION_MS,
+        },
         enabled: true,
-        speed: 450,
+        speed: DASHBOARD_CHART_ANIMATION_MS,
       },
       fontFamily: "inherit",
       foreColor: "#64748b",
@@ -760,20 +770,24 @@ function VisualizationRequestWidget({
         if (!patchCanRenderVisualization(widget, widgetPatch, assistantContext?.activeDatasetId)) {
           throw new Error("데이터셋이나 필드가 없어 생성된 시각화를 렌더링할 수 없습니다.");
         }
-        await onApplyWidgetPatch({
+        const applied = await onApplyWidgetPatch({
           ...widgetPatch,
           config: {
             prompt: nextPrompt,
             ...(widgetPatch.config ?? {}),
           },
         });
+        if (applied === false) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
       } else {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
       setRequestTone("success");
-      setMessage("AI가 생성한 시각화 변경을 편집기에 적용했습니다.");
+      setMessage([
+        "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
+        dashboardEvidenceSummary(response),
+      ].filter(Boolean).join(" "));
       setIsPromptEditing(false);
     } catch (error) {
       setRequestTone("error");
@@ -1017,6 +1031,9 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
       type: "bar",
     },
     colors,
+    dataLabels: {
+      enabled: false,
+    },
     plotOptions: {
       bar: {
         borderRadius: 5,

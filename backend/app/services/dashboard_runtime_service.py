@@ -9,6 +9,7 @@ from fastapi import status
 from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext, require_permission
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
@@ -79,6 +80,14 @@ from app.services.dashboard_physical_data import (
     dashboard_widget_supports_incremental_merge,
     merge_dashboard_aggregate_states,
 )
+from app.services.dashboard_realtime_bridge import (
+    DASHBOARD_LEGACY_COLOR_MAP,
+    append_dashboard_published_event,
+    dashboard_datetime_to_iso,
+    dashboard_widget_type_enum,
+    default_dashboard_widget_layout,
+    published_snapshot_event_cursor,
+)
 
 
 MAX_EXPLICIT_WIDGET_ROWS = 500
@@ -88,16 +97,6 @@ logger = logging.getLogger(__name__)
 
 
 class DashboardRuntimeService:
-    _legacy_color_map = {
-        "blue": "#2563eb",
-        "green": "#10b981",
-        "orange": "#f97316",
-        "pink": "#db2777",
-        "purple": "#8b5cf6",
-        "red": "#ef4444",
-        "yellow": "#f59e0b",
-    }
-
     def __init__(
         self,
         repository: DashboardRuntimeRepository,
@@ -221,14 +220,14 @@ class DashboardRuntimeService:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
-        widget_type = self._widget_type_enum(request.type)
+        widget_type = dashboard_widget_type_enum(request.type)
         widget = self.repository.create_widget(
             page.id,
             widget_type=widget_type.value,
             title=request.title,
             dataset_id=request.dataset_id,
             query_id=None,
-            layout=self._layout_to_json(request.layout or self._default_layout()),
+            layout=self._layout_to_json(request.layout or default_dashboard_widget_layout()),
             config=self._config_to_json(widget_type, request.config),
             data=self._resolve_widget_data(request.data, request.dataset_id),
         )
@@ -244,8 +243,8 @@ class DashboardRuntimeService:
     ) -> DashboardWidgetMutationResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
-        current_type = self._widget_type_enum(widget.type)
-        next_type = self._widget_type_enum(request.type or current_type)
+        current_type = dashboard_widget_type_enum(widget.type)
+        next_type = dashboard_widget_type_enum(request.type or current_type)
         type_changed = request.type is not None and next_type != current_type
         next_config = None
         if request.config is not None or type_changed:
@@ -298,11 +297,15 @@ class DashboardRuntimeService:
         published_revision_id = published_revision.id
         published_at = published_revision.published_at or datetime.now(UTC)
         self.repository.update_dashboard_published_metadata(dashboard_id, published_revision_id, published_at)
+        append_dashboard_published_event(
+            self.repository.db, dashboard_id, published_revision_id,
+            published_revision.version, published_at,
+        )
         self.repository.db.commit()
         return PublishDashboardResponse(
             dashboard_id=dashboard_id,
             published_revision_id=published_revision_id,
-            published_at=self._datetime_to_iso(published_at) or published_at.isoformat(),
+            published_at=dashboard_datetime_to_iso(published_at) or published_at.isoformat(),
         )
 
     def _build_runtime_response(
@@ -313,6 +316,7 @@ class DashboardRuntimeService:
         actor: ActorContext,
         dashboard_card: DashboardCard,
     ) -> DashboardRuntimeResponse:
+        snapshot_event_cursor = published_snapshot_event_cursor(self.repository.db, mode)
         has_published_revision = (
             dashboard_meta.has_published_revision
             or (mode == DashboardRuntimeMode.PUBLISHED and revision is not None)
@@ -323,6 +327,7 @@ class DashboardRuntimeService:
                 dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
                 mode=mode,
                 revision=None,
+                event_cursor=snapshot_event_cursor,
                 pages=[],
                 widgets_by_page_id={},
                 filters=[],
@@ -347,6 +352,7 @@ class DashboardRuntimeService:
                 dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
                 mode=mode,
                 revision=self._revision_to_schema(revision),
+                event_cursor=snapshot_event_cursor,
                 pages=[self._page_to_schema(page) for page in pages],
                 widgets_by_page_id={
                     page_id: [
@@ -518,7 +524,7 @@ class DashboardRuntimeService:
                 resource_type="dashboard",
             ),
             has_published_revision=has_published_revision,
-            updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
+            updated_at=dashboard_datetime_to_iso(record.updated_at),
         )
 
     @staticmethod
@@ -527,7 +533,7 @@ class DashboardRuntimeService:
             id=revision.id,
             kind=DashboardRuntimeMode(revision.kind),
             version=revision.version,
-            published_at=DashboardRuntimeService._datetime_to_iso(revision.published_at),
+            published_at=dashboard_datetime_to_iso(revision.published_at),
         )
 
     @staticmethod
@@ -980,6 +986,17 @@ class DashboardRuntimeService:
             session.close()
         if delta_state is None:
             return None
+        if int(commit.row_count or 0) > 0 and not any(
+            isinstance(row, dict) for row in (delta_state.get("rows") or [])
+        ):
+            logger.warning(
+                "dashboard_widget_revision_delta_empty dataset_id=%s revision=%s run_id=%s row_count=%s; falling back to full calculation",
+                dataset_id,
+                commit.revision,
+                commit.run_id,
+                commit.row_count,
+            )
+            return None
         merged_state = merge_dashboard_aggregate_states(current_state, delta_state)
         if merged_state is None:
             return None
@@ -1035,7 +1052,7 @@ class DashboardRuntimeService:
             query_id=widget.query_id,
             applied_revision=applied_revision,
             calculation_version=calculation_version,
-            calculated_at=self._datetime_to_iso(calculated_at),
+            calculated_at=dashboard_datetime_to_iso(calculated_at),
             live_refresh=True,
         )
 
@@ -1079,14 +1096,6 @@ class DashboardRuntimeService:
         return persisted_config
 
     @staticmethod
-    def _default_layout() -> DashboardWidgetLayout:
-        return DashboardWidgetLayout(x=0, y=0, w=4, h=3, min_w=2, min_h=2)
-
-    @staticmethod
-    def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
-        return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
-
-    @staticmethod
     def _normalize_widget_config(
         widget_type: DashboardRuntimeWidgetType,
         config: dict[str, Any] | None,
@@ -1100,9 +1109,14 @@ class DashboardRuntimeService:
 
         color = normalized.get("color")
         if isinstance(color, str):
+            record_compatibility_path(
+                CompatibilityPath.DASHBOARD_LEGACY_COLOR,
+                reason="legacy scalar widget color is being normalized",
+                context={"color": color},
+            )
             normalized["color"] = {
                 "colors": [
-                    DashboardRuntimeService._legacy_color_map.get(
+                    DASHBOARD_LEGACY_COLOR_MAP.get(
                         color,
                         color if color.startswith("#") else "#2563eb",
                     ),
@@ -1196,9 +1210,3 @@ class DashboardRuntimeService:
             x_key="category",
             y_key="value",
         )
-
-    @staticmethod
-    def _datetime_to_iso(value: datetime | None) -> str | None:
-        if value is None:
-            return None
-        return value.isoformat()

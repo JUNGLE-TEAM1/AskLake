@@ -1,5 +1,12 @@
 import type { QualityRuleDraft, SchemaColumnDraft, TransformStepDraft } from "../types";
 
+export type FailurePolicyApplication = {
+  action: string;
+  category: "quality" | "transform";
+  label: string;
+  target: string;
+};
+
 export function summarizeSchemaRuleState(
   columns: SchemaColumnDraft[],
   qualityRules: QualityRuleDraft[],
@@ -14,14 +21,32 @@ export function summarizeSchemaRuleState(
   const transformedColumns = new Set(
     transformRules.map((step) => step.output || step.input).filter(Boolean),
   );
-  const failureActions = [
-    ...enabledSteps.map((step) => step.onError),
-    ...enabledQualityRules.map((rule) => rule.failureAction),
-  ].filter(Boolean);
+  const failurePolicyApplications: FailurePolicyApplication[] = [
+    ...enabledSteps.map((step) => ({
+      action: step.onError,
+      category: "transform" as const,
+      label: step.label || step.operation,
+      target: step.output || step.input,
+    })),
+    ...enabledQualityRules.map((rule) => ({
+      action: rule.failureAction,
+      category: "quality" as const,
+      label: rule.validationType,
+      target: rule.targetColumn,
+    })),
+  ].filter(({ action }) => Boolean(action));
+  const failureActions = failurePolicyApplications.map(({ action }) => action);
+  const failureTargets = new Set(
+    failurePolicyApplications.map(({ target }) => target).filter(Boolean),
+  );
 
   return {
     enabledQualityRules,
     failureActions,
+    failureApplicationCount: failurePolicyApplications.length,
+    failurePolicyApplications,
+    failurePolicyCount: new Set(failureActions).size,
+    failureTargetCount: failureTargets.size,
     qualityRuleCount: enabledQualityRules.length,
     requiredColumnCount,
     transformedColumnCount: transformedColumns.size,

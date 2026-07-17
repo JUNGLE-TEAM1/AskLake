@@ -35,6 +35,7 @@ export type DashboardAssistantWidgetPatch = {
 
 export type DashboardAssistantCreateWidgetAction = {
   type: "create_widget";
+  usedEvidenceIds?: string[];
   widget: {
     config: DashboardRuntimeWidgetConfig;
     datasetId: string;
@@ -46,12 +47,14 @@ export type DashboardAssistantCreateWidgetAction = {
 export type DashboardAssistantUpdateWidgetAction = {
   patch: DashboardAssistantWidgetPatch;
   type: "update_widget";
+  usedEvidenceIds?: string[];
   widgetId: string;
 };
 
 export type DashboardAssistantReportAction = {
   markdown: string;
   type: "report";
+  usedEvidenceIds?: string[];
 };
 
 export type DashboardAssistantAction =
@@ -65,6 +68,7 @@ export type DashboardAssistantResponse = {
   message: string;
   model?: string | null;
   provider?: string | null;
+  requestId?: string | null;
   retrieval?: {
     aliases?: string[];
     datasetIds?: string[];
@@ -116,6 +120,16 @@ export function isDashboardAssistantConfigured() {
 
 export function dashboardAssistantEndpointLabel() {
   return assistantEndpoint || "VITE_DASHBOARD_ASSISTANT_API_PATH";
+}
+
+export function dashboardEvidenceSummary(response: DashboardAssistantResponse) {
+  const sources = response.sources ?? [];
+  if (sources.length === 0) return "";
+  const labels = sources.map((source, index) => {
+    const label = source.title || source.body?.trim().slice(0, 120) || source.datasetId || source.documentId || "근거 문서";
+    return `${index + 1}. ${label}`;
+  });
+  return `RAG 근거 ${sources.length}건 · ${labels.join(" / ")}`;
 }
 
 export function buildDashboardAssistantWidgetContext(widget: DashboardRuntimeWidget): DashboardAssistantWidgetContext {

@@ -33,7 +33,7 @@ $env:VITE_API_BASE_URL = "http://localhost:8080"
 npm run dev
 ```
 
-The frontend always uses the live backend API. Initial ETL jobs and Catalog datasets may legitimately be empty; connection or runtime failures are shown explicitly and are never replaced with fixture responses. Creating a pipeline adds the Job. Airflow's final task publishes a verified Spark result to Catalog, and the frontend refreshes Catalog after observing that Run's terminal success.
+For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Creating a pipeline adds the Job. In Phase 3, Airflow's final task publishes a verified Spark result to Catalog. The frontend loads Jobs only on Jobs routes and loads Catalog data when entering Catalog, SQL, or AI routes; observing a Run's terminal success no longer triggers a full Catalog request.
 The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
 ## Validation

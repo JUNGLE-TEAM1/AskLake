@@ -32,7 +32,7 @@ def session_cookie_options() -> dict[str, Any]:
         "httponly": True,
         "path": SESSION_COOKIE_PATH,
         "samesite": SESSION_COOKIE_SAMESITE,
-        "secure": not settings.is_development_runtime,
+        "secure": settings.uses_secure_session_cookie,
     }
 
 

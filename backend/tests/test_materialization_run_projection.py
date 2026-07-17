@@ -77,6 +77,22 @@ class MaterializationRunProjectionTests(unittest.TestCase):
 
         self.assertEqual([run["runId"] for run in runs], ["run-current", "run-historical"])
 
+    def test_trino_utc_timestamp_keeps_latest_iceberg_run_at_catalog_head(self) -> None:
+        previous = {
+            **successful_run("run-previous", "delta", 8, 80),
+            "icebergCommittedAt": "2026-07-14 14:54:58.833 UTC",
+            "icebergSnapshotId": "9999999999999999999",
+        }
+        latest = {
+            **successful_run("run-latest", "delta", 10, 100),
+            "icebergCommittedAt": "2026-07-14 15:03:25.673 UTC",
+            "icebergSnapshotId": "1000000000000000000",
+        }
+
+        runs = upsert_materialization_run([previous], latest)
+
+        self.assertEqual([run["runId"] for run in runs], ["run-latest", "run-previous"])
+
     def test_deleting_current_snapshot_falls_back_to_previous_snapshot(self) -> None:
         previous = successful_run("run-old", "snapshot", 8, 80)
         recalculated = recalculate_dataset_payload_from_runs({

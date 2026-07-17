@@ -14,7 +14,7 @@ from app.models.base import Base
 from app.models.identity import PermissionGrantModel
 from app.repositories import etl_repository
 from app.repositories.permission_repository import create_permission_grant, list_permission_grants_by_resource
-from app.schemas.etl import CreatePipelineRequest, UpdatePipelineRequest
+from app.schemas.etl import CreatePipelineRequest, ReviewPipelineRequest, UpdatePipelineRequest
 from app.services import etl_service
 
 
@@ -25,12 +25,21 @@ def pipeline_payload() -> dict:
         "owner": "data-platform",
         "permissionSummary": "Data Platform · 조직 내부",
         "permissionRoles": [{"access": ["조회", "실행", "관리"], "checked": True, "name": "Data Platform"}],
-        "permissionGrants": [{
-            "actions": ["view", "run"],
-            "principalId": "demo-user",
-            "principalType": "user",
-            "source": "permission_ui",
-        }],
+        "permissionGrants": [
+            {
+                "actions": ["view", "run"],
+                "principalId": "demo-user",
+                "principalName": "Demo User",
+                "principalType": "user",
+                "source": "permission_ui",
+            },
+            {
+                "actions": ["view"],
+                "principalId": "public",
+                "principalType": "public",
+                "source": "permission_ui",
+            },
+        ],
         "qualityInvalidRows": [],
         "qualityRules": [],
         "qualityStatus": "pass",
@@ -73,12 +82,10 @@ def main() -> None:
 
     try:
         with Session(engine) as db:
-            try:
-                etl_service.get_permission_options(db, ActorContext(name="Demo User", role="viewer"))
-            except ApiError as error:
-                assert error.status_code == 403
-            else:
-                raise AssertionError("Permission options must require an admin actor")
+            viewer = ActorContext(name="Demo User", role="viewer", id="demo-user")
+            create_options = etl_service.get_permission_options(db, viewer)
+            assert any(group.id == "data-platform" for group in create_options.groups)
+            assert any(user.id == "demo-user" for user in create_options.users)
 
             options = etl_service.get_permission_options(db, actor)
             assert any(group.id == "data-platform" for group in options.groups)
@@ -95,7 +102,81 @@ def main() -> None:
                 and "run" in grant.actions
                 for grant in stored
             )
+            assert any(
+                grant.principal_type == "public"
+                and grant.principal_id == "public"
+                and grant.actions == ["view"]
+                and grant.source == "permission_ui"
+                for grant in stored
+            )
             assert any(grant.principal_id == "demo-user" for grant in created.job.permission_grants)
+            assert not any(grant.source in {"owner", "permissionRoles"} for grant in created.job.permission_grants)
+
+            review_request = ReviewPipelineRequest.model_validate(pipeline_payload())
+            review = etl_service.review_pipeline(review_request)
+            basic_information = {entry.label: entry.value for entry in review.basic_information}
+            assert "작업 ID" not in basic_information
+            assert "작업명" not in basic_information
+            assert basic_information["처리 방식"] == "배치 처리"
+            assert basic_information["출력 데이터셋 이름"] == review_request.target_dataset
+            destination_labels = {entry.label for entry in review.destination}
+            assert "테이블 이름" not in destination_labels
+            assert "계층" not in destination_labels
+            continuous_review = etl_service.review_pipeline(
+                review_request.model_copy(update={"execution_mode": "continuous"})
+            )
+            assert any(
+                entry.label == "처리 방식" and entry.value == "실시간 스트리밍"
+                for entry in continuous_review.basic_information
+            )
+            assert review.permission[0].label == "담당자"
+            assert review.permission[0].value == "data-platform · 모든 작업 가능"
+            assert review.permission[1].label == "로그인한 모든 사용자"
+            assert review.permission[1].value == "조회 가능"
+            assert any(
+                entry.label == "Demo User (사용자)" and "실행" in entry.value
+                for entry in review.permission
+            )
+            assert any(row.label == "접근 권한" and row.status == "ready" for row in review.validation)
+            assert any(row.label == "저장 위치" and row.status == "ready" for row in review.validation)
+            assert not any(row.label == "권한/타겟" for row in review.validation)
+            assert not any(row.label in {"스케줄", "스트림 제어", "실패 재시도"} for row in review.validation)
+
+            invalid_permission_payload = pipeline_payload()
+            invalid_permission_payload["permissionSummary"] = ""
+            invalid_permission_payload["owner"] = ""
+            invalid_permission_review = etl_service.review_pipeline(
+                ReviewPipelineRequest.model_validate(invalid_permission_payload)
+            )
+            assert invalid_permission_review.can_create is False
+            assert any(
+                row.label == "접근 권한"
+                and row.status == "warning"
+                and row.value == "담당자 확인 필요"
+                for row in invalid_permission_review.validation
+            )
+
+            owner_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name=created.job.owner, role="viewer"),
+                job_id,
+            )
+            assert any(group.id == "data-platform" for group in owner_options.groups)
+
+            try:
+                etl_service.get_permission_options(db, viewer, job_id)
+            except ApiError as error:
+                assert error.status_code == 403
+            else:
+                raise AssertionError("Unrelated viewers must not read permission options")
+
+            created_by_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name=actor.name, role="viewer"),
+                job_id,
+            )
+            assert any(user.id == "demo-user" for user in created_by_options.users)
+
             create_permission_grant(
                 db,
                 resource_type="etl_job",
@@ -105,6 +186,24 @@ def main() -> None:
                 actions=["view"],
                 created_by=actor.name,
             )
+            create_permission_grant(
+                db,
+                resource_type="etl_job",
+                resource_id=job_id,
+                principal_type="user",
+                principal_id="manager-user",
+                actions=["manage"],
+                created_by=actor.name,
+            )
+            manager_options = etl_service.get_permission_options(
+                db,
+                ActorContext(name="Manager User", role="viewer", id="manager-user"),
+                job_id,
+            )
+            assert manager_options.groups
+            manager_grants = list_permission_grants_by_resource(db, [("etl_job", job_id)])["etl_job", job_id]
+            manager_grant = next(grant for grant in manager_grants if grant.principal_id == "manager-user")
+            assert manager_grant.actions == ["manage", "view"]
 
             update_payload = {
                 key: value
@@ -134,6 +233,36 @@ def main() -> None:
             assert any(grant.principal_id == "analytics" and grant.source == "permission_ui" for grant in replaced)
             assert any(grant.principal_id == "admin-managed-user" and grant.source == "admin" for grant in replaced)
             assert any(grant.principal_id == "analytics" for grant in updated.permission_grants)
+
+            legacy_payload = pipeline_payload()
+            legacy_payload["id"] = "legacy-permission-migration-contract"
+            legacy_payload["jobName"] = "legacy_permission_migration_contract_pipeline"
+            legacy_payload["owner"] = "legacy-owner"
+            legacy_payload["targetDataset"] = "legacy_permission_migration_contract"
+            legacy_payload.pop("permissionGrants")
+            legacy_request = CreatePipelineRequest.model_validate(legacy_payload)
+            legacy_created = etl_service.create_pipeline(db, legacy_request, actor)
+            legacy_actor = ActorContext(
+                name="Data Platform Member",
+                role="viewer",
+                groups=("data-platform",),
+            )
+            migrated = etl_service.with_job_permissions(db, legacy_created.job, legacy_actor)
+            assert migrated.permissions.can_run is True
+            assert migrated.permissions.can_manage is True
+            assert any(
+                grant.principal_type == "group"
+                and grant.principal_id == "data-platform"
+                and grant.source == "legacy_permission_roles"
+                for grant in migrated.permission_grants
+            )
+            assert not any(grant.source == "owner" for grant in migrated.permission_grants)
+
+            migrated_again = etl_service.with_job_permissions(db, legacy_created.job, legacy_actor)
+            assert len([
+                grant for grant in migrated_again.permission_grants
+                if grant.source == "legacy_permission_roles"
+            ]) == 1
     finally:
         etl_repository.ensure_schema = original_ensure_schema
 

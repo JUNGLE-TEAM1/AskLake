@@ -92,6 +92,13 @@ class AiGenerationUsageModel(TimestampMixin, Base):
     output_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
     total_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    candidate_evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    used_evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    context_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
 
 
 class AiContextConsumptionModel(TimestampMixin, Base):

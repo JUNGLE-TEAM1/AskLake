@@ -1,11 +1,31 @@
 import { apiClient } from "./apiClient";
+import { ApiError } from "../types";
 import type { DraftPipelinePatch, RecordParsingDraft, RecordParsingPreviewResponse, SchemaColumnDraft, SourceDraft } from "../types";
+import { sanitizeSourceConnectorFields, type SourceFieldRows } from "../utils/sourceConnectorFields";
 
-type SourceFieldRows = Array<[string, string]>;
+const directBackendBaseUrl = String(
+  import.meta.env.VITE_BACKEND_DIRECT_URL
+    || import.meta.env.VITE_API_BASE_URL
+    || "http://127.0.0.1:8080",
+).replace(/\/$/, "");
+
+export type SourceDatasetSummary = {
+  selectionKind: "prefix";
+  bucket: string;
+  prefix: string;
+  format: string;
+  fileCount: number;
+  totalBytes: number;
+  representativeObject: string;
+  schemaFingerprint?: string;
+  schemaCompatible: boolean;
+  excludedFileCount: number;
+};
 
 export type SourceConnectorAnalysis = {
   actionPath: string;
   assets: Array<[string, string, string]>;
+  datasetSummary?: SourceDatasetSummary;
   draftPatch: DraftPipelinePatch;
   logs: string[];
   message: string;
@@ -18,6 +38,9 @@ export type SourceConnectorAnalysis = {
 
 export type SourceConnectorDefaults = {
   kafkaBroker: string;
+  kafkaTopic: string;
+  s3Bucket: string;
+  s3Prefix: string;
 };
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
@@ -34,11 +57,12 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
   if (normalizedSourceType === "SQL Result") {
     return buildSqlResultConnectorAnalysis(fields);
   }
-  return withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
-    await postSourceConnector(normalizedSourceType, fields),
+  const requestFields = sanitizeSourceConnectorFields(normalizedSourceType, fields);
+  return withUnselectedTargetSchema(withRecordParsingSourceMetadata(normalizeConnectorAnalysis(
+    await postSourceConnector(normalizedSourceType, requestFields),
     normalizedSourceType,
-    fields,
-  ), fields);
+    requestFields,
+  ), requestFields));
 }
 
 export async function previewRecordParsing(rawLines: string[], recordParsing: RecordParsingDraft): Promise<RecordParsingPreviewResponse> {
@@ -46,11 +70,12 @@ export async function previewRecordParsing(rawLines: string[], recordParsing: Re
 }
 
 export async function getSourceConnectorDefaults(): Promise<SourceConnectorDefaults> {
-  return apiClient.get<SourceConnectorDefaults>("/api/etl/sources/defaults");
+  return getWithDevFallback<SourceConnectorDefaults>("/api/etl/sources/defaults");
 }
 
 export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
-  return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  return postSourceAssets(normalizedSourceType, sanitizeSourceConnectorFields(normalizedSourceType, fields), prefix);
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
@@ -60,7 +85,69 @@ async function postSourceConnector(sourceType: string, fields: SourceFieldRows):
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
   const body = { prefix, sourceConfig: fields, sourceType };
-  return apiClient.post<SourceAssetsResponse>("/api/etl/sources/assets", body);
+  return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
+}
+
+async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await postBackendDirect<T>(path, body);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  try {
+    return await apiClient.post<T>(path, body);
+  } catch (error) {
+    if (import.meta.env.DEV && isNotFoundError(error)) {
+      return postBackendDirect<T>(path, body);
+    }
+    throw error;
+  }
+}
+
+async function getWithDevFallback<T>(path: string): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await getBackendDirect<T>(path);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) throw error;
+    }
+  }
+
+  return apiClient.get<T>(path);
+}
+
+async function getBackendDirect<T>(path: string): Promise<T> {
+  const response = await fetch(`${directBackendBaseUrl}${path}`);
+  if (response.ok) return await response.json() as T;
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+}
+
+async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${directBackendBaseUrl}${path}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.ok) {
+    return await response.json() as T;
+  }
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+}
+
+function isNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|networkerror|load failed/i.test(message);
+}
+
+function isNotFoundError(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
 }
 
 function normalizeSourceType(sourceType: string) {
@@ -118,8 +205,11 @@ function isObjectStorageSource(sourceType: string) {
 }
 
 function hasSelectedObject(fields: SourceFieldRows) {
+  const selectionKind = fieldValue(fields, "__Selection Kind").toLowerCase();
+  const selectedPrefix = fieldValue(fields, "Path / Prefix");
   return Boolean(
-    fieldValue(fields, "__Selected Object")
+    (selectionKind === "prefix" && selectedPrefix)
+      || fieldValue(fields, "__Selected Object")
       || fieldValue(fields, "__Sample Object")
       || looksLikeDataFile(fieldValue(fields, "Path / Prefix"))
       || looksLikeDataFile(fieldValue(fields, "Path"))
@@ -132,24 +222,51 @@ function looksLikeDataFile(value: string) {
 }
 
 function withRecordParsingSourceMetadata(analysis: SourceConnectorAnalysis, fields: SourceFieldRows): SourceConnectorAnalysis {
-  const sampleObject = fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Sample Object")
-    || fieldValue(analysis.draftPatch.source?.sourceConfig ?? fields, "__Selected Object")
-    || fieldValue(fields, "Path / Prefix");
-  const detectedFormat = /\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined;
-  const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
-  const requiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
   if (!analysis.draftPatch.source) return analysis;
+  const sourceMetadata = analysis.draftPatch.source;
+  const sampleObject = analysis.datasetSummary?.representativeObject
+    || fieldValue(sourceMetadata.sourceConfig ?? fields, "__Sample Object")
+    || fieldValue(sourceMetadata.sourceConfig ?? fields, "__Selected Object")
+    || fieldValue(fields, "Path / Prefix");
+  const detectedFormat = sourceMetadata.detectedFormat
+    || (/\.(txt|log)$/i.test(sampleObject) ? "TXT" : undefined);
+  const rawValueIndex = analysis.previewColumns.findIndex((column) => /^(value|raw_value)$/i.test(column));
+  const inferredRequiresRecordParsing = detectedFormat === "TXT" && rawValueIndex >= 0;
+  const requiresRecordParsing = sourceMetadata.requiresRecordParsing ?? inferredRequiresRecordParsing;
+  const backendRawPreviewLines = sourceMetadata.rawPreviewLines?.filter((line) => line.trim()) ?? [];
+  const rawPreviewLines = backendRawPreviewLines.length > 0
+    ? backendRawPreviewLines
+    : requiresRecordParsing && rawValueIndex >= 0
+      ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
+      : [];
   return {
     ...analysis,
     draftPatch: {
       ...analysis.draftPatch,
       source: {
-        ...analysis.draftPatch.source,
+        ...sourceMetadata,
         detectedFormat,
-        rawPreviewLines: requiresRecordParsing
-          ? analysis.previewRows.map((row) => row[rawValueIndex] ?? "").filter((line) => line.trim())
-          : [],
+        rawPreviewLines,
         requiresRecordParsing,
+      },
+    },
+  };
+}
+
+function withUnselectedTargetSchema(analysis: SourceConnectorAnalysis): SourceConnectorAnalysis {
+  const schema = analysis.draftPatch.schema;
+  if (!schema?.columns) return analysis;
+  return {
+    ...analysis,
+    draftPatch: {
+      ...analysis.draftPatch,
+      schema: {
+        ...schema,
+        columns: schema.columns.map((column) => ({
+          ...column,
+          included: false,
+          targetOrder: undefined,
+        })),
       },
     },
   };
@@ -160,6 +277,7 @@ function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): Sch
     const values = rows.map((row) => row[columnIndex] ?? "");
     return {
       confidence: 85,
+      included: false,
       nullable: values.some((value) => isEmptyValue(value)),
       sourceName: column,
       targetName: normalizeColumnName(column),

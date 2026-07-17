@@ -38,6 +38,7 @@ const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
 const suppliedRules = objectArrayOption("rules");
 const configuredSchemaColumns = objectArrayOption("schemaColumns");
+const recordParsing = objectOption("recordParsing");
 const configuredOutputSchema = tupleArrayOption("outputSchema");
 const canonicalRules = apiPayload.ruleContractVersion || suppliedRules.length > 0
   ? suppliedRules
@@ -488,7 +489,7 @@ async function consumeKafkaSnapshot(consumer, snapshot) {
               offset: message.offset,
               partition: batch.partition,
               topic: batch.topic,
-            }, configuredSchemaColumns);
+            }, configuredSchemaColumns, recordParsing);
             if (parsed.valid) records.push(parsed.record);
             else invalidRecords.push(parsed.error);
           }

@@ -3,7 +3,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -15,7 +15,10 @@ from app.schemas.permissions import PermissionGrant
 PermissionResourceKey = tuple[str, str]
 DELETED_SEED_SOURCE = "admin_seed_deleted"
 LEGACY_SEED_SOURCES = {"admin_seed", DELETED_SEED_SOURCE}
+LEGACY_PERMISSION_SOURCE = "legacy_permission_roles"
+UI_MANAGED_SOURCES = {"permission_ui", LEGACY_PERMISSION_SOURCE}
 ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share", "publish"}
+VIEW_DEPENDENT_ACTIONS = ALLOWED_ACTIONS - {"view"}
 ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
 ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard", "semantic_model"}
 
@@ -34,15 +37,27 @@ def list_permission_grants_by_resource(
 
     ensure_permission_grant_table(db)
     grouped: dict[PermissionResourceKey, list[PermissionGrant]] = defaultdict(list)
-    for resource_type, resource_id in keys:
-        rows = db.scalars(
-            select(PermissionGrantModel)
-            .where(PermissionGrantModel.resource_type == resource_type)
-            .where(PermissionGrantModel.resource_id == resource_id)
-            .where(PermissionGrantModel.source.not_in(LEGACY_SEED_SOURCES))
-            .order_by(PermissionGrantModel.created_at.asc(), PermissionGrantModel.id.asc())
+    for key in keys:
+        grouped[key]
+
+    rows = db.scalars(
+        select(PermissionGrantModel)
+        .where(
+            tuple_(
+                PermissionGrantModel.resource_type,
+                PermissionGrantModel.resource_id,
+            ).in_(keys)
         )
-        grouped[(resource_type, resource_id)].extend(row_to_permission_grant(row) for row in rows)
+        .where(PermissionGrantModel.source.not_in(LEGACY_SEED_SOURCES))
+        .order_by(
+            PermissionGrantModel.resource_type.asc(),
+            PermissionGrantModel.resource_id.asc(),
+            PermissionGrantModel.created_at.asc(),
+            PermissionGrantModel.id.asc(),
+        )
+    ).all()
+    for row in rows:
+        grouped[(row.resource_type, row.resource_id)].append(row_to_permission_grant(row))
     return dict(grouped)
 
 
@@ -90,7 +105,7 @@ def replace_permission_ui_grants(
         select(PermissionGrantModel)
         .where(PermissionGrantModel.resource_type == normalized_resource_type)
         .where(PermissionGrantModel.resource_id == normalized_resource_id)
-        .where(PermissionGrantModel.source == "permission_ui")
+        .where(PermissionGrantModel.source.in_(UI_MANAGED_SOURCES))
     ).all()
     for row in existing_rows:
         db.delete(row)
@@ -119,6 +134,59 @@ def replace_permission_ui_grants(
     db.add_all(rows)
     db.commit()
     return [row_to_permission_grant(row) for row in rows]
+
+
+def ensure_legacy_permission_grants(
+    db: Session,
+    *,
+    resource_type: str,
+    resource_id: str,
+    grants: list[PermissionGrant],
+    created_by: str | None,
+) -> list[PermissionGrant]:
+    """Persist legacy UI roles once so authorization reads one grant store."""
+    ensure_permission_grant_table(db)
+    normalized_resource_type = validate_resource_type(resource_type)
+    normalized_resource_id = validate_required(resource_id, "resourceId")
+    existing_rows = db.scalars(
+        select(PermissionGrantModel)
+        .where(PermissionGrantModel.resource_type == normalized_resource_type)
+        .where(PermissionGrantModel.resource_id == normalized_resource_id)
+        .where(PermissionGrantModel.source.in_(UI_MANAGED_SOURCES))
+    ).all()
+    if existing_rows or not grants:
+        return list_permission_grants_by_resource(
+            db,
+            [(normalized_resource_type, normalized_resource_id)],
+        ).get((normalized_resource_type, normalized_resource_id), [])
+
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    rows: list[PermissionGrantModel] = []
+    for grant in grants:
+        principal_type = validate_principal_type(grant.principal_type)
+        principal_id = "public" if principal_type == "public" else validate_required(grant.principal_id, "principalId")
+        actions = validate_actions(list(grant.actions))
+        key = (principal_type, principal_id, tuple(actions))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(PermissionGrantModel(
+            id=f"grant_{uuid4().hex}",
+            resource_type=normalized_resource_type,
+            resource_id=normalized_resource_id,
+            principal_type=principal_type,
+            principal_id=principal_id,
+            actions=actions,
+            source=LEGACY_PERMISSION_SOURCE,
+            created_by=created_by,
+        ))
+
+    db.add_all(rows)
+    db.commit()
+    return list_permission_grants_by_resource(
+        db,
+        [(normalized_resource_type, normalized_resource_id)],
+    ).get((normalized_resource_type, normalized_resource_id), [])
 
 
 def update_permission_grant(
@@ -194,7 +262,10 @@ def validate_principal_type(value: str) -> str:
 
 
 def validate_actions(values: list[str]) -> list[str]:
-    actions = sorted({value.strip() for value in values if value.strip()})
+    normalized_actions = {value.strip() for value in values if value.strip()}
+    if normalized_actions & VIEW_DEPENDENT_ACTIONS:
+        normalized_actions.add("view")
+    actions = sorted(normalized_actions)
     if not actions:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "At least one permission action is required", status.HTTP_400_BAD_REQUEST)
     unsupported = [action for action in actions if action not in ALLOWED_ACTIONS]

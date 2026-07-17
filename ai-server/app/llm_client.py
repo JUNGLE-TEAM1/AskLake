@@ -582,7 +582,12 @@ def validate_used_evidence_scope(request: GenerateRequest, output: GenerationOut
         for source in sources or []
         if isinstance(source, dict) and str(source.get("documentId") or "").strip()
     }
-    unknown_ids = [item for item in output.used_evidence_ids if item not in allowed_ids]
+    scoped_ids = (
+        [evidence_id for action in output.actions for evidence_id in action.used_evidence_ids]
+        if isinstance(output, DashboardAssistantOutput)
+        else []
+    )
+    unknown_ids = [item for item in [*output.used_evidence_ids, *scoped_ids] if item not in allowed_ids]
     if unknown_ids:
         raise ProviderResponseError("Provider cited evidence outside the supplied RAG context")
 
@@ -634,7 +639,8 @@ def system_prompt_for_mode(mode: str) -> str:
             "For visualization requests create_widget unless selectedWidgetId/widgetId names an existing widget, then update_widget. "
             "Put update fields under patch and create fields under widget. Always provide a concise natural Korean chart title and a fully renderable config. "
             "If a requested field is unavailable, explain the limitation without an action. For questions prefer a Korean markdown report. "
-            "Return in usedEvidenceIds only exact context.ragContext source documentId values that materially influenced the answer or action; otherwise return an empty list."
+            "For every action, put in that action's usedEvidenceIds only exact context.ragContext source documentId values that materially influenced that specific action; otherwise use an empty list. "
+            "The top-level usedEvidenceIds must be the exact union of the action-level lists and must be empty when no action used retrieved evidence."
         ),
         "review_schema": (
             "Design an editable per-row review analysis schema. Use only copy, one_of_values, or instruction methods; "

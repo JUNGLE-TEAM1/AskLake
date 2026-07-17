@@ -191,6 +191,17 @@ class DashboardActionOutput(BaseModel):
     markdown: str | None = Field(max_length=8_000)
     widget: DashboardWidgetOutput | None
     patch: DashboardWidgetOutput | None
+    used_evidence_ids: list[str] = Field(alias="usedEvidenceIds", max_length=24)
+
+    @field_validator("used_evidence_ids")
+    @classmethod
+    def validate_used_evidence_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value]
+        if any(not item or len(item) > 255 for item in normalized):
+            raise ValueError("Action evidence IDs must be non-empty and at most 255 characters")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Action evidence IDs must be unique")
+        return normalized
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> "DashboardActionOutput":
@@ -229,6 +240,18 @@ class DashboardAssistantOutput(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("Used evidence IDs must be unique")
         return value
+
+    @model_validator(mode="after")
+    def require_action_scoped_evidence(self) -> "DashboardAssistantOutput":
+        scoped_ids = list(dict.fromkeys(
+            evidence_id
+            for action in self.actions
+            for evidence_id in action.used_evidence_ids
+        ))
+        if self.used_evidence_ids and set(self.used_evidence_ids) != set(scoped_ids):
+            raise ValueError("Top-level usedEvidenceIds must equal the union of action-scoped evidence IDs")
+        self.used_evidence_ids = scoped_ids
+        return self
 
 
 class ReviewSchemaColumnOutput(BaseModel):

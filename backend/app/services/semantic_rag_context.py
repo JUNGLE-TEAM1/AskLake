@@ -97,6 +97,7 @@ def build_semantic_rag_context(
     aliases: list[str] = []
     targets: list[dict[str, Any]] = []
     alias_model_ids: dict[str, list[str]] = {}
+    alias_dataset_ids: dict[str, set[str]] = {}
     for dataset_id in resolved_dataset_ids:
         try:
             rag_service._dataset(dataset_id, actor, "query")
@@ -113,6 +114,7 @@ def build_semantic_rag_context(
         ]
         if not model_ids:
             continue
+        alias_dataset_ids.setdefault(alias, set()).add(dataset_id)
         if alias in aliases:
             alias_model_ids[alias] = list(dict.fromkeys([*alias_model_ids[alias], *model_ids]))
             continue
@@ -156,19 +158,29 @@ def build_semantic_rag_context(
     retrieval = dict(result.get("retrieval") or {})
     retrieval.update(retrieval_base)
     sources = []
+    evidence_scope_mismatch = False
     for source in result.get("sources") or []:
         enriched = dict(source)
         source_alias = str(enriched.get("retrievalAlias") or "")
+        source_dataset_id = str(enriched.get("datasetId") or "").strip()
         model_ids = alias_model_ids.get(source_alias, [])
-        if not model_ids:
+        expected_dataset_ids = alias_dataset_ids.get(source_alias, set())
+        if (
+            not model_ids
+            or len(expected_dataset_ids) != 1
+            or source_dataset_id not in expected_dataset_ids
+        ):
             # Fail closed if a search transport returns evidence from an alias
-            # that was not bound to one of the resolved Semantic Models.
+            # that was not bound to exactly the expected Dataset and Semantic Model.
+            evidence_scope_mismatch = True
             continue
         enriched["semanticModelIds"] = model_ids
         enriched["semanticModels"] = [model for model in resolved_models if str(model["id"]) in model_ids]
         sources.append(enriched)
-    retrieval["resultCount"] = len(sources)
-    if result.get("sources") and not sources:
+    if evidence_scope_mismatch:
         retrieval["status"] = "evidence_scope_mismatch"
-        retrieval["reason"] = "Search evidence was not bound to the resolved semantic model aliases"
+        retrieval["reason"] = "Search evidence was not bound to the expected semantic model Dataset aliases"
+        retrieval["resultCount"] = 0
+        return {"sources": [], "retrieval": retrieval}
+    retrieval["resultCount"] = len(sources)
     return {"sources": sources, "retrieval": retrieval}

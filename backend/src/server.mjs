@@ -18,8 +18,6 @@ import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 import { listTargetDatabases } from "./targetDatabase.service.mjs";
 import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggestReviewAnalysisSchema } from "./reviewRowAnalysis.mjs";
 import { handleAuthRoute } from "./authService.mjs";
-import { compileRuleContract } from "./ruleCompiler.mjs";
-import { applySnapshotRules, supportsSnapshotRules } from "./snapshotRuleRuntime.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -46,6 +44,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/etl/sources/defaults") {
       sendJson(response, 200, {
         kafkaBroker: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+        kafkaTopic: process.env.ASKLAKE_SOURCE_DEFAULT_KAFKA_TOPIC || process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events",
+        s3Bucket: process.env.ASKLAKE_SOURCE_DEFAULT_S3_BUCKET || process.env.ASKLAKE_RAW_BUCKET || "",
+        s3Prefix: process.env.ASKLAKE_SOURCE_DEFAULT_S3_PREFIX || "",
       });
       return;
     }
@@ -187,36 +188,6 @@ const server = http.createServer(async (request, response) => {
       const sourceConfig = Array.isArray(body.sourceConfig) ? body.sourceConfig : [];
       const result = await testSourceConnector(sourceType, sourceConfig);
       sendJson(response, 200, result.draftPatch.schema ?? {});
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/etl/rules/preview") {
-      const body = await readJson(request);
-      const compilation = compileRuleContract({
-        executionMode: body.executionMode || "snapshot",
-        ruleContractVersion: body.ruleContractVersion,
-        rules: Array.isArray(body.rules) ? body.rules : [],
-        schemaColumns: Array.isArray(body.schemaColumns) ? body.schemaColumns : [],
-        sourceType: body.sourceType || "",
-      });
-      if (compilation.status !== "pass") {
-        throw Object.assign(new Error(compilation.issues[0]?.message || "Rule compilation failed."), {
-          code: "RULE_COMPILATION_FAILED",
-          details: { issues: compilation.issues },
-          status: 400,
-        });
-      }
-      if (!supportsSnapshotRules(compilation.rules)) {
-        throw Object.assign(new Error("Preview supports canonical Snapshot operations only."), {
-          code: "RULE_PREVIEW_OPERATION_UNSUPPORTED",
-          status: 422,
-        });
-      }
-      const records = Array.isArray(body.records) ? body.records.slice(0, 100) : [];
-      sendJson(response, 200, {
-        compilation,
-        ...applySnapshotRules(records, compilation.rules),
-      });
       return;
     }
 

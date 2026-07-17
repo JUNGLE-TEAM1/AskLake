@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   generateQueryAiSuggestion,
@@ -30,13 +30,20 @@ export function useSqlQueryAi({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const contextFingerprint = useMemo(() => JSON.stringify({
+    baseDatasetId: baseDataset?.id ?? null,
+    query,
+    selectedDatasetIds: selectedDatasets.map((dataset) => dataset.id).sort(),
+  }), [baseDataset?.id, query, selectedDatasets]);
+  const contextFingerprintRef = useRef(contextFingerprint);
 
   useEffect(() => {
+    contextFingerprintRef.current = contextFingerprint;
     setPrompt("");
     setSuggestion(null);
     setError(null);
     setOpen(false);
-  }, [baseDataset?.id]);
+  }, [contextFingerprint]);
 
   const changePrompt = (nextPrompt: string) => {
     setPrompt(nextPrompt);
@@ -71,6 +78,7 @@ export function useSqlQueryAi({
     setSuggestion(null);
     setError(null);
     setPending(true);
+    const requestedContextFingerprint = contextFingerprint;
     try {
       const nextSuggestion = await generateQueryAiSuggestion({
         baseDataset,
@@ -80,6 +88,7 @@ export function useSqlQueryAi({
         query,
         selectedDatasets,
       });
+      if (contextFingerprintRef.current !== requestedContextFingerprint) return;
       setSuggestion(nextSuggestion);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
     } catch {

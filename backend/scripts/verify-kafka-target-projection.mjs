@@ -59,6 +59,41 @@ assert.deepEqual(
   { event_id: "event-1", payload_device: "ios" },
 );
 
+const rawRecordParsing = {
+  enabled: true,
+  delimiterKind: "whitespace",
+  delimiterPattern: "\\s+",
+  expectedFieldCount: 4,
+  header: false,
+  columns: [
+    { position: 0, name: "event_time", inferredType: "Timestamp" },
+    { position: 1, name: "event_id", inferredType: "String" },
+    { position: 2, name: "position", inferredType: "Integer" },
+    { position: 3, name: "active", inferredType: "Boolean" },
+  ],
+};
+const rawParsed = parseKafkaSnapshotRecord(
+  "2026-06-12T10:01:27+09:00 EVT-0001 3 true",
+  { offset: "11", partition: 0, topic: "click-events.log" },
+  [],
+  rawRecordParsing,
+);
+assert.equal(rawParsed.valid, true);
+assert.deepEqual(rawParsed.record, {
+  active: true,
+  event_id: "EVT-0001",
+  event_time: "2026-06-12T10:01:27+09:00",
+  position: 3,
+});
+const invalidRawParsed = parseKafkaSnapshotRecord(
+  "2026-06-12T10:01:27+09:00 EVT-0001",
+  { offset: "12", partition: 0, topic: "click-events.log" },
+  [],
+  rawRecordParsing,
+);
+assert.equal(invalidRawParsed.valid, false);
+assert.equal(invalidRawParsed.error.reason, "record_field_count_mismatch");
+
 assert.equal(usesLegacyReviewContract([]), true);
 const invalidLegacyReview = parseKafkaSnapshotRecord(
   JSON.stringify({ event_id: "review-2" }),

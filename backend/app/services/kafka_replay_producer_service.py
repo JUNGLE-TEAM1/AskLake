@@ -41,12 +41,13 @@ class ReplayProducerManager:
             if self._is_running_locked():
                 raise ApiError(ErrorCode.CONFLICT, "Kafka replay producer is already running.", status.HTTP_409_CONFLICT)
 
-            input_path = resolve_input_path(request.input_path)
+            input_path = resolve_input_path(request.input_path, request.payload_mode)
             command = [
                 "node", str(SCRIPT_PATH),
                 "--broker", os.environ.get("ASKLAKE_KAFKA_BROKER") or "127.0.0.1:19092",
                 "--topic", request.topic,
                 "--input", str(input_path),
+                "--payload-mode", request.payload_mode.replace("_", "-"),
                 "--rate", str(request.rate),
                 "--batch-size", str(request.batch_size),
                 "--progress-every", str(request.progress_every),
@@ -80,6 +81,7 @@ class ReplayProducerManager:
                 "loop": request.loop,
                 "maxCycles": request.max_cycles,
                 "maxMessages": request.max_messages,
+                "payloadMode": request.payload_mode,
                 "rate": request.rate,
                 "topic": request.topic,
             }
@@ -159,15 +161,27 @@ class ReplayProducerManager:
         )
 
 
-def resolve_input_path(input_path: str | None) -> Path:
+def resolve_input_path(input_path: str | None, payload_mode: str = "json_envelope") -> Path:
     configured_root = Path(os.environ.get("ASKLAKE_REPLAY_INPUT_DIR") or DEFAULT_INPUT_PATH.parent).resolve()
+    if payload_mode == "raw_text" and input_path is None:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "inputPath is required when payloadMode is raw_text.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     candidate = (configured_root / input_path).resolve() if input_path else DEFAULT_INPUT_PATH.resolve()
     if input_path is not None and configured_root not in candidate.parents and candidate != configured_root:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "inputPath must stay inside ASKLAKE_REPLAY_INPUT_DIR.", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if not candidate.is_file():
         raise ApiError(ErrorCode.NOT_FOUND, f"Kafka replay input does not exist: {candidate.name}", status.HTTP_404_NOT_FOUND)
-    if not (candidate.name.endswith(".jsonl") or candidate.name.endswith(".jsonl.gz")):
-        raise ApiError(ErrorCode.VALIDATION_ERROR, "Kafka replay input must be .jsonl or .jsonl.gz.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    allowed_suffixes = (".txt", ".txt.gz", ".log", ".log.gz", ".jsonl", ".jsonl.gz") if payload_mode == "raw_text" else (".jsonl", ".jsonl.gz")
+    if not candidate.name.lower().endswith(allowed_suffixes):
+        expected = ".txt/.log/.jsonl" if payload_mode == "raw_text" else ".jsonl"
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            f"Kafka replay input must be {expected} (optionally gzip-compressed) for payloadMode={payload_mode}.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     return candidate
 
 

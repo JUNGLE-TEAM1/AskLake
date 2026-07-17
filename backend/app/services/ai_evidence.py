@@ -29,14 +29,23 @@ def validate_used_evidence_ids(
         normalized.append(evidence_id)
 
     sources = rag_context.get("sources") if isinstance(rag_context, dict) else None
-    allowed_ids = {
+    candidate_ids = {
         str(source.get("documentId") or "").strip()
         for source in sources or []
         if isinstance(source, dict) and str(source.get("documentId") or "").strip()
     }
-    if any(evidence_id not in allowed_ids for evidence_id in normalized):
+    if any(evidence_id not in candidate_ids for evidence_id in normalized):
         raise ValueError("AI cited evidence outside the supplied RAG context")
-    return normalized
+    fallback_ids = {
+        str(source.get("documentId") or "").strip()
+        for source in sources or []
+        if (
+            isinstance(source, dict)
+            and source.get("fallbackApplied") is True
+            and str(source.get("documentId") or "").strip()
+        )
+    }
+    return [evidence_id for evidence_id in normalized if evidence_id not in fallback_ids]
 
 
 def retain_used_rag_evidence(
@@ -50,7 +59,7 @@ def retain_used_rag_evidence(
     normalized = validate_used_evidence_ids(used_evidence_ids, rag_context)
     source_by_id: dict[str, dict[str, Any]] = {}
     for source in rag_context.get("sources") or []:
-        if not isinstance(source, dict):
+        if not isinstance(source, dict) or source.get("fallbackApplied") is True:
             continue
         document_id = str(source.get("documentId") or "").strip()
         if document_id and document_id not in source_by_id:
@@ -64,13 +73,6 @@ def retain_used_rag_evidence(
     )
     retrieval["resultCount"] = len(selected_sources)
     retrieval["evidenceStatus"] = "used" if selected_sources else "not_used"
-    retrieval["fallbackEvidenceCount"] = sum(
-        1 for source in selected_sources if source.get("fallbackApplied") is True
-    )
-    retrieval["fallbackReasons"] = sorted({
-        str(reason)
-        for source in selected_sources
-        for reason in source.get("fallbackReasons") or []
-        if str(reason).strip()
-    })
+    retrieval["fallbackEvidenceCount"] = 0
+    retrieval["fallbackReasons"] = []
     return {"sources": selected_sources, "retrieval": retrieval}

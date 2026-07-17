@@ -161,3 +161,60 @@ def test_shared_resolver_does_not_attribute_unbound_dataset_to_another_model() -
     assert result["retrieval"]["status"] == "dataset_without_published_semantic_model"
     assert result["retrieval"]["missingDatasetIds"] == ["dataset-b"]
     search_service.return_value.search.assert_not_called()
+
+
+def test_source_dataset_must_match_alias_target_dataset() -> None:
+    actor = ActorContext(name="analyst", role="admin")
+    model = {
+        "id": "sm_reviews",
+        "name": "Reviews semantic layer",
+        "version": 3,
+        "status": "published",
+        "datasetIds": ["reviews"],
+    }
+    profile = SimpleNamespace(
+        review_state="approved",
+        serving_status="serving",
+        target_alias="asklake-rag-ds-reviews",
+        active_embedding_provider="openai",
+        active_embedding_model="text-embedding-3-small",
+        active_embedding_dimensions=1536,
+    )
+
+    with (
+        patch("app.services.semantic_rag_context.SemanticModelService") as semantic_service,
+        patch("app.services.semantic_rag_context.RagService") as rag_service,
+        patch("app.services.semantic_rag_context.RagSearchService") as search_service,
+    ):
+        semantic_service.return_value.published_query_models_for_datasets.return_value = [model]
+        rag_service.return_value.profile.return_value = profile
+        rag_service.return_value.search_target_context.return_value = {"datasetId": "reviews"}
+        search_service.return_value.search.return_value = {
+            "sources": [
+                {
+                    "documentId": "doc-valid",
+                    "datasetId": "reviews",
+                    "retrievalAlias": "asklake-rag-ds-reviews",
+                    "title": "valid document in a contaminated response",
+                },
+                {
+                    "documentId": "doc-other-dataset",
+                    "datasetId": "orders",
+                    "retrievalAlias": "asklake-rag-ds-reviews",
+                    "title": "wrongly indexed document",
+                },
+            ],
+            "retrieval": {"status": "ready", "resultCount": 2},
+        }
+
+        result = build_semantic_rag_context(
+            db=object(),
+            settings=SimpleNamespace(),
+            actor=actor,
+            query="배송이 느린 리뷰",
+            dataset_ids=["reviews"],
+        )
+
+    assert result["sources"] == []
+    assert result["retrieval"]["status"] == "evidence_scope_mismatch"
+    assert result["retrieval"]["resultCount"] == 0

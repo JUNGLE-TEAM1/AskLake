@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS dataset_freshness (
   dataset_id VARCHAR(120) PRIMARY KEY,
   latest_revision BIGINT NOT NULL DEFAULT 0 CHECK (latest_revision >= 0),
   latest_run_id VARCHAR(160),
-  next_check_after_ms INTEGER NOT NULL DEFAULT 5000 CHECK (next_check_after_ms BETWEEN 5000 AND 60000),
+  next_check_after_ms INTEGER NOT NULL DEFAULT 1000 CHECK (next_check_after_ms BETWEEN 1000 AND 60000),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

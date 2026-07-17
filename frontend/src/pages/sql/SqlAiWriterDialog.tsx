@@ -217,18 +217,11 @@ export function SqlAiWriterDialog({
                       근거 관련성 검증: {[suggestion.retrieval.relevanceProvider, suggestion.retrieval.relevanceModel].filter(Boolean).join(" · ")}
                     </span>
                   )}
-                  {(suggestion.retrieval.fallbackEvidenceCount ?? 0) > 0 && (
-                    <span className="mt-1 block text-amber-700">
-                      임베딩 전용 청킹 폴백 {suggestion.retrieval.fallbackEvidenceCount}건
-                      {suggestion.retrieval.fallbackReasons?.length ? ` · ${suggestion.retrieval.fallbackReasons.join(", ")}` : ""}
-                    </span>
-                  )}
-                  {(suggestion.sources ?? []).slice(0, 3).map((source, index) => (
+                  {(suggestion.sources ?? []).map((source, index) => (
                     <span className="mt-1 block text-muted-foreground" key={`${source.parentDocumentId ?? "source"}-${index}`}>
                       {index + 1}. {source.title || source.body?.trim().slice(0, 180) || source.datasetId || "source chunk"}
                       {source.chunkIndex !== undefined ? ` · chunk ${source.chunkIndex}` : ""}
                       {source.embeddingProvider || source.embeddingModel ? ` · 임베딩 ${[source.embeddingProvider, source.embeddingModel].filter(Boolean).join(" · ")}` : ""}
-                      {source.fallbackApplied ? ` · 청킹 폴백(${source.fallbackReasons?.join(", ") || source.fallbackReason || "사유 미상"})` : ""}
                     </span>
                   ))}
                 </BubbleContent>

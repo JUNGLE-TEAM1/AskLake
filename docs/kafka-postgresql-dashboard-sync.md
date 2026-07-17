@@ -66,6 +66,8 @@ PostgreSQL에 revision commit + latestRevision을 한 transaction으로 저장
 
 Spark가 파일만 만들었거나 Catalog 반영이 실패한 배치는 대시보드에 새 번호로 공개하지 않는다.
 
+Iceberg commit 시간이 Trino의 `YYYY-MM-DD HH:MM:SS.sss UTC` 형식으로 들어와도 UTC 시각으로 파싱해 `materializationRuns`를 최신 commit 순서로 유지한다. Catalog 최상위 `icebergSnapshotId`는 이 최신 run을 가리켜야 하며, 그래야 전체 위젯 재계산도 현재 Iceberg snapshot을 읽는다.
+
 ## 3. 어디에 무엇을 저장하는가
 
 ### S3/MinIO
@@ -238,7 +240,7 @@ GET /api/datasets/{datasetId}/freshness
   "isContinuous": true,
   "latestRevision": 105,
   "updatedAt": "2026-07-14T12:00:05+00:00",
-  "nextCheckAfterMs": 5000
+  "nextCheckAfterMs": 1000
 }
 ```
 
@@ -263,7 +265,7 @@ Content-Type: application/json
       "isContinuous": true,
       "latestRevision": 105,
       "updatedAt": "2026-07-14T12:00:05+00:00",
-      "nextCheckAfterMs": 5000
+      "nextCheckAfterMs": 1000
     }
   ]
 }
@@ -339,7 +341,7 @@ Kafka event는 S3 Parquet의 행이 된다. 대시보드는 그 행을 서버에
 
 새 행이 테이블에 보이는 조건은 **선택 컬럼·정렬·limit 결과 안에 그 행이 들어오는 경우**다.
 
-새로 실시간 배지나 toast를 만들지 않았다. 계산이 성공하면 현재 위젯의 결과만 자연스럽게 교체한다.
+published Continuous 위젯 header에는 현재 적용된 `appliedRevision`을 `실시간 · R{revision}` 배지로 표시한다. 새 revision이 병합되면 위젯 테두리가 짧게 pulse하고 bar chart는 숫자 data label과 600ms dynamic animation으로 값 변화를 보여준다. 이 표시는 polling 성공을 눈으로 확인하기 위한 UI 근거이며 별도 SSE/WebSocket 연결 상태를 뜻하지 않는다.
 
 ### 수집 상태 확인 화면
 
@@ -356,16 +358,17 @@ Backend가 Spark trigger 설정을 보고 데이터셋별 권장 주기를 내�
 
 ```text
 nextCheckAfterMs
-= clamp(triggerIntervalSeconds × 500, 5,000, 60,000)
+= clamp(triggerIntervalSeconds × 500, 1,000, 60,000)
 ```
 
 | Spark trigger | 대시보드 freshness 확인 주기 |
 | --- | --- |
+| 1~2초 | 1초 |
 | 10초 | 5초 |
 | 30초 | 15초 |
 | 5분 | 60초 |
 
-화면은 서버가 내려준 `nextCheckAfterMs`를 사용한다. 서버의 현재 정책은 최소 5초, 최대 60초다.
+화면은 서버가 내려준 `nextCheckAfterMs`를 사용한다. 서버의 현재 정책은 최소 1초, 최대 60초다.
 
 여러 사용자의 요청이 같은 순간에 몰리지 않도록 화면은 데이터셋 ID로 정한 0~10%의 작은 지연을 더한다. 같은 데이터셋에는 항상 같은 지연이 붙으며, 서버가 정한 기본 주기를 바꾸는 정책은 아니다.
 
@@ -388,6 +391,8 @@ nextCheckAfterMs
 예를 들어 Spark trigger가 30초면 freshness 확인은 15초마다다. 이 경우 Kafka 메시지가 올 때부터 화면에 보일 때까지에는 남은 trigger 시간, Spark/S3 시간, 최대 1초의 reconciliation 대기, 최대 15초의 polling 대기, 계산 시간이 필요하다.
 
 그래서 이 기능은 초당 event serving이 아니라 **micro-batch 기반 자동 갱신**이다.
+
+작은 Continuous batch의 Spark shuffle은 일반 batch와 분리된 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`를 사용하며 기본값은 4다. 운영 로그 기본값은 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`이다. 이 설정은 1초 trigger를 보장하는 SLA가 아니라, 작은 batch에서 불필요한 32-way shuffle과 INFO 로그 I/O를 줄이는 지연 최적화다.
 
 ## 10. 화면을 안정적으로 유지하는 방법
 
@@ -460,6 +465,8 @@ Kafka topic, partition, `[startOffset, endOffset)`은 S3 batch manifest와 Catal
 - batch는 `_SUCCESS`, publication signature, immutable manifest가 맞아야 재사용한다.
 - Catalog run과 PostgreSQL revision commit은 `run_id` 기준으로 멱등이다.
 - DB/Catalog 저장이 실패하면 Catalog cursor를 진행시키지 않고 같은 run을 다시 reconcile한다.
+- Catalog ACK가 전진할 때 worker는 전체 과거 manifest를 다시 스캔하지 않는다. 현재 publication window에서 승인된 항목만 제거하고, window 밖 backlog가 있을 때 필요한 다음 구간만 bulk read한다.
+- S3 manifest 디렉터리에 Spark의 빈 `part-*` task 파일이 함께 있어도 backend는 0-byte part를 건너뛰고 실제 manifest JSON을 읽어 Catalog cursor를 전진시킨다.
 - 잘못된 schema와 Quality 실패 행은 target 인접 quarantine에 Kafka 위치·Rule 근거와 함께 저장한다.
 - 무한 재시도로 hot path를 멈추지 않고 기존 worker/control-plane 실패 상태와 replay 경로를 사용한다.
 - 종료 시 checkpoint를 보존하는 기존 graceful stop/resume 계약을 유지한다.

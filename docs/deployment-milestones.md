@@ -464,7 +464,7 @@ Spark runner 주의:
 - 이 마일스톤의 Docker launcher 기록은 local 개발 호환 경로에만 해당한다.
 - 현재 production Compose는 application scripts를 Spark runtime image에 포함하고 Standalone REST create/status API를 사용한다.
 - backend image에는 Docker CLI나 `/var/run/docker.sock` mount가 없다.
-- 공유 report/output/sample/Ivy 경로는 `spark-dir-init`가 UID/GID `185:185`로 준비한다.
+- 공유 report/output/sample/Ivy 경로는 재시작 가능한 `spark-runtime-guard`가 기존 데이터를 보존하며 UID/GID `185:185`로 준비하고 worker/backend startup probe가 실제 접근을 검증한다.
 - Spark job E2E는 Phase 8 QA와 production-like REST smoke에서 별도로 검증한다.
 
 검증 명령:

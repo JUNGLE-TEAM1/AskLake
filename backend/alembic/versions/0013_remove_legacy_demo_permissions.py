@@ -22,4 +22,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Deleted demo grants represented fabricated authorization and must not be restored.
     pass
-

@@ -542,6 +542,64 @@ class DashboardLiveRuntimeTests(unittest.TestCase):
         self.assertEqual(response.data, [{"category": "A", "amount": 35.0}])
         self.assertEqual(live_repository.save_calls[0]["calculation_mode"], "full")
 
+    def test_nonempty_commit_with_empty_delta_falls_back_to_full_recalculation(self) -> None:
+        current_state = aggregate_state([{
+            "category": "A",
+            "__asklake_state_count": 2,
+            "__asklake_state_sum": 30.0,
+            "__asklake_state_min": 10.0,
+            "__asklake_state_max": 20.0,
+        }])
+        full_state = aggregate_state([{
+            "category": "A",
+            "__asklake_state_count": 3,
+            "__asklake_state_sum": 35.0,
+            "__asklake_state_min": 5.0,
+            "__asklake_state_max": 20.0,
+        }])
+        commit = SimpleNamespace(
+            commit_kind="stream",
+            materialization_mode="delta",
+            revision=2,
+            row_count=1,
+            run_id="continuous:job-live:batch:2:offsets",
+            storage_format="iceberg",
+            storage_location="s3://warehouse/asklake/dataset-live",
+        )
+        live_repository = FakeLiveRepository(
+            latest_revision=2,
+            saved_result=self.saved_result(applied_revision=1, state=current_state),
+            commits=[commit],
+        )
+
+        class EmptyDeltaSession:
+            revision_delta_available = True
+
+            def __init__(self, _payload, **_kwargs) -> None:
+                return None
+
+            def read_aggregate_state(self, _widget_type, _config):
+                return aggregate_state([])
+
+            def close(self) -> None:
+                return None
+
+        service = self.service(live_repository)
+        with patch(
+            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+            EmptyDeltaSession,
+        ), patch.object(
+            service,
+            "_full_widget_result",
+            return_value=(dashboard_result_from_aggregate_state(full_state), full_state),
+        ) as full_calculation:
+            response = render_live_widget(service)
+
+        full_calculation.assert_called_once()
+        self.assertEqual(response.applied_revision, 2)
+        self.assertEqual(response.data, [{"category": "A", "amount": 35.0}])
+        self.assertEqual(live_repository.save_calls[0]["calculation_mode"], "full")
+
     def test_large_revision_gap_advances_one_committed_revision_at_a_time(self) -> None:
         current_state = aggregate_state([{
             "category": "A",

@@ -1,0 +1,82 @@
+name: Refactor Quality Gates
+
+on:
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      release_suite:
+        description: Run slower runtime contract checks
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  structural-ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check structural debt and documentation ratchets
+        run: |
+          python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
+          python3 scripts/refactor_audit/control_plane_ownership.py
+          python3 -m unittest scripts.refactor_audit.test_legacy_removal_evidence
+          python3 scripts/refactor_audit/legacy_removal_evidence.py
+          python3 -m unittest scripts.refactor_audit.test_stacked_pr_merge_plan
+          python3 scripts/refactor_audit/stacked_pr_merge_plan.py
+          python3 scripts/refactor_audit/quality_gate.py --base origin/${{ github.base_ref || 'dev' }}
+
+  backend-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install -r backend/requirements.txt
+          npm ci --prefix backend
+      - name: Verify API, persisted, bridge, and legacy contracts
+        working-directory: backend
+        run: |
+          ASKLAKE_FASTAPI_PYTHON=python npm run verify:backward-compatibility
+          ASKLAKE_FASTAPI_PYTHON=python npm run verify:legacy-paths
+          PYTHONPATH=. python -m unittest tests.test_observability_contract tests.test_runtime_io_ports tests.test_backward_compatibility_contracts tests.test_etl_job_queries tests.test_etl_job_commands tests.test_etl_job_delete tests.test_etl_job_write_commands tests.test_airflow_execution_commands tests.test_source_connector_gateway
+
+  release-runtime-contracts:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install -r backend/requirements.txt
+          npm ci --prefix backend
+      - name: Run slow production/runtime contracts
+        working-directory: backend
+        run: |
+          npm run verify:production-spark
+          ASKLAKE_FASTAPI_PYTHON=python npm run verify:continuous-runtime-contract

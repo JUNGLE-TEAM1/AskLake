@@ -53,15 +53,11 @@ function semanticRetrievalSummary(response: DashboardAssistantResponse) {
   const modelNames = retrieval.semanticModelNames ?? [];
   const modelVersions = retrieval.semanticModelVersions ?? [];
   const modelSummary = modelNames.map((name, index) => `${name}${modelVersions[index] ? ` v${modelVersions[index]}` : ""}`).join(", ");
-  const datasetSummary = (retrieval.datasetIds ?? []).slice(0, 3).join(", ");
+  const datasetSummary = (retrieval.datasetIds ?? []).join(", ");
   const sourceTitles = (response.sources ?? [])
     .map((source) => source.title || source.body?.trim().slice(0, 120) || source.datasetId)
-    .filter((title): title is string => Boolean(title))
-    .slice(0, 3);
+    .filter((title): title is string => Boolean(title));
   const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(" / ")}` : "";
-  const fallback = (retrieval.fallbackEvidenceCount ?? 0) > 0
-    ? ` · 임베딩 전용 청킹 폴백 ${retrieval.fallbackEvidenceCount}건`
-    : "";
   const planner = retrieval.queryPlannerProvider || retrieval.queryPlannerModel
     ? ` · 계획: ${[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}`
     : "";
@@ -72,7 +68,7 @@ function semanticRetrievalSummary(response: DashboardAssistantResponse) {
   const relevance = retrieval.relevanceProvider || retrieval.relevanceModel
     ? ` · 관련성: ${[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}`
     : "";
-  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${fallback}${evidence}`;
+  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${evidence}`;
 }
 
 function AskLakeAssistantMark() {

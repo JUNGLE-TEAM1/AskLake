@@ -8,6 +8,7 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
+import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardEditToolbar } from "./DashboardEditToolbar";
@@ -55,6 +56,7 @@ type DashboardRuntimeState = {
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
+  realtimeConnectionState: RealtimeConnectionState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -136,11 +138,7 @@ const emptyDashboardCopy = {
   title: "게시된 위젯이 없습니다",
 };
 
-export function DashboardRuntimeView({
-  actions,
-  datasets,
-  runtime,
-}: DashboardRuntimeViewProps) {
+export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
@@ -234,16 +232,17 @@ export function DashboardRuntimeView({
       다시 시도
     </Button>
   );
-
-  const patchWidgetConfig = async (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => { await onUpdateWidget(widget.id, {
-    config: {
-      ...widget.config,
-      ...patch,
-    } as UpdateDraftWidgetFormInput["config"],
-    datasetId: widget.datasetId ?? null,
-    title: widget.title ?? "제목 없는 위젯",
-    type: widget.type,
-  }); };
+  const patchWidgetConfig = async (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => {
+    await onUpdateWidget(widget.id, {
+      config: {
+        ...widget.config,
+        ...patch,
+      } as UpdateDraftWidgetFormInput["config"],
+      datasetId: widget.datasetId ?? null,
+      title: widget.title ?? "제목 없는 위젯",
+      type: widget.type,
+    });
+  };
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {
@@ -253,6 +252,12 @@ export function DashboardRuntimeView({
 
     if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
+      if (typeof nextConfig.description === "string" && nextConfig.description.includes("mock fallback")) {
+        delete nextConfig.description;
+      }
+      if (typeof nextConfig.body === "string" && nextConfig.body.includes("mock fallback")) {
+        delete nextConfig.body;
+      }
     }
 
     return nextConfig as UpdateDraftWidgetFormInput["config"];
@@ -501,6 +506,7 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
+        realtimeConnectionState={runtime.realtimeConnectionState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

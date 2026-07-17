@@ -61,7 +61,10 @@ export function projectKafkaTargetRecord(record, schemaColumns) {
   return projected;
 }
 
-export function parseKafkaSnapshotRecord(value, context = {}, schemaColumns = []) {
+export function parseKafkaSnapshotRecord(value, context = {}, schemaColumns = [], recordParsing = null) {
+  if (recordParsing?.enabled) {
+    return parseRawTextRecord(value, context, recordParsing);
+  }
   try {
     const record = JSON.parse(value);
     if (!record || typeof record !== "object" || Array.isArray(record)) {
@@ -99,6 +102,51 @@ export function parseKafkaSnapshotRecord(value, context = {}, schemaColumns = []
   } catch (error) {
     return invalidRecord(context, value, "invalid_json", { message: error?.message || String(error) });
   }
+}
+
+function parseRawTextRecord(value, context, recordParsing) {
+  const columns = list(recordParsing.columns)
+    .slice()
+    .sort((left, right) => Number(left.position) - Number(right.position));
+  const expectedFieldCount = Number(recordParsing.expectedFieldCount || columns.length);
+  const tokens = text(value).split(/\s+/).filter(Boolean);
+  if (expectedFieldCount <= 0 || columns.length !== expectedFieldCount || tokens.length !== expectedFieldCount) {
+    return invalidRecord(context, value, "record_field_count_mismatch", {
+      actualFieldCount: tokens.length,
+      expectedFieldCount,
+    });
+  }
+  try {
+    const record = {};
+    for (const column of columns) {
+      const name = text(column.name);
+      if (!name) return invalidRecord(context, value, "record_field_name_missing");
+      record[name] = castRawTextValue(tokens[Number(column.position)], column.inferredType);
+    }
+    return { record, valid: true };
+  } catch (error) {
+    return invalidRecord(context, value, "record_field_cast_failed", { message: error?.message || String(error) });
+  }
+}
+
+function castRawTextValue(value, inferredType) {
+  const type = text(inferredType).toLowerCase();
+  if (type === "integer") {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) throw new Error(`Invalid integer: ${value}`);
+    return parsed;
+  }
+  if (type === "float") {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) throw new Error(`Invalid float: ${value}`);
+    return parsed;
+  }
+  if (type === "boolean") {
+    if (["true", "1"].includes(String(value).toLowerCase())) return true;
+    if (["false", "0"].includes(String(value).toLowerCase())) return false;
+    throw new Error(`Invalid boolean: ${value}`);
+  }
+  return String(value ?? "");
 }
 
 export function usesLegacyReviewContract(schemaColumns = []) {

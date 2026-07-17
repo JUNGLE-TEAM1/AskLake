@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.core.auth_context import ActorContext
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.mcp.context import issue_ai_context_token
@@ -24,6 +25,11 @@ from app.services.dashboard_assistant_guard import (
 )
 from app.services.ai_gateway_client import AiGatewayClient
 from app.services.ai_evidence import retain_used_rag_evidence
+from app.services.ai_generation_audit import (
+    evidence_candidate_ids,
+    persist_verified_generation_evidence,
+    verified_used_evidence_ids,
+)
 from app.services.semantic_rag_context import build_semantic_rag_context
 
 LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
@@ -70,11 +76,39 @@ class DashboardAssistantService:
 
         try:
             raw_payload = self._request_gateway(request, context, actor, rag_context)
+            request_id = str(raw_payload.pop("_requestId", "")).strip()
             coerced_response = coerce_assistant_response(raw_payload)
             guarded_response = guard_assistant_response(coerced_response, context)
             guarded_response = _require_visualization_action(request, guarded_response)
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
-            return self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
+            final_response = self._attach_rag(self._with_context_warnings(guarded_response, context), rag_context)
+            final_response.request_id = request_id or None
+            db = getattr(self.runtime_repository, "db", None)
+            if db is not None and request_id:
+                persist_verified_generation_evidence(
+                    db,
+                    actor=actor,
+                    candidate_ids=evidence_candidate_ids(rag_context),
+                    context_payload={
+                        "dashboardId": request.dashboard_id,
+                        "datasetIds": [dataset.id for dataset in context.datasets],
+                        "mode": request.mode,
+                        "prompt": request.prompt,
+                        "selectedWidgetId": request.selected_widget_id,
+                    },
+                    mode="dashboard_assistant",
+                    model=str(final_response.model or ""),
+                    output_payload={
+                        "actions": [
+                            action.model_dump(by_alias=True, mode="json")
+                            for action in final_response.actions
+                        ],
+                    },
+                    provider=str(final_response.provider or ""),
+                    request_id=request_id,
+                    used_ids=final_response.used_evidence_ids,
+                )
+            return final_response
         except (ApiError, TimeoutError, ValueError, OSError) as exc:
             return self._attach_rag(
                 self._unavailable_response(
@@ -112,7 +146,7 @@ class DashboardAssistantService:
                 allowed_dataset_ids=selected_dataset_ids,
                 dataset_permissions={dataset_id: ["query"] for dataset_id in selected_dataset_ids},
             )
-        return AiGatewayClient(self.settings).generate_dashboard_response(
+        response = AiGatewayClient(self.settings).generate_dashboard_response(
             request_id=request_id,
             prompt=assistant_request.prompt,
             dashboard_context={
@@ -125,12 +159,19 @@ class DashboardAssistantService:
             context_token=context_token,
             rag_context=rag_context,
         )
+        response["_requestId"] = request_id
+        return response
 
     def _unavailable_response(
         self,
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
+        record_compatibility_path(
+            CompatibilityPath.DASHBOARD_ASSISTANT_DEGRADED,
+            reason=warning,
+            context={"availableDatasetCount": len(context.datasets)},
+        )
         return DashboardAssistantResponse(
             message="AI Gateway를 사용할 수 없어 요청을 실행하지 않았습니다.",
             actions=[],
@@ -159,6 +200,7 @@ class DashboardAssistantService:
             used_context = retain_used_rag_evidence(rag_context, response.used_evidence_ids)
             response.sources = list((used_context or {}).get("sources") or [])
             response.retrieval = (used_context or {}).get("retrieval") or {}
+            response.used_evidence_ids = verified_used_evidence_ids(used_context)
         return response
 
     @staticmethod
@@ -209,11 +251,22 @@ def _require_visualization_action(
 ) -> DashboardAssistantResponse:
     if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
         return response
-    if any(action.type in {"create_widget", "update_widget"} for action in response.actions):
+    mutation_actions = [
+        action
+        for action in response.actions
+        if action.type in {"create_widget", "update_widget"}
+    ]
+    if len(mutation_actions) == 1:
         return response
 
-    warning = "AI가 검증 가능한 위젯 생성·수정 action을 만들지 못했습니다. 대시보드는 변경되지 않았습니다."
-    response.message = "시각화 변경 작업을 생성하지 못해 대시보드를 수정하지 않았습니다."
+    warning = (
+        "AI가 여러 위젯 변경 action을 한 응답에 생성해 원자적으로 적용할 수 없었습니다. 대시보드는 변경되지 않았습니다."
+        if len(mutation_actions) > 1
+        else "AI가 검증 가능한 위젯 생성·수정 action을 만들지 못했습니다. 대시보드는 변경되지 않았습니다."
+    )
+    response.message = "시각화 변경 작업을 안전하게 적용할 수 없어 대시보드를 수정하지 않았습니다."
+    response.actions = []
+    response.used_evidence_ids = []
     if warning not in response.warnings:
         response.warnings.append(warning)
     return response

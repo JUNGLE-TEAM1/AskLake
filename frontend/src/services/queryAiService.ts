@@ -20,6 +20,7 @@ export type QueryAiRequest = {
 export type QueryAiSuggestion = {
   body: string;
   mode: QueryAiMode;
+  requestId: string;
   model?: string | null;
   provider?: string | null;
   notices: string[];

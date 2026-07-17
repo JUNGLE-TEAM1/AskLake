@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -29,13 +29,16 @@ import {
   Search,
   Sparkles,
   SlidersHorizontal,
+  Table2,
   Trash2,
 } from "lucide-react";
 import TransformFunctionModal from "./TransformFunctionModal";
+import { EtlSectionHeader } from "./EtlSectionHeader";
 import { EtlStepHeader } from "./EtlStepHeader";
 import InlineAIInput from "../ai/InlineAIInput";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DataTable } from "@/components/ui/data-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { schemaTransformApi } from "@/services/schemaTransformApi";
@@ -219,10 +222,10 @@ export default function SchemaTransformEditor({
     const name = String(column.name || column.field || "");
     return name.toLowerCase().includes(sqlSourceQuery.trim().toLowerCase());
   });
-  const sqlPreviewColumns = Array.isArray(sqlPreviewResult?.schema)
+  const sqlPreviewColumnNames = Array.isArray(sqlPreviewResult?.schema)
     ? sqlPreviewResult.schema.map((column) => String(column.name || "")).filter(Boolean)
     : [];
-  const sqlPreviewRows = Array.isArray(sqlPreviewResult?.sample_rows) ? sqlPreviewResult.sample_rows : [];
+  const sqlPreviewResultRows = Array.isArray(sqlPreviewResult?.sample_rows) ? sqlPreviewResult.sample_rows : [];
   const sqlLineNumbers = Array.from(
     { length: Math.max(customSql.split("\n").length, 7) },
     (_, index) => index + 1,
@@ -769,6 +772,23 @@ export default function SchemaTransformEditor({
       onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
+  const sqlPreviewTableRows = useMemo(
+    () => sqlPreviewResultRows.slice(0, 10).map((values, index) => ({ id: `schema-sql-preview-${index}`, values })),
+    [sqlPreviewResultRows],
+  );
+  const sqlPreviewTableColumns = useMemo(
+    () => sqlPreviewColumnNames.map((columnName, columnIndex) => ({
+      cell: ({ row }) => {
+        const value = String(row.original.values[columnIndex] ?? "-");
+        return <span className="block max-w-64 truncate" title={value}>{value}</span>;
+      },
+      enableSorting: false,
+      header: columnName,
+      id: `schema-sql-preview-${columnIndex}`,
+      meta: { widthClassName: "min-w-40" },
+    })),
+    [sqlPreviewColumnNames],
+  );
 
   return (
     <div className="flex flex-col overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
@@ -1033,12 +1053,12 @@ export default function SchemaTransformEditor({
                             }
                             className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500"
                           />
-                          <span className="text-gray-600">NOT NULL</span>
+                          <span className="text-gray-600">필수값</span>
                         </label>
 
                         {/* Default Value */}
                         <label className="flex items-center gap-1.5">
-                          <span className="text-gray-500">Default:</span>
+                          <span className="text-gray-500">누락 시 기본값</span>
                           <input
                             type="text"
                             value={col.defaultValue || ""}
@@ -1050,7 +1070,7 @@ export default function SchemaTransformEditor({
                                 e.target.value,
                               )
                             }
-                            placeholder="NULL"
+                            placeholder="설정 안 함"
                             className="w-20 px-1.5 py-0.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </label>
@@ -1228,10 +1248,8 @@ export default function SchemaTransformEditor({
           </div>
 
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/50 px-4 py-3">
-              <h3 className="text-sm font-bold text-slate-900">결과 미리보기</h3>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500">{sqlPreviewVisible ? `${sqlPreviewRows.length}개 결과` : "최대 10개 행"}</span>
+            <EtlSectionHeader
+              actions={(
                 <button
                   aria-expanded={sqlPreviewPanelOpen}
                   aria-label={sqlPreviewPanelOpen ? "결과 미리보기 접기" : "결과 미리보기 펼치기"}
@@ -1242,24 +1260,22 @@ export default function SchemaTransformEditor({
                 >
                   {sqlPreviewPanelOpen ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </button>
-              </div>
-            </div>
-            {sqlPreviewPanelOpen && (sqlPreviewVisible && sqlPreviewResult ? (
-              <div className="overflow-auto">
-                <table className="w-full min-w-[720px] border-collapse text-sm">
-                  <thead className="bg-slate-50 text-left text-xs font-bold text-slate-500">
-                    <tr>{sqlPreviewColumns.map((column, columnIndex) => <th key={`${column}-${columnIndex}`} className="border-b border-slate-200 px-4 py-3">{column}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {sqlPreviewRows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-b border-slate-100 last:border-0">
-                        {sqlPreviewColumns.map((column, columnIndex) => <td key={`${column}-${columnIndex}`} className="max-w-64 truncate px-4 py-3 font-medium text-slate-800">{String(row?.[column] ?? "-")}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {sqlPreviewRows.length === 0 && <div className="grid min-h-28 place-items-center px-6 py-8 text-sm font-semibold text-slate-400">SQL 조건에 맞는 실제 샘플 행이 없습니다.</div>}
-              </div>
+              )}
+              icon={<Table2 />}
+              title="결과 미리보기"
+            />
+            {sqlPreviewPanelOpen && (sqlPreviewVisible && sqlPreviewResultRows.length > 0 ? (
+              <DataTable
+                aria-label="SQL 변환 결과 미리보기 표"
+                cellClassName="text-sm font-medium text-slate-800"
+                columns={sqlPreviewTableColumns}
+                data={sqlPreviewTableRows}
+                enableSorting={false}
+                getRowId={(row) => row.id}
+                pagination={false}
+                tableClassName="min-w-[720px]"
+                viewportClassName="rounded-none border-0"
+              />
             ) : (
               <div className="grid min-h-[150px] place-items-center px-6 py-8 text-center text-sm font-semibold text-slate-400">
                 <span>{sqlPreviewLoading ? "Catalog 실제 데이터에서 SQL을 실행하고 있습니다." : "먼저 문법 검증을 완료한 뒤 미리보기를 실행하세요."}</span>

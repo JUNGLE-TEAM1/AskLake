@@ -12,6 +12,7 @@ class PermissionGrant(CamelModel):
     id: str | None = None
     actions: list[PermissionAction] = Field(default_factory=list)
     principal_id: str
+    principal_name: str | None = None
     principal_type: PermissionPrincipalType
     source: str = "metadata"
 

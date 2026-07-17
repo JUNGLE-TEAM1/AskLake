@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
+from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import active_materialization_runs, materialization_mode
@@ -158,6 +159,11 @@ class CatalogService:
         lineage_payload = self.repository.get_lineage_payload(dataset_id)
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
+        record_compatibility_path(
+            CompatibilityPath.CATALOG_SYNTHETIC_LINEAGE,
+            reason="persisted lineage payload is absent",
+            context={"datasetId": dataset_id},
+        )
         return build_fallback_lineage_graph(dataset)
 
     def get_dataset_rows(
