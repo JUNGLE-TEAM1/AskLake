@@ -8,7 +8,7 @@ from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -198,6 +198,31 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
+        frame = FakeFrame()
+        spark = SimpleNamespace(table=Mock(return_value=frame))
+
+        for source_path in (
+            "iceberg:asklake.asklake.amazon_products",
+            "iceberg://asklake/asklake/amazon_products",
+            "asklake.asklake.amazon_products",
+        ):
+            self.assertIs(
+                spark_job_run.read_source(spark, "iceberg", source_path, []),
+                frame,
+            )
+
+        self.assertEqual(
+            spark.table.call_args_list,
+            [call("`asklake`.`asklake`.`amazon_products`")] * 3,
+        )
+
+    def test_invalid_iceberg_source_manifest_path_fails_closed(self) -> None:
+        spark = SimpleNamespace(table=Mock())
+
+        with self.assertRaisesRegex(ValueError, "ICEBERG_SOURCE_INVALID"):
+            spark_job_run.read_source(spark, "iceberg", "iceberg:missing-table", [])
+
     def test_selection_fingerprint_uses_cross_runtime_utf8_byte_order(self) -> None:
         inventory = [
             identity("ordering/a.jsonl", last_modified="2026-07-13T00:00:00.000Z", size=20),
