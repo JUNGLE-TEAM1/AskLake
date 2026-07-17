@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveMockApiMode } from "../src/services/apiRuntimeMode.ts";
+import {
+  resolveApiBaseUrl,
+  resolveMockApiMode,
+} from "../src/services/apiRuntimeMode.ts";
 import {
   getCompatibilityPathCounts,
   recordCompatibilityPath,
@@ -16,6 +19,13 @@ test("mock API is allowed only in a development build", () => {
     () => resolveMockApiMode(true, false),
     /development-only/,
   );
+});
+
+test("API base URL defaults to the browser origin and normalizes explicit origins", () => {
+  assert.equal(resolveApiBaseUrl(undefined), "");
+  assert.equal(resolveApiBaseUrl(false), "");
+  assert.equal(resolveApiBaseUrl(""), "");
+  assert.equal(resolveApiBaseUrl("https://asklake.example.com/"), "https://asklake.example.com");
 });
 
 test("frontend compatibility paths emit a warning and increment a stable counter", () => {

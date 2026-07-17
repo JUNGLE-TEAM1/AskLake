@@ -1,3 +1,5 @@
+import { resolveApiBaseUrl } from "./apiRuntimeMode.ts";
+
 export type RealtimeConnectionState =
   | "connecting"
   | "open"
@@ -324,8 +326,7 @@ function realtimeApiBaseUrl() {
       env?: Record<string, boolean | string | undefined>;
     }
   ).env ?? {};
-  const defaultBaseUrl = environment.DEV ? "" : "http://localhost:8080";
-  return String(environment.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, "");
+  return resolveApiBaseUrl(environment.VITE_API_BASE_URL);
 }
 
 

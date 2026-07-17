@@ -33,6 +33,8 @@ VITE_USE_MOCK_API=true # frontend-only mock QA only
 
 `VITE_API_BASE_URL` is optional in local dev. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, so no frontend env is required when using the local backend. Restart the dev server after changing environment variables.
 
+Production builds also default to the current browser origin. EKS image delivery must omit `VITE_API_BASE_URL` so CloudFront and the ALB route `/api` to FastAPI without baking a deployment hostname into the image.
+
 ## Main Files
 
 ```text

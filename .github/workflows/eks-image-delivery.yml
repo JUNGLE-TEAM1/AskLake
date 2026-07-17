@@ -33,6 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify EKS frontend same-origin contract
+        shell: bash
+        run: bash scripts/verify-eks-frontend-same-origin.sh
+
       - name: Validate protected environment inputs
         shell: bash
         run: |

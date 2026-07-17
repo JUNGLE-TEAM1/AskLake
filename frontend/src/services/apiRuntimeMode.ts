@@ -1,3 +1,9 @@
+export function resolveApiBaseUrl(configuredBaseUrl: unknown) {
+  return typeof configuredBaseUrl === "string"
+    ? configuredBaseUrl.replace(/\/+$/, "")
+    : "";
+}
+
 export function resolveMockApiMode(requested: boolean, isDevelopment: boolean) {
   if (requested && !isDevelopment) {
     throw new Error(

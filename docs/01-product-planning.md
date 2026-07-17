@@ -141,7 +141,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 ### Flow C. FastAPI live backend 연결
 
 1. 프론트는 기본적으로 live backend API를 호출하며, frontend-only QA는 `VITE_USE_MOCK_API=true`로 mock mode를 명시한다.
-2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
+2. API adapter는 `VITE_API_BASE_URL`이 있으면 해당 origin을 사용하고, 없으면 현재 browser origin의 `/api`를 호출한다. 로컬 Vite는 이 same-origin `/api`를 `http://127.0.0.1:8080`으로 proxy한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
