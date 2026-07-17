@@ -52,16 +52,24 @@ const PRIVATE_IDENTIFIER_KEYS = new Set([
   "fixtureBatchId",
 ]);
 
-function parseArguments(argv) {
-  const options = { ...DEFAULTS, prior: [...DEFAULTS.prior] };
+export function parseArguments(argv) {
+  const options = {
+    ...DEFAULTS,
+    prior: [...DEFAULTS.prior],
+    historyMode: "provided",
+  };
   let priorMode = "default";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--no-prior") {
-      if (priorMode !== "default") {
+      if (priorMode === "none") {
+        throw new Error("--no-prior may only be provided once");
+      }
+      if (priorMode === "paths") {
         throw new Error("--no-prior cannot be combined with --prior");
       }
       options.prior = [];
+      options.historyMode = "operator-declared-clean";
       priorMode = "none";
       continue;
     }
@@ -73,6 +81,7 @@ function parseArguments(argv) {
       }
       if (priorMode === "default") {
         options.prior = [];
+        options.historyMode = "provided";
         priorMode = "paths";
       }
       options.prior.push(value);
@@ -205,6 +214,59 @@ function receiptIsSanitized(receipt, sourceDocuments) {
   );
 }
 
+function isShortHash(value) {
+  return typeof value === "string" && /^[a-f0-9]{12}$/.test(value);
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function priorReceiptIsValid(prior, campaignCreatedAt, currentRunHashes) {
+  if (!prior || typeof prior !== "object" || prior.contractVersion !== "1.0") {
+    return false;
+  }
+  if (!["partial", "submitted"].includes(prior.status)) return false;
+  const createdAt = Date.parse(prior.createdAt ?? "");
+  const campaignAt = Date.parse(campaignCreatedAt ?? "");
+  if (
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(campaignAt) ||
+    createdAt >= campaignAt
+  ) {
+    return false;
+  }
+  const submittedRuns = prior.counts?.submittedRuns;
+  const failedSubmissions = prior.counts?.failedSubmissions;
+  if (
+    !isNonNegativeInteger(submittedRuns) ||
+    !isNonNegativeInteger(failedSubmissions) ||
+    submittedRuns + failedSubmissions !== 3 ||
+    (prior.status === "submitted" &&
+      (submittedRuns !== 3 || failedSubmissions !== 0)) ||
+    (prior.status === "partial" && (submittedRuns >= 3 || failedSubmissions === 0))
+  ) {
+    return false;
+  }
+  const redactedRuns = prior.redactedRuns;
+  if (!Array.isArray(redactedRuns) || redactedRuns.length !== submittedRuns) {
+    return false;
+  }
+  const aliases = redactedRuns.map((item) => item?.alias);
+  const runHashes = redactedRuns.map((item) => item?.run);
+  return (
+    new Set(aliases).size === aliases.length &&
+    aliases.every((alias) => ["Run A", "Run B", "Run C"].includes(alias)) &&
+    redactedRuns.every(
+      (item) =>
+        isShortHash(item?.run) &&
+        isShortHash(item?.job) &&
+        isShortHash(item?.dataset),
+    ) &&
+    runHashes.every((runHash) => !currentRunHashes.includes(runHash))
+  );
+}
+
 export function buildFinalReceipt({
   race,
   load,
@@ -214,6 +276,8 @@ export function buildFinalReceipt({
   multiResults,
   cleanup,
   priorReceipts = [],
+  historyMode =
+    priorReceipts.length === 0 ? "operator-declared-clean" : "provided",
   createdAt = new Date().toISOString(),
 }) {
   const expectedRunHashes = (campaign.redactedRuns ?? []).map((item) => item.run);
@@ -322,6 +386,23 @@ export function buildFinalReceipt({
         .filter(([key]) => key !== "alias")
         .every(([, value]) => typeof value === "string" && value.length === 12),
     );
+  const currentCampaignIdentityConsistent =
+    campaign.status === "submitted" &&
+    campaign.counts?.submittedRuns === 3 &&
+    campaign.counts?.failedSubmissions === 0 &&
+    expectedRunHashes.length === 3 &&
+    new Set(expectedRunHashes).size === 3 &&
+    expectedRunHashes.every(isShortHash) &&
+    multiResults.checks?.noResultSubstitution === true &&
+    identitiesComplete;
+  const submissionHistoryDeclarationValid =
+    historyMode === "operator-declared-clean"
+      ? priorReceipts.length === 0
+      : historyMode === "provided" &&
+        priorReceipts.length > 0 &&
+        priorReceipts.every((prior) =>
+          priorReceiptIsValid(prior, campaign.createdAt, expectedRunHashes),
+        );
 
   const raceStart = (race.timeline ?? []).find(
     (item) => item.event === "race-run-created-at-six-replicas",
@@ -407,11 +488,8 @@ export function buildFinalReceipt({
     continuousBoundary:
       race.counts?.continuousSessionsStarted === 0 &&
       (latestCampaignRecord?.runs?.continuousSessionsStarted ?? 0) === 0,
-    priorFailuresNotSubstituted:
-      (priorReceipts.length === 0 ||
-        (priorReceipts.length >= 3 &&
-          priorReceipts.some((receipt) => receipt.status === "partial"))) &&
-      multiResults.checks?.noResultSubstitution === true,
+    currentCampaignResultsNotSubstituted: currentCampaignIdentityConsistent,
+    submissionHistoryDeclarationValid,
     identityLinksComplete: identitiesComplete,
     evidenceSanitized: false,
   };
@@ -546,6 +624,10 @@ export function buildFinalReceipt({
       },
     },
     executionHistory: {
+      historyMode,
+      historyCompletenessMachineVerified: false,
+      providedReceiptsStructurallyVerified:
+        historyMode === "provided" && submissionHistoryDeclarationValid,
       priorSubmissionReceipts: priorReceipts.map((prior) => ({
         status: prior.status ?? "unknown",
         submittedRuns: Number(prior.counts?.submittedRuns ?? 0),
@@ -581,6 +663,13 @@ export function buildFinalReceipt({
       "local operator SparkApplication list RBAC remained forbidden",
       "later cluster workloads after campaign baseline recovery were outside cleanup scope",
       "raw identifiers remain only in mode 0600 private source receipts",
+      ...(historyMode === "operator-declared-clean"
+        ? [
+            "absence of earlier submission receipts is operator-declared, not machine-proven",
+          ]
+        : [
+            "provided submission receipts are validated, but filesystem history completeness is not machine-proven",
+          ]),
     ],
   };
   receipt.checks.evidenceSanitized = receiptIsSanitized(receipt, [
@@ -657,6 +746,7 @@ async function main() {
     multiResults,
     cleanup,
     priorReceipts,
+    historyMode: options.historyMode,
   });
   if (receipt.status !== "passed") {
     const failedChecks = Object.entries(receipt.checks)

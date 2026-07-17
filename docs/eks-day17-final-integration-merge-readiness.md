@@ -21,8 +21,9 @@ Frontend와 API/schema는 변경하지 않는다.
 동일 Run 경합 수정은 persisted bounded fixture와 현재 Job의 consumer group이
 일치해야 한다는 기존 경계를 강화하고, multi-Spark 후보가 경합 fixture를 대신하지
 못하게 한다. final receipt 변경은 과거 제출 이력이 없는 독립 캠페인을
-`--no-prior`로 명시할 수 있게 하되, 과거 이력을 전달한 경우 partial 이력 누락을
-계속 실패 처리한다.
+`--no-prior`로 명시할 수 있게 하되 이를 `operator-declared-clean`으로 기록한다.
+현재 캠페인 결과 identity 검증과 과거 제출 receipt 구조 검증은 분리하며, history
+완전성을 machine-proven으로 과장하지 않는다.
 
 ## 검증 결과
 
@@ -30,11 +31,11 @@ Frontend와 API/schema는 변경하지 않는다.
 
 - EKS foundation verifier와 tracked evidence redaction
 - EKS web workload Helm lint/render 및 HPA/Collector 계약
-- Day 17 scale observer, multi-Spark observer, final receipt 테스트 `26/26`
+- Day 17 scale observer, multi-Spark observer, final receipt 테스트 `30/30`
 - Backend HPA fixture 선택 회귀 테스트 `2/2`
 - Terraform `1.15.8` container의 `fmt`, `init -backend=false
   -lockfile=readonly`, `validate`, mock test `45/45`
-- final private receipt의 판정 `16/16`, sanitizer, mode `0600`
+- final private receipt의 판정 `17/17`, sanitizer, mode `0600`
 - Git diff whitespace, unmerged entry, conflict marker와 private evidence 추적 감사
 
 Terraform 검증은 AWS backend와 credential을 사용하지 않았고 plan/apply를 실행하지

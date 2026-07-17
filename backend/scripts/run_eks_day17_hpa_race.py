@@ -35,13 +35,13 @@ from app.services.iceberg_writer_service import (
     IcebergWriterService,
     qualified_identifier,
 )
+from scripts.kafka_fixture_slots import EKS_MVP_FIXTURE_CONSUMER_GROUP
 
 
 BATCH_FIELD = "__EKS MVP Fixture Batch ID"
 COUNT_FIELD = "__EKS MVP Expected Count"
 TERMINAL_STATUSES = {"success", "failed", "cancelled"}
 FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1"
-FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1"
 
 
 def required(name: str) -> str:
@@ -113,7 +113,7 @@ def fixture_jobs(db) -> list[ETLJobModel]:
             or boundary.get("topic") != FIXTURE_TOPIC
             or int(boundary.get("expectedCount") or 0) != 100
             or str(boundary.get("consumerGroup") or "").strip()
-            != FIXTURE_CONSUMER_GROUP
+            != EKS_MVP_FIXTURE_CONSUMER_GROUP
         ):
             continue
         candidate_ids.add(str(run.job_id))
@@ -134,7 +134,7 @@ def fixture_jobs(db) -> list[ETLJobModel]:
         )
         if (
             topic == FIXTURE_TOPIC
-            and fixture_consumer_group(job) == FIXTURE_CONSUMER_GROUP
+            and fixture_consumer_group(job) == EKS_MVP_FIXTURE_CONSUMER_GROUP
             and target.table
         ):
             candidates.append(job)

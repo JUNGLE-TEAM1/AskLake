@@ -3,6 +3,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from scripts import run_eks_day17_hpa_race as race
+from scripts.kafka_fixture_slots import EKS_MVP_FIXTURE_CONSUMER_GROUP
 
 
 class _ScalarResult:
@@ -62,7 +63,7 @@ class Day17HpaRaceFixtureSelectionTests(TestCase):
     def test_multi_spark_candidates_do_not_replace_the_bounded_race_fixture(
         self, _fixture_target
     ):
-        base_group = race.FIXTURE_CONSUMER_GROUP
+        base_group = EKS_MVP_FIXTURE_CONSUMER_GROUP
         scale_groups = [
             "asklake-eks-mvp-spark-scale17-01",
             "asklake-eks-mvp-spark-scale17-02",
@@ -87,7 +88,7 @@ class Day17HpaRaceFixtureSelectionTests(TestCase):
     def test_current_job_group_must_match_the_persisted_base_boundary(
         self, _fixture_target
     ):
-        base_group = race.FIXTURE_CONSUMER_GROUP
+        base_group = EKS_MVP_FIXTURE_CONSUMER_GROUP
         jobs = {"base": _job("asklake-eks-mvp-spark-scale17-01")}
         runs = [_run("base", base_group)]
 

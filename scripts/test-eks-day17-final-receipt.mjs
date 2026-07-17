@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildFinalReceipt } from "./build-eks-day17-final-receipt.mjs";
+import {
+  buildFinalReceipt,
+  parseArguments,
+} from "./build-eks-day17-final-receipt.mjs";
 
 const RUNS = [
   {
@@ -65,6 +68,21 @@ function record(at, { driver = {}, executor = {}, sparkNodes = 0, success = fals
   };
 }
 
+function priorReceipt(status, submittedRuns, failedSubmissions, seed, createdAt) {
+  return {
+    contractVersion: "1.0",
+    status,
+    createdAt,
+    counts: { submittedRuns, failedSubmissions },
+    redactedRuns: RUNS.slice(0, submittedRuns).map((run, index) => ({
+      alias: run.alias,
+      run: `${seed}${index}`.padEnd(12, seed),
+      job: `${seed}${index + 3}`.padEnd(12, seed),
+      dataset: `${seed}${index + 6}`.padEnd(12, seed),
+    })),
+  };
+}
+
 function fixture() {
   const trueChecks = {
     raceStartedAtSixReplicas: true,
@@ -120,7 +138,7 @@ function fixture() {
   const campaign = {
     status: "submitted",
     createdAt: "2026-07-17T11:29:45Z",
-    counts: { submittedRuns: 3 },
+    counts: { submittedRuns: 3, failedSubmissions: 0 },
     redactedRuns: RUNS,
     privateIdentity: RUNS.map((run) => ({
       alias: run.alias,
@@ -197,9 +215,9 @@ function fixture() {
     preserved: { durableRuns: 3, snapshots: 3, materializations: 3 },
   };
   const priorReceipts = [
-    { status: "partial", counts: { submittedRuns: 1, failedSubmissions: 2 } },
-    { status: "partial", counts: { submittedRuns: 2, failedSubmissions: 1 } },
-    { status: "submitted", counts: { submittedRuns: 3, failedSubmissions: 0 } },
+    priorReceipt("partial", 1, 2, "4", "2026-07-17T08:00:00Z"),
+    priorReceipt("partial", 2, 1, "5", "2026-07-17T09:00:00Z"),
+    priorReceipt("submitted", 3, 0, "6", "2026-07-17T10:00:00Z"),
   ];
   return {
     race,
@@ -237,20 +255,98 @@ test("accepts an explicitly clean campaign without prior submission receipts", (
   const receipt = buildFinalReceipt(input);
 
   assert.equal(receipt.status, "passed");
-  assert.equal(receipt.checks.priorFailuresNotSubstituted, true);
+  assert.equal(receipt.checks.currentCampaignResultsNotSubstituted, true);
+  assert.equal(receipt.checks.submissionHistoryDeclarationValid, true);
+  assert.equal(receipt.executionHistory.historyMode, "operator-declared-clean");
+  assert.equal(receipt.executionHistory.historyCompletenessMachineVerified, false);
   assert.deepEqual(receipt.executionHistory.priorSubmissionReceipts, []);
 });
 
-test("fails closed when a supplied prior history omits partial failures", () => {
-  const input = fixture();
-  input.priorReceipts = [
-    { status: "submitted", counts: { submittedRuns: 3, failedSubmissions: 0 } },
+test(
+  "accepts structurally valid provided submission history without claiming completeness",
+  () => {
+    const input = fixture();
+
+    const receipt = buildFinalReceipt(input);
+
+    assert.equal(receipt.status, "passed");
+    assert.equal(receipt.checks.submissionHistoryDeclarationValid, true);
+    assert.equal(receipt.executionHistory.historyMode, "provided");
+    assert.equal(receipt.executionHistory.providedReceiptsStructurallyVerified, true);
+    assert.equal(receipt.executionHistory.historyCompletenessMachineVerified, false);
+  },
+);
+
+test("fails closed for malformed or unrelated provided submission history", () => {
+  const malformed = fixture();
+  malformed.priorReceipts = [{ status: "partial", counts: { submittedRuns: 1 } }];
+  assert.equal(
+    buildFinalReceipt(malformed).checks.submissionHistoryDeclarationValid,
+    false,
+  );
+
+  const later = fixture();
+  later.priorReceipts = [
+    priorReceipt("partial", 1, 2, "7", "2026-07-17T12:00:00Z"),
   ];
+  assert.equal(
+    buildFinalReceipt(later).checks.submissionHistoryDeclarationValid,
+    false,
+  );
+
+  const overlapping = fixture();
+  const related = priorReceipt("partial", 1, 2, "8", "2026-07-17T08:00:00Z");
+  related.redactedRuns[0].run = RUNS[0].run;
+  overlapping.priorReceipts = [related];
+  assert.equal(
+    buildFinalReceipt(overlapping).checks.submissionHistoryDeclarationValid,
+    false,
+  );
+});
+
+test("fails when current campaign result identity substitution is reported", () => {
+  const input = fixture();
+  input.multiResults.checks.noResultSubstitution = false;
 
   const receipt = buildFinalReceipt(input);
 
   assert.equal(receipt.status, "failed");
-  assert.equal(receipt.checks.priorFailuresNotSubstituted, false);
+  assert.equal(receipt.checks.currentCampaignResultsNotSubstituted, false);
+});
+
+test("parses explicit clean and repeated prior CLI modes", () => {
+  const defaults = parseArguments([]);
+  assert.equal(defaults.historyMode, "provided");
+  assert.equal(defaults.prior.length, 3);
+
+  const clean = parseArguments(["--no-prior"]);
+  assert.equal(clean.historyMode, "operator-declared-clean");
+  assert.deepEqual(clean.prior, []);
+
+  const provided = parseArguments([
+    "--prior",
+    "/private/tmp/one.json",
+    "--prior",
+    "/private/tmp/two.json",
+  ]);
+  assert.equal(provided.historyMode, "provided");
+  assert.deepEqual(provided.prior, ["/private/tmp/one.json", "/private/tmp/two.json"]);
+});
+
+test("rejects ambiguous or incomplete prior CLI arguments", () => {
+  assert.throws(() => parseArguments(["--prior"]), /requires a path/);
+  assert.throws(
+    () => parseArguments(["--no-prior", "--prior", "/private/tmp/one.json"]),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () => parseArguments(["--prior", "/private/tmp/one.json", "--no-prior"]),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () => parseArguments(["--no-prior", "--no-prior"]),
+    /only be provided once/,
+  );
 });
 
 test("fails when pending to running evidence is incomplete", () => {
