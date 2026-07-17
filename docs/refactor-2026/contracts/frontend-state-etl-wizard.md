@@ -6,7 +6,7 @@
 
 | 상태 | 권위자 | 책임 |
 |---|---|---|
-| Job·Catalog 서버 상태 | `useAskLakeData`와 API adapter | 요청, 정규화, 현재 서버 snapshot 반영 |
+| Job·Catalog 서버 상태 | `useAskLakeWorkspace`, domain hydration hook과 API adapter | 현재 route가 사용하는 resource 요청, 정규화, 현재 서버 snapshot 반영 |
 | 요청 순서 | `LatestRequestGate` | resource/query key별 최신 요청만 적용하고 이전 요청을 abort/stale 처리 |
 | ETL 편집 draft | `etlDraftState`와 `useAskLakeData` façade | versioned normalize/serialize/hydrate, 브라우저 편집 복구 |
 | ETL route·단계 순서 | `stepRegistry`와 `App` | 기존 `/etl/*` URL 매핑, optional 레코드 구조화, Continuous Kafka schedule 생략 |
@@ -26,7 +26,7 @@ response A -> stale, 무시
 response B -> current, 상태 반영
 ```
 
-수동 workspace refresh와 초기 hydrate, Job filter는 같은 규칙을 사용한다. stale 응답은 최신 목록, loading, error를 덮지 않는다.
+route 진입 hydrate와 현재 route domain refresh, Job filter는 같은 규칙을 사용한다. Job과 Catalog는 서로 다른 gate와 loading/error를 소유하며 stale 응답은 최신 목록이나 다른 화면 상태를 덮지 않는다.
 
 ## 3. ETL draft 문서 계약
 

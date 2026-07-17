@@ -17,12 +17,6 @@ export type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
 
 export type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 
-export const snapshotPollIntervalMs = 1000;
-
-export const snapshotPollMaxAttempts = 900;
-
-export const snapshotPollMaxConsecutiveErrors = 5;
-
 export const emptySelectedJob: JobRowData = {
   id: "JOB-NONE",
   lastRun: "-",

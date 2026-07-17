@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
+    airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     dashboard_sync_mode: str = "polling"
@@ -105,6 +106,7 @@ class Settings(BaseSettings):
     bootstrap_admin_display_name: str = "AskLake Administrator"
     auth_legacy_demo_users_enabled: bool = False
     auth_public_signup_enabled: bool = False
+    auth_session_cookie_secure: bool | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -285,6 +287,12 @@ class Settings(BaseSettings):
     @property
     def allows_header_auth_fallback(self) -> bool:
         return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
+
+    @property
+    def uses_secure_session_cookie(self) -> bool:
+        if self.auth_session_cookie_secure is not None:
+            return self.auth_session_cookie_secure
+        return not self.allows_header_auth_fallback
 
     @property
     def allows_public_signup(self) -> bool:

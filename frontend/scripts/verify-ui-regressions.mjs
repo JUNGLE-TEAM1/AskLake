@@ -8,7 +8,7 @@ const readCssWithLocalImports = (filePath, visited = new Set()) => {
   visited.add(filePath);
 
   return readFileSync(filePath, "utf8").replace(
-    /@import\s+["'](\.\/[^"']+)["'];/g,
+    /@import\s+["']((?:\.{1,2}\/)[^"']+)["'];/g,
     (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
   );
 };
@@ -67,13 +67,15 @@ const askLakeDataFiles = [
   "src/state/asklake/etlDraftState.ts",
   "src/state/asklake/initialRead.ts",
   "src/state/asklake/jobState.ts",
+  "src/state/asklake/routeDataRequirements.ts",
   "src/state/asklake/sqlJobDraft.ts",
   "src/state/asklake/useAskLakeWorkspace.ts",
   "src/state/asklake/useAskLakeWorkspaceState.ts",
+  "src/state/asklake/useCatalogHydration.ts",
   "src/state/asklake/useCatalogController.ts",
   "src/state/asklake/useJobController.ts",
+  "src/state/asklake/useJobsHydration.ts",
   "src/state/asklake/usePipelineMutations.ts",
-  "src/state/asklake/useWorkspaceHydration.ts",
 ];
 
 const catalogPageFiles = [
@@ -1870,17 +1872,24 @@ const checks = [
     ],
   },
   {
-    name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
+    name: "Workspace list reads are owned by the active route and domain hook",
     files: askLakeDataFiles,
     patterns: [
-      /const dataHydrationRequests = useRef\(new LatestRequestGate\(\)\);/,
-      /const refreshData = async \(\) =>/,
-      /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
+      /const jobDataFlows = new Set<FlowId>\(\["jobs", "jobDetail", "jobRuns"\]\);/,
+      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql", "ai"\]\);/,
+      /const jobsHydration = useJobsHydration\(\{ enabled: enabled && dataRequirements\.jobs, showToast, state \}\);/,
+      /useCatalogHydration\(\{ enabled: enabled && dataRequirements\.catalog, showToast, state \}\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
       /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
-      /filterJobs: hydration\.filterJobs,/,
-      /refreshData: hydration\.refreshData,/,
+      /filterJobs: jobsHydration\.filterJobs,/,
+      /if \(dataRequirements\.jobs\) return jobsHydration\.refreshJobs\(\);/,
+      /if \(dataRequirements\.catalog\) return catalogHydration\.refreshCatalog\(\);/,
+      /refreshData,/,
       /createSqlDatasetJob: pipeline\.createSqlDatasetJob,/,
+    ],
+    forbiddenPatterns: [
+      /Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\)/,
+      /refreshData: hydration\.refreshData/,
     ],
   },
   {

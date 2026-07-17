@@ -307,7 +307,7 @@ npm run verify:record-parsing
 npm run verify:record-parsing:e2e
 ```
 
-Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner와 Iceberg commit을 실행하고, `publish_run_result`가 Trino table/snapshot/data-file mapping을 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
+Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner와 Iceberg commit을 실행하고, `publish_run_result`가 Trino table/snapshot/data-file mapping을 검증해 Catalog를 확정한다. Backend의 Snapshot reconciliation loop가 DAG Run/Task Instance 상태를 DB에 저장하고, Run History와 DAG modal은 `GET /api/etl/jobs/statuses`의 최신 Run·DAG 단계를 반영한다.
 
 실행 중인 local Airflow 자체의 DAG 발견/import error/성공 Run/강제 실패 Run을 한 번에 확인할 때는 아래 smoke를 실행한다.
 
@@ -349,7 +349,7 @@ npm run verify:spark-csv-quoting
 
 현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.
 
-Live frontend는 같은 Run id를 `queued` 또는 `running`으로 관찰한 뒤 `success`가 된 경우에만 `GET /api/catalog/datasets`를 한 번 다시 호출한다. 실행 버튼 직후의 optimistic 상태에서 서버의 이전 성공 Run을 읽더라도 조기 refresh하지 않는다. Catalog 재조회만 실패한 경우에는 이미 확정된 Job/Run 성공을 되돌리지 않고 기존 목록과 수동 새로고침 안내를 유지한다. Job 목록의 실행 관측 모달은 열 때 받은 객체 snapshot을 고정하지 않고 `jobId`와 `runId`로 중앙 polling이 갱신한 최신 Job/Run을 다시 찾아 표시한다. 별도 모달 polling을 만들지 않으므로 terminal 중단, 연속 오류 안내, Catalog 갱신 정책은 기존 단일 poller가 계속 소유한다. 정적 연결과 production build는 `cd frontend && npm run verify:ui-regressions && npm run build`로 확인한다.
+Live frontend의 Snapshot polling은 가장 최근의 실제 Run이 `queued` 또는 `running`인 Job ID를 모아 5초마다 `GET /api/etl/jobs/statuses` 한 요청으로 Job/Run state를 갱신한다. Job 수가 늘어도 주기당 요청은 하나다. hidden tab, Jobs route 이탈, active Job 부재 시 요청을 멈추고 연속 실패는 10·20·30초로 backoff한 뒤 성공하면 5초로 복구한다. 오래된 응답과 terminal-to-active 역행은 버린다. terminal success를 관찰했다는 이유로 Jobs route에서 `GET /api/catalog/datasets`를 추가 호출하지 않는다. Catalog·SQL·AI route에 들어갈 때 Catalog domain loader가 최신 목록을 조회하며, command 응답이 Dataset을 직접 포함하면 해당 응답만 즉시 반영한다. Job 목록의 실행 관측 모달은 열 때 받은 객체 snapshot을 고정하지 않고 `jobId`와 `runId`로 중앙 polling이 갱신한 최신 Job/Run을 다시 찾아 표시한다. 별도 모달 polling을 만들지 않는다. 정적 연결과 production build는 `cd frontend && npm run test:snapshot-status-polling && npm run verify:ui-regressions && npm run build`로 확인한다.
 
 DAG에서 Catalog endpoint를 호출하는 경로, 인증 header/body, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 외부 runtime 없이 확인할 때는 아래 명령을 실행한다.
 
@@ -401,7 +401,7 @@ cd backend
 npm run verify:dashboard-assistant-guard
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Airflow task와 Spark 처리 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, backend reconciliation이 Airflow task와 Spark 처리 완료 상태를 DB에 저장한다. 프론트는 `GET /api/etl/jobs/statuses` batch polling으로 저장된 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
@@ -587,6 +587,8 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 
 Backend는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
+일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
+
 작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
 ```bash
@@ -687,6 +689,8 @@ VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
 ```
 
 Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
+
+dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
 실제 서버에서는 Compose 실행 전에 durable host root와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` root와 별도 read-only replay 입력인 `ASKLAKE_REPLAY_HOST_INPUT_DIR`는 먼저 존재해야 한다. `spark-runtime-guard`가 root 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`를 생성하고 UID/GID `185:185`로 정규화하므로 수동 subdirectory `chown`은 필요 없다.
 
@@ -1092,19 +1096,26 @@ npm run build
 
 Job 목록·상세·실행 이력은 `pages/ingest/jobs/`, 앱 서버 상태 조회와 mutation은 `state/asklake/`에서 변경한다. `JobsPages.tsx`와 `useAskLakeData.ts` façade에 새 구현을 직접 추가하지 않는다. 화면 module을 추가하면 `verify-ui-regressions.mjs`의 `jobsPageFiles`, 상태 module을 추가하면 `askLakeDataFiles`에 포함한다.
 
+`App.tsx`와 신규 source는 façade를 import하지 않고 `pages/ingest/jobs/`와 `useAskLakeWorkspace.ts`의 canonical module을 직접 사용한다. 배포 UI 무변경 리팩토링에서는 아래 guard가 façade의 재활성화와 production mock/legacy 기본값 변경을 차단한다.
+
 ```bash
 cd frontend
 npm run test:request-ownership
+npm run test:route-data-loading
 npm run test:jobs-data-boundary
+npm run test:snapshot-status-polling
+npm run test:deployed-ui-boundary
 npm run verify:ui-regressions
 npm run build
 ```
 
-Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage`, `useAskLakeData` import를 제거하려면 별도 deprecation PR이 필요하다.
+Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage` export 또는 compatibility façade 파일을 제거하려면 별도 deprecation PR이 필요하다.
+
+`route-data-loading`은 `/jobs*`가 Catalog 목록을 요청하지 않고, `/catalog*`·`/sql`·`/ai`가 Job 목록을 요청하지 않으며, Dashboard 목록이 workspace Catalog hydrate를 시작하지 않는지 검사한다. `refreshData` 호환 함수도 Job과 Catalog를 동시에 요청하지 않고 현재 route domain만 갱신해야 한다. route를 벗어나면 해당 `LatestRequestGate`를 무효화하고 Job/Catalog 오류 상태를 서로 공유하지 않는다.
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증
 
-ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
+ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일에서 변경한다. entrypoint import 순서 변경, 기존 중복 selector 정리, specificity 변경은 시각 회귀 근거가 있는 별도 PR로 다룬다. 인접 중복을 합칠 때도 selector, at-rule parent와 declaration 순서를 유지하고 source hash·정확한 selector inventory·해당 rule declaration 계약을 함께 갱신한다. 비인접 중복은 computed-style와 페이지별 visual baseline 없이 제거하지 않는다. Catalog 조회·선택 state는 `useCatalogExplorerState.ts`, 순수 검색·정렬은 `catalogModel.ts`, 표현은 각 page module이 소유한다.
 
 ```bash
 cd frontend
@@ -1113,7 +1124,7 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다.
+Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다. 렌더 검증은 mock/legacy를 production처럼 켜지 않고 live workspace 또는 실제 Vite CSS를 읽는 최소 fixture에서 desktop/mobile computed style, console, screenshot과 target interaction을 비교한다.
 
 ### ETL Permission create-flow 검증
 
@@ -1150,6 +1161,16 @@ npm run build
 
 운영에서 도달 가능한 fallback/legacy adapter를 추가할 때 `docs/refactor-2026/legacy-path-register.json`에 안정적인 ID, owner, activation, telemetry, 제거 조건과 목표 release를 등록한다. 구조화 warning과 counter 없는 production entry는 검증 실패다. 개발 mock/우회는 명시적 환경 guard가 필요하며 production에서 mock으로 조용히 전환해서는 안 된다.
 
+production compatibility path를 제거 후보로 바꾸려면 `docs/refactor-2026/legacy-removal-evidence.json`에 최소 30일의 시작·종료일, `observedCalls=0`, log query/dashboard export/release record 참조와 별도 reviewer 승인을 기록한다. validator `status=pass`만으로 제거할 수 없으며 `eligiblePaths`에 해당 ID가 있어야 한다. 현재 10개 경로는 모두 `not_started`/`not_requested`이므로 삭제하거나 비활성화하지 않는다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_legacy_removal_evidence
+python3 scripts/refactor_audit/legacy_removal_evidence.py
+
+cd backend
+npm run verify:legacy-removal-evidence
+```
+
 DB breaking change는 같은 PR에서 바로 수행하지 않는다. expand schema와 rollback reader, idempotent backfill, 호출 0 관측 기간, contract 제거를 각각 검증 가능한 단계로 나눈다. Job, session, runtime artifact, checkpoint를 테스트 편의를 위해 초기화하지 않는다.
 # 관측성·품질 게이트 개발 절차 (2026-07-16)
 
@@ -1166,6 +1187,98 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_observability_contract test
 API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
 
 ## 20) ETL E2E·복구 프로필 실행
+
+### ETL Job 조회·hydrate 경계 검증
+
+Job 목록·경량 상태·상세의 read-only hydrate, backend Airflow sync, permission projection 또는 facet/filter를 변경할 때는 application 경계 unit과 기존 hydrate/API 계약을 함께 실행한다. GET handler에 runtime 호출이나 write를 다시 넣지 않고 `etl_service.py` façade에 조회 정책을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_queries -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_snapshot_status_reconciliation -v
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+```
+
+### ETL Job 삭제 command·transaction 경계 검증
+
+Job 삭제 권한, active workload 차단, 종속 레코드 또는 transaction을 변경할 때는 application command unit과 기존 row-lock·동시성 회귀를 함께 실행한다. `etl_service.delete_job` façade에 삭제 정책이나 commit/rollback을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+.venv/bin/python ../scripts/refactor_audit/quality_gate.py --base origin/dev
+```
+
+### ETL Pipeline 생성·수정 write 경계 검증
+
+일반 Pipeline POST/PATCH의 Rule validation, mapping, identity, permission 또는 repository write를 변경할 때는 application unit과 기존 create/update 계약 verifier를 함께 실행한다. `etl_service.create_pipeline/update_pipeline` façade에 write 정책을 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v
+PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-permission-create-flow-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-dataset-identity-contract.py
+PYTHONPATH=. .venv/bin/python scripts/verify-kafka-continuous-contract.py
+```
+
+### Airflow Spark 실행·Catalog 발행 경계 검증
+
+Snapshot Airflow Run identity, Spark execution lease, runner 결과 finalize, physical output 검증 또는 Catalog transaction을 변경할 때는 application unit과 기존 concurrency·Iceberg·PostgreSQL reconciliation 검증을 함께 실행한다. `etl_service.execute_airflow_spark_run/reconcile_airflow_catalog` façade에 실행·발행 순서를 다시 구현하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_delete tests.test_spark_iceberg_reconciliation -v
+PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
+PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
+```
+
+### Source connector Python·Node gateway 경계 검증
+
+Source 연결 테스트나 asset listing의 request/response, Node transport 또는 connector adapter를 변경할 때는 typed gateway unit과 기존 bridge·auth·schema·object-storage 회귀를 함께 실행한다. Python application/service에서 Node script 이름이나 stdout marker를 직접 조립하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_source_connector_gateway -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_runtime_io_ports tests.test_etl_endpoint_auth tests.test_source_connector_raw_preview_schema tests.test_object_storage_mode -v
+node --check src/connectors.mjs
+node --check scripts/test-source-connector.mjs
+node --check scripts/list-source-assets.mjs
+```
+
+### EKS·EC2 Continuous control-plane owner 검증
+
+Production workload 역할이나 FastAPI background loop entrypoint를 변경하는 PR은 단일-owner manifest unit과 현재 topology 검증을 함께 실행한다. EKS/EC2 역할 이동은 manifest만 수정하지 말고 양쪽 workload spec, 실제 replica/process 증거와 rollback 승인을 포함해야 한다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
+python3 scripts/refactor_audit/control_plane_ownership.py
+
+cd backend
+npm run verify:control-plane-ownership
+```
+
+이 검증은 배포를 실행하지 않으며 `backend/app/main.py`의 lifespan이나 Compose environment를 변경하지 않는다. 현재 owner 선언과 repository entrypoint marker가 어긋나거나 required control plane을 둘 이상의 workload가 claim하면 merge 전에 실패한다.
+
+### 10단계 stacked PR 순차 머지 검증
+
+현재 refactor PR은 모두 base `dev`인 누적 branch다. `stacked-pr-merge-plan.json`의 order대로 한 번에 하나만 merge하고, 매 merge 뒤 `dev`를 fetch한 다음 다음 PR의 changed files·conflict·required checks를 다시 확인한다. validator 통과는 GitHub live check나 review 승인을 대신하지 않는다.
+
+```bash
+python3 -m unittest scripts.refactor_audit.test_stacked_pr_merge_plan
+python3 scripts/refactor_audit/stacked_pr_merge_plan.py
+
+cd backend
+npm run verify:stacked-pr-merge-plan
+npm run verify:refactor-release-plan
+npm run verify:refactor-release-execution  # manual evidence 전 exit 2가 정상
+```
+
+merge 중에는 배포·재시작·traffic 전환을 수행하지 않는다. 실패하거나 예상 밖 누적 diff가 보이면 다음 PR을 열지 않고 해당 단계에서 중단한다.
 
 Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 아래 빠른 프로필을 실행한다.
 

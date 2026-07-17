@@ -9,7 +9,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. `status` 반복 query, `scheduleKind=daily|weekly|monthly|realtime|none|other`, `owner`, `lastRunOutcome`으로 server-side 목록을 좁히고 status/최근 실행 결과 count와 owner facet을 함께 반환. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시하며, `PATCH /api/etl/jobs/{jobId}`가 같은 Job ID에 허용된 metadata를 저장 | 삭제 API, 서버 pagination/search, 복제 후 새 Job 생성 UX |
+| 수집/처리 목록 | `GET /api/etl/jobs` read-only hydrate. 외부 runtime probe와 상태 write 없이 Job/최신 Run/runtime/permission 자료를 종류별로 일괄 조회한다. `GET /api/etl/jobs/statuses`는 active Snapshot Job 최대 100개의 저장된 상태·진행률·최신 Run·DAG 단계만 한 번에 반환한다. 목록 `runHistory`는 Job별 최신 Run 1개만 반환하고 상세/실행 이력 route는 read-only `GET /api/etl/jobs/{jobId}`로 전체 이력을 hydrate한다. `status` 반복 query, `scheduleKind=daily|weekly|monthly|realtime|none|other`, `owner`, `lastRunOutcome`으로 server-side 목록을 좁히고 status/최근 실행 결과 count와 owner facet을 함께 반환. Frontend는 초기 Jobs 응답을 Catalog 응답과 독립 반영한다. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시하며, `PATCH /api/etl/jobs/{jobId}`가 같은 Job ID에 허용된 metadata를 저장 | 삭제 API, 서버 pagination/search, 복제 후 새 Job 생성 UX |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. bucket 목록은 writer의 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 프론트의 오래된 기본 bucket을 이 값으로 교정한다. 로컬은 MinIO, EC2 prod compose는 실제 AWS S3와 instance profile IAM Role/default credential chain을 사용하며 AWS 설정 누락은 명시적 `503`이다. | 서비스별 IAM 분리와 credential rotation 고도화 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
@@ -17,7 +17,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Rule | versioned canonical `rules[]` compiler, legacy transform/quality adapter, create/update/review 사전 검증, pass-through output schema와 bounded Rule Preview를 제공한다. Snapshot conformance를 통과한 stateless Rule은 Continuous `foreachBatch`와 replay에도 같은 Spark runtime으로 적용한다 | stateful join/aggregation과 engine-specific SQL은 후속 범위 |
 | Job command | Kafka Snapshot Job은 fixed range를 transform/quality한 뒤 Iceberg append, Trino/Catalog 검증, offset commit 순서로 실행하고 같은 snapshot retry를 deduplicate한다. non-Kafka Job은 Airflow DAG Run을 접수한다. Continuous Kafka Job은 long-running Spark worker를 제어하며, PostgreSQL partition cursor의 start/resume 전달과 쓰기 전 duplicate offset 필터, S3A checkpoint contract fingerprint, deterministic source boundary, Iceberg append/reuse, exact snapshot·Run 행 수 Trino/Catalog 복구, partition lag/throughput/schema/Rule report, quarantine replay와 worker-idle Iceberg rewrite/snapshot expiration/orphan cleanup을 제공한다. Worker start/resume과 maintenance 시작은 같은 Job/runtime lock 순서로 fence하고 durable runner heartbeat로 maintenance lease를 갱신한다 | pause/cancel의 실제 Airflow/Spark interrupt, production 대용량/concurrent-query soak, async Airflow maintenance scheduling |
 | Run/DAG | local Airflow DAG는 일반 batch의 Spark/Catalog 단계를 관리한다. Continuous는 start-to-terminal session과 하위 micro-batch 이력에 Source부터 Catalog까지 7단계 증적을 영속화하고 active 실행 이력 화면을 자동 갱신한다 | Spark log object storage 분리, session history 장기 retention/pagination |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 row pagination. 검증된 Iceberg Dataset은 `queryEngineTable`의 main snapshot을 요청당 고정해 count/page를 함께 조회하고 Catalog 사용자 schema만 projection한다. legacy file Dataset만 DuckDB compatibility reader를 사용한다. SQL derived/Kafka 결과를 Postgres JSONB payload로 반영하며 늦은 과거 snapshot reconciliation이 현재 projection을 되돌리지 않는다. 일반 Airflow/Spark batch는 Iceberg current snapshot/warehouse/exact file evidence를 검증하는 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 서버 검색/정렬 API, Iceberg snapshot expiration과 materialization 삭제 UX 고도화 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 row pagination. 검증된 Iceberg Dataset은 `queryEngineTable`의 main snapshot을 요청당 고정해 count/page를 함께 조회하고 Catalog 사용자 schema만 projection한다. legacy file Dataset만 DuckDB compatibility reader를 사용한다. SQL derived/Kafka 결과를 Postgres JSONB payload로 반영하며 늦은 과거 snapshot reconciliation이 현재 projection을 되돌리지 않는다. 일반 Airflow/Spark batch는 Iceberg current snapshot/warehouse/exact file evidence를 검증하는 멱등 reconciliation endpoint, transaction, final-task 연결, Catalog route 독립 hydrate, live E2E 구현 | 서버 검색/정렬 API, Iceberg snapshot expiration과 materialization 삭제 UX 고도화 |
 | SQL 분석 | DuckDB compatibility snapshot과 Trino Query Run을 분리 지원. Trino mode는 canonical `/api/query/validate`, idempotent submit, durable collector, signed-cursor 결과 page, server-side CSV, Iceberg CTAS 등록과 반복 full-refresh SQL Job을 제공한다. ETL Job의 backend-owned `icebergTarget`, 일반 Spark/Kafka Snapshot/Kafka Continuous의 native Iceberg commit과 공통 `$refs` main snapshot/warehouse/`DESCRIBE`/exact `$snapshots.summary` 검증 adapter도 제공한다. Continuous maintenance 결과도 같은 current/exact snapshot 계약으로 Trino 재검증한다. 실행 평가와 timeline은 기존 SQL editor를 변경하지 않고 결과 panel의 `실행 정보` view에 표시한다. | old SQL Job table cleanup policy, org quota와 조직별 retention policy 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. Catalog Iceberg source widget은 Catalog/physical schema 교집합만 검증된 Trino table에서 집계하고, 전체 wall-clock timeout 뒤 진행 query를 취소한다. legacy file source만 DuckDB를 사용한다. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | ETL Permission 화면이 그룹·사용자별 `permissionGrants`와 대상별 action을 저장하고 Job 접근 판정에 사용. owner는 자동 전체 권한 fallback, `permissionSummary`/`permissionRoles`는 호환용 요약. Job/Dataset/Dashboard 응답은 optional identity/grant/permission metadata를 제공. Backend는 session 또는 local header fallback을 `ActorContext`로 읽고 공통 `can()`을 적용한다. Dashboard/Catalog/Job뿐 아니라 Trino Query Run submit/history/result/CSV/cancel/materialization도 현재 Dataset 권한, principal block, resource lock과 submitter identity를 재검사한다. Frontend 비활성화는 UX 보조이고 backend 403이 최종 경계다. | 실서비스 조직/그룹 디렉터리 연동, deny/조건부 정책, dataset 생성/삭제 전체로 permission check 확대 |
@@ -33,6 +33,8 @@ Kafka Source Preview와 Snapshot bridge는 공통 KafkaJS Snappy codec을 등록
 Production Spark 공유 경로는 `spark-runtime-guard`가 매 daemon restart마다 기존 데이터를 보존하면서 초기화한다. worker는 UID 185 write/read/atomic rename/delete, backend는 report readiness read를 각각 startup probe로 확인한다. `npm run verify:spark-runtime-paths`, `npm run verify:spark-runtime-paths:container`, `npm run verify:production-spark`가 이 경계를 검증하며 실패 로그는 `runtime_storage_unwritable` 등 path·expected/actual metadata가 있는 JSON code를 사용한다.
 
 Continuous publication은 `output -> manifest -> Catalog -> Dashboard` 단계로 분리되어 있다. output/manifest 외부 검증 뒤 Catalog를 독립 commit하고 Dashboard revision 또는 zero-row progress를 별도 commit한다. 같은 batch/run/manifest fingerprint의 재시도는 기존 Iceberg output과 Catalog Run을 재사용하며, Dashboard 실패는 적재 성공을 data loss로 바꾸지 않는다. 최신 단계 진단은 기존 runtime metrics의 bounded `publicationWorkflow`에 저장되고 공개 API·DB schema는 그대로 유지한다. 구현·복구 기준은 [Continuous Materialization·Catalog·Dashboard 발행 계약](./refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
+
+Production deployment ownership은 `deploy/control-plane-ownership.json`에 EKS 웹·유한 배치 cell과 EC2 Continuous cell을 구분해 기록한다. Kafka Continuous와 Continuous SQL reconciliation은 현재 EC2 cell 하나만 claim하며 정적 validator가 owner 0개·중복 claim·entrypoint evidence drift를 차단한다. 이 검증은 runtime 역할을 옮기지 않으며 실제 EKS/EC2 process 대조는 rollout 전 수동 gate다.
 
 Rule/target 변경의 빠른 검증은 `npm run verify:dataset-identity`, `npm run verify:rule-compiler`, `npm run verify:snapshot-rule-conformance`, `npm run verify:spark-schema-contract`, `npm run verify:snapshot-spark-pipeline`, `npm run verify:kafka-target-projection`, `npm run verify:target-mode-contract` 순서로 실행한다. `verify:dataset-identity`는 서로 다른 한글/slug-collision target의 Job·dataset ID 분리와 정확히 같은 target의 append 재사용을 격리 SQLite metadata DB에서 확인한다. `verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용해 실행 의미의 동등성을 확인한다. Spark schema contract는 필수 컬럼별로 원본을 다시 읽지 않고 하나의 집계 action으로 input row count와 모든 null/cast 실패 컬럼을 함께 식별한다. JSON/JSONL runtime은 승인된 source path로 명시적 reader schema를 구성해 schema inference scan을 만들지 않고 dotted nested path를 target alias로 펼친다. 현재 단일 cast transform-only Snapshot의 raw source action 예산은 schema summary 1회, invalid-row summary 1회, Parquet write 1회로 총 3회다. `verify:snapshot-spark-pipeline`은 실제 JSONL `FileScanRDD` 로그를 세어 이 예산을 회귀 검증한다. Kafka Snapshot Job bridge는 확정 schema와 compiler output schema를 전달하고 Iceberg target/Catalog schema를 동일 projection으로 생성한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command와 direct JSONL compatibility를 end-to-end로 검증하고, 실제 Job의 Iceberg/Catalog/offset 및 retry idempotency는 `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`로 검증한다.
 
@@ -121,7 +123,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 ## 5. Airflow-Orchestrated Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. Backend는 기본 5초마다 active Snapshot Run을 Airflow와 동기화해 DB에 저장한다. PostgreSQL advisory lock으로 여러 backend process 중 하나만 한 cycle을 실행하고, Job별 transaction으로 오류를 격리한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영한 뒤 `GET /api/etl/jobs/statuses` 한 요청으로 모든 active Snapshot Job의 저장된 상태를 확인한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 해당 Job은 다음 요청 대상에서 제외된다. Jobs 화면을 닫아도 backend 동기화는 계속된다.
 
 현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. `airflow/dags/asklake_etl_job.py`는 독립 smoke mode와 실제 Spark execution mode를 함께 지원한다. Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
 
@@ -132,6 +134,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_UI_BASE_URL`: Airflow UI link 생성용 optional base URL
 - `AIRFLOW_API_TOKEN` 또는 `AIRFLOW_USERNAME`/`AIRFLOW_PASSWORD`: Airflow API 인증
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: API timeout, 기본값 `10`
+- `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`: backend가 active Snapshot Airflow Run을 DB에 동기화하는 간격, 기본값 `5`, 허용 범위 `1~60`
 - `AIRFLOW_EXECUTION_API_TOKEN`: Airflow task가 FastAPI internal Spark endpoint를 호출할 때 사용하는 shared bearer token. Airflow/FastAPI 양쪽 값이 같아야 한다.
 - `AIRFLOW_INTERNAL_BASE_URL`, `AIRFLOW_INTERNAL_TOKEN`, `AIRFLOW_INTERNAL_TIMEOUT_SECONDS`: 기존 단일 호출 internal endpoint 호환 설정. 신규 DAG는 execution bearer endpoint를 우선 사용한다.
 
@@ -174,7 +177,7 @@ Airflow sync 결과:
 
 ### Phase 3 Catalog reconciliation target
 
-Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, frontend terminal-success Catalog refresh, and live end-to-end verification are complete on the current branch.
+Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, Catalog route-owned hydrate, and live end-to-end verification are complete on the current branch.
 
 `publish_run_result`는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 일반 Spark batch는 persisted target과 reported snapshot/fingerprint가 Trino table/snapshot/data-file evidence와 일치한 경우에만 Catalog dataset을 create/upsert한다.
 
@@ -196,7 +199,7 @@ Failure/recovery boundary:
 - commit 뒤 response가 유실돼도 retry는 기존 성공 `catalogResult`를 읽어 같은 success를 반환한다.
 - Catalog commit 전에는 Airflow DAG Run과 AskLake Run을 최종 `success`로 간주하지 않는다.
 - polling sync는 Airflow 응답 뒤 Run row를 refresh/lock하고 task snapshot을 저장해 동시 commit된 Spark/Catalog evidence 유실을 막는다.
-- terminal success를 처음 본 frontend poller는 `GET /api/catalog/datasets`를 재조회한다.
+- Job status poller는 Catalog를 조회하지 않는다. Catalog·SQL·AI route의 domain loader가 진입 시 `GET /api/catalog/datasets`를 조회한다.
 
 Phase 3 acceptance checks:
 
@@ -235,6 +238,10 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_source_connector_gateway -v
 npm run verify:sources
 npm run verify:spark-run
 npm run verify:record-parsing
@@ -266,7 +273,12 @@ FastAPI Pair2 smoke:
 - `ASKLAKE_VERIFY_DASHBOARD_POSTGRES=true npm run verify:dashboard-live-postgres`는 `DATABASE_URL`의 실제 PostgreSQL에 임시 Catalog dataset, revision commit, partition cursor, freshness, widget result를 저장한다. 같은 `run_id` 멱등성, manifest 위치, canonical source range/fingerprint/watermark, 다른 `run_id`의 같은 offset 중복 방지, 부분 겹침 거절, 계산 result/state 재조회를 확인한 뒤 fixture를 삭제한다. repository 테스트는 stream/replay namespace 분리도 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지, explicit canonical empty가 legacy Rule을 되살리지 않는지 확인한다.
 - `PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-update-contract.py`는 실제 DB session에서 canonical Rule 저장을 확인하고 source config 보존, 성공 Run 뒤 target identity 변경 `422`, 실행 중 update `409`를 검증한다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_commands tests.test_etl_job_delete -v`는 Job 삭제의 권한 선행, active Run·Continuous 보호, 종속 레코드 삭제 순서, audit·commit/rollback과 Airflow/Kafka reservation 동시성을 검증한다. application 경계는 `docs/refactor-2026/contracts/etl-job-command-boundary.md`에 고정한다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_write_commands -v`는 일반 Pipeline create의 new/append/continuous 분기와 update의 governance·permission·validation·immutability·projection 순서를 검증한다. 실제 Rule·permission·identity persistence는 인접한 update/create verifier와 함께 확인하며 상세 경계는 `docs/refactor-2026/contracts/etl-job-write-boundary.md`를 따른다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_airflow_execution_commands -v`는 성공 Spark 결과 재사용, active execution lease, runner 실패/finalize, Catalog 멱등성, physical evidence 이후 단일 transaction과 실패 evidence 보존을 외부 runtime 없이 검증한다. 공개 façade와 실제 PostgreSQL reconciliation은 `docs/refactor-2026/contracts/airflow-execution-publication-boundary.md`를 따른다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_source_connector_gateway -v`는 Python request/response schema use case와 Node script·marker·payload·timeout adapter parity를 외부 connector 없이 검증한다. 실제 connector 구현과 기존 오류 transport는 유지하며 상세 권위는 `docs/refactor-2026/contracts/source-connector-authority-boundary.md`를 따른다.
 - `npm run verify:record-parsing`은 공백 구분 규칙의 10필드 추론, 타입 추론, 사용자 컬럼명 반영, 필드 개수가 다른 행의 line/count 오류 계약을 FastAPI service 수준에서 확인한다.
+- `PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_service_module_boundaries tests.test_scheduling -v`는 `etl_service.py` 2,500줄 상한, application projection·policy와 API·snapshot·Airflow·source runtime·Continuous·replay fragment의 파일 budget, 역방향 façade import 금지, 기존 공개 함수 re-export/runtime-binding identity와 schedule 동작을 검증한다. 상세 경계는 `docs/refactor-2026/contracts/etl-service-module-layout.md`를 따른다.
 - `npm run verify:record-parsing:e2e`는 `s3://m3-raw/asklake-fixtures/txt/click-events-whitespace-100.log`를 실제 Source API로 읽고 Preview 100/100, Job 계약 저장, Airflow/Spark input/output 100행, MinIO Parquet, Catalog의 10개 사용자 컬럼을 확인한다. 실행 중인 FastAPI/Airflow와 올바른 `ASKLAKE_DOCKER_NETWORK`가 필요하다.
 
 Frontend:
@@ -299,7 +311,7 @@ Live Airflow verification through 2026-07-11:
 - Python S3 physical inspection against `s3a://asklake-output/customer_review_gold/gold/run_d783b7d326e1`: pass, Parquet 1 object / 3,882 bytes
 - Airflow `publish_run_result` -> Catalog endpoint: pass, real Spark/MinIO output published with matching Run id/path, positive bytes, one materialization, and 3-node lineage
 - concurrent polling evidence preservation: pass, stale session could not erase committed `sparkResult`
-- frontend terminal-success Catalog refresh: 기존 polling/hydrate 경로 pass. Snapshot 재실행의 현재 행 수는 `verify:materialization-projection`과 갱신된 Catalog reconciliation fixture에서 최신 snapshot 기준으로 검증한다.
+- Catalog route-owned hydrate: Job status 요청과 독립된 Catalog loader 경로 pass. Snapshot 재실행의 현재 행 수는 `verify:materialization-projection`과 갱신된 Catalog reconciliation fixture에서 최신 snapshot 기준으로 검증한다.
 
 ## 7. 완료 기준
 
@@ -582,6 +594,28 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다. 자동화가 추가됐더라도 새 workflow의 성공 run과 production-like operator evidence 전에는 realtime flag 활성화가 No-Go다. 상세 판정은 `docs/realtime-2026/final-audit.md`를 따른다.
+
+## Legacy removal evidence readiness
+
+- [x] production legacy register 10경로와 evidence manifest ID·owner 1:1 검증
+- [x] 누락·중복·unknown path와 owner drift fail-closed
+- [x] 30일 미만 zero-call window, non-zero call, evidence·approval 누락 fail-closed
+- [x] 현재 10경로 모두 `not_started`/`not_requested`, removal eligible 0개
+- [ ] production log drain/dashboard에서 path별 30일 관찰 시작
+- [ ] 실제 0-call evidence와 owner 승인 후 경로별 제거 PR 생성
+
+이 readiness는 기존 compatibility activation, API/DB/runtime, UI와 배포 설정을 바꾸지 않는다. validator의 pass는 manifest 정합성만 뜻하며 제거 승인으로 해석하지 않는다.
+
+## Current 10-PR merge readiness
+
+- [x] issue/PR/branch/base/직전 PR dependency를 machine-readable manifest로 고정
+- [x] 정확히 10개, contiguous order, strict sequential merge와 no-deploy 규칙 검증
+- [x] backend/frontend deterministic regression과 release plan 검증 command 연결
+- [ ] PR 01부터 PR 10까지 각 단계의 review·green CI 확인 후 `dev` 순차 merge
+- [ ] 각 merge 뒤 다음 PR changed files·conflict·CI를 새 `dev` 기준으로 재검증
+- [ ] 실제 EKS/EC2 control-plane owner, isolated nightly, clean reboot, backup/restore 수동 evidence
+
+정적 plan 통과는 merge나 production 실행을 수행하지 않는다. 마지막 PR까지 merge된 뒤에도 release execution은 모든 production manual gate가 passed 되기 전 exit 2로 차단되어야 한다.
 
 ## Full-stack E2E·recovery readiness
 

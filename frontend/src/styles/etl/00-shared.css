@@ -1,0 +1,12 @@
+.hegun-console-panel {
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.etl-step-standalone-header {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}

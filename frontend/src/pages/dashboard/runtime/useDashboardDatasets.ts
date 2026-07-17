@@ -6,12 +6,18 @@ import {
   isUsableDashboardDataset,
 } from "./dashboardDatasetAdapters";
 
-export function useDashboardDatasets() {
+export function useDashboardDatasets(enabled = true) {
   const [datasets, setDatasets] = useState<DashboardDatasetOption[]>([]);
   const [error, setError] = useState<Error | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(enabled);
 
   useEffect(() => {
+    if (!enabled) {
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+
     let ignore = false;
 
     setIsLoading(true);
@@ -37,7 +43,7 @@ export function useDashboardDatasets() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [enabled]);
 
   return useMemo(
     () => ({
