@@ -133,14 +133,35 @@ export function useWorkspaceHydration({
     async function hydrateData() {
       setDataError(null);
       try {
+        const jobsResultPromise = readInitialResource(
+          getJobs,
+          "jobs",
+          { facets: getJobListFacets([]), jobs: [] },
+        ).then((jobsResult) => {
+          if (
+            !cancelled
+            && dataHydrationRequests.current.isCurrent(hydrationLease)
+            && jobsFilterRequests.current.isCurrent(jobsLease)
+          ) {
+            applyHydratedJobs(jobsResult.data);
+          }
+          return jobsResult;
+        });
+        const datasetsResultPromise = readInitialResource(
+          getDatasets,
+          "catalog",
+          [],
+        ).then((datasetsResult) => {
+          if (!cancelled && dataHydrationRequests.current.isCurrent(hydrationLease)) {
+            applyHydratedDatasets(datasetsResult.data);
+          }
+          return datasetsResult;
+        });
         const [jobsResult, datasetsResult] = await Promise.all([
-          readInitialResource(getJobs, "jobs", { facets: getJobListFacets([]), jobs: [] }),
-          readInitialResource(getDatasets, "catalog", []),
+          jobsResultPromise,
+          datasetsResultPromise,
         ]);
         if (cancelled || !dataHydrationRequests.current.isCurrent(hydrationLease)) return;
-
-        if (jobsFilterRequests.current.isCurrent(jobsLease)) applyHydratedJobs(jobsResult.data);
-        applyHydratedDatasets(datasetsResult.data);
 
         const fatalErrors = [jobsResult, datasetsResult]
           .filter((result) => result.fatal && result.error)

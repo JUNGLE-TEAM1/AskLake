@@ -26,6 +26,7 @@ import { TargetPage } from "./pages/etl/TargetPage";
 import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath } from "./pages/etl/stepRegistry";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeWorkspace } from "./state/asklake/useAskLakeWorkspace";
+import { useJobRouteHydration } from "./state/asklake/useJobRouteHydration";
 import { fetchAuthSession, logout as logoutSession } from "./services/authApi";
 import { canNavigateToWizardStep } from "./utils/wizardNavigation";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
@@ -161,22 +162,6 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "profile") return "/profile";
   if (flow === "login") return "/login";
   return "/jobs";
-}
-
-function buildMissingJobFromRoute(jobId: string): JobRowData {
-  return {
-    id: jobId,
-    lastRun: "-",
-    lastState: "목록에서 찾을 수 없음",
-    name: "선택한 Job을 찾을 수 없음",
-    nextRun: "-",
-    owner: "-",
-    schedule: "-",
-    source: "-",
-    status: "paused",
-    tag: "Missing",
-    target: "-",
-  };
 }
 
 function buildMissingDatasetFromRoute(datasetId: string): CatalogDataset {
@@ -321,6 +306,12 @@ export function App() {
     () => parseAppRoute(location.pathname, lastScheduleFlow),
     [lastScheduleFlow, location.pathname],
   );
+  useJobRouteHydration({
+    flow: routeState.flow,
+    jobId: routeState.jobId,
+    jobs,
+    setSelectedJob,
+  });
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -389,17 +380,6 @@ export function App() {
     navigate(getFlowPath("schema"), { replace: true });
     setActiveFlow("schema");
   }, [activeFlow, navigate, requiresRecordParsing]);
-
-  useEffect(() => {
-    if (!routeState.jobId) return;
-    const matchedJob = jobs.find((job) => job.id === routeState.jobId);
-    const nextJob = matchedJob ?? buildMissingJobFromRoute(routeState.jobId);
-    setSelectedJob((job) => (
-      job === nextJob || (job.id === nextJob.id && job.name === nextJob.name && job.lastState === nextJob.lastState)
-        ? job
-        : nextJob
-    ));
-  }, [jobs, routeState.jobId, setSelectedJob]);
 
   useEffect(() => {
     if (!routeState.datasetId) return;

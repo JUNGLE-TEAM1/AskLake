@@ -46,6 +46,7 @@ test("AskLake data facade composes domain controllers instead of owning server s
 
   for (const path of [
     "src/state/asklake/useWorkspaceHydration.ts",
+    "src/state/asklake/useJobRouteHydration.ts",
     "src/state/asklake/usePipelineMutations.ts",
     "src/state/asklake/useJobController.ts",
     "src/state/asklake/useCatalogController.ts",
@@ -59,4 +60,27 @@ test("Job command rollback is guarded by an entity mutation revision", () => {
   assert.match(controller, /new MutationRevisionGate\(\)/);
   assert.match(controller, /mutationRevisions\.current\.begin\(job\.id\)/);
   assert.match(controller, /if \(!mutationRevisions\.current\.isCurrent\(mutationLease\)\) return false;/);
+});
+
+test("initial Jobs hydration is applied without waiting for Catalog hydration", () => {
+  const hydration = read("src/state/asklake/useWorkspaceHydration.ts");
+  assert.match(hydration, /const jobsResultPromise = readInitialResource\(/);
+  assert.match(hydration, /\.then\(\(jobsResult\) => \{/);
+  assert.match(hydration, /applyHydratedJobs\(jobsResult\.data\);/);
+  assert.match(hydration, /const datasetsResultPromise = readInitialResource\(/);
+  assert.match(hydration, /Promise\.all\(\[\s*jobsResultPromise,\s*datasetsResultPromise,/);
+  assert.doesNotMatch(
+    hydration,
+    /Promise\.all\(\[\s*readInitialResource\(getJobs[\s\S]*readInitialResource\(getDatasets/,
+  );
+});
+
+test("Job detail routes hydrate full history separately from the list summary", () => {
+  const app = read("src/App.tsx");
+  const routeHydration = read("src/state/asklake/useJobRouteHydration.ts");
+  assert.match(app, /useJobRouteHydration\(\{/);
+  assert.match(routeHydration, /getJob as getPipelineJob/);
+  assert.match(routeHydration, /flow === "jobDetail" \|\| flow === "jobRuns"/);
+  assert.match(routeHydration, /getPipelineJob\(jobId\)/);
+  assert.match(routeHydration, /setSelectedJob\(\(job\) => job\.id === normalizedDetail\.id \? normalizedDetail : job\)/);
 });
