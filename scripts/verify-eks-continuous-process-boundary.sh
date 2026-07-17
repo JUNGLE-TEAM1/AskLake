@@ -12,7 +12,13 @@ for command in jq kubectl; do
   }
 done
 
-pods="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json)"
+pods="$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json | jq '
+  {items: [.items[]
+    | select(.metadata.deletionTimestamp == null)
+    | select(.status.phase == "Running")
+    | select(any(.status.containerStatuses[]?; .name == "fastapi" and .ready == true))
+  ]}
+')"
 [[ "$(jq '.items | length' <<<"$pods")" -eq 2 ]] || {
   echo "exactly two Backend Pods are required for the Continuous boundary check" >&2
   exit 1

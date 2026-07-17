@@ -608,7 +608,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
 - [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
 - [x] bounded E2E temporary Job failure 즉시 감지와 Helm/Deployment runtime drift fail-closed
-- [ ] 공유 Helm rollout이 없는 exclusive window에서 새 fixture 100건의 durable Run success 재검증
+- [x] 공유 Helm rollout이 없는 exclusive window에서 새 fixture 100건의 durable Run success와 동일 runId retry 재검증 ([live evidence](eks-pair1-live-validation.md))
 ## Realtime 2026 foundation readiness
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사

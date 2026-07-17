@@ -174,9 +174,10 @@ helm get values asklake-airflow -n "$NAMESPACE" -o json >"$AIRFLOW_CURRENT"
 helm get values asklake-trino -n "$NAMESPACE" -o json >"$TRINO_CURRENT"
 helm get values asklake-runtime-config -n "$NAMESPACE" -o json >"$RUNTIME_CURRENT"
 
-jq --arg frontend "$frontend_image" --arg backend "$backend_image" '
+jq --arg frontend "$frontend_image" --arg backend "$backend_image" --arg revision "$receipt_revision" '
   .frontend.image=$frontend
   | .backend.image=$backend
+  | .backend.runtimeConfigRevision=$revision
   | .collector=(.collector // {
       enabled:true,replicaCount:1,serviceAccountName:"asklake-backend",
       resources:{
@@ -197,7 +198,8 @@ jq --slurpfile receipt "$RECEIPT" '.images=$receipt[0].images' \
   "$HANDOFF" >"$HANDOFF_CANDIDATE"
 
 jq -e --slurp '
-  (.[0] | del(.frontend.image,.backend.image,.collector)) == (.[1] | del(.frontend.image,.backend.image,.collector))
+  (.[0] | del(.frontend.image,.backend.image,.backend.runtimeConfigRevision,.collector))
+  == (.[1] | del(.frontend.image,.backend.image,.backend.runtimeConfigRevision,.collector))
   and .[1].collector == (
     .[0].collector // {
       enabled:true,replicaCount:1,serviceAccountName:"asklake-backend",
@@ -280,15 +282,15 @@ for revision in "$WEB_REVISION" "$AIRFLOW_REVISION" "$TRINO_REVISION" "$RUNTIME_
 done
 
 APPLY_STARTED=true
+helm upgrade --install asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-config" \
+  -n "$NAMESPACE" -f "$RUNTIME_CANDIDATE" --server-side=true --force-conflicts \
+  --rollback-on-failure --wait --timeout 10m >/dev/null
 helm upgrade --install asklake-web "$ROOT_DIR/infra/eks/helm/asklake-web" \
   -n "$NAMESPACE" -f "$WEB_CANDIDATE" --rollback-on-failure --wait --timeout 10m >/dev/null
 helm upgrade --install asklake-airflow "$ROOT_DIR/infra/eks/helm/asklake-workloads" \
   -n "$NAMESPACE" -f "$AIRFLOW_CANDIDATE" --rollback-on-failure --wait --timeout 10m >/dev/null
 helm upgrade --install asklake-trino "$ROOT_DIR/infra/eks/helm/asklake-workloads" \
   -n "$NAMESPACE" -f "$TRINO_CANDIDATE" --rollback-on-failure --wait --timeout 10m >/dev/null
-helm upgrade --install asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-config" \
-  -n "$NAMESPACE" -f "$RUNTIME_CANDIDATE" --server-side=true --force-conflicts \
-  --rollback-on-failure --wait --timeout 10m >/dev/null
 
 kubectl rollout status deployment/frontend deployment/fastapi deployment/trino-result-collector \
   deployment/asklake-airflow-apiserver deployment/asklake-airflow-scheduler \
@@ -315,6 +317,20 @@ kubectl get deployment frontend fastapi trino-result-collector asklake-airflow-a
 
 [[ "$(kubectl get configmap asklake-runtime -n "$NAMESPACE" -o jsonpath='{.data.ASKLAKE_SPARK_KUBERNETES_IMAGE}')" == "$spark_image" ]] \
   || fail "runtime ConfigMap did not converge on the Spark receipt image"
+backend_pods="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json | jq -r '
+  [.items[]
+    | select(.metadata.deletionTimestamp == null)
+    | select(.status.phase == "Running")
+    | select(any(.status.containerStatuses[]?; .name == "fastapi" and .ready == true))
+    | .metadata.name
+  ] | .[]
+')"
+[[ "$(awk 'NF {count += 1} END {print count + 0}' <<<"$backend_pods")" -eq 2 ]] \
+  || fail "exactly two active Ready Backend Pods are required after rollout"
+while IFS= read -r pod; do
+  [[ "$(kubectl exec -n "$NAMESPACE" "$pod" -c fastapi -- printenv ASKLAKE_SPARK_KUBERNETES_IMAGE)" == "$spark_image" ]] \
+    || fail "a Backend Pod did not reload the Spark receipt image from runtime ConfigMap"
+done <<<"$backend_pods"
 wait_for_alb_steady
 bash "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh" >/dev/null
 verify_preserved_external_ec2

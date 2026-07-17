@@ -23,6 +23,7 @@ frontend:
 backend:
   image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000
   replicaCount: 2
+  runtimeConfigRevision: "0000000000000000000000000000000000000000"
   serviceAccountName: asklake-backend
   service: { name: fastapi, type: ClusterIP, port: 8080 }
   runtimeConfigMapName: asklake-runtime

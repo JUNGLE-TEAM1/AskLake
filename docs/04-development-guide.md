@@ -1599,3 +1599,5 @@ bash scripts/run-eks-day16-phase6-bounded-e2e.sh
 ```
 
 runner는 시작 시 `asklake-web`, `asklake-airflow`, `asklake-trino`, `asklake-runtime-config` revision과 7개 Deployment의 UID/Pod template을 저장한다. 실행 중 이 identity가 바뀌거나 temporary Job이 failed가 되면 즉시 fail-closed한다. Spark driver가 실제 100건을 commit했더라도 durable Run이 `success`가 아니면 E2E 성공으로 기록하지 않는다.
+
+다섯 image를 함께 교체할 때는 runtime ConfigMap의 Spark image를 먼저 적용하고, receipt revision을 FastAPI·Collector Pod template annotation에 넣어 envFrom consumer를 반드시 재생성한다. ConfigMap object 값만 새 digest여도 이미 실행 중인 process 환경은 바뀌지 않으므로 완료로 인정하지 않는다. rollout 뒤 활성·Ready FastAPI 두 Pod 안의 `ASKLAKE_SPARK_KUBERNETES_IMAGE`가 formal receipt와 일치해야 한다. ALB drain 중 deletion timestamp가 생긴 구 Pod는 replica·Continuous process 검사 대상에서 제외한다.

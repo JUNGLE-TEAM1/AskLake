@@ -157,10 +157,11 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
+      "required": ["image", "replicaCount", "runtimeConfigRevision", "terminationGracePeriodSeconds", "preStopDelaySeconds", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
+        "runtimeConfigRevision": { "type": "string", "pattern": "^$|^[a-f0-9]{40}$" },
         "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
         "preStopDelaySeconds": { "type": "integer", "const": 310 },
         "serviceAccountName": { "type": "string", "const": "asklake-backend" },

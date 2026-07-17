@@ -156,9 +156,19 @@ bash -n "$ROOT_DIR/scripts/verify-tracked-evidence-redaction.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-day16-bounded-e2e-evidence.sh"
 bash -n "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
 bash -n "$ROOT_DIR/scripts/retain-eks-phase6-spark-evidence.sh"
+bash -n "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
 grep -Fq 'capture_runtime_identity' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
 grep -Fq 'shared EKS runtime changed during the bounded E2E' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
 grep -Fq 'Phase 6 bounded E2E Job failed' "$ROOT_DIR/scripts/run-eks-day16-phase6-bounded-e2e.sh"
+grep -Fq 'select(.metadata.deletionTimestamp == null)' "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
+grep -Fq '.backend.runtimeConfigRevision=$revision' "$ROOT_DIR/scripts/rollout-eks-pair1-images.sh"
+grep -Fq 'printenv ASKLAKE_SPARK_KUBERNETES_IMAGE' "$ROOT_DIR/scripts/rollout-eks-pair1-images.sh"
+awk '
+  /APPLY_STARTED=true/ { apply = 1 }
+  apply && /helm upgrade --install asklake-runtime-config/ && runtime == 0 { runtime = NR }
+  apply && /helm upgrade --install asklake-web/ && web == 0 { web = NR }
+  END { exit !(runtime > 0 && web > 0 && runtime < web) }
+' "$ROOT_DIR/scripts/rollout-eks-pair1-images.sh"
 
 helm lint "$ROOT_DIR/infra/eks/helm/asklake-runtime-config" \
   -f "$ROOT_DIR/infra/eks/values/workloads/runtime-config.test.example.yaml"

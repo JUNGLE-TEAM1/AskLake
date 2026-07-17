@@ -70,7 +70,13 @@ kubectl apply -f "$manifest" >/dev/null
 kubectl wait --for=condition=complete "job/$name" -n "$NAMESPACE" --timeout=10m >/dev/null || \
   fail "Phase 5 evidence Job did not complete"
 kubectl logs "job/$name" -n "$NAMESPACE" >"$raw"
-jq -e '.status=="passed" and ([.checks[]]|all)' "$raw" >/dev/null || fail "persisted Phase 5 evidence is inconsistent"
+if ! jq -e '.status=="passed" and ([.checks[]]|all)' "$raw" >/dev/null; then
+  jq -r '
+    [.checks | to_entries[] | select(.value != true) | .key]
+    | "phase5_failed_checks=" + (if length == 0 then "unknown" else join(",") end)
+  ' "$raw" >&2 || true
+  fail "persisted Phase 5 evidence is inconsistent"
+fi
 
 application_name="$(jq -r '.privateIdentity.applicationName // empty' "$raw")"
 application_uid="$(jq -r '.privateIdentity.applicationUid // empty' "$raw")"

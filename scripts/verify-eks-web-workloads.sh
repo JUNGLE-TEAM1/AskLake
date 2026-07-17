@@ -39,6 +39,7 @@ for contract in \
   'terminationGracePeriodSeconds: 360' \
   'preStop:' \
   'sleep 310' \
+  'asklake.io/runtime-config-revision: "0000000000000000000000000000000000000000"' \
   'scripts/collect-trino-results.py' \
   'containerPort: 80' \
   'containerPort: 8080'; do
@@ -90,6 +91,7 @@ negative_cases=(
   'backend.replicaCount=1'
   'backend.terminationGracePeriodSeconds=120'
   'backend.preStopDelaySeconds=0'
+  'backend.runtimeConfigRevision=invalid'
   'collector.enabled=false'
   'collector.replicaCount=0'
   'collector.replicaCount=2'
