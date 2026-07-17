@@ -1,8 +1,9 @@
 """Job list/detail hydration use cases.
 
 The public ``etl_service`` functions remain compatibility façades. This module
-owns the read sequence: refresh runtime evidence, hydrate repository schemas,
-apply actor permissions, and build stable list facets or detail failures.
+owns the read sequence: hydrate repository schemas, apply actor permissions,
+and build stable list facets, lightweight status snapshots, or detail failures.
+Every public GET in this module is side-effect free.
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
-from app.models import ETLJobModel
 from app.repositories import etl_repository
+from app.repositories import snapshot_status_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     JobListFacets,
@@ -25,6 +26,7 @@ from app.schemas.etl import (
     JobRunOutcome,
     JobScheduleKind,
 )
+from app.schemas.job_status import JobStatusListResponse, JobStatusSnapshot
 
 
 JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
@@ -33,10 +35,12 @@ JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped
 @dataclass(frozen=True, slots=True)
 class EtlJobQueryHooks:
     record_audit_event: Callable[..., object | None]
-    refresh_continuous_runtime: Callable[[Session, ETLJobModel], None]
     schedule_kind: Callable[[str | None], JobScheduleKind]
-    sync_airflow_runs: Callable[[Session, ETLJobModel], None]
     with_permissions: Callable[[Session, JobRowData, ActorContext], JobRowData]
+    with_list_permissions: Callable[
+        [Session, list[JobRowData], ActorContext],
+        list[JobRowData],
+    ]
 
 
 def list_jobs(
@@ -49,14 +53,12 @@ def list_jobs(
     *,
     hooks: EtlJobQueryHooks,
 ) -> JobListResponse:
-    for job in etl_repository.list_job_models(db):
-        hooks.refresh_continuous_runtime(db, job)
-
     actor_context = actor or ActorContext()
-    visible_jobs = [
-        hooks.with_permissions(db, job, actor_context)
-        for job in etl_repository.list_jobs(db)
-    ]
+    visible_jobs = hooks.with_list_permissions(
+        db,
+        etl_repository.list_jobs(db),
+        actor_context,
+    )
     all_jobs = [job for job in visible_jobs if job.permissions.can_view]
     selected_statuses = set(statuses or [])
     filtered_jobs = [
@@ -89,6 +91,51 @@ def list_jobs(
     )
 
 
+def list_job_statuses(
+    db: Session,
+    job_ids: list[str],
+    actor: ActorContext | None = None,
+    *,
+    hooks: EtlJobQueryHooks,
+) -> JobStatusListResponse:
+    normalized_job_ids = list(dict.fromkeys(job_id.strip() for job_id in job_ids if job_id.strip()))
+    if len(normalized_job_ids) > 100:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "At most 100 Job statuses can be requested at once.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if not normalized_job_ids:
+        return JobStatusListResponse(jobs=[])
+
+    actor_context = actor or ActorContext()
+    visible_jobs = hooks.with_list_permissions(
+        db,
+        snapshot_status_repository.list_jobs_by_ids(db, normalized_job_ids),
+        actor_context,
+    )
+    jobs_by_id = {
+        job.id: job
+        for job in visible_jobs
+        if job.permissions.can_view
+    }
+    return JobStatusListResponse(jobs=[
+        JobStatusSnapshot(
+            id=job.id,
+            status=job.status,
+            progress=job.progress,
+            last_run=job.last_run,
+            last_state=job.last_state,
+            next_run=job.next_run,
+            updated_at=job.updated_at,
+            latest_run=(job.run_history or [None])[0],
+            dag_steps=job.dag_steps or [],
+        )
+        for job_id in normalized_job_ids
+        if (job := jobs_by_id.get(job_id)) is not None
+    ])
+
+
 def get_job(
     db: Session,
     job_id: str,
@@ -97,12 +144,6 @@ def get_job(
     hooks: EtlJobQueryHooks,
 ) -> JobRowData:
     actor_context = actor or ActorContext()
-    job_model = etl_repository.get_job(db, job_id)
-    if job_model is None:
-        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-
-    hooks.sync_airflow_runs(db, job_model)
-    hooks.refresh_continuous_runtime(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)

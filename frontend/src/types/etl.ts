@@ -201,7 +201,7 @@ export type JobRowData = {
   tag: string;
   source: string;
   target: string;
-  updatedAt?: string;
+  updatedAt?: string | null;
   schedule: string;
   schedulePolicy?: SchedulePolicyDraft;
   scheduleSummary?: string;
@@ -276,6 +276,25 @@ export type JobListFacets = {
 export type JobListResult = {
   facets: JobListFacets;
   jobs: JobRowData[];
+};
+
+export type JobStatusSnapshot = {
+  id: string;
+  status: JobStatus;
+  progress?: {
+    label: string;
+    value: number;
+  } | null;
+  lastRun: string;
+  lastState: string;
+  nextRun: string;
+  updatedAt?: string | null;
+  latestRun?: JobRunSummary | null;
+  dagSteps: JobDagStep[];
+};
+
+export type JobStatusListResult = {
+  jobs: JobStatusSnapshot[];
 };
 
 export type JobStats = {

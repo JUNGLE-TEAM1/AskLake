@@ -303,7 +303,7 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 Airflow orchestration dependencies:
 
 - Production compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.
-- The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, and `AIRFLOW_REQUEST_TIMEOUT_SECONDS`.
+- The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_REQUEST_TIMEOUT_SECONDS`, and `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`. The last value defaults to 5 seconds and controls server-owned active Snapshot Run reconciliation.
 - ETL `run` and `retry` commands require a reachable Airflow API. The default prod value is `http://airflow-apiserver:8080`, the internal Compose service URL.
 - The smoke DAG is committed at `airflow/dags/asklake_etl_job.py`; it uses only packages included in the Airflow image.
 

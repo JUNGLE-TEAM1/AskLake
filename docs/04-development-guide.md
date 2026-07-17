@@ -37,7 +37,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run test:trino-timeline`은 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` 단계의 순서, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
+`npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 
 ### 단계적 리팩토링 기준선
 
@@ -133,9 +133,12 @@ PYTHONPATH=. .venv/bin/python -m unittest \
 
 Trino Query Run protocol, storage, collector, registration, actor isolation은 프로젝트 가상환경에서 아래 명령으로 각각 확인한다.
 
+Query Run 내부를 수정할 때는 façade 파일에 새 로직을 다시 쌓지 않는다. 요청 제출은 `trino_query_submission.py`, 권한은 `trino_query_access.py`, 상태 조회·취소는 `trino_query_lifecycle.py`, worker 수집은 `trino_query_collector.py`, 결과 page·CSV·retention은 `trino_query_results.py`에서 수정한다. DB 쿼리는 실행 기록, 결과 page, collector lease에 맞춰 각각 `sql_run_repository.py`, `sql_result_page_repository.py`, `trino_collector_repository.py`에서 수정한다. 프론트는 preview 상태를 `useTrinoPreviewRun.ts`, 검증·estimate를 `useTrinoQueryPreflight.ts`, full-result를 `useTrinoFullResult.ts`, API 호출을 `sqlQueryApi.ts`에서 수정한다.
+
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-preview-full-flow
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-result-storage
@@ -143,6 +146,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilienc
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 .venv/bin/python -m unittest tests.test_query_route_compatibility tests.test_trino_production_hardening -v
 ```
+
+프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
@@ -302,7 +307,7 @@ npm run verify:record-parsing
 npm run verify:record-parsing:e2e
 ```
 
-Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner와 Iceberg commit을 실행하고, `publish_run_result`가 Trino table/snapshot/data-file mapping을 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
+Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner와 Iceberg commit을 실행하고, `publish_run_result`가 Trino table/snapshot/data-file mapping을 검증해 Catalog를 확정한다. Backend의 Snapshot reconciliation loop가 DAG Run/Task Instance 상태를 DB에 저장하고, Run History와 DAG modal은 `GET /api/etl/jobs/statuses`의 최신 Run·DAG 단계를 반영한다.
 
 실행 중인 local Airflow 자체의 DAG 발견/import error/성공 Run/강제 실패 Run을 한 번에 확인할 때는 아래 smoke를 실행한다.
 
@@ -344,7 +349,7 @@ npm run verify:spark-csv-quoting
 
 현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.
 
-Live frontend는 같은 Run id를 `queued` 또는 `running`으로 관찰한 뒤 `success`가 된 경우에만 `GET /api/catalog/datasets`를 한 번 다시 호출한다. 실행 버튼 직후의 optimistic 상태에서 서버의 이전 성공 Run을 읽더라도 조기 refresh하지 않는다. Catalog 재조회만 실패한 경우에는 이미 확정된 Job/Run 성공을 되돌리지 않고 기존 목록과 수동 새로고침 안내를 유지한다. Job 목록의 실행 관측 모달은 열 때 받은 객체 snapshot을 고정하지 않고 `jobId`와 `runId`로 중앙 polling이 갱신한 최신 Job/Run을 다시 찾아 표시한다. 별도 모달 polling을 만들지 않으므로 terminal 중단, 연속 오류 안내, Catalog 갱신 정책은 기존 단일 poller가 계속 소유한다. 정적 연결과 production build는 `cd frontend && npm run verify:ui-regressions && npm run build`로 확인한다.
+Live frontend의 Snapshot polling은 가장 최근의 실제 Run이 `queued` 또는 `running`인 Job ID를 모아 5초마다 `GET /api/etl/jobs/statuses` 한 요청으로 Job/Run state를 갱신한다. Job 수가 늘어도 주기당 요청은 하나다. hidden tab, Jobs route 이탈, active Job 부재 시 요청을 멈추고 연속 실패는 10·20·30초로 backoff한 뒤 성공하면 5초로 복구한다. 오래된 응답과 terminal-to-active 역행은 버린다. terminal success를 관찰했다는 이유로 Jobs route에서 `GET /api/catalog/datasets`를 추가 호출하지 않는다. Catalog·SQL·AI route에 들어갈 때 Catalog domain loader가 최신 목록을 조회하며, command 응답이 Dataset을 직접 포함하면 해당 응답만 즉시 반영한다. Job 목록의 실행 관측 모달은 열 때 받은 객체 snapshot을 고정하지 않고 `jobId`와 `runId`로 중앙 polling이 갱신한 최신 Job/Run을 다시 찾아 표시한다. 별도 모달 polling을 만들지 않는다. 정적 연결과 production build는 `cd frontend && npm run test:snapshot-status-polling && npm run verify:ui-regressions && npm run build`로 확인한다.
 
 DAG에서 Catalog endpoint를 호출하는 경로, 인증 header/body, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 외부 runtime 없이 확인할 때는 아래 명령을 실행한다.
 
@@ -396,7 +401,7 @@ cd backend
 npm run verify:dashboard-assistant-guard
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Airflow task와 Spark 처리 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, backend reconciliation이 Airflow task와 Spark 처리 완료 상태를 DB에 저장한다. 프론트는 `GET /api/etl/jobs/statuses` batch polling으로 저장된 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
@@ -565,6 +570,29 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 ```
 
+ClickHouse serving mode를 변경할 때는 기존 Spark/Iceberg 검증을 대신하지 말고 아래 실동작 smoke를 추가로 실행한다. 스크립트는 고유 Kafka topic, ClickHouse table, PostgreSQL metadata를 만들고 정확한 이름만 종료 시 정리한다. 실제 Continuous SQL Job 생성/시작, 13개 Kafka 입력 중 INNER JOIN 12개 output, Catalog revision, published Dashboard의 10개 widget type, pause/resume과 `(partition, offset)` 중복 제거를 한 번에 확인한다.
+
+```bash
+# 저장소 root
+docker compose up -d postgres redpanda clickhouse
+
+cd backend
+PYTHONPATH=. python -m unittest tests.test_clickhouse_continuous_sql tests.test_realtime_feature_flags -v
+npm run verify:clickhouse-kafka-join
+```
+
+이 smoke의 static relation은 exact snapshot reader 계약을 재현하는 bounded fixture를 사용하고 Kafka·ClickHouse·PostgreSQL·Catalog·Dashboard 경로는 실제 container와 application service를 사용한다. 실제 S3/Iceberg/Trino static snapshot round trip은 기존 Trino/Iceberg readiness와 함께 배포 환경에서 별도로 확인한다.
+
+로컬 MinIO S3에 실제 Iceberg static table을 만들고 exact snapshot을 Trino로 ClickHouse에 적재하는 전체 경계까지 확인하려면 Trino를 함께 올리고 live option을 사용한다. 고유 Iceberg table은 검증 종료 시 `DROP TABLE`로 정리한다.
+
+```bash
+# 저장소 root
+docker compose up -d --wait minio postgres trino
+
+cd backend
+CLICKHOUSE_E2E_LIVE_TRINO=true npm run verify:clickhouse-kafka-join
+```
+
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
 ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. 이 값은 새 빈 Source draft에만 한 번 채우고 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
@@ -581,6 +609,8 @@ ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
 Backend는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+
+일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 
 작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
@@ -638,7 +668,14 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. Query AI gateway mode는 `AI_PROVIDER_API_KEY`를 `ai-server` 환경에만 두고, backend는 service token과 signed context secret만 사용한다. `AI_QUERY_PROVIDER=direct` 롤백 모드의 `OPENAI_API_KEY`와 Dashboard Assistant 설정은 별도 호환 경로다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 실행 정보는 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집`의 실제 가능한 지표만 표시하고 다른 분모를 하나의 진행률로 합치지 않는다. Trino 결과는 현재 cursor page와 전체 보기, server CSV, 반복 Job 생성을 확인하고 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino page 차트는 현재 표시 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+
+Preview/full-result 저장 경계는 아래 격리 검증으로 확인한다. Preview page가 object storage를 호출하지 않고 PostgreSQL inline manifest를 만들며, full-result 요청이 `mode=run`과 source preview ID를 보존하는지 검사한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-preview-full-flow
+```
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) Prod-Like Docker Compose
@@ -667,6 +704,10 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
 
+ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse`를 함께 설정한다. `CLICKHOUSE_URL`은 Compose private endpoint `http://clickhouse:8123`를 사용하고 16자 이상의 전용 password를 server `deploy/.env`에만 둔다. ClickHouse port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/Trino/credential/backend-service wiring 불일치를 배포 전에 차단한다. `scripts/deploy.sh`는 enabled 배포에서 Redpanda와 ClickHouse를 먼저 기동하고 backend credential로 실제 query readiness를 확인하며, disabled 배포에서는 이전 profile의 stale ClickHouse container를 제거한다.
+
+롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
+
 Production은 알려진 legacy demo 계정을 기본 비활성화한다. 재시작 가능한 데모 서버에서 해당 계정을 유지하려면 server `deploy/.env`의 backend/frontend 플래그를 반드시 함께 켠다. 한쪽만 켜면 preflight가 실패한다. 이 설정은 기존 DB status를 보존하므로 이전 startup이 이미 `disabled`로 만든 계정은 opt-in 배포 전후에 한 번만 `active`로 복구하고, 이후 재시작에서는 추가 DB 수정이 없어야 한다.
 
 ```bash
@@ -675,6 +716,8 @@ VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
 ```
 
 Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
+
+dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
 실제 서버에서는 Compose 실행 전에 durable host root와 env를 준비하고 preflight를 통과시킨다. `ASKLAKE_HOST_DATA_DIR` root와 별도 read-only replay 입력인 `ASKLAKE_REPLAY_HOST_INPUT_DIR`는 먼저 존재해야 한다. `spark-runtime-guard`가 root 아래 `spark-ivy`, `spark-output`, `spark-runs`, `samples`, `review-text-models`를 생성하고 UID/GID `185:185`로 정규화하므로 수동 subdirectory `chown`은 필요 없다.
 
@@ -1085,13 +1128,17 @@ Job 목록·상세·실행 이력은 `pages/ingest/jobs/`, 앱 서버 상태 조
 ```bash
 cd frontend
 npm run test:request-ownership
+npm run test:route-data-loading
 npm run test:jobs-data-boundary
+npm run test:snapshot-status-polling
 npm run test:deployed-ui-boundary
 npm run verify:ui-regressions
 npm run build
 ```
 
 Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를 우회하면 안 된다. 기존 `/jobs` route와 `JobsLandingPage`, `JobDetailPage`, `JobRunsPage` export 또는 compatibility façade 파일을 제거하려면 별도 deprecation PR이 필요하다.
+
+`route-data-loading`은 `/jobs*`가 Catalog 목록을 요청하지 않고, `/catalog*`·`/sql`·`/ai`가 Job 목록을 요청하지 않으며, Dashboard 목록이 workspace Catalog hydrate를 시작하지 않는지 검사한다. `refreshData` 호환 함수도 Job과 Catalog를 동시에 요청하지 않고 현재 route domain만 갱신해야 한다. route를 벗어나면 해당 `LatestRequestGate`를 무효화하고 Job/Catalog 오류 상태를 서로 공유하지 않는다.
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증
 
@@ -1170,11 +1217,12 @@ API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, C
 
 ### ETL Job 조회·hydrate 경계 검증
 
-Job 목록·상세의 runtime refresh, Airflow sync, permission projection 또는 facet/filter를 변경할 때는 application 경계 unit과 기존 hydrate/API 계약을 함께 실행한다. `etl_service.py` façade에 조회 정책을 다시 구현하지 않는다.
+Job 목록·경량 상태·상세의 read-only hydrate, backend Airflow sync, permission projection 또는 facet/filter를 변경할 때는 application 경계 unit과 기존 hydrate/API 계약을 함께 실행한다. GET handler에 runtime 호출이나 write를 다시 넣지 않고 `etl_service.py` façade에 조회 정책을 다시 구현하지 않는다.
 
 ```bash
 cd backend
 PYTHONPATH=. .venv/bin/python -m unittest tests.test_etl_job_queries -v
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_snapshot_status_reconciliation -v
 PYTHONPATH=. .venv/bin/python scripts/verify-etl-job-hydrate-contract.py
 PYTHONPATH=. .venv/bin/python scripts/verify-backward-compatibility.py
 ```

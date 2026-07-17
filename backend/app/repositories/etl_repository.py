@@ -18,6 +18,7 @@ from app.models import (
 )
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
+from app.repositories import etl_job_list_repository
 from app.schemas.etl import (
     CatalogDataset,
     ContinuousMaintenanceRun,
@@ -215,7 +216,25 @@ def ensure_schema(db: Session) -> None:
 def list_jobs(db: Session) -> list[JobRowData]:
     ensure_schema(db)
     jobs = db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
-    return [job_to_schema(db, job) for job in jobs]
+    job_ids = [job.id for job in jobs]
+    continuous_runtime_by_job_id = etl_job_list_repository.list_continuous_runtimes(
+        db,
+        [job.id for job in jobs if job.execution_mode == "continuous"],
+    )
+    run_models_by_job_id = etl_job_list_repository.list_latest_run_models(db, job_ids)
+    return [
+        job_to_schema(
+            db,
+            job,
+            continuous_runtime=continuous_runtime_by_job_id.get(job.id),
+            related_loaded=True,
+            run_history=[
+                run_to_schema(run)
+                for run in run_models_by_job_id.get(job.id, [])
+            ],
+        )
+        for job in jobs
+    ]
 
 
 def list_job_models(db: Session) -> list[ETLJobModel]:
@@ -629,7 +648,6 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     return [run_to_schema(run) for run in runs]
 
 
-
 def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
     ensure_schema(db)
     return db.scalars(
@@ -662,8 +680,19 @@ def public_sql_recipe(value: object) -> dict[str, Any] | None:
     return recipe
 
 
-def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
-    runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+def job_to_schema(
+    db: Session,
+    job: ETLJobModel,
+    *,
+    continuous_runtime: KafkaContinuousRuntimeModel | None = None,
+    related_loaded: bool = False,
+    run_history: list[JobRunSummary] | None = None,
+) -> JobRowData:
+    runtime = continuous_runtime
+    hydrated_run_history = run_history or []
+    if not related_loaded:
+        runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
+        hydrated_run_history = list_runs_for_job(db, job.id)
     persisted_rules = job.rules if job.rule_contract_version is not None and job.rules is not None else None
     compiled_rules = compile_rule_set(
         contract_version=job.rule_contract_version,
@@ -738,7 +767,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         next_run=job.next_run or "-",
         progress=job.progress,
         stats=job.stats,
-        run_history=list_runs_for_job(db, job.id),
+        run_history=hydrated_run_history,
         dag_steps=job.dag_steps,
         dag_steps_by_run_id=job.dag_steps_by_run_id,
     )

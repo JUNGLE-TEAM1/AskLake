@@ -6,6 +6,7 @@ from app.schemas.common import CamelModel
 from app.schemas.catalog import QueryEngineStatus
 
 TrinoQueryRunStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+TrinoQueryRunMode = Literal["preview", "run"]
 
 
 class TrinoQueryRunError(CamelModel):
@@ -80,9 +81,12 @@ class SubmitTrinoQueryRunRequest(CamelModel):
     base_dataset_id: str
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     confirmation_token: str | None = None
+    mode: TrinoQueryRunMode = "run"
+    preview_limit: int = Field(default=100, ge=1, le=100)
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)
     result_page_size: int | None = Field(default=None, ge=1, le=1000)
+    source_run_id: str | None = None
 
     @field_validator("client_request_id")
     @classmethod
@@ -171,10 +175,28 @@ class QueryRunSubmitRequest(CamelModel):
             baseDatasetId=base_dataset_id,
             clientRequestId=self.client_request_id,
             confirmationToken=self.confirmation_token,
+            # The public SQL execute route is always a bounded preview. Full
+            # result runs are created only through /runs/{previewRunId}/full-results.
+            mode="preview",
+            previewLimit=min(self.limit or 100, 100),
             query=self.query,
             referenceDatasetIds=self.reference_dataset_ids,
             resultPageSize=self.result_page_size,
         )
+
+
+class CreateTrinoFullResultRequest(CamelModel):
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("client_request_id")
+    @classmethod
+    def normalize_client_request_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientRequestId must not be blank")
+        return normalized
 
 
 class TrinoQueryRunResponse(CamelModel):
@@ -183,6 +205,7 @@ class TrinoQueryRunResponse(CamelModel):
     engine: Literal["trino"] = "trino"
     estimate: TrinoQueryRunEstimate | None = None
     error: TrinoQueryRunError | None = None
+    mode: TrinoQueryRunMode = "run"
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)
     result: TrinoQueryRunResult | None = None
@@ -193,6 +216,7 @@ class TrinoQueryRunResponse(CamelModel):
     submitted_by_name: str | None = None
     submitted_by_user_id: str | None = None
     submitted_at: str
+    source_run_id: str | None = None
     trino_query_id: str | None = None
 
 

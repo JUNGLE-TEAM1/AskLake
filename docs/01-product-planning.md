@@ -45,19 +45,20 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage와 최신 성공 materialization을 기준으로 한 스키마·실제 sample row 페이지 탐색
-- Dataset 범위의 read-only SQL 실행. `TRINO_ENABLED=true`에서는 preview용 `LIMIT`을 기본 SQL에 강제로 넣지 않고 Trino Query Run으로 전체 SQL을 제출한다. 결과는 private page storage와 signed cursor로 필요한 논리 page만 탐색하며, lifecycle은 [Trino Query Run Contract](trino-query-run-contract.md), 저장·retention은 [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 compatibility 경로로 유지한다.
+- Dataset 범위의 read-only SQL 실행. `TRINO_ENABLED=true`의 기본 `실행`은 원본 SQL을 보존한 채 서버가 최대 100행으로 감싼 `preview` Query Run을 제출하고, 작은 결과를 PostgreSQL에 저장해 먼저 표시한다. `전체 보기` 또는 `CSV 다운로드`를 요청할 때만 원본 SQL의 별도 `run` Query Run을 만들고 private object page storage와 signed cursor로 전체 결과를 준비한다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 compatibility 경로로 유지한다. 상세 lifecycle과 저장·retention은 [Trino Query Run Contract](trino-query-run-contract.md), [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다.
 - SQL 편집기는 약 10행 보기 높이와 하나의 스크롤만 사용한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
-- SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과, 선택 데이터셋, 또는 현재 로드된 Trino 논리 결과 page를 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 결과 panel 안에서 제공한다. `실행 정보`는 실행 평가와 `쿼리 실행 -> 첫 결과 준비 -> 전체 결과 수집` timeline을 담으며 별도 카드로 editor 아래에 삽입하지 않는다. Trino page 차트는 현재 page 범위의 임시 시각화이고 전체 Query Run 또는 저장 가능한 Dashboard source가 아니다.
+- SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과, 선택 데이터셋, 또는 현재 로드된 Trino preview page를 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 결과 panel 안에서 제공한다. `preview` 실행 정보는 `쿼리 실행 -> 첫 결과 준비`까지만 표시하고, on-demand 전체 결과 준비 상태는 전체 보기/CSV action에서 별도로 표시한다. Trino page 차트는 현재 page 범위의 임시 시각화이고 전체 Query Run 또는 저장 가능한 Dashboard source가 아니다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
 - DuckDB compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
-- 완료된 Trino Query Run의 결과 화면은 CSV 다운로드와 반복 SQL Job 생성만 제공한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
+- 성공한 Trino preview 결과 화면은 CSV 다운로드와 반복 SQL Job 생성을 제공한다. CSV는 on-demand 전체 결과 `run`이 완료된 뒤 해당 저장 page를 stream하고, 반복 SQL Job 생성은 전체 결과 저장을 기다리지 않고 preview의 SQL·Dataset context·출력 컬럼을 recipe로 저장한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지
 - Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. 원본 event는 기존대로 S3/MinIO에 둔다.
 - Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 기본 static binding은 Job 시작 시 snapshot을 고정하는 PINNED_AT_START이며, LATEST_PER_BATCH와 static change backfill은 각각 별도 기능 플래그와 운영 승인이 필요한 opt-in이다. 새 Continuous SQL Job의 기본 micro-batch trigger는 5초이고, Catalog 통계가 안전 한도 이하인 불변 static snapshot은 worker가 재사용한다. 5초는 시작 주기이며 JOIN·Iceberg commit·Trino 검증·Dashboard 게시 시간까지 포함한 반영 SLA는 아니다.
+- 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. 기존 Iceberg mode와 일반 Kafka Continuous Job은 바꾸지 않으며 ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -127,13 +128,13 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, lineage와 최신 성공 materialization에서 읽은 실제 sample rows를 보여준다. 스키마 상세 모달에서도 전체 스키마와 sample page를 함께 탐색한다.
-3. 사용자는 SQL 화면으로 이동해 read-only SQL을 실행한다. Trino mode에서는 Query Run을 제출하고 signed cursor로 현재 논리 page만 탐색하며, compatibility mode에서는 저장된 DuckDB snapshot을 `offset`/`limit`로 조회한다.
+3. 사용자는 SQL 화면으로 이동해 read-only SQL을 실행한다. Trino mode에서는 최대 100행 preview Query Run을 먼저 제출해 결과를 표시하고, compatibility mode에서는 저장된 DuckDB snapshot을 `offset`/`limit`로 조회한다.
 4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
 6. SQL editor의 높이와 입력 방식은 기존 계약을 유지한다. Trino 실행 평가와 실행 과정은 editor 아래의 독립 블록으로 늘어나지 않고 결과 panel의 세 번째 `실행 정보` 탭에서 확인한다.
-7. `실행 정보`는 실행 전 평가와 실행 후 `쿼리 실행`, `첫 결과 준비`, `전체 결과 수집` 구간별 경과·실제 처리량·계산 가능한 진행률만 표시하며, 서로 다른 단계의 진행률을 하나로 합치거나 알 수 없는 값을 만들지 않는다.
-8. 완료된 Trino 결과는 retention-backed cursor page와 전체 보기에서 탐색하고 서버 CSV stream으로 내려받는다. Backend는 사용자별 실행 이력 조회·재열기 API를 유지하되, 이번 SQL 분석 UI 범위는 현재 실행과 화면에 보존된 결과에 한정하며 별도 최근 실행 선택 목록은 노출하지 않는다.
-9. 성공한 Trino Run은 반복 SQL Job으로 만들 수 있다. 각 Run은 실행 시점 권한을 다시 확인하고 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.
+7. `실행 정보`는 preview의 실행 전 평가와 `쿼리 실행`, `첫 결과 준비` 경과·실제 처리량만 표시한다. 전체 결과가 필요한 action은 별도 `run`을 만들며 서로 다른 run의 시간과 진행률을 하나로 합치지 않는다.
+8. 사용자가 `전체 보기`를 누르면 별도 전체 결과 run을 시작하거나 재사용하고, 준비된 signed-cursor page부터 100행씩 탐색한다. `CSV 다운로드`는 같은 전체 결과 run이 완료될 때까지 비동기로 기다린 뒤 서버 stream을 시작한다. Backend는 사용자별 실행 이력 조회·재열기 API를 유지하되, 이번 SQL 분석 UI 범위는 현재 실행과 화면에 보존된 결과에 한정하며 별도 최근 실행 선택 목록은 노출하지 않는다.
+9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe만 저장하고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.
 10. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 전환한다. Trino page 차트는 현재 표시 범위만 임시로 시각화한다.
 11. DuckDB compatibility 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결한다.
 
@@ -144,16 +145,19 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 5. Dashboard API는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 사용한다.
+6. 로그인 뒤 목록 데이터는 현재 화면이 실제로 사용하는 범위만 조회한다. Jobs 계열은 Job 목록, Catalog·SQL·AI 계열은 Catalog 목록을 소유하며 Dashboard 목록은 자체 Dashboard 요청만 시작한다. 화면을 벗어난 늦은 응답은 현재 화면 상태에 반영하지 않는다.
+7. 일반 배치 Job의 Airflow 상태는 사용자가 화면을 열어 두었는지와 무관하게 backend가 주기적으로 DB에 저장한다. Jobs 화면은 실행 중인 여러 Job의 가벼운 상태를 한 요청으로 확인하고, 상세·전체 실행 이력은 사용자가 해당 화면을 열 때만 별도로 조회한다.
 
 ### Flow D. Continuous SQL stream-static JOIN
 
 1. 사용자는 query 가능한 Catalog Dataset 중 Kafka Continuous streaming relation 1개와 static Iceberg relation 1개 이상을 선택한다.
 2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key type과 static unique-key evidence를 실행 전에 검사한다.
 3. 생성된 Job은 기본적으로 stopped 상태이며 명시적 start command에서 Run generation, fencing, checkpoint와 static snapshot set을 고정한다.
-4. 각 Kafka micro-batch는 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용하고, 유일키 실데이터 검증도 같은 snapshot·JOIN key에서 한 번만 한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 경우에만 다음 batch부터 새 snapshot을 사용하며 이때 이전 cache를 폐기하고 다시 검증한다.
-5. 새 Continuous SQL output table은 내부 `_asklake_run_id`를 partition column으로 사용해 해당 batch만 Trino가 가지치기하도록 한다. 기존 table은 기존 partition spec을 유지한다.
-6. exact Iceberg snapshot과 `_asklake_run_id` 행 수가 검증된 뒤에만 Catalog revision과 Dashboard change event가 공개된다. publication 재시도는 이미 처리한 Kafka input을 다시 쓰지 않는다.
-7. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다.
+4. 기본 Iceberg mode에서는 각 Kafka micro-batch가 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 Iceberg mode에서만 허용한다.
+5. ClickHouse mode에서는 Kafka Engine의 전용 consumer group이 원문을 raw MergeTree에 먼저 기록하고, cascading Materialized View가 `PINNED_AT_START` static snapshot과 JOIN해 output ReplacingMergeTree에 쓴다. raw와 output은 `partition + offset`으로 중복을 제거하며 `INNER JOIN`에서 결과가 없는 입력도 raw offset lineage에는 남는다.
+6. 기본 Iceberg mode의 새 output table은 내부 `_asklake_run_id`를 partition column으로 사용해 해당 batch만 Trino가 가지치기하도록 한다. ClickHouse mode의 Dashboard query는 output table을 `FINAL`로 읽고 Catalog user schema만 노출한다.
+7. Iceberg mode는 exact snapshot·행 수 검증 후, ClickHouse mode는 raw offset boundary와 query 가능한 output count 확인 후에만 Catalog revision과 Dashboard change event를 공개한다. publication 재시도는 같은 source range를 다시 올리지 않는다.
+8. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`와 `docs/clickhouse-dashboard-join-plan.md`를 따른다.
 
 ## 7) 성공 기준
 

@@ -156,8 +156,9 @@ class TakeoverResultStorage(MemoryResultStorage):
 
 
 class UngovernedResultPageService(TrinoQueryRunService):
-    def _require_access_for_response(self, *_: object, **__: object) -> None:
-        return None
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.access_service.require_access_for_response = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
 
 
 class DummyDb:

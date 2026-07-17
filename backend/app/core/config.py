@@ -1,4 +1,5 @@
 import json
+import re
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
+    airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     dashboard_sync_mode: str = "polling"
@@ -47,6 +49,14 @@ class Settings(BaseSettings):
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
     continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
+    clickhouse_continuous_join_enabled: bool = False
+    clickhouse_url: str = "http://localhost:8123"
+    clickhouse_user: str = "asklake"
+    clickhouse_password: str | None = None
+    clickhouse_database: str = "asklake"
+    clickhouse_query_timeout_seconds: float = Field(default=15.0, ge=1.0, le=300.0)
+    clickhouse_static_load_max_rows: int = Field(default=1_000_000, ge=1, le=100_000_000)
+    clickhouse_insert_batch_rows: int = Field(default=5_000, ge=1, le=100_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
     realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)
@@ -105,6 +115,7 @@ class Settings(BaseSettings):
     bootstrap_admin_display_name: str = "AskLake Administrator"
     auth_legacy_demo_users_enabled: bool = False
     auth_public_signup_enabled: bool = False
+    auth_session_cookie_secure: bool | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -267,6 +278,23 @@ class Settings(BaseSettings):
             }.items():
                 if len(str(secret or "")) < 32:
                     raise ValueError(f"{key} must contain at least 32 characters")
+        if not self.allows_header_auth_fallback and self.clickhouse_continuous_join_enabled:
+            if not self.trino_enabled:
+                raise ValueError(
+                    "TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED is true"
+                )
+            parsed_clickhouse_url = urlparse(self.clickhouse_url)
+            if parsed_clickhouse_url.scheme not in {"http", "https"} or not parsed_clickhouse_url.netloc:
+                raise ValueError("CLICKHOUSE_URL must be an explicit http(s) URL")
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.clickhouse_database) is None:
+                raise ValueError("CLICKHOUSE_DATABASE must be a safe ClickHouse identifier")
+            if not self.clickhouse_user.strip():
+                raise ValueError("CLICKHOUSE_USER is required")
+            password = str(self.clickhouse_password or "")
+            if len(password) < 16 or "replace-with-" in password:
+                raise ValueError(
+                    "CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters"
+                )
         if not self.allows_header_auth_fallback and self.ai_query_provider == "gateway":
             required_ai_values = {
                 "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
@@ -285,6 +313,12 @@ class Settings(BaseSettings):
     @property
     def allows_header_auth_fallback(self) -> bool:
         return self.app_env.strip().casefold() in {"local", "development", "dev", "test", "testing"}
+
+    @property
+    def uses_secure_session_cookie(self) -> bool:
+        if self.auth_session_cookie_secure is not None:
+            return self.auth_session_cookie_secure
+        return not self.allows_header_auth_fallback
 
     @property
     def allows_public_signup(self) -> bool:
