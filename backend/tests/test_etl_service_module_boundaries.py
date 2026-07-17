@@ -14,6 +14,18 @@ from app.application import (
     etl_source_window,
 )
 from app.services import etl_service
+from app.services.etl import (
+    airflow_operations,
+    api_job_operations,
+    api_review_operations,
+    continuous_maintenance,
+    continuous_publication,
+    continuous_session,
+    replay_schedule,
+    snapshot_operations,
+    source_runtime,
+)
+from app.services.etl.runtime_binding import runtime_implementation
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -196,11 +208,35 @@ REVIEWED_FUNCTION_DIGESTS = {
     etl_pipeline_policy: "5134f1bc5d77d794671f55e2b3412df311980d3506314ce99c2cd6665c2cd510",
 }
 
+RUNTIME_FACADE_MODULES = (
+    api_job_operations,
+    api_review_operations,
+    snapshot_operations,
+    airflow_operations,
+    source_runtime,
+    continuous_maintenance,
+    continuous_session,
+    continuous_publication,
+    replay_schedule,
+)
+
+RUNTIME_FACADE_DIGESTS = {
+    api_job_operations: "dcbce6c9748d04079a78231feff8bac72e8955469ff4bff6ad501c4ec80a3004",
+    api_review_operations: "0220651802b5aa91a33e2a601aa4f059d5aca0ccb3cef2aa06142767d71ad039",
+    snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
+    airflow_operations: "7062ae1d96476a9ab27b954ab1534a2824826b60edad24545decc426ba464dd6",
+    source_runtime: "3a34808ad726099502d233e5ff94c2ee7d25fc70dc620cd30054d99aaad0883e",
+    continuous_maintenance: "459e03480a7c623e6b80545aa87264f1246afe1d6ec5822dc0617143766b60a2",
+    continuous_session: "218eea6f08099161193e8c75d52bdfd488f8403c0e1dea24e8b3c60d4d03a3f5",
+    continuous_publication: "b5dae24b0e8c823080dc354def603e21de3e4ce88a561063b751bc6864663669",
+    replay_schedule: "610ef5559f2da9ca6e8e930b5ac792e9490ed883038d15b889025d43cf99f0ff",
+}
+
 
 class EtlServiceModuleBoundaryTests(unittest.TestCase):
     def test_etl_service_remains_a_bounded_compatibility_facade(self) -> None:
         source = ETL_SERVICE_PATH.read_text(encoding="utf-8")
-        self.assertLessEqual(len(source.splitlines()), 6_000)
+        self.assertLessEqual(len(source.splitlines()), 2_500)
 
         service_definitions = {
             node.name
@@ -211,6 +247,15 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
             for name in names:
                 self.assertNotIn(name, service_definitions)
                 self.assertIs(getattr(etl_service, name), getattr(module, name))
+
+        for module in RUNTIME_FACADE_MODULES:
+            for name in module.EXPORTED_FUNCTIONS:
+                self.assertNotIn(name, service_definitions)
+                self.assertIs(
+                    runtime_implementation(getattr(etl_service, name)),
+                    module.IMPLEMENTATIONS[name],
+                )
+                self.assertEqual(getattr(etl_service, name).__module__, etl_service.__name__)
 
     def test_extracted_modules_stay_small_and_do_not_import_the_facade(self) -> None:
         budgets = {
@@ -238,6 +283,35 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
             self.assertEqual(
                 hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                 REVIEWED_FUNCTION_DIGESTS[module],
+            )
+
+    def test_runtime_facade_modules_stay_bounded_and_reviewed(self) -> None:
+        budgets = {
+            api_job_operations: 670,
+            api_review_operations: 450,
+            snapshot_operations: 460,
+            airflow_operations: 980,
+            source_runtime: 800,
+            continuous_maintenance: 660,
+            continuous_session: 530,
+            continuous_publication: 810,
+            replay_schedule: 200,
+        }
+        for module, line_budget in budgets.items():
+            source = Path(module.__file__).read_text(encoding="utf-8")
+            self.assertLessEqual(len(source.splitlines()), line_budget)
+            self.assertNotIn("app.services.etl_service", source)
+
+            functions = [
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
+            payload = "\n".join(ast.dump(node, include_attributes=False) for node in functions)
+            payload += "\nEXPORTS\n" + "\n".join(module.EXPORTED_FUNCTIONS)
+            self.assertEqual(
+                hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                RUNTIME_FACADE_DIGESTS[module],
             )
 
 

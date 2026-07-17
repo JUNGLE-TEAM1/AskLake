@@ -160,3 +160,10 @@
 - 결정: 증분 source identity, Airflow·Spark·Kafka Run projection, Catalog·lineage projection, Pipeline policy와 공통 runtime helper 93개 함수를 다섯 application module로 추가 분리한다.
 - 이유: `etl_service.py`를 5,895줄의 compatibility façade·transaction 조립 경계로 줄이면서 API, DB schema, persisted payload와 기존 import 경로를 그대로 유지하기 위해서다.
 - 제약: 새 모듈은 façade를 역참조하지 않고 800줄 이하 budget을 갖는다. 추출 함수의 AST digest와 re-export identity를 구조 테스트로 고정한다.
+
+## D-025 — ETL side-effect orchestration은 runtime-bound service fragment로 분리
+
+- 상태: Accepted
+- 결정: 100줄 이하의 API·snapshot·Airflow·source runtime·Continuous·replay orchestration 함수 164개를 `app.services.etl`의 아홉 책임 모듈로 옮기고, `etl_service.py`에는 signature-preserving compatibility binding과 100줄 초과 핵심 transaction 함수만 남긴다.
+- 이유: 기존 router·script import와 테스트 monkeypatch 지점을 깨지 않으면서 façade를 5,895줄에서 2,178줄로 줄이고, 기능별 변경 범위와 파일 소유권을 분리하기 위해서다.
+- 제약: runtime fragment는 façade를 역참조하지 않으며 파일별 1,000줄·함수별 100줄 budget을 지킨다. binding은 호출 시 기존 façade dependency를 동기화할 뿐 API, DB schema, persisted payload, transaction·외부 side-effect 순서, legacy/mock 활성 상태를 변경하지 않는다. 남은 100줄 초과 함수는 hook 계약을 명시한 뒤 후속 단계에서 분리한다.
