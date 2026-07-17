@@ -814,6 +814,20 @@ bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
 
 Phase 14 web/collector workload와 FastAPI HPA 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. verifier는 HPA 활성 render의 `autoscaling/v2`, `2..6`, CPU metric·scale behavior와 FastAPI `spec.replicas` 부재, HPA 비활성 render의 고정 replica 복귀, Collector 보존을 함께 확인한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용하며 HPA 활성화에는 Metrics API와 baseline CPU 확인을 추가한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment/HPA field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI·Collector Workload](eks-phase-14-web-workloads.md)를 따른다.
 
+Day 17 A/B 최종 통합 campaign은 반드시 최신 `pair1` merge SHA를 고정한 read-only baseline 뒤에 시작한다. baseline에서 다른 active Job/SparkApplication/Pending·terminating Pod, EndpointSlice drain, stale smoke release를 확인하고 General/Spark placement와 canonical image receipt를 함께 검사한다. exclusive window만 열려 있고 placement나 receipt가 닫혀 있으면 정적 검증은 계속할 수 있지만 API load와 Spark 제출은 시작하지 않는다. 2026-07-17 최초 통합 baseline은 live Airflow·Trino General selector 미반영과 canonical Day 17 receipt 부재를 확인해 live campaign을 차단했다. 상세 상태와 복구 순서는 [Day 17 A/B 최종 통합 검증 기준점](eks-day17-final-integration-baseline.md)을 따른다.
+
+통합 baseline 뒤 정적 검증은 A NodePool/evidence, B workload/HPA/multi-Spark, Backend 집중 회귀, receipt sanitizer와 Terraform을 모두 포함한다. Python 집중 테스트는 CI와 같은 Python 3.13 계열 또는 `backend/.venv/bin/python`으로 실행한다. 프로젝트 dependency가 없는 system Python의 import 실패를 source regression으로 판정하지 않으며 올바른 interpreter로 재실행한 결과를 함께 기록한다. 로컬 Terraform CLI가 없으면 이 문서의 `hashicorp/terraform:1.15.8` Docker 명령으로 `fmt`, `init -backend=false`, `validate`, `test`를 보완한다. Issue #909의 실제 통과 범위는 [Day 17 A/B 최종 통합 정적 검증](eks-day17-final-integration-static-verification.md)을 따른다.
+
+병합된 placement를 기존 component release에 반영할 때는 먼저 `helm get values`를 mode `0600` 임시 파일에 저장하고 현재 manifest와 새 render를 구조 비교한다. image, env, Secret reference, Service, ConfigMap, resource와 probe가 동일하고 nodeSelector delta만 존재할 때 release별 `helm upgrade --install --dry-run=server`를 실행한다. Airflow의 placement-only upgrade는 migration hook을 다시 실행할 이유가 없으므로 `--no-hooks`를 사용한다. Issue #909에서는 Airflow revision `17→18`, Trino `15→16`을 component ownership 그대로 적용했고 모든 대상 Pod의 General 배치, EndpointSlice, ALB/RDS steady를 통과했다. 적용 결과와 rollback 기준은 [Day 17 A/B 최종 통합 placement 적용](eks-day17-final-integration-placement.md)을 따른다.
+
+Phase 3의 canonical image 정렬은 공식 image delivery workflow가 만든 하나의 receipt를 Frontend, Backend/Collector, Airflow, Spark runtime과 Trino에 함께 적용한다. 같은 Kafka topic의 multi-Spark scale candidate가 존재하더라도 HPA same-run fixture 선택은 기본 consumer group 하나만 허용해야 한다. receipt와 live role `5/5`, `linux/amd64`, Backend contract version `2`와 slot `4`, multi-Spark와 HPA preflight를 모두 확인한 실제 결과는 [Day 17 A/B 최종 이미지 정렬과 preflight](eks-day17-final-integration-image-alignment.md)를 따른다.
+
+Issue #909 Phase 4에서는 50 RPS probe 뒤 200 RPS 부하로 HPA `2→4→6`을 확인하고 `6/6/6`에서 same-run 경합을 시작했다. scale-down으로 Airflow 연결이 실패해도 새 Run을 만들지 않고, failed-task dry-run, 같은 DAG run clear, persisted state sync와 read-only recovery verification 순서를 지킨다. 실제 exact-one 결과와 200 RPS 발행 skip 한계는 [Day 17 최종 통합 HPA campaign](eks-day17-final-integration-hpa-campaign.md)을 따른다.
+
+Issue #909 Phase 5의 직접 multi-Spark 제출은 Frontend polling을 동반하지 않으므로 Spark/Catalog가 success여도 RDS 요약이 queued로 남을 수 있다. 이 경우 새 Run을 제출하거나 Spark를 재실행하지 않고 정상 `get_job` 조회 경로를 각 Job에 한 번 호출해 Airflow terminal 상태만 동기화한 뒤 read-only result verifier를 실행한다. 실제 Run 3개, Spark Node `0→1→2`, exact row `300/300`과 전체 pairwise isolation 결과는 [Day 17 최종 통합 multi-Spark campaign](eks-day17-final-integration-multi-spark-campaign.md)을 따른다.
+
+Phase 6 observer를 재시작할 때 submission receipt `createdAt`은 Run 생성 직후 기록되므로 그대로 `--since`에 쓰면 같은 초의 Run이 빠질 수 있다. private receipt 시각보다 2초 앞선 범위로 시작하고 Run A/B/C exact hash set이 일치하는지 확인한 뒤 기존 JSONL에 append한다. HPA/ALB와 Spark Node를 수동 scale/delete하지 않고 cleanup audit이 `2/2`, Spark Node `2→0`, removal event와 임시 자원 `0`을 직접 확인하게 한다. Issue #909 결과는 [Day 17 최종 통합 scale-in과 cleanup](eks-day17-final-integration-scale-in-cleanup.md)을 따른다.
+
 17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
 
 ```bash
@@ -840,7 +854,7 @@ export ASKLAKE_DAY17_LOAD_DURATION_SECONDS=60
 bash scripts/run-eks-day17-api-load.sh
 ```
 
-같은 `runId`의 HPA 경합 실험은 전용 runner로만 수행한다. runner는 실행 전에 HPA current/desired와 FastAPI Ready가 정확히 `6/6/6`인지 확인하고, Deployment selector에서 서로 다른 Ready Pod 6개를 골라 동일한 내부 실행 요청을 동시에 보낸다. 새 producer fixture를 만들 수 있는 기존 권한이 없으면 IAM이나 NodePool 권한을 넓히지 않는다. 이 경우 exact batch marker와 100-record count가 이미 고정된 성공 fixture만 `--prepare-reuse`로 선택하며, 안전한 fixture가 없으면 실행하지 않는다. 전용 Run의 결과와 receipt는 항상 새로 만든다.
+같은 `runId`의 HPA 경합 실험은 전용 runner로만 수행한다. runner는 실행 전에 HPA current/desired와 FastAPI Ready가 정확히 `6/6/6`인지 확인하고, Deployment selector에서 서로 다른 Ready Pod 6개를 골라 동일한 내부 실행 요청을 동시에 보낸다. 새 producer fixture를 만들 수 있는 기존 권한이 없으면 IAM이나 NodePool 권한을 넓히지 않는다. 이 경우 exact batch marker와 100-record count가 이미 고정된 성공 fixture만 `--prepare-reuse`로 선택하며, 안전한 fixture가 없으면 실행하지 않는다. fixture 선택은 기본 bounded consumer group `asklake-eks-mvp-spark-v1`과 persisted boundary의 group이 모두 정확히 일치해야 하며, `asklake-eks-mvp-spark-scale17-*` multi-Spark 후보는 같은 topic을 사용하더라도 HPA 경합 후보에서 제외한다. 전용 Run의 결과와 receipt는 항상 새로 만든다.
 
 ```bash
 export ASKLAKE_EKS_NAMESPACE=asklake-dev
@@ -934,8 +948,15 @@ cleanup 전에는 completed Run, SparkApplication, RDS/Catalog/Iceberg object를
 삭제하지 않는다.
 
 10번 audit까지 통과하면 11번의 통합 receipt를 아래 fail-closed generator로
-만든다. generator는 HPA race/load/scale observer, baked multi-Spark campaign,
-multi-Spark observer/result, cleanup audit와 이전 제출 receipt를 함께 읽는다.
+만든다. generator는 HPA race/load/scale observer, multi-Spark campaign,
+multi-Spark observer/result와 cleanup audit을 함께 읽는다. 현재 캠페인은 제출
+`3`, 실패 `0`, 세 Run hash와 observer/result identity chain이 일치할 때만
+`currentCampaignResultsNotSubstituted`를 통과한다. 이전 제출 receipt가 있는
+캠페인은 모든 이력을 `--prior`로 전달하고 각 receipt의 contract, 시각, count,
+alias/hash와 현재 캠페인 비중복을 검증한다. 이번 Issue처럼 운영자가 이전 제출
+receipt가 없다고 판단한 독립 캠페인은 `--no-prior`를 명시한다. 이 mode는
+`operator-declared-clean`으로 기록되며 과거 이력의 완전성을 machine-proven으로
+표현하지 않는다. `--no-prior`와 `--prior`는 함께 사용할 수 없다.
 API `2 → 6 → 2`, 동일 Run exact-one, driver/executor
 `Pending → Node 증가 → Running`, Run별 데이터/격리, Spark Node baseline 복귀와
 임시 리소스 `0`이 모두 참일 때만 출력한다.
@@ -943,6 +964,17 @@ API `2 → 6 → 2`, 동일 Run exact-one, driver/executor
 ```bash
 node --test scripts/test-eks-day17-final-receipt.mjs
 node scripts/build-eks-day17-final-receipt.mjs
+
+# 과거 제출 이력이 없는 새 독립 캠페인
+node scripts/build-eks-day17-final-receipt.mjs --no-prior \
+  --race /private/tmp/asklake-day17-issue909-phase4-race-receipt.json \
+  --load /private/tmp/asklake-day17-issue909-phase4-load-200.json \
+  --scale-observer /private/tmp/asklake-day17-issue909-phase4-scale-observer.jsonl \
+  --campaign /private/tmp/asklake-day17-issue909-phase5-multi-spark-receipt.json \
+  --multi-observer /private/tmp/asklake-day17-issue909-phase5-multi-spark-observer.jsonl \
+  --multi-results /private/tmp/asklake-day17-issue909-phase5-multi-spark-results.json \
+  --cleanup /private/tmp/asklake-day17-issue909-phase6-cleanup-audit.json \
+  --output /private/tmp/asklake-day17-issue909-phase7-final-receipt-v3.json
 ```
 
 기본 출력은 저장소 밖
