@@ -132,3 +132,10 @@
 - 결정: 같은 selector의 rule이 동일 at-rule parent에서 바로 이어질 때만 declaration 순서를 유지해 합치며, 이번 변경은 `.s3-tree-panel` 한 쌍으로 제한한다.
 - 이유: 비인접 중복은 사이 rule의 specificity와 source order에 따라 computed style이 달라질 수 있다. 안전한 한 쌍만 source hash·정확한 inventory·declaration contract와 desktop/mobile 렌더 hash로 증명해야 현재 배포 UI를 유지할 수 있다.
 - 제약: 나머지 중복 66개, selector/DOM/JSX, 색상·간격·반응형 값은 변경하지 않는다. live workspace 렌더가 불가능한 환경에서는 mock/legacy를 켜지 않고 실제 Vite CSS fixture와 자동 UI regression을 사용하며 한계를 PR에 기록한다.
+
+## D-021 — Legacy 제거는 30일 0-call 증거와 별도 승인 전까지 차단
+
+- 상태: Accepted
+- 결정: production register 10경로와 1:1인 evidence manifest를 두고, 최소 30일 관찰·호출 0건·근거 참조·review 승인을 모두 통과한 경로만 제거 후보로 판정한다.
+- 이유: source marker와 counter가 있어도 실제 관찰 기간과 승인 기록을 기계적으로 묶지 않으면 문자열 검색이나 추정만으로 persisted compatibility reader를 삭제할 수 있다.
+- 제약: 현재 모든 경로는 `not_started`/`not_requested`로 유지하며 제거 가능 경로는 0개다. runtime source, activation flag, façade/mock/legacy 기본값, API/DB/UI와 배포 topology는 변경하지 않는다.

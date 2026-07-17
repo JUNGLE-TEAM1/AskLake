@@ -17,7 +17,7 @@
 | R-013 | P2 | production fallback/legacy/mock 경로 도달 가능성 불명확 | semantic 15경로 등록, 운영 10경로 warning+counter, production mock fail-closed | 12 | CLOSED |
 | R-014 | P2 | 프런트 번들 chunk 2.6 MB warning | Vite build baseline | 09~11 | OPEN |
 | R-015 | P2 | frontend npm audit 2건 | 1 moderate, 1 high | 13 또는 별도 보안 이슈 | OPEN |
-| R-016 | P1 | production compatibility 경로가 10개 남음 | 15경로 등록·계측 완료, 30일 0-call 후 제거 필요 | 12·15 + cleanup | OPEN |
+| R-016 | P1 | production compatibility 경로가 10개 남음 | 15경로 등록·계측 후 production 10경로의 removal evidence를 fail-closed로 고정. 현재 30일 관찰 미시작·eligible 0개이며 실제 log evidence 후 경로별 제거 필요 | 12·15, #879 + cleanup | OPEN |
 | R-017 | P1 | `connectors.mjs` 2,319 LOC와 Node/Python 중복 authority | Source request/response는 Python application, 기존 Node 실행은 typed gateway adapter로 분리했으나 `connectors.mjs` 기능 분해와 Python parity 전환은 미완료 | 08·15, #873 + cleanup | PARTIAL |
 | R-018 | P1 | EKS·EC2가 같은 Continuous control plane을 동시에 claim할 수 있음 | production topology manifest와 exactly-one owner validator를 CI에 추가했으나 실제 cluster/process 대조는 rollout 수동 gate로 남음 | #875 + rollout | PARTIAL |
 

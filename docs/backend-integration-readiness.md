@@ -592,6 +592,17 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다. 자동화가 추가됐더라도 새 workflow의 성공 run과 production-like operator evidence 전에는 realtime flag 활성화가 No-Go다. 상세 판정은 `docs/realtime-2026/final-audit.md`를 따른다.
 
+## Legacy removal evidence readiness
+
+- [x] production legacy register 10경로와 evidence manifest ID·owner 1:1 검증
+- [x] 누락·중복·unknown path와 owner drift fail-closed
+- [x] 30일 미만 zero-call window, non-zero call, evidence·approval 누락 fail-closed
+- [x] 현재 10경로 모두 `not_started`/`not_requested`, removal eligible 0개
+- [ ] production log drain/dashboard에서 path별 30일 관찰 시작
+- [ ] 실제 0-call evidence와 owner 승인 후 경로별 제거 PR 생성
+
+이 readiness는 기존 compatibility activation, API/DB/runtime, UI와 배포 설정을 바꾸지 않는다. validator의 pass는 manifest 정합성만 뜻하며 제거 승인으로 해석하지 않는다.
+
 ## Full-stack E2E·recovery readiness
 
 - [x] PR/release/nightly 누적 profile과 선언형 fault matrix
