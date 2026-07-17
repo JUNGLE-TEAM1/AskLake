@@ -10,12 +10,14 @@
 
 - Helm에 적용된 `asklake-auto-mode` pool 값과 live NodePool spec의 일치 여부
 - NodePool Ready, architecture, capacity type, instance category/generation, limits, disruption, expiry와 Spark taint
-- pool별 node allocatable capacity와 현재 non-terminal Pod request 합계
+- cluster 전체 namespace의 non-terminal Pod request를 반영한 pool별 node allocatable, request 합계와 최대 단일-node 여유
 - Frontend, FastAPI, Collector, Airflow, Trino의 selector와 실제 scheduled pool
 - SparkApplication driver/executor의 Spark selector와 toleration
 - HPA generation/replica/CPU target, Deployment generation과 Helm release revision으로 만든 identity fingerprint
 - unrelated active Job/SparkApplication, Pending/terminating Pod와 EndpointSlice drain candidate
-- run fingerprint를 가진 임시 Job/SparkApplication/Pod의 cleanup 상태
+- run fingerprint를 가진 Deployment, 모든 phase의 Pod, Job, SparkApplication과 Helm release 전체 cleanup 상태
+- isolated scope의 unscheduled Pending, 신규 node 생성, controlled Pod의 신규 node 배치와 Running 전이
+- Spark NodePool·실제 Spark node의 exact taint, negative Pod의 toleration 부재와 untolerated scheduling event 결합 판정
 
 node 이름, Pod 이름·UID, IP, endpoint, ARN, image reference/digest, Secret과 실행 토큰 원문은 evidence에 넣지 않는다. component와 release의 공개된 canonical 이름, 개수, resource 합계와 짧은 비교 fingerprint만 남긴다.
 
@@ -36,7 +38,7 @@ bash scripts/capture-eks-day17-autoscaling-evidence.sh \
   final infra/eks/delivery/<run>.day17-autoscaling-evidence.json
 ```
 
-파일은 원자적으로 교체하고 항상 mode `0600`으로 고정한다. `sample`은 baseline 이후 Deployment/HPA/Helm identity가 변하면 evidence를 쓴 뒤 실패한다. `final`은 identity 고정, source/live pool 일치, placement 일치, unrelated blocker 0, run 소유 임시 resource 0을 모두 만족해야 성공한다.
+파일은 원자적으로 교체하고 항상 mode `0600`으로 고정한다. `sample`은 baseline 이후 Deployment/HPA/Helm identity가 변하면 evidence를 쓴 뒤 실패한다. `final`은 identity 고정, source/live pool 일치, unrelated blocker 0과 run 소유 전체 resource 0을 요구한다. `integrated` scope는 workload placement까지, `isolated` scope는 두 pool의 신규-node 배치 proof와 exact Spark taint 음성 증거까지 만족해야 성공한다.
 
 실제 부하 resource에는 `asklake.io/day17-run=<run-fingerprint>` label을 붙여야 한다. fingerprint는 baseline evidence의 `runFingerprint`에서 확인하되 Git, PR, Issue나 일반 로그에는 복사하지 않는다.
 
@@ -55,7 +57,7 @@ Phase 2 당시에는 통합 workload 부하 진입을 차단했다. 이후 Phase
 
 ## 정적 회귀
 
-다음 명령은 정상 baseline, generation drift, 정상 cleanup과 cleanup 잔존 실패를 fixture로 검사한다. 또한 관찰 스크립트에 Kubernetes/Helm mutation command가 들어오면 실패한다.
+다음 명령은 정상 baseline, generation과 HPA 순서 drift, cluster-wide quantity 계산, 신규 node 오귀속, 일반 FailedScheduling 오인, stale release, 완료 Pod·0-replica Deployment 잔존과 정상 cleanup을 fixture로 검사한다. 또한 관찰 스크립트에 Kubernetes/Helm mutation command가 들어오면 실패한다.
 
 ```bash
 bash scripts/test-eks-day17-autoscaling-evidence.sh

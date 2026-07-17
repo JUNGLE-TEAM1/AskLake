@@ -49,6 +49,7 @@ trap 'rm -rf "$temporary_directory"' EXIT
 kubectl get nodepools.karpenter.sh -o json >"$temporary_directory/nodepools.json"
 kubectl get nodes -o json >"$temporary_directory/nodes.json"
 kubectl get pods -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/pods.json"
+kubectl get pods -A -o json >"$temporary_directory/allpods.json"
 kubectl get deployments -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/deployments.json"
 kubectl get horizontalpodautoscalers -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/hpas.json"
 kubectl get jobs -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/jobs.json"
@@ -59,6 +60,14 @@ if ! kubectl get sparkapplications.sparkoperator.k8s.io -n "$ASKLAKE_EKS_NAMESPA
 fi
 helm list -A -o json >"$temporary_directory/helm-releases.json"
 helm get values asklake-auto-mode -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/auto-mode-values.json"
+if helm status asklake-day17-nodepool-smoke -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null 2>&1; then
+  helm get values asklake-day17-nodepool-smoke -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$temporary_directory/smoke-release-values.json"
+fi
+if [[ -n "${ASKLAKE_DAY17_TRANSITION_PROOF_FILE:-}" ]]; then
+  [[ -s "$ASKLAKE_DAY17_TRANSITION_PROOF_FILE" ]] || { echo "transition proof file is missing" >&2; exit 1; }
+  cp "$ASKLAKE_DAY17_TRANSITION_PROOF_FILE" "$temporary_directory/transition-proof.json"
+  chmod 600 "$temporary_directory/transition-proof.json"
+fi
 if [[ "$PHASE" != "baseline" ]]; then
   cp "$evidence_absolute" "$temporary_directory/existing-evidence.json"
 fi
