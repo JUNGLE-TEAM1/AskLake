@@ -102,12 +102,19 @@ git -C "$ROOT_DIR" merge-base --is-ancestor "$receipt_commit" HEAD || \
   fail "the Backend receipt revision is not contained in the current branch"
 
 deployment_before="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
-collector_deployment_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
 current_backend_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | .image' <<<"$deployment_before")"
-current_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_deployment_before")"
 current_frontend_image="$(kubectl get deployment frontend -n "$NAMESPACE" -o json | jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image')"
+collector_deployment_before=""
+current_collector_image=""
+collector_present_before=false
+if collector_deployment_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json 2>/dev/null)"; then
+  collector_present_before=true
+  current_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_deployment_before")"
+fi
 [[ "$new_backend_image" != "$current_backend_image" ]] || fail "the candidate Backend image is already deployed"
-[[ "$current_collector_image" == "$current_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
+if [[ "$collector_present_before" == "true" ]]; then
+  [[ "$current_collector_image" == "$current_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
+fi
 
 jq -e '
   (.spec.replicas // 0) == 2
@@ -117,13 +124,15 @@ jq -e '
   and (.status.unavailableReplicas // 0) == 0
 ' <<<"$deployment_before" >/dev/null || fail "the current Backend Deployment is not steady"
 
-jq -e '
-  (.spec.replicas // 0) == 1
-  and (.status.readyReplicas // 0) == 1
-  and (.status.updatedReplicas // 0) == 1
-  and (.status.availableReplicas // 0) == 1
-  and (.status.unavailableReplicas // 0) == 0
-' <<<"$collector_deployment_before" >/dev/null || fail "the current Trino result collector Deployment is not steady"
+if [[ "$collector_present_before" == "true" ]]; then
+  jq -e '
+    (.spec.replicas // 0) == 1
+    and (.status.readyReplicas // 0) == 1
+    and (.status.updatedReplicas // 0) == 1
+    and (.status.availableReplicas // 0) == 1
+    and (.status.unavailableReplicas // 0) == 0
+  ' <<<"$collector_deployment_before" >/dev/null || fail "the current Trino result collector Deployment is not steady"
+fi
 
 bash "$ROOT_DIR/scripts/verify-eks-backend-image-provenance.sh" \
   "$RECEIPT_PATH" "$new_backend_image" "$receipt_commit" >/dev/null
@@ -196,9 +205,13 @@ jq -e --arg namespace "$NAMESPACE" '
 
 release_revision_before="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | select(.name == "asklake-web") | .revision')"
 deployment_generation_before="$(jq -r '.metadata.generation' <<<"$deployment_before")"
-collector_generation_before="$(jq -r '.metadata.generation' <<<"$collector_deployment_before")"
 pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
-collector_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
+collector_generation_before=""
+collector_pod_uids_before=""
+if [[ "$collector_present_before" == "true" ]]; then
+  collector_generation_before="$(jq -r '.metadata.generation' <<<"$collector_deployment_before")"
+  collector_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
+fi
 
 helm upgrade --install asklake-web "$CHART_DIR" \
   --namespace "$NAMESPACE" --create-namespace=false \
@@ -206,20 +219,24 @@ helm upgrade --install asklake-web "$CHART_DIR" \
 
 release_revision_after="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | select(.name == "asklake-web") | .revision')"
 deployment_after="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
-collector_deployment_after="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
 deployment_generation_after="$(jq -r '.metadata.generation' <<<"$deployment_after")"
-collector_generation_after="$(jq -r '.metadata.generation' <<<"$collector_deployment_after")"
 deployed_image_after="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | .image' <<<"$deployment_after")"
-deployed_collector_image_after="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_deployment_after")"
 pod_uids_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
-collector_pod_uids_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
 [[ "$release_revision_after" == "$release_revision_before" ]] || fail "server dry-run changed the Helm release revision"
 [[ "$deployment_generation_after" == "$deployment_generation_before" ]] || fail "server dry-run changed the Backend Deployment generation"
-[[ "$collector_generation_after" == "$collector_generation_before" ]] || fail "server dry-run changed the collector Deployment generation"
 [[ "$deployed_image_after" == "$current_backend_image" ]] || fail "server dry-run changed the deployed Backend image"
-[[ "$deployed_collector_image_after" == "$current_collector_image" ]] || fail "server dry-run changed the deployed collector image"
 [[ "$pod_uids_after" == "$pod_uids_before" ]] || fail "server dry-run replaced Backend Pods"
-[[ "$collector_pod_uids_after" == "$collector_pod_uids_before" ]] || fail "server dry-run replaced collector Pods"
+if [[ "$collector_present_before" == "true" ]]; then
+  collector_deployment_after="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
+  collector_generation_after="$(jq -r '.metadata.generation' <<<"$collector_deployment_after")"
+  deployed_collector_image_after="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_deployment_after")"
+  collector_pod_uids_after="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=trino-result-collector -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
+  [[ "$collector_generation_after" == "$collector_generation_before" ]] || fail "server dry-run changed the collector Deployment generation"
+  [[ "$deployed_collector_image_after" == "$current_collector_image" ]] || fail "server dry-run changed the deployed collector image"
+  [[ "$collector_pod_uids_after" == "$collector_pod_uids_before" ]] || fail "server dry-run replaced collector Pods"
+elif kubectl get deployment trino-result-collector -n "$NAMESPACE" >/dev/null 2>&1; then
+  fail "server dry-run created the previously absent collector Deployment"
+fi
 
 bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
 verify_backend_secret_runtime
@@ -230,6 +247,7 @@ echo "backend_candidate_receipt=verified_fix_ancestor"
 echo "backend_candidate_platform=linux_amd64"
 echo "backend_candidate_values_change=backend_image_only"
 echo "backend_candidate_collector_image=same_immutable_digest"
+echo "backend_candidate_collector_baseline=$([[ "$collector_present_before" == "true" ]] && echo present || echo absent)"
 echo "backend_candidate_server_dry_run=passed"
 echo "backend_candidate_cluster_mutation=zero"
 echo "backend_candidate_pre_rollout_health=passed"

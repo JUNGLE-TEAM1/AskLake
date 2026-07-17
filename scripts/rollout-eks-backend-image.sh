@@ -34,7 +34,7 @@ stop_monitor() {
 }
 
 rollback_on_error() {
-  local exit_code=$? rollback_deadline rollback_steady
+  local exit_code=$? rollback_deadline rollback_steady collector_rollback_restored
   trap - ERR
   set +e
   stop_monitor
@@ -52,9 +52,17 @@ rollback_on_error() {
         fi
         sleep 5
       done
+      collector_rollback_restored=false
+      if [[ "$old_collector_present" == "true" ]]; then
+        if [[ "$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="trino-result-collector")].image}' 2>/dev/null)" == "$old_collector_image" ]]; then
+          collector_rollback_restored=true
+        fi
+      elif ! kubectl get deployment trino-result-collector -n "$NAMESPACE" >/dev/null 2>&1; then
+        collector_rollback_restored=true
+      fi
       if [[ "$rollback_steady" == "true" ]] \
         && [[ "$(kubectl get deployment fastapi -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="fastapi")].image}')" == "$old_backend_image" ]] \
-        && [[ "$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="trino-result-collector")].image}')" == "$old_collector_image" ]]; then
+        && [[ "$collector_rollback_restored" == "true" ]]; then
         echo "backend_rollout_rollback=completed_and_steady" >&2
       else
         echo "backend_rollout_rollback=workload_restored_but_postcheck_failed" >&2
@@ -108,15 +116,22 @@ RELEASE_REVISION_BEFORE="$(helm list -n "$NAMESPACE" -o json | jq -r '.[] | sele
 [[ "$RELEASE_REVISION_BEFORE" =~ ^[0-9]+$ ]] || fail "the current Helm release revision is unavailable"
 
 backend_before="$(kubectl get deployment fastapi -n "$NAMESPACE" -o json)"
-collector_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json)"
 frontend_before="$(kubectl get deployment frontend -n "$NAMESPACE" -o json)"
 old_backend_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "fastapi") | .image' <<<"$backend_before")"
-old_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_before")"
+collector_before=""
+old_collector_image=""
+old_collector_present=false
+if collector_before="$(kubectl get deployment trino-result-collector -n "$NAMESPACE" -o json 2>/dev/null)"; then
+  old_collector_present=true
+  old_collector_image="$(jq -r '.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image' <<<"$collector_before")"
+fi
 frontend_image_before="$(jq -r '.spec.template.spec.containers[] | select(.name == "frontend") | .image' <<<"$frontend_before")"
 frontend_generation_before="$(jq -r '.metadata.generation' <<<"$frontend_before")"
 frontend_pod_uids_before="$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=frontend -o json | jq -r '.items[].metadata.uid' | LC_ALL=C sort)"
 [[ "$old_backend_image" != "$new_backend_image" ]] || fail "the new Backend image is already deployed"
-[[ "$old_collector_image" == "$old_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
+if [[ "$old_collector_present" == "true" ]]; then
+  [[ "$old_collector_image" == "$old_backend_image" ]] || fail "FastAPI and collector currently use different Backend images"
+fi
 
 target_secret_before="$(kubectl get secret asklake-backend-runtime -n "$NAMESPACE" -o json)"
 secret_keys_before="$(jq -c '.data | keys | sort' <<<"$target_secret_before")"
@@ -279,6 +294,7 @@ echo "backend_rollout_replicas=2_of_2"
 echo "backend_rollout_pod_digest=verified"
 echo "backend_rollout_collector_replicas=1_of_1"
 echo "backend_rollout_collector_digest=verified"
+echo "backend_rollout_collector_baseline=$([[ "$old_collector_present" == "true" ]] && echo present || echo absent)"
 echo "backend_rollout_frontend_mutation=zero"
 echo "backend_rollout_secret_mutation=zero"
 echo "backend_rollout_http_samples=$sample_count"
