@@ -9,7 +9,7 @@
 - `terraform/`: 기존/new EKS Auto Mode cluster, external/MVP-owned VPC network, ECR repository, Trino handoff와 opt-in MSK/RDS/S3 data-plane 계약
 - `helm/asklake-foundation/`: namespace, workload별 service account, backend/Spark namespace RBAC, non-secret runtime boundary ConfigMap
 - `helm/asklake-ingress/`: EKS Auto Mode IngressClassParams/Class와 HTTPS ALB routing 계약
-- `helm/asklake-web/`: immutable image와 runtime 준비 gate 뒤 Frontend/FastAPI 및 Trino result collector를 배포하는 Backend workload 계약
+- `helm/asklake-web/`: immutable image와 runtime 준비 gate 뒤 Frontend/FastAPI, Trino result collector와 opt-in FastAPI HPA를 배포하는 Backend workload 계약
 - `helm/asklake-scale-smoke/`: Metrics API와 General NodePool scale-out을 확인한 뒤 제거하는 임시 test Deployment
 - `helm/asklake-auto-mode/`: 명시적인 운영값이 없으면 아무 resource도 만들지 않는 General/Spark NodeClass·NodePool 계약
 - `values/dev.example.yaml`: B가 manifest render와 fake client test에 사용할 예시 값
@@ -144,7 +144,9 @@ Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark N
 
 Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto Mode `IngressClassParams`/`IngressClass`로 하나의 ALB를 관리한다. dev MVP는 AWS 기본 DNS + HTTP를 사용하고 사용자 도메인·ACM·HTTPS는 후속 결정으로 남긴다. 기본 렌더는 비어 있고 실제 subnet/DNS/ACM 값은 저장소 밖에 둔다. apply/destroy confirmation, namespace selector, Helm ownership preflight와 Ingress-first cleanup은 [Phase 13 Auto Mode ALB 진입 경로](../../docs/eks-phase-13-auto-mode-alb.md), [ALB route 적용 기록](../../docs/eks-day15-alb-runtime-evidence.md)을 따른다.
 
-Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service, Frontend/FastAPI Deployment 및 HTTP endpoint가 없는 Trino result collector Deployment를 추가한다. Collector는 FastAPI와 같은 immutable Backend image·runtime identity를 사용하고 steady-state 1 replica로 RDS Query Run continuation을 회수한다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI·Collector Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
+Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service, Frontend/FastAPI Deployment, HTTP endpoint가 없는 Trino result collector Deployment와 opt-in FastAPI HPA를 추가한다. Collector는 FastAPI와 같은 immutable Backend image·runtime identity를 사용하고 steady-state 1 replica로 RDS Query Run continuation을 회수한다. HPA는 기본 disabled이고 CPU request 기반 `2..6`만 허용하며 활성화 시 FastAPI `spec.replicas`의 소유권을 autoscaling controller에 넘긴다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI·Collector Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
+
+Day 17 동시 bounded fixture는 전용 `asklake-runtime-config` release의 non-secret `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`을 사용한다. tracked test values는 Day 16 기본 group/table 한 쌍만 보존한다. Pair A가 MSK IAM group 범위를 승인한 뒤에만 private values에 최대 4개의 exact scale group/table 쌍을 추가한다. live ConfigMap raw patch와 기본 slot을 공유하는 동시 Job은 금지한다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 

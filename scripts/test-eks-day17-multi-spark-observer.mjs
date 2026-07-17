@@ -9,6 +9,7 @@ import {
   RunAliasTracker,
   assertSanitizedSnapshot,
   buildIsolation,
+  parseArgs,
   parseRdsPayload,
   parseScaleSlotConfig,
   parseSparkApplications,
@@ -126,6 +127,17 @@ test("Run aliases remain stable and isolation requires four 3-of-3 unique bounda
     index === 2 ? { ...run, groupHash: complete[0].groupHash } : run,
   );
   assert.equal(buildIsolation(duplicated).valid, false);
+});
+
+test("campaign start accepts ISO-8601 input and rejects invalid input", () => {
+  assert.equal(
+    parseArgs(["--since", "2026-07-17T10:50:00Z"]).since,
+    "2026-07-17T10:50:00Z",
+  );
+  assert.throws(
+    () => parseArgs(["--since", "not-a-timestamp"]),
+    /since must be an ISO-8601 timestamp/,
+  );
 });
 
 test("SparkApplication parser emits only state plus Run and UID short hashes", () => {

@@ -853,19 +853,21 @@ export function renderDashboard(snapshot, options) {
   return lines.join("\n");
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     namespace: DEFAULT_NAMESPACE,
     interval: 5,
     once: false,
     clear: true,
     record: DEFAULT_RECORD,
+    since: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--namespace") options.namespace = argv[++index];
     else if (argument === "--interval") options.interval = numberOr(argv[++index], -1);
     else if (argument === "--record") options.record = resolve(argv[++index]);
+    else if (argument === "--since") options.since = argv[++index];
     else if (argument === "--no-record") options.record = null;
     else if (argument === "--once") options.once = true;
     else if (argument === "--no-clear") options.clear = false;
@@ -878,6 +880,14 @@ function parseArgs(argv) {
   if (!Number.isInteger(options.interval) || options.interval < 2) {
     throw new Error("interval must be an integer of at least 2 seconds");
   }
+  if (
+    options.since !== null &&
+    (typeof options.since !== "string" ||
+      !options.since.trim() ||
+      !Number.isFinite(Date.parse(options.since)))
+  ) {
+    throw new Error("since must be an ISO-8601 timestamp");
+  }
   return options;
 }
 
@@ -889,6 +899,7 @@ Options:
   --namespace <name>       Kubernetes namespace (default: asklake-dev)
   --interval <seconds>     Refresh interval, minimum 2 (default: 5)
   --record <outside-path>  Sanitized JSONL path (default: ${DEFAULT_RECORD})
+  --since <ISO timestamp>  Observe a campaign that started before this process
   --no-record              Do not write JSONL
   --once                   Read and render one snapshot, then exit
   --no-clear               Keep previous snapshots in terminal scrollback
@@ -922,7 +933,9 @@ async function main() {
     return;
   }
 
-  const startedAt = new Date().toISOString();
+  const startedAt = options.since
+    ? new Date(options.since).toISOString()
+    : new Date().toISOString();
   const aliasTracker = new RunAliasTracker();
   const nodeScaleTracker = new NodeScaleTracker(startedAt);
   const regionResult = await resolveAwsRegion();

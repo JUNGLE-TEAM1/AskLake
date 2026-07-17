@@ -3,4 +3,5 @@ configMap:
   name: asklake-runtime
   data:
     ASKLAKE_CONTINUOUS_CONTROL_PLANE: external_ec2
+    ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON: '[{"consumerGroup":"asklake-eks-mvp-spark-v1","table":"eks_mvp_fixture"}]'
     ASKLAKE_SPARK_KUBERNETES_IMAGE: example.invalid/asklake/spark-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000

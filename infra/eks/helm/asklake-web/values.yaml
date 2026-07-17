@@ -30,6 +30,20 @@ backend:
   replicaCount: 0
   terminationGracePeriodSeconds: 360
   preStopDelaySeconds: 310
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 60
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        pods: 2
+        periodSeconds: 30
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        pods: 1
+        periodSeconds: 60
   serviceAccountName: asklake-backend
   service:
     name: fastapi
@@ -37,6 +51,7 @@ backend:
     port: 8080
   runtimeConfigMapName: asklake-runtime
   runtimeBoundaryConfigMapName: asklake-runtime-boundary
+  runtimeConfigRevision: ""
   runtimeSecretName: asklake-backend-runtime
   trinoRuntimeSecretName: asklake-backend-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem

@@ -812,7 +812,159 @@ bash scripts/capture-eks-day15-integration-baseline.sh --expect-pre-change
 
 위 live 검증 script와 Backend S3 runner는 모두 `ASKLAKE_EKS_CLUSTER_NAME`을 필수로 받고 AWS EKS endpoint와 현재 `kubectl` endpoint가 같은지 먼저 확인한다. namespace 존재 확인까지 통과하기 전에는 Kubernetes 또는 AWS runtime 검증을 수행하지 않는다.
 
-Phase 14 web/collector workload 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI·Collector Workload](eks-phase-14-web-workloads.md)를 따른다.
+Phase 14 web/collector workload와 FastAPI HPA 변경은 `bash scripts/verify-eks-web-workloads.sh`로 검사한다. verifier는 HPA 활성 render의 `autoscaling/v2`, `2..6`, CPU metric·scale behavior와 FastAPI `spec.replicas` 부재, HPA 비활성 render의 고정 replica 복귀, Collector 보존을 함께 확인한다. 실제 배포 values는 저장소 밖에 두고 Phase 6 image receipt와 함께 `deploy-eks-web-workloads.sh --render`로 먼저 검토한다. apply는 Foundation ServiceAccount, runtime ConfigMap/Secret, General NodePool label, B의 FastAPI runtime 경계가 실제로 준비된 뒤에만 허용하며 HPA 활성화에는 Metrics API와 baseline CPU 확인을 추가한다. 기존 Helm release의 image를 바꾸는 preflight는 `helm upgrade --install --dry-run=server`로 수행해 Helm field ownership을 유지하며, 별도 `kubectl apply --server-side` manager로 Deployment/HPA field를 인수하지 않는다. Phase 13 Ingress보다 workload를 먼저 배포하고 삭제할 때는 Ingress와 ALB finalizer를 먼저 제거한다. 자세한 gate와 명령은 [Phase 14 Frontend·FastAPI·Collector Workload](eks-phase-14-web-workloads.md)를 따른다.
+
+17일 scale 실험을 시작하기 전 별도 터미널에서 아래 read-only observer를 먼저 실행한다. 화면은 선택한 namespace의 HPA CPU/replica, FastAPI Deployment/Pod, Spark driver/executor와 phase, AWS 관리형 NodePool별 node 수, 최근 15분의 autoscaling/scheduling event를 5초마다 집계한다. 원본 Pod·Node·Run 이름, ARN, account, endpoint는 출력하거나 JSONL에 기록하지 않는다. AWS region은 `ASKLAKE_AWS_REGION`/`AWS_REGION`, 현재 kubeconfig, AWS config 순으로 찾고 cluster 이름은 `ASKLAKE_EKS_CLUSTER_NAME`을 우선 사용한다. 환경에서 보이는 EKS cluster가 정확히 하나일 때만 cluster 이름을 자동 선택한다.
+
+```bash
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+# 여러 EKS cluster가 보이는 계정에서는 반드시 지정한다.
+export ASKLAKE_EKS_CLUSTER_NAME='<reviewed-cluster>'
+node scripts/watch-eks-day17-scale.mjs \
+  --interval 5 \
+  --record /private/tmp/asklake-day17-scale-observer.jsonl
+```
+
+observer는 `kubectl get/list/raw/config view`, AWS `list/describe/config get`, 로컬 JSONL append만 수행하고 workload나 autoscaling 설정을 변경하지 않는다. `--record` 경로는 저장소 밖만 허용하고 파일 mode를 `0600`으로 고정한다. 직접 Pod Metrics RBAC가 없으면 화면에 `RBAC forbidden`을 표시하며, HPA가 배포된 뒤에는 HPA status의 aggregate CPU로 scale 판단을 계속 볼 수 있다. 부하 runner가 아래 aggregate JSON을 저장소 밖 파일에 갱신하면 `--load-status <path>`로 같은 화면의 `LOAD` 행에 연결한다. endpoint나 요청별 식별자는 이 파일에 넣지 않는다.
+
+```json
+{"phase":"ramp-100","targetRps":100,"totalRequests":4200,"non2xx":0,"serverErrors":0,"p95Ms":84}
+```
+
+첫 API 부하 단계는 외부 Backend ALB의 읽기 전용 `/api/health`에 50 RPS를 60초 동안 보낸다. runner는 실행 전에 현재 EKS context와 ALB steady target, Backend/RDS health를 확인하고 endpoint는 출력하거나 status JSON에 저장하지 않는다. status 파일은 저장소 밖에 mode `0600`으로 원자적으로 갱신한다. 5xx 또는 DB health 실패가 한 번이라도 발생하거나 transport 오류가 5회 연속 발생하거나 비-2xx 비율이 0.1%를 넘으면 중단한다. 다음 100/200 RPS 단계는 앞 단계 결과를 검토한 뒤 별도로 실행한다.
+
+```bash
+export ASKLAKE_DAY17_LOAD_CONFIRM=run-read-only-api-load
+export ASKLAKE_DAY17_LOAD_RATE=50
+export ASKLAKE_DAY17_LOAD_DURATION_SECONDS=60
+bash scripts/run-eks-day17-api-load.sh
+```
+
+같은 `runId`의 HPA 경합 실험은 전용 runner로만 수행한다. runner는 실행 전에 HPA current/desired와 FastAPI Ready가 정확히 `6/6/6`인지 확인하고, Deployment selector에서 서로 다른 Ready Pod 6개를 골라 동일한 내부 실행 요청을 동시에 보낸다. 새 producer fixture를 만들 수 있는 기존 권한이 없으면 IAM이나 NodePool 권한을 넓히지 않는다. 이 경우 exact batch marker와 100-record count가 이미 고정된 성공 fixture만 `--prepare-reuse`로 선택하며, 안전한 fixture가 없으면 실행하지 않는다. 전용 Run의 결과와 receipt는 항상 새로 만든다.
+
+```bash
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+bash scripts/run-eks-day17-hpa-race.sh --preflight
+
+export ASKLAKE_DAY17_REUSE_CONFIRM=reuse-persisted-bounded-fixture
+bash scripts/run-eks-day17-hpa-race.sh --prepare-reuse
+
+# 별도 read-only 부하와 observer에서 HPA/FastAPI 6/6/6을 확인한 뒤 실행한다.
+export ASKLAKE_DAY17_RACE_CONFIRM=run-one-day17-hpa-race
+bash scripts/run-eks-day17-hpa-race.sh --run
+```
+
+성공 receipt는 RDS Run과 Spark owner/attempt/generation, 외부 실행, Airflow DAG run, SparkApplication object/UID, 새 Iceberg snapshot, Catalog materialization을 직접 다시 읽고 각각 exact-one인지 확인해야 한다. input/output/Trino row count, data file, Continuous session도 함께 확인한다. 원본 식별자가 든 fixture/race receipt는 저장소 밖 mode `0600`만 허용하고 Git 문서에는 count와 가린 timeline만 남긴다.
+
+HPA scale-in으로 Airflow task가 실패한 경우 새 Run이나 새 SparkApplication을 만들어 보완하지 않는다. `--status`로 Spark의 영속 성공과 Catalog 미완료를 먼저 구분하고, `--clear-dry-run`이 같은 DAG run의 실패 task만 선택하는지 검토한다. 실제 `--clear-failed`는 별도 confirmation이 필요하며, 복구 뒤 `--sync-recovered`와 `--recover`로 새 외부 실행·SparkApplication·snapshot이 생기지 않았음을 재검증한다. 2026-07-17 실제 결과와 HTTP log 보존 한계는 [same-run race live evidence](eks-day17-b-same-run-race-live-evidence.md)를 따른다.
+
+17todo 7·8번의 동시 Spark 실행과 Node scale은 FastAPI HPA observer와 분리된 아래 read-only 화면으로 관찰한다. 이 observer는 실행 뒤 생기는 세 fixture Run을 A/B/C alias로 고정하고 RDS/Airflow/Spark/Catalog generation, SparkApplication UID short hash, driver/executor phase, group/table/output/checkpoint의 `3/3 unique`, 관리형 General/Spark instance type 집계와 최근 15분 scheduling/NodeClaim/consolidation event를 5초마다 표시한다. 원본 Run·Job·application·snapshot·dataset·group·table·output·checkpoint 식별자는 FastAPI Pod 안의 SELECT-only query에서 SHA-256 short hash로 바뀐 뒤에만 로컬로 반환한다.
+
+```bash
+cd /Users/sisu/Projects/jungle/AskLake
+node scripts/watch-eks-day17-multi-spark.mjs \
+  --interval 5 \
+  --record /private/tmp/asklake-day17-multi-spark-observer.jsonl
+```
+
+기본 record는 위 저장소 밖 경로이고 mode `0600`이다. observer는 Kubernetes get/list/config-view, AWS list/describe와 기존 FastAPI Pod 안의 RDS SELECT만 사용한다. Run, Job, Pod, Secret, ConfigMap, IAM, RBAC와 NodePool을 생성·수정·삭제하지 않는다. scale slot·candidate Job·SparkApplication RBAC·Node visibility가 아직 준비되지 않았으면 종료하거나 우회하지 않고 각각 `scale slots not configured`, `candidate jobs missing`, `SparkApplication RBAC unavailable`, `Node visibility unavailable` blocker로 남긴다. 화면과 sanitizer 회귀는 다음 명령으로 확인한다.
+
+```bash
+node --test scripts/test-eks-day17-multi-spark-observer.mjs
+node scripts/watch-eks-day17-multi-spark.mjs --once --no-clear
+```
+
+실제 세 Run 제출은 observer와 별도의 fail-closed runner로만 수행한다. `--preflight`는 기존 FastAPI Pod 안에서 RDS와 SparkApplication API를 읽을 뿐 새 Run·Job·Pod·ConfigMap을 만들지 않는다. 정확한 scale group/table 3쌍, snapshot candidate Job 3개, 하나의 100-record fixture batch, 고유 dataset/table, active slot 0, Airflow 설정과 SparkApplication list 권한을 모두 확인한다. 하나라도 실패하면 `--run`은 호출되지 않는다. `--run`은 별도 confirmation이 필요하고 제출 전에 mode `0600` private receipt를 `armed` 상태로 먼저 만들어, 부분 제출이나 터미널 중단 뒤 같은 명령을 자동 재실행하지 못하게 한다.
+
+```bash
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+bash scripts/run-eks-day17-multi-spark.sh --preflight
+
+# preflight가 passed이고 observer를 보고 있는 상태에서만 별도로 실행한다.
+export ASKLAKE_DAY17_MULTI_SPARK_CONFIRM=submit-three-isolated-spark-runs
+bash scripts/run-eks-day17-multi-spark.sh --run
+```
+
+성공 제출 receipt는 `/private/tmp/asklake-day17-multi-spark-receipt.json`에만 두며 원본 Run·Job·dataset·group·table·output·checkpoint 식별자를 포함하므로 Git에 넣지 않는다. 제출 결과가 `partial` 또는 `blocked`이면 새 Run으로 빈 자리를 자동 보충하지 않고 receipt와 observer를 먼저 검토한다.
+
+세 Run이 모두 terminal success가 된 뒤 17todo 9번의 데이터 결과는 아래 read-only
+verifier로 닫는다. verifier는 기존 FastAPI Pod에 `kubectl exec`하고 RDS
+transaction을 `READ ONLY`로 설정한 뒤, persisted Run/Job/dataset/source
+boundary/Spark commit/Catalog materialization과 Trino exact snapshot
+`_asklake_run_id` count 및 Iceberg snapshot data-file summary를 대조한다. 새
+Run·Job·Pod·SparkApplication이나 Kubernetes resource를 만들지 않으며 retry나
+Catalog 재실행도 하지 않는다.
+
+```bash
+cd /Users/sisu/Projects/jungle/AskLake
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export ASKLAKE_DAY17_MULTI_SPARK_RECEIPT=/private/tmp/asklake-day17-multi-spark-receipt.json
+export ASKLAKE_DAY17_MULTI_SPARK_RESULTS=/private/tmp/asklake-day17-multi-spark-results.json
+bash scripts/verify-eks-day17-multi-spark-results.sh --verify
+
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_eks_day17_multi_spark_results -v
+```
+
+입력과 출력은 모두 저장소 밖 `/private/tmp/asklake-day17-*.json`, mode `0600`만
+허용한다. 기존 결과 파일은 덮어쓰지 않으므로 재검증이 필요하면 이전 evidence를
+보존하고 새 출력 경로를 명시한다. stdout과 결과에는 Run A/B/C alias, count,
+boolean 판정만 남기며 원본 Run·Job·dataset·group·table·output·checkpoint·fixture
+식별자는 기록하지 않는다. 2026-07-17 실제 7·8·9번 결과는
+[multi-Spark live evidence](eks-day17-b-multi-spark-live-evidence.md)를 따른다.
+
+부하 종료 뒤 10번 scale-in과 cleanup은 다음 read-only audit로 확인한다.
+
+```bash
+export ASKLAKE_EKS_NAMESPACE=asklake-dev
+export ASKLAKE_DAY17_MULTI_SPARK_RECEIPT=/private/tmp/asklake-day17-multi-spark-baked-receipt.json
+export ASKLAKE_DAY17_MULTI_SPARK_RESULTS=/private/tmp/asklake-day17-multi-spark-results.json
+export ASKLAKE_DAY17_MULTI_SPARK_OBSERVER=/private/tmp/asklake-day17-multi-spark-observer.jsonl
+export ASKLAKE_DAY17_CLEANUP_AUDIT=/private/tmp/asklake-day17-cleanup-audit.json
+bash scripts/audit-eks-day17-cleanup.sh --audit
+```
+
+audit은 HPA `2/2`, FastAPI Deployment/Pod steady, campaign Run 3개 terminal,
+driver/executor active `0`, Spark Node peak에서 baseline 복귀와 removal event,
+Day 17 temporary Job/Pod/ConfigMap/Secret `0`, local load process `0`, durable
+Run/snapshot/materialization 보존을 확인한다. cleanup 대상이 남아 있으면
+fail-closed하며 자동 삭제하지 않는다. 대상의 정확한 ownership을 검토한 별도
+cleanup 전에는 completed Run, SparkApplication, RDS/Catalog/Iceberg object를
+삭제하지 않는다.
+
+10번 audit까지 통과하면 11번의 통합 receipt를 아래 fail-closed generator로
+만든다. generator는 HPA race/load/scale observer, baked multi-Spark campaign,
+multi-Spark observer/result, cleanup audit와 이전 제출 receipt를 함께 읽는다.
+API `2 → 6 → 2`, 동일 Run exact-one, driver/executor
+`Pending → Node 증가 → Running`, Run별 데이터/격리, Spark Node baseline 복귀와
+임시 리소스 `0`이 모두 참일 때만 출력한다.
+
+```bash
+node --test scripts/test-eks-day17-final-receipt.mjs
+node scripts/build-eks-day17-final-receipt.mjs
+```
+
+기본 출력은 저장소 밖
+`/private/tmp/asklake-day17-final-receipt.json`이며 mode `0600`이다. 기존 출력은
+덮어쓰지 않는다. 다시 검증할 때는 기존 evidence를 보존하고 `--output`으로 새
+`/private/tmp/asklake-day17-*.json` 경로를 지정한다. machine receipt에는
+Run A/B/C alias와 12자리 hash, timestamp, aggregate count만 남는다. 입력
+`privateIdentity`의 원본 Run/Job/application/snapshot/dataset/group/table/output/
+checkpoint 값, Kubernetes Node 이름/IP, URL, ARN이 복사되거나 forbidden key가
+생기면 실패한다.
+
+2026-07-17의 API/Spark 두 timeline, 가린 identity chain, 실패/재시도와 미실행
+범위는 [Day 17 최종 통합 evidence](eks-day17-final-integrated-evidence.md)를
+따른다. Pair A의 NodePool event는 기존 Phase 12/Day 14 문서에 링크하고 Pair B
+evidence에 복사하지 않는다.
+
+observer 자체 검증과 현재 상태 한 번 읽기는 다음처럼 수행한다.
+
+```bash
+node --test scripts/test-eks-day17-scale-observer.mjs
+node scripts/watch-eks-day17-scale.mjs --once --no-clear
+```
 
 14일 Metrics Server/Node scale 계약은 `bash scripts/verify-eks-metrics-scale.sh`로 검사한다. 실제 cluster에서는 `describe-addon-versions`로 호환되는 exact community add-on version을 선택하고 Terraform plan/apply 뒤 Metrics API와 `kubectl top`을 확인한다. Node scale smoke는 저장소 밖 values와 evidence 경로를 사용하며 비용 confirmation 없이는 실행되지 않는다. scale-out 뒤 임시 Helm release를 제거하고 Auto Mode scale-in까지 별도 기록한다.
 
@@ -1363,6 +1515,20 @@ Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 
 
 `spark_job_run.py`는 배포 경로 호환 façade이고 Kafka bounded offset·MSK IAM·fixture row-count 구현은 `backend/scripts/runtime/spark_job_runtime.py`에 있다. `scripts/verify-eks-workloads.sh`는 façade의 존재와 실제 runtime 구현을 각각 검사해야 하며, 구현 문자열을 façade에 복제해 검증을 통과시키지 않는다. EKS lease와 Kubernetes identity helper를 변경하면 realtime architecture budget과 `tests.test_eks_execution_contract`, `tests.test_eks_runtime_boundary`, `tests.test_runtime_io_ports`, `npm run test:spark-kubernetes`를 함께 실행한다.
 
+동시 bounded fixture 검증은 A가 승인한 MSK group을 먼저 `asklake-runtime-config` release의 `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`에 exact group/table 쌍으로 추가한다. 기본 `asklake-eks-mvp-spark-v1 → eks_mvp_fixture` slot은 항상 포함하고 scale slot은 최대 4개만 더한다. group과 table 중복, wildcard/prefix, 기본 slot 제거, 5개 초과는 Backend와 Spark runtime이 모두 거부한다. 실제 private values를 만들기 전 A의 IAM group 범위 승인이 없으면 기본 slot을 여러 Job에 복제하지 말고 blocker로 남긴다.
+
+Terraform의 Spark MSK group 권한은 `msk_scale_consumer_groups`에 `49d163cfbaf1`부터 필요한 exact 값만 선택한다. 변수 validation은 `scale17-01..04` 외 값과 wildcard를 거부하고, IAM policy는 기본 group ARN과 선택한 group ARN만 `DescribeGroup`/`AlterGroup` resource로 렌더한다. 3개 실험에는 `01..03`만 사용하며 4번째는 3개로 Pending 증거를 만들 수 없을 때 별도 검토 후 추가한다.
+
+각 scale Job의 `sourceConfig`에는 서로 다른 등록 group을 넣고 table은 요청으로 받지 않는다. FastAPI가 slot mapping에서 target을 정하며 active Run 예약은 PostgreSQL group별 advisory lock으로 직렬화된다. 따라서 동일 slot 두 번째 실행은 Airflow/Spark 호출 전 `409 EKS_MVP_FIXTURE_SLOT_ACTIVE`, 서로 다른 3~4개 slot은 각기 고유 group/table과 Run별 output/checkpoint로 진행된다. 빠른 정적 검증은 다음과 같다.
+
+```bash
+cd backend
+npm run test:kafka-fixture-boundary
+npm run test:spark-kubernetes
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_etl_job_delete.EtlJobDeleteRunConcurrencyTests.test_three_approved_fixture_slots_reserve_unique_groups_and_tables
+```
+
 15.5 bounded 물리 조회는 호환상 `scripts/run-eks-catalog-physical-read-smoke.sh` 이름을 유지한다. Git 제외 Phase 6 image receipt와 `datasetId`, `materializationRoot`, `objectUri`만 가진 Git 제외 `*.physical-read-input.json`을 명시한다. 이 실행기는 URI root 경계만 확인하며 Catalog API를 다시 조회하지 않으므로 `datasetId`는 운영자 인수 문맥이고 결과는 Catalog provenance 증거가 아니라 `bounded-s3-parquet-object` 증거다. `--validate-only`는 AWS/Kubernetes mutation 없이 receipt·입력·AMD64 image와 임시 SparkApplication manifest를 검사한다. `--live`는 별도 confirmation과 검증된 EKS context, Established CRD, Ready controller/webhook, `asklake-spark` ServiceAccount, Ready AMD64 Spark NodePool/NodeClass, 단일 Pod Identity association과 server-side dry-run을 모두 통과해야 한다. 그 뒤 최대 100행을 제한 조회하고 실제 row나 URI 대신 column/row count와 폭 일치만 출력한다. 성공·실패·timeout·signal 모두 현재 run label과 exact name prefix의 SparkApplication·Pod·Service·ConfigMap·PVC를 정리한다. cleanup/audit API 오류는 잔여 0으로 간주하지 않고 실패하며 Spark Secret read 거부도 확인한다. timeout은 1~3600초, poll은 0.1~30초로 제한한다.
 
 7/16 Pair A data-plane 작업 전에는 `scripts/capture-eks-day16-a-baseline.sh --expect-phase0`로 현재 Web/Airflow, Secret delivery, ServiceAccount/Pod Identity, Spark Operator, MSK endpoint, ECR/RDS/ALB, Continuous와 외부 EC2 rollback 기준점을 읽기 전용으로 고정한다. capture는 source/target Secret value를 출력하지 않고 canonical hash와 공유 token 동일성만 비교한다. 당시 발견한 Airflow password와 Backend Trino mapping drift는 canonical ExternalSecret/target으로 수렴했다. 이 기준점 문서는 역사적 입력이며 현재 판단은 Phase 4~7 증거와 재사용 verifier를 따른다.
@@ -1478,6 +1644,8 @@ Airflow MVP는 `LocalExecutor`, image-baked DAG와 RDS metadata를 사용한다.
 - A의 `asklake-web` release가 이미 설치돼 있으면 Frontend/Backend가 활성화된 일반 Helm install을 진행하지 않는다. Airflow-only component release는 비활성 component가 0개 resource로 렌더되는 verifier를 통과한 경우에만 사용한다. 동일 `frontend`/`fastapi` Service의 ownership 전환은 별도 rollback 절차가 합의되기 전까지 금지한다.
 
 AWS 입력이 준비되면 먼저 `mskSmoke.create=true`로 metadata smoke를 실행하고 성공 후 producer receipt의 batch ID/count로 bounded Kafka fixture를 실행한다. 정적 smoke는 `sparkApplication.create=true`와 고유 `runId`/`jobId`를 사용하고, 제품 경로는 exact fixture sourceConfig로 AskLake Job을 실행해 같은 `runId`가 Airflow와 동적 SparkApplication까지 전달되는지 확인한다. 두 경로 모두 실행 시점의 `earliest`~`latest`를 읽되 해당 `raw.fixture_batch_id`만 남겨 전용 `iceberg.asklake.eks_mvp_fixture` table을 replace commit하므로 이전 smoke batch나 Continuous 소유권과 섞이지 않는다. Spark report의 input/output count, commit source boundary와 snapshot ID가 producer expected count와 같아야 한다. 그 다음 Trino에서 `SELECT count(*) FROM iceberg.asklake.eks_mvp_fixture`와 snapshot/file evidence를 조회한다. 이 live 결과는 B 코드만으로 독립 생성할 수 없고 A의 endpoint, fixture topic, Pod Identity, bucket, Secret, ECR digest가 실제로 연결되어야 한다.
+
+금요일 scale 실행에서는 위 단일 smoke와 별도로 승인된 3개 slot부터 시작하고, 현재 Spark 여유 용량을 넘지 못한 경우에만 네 번째 slot을 사용한다. 실행 전 `group → table → fixture batch → expected count` 표를 private receipt 입력에 고정하고, 모든 Run이 terminal인 뒤 group, Run별 output/checkpoint, table, snapshot, Catalog dataset이 pairwise unique인지 교차 검사한다. `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON` 변경은 live ConfigMap을 raw patch하지 않고 전용 runtime-config release의 private values, server dry-run, rollback 절차로 전달한다.
 
 일반 FastAPI batch 실행은 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 deterministic `SparkApplication`을 제출한다. driver와 executor에는 모두 Spark 전용 workload selector, AMD64 selector와 `NoSchedule` toleration을 넣고, package resolution cache는 `spark.jars.ivy=/tmp/.ivy2`로 고정한다. provider unit test는 두 replica가 같은 run identity를 사용하고, create 응답 유실 뒤 한 번의 POST만으로 복구하며, 다른 identity object를 거절하는지 검증한다. driver Pod가 생성되기 전 submission failure에서는 Pod log `404`가 SparkApplication status 원인을 덮지 않아야 한다. 실제 cluster smoke에서는 실행 중 같은 `runId` 요청이 RDS lease로 차단되고 terminal 재요청이 같은 UID object를 복구하며 label 기준 object 수가 하나인지 확인한다.
 

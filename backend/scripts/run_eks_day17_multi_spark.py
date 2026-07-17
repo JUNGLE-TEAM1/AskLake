@@ -22,6 +22,7 @@ from app.models import (
     KafkaContinuousRuntimeModel,
     KafkaContinuousSessionModel,
 )
+from app.repositories import etl_repository
 from app.services.airflow_client import build_airflow_client
 
 
@@ -613,10 +614,24 @@ def prepare_candidate_jobs() -> dict[str, Any]:
         db.close()
 
 
+def initialize_submission_schema() -> None:
+    """Serialize lazy repository DDL before submit mode starts its threads."""
+    db = SessionLocal()
+    try:
+        # Every kubectl exec starts a fresh Python process, so the repository's
+        # process-local schema-ready cache begins empty. Run its initialization
+        # once here; otherwise all command_job threads can enter ensure_schema()
+        # together and deadlock on etl_jobs DDL.
+        etl_repository.ensure_schema(db)
+    finally:
+        db.close()
+
+
 def submit_runs() -> dict[str, Any]:
     preflight, facts = collect_preflight()
     if preflight["status"] != "passed":
         return preflight
+    initialize_submission_schema()
     facts_by_alias = {fact.alias: fact for fact in facts}
     barrier = threading.Barrier(3)
     result_lock = threading.Lock()

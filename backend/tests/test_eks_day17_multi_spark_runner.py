@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import MagicMock, call, patch
 
 from scripts.run_eks_day17_multi_spark import (
     CandidateFact,
@@ -8,7 +9,9 @@ from scripts.run_eks_day17_multi_spark import (
     REQUIRED_SCALE_SLOTS,
     candidate_job_values,
     evaluate_preflight,
+    initialize_submission_schema,
     replace_source_field,
+    submit_runs,
 )
 
 
@@ -181,6 +184,51 @@ class Day17MultiSparkRunnerTests(unittest.TestCase):
                 {"CONSUMER GROUP ID", "Consumer Group ID"},
                 REQUIRED_SCALE_SLOTS[0][1],
             )
+
+    def test_submission_schema_initialization_uses_one_session(self):
+        db = MagicMock()
+
+        with (
+            patch(
+                "scripts.run_eks_day17_multi_spark.SessionLocal",
+                return_value=db,
+            ),
+            patch(
+                "scripts.run_eks_day17_multi_spark.etl_repository.ensure_schema",
+            ) as ensure_schema,
+        ):
+            initialize_submission_schema()
+
+        ensure_schema.assert_called_once_with(db)
+        db.close.assert_called_once_with()
+
+    def test_submit_initializes_schema_before_starting_threads(self):
+        threads = [MagicMock() for _ in REQUIRED_SCALE_SLOTS]
+        for thread in threads:
+            thread.is_alive.return_value = False
+
+        with (
+            patch(
+                "scripts.run_eks_day17_multi_spark.collect_preflight",
+                return_value=({"status": "passed"}, passing_facts()),
+            ),
+            patch(
+                "scripts.run_eks_day17_multi_spark.initialize_submission_schema",
+            ) as initialize_schema,
+            patch(
+                "scripts.run_eks_day17_multi_spark.threading.Thread",
+                side_effect=threads,
+            ) as thread_factory,
+        ):
+            timeline = MagicMock()
+            timeline.attach_mock(initialize_schema, "initialize_schema")
+            timeline.attach_mock(thread_factory, "thread")
+            result = submit_runs()
+
+        self.assertEqual(timeline.mock_calls[0], call.initialize_schema())
+        self.assertEqual(timeline.mock_calls[1][0], "thread")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["counts"]["submittedRuns"], 0)
 
 
 if __name__ == "__main__":

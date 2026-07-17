@@ -76,6 +76,9 @@ backend:
 
 airflow:
   enabled: true
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
   image:
     repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/airflow
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -185,6 +188,9 @@ sparkApplication:
 trino:
   enabled: true
   replicas: 1
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
   image:
     repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/trino
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

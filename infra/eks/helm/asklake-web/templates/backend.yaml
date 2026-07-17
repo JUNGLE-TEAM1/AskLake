@@ -8,7 +8,9 @@ metadata:
     {{- include "asklake-web.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
   replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: 3
   progressDeadlineSeconds: 600
   selector:
@@ -22,6 +24,9 @@ spec:
         app.kubernetes.io/component: backend
       annotations:
         asklake.io/runtime-boundary-configmap: {{ .Values.backend.runtimeBoundaryConfigMapName | quote }}
+        {{- with .Values.backend.runtimeConfigRevision }}
+        asklake.io/runtime-config-revision: {{ . | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.backend.serviceAccountName }}
       automountServiceAccountToken: true

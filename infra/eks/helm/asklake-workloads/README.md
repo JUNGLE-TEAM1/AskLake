@@ -60,3 +60,11 @@ FastAPI's normal batch path uses the in-cluster Kubernetes API to create a deter
 The foundation ServiceAccount contract sets `asklake-backend` and `asklake-spark` to `automountServiceAccountToken: true`. FastAPI needs the token to manage `SparkApplication` objects; the Spark driver needs it to create and monitor executor Pods. The 15-day MVP keeps driver and executor on the same `asklake-spark` ServiceAccount, so executor Pods inherit the driver token/RBAC as a documented residual risk; split them before production. Frontend, Airflow, MSK smoke, and Trino keep the Kubernetes API token disabled. FastAPI startup/readiness use the DB-aware `/api/health` endpoint, while liveness uses a TCP socket so an RDS outage removes Pods from Service endpoints without causing restart loops.
 
 Airflow uses `LocalExecutor` with the DAG baked into its custom image and RDS metadata over `verify-full` TLS. Do not mirror the upstream Airflow base image as the application image: the delivery workflow must build `airflow/Dockerfile`, or `/opt/airflow/dags` will be empty. The migration hook explicitly enables FAB AuthManager, migrates the database, creates the API user when absent, and always resets its Secret-backed password. The chart creates no EFS/PVC or shared DAG/log volume, so Pod-local logs are not durable across restarts. The complete A/B contract review is in `docs/eks-day15-b-workload-contract-review.md`, and the dev deployment receipt is in `docs/eks-day16-b-airflow-live-evidence.md`.
+
+Airflow API server, scheduler, DAG processor, migration Job, and Trino coordinator
+are General workloads. Their values must keep both
+`asklake.io/workload-class=general` and `kubernetes.io/arch=amd64`; the schema
+rejects Spark/ARM64 overrides, and `scripts/verify-eks-workloads.sh` checks every
+rendered Pod template. A chart change does not mutate the live release by itself:
+use a server-side dry-run and verify actual Pod placement during the next
+authorized Helm upgrade.
