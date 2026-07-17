@@ -19,6 +19,7 @@
 13. [final-audit.md](./final-audit.md): 정량 재감사, 잔여 위험, END_STATE 증거와 guarded Go/No-Go
 14. [operations/staged-rollout-and-rollback.md](./operations/staged-rollout-and-rollback.md): production 전 수동 gate, canary, 관찰, rollback template
 15. [contracts/deployed-ui-no-reactivation.md](./contracts/deployed-ui-no-reactivation.md): 배포 UI 무변경, compatibility façade 비활성, production mock/legacy 차단 계약
+16. [contracts/etl-job-query-boundary.md](./contracts/etl-job-query-boundary.md): Job list/detail runtime refresh, hydrate, permission과 facet application 경계
 
 ## 기준선 재생성
 
