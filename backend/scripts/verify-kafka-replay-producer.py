@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 from unittest.mock import patch
@@ -72,6 +74,41 @@ def main() -> None:
     assert producer_service.resolve_input_path(None).is_file()
 
     with tempfile.TemporaryDirectory() as directory:
+        json_input = Path(directory) / "click-events.jsonl"
+        json_input.write_text(
+            json.dumps(
+                {
+                    "event_id": "EVT-1",
+                    "review": "product_click",
+                    "created_at": "2026-07-15T00:00:00Z",
+                    "raw": {
+                        "event_time": "2026-07-15T00:00:00Z",
+                        "event_id": "EVT-1",
+                        "event_type": "product_click",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        dry_run = subprocess.run(
+            [
+                "node",
+                str(producer_service.SCRIPT_PATH),
+                "--dry-run",
+                "--input",
+                str(json_input),
+                "--limit",
+                "1",
+            ],
+            cwd=producer_service.BACKEND_DIR,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        assert dry_run.returncode == 0, dry_run.stderr
+        assert "input valid: 1 messages" in dry_run.stdout
+
         raw_input = Path(directory) / "click-events.log"
         raw_input.write_text("2026-07-15T00:00:00Z EVT-1 USR-1 SES-1 click P-1 / mobile direct 1\n", encoding="utf-8")
         raw_manager = producer_service.ReplayProducerManager()

@@ -228,7 +228,9 @@ async function* readInputLines(targetPath) {
   }
 }
 
-const readJsonLines = readInputLines;
+async function* readJsonLines(targetPath) {
+  yield* readInputLines(targetPath);
+}
 
 function parseJsonLine(line, lineNumber) {
   try {
