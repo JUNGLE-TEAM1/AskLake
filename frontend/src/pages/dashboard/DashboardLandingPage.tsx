@@ -113,6 +113,7 @@ export function DashboardLandingPage({
         className="dashboard-page-header"
         icon={<BarChart3 size={18} />}
         leadingAlign="center"
+        size="sm"
         title="대시보드"
       />
 

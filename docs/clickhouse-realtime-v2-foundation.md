@@ -11,7 +11,7 @@ PR02는 다음 기반만 추가한다.
 - 공식 ClickHouse Kafka Connect Sink plugin이 포함된 worker image build
 - 관리자와 ingest/materializer/reader/migration/observer 계정을 분리하는 초기화 script
 - backend의 V2 설정 검증, 단일 consumer owner guard와 secret-free health/config 응답
-- Alembic revision `0012_clickhouse_realtime_v2_foundation`의 10개 expand-only metadata table
+- Alembic revision `0016_clickhouse_realtime_v2_foundation`의 10개 expand-only metadata table
 
 PR02는 connector instance를 등록하지 않고 Kafka message를 소비하지 않는다. raw/serving ClickHouse table, receipt auditor, materializer, Catalog publication, Dashboard routing도 만들지 않는다. `KAFKA_CONNECT_SINK_ENABLED=true`는 connector 등록이나 수집 시작 명령이 아니며, 실제 raw ingest는 PR03부터 구현한다.
 
@@ -120,7 +120,7 @@ V2 flag가 켜지면 `v2.status`는 `configuration_validated`가 되지만 PR02�
 
 ## Alembic expand migration
 
-`0012_clickhouse_realtime_v2_foundation`은 단일 head `0011_rag_control_plane_fencing` 다음에 아래 10개 table을 만든다.
+`0016_clickhouse_realtime_v2_foundation`은 단일 head `0015_ai_generation_evidence_audit` 다음에 아래 10개 table을 만든다.
 
 | Table | PR02 schema 목적 |
 | --- | --- |

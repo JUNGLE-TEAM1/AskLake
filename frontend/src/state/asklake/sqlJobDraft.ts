@@ -7,17 +7,44 @@ export const sqlJobPermissionAccess = ["조회", "쿼리 실행", "메타데이�
 
 export function buildSqlJobPermissionRoles(
   accessScope: NonNullable<CreateDerivedDatasetRequest["job"]>["accessScope"] | undefined,
-  owner: string,
+  principalId?: string,
 ) {
   if (accessScope === "private") {
-    return [{ access: [...sqlJobPermissionAccess], checked: true, name: owner }];
+    return [];
   }
 
-  return [
-    { access: [...sqlJobPermissionAccess], checked: true, name: "Data Engineer Group" },
-    { access: [...sqlJobPermissionAccess], checked: accessScope !== "project", name: "Data Analyst Group" },
-    { access: [...sqlJobPermissionAccess], checked: accessScope === "project", name: "Project Members" },
-  ];
+  if (accessScope === "organization" || !accessScope) {
+    return [{
+      access: [...sqlJobPermissionAccess],
+      checked: true,
+      name: "모든 인증 사용자",
+      principalId: "authenticated-users",
+      principalType: "public" as const,
+    }];
+  }
+
+  const normalizedPrincipalId = principalId?.trim() ?? "";
+  if (!normalizedPrincipalId) return [];
+  return [{
+    access: [...sqlJobPermissionAccess],
+    checked: true,
+    name: normalizedPrincipalId,
+    principalId: normalizedPrincipalId,
+    principalType: "group" as const,
+  }];
+}
+
+export function buildSqlJobPermissionSummary(
+  accessScope: NonNullable<CreateDerivedDatasetRequest["job"]>["accessScope"] | undefined,
+  owner: string,
+  principalId?: string,
+) {
+  if (accessScope === "organization" || !accessScope) return "모든 인증 사용자 · 조직 내부";
+  if (accessScope === "project") {
+    const normalizedPrincipalId = principalId?.trim() ?? "";
+    return normalizedPrincipalId ? `그룹 ${normalizedPrincipalId} · 프로젝트 멤버` : "프로젝트 그룹 선택 필요";
+  }
+  return `${owner} · 소유자 전용`;
 }
 
 export function buildSqlDatasetJobDraft(
@@ -47,8 +74,12 @@ export function buildSqlDatasetJobDraft(
     permission: {
       ...initialDraftPipeline.permission,
       owner: permissionOwner,
-      roles: buildSqlJobPermissionRoles(request.job?.accessScope, permissionOwner),
-      summary: request.job?.permissionSummary || "Data Engineer Group · 조직 내부 · 승인 완료",
+      roles: buildSqlJobPermissionRoles(request.job?.accessScope, request.job?.principalId),
+      summary: buildSqlJobPermissionSummary(
+        request.job?.accessScope,
+        permissionOwner,
+        request.job?.principalId,
+      ),
     },
     quality: {
       invalidRows: [],

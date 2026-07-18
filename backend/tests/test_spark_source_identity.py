@@ -6,7 +6,7 @@ from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 SCRIPTS_DIR = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -105,6 +105,54 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
+        frame = FakeFrame()
+        spark = SimpleNamespace(table=Mock(return_value=frame))
+
+        for source_path in (
+            "iceberg:asklake.asklake.amazon_products",
+            "iceberg://asklake/asklake/amazon_products",
+            "asklake.asklake.amazon_products",
+        ):
+            self.assertIs(
+                spark_job_run.read_source(spark, "iceberg", source_path, []),
+                frame,
+            )
+
+        self.assertEqual(
+            spark.table.call_args_list,
+            [call("`asklake`.`asklake`.`amazon_products`")] * 3,
+        )
+
+    def test_invalid_iceberg_source_manifest_path_fails_closed(self) -> None:
+        spark = SimpleNamespace(table=Mock())
+
+        with self.assertRaisesRegex(ValueError, "ICEBERG_SOURCE_INVALID"):
+            spark_job_run.read_source(spark, "iceberg", "iceberg:missing-table", [])
+
+    def test_iceberg_source_manifest_reads_the_committed_snapshot(self) -> None:
+        frame = FakeFrame()
+        reader = Mock()
+        iceberg_reader = Mock()
+        reader.format.return_value = iceberg_reader
+        iceberg_reader.option.return_value = iceberg_reader
+        iceberg_reader.load.return_value = frame
+        spark = SimpleNamespace(read=reader, table=Mock())
+
+        result = spark_job_run.read_source(
+            spark,
+            "iceberg",
+            "iceberg:asklake.asklake.amazon_products",
+            [],
+            source_snapshot_id="123456789",
+        )
+
+        self.assertIs(result, frame)
+        reader.format.assert_called_once_with("iceberg")
+        iceberg_reader.option.assert_called_once_with("snapshot-id", "123456789")
+        iceberg_reader.load.assert_called_once_with("`asklake`.`asklake`.`amazon_products`")
+        spark.table.assert_not_called()
+
     def test_current_iceberg_snapshot_uses_main_ref_not_newest_history(self) -> None:
         target = {
             "catalog": "iceberg",

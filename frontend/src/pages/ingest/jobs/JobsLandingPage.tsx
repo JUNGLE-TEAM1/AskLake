@@ -121,12 +121,10 @@ export function JobsLandingPage({
             새 수집/처리 생성
           </Button>
         )}
-        icon={<Database size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
+        icon={<Database size={20} />}
         leadingAlign="center"
-        size="lg"
+        size="sm"
         title="수집/처리"
-        titleClassName="text-4xl"
       />
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">

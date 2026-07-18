@@ -80,6 +80,24 @@ def project_job(**overrides: object) -> RagJobListItem:
     return RagService._job_list_item(job_model(**overrides))
 
 
+def test_stalled_nonterminal_job_is_reported_as_failed_in_history() -> None:
+    stalled = RagService._job_list_item(
+        job_model(status="embedding", stage="embedding", updated_at=NOW - timedelta(hours=3)),
+        observed_at=NOW,
+    )
+    fresh = RagService._job_list_item(
+        job_model(status="embedding", stage="embedding", updated_at=NOW - timedelta(minutes=5)),
+        observed_at=NOW,
+    )
+
+    assert stalled.status == "failed"
+    assert stalled.stage == "embedding"
+    assert stalled.error is not None
+    assert "다시 색인" in stalled.error
+    assert fresh.status == "embedding"
+    assert fresh.error is None
+
+
 def catalog_dataset() -> dict[str, object]:
     names = ["content", "title", "category", "id", "unused"]
     return {

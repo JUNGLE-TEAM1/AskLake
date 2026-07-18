@@ -80,9 +80,11 @@ const askLakeDataFiles = [
 
 const catalogPageFiles = [
   "src/pages/catalog/CatalogPage.tsx",
+  "src/pages/catalog/CatalogWorkspacePage.tsx",
   "src/pages/catalog/CatalogExplorerPage.tsx",
   "src/pages/catalog/CatalogDetailPage.tsx",
   "src/pages/catalog/CatalogLineage.tsx",
+  "src/pages/catalog/catalogLineageProjection.ts",
   "src/pages/catalog/catalogModel.ts",
   "src/pages/catalog/useCatalogExplorerState.ts",
 ];
@@ -257,6 +259,24 @@ const checks = [
     ],
   },
   {
+    name: "Primary workspace pages share the compact page header density",
+    files: [
+      "src/components/ui/page-header.tsx",
+      "src/pages/ingest/jobs/JobsLandingPage.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+      "src/pages/sql/SqlAnalysisPage.tsx",
+      "src/pages/dashboard/DashboardLandingPage.tsx",
+    ],
+    patterns: [
+      /const compact = size === "sm";/,
+      /compact \? "text-2xl sm:text-\[28px\]"/,
+      /size="sm"\s*title="수집\/처리"/,
+      /size="sm"\s*title="검색\/카탈로그"/,
+      /size="sm"\s*title="SQL 분석"/,
+      /size="sm"\s*title="대시보드"/,
+    ],
+  },
+  {
     name: "SQL analysis page orchestrates focused SQL modules",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
@@ -267,6 +287,7 @@ const checks = [
       /const queryAi = useSqlQueryAi\(\{/,
       /limit: previewRowLimit,/,
       /leadingAlign="center"/,
+      /size="sm"/,
       /<SqlDatasetContextPanel/,
       /<SqlQueryEditorPanel/,
       /<SqlResultsPanel/,
@@ -307,11 +328,18 @@ const checks = [
     name: "SQL context panel keeps dataset and Dashboard chart tools together",
     file: "src/pages/sql/SqlDatasetContextPanel.tsx",
     patterns: [
-      /<TabsTrigger value="tables"><Table2 \/> 분석 테이블<\/TabsTrigger>/,
-      /<TabsTrigger value="chart"><BarChart3 \/> 차트 생성하기<\/TabsTrigger>/,
+      /import \{ ChevronLeft \} from "lucide-react";/,
+      /aria-controls="sql-dataset-tools" aria-expanded="true"/,
+      /<ChevronLeft aria-hidden="true" \/>/,
+      /<TabsTrigger value="tables">분석 테이블<\/TabsTrigger>/,
+      /<TabsTrigger value="chart">차트 생성하기<\/TabsTrigger>/,
       /<SqlDatasetTree/,
       /<SqlChartConfigurator/,
       /className=\{styles\.datasetPanel\}/,
+    ],
+    forbiddenPatterns: [
+      /SqlPageIcon as BarChart3/,
+      /SqlPageIcon as PanelLeftClose/,
     ],
   },
   {
@@ -324,6 +352,25 @@ const checks = [
       /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
       /autocompleteCandidates\.map/,
       /title="선택 데이터셋 기준 SQL"/,
+    ],
+    forbiddenPatterns: [
+      /SqlPageIcon as PlayCircle/,
+      /SqlPageIcon as RotateCcw/,
+    ],
+  },
+  {
+    name: "SQL primary action buttons keep their text labels without decorative glyphs",
+    files: [
+      "src/pages/sql/SqlAiWriterDialog.tsx",
+      "src/pages/sql/SqlQueryEditorPanel.tsx",
+    ],
+    patterns: [
+      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*Nessie로 SQL 작성\s*<\/Button>/,
+      /<Button type="button" onClick=\{onReset\}[\s\S]*?>\s*SQL 초기화\s*<\/Button>/,
+      /<Button type="button" onClick=\{onExecute\}[\s\S]*?>\s*\{pending \? "실행 중" : "실행"\}\s*<\/Button>/,
+    ],
+    forbiddenPatterns: [
+      /<PopoverTrigger asChild>[\s\S]{0,260}<NessieMark/,
     ],
   },
   {
@@ -430,34 +477,39 @@ const checks = [
     ],
   },
   {
-    name: "SQL page feature icons share the requested table glyph",
+    name: "SQL feature glyph compatibility and section marker stay visually distinct",
     file: "src/pages/sql/SqlPageIcon.tsx",
     patterns: [
       /import \{ Table2, type LucideProps \} from "lucide-react";/,
-      /SQL_PAGE_PANEL_ICON_CLASS_NAME = "rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm"/,
       /export function SqlPageIcon\(props: LucideProps\)/,
       /<Table2 \{\.\.\.props\} \/>/,
+      /SQL_PAGE_SECTION_MARKER_CLASS_NAME = "size-5 rounded-none bg-transparent shadow-none"/,
+      /export function SqlSectionMarker\(\)/,
+      /size-2\.5 rounded-full bg-sky-400 ring-4 ring-sky-50/,
     ],
   },
   {
-    name: "SQL panel headers use the reference white framed icon treatment",
+    name: "SQL tools header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlDatasetContextPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
-    name: "SQL editor header uses the reference white framed icon treatment",
+    name: "SQL editor header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
-    name: "SQL result header uses the reference white framed icon treatment",
+    name: "SQL result header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlResultsPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
@@ -524,22 +576,21 @@ const checks = [
     ],
   },
   {
-    name: "AI workspace submits through the governed SQL suggestion contract",
-    file: "src/pages/ai/AiChatPage.tsx",
-    patterns: [
-      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
-      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
-      /previousRequest\?\.controller\.abort\(\);/,
-      /const suggestion = await generateQueryAiSuggestion\(/,
-      /signal: controller\.signal,/,
-      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
-      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
-      /content: getQueryAiErrorMessage\(error\)/,
-      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
-      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
-      /message\.sql \? <pre className="ai-chat-sql">/,
+    name: "Catalog semantic workspace uses live Semantic Model and RAG contracts",
+    files: [
+      "src/pages/catalog/CatalogWorkspacePage.tsx",
+      "src/pages/semantic/SemanticLayerPage.tsx",
+      "src/services/semanticApi.ts",
     ],
-    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+    patterns: [
+      /view === "semantic"/,
+      /<SemanticLayerPage datasets=\{catalogProps\.datasets\}/,
+      /listSemanticModels\(\)/,
+      /apiClient\.get<SemanticModel\[\]>\("\/api\/semantic-models"\)/,
+      /apiClient\.post<RagProfile>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/approve`/,
+      /<RagJobHistory datasetId=\{selectedDatasetId\}/,
+    ],
+    forbiddenPatterns: [/semanticLayerMock/, /services\/mockApi/],
   },
   {
     name: "AI suggestions preserve only the backend-validated response",
@@ -571,7 +622,7 @@ const checks = [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
       /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
-      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner\)/,
+      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
       /rag: false/,
@@ -599,8 +650,8 @@ const checks = [
     name: "SQL Job governance keeps access scope and permission summary aligned",
     file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [
-      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
-      /accessScope,\s*owner:[\s\S]*permissionSummary: buildPermissionSummary\(accessScope\)/s,
+      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope, principalLabel = ""\)/,
+      /accessScope,\s*owner,\s*permissionSummary: buildPermissionSummary\(accessScope, owner\),\s*principalId: owner,/s,
     ],
     forbiddenPatterns: [
       /eyebrow="처리 작업"/,
@@ -735,10 +786,52 @@ const checks = [
     patterns: [
       /getCatalogDataset\(datasetId\)/,
       /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
-      /className="catalog-result-description"/,
+      /className="catalog-result-tags"/,
       /const firstSampleRow = dataset\.sampleRows\[0\] \?\? \[\];/,
       /accessorKey: "sample"/,
       /header: "샘플"/,
+    ],
+  },
+  {
+    name: "Source and Catalog cards keep only primary scan information",
+    files: [
+      "src/pages/etl/SourceConnectionStages.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+    ],
+    patterns: [
+      /min-h-28[\s\S]*?\{meta\.label\}/,
+      /className="catalog-result-heading"/,
+      /className="catalog-result-tags"/,
+    ],
+    forbiddenPatterns: [
+      /\{meta\.description\}/,
+      /className="catalog-result-description"/,
+    ],
+  },
+  {
+    name: "The global workspace sidebar stays compact without dropping navigation labels",
+    files: [
+      "src/components/layout/Sidebar.tsx",
+      "src/styles/base.css",
+    ],
+    patterns: [
+      /--sidebar-width:\s*152px/,
+      /\.brand img[\s\S]*?width:\s*112px/,
+      /\.nav-item span[\s\S]*?text-overflow:\s*ellipsis/,
+      /nameClassName="text-sm"[\s\S]*?size="sm"/,
+    ],
+  },
+  {
+    name: "Catalog lineage keeps PROCESS data but collapses it in the UI projection",
+    files: [
+      "src/pages/catalog/CatalogLineage.tsx",
+      "src/pages/catalog/catalogLineageProjection.ts",
+    ],
+    patterns: [
+      /collapseProcessLineageGraph\(lineageGraph\)/,
+      /dataset\.layer === "PROCESS"/,
+      /datasets: graph\.datasets\.filter\(\(dataset\) => dataset\.layer !== "PROCESS"\)/,
+      /canBridgeProcessColumn/,
     ],
   },
   {
@@ -999,6 +1092,8 @@ const checks = [
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /<main className=\{cn\(styles\.workspace[\s\S]*contextPanel\.collapsed && \([\s\S]*className=\{styles\.contextRailButton\}/,
+      /aria-controls="sql-dataset-tools" aria-expanded="false"/,
+      /<ChevronRight aria-hidden="true" \/>/,
     ],
   },
   {
@@ -1352,6 +1447,23 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard editor starts with data closed and keeps an accessible inspector toggle",
+    files: [
+      "src/pages/dashboard/DashboardPage.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+      "src/styles/dashboard-runtime-shell.css",
+    ],
+    patterns: [
+      /const \[isDatasetSidebarOpen, setIsDatasetSidebarOpen\] = useState\(false\)/,
+      /const \[isInspectorOpen, setIsInspectorOpen\] = useState\(true\)/,
+      /inspectorOpen=\{isInspectorAvailable && isInspectorOpen\}/,
+      /aria-label=\{inspectorOpen \? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"\}/,
+      /aria-controls="asklake-dashboard-inspector"/,
+      /\.asklake-dashboard-inspector-toggle[\s\S]*?margin-left:\s*auto/,
+    ],
+  },
+  {
     name: "ETL source asset browser uses the shared explorer tree",
     file: "src/pages/etl/SourceAssetTree.tsx",
     patterns: [
@@ -1519,7 +1631,7 @@ const checks = [
     name: "Frontend defaults to the live dashboard Assistant API",
     file: "src/services/dashboardAssistantService.ts",
     patterns: [
-      /VITE_DASHBOARD_ASSISTANT_API_PATH \?\? "\/api\/dashboards\/assistant"/,
+      /VITE_DASHBOARD_ASSISTANT_API_PATH \|\| "\/api\/dashboards\/assistant"/,
     ],
   },
   {
@@ -1885,7 +1997,7 @@ const checks = [
     files: askLakeDataFiles,
     patterns: [
       /const jobDataFlows = new Set<FlowId>\(\["jobs", "jobDetail", "jobRuns"\]\);/,
-      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql", "ai"\]\);/,
+      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql"\]\);/,
       /const jobsHydration = useJobsHydration\(\{ enabled: enabled && dataRequirements\.jobs, showToast, state \}\);/,
       /useCatalogHydration\(\{ enabled: enabled && dataRequirements\.catalog, showToast, state \}\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
