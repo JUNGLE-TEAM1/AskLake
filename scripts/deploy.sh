@@ -218,13 +218,13 @@ health_check() {
 
   for attempt in $(seq 1 "$HEALTH_RETRIES"); do
     printf 'Checking frontend: %s (attempt %s/%s)\n' "$url" "$attempt" "$HEALTH_RETRIES"
-    if curl -fsSI --max-time 20 "$url" >/dev/null; then
+    if curl -fsSI --location --max-time 20 "$url" >/dev/null; then
       printf 'Checking backend: %s%s (attempt %s/%s)\n' "$url" "$HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
-      if health_payload="$(curl -fsS --max-time 20 "${url}${HEALTH_PATH}")"; then
+      if health_payload="$(curl -fsS --location --max-time 20 "${url}${HEALTH_PATH}")"; then
         if printf '%s' "$health_payload" | health_payload_ready; then
           printf 'Backend health is deployment-ready.\n'
           printf 'Checking AI gateway: %s%s (attempt %s/%s)\n' "$url" "$AI_HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
-          if ai_health_payload="$(curl -fsS --max-time 20 "${url}${AI_HEALTH_PATH}")"; then
+          if ai_health_payload="$(curl -fsS --location --max-time 20 "${url}${AI_HEALTH_PATH}")"; then
             if printf '%s' "$ai_health_payload" | python3 -c '
 import json
 import sys
@@ -238,10 +238,15 @@ raise SystemExit(0 if isinstance(payload, dict) and payload.get("ok") is True el
               return
             fi
           fi
-          printf 'AI gateway health is not ready.\n' >&2
+          printf 'AI gateway health is not ready after redirect resolution.\n' >&2
+        else
+          printf 'Backend health JSON is not ready after redirect resolution; expected .ok=true and .database.ok=true with .statusCode=200.\n' >&2
         fi
-        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true with .statusCode=200.\n' >&2
+      else
+        printf 'Backend health request failed after redirect resolution.\n' >&2
       fi
+    else
+      printf 'Frontend reachability or redirect check failed.\n' >&2
     fi
 
     if [[ "$attempt" -lt "$HEALTH_RETRIES" ]]; then
