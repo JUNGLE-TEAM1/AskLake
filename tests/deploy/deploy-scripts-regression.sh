@@ -446,6 +446,33 @@ else
   record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
+mock_stack_metadata_bootstrap() (
+  local stack_name="$1"
+
+  ensure_started() { printf 'ensure_started\n'; }
+  ssh_run() { printf 'git_pull\n'; }
+  remote_deploy_preflight() { printf 'preflight\n'; }
+  bootstrap_metadata_schema() { printf 'metadata_bootstrap\n'; }
+  bootstrap_trino_dependencies() { printf 'trino_bootstrap\n'; }
+  prepare_clickhouse_runtime() { printf 'clickhouse_prepare\n'; }
+  remote_compose() { printf 'compose:%s\n' "$1"; }
+  health_check() { printf 'health_check\n'; }
+  verify_trino_runtime() { printf 'trino_verify\n'; }
+  verify_clickhouse_runtime() { printf 'clickhouse_verify\n'; }
+
+  "${stack_name}_stack"
+)
+
+for stack_name in start deploy restart; do
+  if output="$(mock_stack_metadata_bootstrap "$stack_name" 2>&1)" \
+    && [[ "$output" == *$'preflight\nmetadata_bootstrap\ntrino_bootstrap'* ]] \
+    && [[ "$output" == *$'metadata_bootstrap\ntrino_bootstrap\nclickhouse_prepare\ncompose:'* ]]; then
+    record_pass "$stack_name bootstraps metadata schema before application services"
+  else
+    record_fail "$stack_name bootstraps metadata schema before application services"
+  fi
+done
+
 mock_health_check() (
   local payload="$1"
 
@@ -528,6 +555,45 @@ expect_health_failure \
 expect_health_failure \
   'health rejects malformed JSON without echoing it' \
   "$SECRET_SENTINEL"
+
+mock_redirect_health_check() (
+  local payload='{"ok":true,"database":{"ok":true}}'
+  local curl_log="$TMP_DIR/redirect-health-curl.log"
+
+  HEALTH_RETRIES=1
+  HEALTH_RETRY_DELAY=0
+  HEALTH_PATH=/api/health
+
+  resolve_app_url() {
+    printf 'http://deploy.asklake.test\n'
+  }
+
+  curl() {
+    printf '%s\n' "$*" >> "$curl_log"
+    if [[ " $* " == *' --location '* ]]; then
+      if [[ " $* " == *' -fsSI '* ]]; then
+        return 0
+      fi
+      printf '%s' "$payload"
+      return 0
+    fi
+    return 22
+  }
+
+  sleep() {
+    :
+  }
+
+  health_check
+  [[ "$(wc -l < "$curl_log")" -eq 3 ]]
+  ! grep -Fv -- '--location' "$curl_log" >/dev/null
+)
+
+if mock_redirect_health_check >/dev/null 2>&1; then
+  record_pass 'health follows redirect for frontend, backend, and AI readiness requests'
+else
+  record_fail 'health follows redirect for frontend, backend, and AI readiness requests'
+fi
 
 printf 'deploy regression summary: %s passed, %s failed, %s skipped\n' \
   "$pass_count" "$fail_count" "$skip_count"

@@ -59,6 +59,7 @@ RUNTIME_NAMES = {
     'review_permission_issue',
     'review_validation',
     'run_kafka_continuous_worker',
+    'settings',
     'status',
     'str',
     'sum',
@@ -80,6 +81,7 @@ def command_kafka_continuous_job(
         ContinuousCommandRequest(command=command, job_id=job.id),
         actor,
         worker=CallableKafkaRuntimeGateway(run_kafka_continuous_worker),
+        dispatch_worker=settings.continuous_control_plane == "embedded",
         hooks=ContinuousCommandHooks(
             is_kafka_job=is_kafka_job,
             runtime_from_job=continuous_runtime_from_job,
