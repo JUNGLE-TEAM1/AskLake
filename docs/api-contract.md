@@ -2334,6 +2334,7 @@ Response `200 OK`:
 - 생성 직후에는 Catalog에 추가하지 않습니다.
 - 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. `publish_run_result`가 저장한 dataset과 materialization history는 Catalog·SQL·AI route 진입 시 Catalog domain loader가 `GET /api/catalog/datasets`로 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
+- 검증된 Spark/Iceberg publication은 같은 payload와 `catalog_datasets.source_manifest`에 RAG source contract를 저장합니다. `sourceManifest`는 `manifestVersion=1`, Dataset/Run identity, Spark-readable Iceberg table path, source fingerprint, expiry, exact `icebergSnapshotId`를 포함합니다. RAG Spark parent stage는 이 snapshot을 `snapshot-id` option으로 읽으며 최신 table head로 조용히 이동하지 않습니다. Iceberg snapshot 증적이 없으면 manifest를 발급하지 않고 RAG dispatch가 fail-closed 합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.

@@ -177,6 +177,9 @@ def parent_stage_context(manifest: dict) -> dict[str, Any]:
         )
     ):
         raise ValueError("RAG_PARENT_MANIFEST_REQUIRED_FIELDS_MISSING")
+    source_snapshot_id = str(manifest.get("sourceSnapshotId") or "").strip()
+    if source_format == "iceberg" and not source_snapshot_id:
+        raise ValueError("RAG_PARENT_ICEBERG_SNAPSHOT_REQUIRED")
     target = manifest.get("icebergTarget")
     if not isinstance(target, dict):
         raise ValueError("RAG_PARENT_ICEBERG_TARGET_REQUIRED")
@@ -200,6 +203,7 @@ def parent_stage_context(manifest: dict) -> dict[str, Any]:
         "sourcePath": source_path,
         "sourceFormat": source_format,
         "sourceFingerprint": source_fingerprint,
+        "sourceSnapshotId": source_snapshot_id or None,
         "paths": build_staging_paths(
             base_path=base_path,
             dataset_id=dataset_id,
@@ -454,6 +458,7 @@ def write_parent_stage(
         stage["sourcePath"],
         stage["sourceColumns"],
         source_collection=manifest.get("sourceCollection") or {},
+        source_snapshot_id=stage.get("sourceSnapshotId"),
     )
     normalized_df = normalize_columns(source_df, stage["sourceColumns"])
     role_body, role_title, role_metadata, role_identifiers = role_columns(manifest)

@@ -27,8 +27,8 @@ from runtime.contracts import (
 from runtime.config import SparkJobConfig
 from runtime.spark_iceberg_identifiers import (
     quote_spark_identifier,
+    read_spark_iceberg_source,
     required_iceberg_identifier,
-    spark_iceberg_source_identifier,
 )
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
@@ -892,10 +892,11 @@ def read_source(
     record_parsing=None,
     source_collection=None,
     transform_steps=None,
+    source_snapshot_id=None,
 ):
     source_collection = source_collection or {}
     if source_format == "iceberg":
-        return spark.table(spark_iceberg_source_identifier(source_path))
+        return read_spark_iceberg_source(spark, source_path, source_snapshot_id)
     exact_paths = incremental_source_paths(source_path, source_collection)
     if exact_paths == []:
         return empty_source_frame(spark, schema_columns)

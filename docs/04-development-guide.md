@@ -451,7 +451,7 @@ npm run build
 
 ### RAG Data Plane 검증
 
-Semantic RAG 색인은 backend control plane이 만든 manifest를 `asklake_rag_index` Airflow DAG에 전달한 뒤, Spark parent staging → chunk staging → embedding worker/OpenSearch publication 순서로 실행한다. Spark 단계는 Catalog가 승인한 Iceberg source identity와 role column만 읽고, checkpoint가 있는 deterministic parent/chunk ID를 생성한다. embedding worker는 provider key를 직접 받지 않고 private AI Gateway의 `/v1/embeddings`만 호출하며, 완성된 generation index를 alias로 원자 전환한다.
+Semantic RAG 색인은 검증된 Spark Catalog publication이 만든 `sourceManifest`를 backend control plane이 `asklake_rag_index` Airflow DAG에 전달한 뒤, Spark parent staging → chunk staging → embedding worker/OpenSearch publication 순서로 실행한다. Spark 단계는 Catalog가 승인한 Iceberg table과 exact snapshot ID, role column만 읽고, checkpoint가 있는 deterministic parent/chunk ID를 생성한다. Spark REST의 `UNKNOWN`은 제출 직후 나타날 수 있는 비종료 상태로 계속 polling하며 `FAILED`, `ERROR`, `KILLED`만 실패로 종료한다. embedding worker는 provider key를 직접 받지 않고 private AI Gateway의 `/v1/embeddings`만 호출하며, 완성된 generation index를 alias로 원자 전환한다.
 
 빠른 회귀는 실제 provider 호출 없이 다음 명령으로 확인한다. OpenSearch 통합 테스트는 고유 index/alias를 만들고 자신이 만든 리소스만 정리하며 `OPENSEARCH_INTEGRATION_URL`이 있을 때만 실행된다.
 
@@ -467,7 +467,7 @@ cd ../embedding-worker
 PYTHONPATH=. ../backend/.venv/bin/python -m pytest -q
 ```
 
-`.github/workflows/rag-opensearch-integration.yml`은 RAG backend/Spark/worker 경로가 바뀐 push와 PR에서 OpenSearch 2.19.1 service, Spark import smoke, backend RAG 회귀, quality gate, embedding worker test를 실행한다. 로컬 live 확인은 `docker compose up -d opensearch` 뒤 `OPENSEARCH_INTEGRATION_URL=http://127.0.0.1:9200`으로 integration marker를 명시한다.
+`.github/workflows/rag-opensearch-integration.yml`은 RAG backend/Spark/worker 경로가 바뀐 PR과 `dev`/`main` push에서 OpenSearch 2.19.1 service, production과 같은 PySpark 4.0.1 import smoke, backend RAG 회귀, quality gate, embedding worker test를 실행한다. feature branch push와 PR 이벤트가 같은 검증을 중복 실행하지 않는다. 로컬 live 확인은 `docker compose up -d opensearch` 뒤 `OPENSEARCH_INTEGRATION_URL=http://127.0.0.1:9200`으로 integration marker를 명시한다.
 
 생성된 Job의 수정 hydrate 계약은 아래 명령으로 별도 확인한다. 이 검증은 Kafka source와 schema/rule/permission/target metadata가 `GET /api/etl/jobs/{jobId}` 형태의 `JobRowData`로 다시 나오는지 확인한다.
 

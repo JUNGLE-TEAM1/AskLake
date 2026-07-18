@@ -288,6 +288,8 @@ File / S3 Prefix Job의 `run`/`retry`는 저장된 `Path / Prefix` 아래에서 
 
 Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다.
 
+검증된 Spark Catalog publication은 `sourceManifest`를 함께 저장한다. Iceberg Dataset의 manifest는 `manifestVersion`, `datasetId`, `sparkPath`, `format=iceberg`, `fingerprint`, `expiresAt`, `runId`, `icebergSnapshotId`를 포함하며, RAG parent staging은 table 최신 상태가 아니라 이 검증된 snapshot ID를 읽는다. snapshot 증적이 없는 Iceberg 결과에는 RAG용 manifest를 발급하지 않는다.
+
 Airflow DAG Run은 Catalog endpoint가 성공한 뒤에만 `success`가 된다. Jobs 화면의 상태 조회는 Job 상태만 갱신하며 Catalog 목록을 함께 요청하지 않는다. Catalog·SQL·AI 화면에 들어갈 때 해당 화면의 loader가 최신 Catalog 목록을 읽는다.
 
 `stopSchedule`/`resumeSchedule`은 배치에서는 자동 실행 중지/재개, 실시간에서는 수집 중지/재개로 해석한다. 실행 중인 실시간 Job을 중지하면 현재 Run도 `canceled`로 종료하고 중지 시각을 기록한다.

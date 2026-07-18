@@ -33,3 +33,15 @@ def spark_iceberg_source_identifier(value):
         required_iceberg_identifier(parts[2], "source.table"),
     )
     return ".".join(quote_spark_identifier(name) for name in names)
+
+
+def read_spark_iceberg_source(spark, value, snapshot_id=None):
+    identifier = spark_iceberg_source_identifier(value)
+    pinned_snapshot = str(snapshot_id or "").strip()
+    if not pinned_snapshot:
+        return spark.table(identifier)
+    return (
+        spark.read.format("iceberg")
+        .option("snapshot-id", pinned_snapshot)
+        .load(identifier)
+    )

@@ -29,7 +29,14 @@ def _safe_table(value: str) -> str:
 
 def cleanup_once(*, apply: bool, retention_days: int, keep_previous: int) -> dict[str, object]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    report: dict[str, object] = {"cutoff": cutoff.isoformat(), "candidates": [], "deletedIndexes": [], "droppedTables": [], "pendingTables": []}
+    report: dict[str, object] = {
+        "cutoff": cutoff.isoformat(),
+        "candidates": [],
+        "deletedIndexes": [],
+        "droppedTables": [],
+        "pendingIndexes": [],
+        "pendingTables": [],
+    }
     with SessionLocal() as db:
         manifests = db.scalars(select(RagIndexManifestModel).where(RagIndexManifestModel.status == "retired").order_by(RagIndexManifestModel.dataset_id.asc(), RagIndexManifestModel.activated_at.desc())).all()
         retained_by_dataset: dict[str, int] = {}
@@ -44,7 +51,14 @@ def cleanup_once(*, apply: bool, retention_days: int, keep_previous: int) -> dic
             report["candidates"].append(candidate)  # type: ignore[union-attr]
             if not apply:
                 continue
-            if client and manifest.index_name:
+            if manifest.index_name:
+                if client is None:
+                    report["pendingIndexes"].append(candidate)  # type: ignore[union-attr]
+                    continue
+                serving_indexes = client.alias_indices(manifest.alias_name)
+                if manifest.index_name in serving_indexes:
+                    report["pendingIndexes"].append(candidate)  # type: ignore[union-attr]
+                    continue
                 try:
                     client.delete_index(manifest.index_name)
                 except httpx.HTTPStatusError as exc:

@@ -49,6 +49,7 @@ RAG_STAGE_ORDER = {
     "validating": 5,
     "ready": 6,
 }
+SPARK_FAILED_STATES = {"FAILED", "ERROR", "KILLED"}
 
 
 def post_json(
@@ -92,6 +93,31 @@ def get_json(url: str) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeError("Spark REST returned an invalid payload")
     return body
+
+
+def wait_for_spark_submission(
+    rest_url: str,
+    submission_id: str,
+    *,
+    stage_label: str,
+) -> dict[str, str]:
+    """Poll Spark until a real terminal state; UNKNOWN is transient."""
+
+    deadline = time.time() + int(os.environ.get("ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS", "7200"))
+    while time.time() < deadline:
+        payload = get_json(f"{rest_url}/v1/submissions/status/{submission_id}")
+        state = str(payload.get("driverState") or "UNKNOWN").upper()
+        if state == "FINISHED":
+            return {"submissionId": submission_id, "driverState": state}
+        if state in SPARK_FAILED_STATES:
+            raise RuntimeError(f"{stage_label} failed: {state}")
+        time.sleep(
+            min(
+                10,
+                max(1, int(os.environ.get("ASKLAKE_RAG_SPARK_POLL_SECONDS", "5"))),
+            )
+        )
+    raise TimeoutError(f"{stage_label} timed out")
 
 
 def ensure_stage_callback_allows_work(
@@ -224,6 +250,9 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
     source_path = str(conf.get("sourcePath") or "").strip()
     if not source_path.startswith(("s3a://", "s3://", "file://", "iceberg:")):
         raise ValueError("RAG Spark staging requires a Spark-readable sourcePath; Catalog readUrl is not a Spark path")
+    source_manifest = conf.get("sourceManifest") if isinstance(conf.get("sourceManifest"), dict) else {}
+    if str(conf.get("sourceFormat") or "").casefold() == "iceberg" and not source_manifest.get("icebergSnapshotId"):
+        raise ValueError("RAG Iceberg staging requires a Catalog-verified icebergSnapshotId")
     parent_table = str(conf.get("parentTable") or "")
     parts = parent_table.split(".")
     if len(parts) != 3:
@@ -240,7 +269,8 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
         "policyFingerprint": conf.get("policyFingerprint"),
         "stagingBasePath": conf.get("stagingBasePath"),
         "icebergTarget": {"catalog": parts[0], "namespace": parts[1], "table": parts[2], "writeMode": "replace", "tableUri": f"iceberg://{parts[0]}/{parts[1]}/{parts[2]}"},
-        "sourceCollection": conf.get("sourceManifest", {}).get("sourceCollection") or {},
+        "sourceCollection": source_manifest.get("sourceCollection") or {},
+        "sourceSnapshotId": source_manifest.get("icebergSnapshotId"),
         "callbackUrl": f"{(os.environ.get('ASKLAKE_EXECUTION_API_BASE_URL') or os.environ.get('AIRFLOW_INTERNAL_BASE_URL') or '').rstrip('/')}/api/internal/airflow/rag-jobs/{conf['jobId']}/result",
         "callbackToken": os.environ.get("ASKLAKE_EXECUTION_API_TOKEN") or os.environ.get("AIRFLOW_INTERNAL_TOKEN") or "",
     }
@@ -267,17 +297,11 @@ def submit_parent_spark_job(conf: dict[str, Any]) -> dict[str, Any]:
     submission_id = str(created.get("submissionId") or "")
     if not submission_id:
         raise RuntimeError("Spark REST did not return a submissionId")
-    deadline = time.time() + int(os.environ.get("ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS", "7200"))
-    terminal = {"FINISHED", "FAILED", "ERROR", "KILLED", "UNKNOWN"}
-    while time.time() < deadline:
-        state_payload = get_json(f"{rest_url}/v1/submissions/status/{submission_id}")
-        state = str(state_payload.get("driverState") or "UNKNOWN").upper()
-        if state in terminal:
-            if state != "FINISHED":
-                raise RuntimeError(f"RAG parent Spark staging failed: {state}")
-            return {"submissionId": submission_id, "driverState": state}
-        time.sleep(min(10, max(1, int(os.environ.get("ASKLAKE_RAG_SPARK_POLL_SECONDS", "5")))))
-    raise TimeoutError("RAG parent Spark staging timed out")
+    return wait_for_spark_submission(
+        rest_url,
+        submission_id,
+        stage_label="RAG parent Spark staging",
+    )
 
 
 def submit_rag_spark_stage(conf: dict[str, Any], *, kind: str) -> dict[str, Any]:
@@ -300,16 +324,11 @@ def submit_rag_spark_stage(conf: dict[str, Any], *, kind: str) -> dict[str, Any]
     submission_id = str(created.get("submissionId") or "")
     if not submission_id:
         raise RuntimeError(f"RAG {kind} Spark stage did not return a submissionId")
-    terminal = {"FINISHED", "FAILED", "ERROR", "KILLED", "UNKNOWN"}
-    deadline = time.time() + int(os.environ.get("ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS", "7200"))
-    while time.time() < deadline:
-        state = str(get_json(f"{rest_url}/v1/submissions/status/{submission_id}").get("driverState") or "UNKNOWN").upper()
-        if state in terminal:
-            if state != "FINISHED":
-                raise RuntimeError(f"RAG {kind} Spark stage failed: {state}")
-            return {"submissionId": submission_id, "driverState": state}
-        time.sleep(min(10, max(1, int(os.environ.get("ASKLAKE_RAG_SPARK_POLL_SECONDS", "5")))))
-    raise TimeoutError(f"RAG {kind} Spark stage timed out")
+    return wait_for_spark_submission(
+        rest_url,
+        submission_id,
+        stage_label=f"RAG {kind} Spark stage",
+    )
 
 
 def rag_dag_failure_callback(context: dict[str, Any]) -> None:
@@ -342,7 +361,7 @@ def asklake_rag_index() -> None:
     @task(task_id="validate_rag_source")
     def validate(conf: dict[str, Any]) -> dict[str, Any]:
         manifest = conf.get("sourceManifest")
-        if not isinstance(manifest, dict) or manifest.get("manifestVersion") != 1 or manifest.get("datasetId") != conf.get("datasetId") or not manifest.get("readUrl") or not manifest.get("sparkPath") or not manifest.get("fingerprint") or not manifest.get("expiresAt"):
+        if not isinstance(manifest, dict) or manifest.get("manifestVersion") != 1 or manifest.get("datasetId") != conf.get("datasetId") or not manifest.get("readUrl") or not manifest.get("sparkPath") or not manifest.get("format") or not manifest.get("fingerprint") or not manifest.get("expiresAt") or (str(manifest.get("format") or "").casefold() == "iceberg" and not manifest.get("icebergSnapshotId")):
             raise ValueError("RAG indexing requires a Catalog-issued sourceManifest")
         if not conf.get("bodyColumns"):
             raise ValueError("RAG indexing requires approved bodyColumns")

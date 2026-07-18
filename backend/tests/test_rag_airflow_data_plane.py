@@ -121,3 +121,52 @@ def test_ready_retry_is_skippable_and_physical_tasks_have_bounded_retries(monkey
     assert 'guard_stage_start(conf, status="chunked", stage="chunking")' in source
     assert 'guard_stage_start(conf, status="embedding", stage="embedding")' in source
     assert 'status="validating"' in source
+
+
+def test_spark_unknown_state_is_polled_until_a_real_terminal_state(monkeypatch):
+    module = load_rag_dag_module(monkeypatch)
+    states = iter(["UNKNOWN", "RUNNING", "FINISHED"])
+    observed_urls = []
+
+    def next_state(url):
+        observed_urls.append(url)
+        return {"driverState": next(states)}
+
+    monkeypatch.setattr(module, "get_json", next_state)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    result = module.wait_for_spark_submission(
+        "http://spark-master:6066",
+        "driver-123",
+        stage_label="RAG parent Spark staging",
+    )
+
+    assert result == {"submissionId": "driver-123", "driverState": "FINISHED"}
+    assert len(observed_urls) == 3
+
+
+def test_spark_failure_state_remains_terminal(monkeypatch):
+    module = load_rag_dag_module(monkeypatch)
+    monkeypatch.setattr(module, "get_json", lambda _url: {"driverState": "FAILED"})
+
+    with pytest.raises(RuntimeError, match="RAG chunk Spark stage failed: FAILED"):
+        module.wait_for_spark_submission(
+            "http://spark-master:6066",
+            "driver-456",
+            stage_label="RAG chunk Spark stage",
+        )
+
+
+def test_iceberg_parent_stage_requires_catalog_snapshot_evidence(monkeypatch):
+    module = load_rag_dag_module(monkeypatch)
+    conf = {
+        "datasetId": "reviews",
+        "jobId": "job-1",
+        "parentTable": "asklake.rag.parents_reviews_job_1",
+        "sourceFormat": "iceberg",
+        "sourceManifest": {"format": "iceberg"},
+        "sourcePath": "iceberg:asklake.asklake.reviews",
+    }
+
+    with pytest.raises(ValueError, match="icebergSnapshotId"):
+        module.submit_parent_spark_job(conf)

@@ -204,7 +204,7 @@ REVIEWED_FUNCTION_DIGESTS = {
     etl_runtime_support: "d410df2ce0f73d32ababf30b0aeeaac09d091bd2f99f0ef0df373468492e7eeb",
     etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
     etl_run_projection: "009ba2344a14edc775694a32163b3819a5b61eed6fd55e825aa603a6703bfbdd",
-    etl_catalog_projection: "b363d72ed63532bc7636c213a27a3a447b0a93fc711ad11edb622db34dda07fe",
+    etl_catalog_projection: "8b7af995d75bb825f1bb436288dc064de9bd0fb886c527a441f2fa07741a7176",
     etl_pipeline_policy: "5134f1bc5d77d794671f55e2b3412df311980d3506314ce99c2cd6665c2cd510",
 }
 

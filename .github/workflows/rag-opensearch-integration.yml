@@ -2,11 +2,15 @@ name: RAG OpenSearch integration
 
 on:
   push:
+    branches:
+      - dev
+      - main
     paths:
       - "backend/app/**"
       - "backend/alembic/**"
       - "backend/scripts/rag_*.py"
       - "backend/scripts/spark_job_run.py"
+      - "backend/scripts/runtime/spark_*.py"
       - "backend/requirements*.txt"
       - "backend/tests/test_rag_*.py"
       - "backend/tests/test_semantic_rag_contract.py"
@@ -24,6 +28,7 @@ on:
       - "backend/alembic/**"
       - "backend/scripts/rag_*.py"
       - "backend/scripts/spark_job_run.py"
+      - "backend/scripts/runtime/spark_*.py"
       - "backend/requirements*.txt"
       - "backend/tests/test_rag_*.py"
       - "backend/tests/test_semantic_rag_contract.py"
@@ -62,7 +67,7 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements-test.txt
       - name: Install Spark import smoke dependency
-        run: python -m pip install "pyspark>=3.5,<4"
+        run: python -m pip install "pyspark==4.0.1"
       - name: Verify RAG Spark script imports
         env:
           PYTHONPATH: backend/scripts
