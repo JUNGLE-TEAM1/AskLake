@@ -55,9 +55,9 @@ class Settings(BaseSettings):
     clickhouse_user: str = "asklake"
     clickhouse_password: str | None = None
     clickhouse_database: str = "asklake"
-    clickhouse_query_timeout_seconds: float = Field(default=15.0, ge=1.0, le=300.0)
-    clickhouse_static_load_max_rows: int = Field(default=1_000_000, ge=1, le=100_000_000)
-    clickhouse_insert_batch_rows: int = Field(default=5_000, ge=1, le=100_000)
+    clickhouse_query_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    clickhouse_static_load_max_rows: int = Field(default=15_000_000, ge=1, le=100_000_000)
+    clickhouse_insert_batch_rows: int = Field(default=20_000, ge=1, le=100_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
     realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     trino_materializer_password: str | None = None
     trino_tls_ca_file: str | None = None
     trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
-    trino_max_response_bytes: int = Field(default=2_000_000, ge=65_536, le=50_000_000)
+    trino_max_response_bytes: int = Field(default=20_000_000, ge=65_536, le=50_000_000)
     trino_max_result_bytes: int = Field(default=50_000_000, ge=1_000_000, le=1_000_000_000)
     trino_max_result_pages: int = Field(default=1_000, ge=1, le=100_000)
     trino_result_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)

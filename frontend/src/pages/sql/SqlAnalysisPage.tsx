@@ -929,6 +929,7 @@ export function SqlAnalysisPage({
       )}
       {continuousSql.relationMix && (
         <ContinuousSqlJoinDialog
+          catalogDataset={continuousSql.catalogDataset}
           error={continuousSql.error}
           featureEnabled={continuousSql.featureEnabled}
           onCreate={() => void continuousSql.create()}
@@ -938,6 +939,7 @@ export function SqlAnalysisPage({
           open={continuousSql.dialogOpen}
           outputName={continuousSql.outputName}
           pending={continuousSql.pending}
+          progressMessage={continuousSql.progressMessage}
           result={continuousSql.result}
           staticDatasets={continuousSql.relationMix.staticDatasets}
           streamingDataset={continuousSql.relationMix.streamingDataset}

@@ -5,6 +5,10 @@
 
 ## Pipeline·Snapshot·SQL·Catalog 내부 경계
 
+### Catalog JOIN 유일키 자동 검증
+
+`POST /api/catalog/datasets/{datasetId}/unique-keys/verify-and-register`는 `{ columns: string[] }`을 받고 Dataset `manage` 권한을 검사한 뒤 query 가능한 정적 Iceberg table에서 exact `count(*)`, invalid key count, distinct key count를 계산한다. `invalidKeyRows=0`이고 `totalRows=distinctKeys`일 때만 단일/복합 key set을 Catalog에 저장한다. 실패는 `CATALOG_UNIQUE_KEY_VERIFICATION_FAILED`와 세 count를 반환하며 추정치나 UI 선언만으로 유일성을 등록하지 않는다. Continuous SQL UI는 `CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE`의 `datasetId`와 `joinColumns`를 이용해 이 API를 자동 호출하고 validate/create/start를 재개한다.
+
 PR 07의 내부 리팩터링은 기존 API 계약에 additive field도 추가하지 않는다. Pipeline draft validation, persisted Job mapping, finite Snapshot command planning, Catalog payload publication을 application/domain 경계로 옮기되 다음 외부 계약을 그대로 유지한다.
 
 - `recordParsing`, `schemaColumns`, Rule, schedule, permission, target request shape
@@ -4023,7 +4027,13 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 }
 ```
 
-ClickHouse mode에는 `storagePath`, `icebergTarget`, `checkpointPath`를 보내지 않으며 `staticBindingPolicy`는 `PINNED_AT_START`만 허용한다. 실행 시작 시 정적 Catalog relation의 exact S3/Iceberg snapshot을 Trino로 bounded load하고 ClickHouse local static table에 고정한다. Kafka Engine은 먼저 raw `ReplacingMergeTree(partition, offset)`에 원문과 offset을 보존하고, JOIN materialized view가 매칭된 row만 output `ReplacingMergeTree(partition, offset)`에 기록한다. 이 순서 때문에 INNER JOIN에서 매칭되지 않은 메시지도 소비 진도에서 사라지지 않으며 pause/resume은 같은 raw/output table을 재사용한다.
+ClickHouse mode에는 `storagePath`, `icebergTarget`, `checkpointPath`를 보내지 않으며 `staticBindingPolicy`는 `PINNED_AT_START`만 허용한다. 실행 시작 시 정적 Catalog relation의 exact S3/Iceberg snapshot에서 SQL 참조 열만 Trino page로 적재하고 snapshot identity가 포함된 ClickHouse local static table에 고정한다. source exact count와 local count가 같으면 같은 snapshot table을 resume/recover에서 재사용하고 다르면 truncate 후 재적재한다. 적재 뒤 compiled static JOIN key의 null·빈 값·`uniqExact` count를 다시 비교하며 불일치는 `CLICKHOUSE_STATIC_KEY_NOT_UNIQUE`로 시작을 실패시킨다.
+
+Kafka Engine table은 source payload를 `JSONEachRow`로 추정하지 않고 메시지 전체를 `_raw_message String`의 `RawBLOB`으로 소비한다. ingest materialized view는 Catalog streaming source의 `recordParsing`이 활성화된 경우 exact `expectedFieldCount`와 `\\s+` 위치 계약을 검사하고, 그렇지 않으면 `schemaColumns.sourceName`의 nested JSON path를 사용한다. timestamp는 timezone offset을 포함한 값을 `parseDateTime64BestEffortOrNull`로 변환한다. malformed JSON이나 field count mismatch는 offset을 조용히 건너뛰지 않고 Kafka consumer exception으로 노출한다.
+
+typed raw `ReplacingMergeTree(partition, offset)`는 JOIN 성공 여부와 무관하게 입력과 offset을 보존하고, JOIN materialized view가 매칭된 row만 output `ReplacingMergeTree(partition, offset)`에 기록한다. JOIN SELECT의 사용자 projection은 compiled `outputSchema` 이름으로 명시적으로 alias되어 ClickHouse target column과 정확히 일치한다. worker는 runtime table 존재와 `system.kafka_consumers`의 active 상태/exception을 함께 검사하며 consumer가 아직 등록되지 않았으면 `starting`, parser/consumer 오류가 있으면 `failed`와 `lastErrorCode/lastErrorMessage`를 반환한다. 이 순서 때문에 INNER JOIN에서 매칭되지 않은 메시지도 소비 진도에서 사라지지 않는다.
+
+pause는 Kafka table과 ingest/JOIN materialized view만 제거하고 안정적인 consumer group 이름, raw/output/static table을 보존한다. pause 중 topic에 쌓인 event는 resume에서 같은 consumer group offset 뒤부터 처리한다. Catalog Dataset은 raw offset과 query 가능한 output row가 확인된 첫 publication 이후에만 생성되며, start 응답이나 빈 table 생성만으로 게시 완료로 간주하지 않는다.
 
 ClickHouse Job 응답은 `servingMode=clickhouse`, `outputTarget`의 `engine/database/table/tableUri`를 반환한다. Catalog Dataset은 `storageFormat=clickhouse`, `clickhouseTable`, input offset과 별도인 output row count를 보존한다. Dataset row와 Dashboard widget physical query는 `FINAL`을 사용해 같은 `(partition, offset)` retry 중복을 제거한다. 일반 Trino query mapping은 만들지 않으므로 이 Dataset을 범용 SQL editor source로 사용하지 않는다. worker가 실패한 같은 Run을 Spark/Iceberg로 자동 전환하지 않으며 rollback은 새 실행 전에 flag를 끄고 기존 Iceberg mode로 Job을 생성하는 방식이다.
 

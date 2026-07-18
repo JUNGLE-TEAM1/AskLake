@@ -13,6 +13,7 @@ TEST_MODULES = (
     "tests.test_realtime_events",
     "tests.test_realtime_feature_flags",
     "tests.test_clickhouse_continuous_sql",
+    "tests.test_catalog_unique_key_verification",
     "tests.test_continuous_sql_planner",
     "tests.test_continuous_sql_runtime_performance",
     "tests.test_continuous_sql_runtime_contract",

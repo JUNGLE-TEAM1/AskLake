@@ -4,14 +4,18 @@ import { apiConfig } from "../../services/apiClient";
 import {
   commandContinuousSqlJob,
   createClickHouseContinuousSqlJob,
+  getContinuousSqlJob,
   type ContinuousSqlJob,
   validateContinuousSqlPlan,
+  verifyAndRegisterCatalogUniqueKey,
 } from "../../services/continuousSqlApi";
+import { getCatalogDataset } from "../../services/catalogApi";
 import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
-import type { AuditResult, CatalogDataset } from "../../types";
+import { ApiError, type AuditResult, type CatalogDataset } from "../../types";
 import {
   buildClickHouseOutputIdentity,
   buildContinuousSqlOutputName,
+  getContinuousSqlUniqueKeyIssue,
   getContinuousSqlRelationMix,
 } from "./continuousSqlUi";
 
@@ -36,6 +40,8 @@ export function useContinuousSqlJoin({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ContinuousSqlJob | null>(null);
+  const [catalogDataset, setCatalogDataset] = useState<CatalogDataset | null>(null);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const relationMix = useMemo(() => getContinuousSqlRelationMix(selectedDatasets), [selectedDatasets]);
   const featureEnabled = Boolean(
     featureConfig?.continuousSqlJoinEnabled && featureConfig.clickhouseContinuousJoinEnabled,
@@ -56,12 +62,59 @@ export function useContinuousSqlJoin({
     };
   }, []);
 
+  useEffect(() => {
+    if (!dialogOpen || !result || catalogDataset || result.observedState === "failed") return;
+    let active = true;
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+    const poll = async () => {
+      try {
+        const latest = await getContinuousSqlJob(result.id);
+        if (!active) return;
+        setResult(latest);
+        if (latest.observedState === "failed") {
+          setError(latest.lastErrorMessage || "ClickHouse 실시간 JOIN 실행에 실패했습니다.");
+          setProgressMessage(null);
+          return;
+        }
+        if (latest.observedState !== "running") {
+          setProgressMessage("ClickHouse Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.");
+        } else {
+          try {
+            const published = await getCatalogDataset(latest.outputDatasetId);
+            if (!active) return;
+            setCatalogDataset(published);
+            setProgressMessage("첫 실제 이벤트가 JOIN되어 GOLD 카탈로그와 대시보드 데이터 소스에 게시됐습니다.");
+            return;
+          } catch (catalogError) {
+            if (!(catalogError instanceof ApiError) || catalogError.status !== 404) throw catalogError;
+            setProgressMessage("Kafka 소비 준비 완료 · 첫 실제 이벤트가 들어오면 카탈로그와 대시보드에 즉시 게시됩니다.");
+          }
+        }
+      } catch (pollError) {
+        if (active) {
+          setProgressMessage("상태 확인이 지연되어 1초 뒤 다시 확인합니다.");
+          if (pollError instanceof ApiError && pollError.status < 500) setError(pollError.message);
+        }
+      }
+      if (active) timer = globalThis.setTimeout(() => void poll(), 1_000);
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer !== undefined) globalThis.clearTimeout(timer);
+    };
+  }, [catalogDataset, dialogOpen, result?.id]);
+
   const open = () => {
     if (!relationMix) return;
     setOutputName(buildContinuousSqlOutputName(relationMix.streamingDataset));
     setTriggerIntervalSeconds(1);
     setError(null);
     setResult(null);
+    setCatalogDataset(null);
+    setProgressMessage(null);
     setDialogOpen(true);
     onAction("analysis.continuous_sql.opened", "/api/query/continuous-jobs/validate", relationMix.streamingDataset.id);
   };
@@ -78,8 +131,26 @@ export function useContinuousSqlJoin({
     const outputIdentity = buildClickHouseOutputIdentity();
     setPending(true);
     setError(null);
+    setCatalogDataset(null);
+    setProgressMessage("SQL과 JOIN 구성을 검증하고 있습니다.");
     try {
-      await validateContinuousSqlPlan(planRequest);
+      const registeredKeys = new Set<string>();
+      while (true) {
+        try {
+          await validateContinuousSqlPlan(planRequest);
+          break;
+        } catch (validationError) {
+          const issue = getContinuousSqlUniqueKeyIssue(validationError);
+          const issueKey = issue ? `${issue.datasetId}:${issue.columns.join(",")}` : "";
+          if (!issue || registeredKeys.has(issueKey)) throw validationError;
+          registeredKeys.add(issueKey);
+          const dataset = selectedDatasets.find((item) => item.id === issue.datasetId);
+          setProgressMessage(`${dataset?.name ?? "정적 데이터셋"}의 JOIN 키를 실제 데이터 전체로 검사하고 자동 등록하고 있습니다.`);
+          await verifyAndRegisterCatalogUniqueKey(issue.datasetId, issue.columns);
+          setProgressMessage("유일키 등록이 완료되어 JOIN SQL을 다시 검증하고 있습니다.");
+        }
+      }
+      setProgressMessage("정적 스냅샷을 ClickHouse에 준비하고 실시간 JOIN 경로를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.");
       const job = await createClickHouseContinuousSqlJob({
         ...planRequest,
         clientRequestId: createClientRequestId(),
@@ -94,6 +165,14 @@ export function useContinuousSqlJoin({
       });
       const started = await commandContinuousSqlJob(job.id, "start", createClientRequestId());
       setResult(started.job);
+      if (started.job.observedState === "failed") {
+        throw new Error(started.job.lastErrorMessage || "ClickHouse 실시간 JOIN 실행에 실패했습니다.");
+      }
+      setProgressMessage(
+        started.job.observedState === "running"
+          ? "Kafka 소비 준비 완료 · 첫 실제 이벤트를 기다리고 있습니다."
+          : "ClickHouse Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
+      );
       onAction(
         "analysis.continuous_sql.started",
         `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
@@ -101,6 +180,7 @@ export function useContinuousSqlJoin({
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "실시간 JOIN Job을 만들지 못했습니다.");
+      setProgressMessage(null);
       onAction("analysis.continuous_sql.failed", "/api/query/continuous-jobs", relationMix.streamingDataset.id, "failed");
     } finally {
       setPending(false);
@@ -108,6 +188,7 @@ export function useContinuousSqlJoin({
   };
 
   return {
+    catalogDataset,
     create,
     dialogOpen,
     error,
@@ -115,6 +196,7 @@ export function useContinuousSqlJoin({
     open,
     outputName,
     pending,
+    progressMessage,
     relationMix,
     result,
     setDialogOpen,

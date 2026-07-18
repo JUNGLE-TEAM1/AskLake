@@ -28,15 +28,17 @@ export type ApiErrorResponse = {
 
 export class ApiError extends Error {
   code: string;
+  details?: Record<string, unknown> | null;
   diagnosticId?: string;
   retryable: boolean;
   stage: string;
   status: number;
 
-  constructor({ code, diagnosticId, message, retryable = false, stage = "api", status }: { code: string; diagnosticId?: string; message: string; retryable?: boolean; stage?: string; status: number }) {
+  constructor({ code, details, diagnosticId, message, retryable = false, stage = "api", status }: { code: string; details?: Record<string, unknown> | null; diagnosticId?: string; message: string; retryable?: boolean; stage?: string; status: number }) {
     super(message);
     this.name = "ApiError";
     this.code = code;
+    this.details = details;
     this.diagnosticId = diagnosticId;
     this.retryable = retryable;
     this.stage = stage;

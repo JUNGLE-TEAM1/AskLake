@@ -396,6 +396,33 @@ class ContinuousSqlService:
                 job.last_error_message = str(exc)[:2000]
                 run.last_error_code = job.last_error_code
                 run.last_error_message = job.last_error_message
+        elif (
+            continuous_sql_serving_mode(job) == "clickhouse"
+            and container_state == "starting"
+            and run is not None
+        ):
+            if job.desired_state == "running":
+                job.observed_state = "starting"
+                run.status = "starting"
+            job.last_error_code = None
+            job.last_error_message = None
+            run.last_error_code = None
+            run.last_error_message = None
+        elif (
+            continuous_sql_serving_mode(job) == "clickhouse"
+            and container_state == "failed"
+            and run is not None
+        ):
+            job.observed_state = "failed"
+            job.last_error_code = str(
+                worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
+            )
+            job.last_error_message = str(
+                worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
+            )[:2000]
+            run.status = "failed"
+            run.last_error_code = job.last_error_code
+            run.last_error_message = job.last_error_message
         elif container_state in {"exited", "missing", "not_running"}:
             if job.desired_state == "paused":
                 job.observed_state = "paused"
@@ -586,9 +613,22 @@ class ContinuousSqlService:
         container_state = str(worker.get("containerState") or "")
         worker_id = str(worker.get("containerId") or worker.get("workerAttemptId") or "") or None
         if command_name in {"start", "resume", "recover"}:
-            job.observed_state = "running" if container_state == "running" else "starting"
+            if container_state == "failed":
+                job.observed_state = "failed"
+                job.last_error_code = str(
+                    worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
+                )
+                job.last_error_message = str(
+                    worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
+                )[:2000]
+            else:
+                job.observed_state = "running" if container_state == "running" else "starting"
+                job.last_error_code = None
+                job.last_error_message = None
             if run is not None:
                 run.status = job.observed_state
+                run.last_error_code = job.last_error_code
+                run.last_error_message = job.last_error_message
         elif command_name == "pause":
             job.observed_state = "paused" if container_state in {"exited", "not_running"} else "pausing"
             if run is not None:
@@ -605,9 +645,11 @@ class ContinuousSqlService:
                 run.worker_id = worker_id
         command = self.db.get(ContinuousSqlCommandModel, command_record_id)
         if command is not None:
-            command.status = "completed"
+            command.status = "failed" if container_state == "failed" else "completed"
             command.result = {
                 "containerState": container_state or None,
+                "code": job.last_error_code if container_state == "failed" else None,
+                "message": job.last_error_message if container_state == "failed" else None,
                 "workerId": worker_id,
             }
             self.db.add(command)
