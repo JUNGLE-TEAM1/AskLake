@@ -54,6 +54,7 @@ class ClickHouseContinuousSqlPublicationService:
         publication_run_id = f"csqlch_{marker[:32]}"
         if self.repository.lock_job(job.id) is None:
             raise ValueError("ClickHouse Continuous SQL Job disappeared during publication")
+        previous = self.catalog_repository.get_dataset_payload(job.output_dataset_id) or {}
         existing_commit = self.live_repository.commit_by_run_id(publication_run_id)
         if existing_commit is not None:
             existing_batch = self.repository.batch_by_output_commit_id(
@@ -66,13 +67,54 @@ class ClickHouseContinuousSqlPublicationService:
                 if existing_batch is not None
                 else self.repository.next_batch_id(job.id, run.generation)
             )
+            source_ranges = list(existing_commit.source_ranges or [])
+            if not previous:
+                published_at = existing_commit.committed_at
+                evidence = {
+                    "batchId": batch_id,
+                    "generation": int(run.generation),
+                    "marker": marker,
+                    "rowCount": int(existing_commit.row_count or 0),
+                    "outputRowCount": output_row_count,
+                    "sourceRanges": source_ranges,
+                    "staticSnapshots": list(run.static_bindings or []),
+                    "publishedAt": (
+                        published_at.isoformat()
+                        if published_at is not None
+                        else datetime.now(UTC).isoformat()
+                    ),
+                }
+                dataset = self._catalog_dataset(
+                    job,
+                    run,
+                    target,
+                    progress,
+                    evidence,
+                    {},
+                )
+                save_catalog_dataset_and_revision(
+                    self.db,
+                    dataset,
+                    run_id=publication_run_id,
+                    storage_location=str(existing_commit.storage_location or target.table_uri),
+                    storage_format=str(existing_commit.storage_format or "clickhouse"),
+                    materialization_mode=str(existing_commit.materialization_mode or "delta"),
+                    row_count=int(existing_commit.row_count or 0),
+                    next_check_after_ms=max(
+                        1_000,
+                        min(60_000, int(job.trigger_interval_seconds) * 500),
+                    ),
+                    source_ranges=source_ranges,
+                    commit_kind=str(existing_commit.commit_kind or STREAM_COMMIT_KIND),
+                    manifest_location=str(existing_commit.manifest_location or "") or None,
+                )
             return self._ready_batch(
                 job,
                 run,
                 batch_id=batch_id,
                 publication_run_id=publication_run_id,
                 progress=progress,
-                source_ranges=list(existing_commit.source_ranges or []),
+                source_ranges=source_ranges,
                 revision=int(existing_commit.revision),
                 target=target,
             )
@@ -81,7 +123,6 @@ class ClickHouseContinuousSqlPublicationService:
         if not source_ranges:
             return None
         batch_id = self.repository.next_batch_id(job.id, run.generation)
-        previous = self.catalog_repository.get_dataset_payload(job.output_dataset_id) or {}
         previous_output_row_count = normalize_output_row_count(
             previous.get("clickhouseOutputRowCount"),
             fallback=0,

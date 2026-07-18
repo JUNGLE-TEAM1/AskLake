@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.models.base import Base
+from app.models.catalog import CatalogDatasetModel
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
@@ -25,6 +26,7 @@ from app.services.clickhouse_continuous_publication import (
 from app.services.clickhouse_continuous_sql import (
     ClickHouseContinuousSqlWorkerGateway,
     clickhouse_ingest_materialized_view_ddl,
+    clickhouse_kafka_error_is_retriable,
     clickhouse_kafka_table_ddl,
     clickhouse_raw_table_ddl,
     clickhouse_static_table_ddl,
@@ -62,6 +64,7 @@ class FakeDashboardClickHouseClient:
                     ["user_name", "Nullable(String)"],
                     ["event_time", "Nullable(DateTime64(3))"],
                     ["event_type", "Nullable(String)"],
+                    ["price", "Nullable(Float64)"],
                 ],
             )
         return ClickHouseRows(
@@ -209,6 +212,16 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertIn("ReplacingMergeTree", raw_ddl)
         self.assertIn("_offset AS kafka_offset", ingest_ddl)
         self.assertIn("TO `asklake`.`events_raw`", ingest_ddl)
+
+        initial_group_ddl = ddl
+        job.generation = 9
+        restarted_group_ddl = clickhouse_kafka_table_ddl(
+            job,
+            job_target(job),
+            "events_kafka",
+            job.relation_bindings[0],
+        )
+        self.assertEqual(initial_group_ddl, restarted_group_ddl)
 
     def test_whitespace_kafka_ingest_uses_saved_parsing_contract(self) -> None:
         stream = {
@@ -378,6 +391,20 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(len(client.executed), 1)
         self.assertIn("CREATE TABLE IF NOT EXISTS", client.executed[0])
 
+    def test_static_snapshot_refresh_changes_cache_identity_and_runtime_table(self) -> None:
+        relation = self._job().relation_bindings[1]
+        first_binding = {"datasetId": "dataset-users", "snapshotId": "101"}
+        refreshed_binding = {"datasetId": "dataset-users", "snapshotId": "102"}
+
+        first = static_snapshot_cache_identity(relation, first_binding, ["id"])
+        refreshed = static_snapshot_cache_identity(relation, refreshed_binding, ["id"])
+
+        self.assertNotEqual(first.cache_key, refreshed.cache_key)
+        self.assertNotEqual(
+            clickhouse_static_runtime_table("asklake_job", 1, first_binding),
+            clickhouse_static_runtime_table("asklake_job", 1, refreshed_binding),
+        )
+
     def test_static_snapshot_load_is_rejected_before_disk_reserve_is_exhausted(self) -> None:
         class LowDiskClient:
             def query(self, query: str, **_kwargs) -> ClickHouseRows:
@@ -413,6 +440,23 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(worker["containerState"], "failed")
         self.assertEqual(worker["lastErrorCode"], "CLICKHOUSE_KAFKA_CONSUMER_ERROR")
         self.assertIn("Cannot parse", worker["lastErrorMessage"])
+
+    def test_status_treats_broker_outage_as_recovering(self) -> None:
+        job = self._job()
+        gateway = ClickHouseContinuousSqlWorkerGateway(Settings(_env_file=None, app_env="test"))
+        worker = gateway._status(
+            FakeContinuousStatusClient(
+                consumer_error="Local: Broker transport failure",
+                last_exception_ms=200,
+                last_poll_ms=100,
+            ),
+            job,
+            job_target(job),
+        )
+
+        self.assertTrue(clickhouse_kafka_error_is_retriable(worker["lastErrorMessage"]))
+        self.assertEqual(worker["containerState"], "recovering")
+        self.assertEqual(worker["lastErrorCode"], "CLICKHOUSE_KAFKA_RECOVERING")
 
     def test_status_ignores_consumer_exception_after_a_new_successful_poll(self) -> None:
         job = self._job()
@@ -509,6 +553,44 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
             2,
         )
 
+    def test_clickhouse_dashboard_date_and_aggregation_matrix_is_qualified(self) -> None:
+        client = FakeDashboardClickHouseClient()
+        session = DashboardDatasetQuerySession(
+            {
+                "id": "dataset-hot",
+                "name": "hot",
+                "schema": [
+                    ["event_time", "timestamp"],
+                    ["event_type", "string"],
+                    ["price", "double"],
+                ],
+                "storageFormat": "clickhouse",
+                "clickhouseTable": {"database": "asklake", "table": "hot_join"},
+            },
+            clickhouse_client=client,
+        )
+        try:
+            for date_unit in ("day", "month", "year"):
+                for aggregation in ("count", "sum", "avg", "min", "max"):
+                    session.read_widget(
+                        "line_chart",
+                        {
+                            "aggregation": aggregation,
+                            "xKey": "event_time",
+                            "yKey": "price",
+                            "seriesKey": "event_type",
+                            "dateUnit": date_unit,
+                        },
+                    )
+                    query = client.queries[-1].casefold()
+                    self.assertIn('as "__asklake_source" final', query)
+                    self.assertIn(f"date_trunc('{date_unit}'", query)
+                    self.assertIn('"__asklake_source"."event_time"', query)
+                    if aggregation != "count":
+                        self.assertIn('"__asklake_source"."price"', query)
+        finally:
+            session.close()
+
     def test_offset_progress_publishes_catalog_revision_idempotently(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -564,6 +646,20 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
                 continuous_job.continuous_config["triggerIntervalSeconds"],
                 1,
             )
+
+            catalog_model = db.get(CatalogDatasetModel, job.output_dataset_id)
+            db.delete(catalog_model)
+            db.commit()
+            restored = service.reconcile_progress(job, run, worker)
+            restored_payload = CatalogRepository(db).get_dataset_payload(
+                job.output_dataset_id
+            )
+            restored_freshness = live_repository.get_freshness(job.output_dataset_id)
+
+            self.assertEqual(restored.id, first.id)
+            self.assertEqual(restored_payload["storageFormat"], "clickhouse")
+            self.assertEqual(restored_payload["clickhouseOutputRowCount"], 2)
+            self.assertEqual(int(restored_freshness.latest_revision), 1)
         finally:
             db.close()
             engine.dispose()

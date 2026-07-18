@@ -539,7 +539,9 @@ Spark/Iceberg commit
 - ClickHouse hot path는 `Kafka Engine -> ingest Materialized View -> raw ReplacingMergeTree -> JOIN Materialized View -> output ReplacingMergeTree` 순서다. raw와 output은 `(kafka_partition, kafka_offset)` identity를 사용하고 Dashboard와 Catalog rows reader는 output을 `FINAL`로 읽는다. 따라서 INNER JOIN의 미매칭 입력도 raw offset 경계에는 남고 output에는 노출되지 않는다.
 - static relation은 Run 시작 시 고정한 Iceberg snapshot을 Trino로 bounded read해 ClickHouse local MergeTree에 적재한다. ClickHouse mode는 `PINNED_AT_START`만 허용하며 static snapshot 변경은 기존 행을 backfill하지 않고 새 Run의 이후 입력부터 적용한다.
 - ClickHouse publication은 raw input offset range와 output row count를 구분해 PostgreSQL Catalog revision/event에 기록한다. ClickHouse output은 일반 Trino SQL table로 가장하지 않고 `queryEngineStatus=unavailable`, `clickhouseTable` mapping을 사용하며 Dashboard·Catalog row API만 전용 reader로 조회한다.
-- ClickHouse 장애 시 같은 Run을 Spark로 자동 전환하지 않는다. 전용 Kafka consumer group의 offset ownership을 보존하기 위해 Job을 실패 상태로 남기고 운영자가 flag·새 generation을 명시적으로 선택한다.
+- ClickHouse 장애 시 같은 Run을 Spark로 자동 전환하지 않는다. 전용 Kafka consumer group의 offset ownership을 보존한다. broker 연결·coordinator·timeout 같은 일시 장애는 같은 generation에서 `recovering`으로 유지하고 consumer poll이 재개되면 자동으로 `running`으로 복귀한다. parsing/schema처럼 입력을 바꾸지 않으면 반복되는 오류만 `failed`로 둔다.
+- backend 재시작은 PostgreSQL의 desired/observed Job·active Run을 다시 읽고, ClickHouse 재시작은 Job ID 기반 고정 Kafka group의 committed offset을 이어받는다. raw/output table은 `(partition,offset)` identity와 `FINAL` reader로 retry 중복을 제거한다.
+- publication commit과 Dashboard revision은 남아 있는데 Catalog row만 사라진 경우 reconciler가 같은 run ID와 revision으로 row만 복원한다. partition cursor를 새로 전진시키지 않는다.
 
 결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
 

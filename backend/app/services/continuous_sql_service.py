@@ -398,12 +398,12 @@ class ContinuousSqlService:
                 run.last_error_message = job.last_error_message
         elif (
             continuous_sql_serving_mode(job) == "clickhouse"
-            and container_state == "starting"
+            and container_state in {"starting", "recovering"}
             and run is not None
         ):
             if job.desired_state == "running":
-                job.observed_state = "starting"
-                run.status = "starting"
+                job.observed_state = container_state
+                run.status = container_state
             job.last_error_code = None
             job.last_error_message = None
             run.last_error_code = None

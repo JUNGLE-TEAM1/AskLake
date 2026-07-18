@@ -39,6 +39,10 @@ worker report와 publication은 plan hash, generation, fencing token hash가 모
 
 start/resume/recover가 외부 worker를 provision하는 동안에는 persisted `starting|recovering` 전환 시점부터 기본 300초까지 missing status를 terminal failure로 바꾸지 않는다. 준비가 끝난 running worker의 소실 또는 유예 만료 뒤 missing만 `CONTINUOUS_SQL_WORKER_MISSING`으로 전환한다.
 
+ClickHouse Kafka consumer가 broker 연결·coordinator·timeout 계열의 최신 exception을 보고하면 desired state를 바꾸지 않고 같은 generation을 `recovering`으로 둔다. 새 successful poll이 exception보다 뒤에 관측되면 `running`으로 복귀한다. record parsing·field count·schema/type 변환 오류는 재시도로 고쳐지지 않으므로 `failed`다. backend restart는 PostgreSQL active Run을, ClickHouse restart는 Job ID 기반 consumer group committed offset을 사용하며 새로운 generation을 암묵적으로 만들지 않는다.
+
+`PINNED_AT_START`에서 pause/resume은 같은 static binding을 사용한다. 새 `start`/`recover` generation만 현재 Catalog snapshot을 다시 resolve하며 snapshot ID가 달라지면 cache identity와 physical table도 달라져야 한다. 기존 generation의 immutable cache를 덮어쓰지 않는다.
+
 create validation뿐 아니라 start/resume/recover command에서도 모든 입력 Dataset의 현재 query permission과 governance policy를 다시 검사한다. 권한이 회수되면 새 worker action을 보내지 않는다.
 
 ## batch와 publication
@@ -52,6 +56,8 @@ publication은 다음 단계를 전진만 한다.
 3. `dashboard_ready`: Catalog Dataset revision과 durable realtime event를 같은 transaction에 기록한다.
 
 Catalog 또는 Dashboard publication 실패는 Spark input을 다시 처리하게 만들지 않는다. reconciler가 `output_committed` 또는 `catalog_ready`부터 재시도한다. 빈 결과 batch는 잘못된 Dataset revision/event를 만들지 않는다.
+
+ClickHouse publication commit이 이미 존재하고 Catalog dataset row만 없어진 경우 같은 publication run ID를 재사용해 Catalog row를 복원한다. 기존 Dataset revision과 Kafka partition cursor는 그대로 두며 새 event를 기다리거나 동일 source range를 다시 commit하지 않는다.
 
 ## 호환성과 rollback
 

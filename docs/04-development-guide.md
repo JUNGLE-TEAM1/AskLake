@@ -604,9 +604,14 @@ docker compose up -d postgres redpanda clickhouse
 cd backend
 PYTHONPATH=. python -m unittest tests.test_clickhouse_continuous_sql tests.test_catalog_unique_key_verification tests.test_realtime_feature_flags -v
 npm run verify:clickhouse-kafka-join
+npm run verify:clickhouse-static-cache-refresh
 ```
 
 이 smoke의 static relation은 count query와 page reader를 포함한 exact snapshot 계약을 재현하는 bounded fixture를 사용하고 Kafka·ClickHouse·PostgreSQL·Catalog·Dashboard 경로는 실제 container와 application service를 사용한다. 실제 S3/Iceberg/Trino static snapshot round trip은 기존 Trino/Iceberg readiness와 함께 배포 환경에서 별도로 확인한다.
+
+`verify:clickhouse-static-cache-refresh`는 고유 Iceberg table에 2행 snapshot과 3행 snapshot을 차례로 commit하고 두 snapshot이 서로 다른 cache key와 ClickHouse table로 고정되는지 확인한다. 이전 cache가 2행, 새 cache가 3행을 유지해야 성공하며 fixture Iceberg/ClickHouse table과 registry row는 종료 시 정확한 dataset ID로 정리한다.
+
+운영 복구 점검은 기존 volume을 삭제하지 않고 Redpanda, backend, ClickHouse를 한 번에 하나씩 재시작한다. 각 단계 전후에 Job generation/activeRunId, Kafka group committed offset, raw offset 연속 범위, `FINAL` row 수와 distinct `(partition,offset)`, Catalog revision을 기록한다. Redpanda 중단 중에는 `recovering`, 재기동 뒤에는 같은 generation의 `running`이어야 한다. 장시간 점검은 ClickHouse cgroup memory와 row/offset을 같은 간격으로 표본화하고 마지막에 raw/output identity 중복을 다시 검사한다.
 
 로컬 MinIO S3에 실제 Iceberg static table을 만들고 exact snapshot을 Trino로 ClickHouse에 적재하는 전체 경계까지 확인하려면 Trino를 함께 올리고 live option을 사용한다. 고유 Iceberg table은 검증 종료 시 `DROP TABLE`로 정리한다.
 

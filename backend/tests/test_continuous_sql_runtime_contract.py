@@ -12,10 +12,15 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.models.continuous_sql import ContinuousSqlBatchModel, ContinuousSqlJobModel
+from app.models.etl import ETLJobModel
+from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
 from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
-from app.schemas.continuous_sql import ContinuousSqlCommandRequest
+from app.schemas.continuous_sql import (
+    ContinuousSqlCommandRequest,
+    ContinuousSqlCreateRequest,
+)
 from app.schemas.iceberg import IcebergCommitEvidence
 from app.services.continuous_sql_planner import CatalogRelation, ContinuousSqlPlanner
 from app.services.continuous_sql_catalog import parse_row_count, unique_key_sets
@@ -273,6 +278,34 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
             )
         )
 
+    def test_transient_clickhouse_broker_failure_stays_recoverable(self) -> None:
+        started = self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="start", commandId="start-broker-recovery"),
+            self.actor,
+        )
+        job = self.repository.get_job(self.job.id)
+        run = self.repository.get_run(started.job.active_run_id)
+        job.output_target = {
+            "engine": "clickhouse",
+            "database": "asklake",
+            "table": "orders_users",
+        }
+        self.db.add(job)
+        self.db.commit()
+        self.gateway.status_result = {
+            "containerState": "recovering",
+            "lastErrorCode": "CLICKHOUSE_KAFKA_RECOVERING",
+            "lastErrorMessage": "Local: Broker transport failure",
+        }
+
+        reconciled = self.service.reconcile(job)
+
+        self.assertEqual(reconciled.desired_state, "running")
+        self.assertEqual(reconciled.observed_state, "recovering")
+        self.assertIsNone(reconciled.last_error_code)
+        self.assertEqual(run.generation, 1)
+
     def test_invalid_duplicate_start_and_lifecycle_transitions(self) -> None:
         self.service.command(
             self.job.id,
@@ -304,6 +337,123 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
         )
         self.assertEqual(resumed.job.generation, 1)
         self.assertEqual(resumed.job.desired_state, "running")
+
+    def test_new_generation_pins_refreshed_static_snapshot(self) -> None:
+        snapshots = ["101", "102"]
+        self.service._resolve_run_bindings = lambda _job: [{
+            "datasetId": "dataset-users",
+            "snapshotId": snapshots.pop(0),
+            "schemaFingerprint": "users-schema",
+        }]
+        first = self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="start", commandId="refresh-start-1"),
+            self.actor,
+        )
+        self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="stop", commandId="refresh-stop-1"),
+            self.actor,
+        )
+        current = self.repository.get_job(self.job.id)
+        current.desired_state = "stopped"
+        current.observed_state = "stopped"
+        self.db.add(current)
+        self.db.commit()
+
+        refreshed = self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="start", commandId="refresh-start-2"),
+            self.actor,
+        )
+
+        self.assertEqual(first.job.active_run.static_bindings[0]["snapshotId"], "101")
+        self.assertEqual(refreshed.job.generation, 2)
+        self.assertEqual(refreshed.job.active_run.static_bindings[0]["snapshotId"], "102")
+
+    def test_create_retry_is_idempotent_and_same_display_name_is_allowed(self) -> None:
+        ETLJobModel.__table__.create(self.engine, checkfirst=True)
+        catalog = CatalogRepository(self.db)
+        common = {
+            "description": "fixture",
+            "downstream": [],
+            "freshness": "latest",
+            "lastUpdated": "2026-07-18T00:00:00Z",
+            "layer": "BRONZE",
+            "nextRefresh": "-",
+            "owner": self.actor.name,
+            "quality": "verified",
+            "queryEngineStatus": "available",
+            "rag": False,
+            "rows": "2",
+            "sampleRows": [],
+            "size": "fixture",
+            "source": "fixture",
+            "status": "available",
+            "storageFormat": "iceberg",
+            "tags": [],
+            "upstream": [],
+        }
+        catalog.save_dataset_payload({
+            **common,
+            "id": "retry-events",
+            "name": "retry_events",
+            "relationMode": "streaming",
+            "schema": [["event_id", "bigint"], ["user_id", "bigint"]],
+            "queryEngineTable": {
+                "catalog": "iceberg", "schema": "asklake", "table": "retry_events", "format": "iceberg"
+            },
+            "streamingSource": {
+                "broker": "redpanda:9092", "topic": "retry-events", "consumerGroupId": "retry-group"
+            },
+        })
+        catalog.save_dataset_payload({
+            **common,
+            "id": "retry-users",
+            "name": "retry_users",
+            "relationMode": "static",
+            "schema": [["id", "bigint"], ["name", "string"]],
+            "schemaFingerprint": "retry-users-v1",
+            "icebergSnapshotId": "101",
+            "uniqueKeySets": [["id"]],
+            "queryEngineTable": {
+                "catalog": "iceberg", "schema": "asklake", "table": "retry_users", "format": "iceberg"
+            },
+        })
+
+        def request(client_id: str, dataset_id: str, table: str):
+            return ContinuousSqlCreateRequest.model_validate({
+                "name": "same JOIN name",
+                "query": (
+                    "SELECT e.event_id, u.name AS user_name FROM retry_events e "
+                    "LEFT JOIN retry_users u ON e.user_id = u.id"
+                ),
+                "relationDatasetIds": ["retry-events", "retry-users"],
+                "clientRequestId": client_id,
+                "output": {
+                    "datasetId": dataset_id,
+                    "datasetName": "same catalog display name",
+                    "storagePath": f"s3a://lake/{table}",
+                    "icebergTarget": {
+                        "catalog": "iceberg",
+                        "namespace": "asklake",
+                        "table": table,
+                        "writeMode": "append",
+                    },
+                },
+            })
+
+        first_request = request("same-name-request-1", "same-name-output-1", "same_name_one")
+        first = self.service.create(first_request, self.actor)
+        replay = self.service.create(first_request, self.actor)
+        second = self.service.create(
+            request("same-name-request-2", "same-name-output-2", "same_name_two"),
+            self.actor,
+        )
+
+        self.assertEqual(replay.id, first.id)
+        self.assertNotEqual(second.id, first.id)
+        self.assertEqual(second.output_dataset_name, first.output_dataset_name)
 
     def test_stale_worker_report_is_rejected_by_generation_and_fence(self) -> None:
         started = self.service.command(

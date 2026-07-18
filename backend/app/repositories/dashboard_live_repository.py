@@ -665,7 +665,8 @@ def save_catalog_dataset_and_revision(
                 commit_kind=commit_kind,
                 manifest_location=manifest_location,
             )
-            merged_dataset = db.merge(dataset) if created else None
+            catalog_missing = db.get(CatalogDatasetModel, dataset.id) is None
+            merged_dataset = db.merge(dataset) if created or catalog_missing else None
             db.commit()
             break
         except IntegrityError:

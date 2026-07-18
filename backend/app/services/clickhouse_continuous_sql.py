@@ -34,6 +34,31 @@ from app.services.trino_client import TrinoClient
 ClientFactory = Callable[[], ClickHouseClient]
 
 
+_NON_RETRIABLE_KAFKA_ERROR_MARKERS = (
+    "cannot parse",
+    "cannot convert",
+    "field count",
+    "invalid json",
+    "malformed",
+    "schema mismatch",
+    "type mismatch",
+)
+_RETRIABLE_KAFKA_ERROR_MARKERS = (
+    "all brokers",
+    "broker transport",
+    "connection",
+    "coordinator",
+    "disconnected",
+    "leader not available",
+    "network",
+    "resolve",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+    "transport failure",
+)
+
+
 class ClickHouseContinuousSqlWorkerGateway:
     """Provision and control a Kafka Engine -> JOIN MV -> MergeTree hot path."""
 
@@ -238,9 +263,13 @@ class ClickHouseContinuousSqlWorkerGateway:
                 last_poll_ms = int(row[3] or 0) if len(row) > 3 else 0
                 last_exception_ms = int(row[4] or 0) if len(row) > 4 else 0
                 if consumer_error and last_exception_ms >= last_poll_ms:
-                    state = "failed"
-                    last_error_code = "CLICKHOUSE_KAFKA_CONSUMER_ERROR"
                     last_error_message = consumer_error[:1000]
+                    if clickhouse_kafka_error_is_retriable(consumer_error):
+                        state = "recovering"
+                        last_error_code = "CLICKHOUSE_KAFKA_RECOVERING"
+                    else:
+                        state = "failed"
+                        last_error_code = "CLICKHOUSE_KAFKA_CONSUMER_ERROR"
                 else:
                     state = "running" if clickhouse_truthy(row[0]) else "starting"
         progress = client.query(
@@ -648,6 +677,16 @@ def clickhouse_truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().casefold() in {"1", "true", "yes"}
+
+
+def clickhouse_kafka_error_is_retriable(message: str) -> bool:
+    """Separate broker availability failures from deterministic record failures."""
+    normalized = str(message or "").strip().casefold()
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in _NON_RETRIABLE_KAFKA_ERROR_MARKERS):
+        return False
+    return any(marker in normalized for marker in _RETRIABLE_KAFKA_ERROR_MARKERS)
 
 
 def replace_runtime_table(query: str, runtime_view: str, target: str) -> str:
