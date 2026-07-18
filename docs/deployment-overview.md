@@ -21,7 +21,7 @@ PR merge to dev
 발표와 개발 검증에서는 외부 서비스 장애에 덜 흔들리는 구조가 중요하다.
 따라서 기본 배포는 실제 FastAPI backend와 실제 DB를 사용하되, source data는 미리 심은 fixture를 사용한다.
 
-## 최종 구조
+## 현재 데모 구조
 
 초기 배포는 AWS EC2 한 대에 여러 컨테이너를 띄우는 구조로 간다.
 
@@ -41,6 +41,8 @@ AWS S3
 ```
 
 Iceberg Warehouse와 Query Result bucket은 이미 만들어 두어도 되지만 현재 `dev` runtime은 사용하지 않는다. Trino/query engine 복원은 별도 이슈와 검증을 거쳐야 한다.
+
+이 단일 EC2 Compose는 demo/staging topology이며 HA 또는 production-ready ClickHouse topology로 표시하지 않는다. ClickHouse Realtime Serving V2의 production 목표인 2개 replica, 3개 Keeper, 2개 이상의 Kafka Connect worker와 backend replica는 [V2 구현 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md)의 cutover gate와 별도 운영 승인을 통과한 뒤 적용한다. PR09까지의 코드 merge만으로 production traffic을 전환하지 않는다.
 
 외부 요청은 Caddy가 받는다.
 

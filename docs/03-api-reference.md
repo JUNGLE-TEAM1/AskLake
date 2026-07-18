@@ -1170,3 +1170,68 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 - `details`는 secret key를 재귀적으로 redaction하며 validation input 원문과 unhandled stack을 반환하지 않는다.
 - `GET /api/health/live`는 process liveness, `GET /api/health/ready`는 DB readiness, 기존 `GET /api/health`는 호환 readiness다.
 - `GET /api/health/metrics`는 현재 backend process의 진단 counter snapshot을 반환한다.
+
+## 11) ClickHouse Realtime Serving V2 예정 additive API
+
+이 절은 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md` 순서로 도입할 target contract다. 관련 구현 PR이 merge되기 전에는 request에 V2 field를 보내거나 응답에 존재한다고 가정하지 않는다.
+
+### 기존 Continuous SQL API 확장
+
+- 별도 `/api/realtime/pipelines` 계층을 만들지 않고 기존 `/api/query/continuous-jobs/validate`, `/api/query/continuous-jobs`, `/api/query/continuous-jobs/{jobId}`, command API를 확장한다.
+- validate/create의 optional `runtimeVersion=2`는 V2 flag가 켜진 경우에만 허용한다. 미지정 기존 request는 현재 V1 의미를 유지한다.
+- V2 validate 응답은 `executionMode`, `dimensionSemantics`, JOIN별 `missingPolicy`, `correctionPolicy`, normalized SQL fingerprint와 source boundary estimate를 additive field로 제공한다.
+- V2 Job/Run은 immutable plan/pipeline version, materialization ID, connector identity, consumer owner와 binding epoch를 보존한다.
+- repair/reconcile endpoint는 구현 PR에서 OpenAPI와 `docs/api-contract.md`를 함께 확정하기 전까지 외부 호출 경로로 열지 않는다.
+
+### Catalog additive binding
+
+기존 `queryEngineTable`과 `clickhouseTable`은 migration window 동안 유지한다. V2 Dataset은 다음 optional field를 추가한다.
+
+```json
+{
+  "physicalBindings": [
+    {
+      "role": "serving",
+      "engine": "clickhouse",
+      "status": "available",
+      "database": "asklake_serving",
+      "table": "joined_click_events_v2_current",
+      "pipelineVersionId": "rtpv_1",
+      "bindingEpoch": 4,
+      "latestRevision": 1532,
+      "sourceBoundary": {}
+    },
+    {
+      "role": "archive",
+      "engine": "iceberg",
+      "status": "available",
+      "catalog": "iceberg",
+      "namespace": "gold",
+      "table": "joined_click_events",
+      "pipelineVersionId": "rtpv_1",
+      "dimensionVersionIds": {},
+      "sourceBoundary": {}
+    }
+  ]
+}
+```
+
+ClickHouse identifier를 `queryEngineTable`에 저장하지 않는다. archive binding이 같은 pipeline/dimension version의 Gold projection을 가리킬 때만 Trino fallback으로 사용할 수 있다. PR09 이전 ClickHouse-only V1 Dataset은 archive binding이 없거나 `status="pending"`일 수 있으며, 이 상태를 검증된 Trino fallback으로 표시하지 않는다.
+
+### Dashboard cursor와 mutation
+
+`POST /api/dashboards/{dashboardId}/widgets/query`는 V2에서 optional Dataset cursor map을 받는다.
+
+```json
+{
+  "clientKnownRevisions": {
+    "ds_joined": {"bindingEpoch": 4, "revision": 1532}
+  }
+}
+```
+
+widget 응답은 `engine`, `bindingEpoch`, `appliedRevision`, `latestKnownRevision`, `sourceBoundary`, `freshnessState`, optional structured `error`를 제공한다. `mutationType=append`만 기존 delta merge 후보이며 `upsert|replace|retract`는 canonical current serving 결과를 다시 조회한다.
+
+기존 `GET /api/realtime/events`와 `realtime_event_log`를 재사용한다. 기존 event 이름 `dataset.revision.committed`, `dashboard.published`와 `system.*` control event를 rename하지 않는다. V2는 schema version 2 allowlist payload에 `bindingEpoch`, revision, `pipelineVersionId`, `materializationId`와 mutation type을 추가하되 event 본문에 row/widget 결과를 넣지 않는다. Browser는 `(bindingEpoch, revision)`을 비교하고 epoch가 증가한 cutover/rollback 결과를 수용한다.
+
+V2 kill switch와 connector 설정 이름은 기반시설 PR에서 config schema, deploy example, fail-closed 검증과 함께 확정한다. 문서만 앞서 env를 production에 설정하지 않는다.

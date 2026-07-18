@@ -4141,3 +4141,44 @@ Review analysis API request/response는 변경하지 않는다. 내부 Python→
 version field가 없는 runtime report/checkpoint/manifest는 version 0 reader로 읽고, 미래 version은 거절한다. `runtimeContract`가 없는 DB row는 기존 status/error로 투영한다. 구버전 Job의 `permissionRoles`, legacy transform/quality rule, dashboard scalar color와 lineage payload 부재는 제한된 compatibility adapter를 사용하며 활성화 시 `compatibility.path.used` warning/counter가 기록된다.
 
 frontend mock API는 개발 빌드에서만 허용한다. production build에서 `VITE_USE_MOCK_API=true`이면 실제 backend 대신 mock을 사용하지 않고 즉시 실패한다. 전체 owner·제거 조건은 `docs/refactor-2026/legacy-path-register.json`에 고정한다.
+
+## ClickHouse Realtime Serving V2 additive migration contract
+
+이 계약은 target 상태이며 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 해당 구현 PR이 merge될 때 field별로 활성화한다. 기존 client request의 required field를 늘리지 않는다.
+
+### Persisted state 확장
+
+- 새 pipeline/materialization/receipt/dimension metadata는 Alembic expand migration으로 추가한다.
+- 공개 Dataset revision은 기존 `dataset_freshness.latest_revision`과 `dataset_revision_commits`를 확장한다. 별도 public revision table을 만들지 않는다.
+- `dataset_freshness`에는 optional `binding_epoch`, active serving/archive version과 latest source boundary/checksum/mutation type을 추가한다.
+- `dataset_revision_commits`에는 optional materialization ID, serving engine/version, binding epoch, dimension version set, source boundary, mutation type과 checksum을 추가한다.
+- durable change event는 기존 `realtime_event_log`를 확장한다. event idempotency key는 Dataset revision/binding event와 1:1이어야 한다.
+- pointer switch와 rollback은 `dataset_freshness` row lock 안에서 새 global revision과 더 큰 binding epoch를 함께 할당한다.
+
+### Catalog 하위 호환
+
+- `queryEngineTable`은 검증된 archive Iceberg/Trino mapping으로 유지한다.
+- `clickhouseTable`은 기존 V1 reader 호환 field로 유지한다.
+- V2는 optional `physicalBindings[]`를 추가하고 `role=serving|archive`, engine, status, physical identity, pipeline/dimension version, boundary, revision/epoch를 명시한다.
+- PR09 이전 ClickHouse-only V1 Dataset은 archive binding이 없거나 `status=pending`일 수 있다. 검증된 Gold projection이 없으면 `queryEngineTable`을 합성하거나 Trino fallback 가능으로 표시하지 않는다.
+- V2 writer는 migration window 동안 호환 field와 `physicalBindings`를 함께 쓰며 reader 전환 근거 없이 기존 field를 제거하지 않는다.
+- ClickHouse physical identifier를 `queryEngineTable`로 저장하지 않는다.
+
+### Revision·Dashboard 하위 호환
+
+- V2 revision은 `mutationType=append|upsert|replace|retract`를 갖는다. field가 없는 기존 revision은 현재 규칙대로 append/delta 또는 full fallback을 추론한다.
+- Dashboard widget query의 optional `clientKnownRevisions`는 Dataset별 `{bindingEpoch, revision}` map이다. 미지정 client는 현재 query 의미를 유지한다.
+- response의 `bindingEpoch`, engine, boundary와 freshness/error metadata는 additive다.
+- append만 delta merge 후보이며 upsert/replace/retract와 late dimension repair는 canonical current serving 결과를 다시 계산한다.
+- SSE Dataset event는 기존 `dataset.revision.committed` 이름을 유지하고 schema version 2 payload에 binding epoch, mutation type, pipeline/materialization version identity를 작은 allowlist metadata로 추가한다. `dashboard.published`와 `system.*` control event도 rename하지 않으며 row, widget result, credential은 금지한다.
+
+### Consumer·publication 불변식
+
+- 같은 Job generation의 Kafka Engine V1과 Kafka Connect V2 동시 ownership을 거부한다.
+- checkpoint는 Kafka read-committed expected position과 raw/quarantine/audited-skip position이 일치하는 contiguous receipt range까지만 전진한다.
+- 같은 source boundary retry는 같은 materialization ID, source fingerprint와 ClickHouse insert token을 사용한다.
+- ClickHouse count/checksum/widget/parity는 base ReplacingMergeTree가 아니라 canonical current view를 사용한다.
+- external ClickHouse/Kafka/S3 I/O 중 PostgreSQL transaction이나 row lock을 유지하지 않는다.
+- final publication transaction은 freshness lock, checkpoint CAS, materialization commit, revision commit, freshness update, durable event insert 순서로 원자화한다.
+
+상세 endpoint와 error code는 구현 PR마다 `docs/03-api-reference.md`, OpenAPI와 함께 활성화한다. 문서에 target field가 있다는 이유만으로 merge 전 production client가 전송해서는 안 된다.
