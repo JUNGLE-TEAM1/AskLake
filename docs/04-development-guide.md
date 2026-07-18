@@ -1067,9 +1067,16 @@ Phase 6 운영 대응은 [EKS Day 18 운영 runbook](eks-day18-operations-runboo
 preflight/rollout, 보존 EC2 fallback과 비용·cleanup을 한 순서로 사용하되 조회·조정·변경을
 구분한다. Phase 6에서는 runbook과 preflight만 고정하고 실제 새 digest rolling update는
 Pair B 변경이 합쳐진 뒤 Phase 7 confirmation으로 실행한다. static 계약은
-`bash scripts/verify-eks-day18-operations-runbook.sh`로 검사한다. evidence는 저장소 밖의
-고유 경로와 mode `0600`을 사용하며 EC2 `start` 성공을 트래픽 cutover 성공으로 확대하지
-않는다.
+`bash scripts/verify-eks-day18-operations-runbook.sh`, 안전·위험 fixture는
+`bash scripts/test-eks-day18-operations-runbook.sh`로 검사한다. formal image receipt는
+Git ignore 대상 `infra/eks/delivery/*.image-receipt.json`, 일반 evidence는 저장소 밖의 고유
+경로와 mode `0600`을 사용한다. preflight/rollout은 private `deploy/ec2.env`에서 exact 보존
+instance를 `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 전달하며 파일 누락·권한 drift를 추측으로
+복구하지 않는다. 현재 rollout runner의 postcheck 실패 자동 rollback은 성공 release의 의도적
+rollback·재승격 증거가 아니며 후자는 Phase 7 공동 gate다. CloudWatch는 add-on Ready뿐 아니라
+같은 UTC window의 Event, 비식별 log marker count와 alarm 상태 시각을 대조한다. EC2 `start`
+성공을 트래픽 cutover 성공으로 확대하지 않고, Phase 4 ALB/RDS/HPA 복구를 S3·Catalog·Iceberg
+연속성으로 확대하지 않는다.
 
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 

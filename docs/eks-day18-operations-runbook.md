@@ -21,7 +21,10 @@ Backend digest의 실제 rolling update와 rollback 실행은 Pair B 결과가 �
 저장소 root에서 실행하고 `aws`, `kubectl`, `helm`, `jq`, `curl`의 인증 context를 먼저
 확인한다. 실제 account, cluster, endpoint, ARN, instance ID, image digest, Secret과 receipt는
 Git에 기록하지 않는다. evidence는 `/private/tmp` 또는 Git ignore 경로에 mode `0600`으로
-만들고 기존 파일을 덮어쓰지 않는다.
+만들고 기존 파일을 덮어쓰지 않는다. 단, Backend rollout verifier가 받는 formal image
+receipt는 저장소의 `.gitignore`가 직접 덮는
+`infra/eks/delivery/*.image-receipt.json`이어야 한다. 일반 evidence 경로 규칙과 image
+receipt 입력 규칙을 섞지 않는다.
 
 ```bash
 export AWS_REGION=ap-northeast-2
@@ -94,6 +97,35 @@ aws eks describe-addon --region "$AWS_REGION" \
 kubectl get pod -n amazon-cloudwatch
 ```
 
+장애 대응에서는 시작·종료 UTC를 먼저 고정한 뒤 같은 구간의 Event, application log marker와
+alarm 변경 시각을 비교한다. 아래 조회는 raw log message, log stream, ARN과 alarm 이름을
+출력하지 않고 marker 건수와 alarm 상태·시각만 보여 준다. marker는 장애 주입 runner가
+남긴 비식별 고유 문자열만 사용한다.
+
+```bash
+export ASKLAKE_INCIDENT_START_MS='<private UTC epoch milliseconds>'
+export ASKLAKE_INCIDENT_END_MS='<private UTC epoch milliseconds>'
+export ASKLAKE_INCIDENT_MARKER='<sanitized unique marker>'
+export ASKLAKE_APPLICATION_LOG_GROUP="/aws/otel/containerinsights/${ASKLAKE_EKS_CLUSTER_NAME}/application"
+
+aws logs filter-log-events --region "$AWS_REGION" \
+  --log-group-name "$ASKLAKE_APPLICATION_LOG_GROUP" \
+  --start-time "$ASKLAKE_INCIDENT_START_MS" --end-time "$ASKLAKE_INCIDENT_END_MS" \
+  --filter-pattern "$ASKLAKE_INCIDENT_MARKER" --output json \
+  | jq '{markerCount:(.events | length)}'
+
+aws cloudwatch describe-alarms --region "$AWS_REGION" \
+  --alarm-name-prefix "${ASKLAKE_EKS_CLUSTER_NAME}-" --output json \
+  | jq '[.MetricAlarms[]
+      | select(.AlarmName | test("(daily-log-ingest|stored-log)-warning$"))
+      | {state:.StateValue,stateUpdatedAt:.StateUpdatedTimestamp,
+         actionsEnabled:.ActionsEnabled,actionCount:((.AlarmActions // []) | length)}]'
+```
+
+marker가 0이면 장애가 없었다고 판정하지 않는다. Kubernetes Event와 ALB health 실패 시각은
+있는데 marker가 없다면 `관측 불완전`으로 분류한다. alarm은 두 개이고 notification action이
+0이어야 하며, 상태가 바뀌어도 현재는 사람에게 자동 전달되지 않는다.
+
 add-on이 `ACTIVE`가 아니거나 collector Pod가 모두 Ready가 아니면 관측 증거를 완전하다고
 판정하지 않는다. add-on update 뒤 cluster scraper만 host network drift가 재발한 경우에만
 다음 조정 명령을 사용한다.
@@ -126,20 +158,40 @@ CloudWatch marker 2개와 임시 resource 0개다.
 
 ## 5. immutable digest rollout과 rollback
 
-Phase 6에서는 preflight까지만 실행할 수 있다. receipt revision이 현재 branch에 포함되고,
-Backend image가 `linux/amd64` immutable digest이며, Secret/RDS/ALB/EC2 rollback source가
-모두 준비돼야 한다.
+Phase 6에서는 preflight 절차만 고정하며 candidate receipt가 Pair B에게서 오기 전에는 실제
+preflight도 실행하지 않는다. receipt revision이 현재 branch에 포함되고, Backend image가
+`linux/amd64` immutable digest이며, Secret/RDS/ALB/EC2 rollback source가 모두 준비돼야 한다.
+현재 worktree에 private `deploy/ec2.env`가 없으면 다른 worktree에서 자동 복사하거나 새 값을
+추측하지 말고 준비 작업을 차단 상태로 보고한다.
 
 ```bash
-bash scripts/preflight-eks-backend-image-rollout.sh '<private-image-receipt.json>'
+export ASKLAKE_IMAGE_RECEIPT='infra/eks/delivery/<private>.image-receipt.json'
+[[ -s "$ASKLAKE_IMAGE_RECEIPT" ]] || { echo 'private image receipt is missing' >&2; exit 1; }
+git check-ignore -q -- "$ASKLAKE_IMAGE_RECEIPT" || {
+  echo 'image receipt must be covered by .gitignore' >&2
+  exit 1
+}
+git ls-files --error-unmatch -- "$ASKLAKE_IMAGE_RECEIPT" >/dev/null 2>&1 && {
+  echo 'image receipt must not be tracked by Git' >&2
+  exit 1
+}
+[[ -s deploy/ec2.env ]] || { echo 'private deploy/ec2.env is missing' >&2; exit 1; }
+ec2_env_mode="$(stat -f '%Lp' deploy/ec2.env 2>/dev/null || stat -c '%a' deploy/ec2.env)"
+[[ "$ec2_env_mode" == '600' ]] || { echo 'deploy/ec2.env must use mode 0600' >&2; exit 1; }
+set -a
+source deploy/ec2.env
+set +a
+export ASKLAKE_EXPECTED_EC2_INSTANCE_ID="${ASKLAKE_EC2_INSTANCE_ID:?}"
+[[ "$ASKLAKE_EXPECTED_EC2_INSTANCE_ID" == "$ASKLAKE_EC2_INSTANCE_ID" ]] || exit 1
+bash scripts/preflight-eks-backend-image-rollout.sh "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
-다음 명령은 Phase 7의 공동 **변경** 명령이다. Pair B의 최종 digest와 fault/retry 변경이
-`pair1`에 병합되고 실행 창을 확보한 뒤에만 사용한다.
+다음 명령은 Phase 7의 공동 **변경** 중 첫 번째인 candidate rolling update다. Pair B의 최종
+digest와 fault/retry 변경이 `pair1`에 병합되고 실행 창을 확보한 뒤에만 사용한다.
 
 ```bash
 export ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend
-bash scripts/rollout-eks-backend-image.sh '<private-image-receipt.json>'
+bash scripts/rollout-eks-backend-image.sh "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
 runner는 Helm revision을 기록하고 rollout 후 ALB, Secret, RDS, Pod imageID, collector와
@@ -147,6 +199,20 @@ Continuous 경계를 확인한다. upgrade 이후 postcheck가 실패하면 직�
 자동 rollback을 시도한다. 출력이 `backend_rollout_rollback=completed_and_steady`가 아니면
 자동 복구 성공으로 선언하지 말고, Helm revision과 live digest를 조회한 뒤 변경을 멈춘다.
 mutable tag 재배포, `kubectl set image`와 source commit만으로 완료 처리하는 방식은 금지한다.
+
+이 자동 실패 rollback은 Phase 7이 요구하는 의도적 왕복 검증을 대신하지 않는다. Phase 7은
+별도 approval-gated runner 또는 검토된 명령으로 다음 순서를 구현해야 한다.
+
+1. 이전 Helm revision과 이전 FastAPI/Collector digest를 private evidence에 고정한다.
+2. 새 candidate digest로 rolling update하고 FastAPI `2/2`, Collector `1/1`, ALB/RDS/Secret,
+   Continuous와 외부 HTTP 무중단을 확인한다.
+3. 성공한 release를 의도적으로 이전 revision으로 rollback하고 같은 gate를 다시 확인한다.
+4. 새 digest로 재승격하고 formal receipt, Deployment와 Pod imageID가 다시 일치하는지 확인한다.
+5. 전 과정에서 Frontend image와 runtime Secret이 변하지 않았음을 확인한다.
+
+의도적 rollback 또는 재승격이 실패하면 추가 mutation을 중단한다. 현재
+`scripts/rollout-eks-backend-image.sh`에는 성공 뒤 의도적 rollback·재승격 기능이 없으므로
+Phase 6 완료를 해당 live 증거로 확대하지 않는다.
 
 ## 6. 보존 EC2 fallback
 
@@ -175,9 +241,21 @@ bash scripts/deploy.sh start
 bash scripts/deploy.sh health
 ```
 
-`start` 성공은 cutover가 아니다. health와 Continuous 단일 소유권을 다시 확인하고 DNS/route
-변경은 별도 승인된 절차로 수행한다. EKS와 EC2가 동시에 같은 Kafka Continuous worker를
-소유하면 즉시 중단한다. 기존 EC2, DB와 MinIO를 삭제하거나 Compose volume을 제거하지 않는다.
+`start` 성공은 cutover가 아니다. 다음 순서로 Backend·AI·Compose health, EKS process 0과
+EC2 Continuous 단일 소유권을 재확인한 뒤 별도 승인된 DNS/route 절차로 전환한다. cutover
+뒤에는 외부 URL을 다시 검사한다. Phase 6에서는 route를 변경하지 않는다.
+
+```bash
+bash scripts/deploy.sh health
+bash scripts/verify-eks-continuous-process-boundary.sh
+bash scripts/verify-eks-day18-ec2-rollback.sh \
+  "/private/tmp/asklake-day18-ec2-post-start-$(date +%s).json"
+```
+
+마지막 audit은 application URL이 이미 보존 EC2를 가리키는 환경에서만 통과하므로 DNS/route가
+아직 EKS를 가리키면 post-start service health와 cutover 검증을 분리해 기록한다. EKS와 EC2가
+동시에 같은 Kafka Continuous worker를 소유하면 즉시 중단한다. 기존 EC2, DB와 MinIO를
+삭제하거나 Compose volume을 제거하지 않는다.
 현재 보존 원본에는 legacy-local-default 표시와 Trino collector/cleanup의 미적용 health check
 2개가 남아 있으므로 이를 숨기지 않고 인계한다.
 
@@ -215,6 +293,10 @@ CloudWatch 비용 판정은 5분 이상 관찰과 24시간 보정치를 사용�
 - 자동 rollback이 있었다면 직전 Helm revision과 steady 상태가 재검증됐다.
 - OTel HTTP 400, 24시간 비용 window, action 없는 alarm, EC2 legacy/probe drift 같은 미해결
   항목을 성공 판정과 분리해 인계했다.
+
+Phase 4의 격리 복구는 ALB/RDS/HPA/CloudWatch 복구만 증명한다. S3 object, Catalog
+materialization, Iceberg snapshot과 retry duplicate 부재는 Phase 7 또는 Phase 8의 bounded
+E2E에서 별도로 확인해야 하며, 이 증거 없이 Day 18 전체 데이터 경로 완료로 선언하지 않는다.
 
 Phase 7에서는 Pair B의 최종 immutable digest와 fault/retry 결과를 받은 뒤 5절의 rollout을
 공동 실행한다. Phase 8의 bounded E2E 3회와 최종 cleanup이 끝나기 전에는 Day 18 전체 완료로

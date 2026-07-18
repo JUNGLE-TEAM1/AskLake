@@ -179,9 +179,12 @@ NodePool CPU·memory limit은 실패 trap에서도 원래 값으로 복구하며
 Day 18 Phase 6 운영 절차는 [운영 runbook](../../docs/eks-day18-operations-runbook.md)에
 고정한다. `kubectl`·ALB/RDS·CloudWatch 조회, 격리 복구, immutable digest rollout/rollback,
 보존 EC2 fallback과 cleanup을 조회/조정/변경 등급으로 나누며
-`scripts/verify-eks-day18-operations-runbook.sh`가 필수 명령, confirmation과 금지된 광역
-삭제·mutable image 경로를 검사한다. 실제 새 digest rollout은 Phase 7 공동 실행 전에는
-수행하지 않는다.
+`scripts/verify-eks-day18-operations-runbook.sh`와 negative fixture가 실행 가능한 필수 명령,
+Git-ignored receipt, exact EC2 identity, confirmation과 금지된 광역 삭제·mutable image 경로를
+검사한다. add-on Ready는 같은 UTC window의 Event/log marker/alarm 상관관계를 대신하지 않고,
+rollout 실패 자동 rollback은 성공 release의 의도적 rollback·재승격을 대신하지 않는다. 실제
+새 digest 왕복 검증은 Phase 7 공동 실행 전에는 수행하지 않으며 S3·Catalog·Iceberg 연속성은
+Phase 7/8 bounded E2E에서 닫는다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 
