@@ -246,6 +246,7 @@ class ClickHouseContinuousSqlWorkerGateway:
             f"WHERE database = {quote_clickhouse_string(target.database)} "
             "AND name IN ("
             f"{quote_clickhouse_string(names['ingest_view'])}, "
+            f"{quote_clickhouse_string(names['ingest_view'] + '_v2')}, "
             f"{quote_clickhouse_string(names['join_view'])}, "
             f"{quote_clickhouse_string(names['raw'])}, "
             f"{quote_clickhouse_string(target.table)})"
@@ -253,9 +254,10 @@ class ClickHouseContinuousSqlWorkerGateway:
         existing = {str(row[0]) for row in tables.rows if row}
         if target.table not in existing or names["raw"] not in existing:
             return self._worker_result(job, target, "missing")
+        ingest_running = names["ingest_view"] in existing or f"{names['ingest_view']}_v2" in existing
         state = (
             "running"
-            if {names["ingest_view"], names["join_view"]}.issubset(existing)
+            if ingest_running and names["join_view"] in existing
             else "not_running"
         )
         progress = client.query(
