@@ -164,7 +164,7 @@ export function SqlAiWriterDialog({
     <Popover onOpenChange={onOpenChange} open={open}>
       <PopoverTrigger asChild>
         <Button disabled={disabled} size="sm" type="button" variant="outline">
-          <NessieMark className="size-5" /> Nessie로 SQL 작성
+          Nessie로 SQL 작성
         </Button>
       </PopoverTrigger>
       <PopoverContent

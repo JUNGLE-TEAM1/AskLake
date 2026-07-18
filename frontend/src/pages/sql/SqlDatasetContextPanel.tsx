@@ -1,10 +1,9 @@
 import type { RefObject } from "react";
+import { ChevronLeft } from "lucide-react";
 import {
-  SQL_PAGE_PANEL_ICON_CLASS_NAME,
-  SqlPageIcon as BarChart3,
-  SqlPageIcon as PanelLeftClose,
+  SQL_PAGE_SECTION_MARKER_CLASS_NAME,
   SqlPageIcon as Search,
-  SqlPageIcon as Table2,
+  SqlSectionMarker,
 } from "./SqlPageIcon";
 
 import { Button } from "@/components/ui/button";
@@ -75,7 +74,7 @@ export function SqlDatasetContextPanel({
 }: SqlDatasetContextPanelProps) {
   return (
     <Panel asChild>
-      <aside className={styles.datasetPanel} ref={contextPanelRef}>
+      <aside className={styles.datasetPanel} id="sql-dataset-tools" ref={contextPanelRef}>
         <Tabs
           className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)]"
           onValueChange={(value) => onTabChange(value as SqlContextPanelTab)}
@@ -84,20 +83,19 @@ export function SqlDatasetContextPanel({
           <div className="grid">
             <PanelHeader
               actions={(
-                <Button type="button" onClick={onCollapse} aria-label="SQL 도구 접기" title="SQL 도구 접기" size="icon" variant="ghost">
-                  <PanelLeftClose data-icon="inline-start" />
+                <Button aria-controls="sql-dataset-tools" aria-expanded="true" type="button" onClick={onCollapse} aria-label="SQL 도구 접기" title="SQL 도구 접기" size="icon" variant="ghost">
+                  <ChevronLeft aria-hidden="true" />
                 </Button>
               )}
-              icon={<Table2 size={16} />}
-              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
-              iconVariant="outline"
+              icon={<SqlSectionMarker />}
+              iconClassName={SQL_PAGE_SECTION_MARKER_CLASS_NAME}
               size="section"
               title="SQL 도구"
             />
             <div className="px-4 pb-4 pt-3">
               <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
-                <TabsTrigger value="tables"><Table2 /> 분석 테이블</TabsTrigger>
-                <TabsTrigger value="chart"><BarChart3 /> 차트 생성하기</TabsTrigger>
+                <TabsTrigger value="tables">분석 테이블</TabsTrigger>
+                <TabsTrigger value="chart">차트 생성하기</TabsTrigger>
               </TabsList>
             </div>
           </div>

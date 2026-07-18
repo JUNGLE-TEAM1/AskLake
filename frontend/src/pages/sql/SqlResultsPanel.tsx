@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import {
-  SQL_PAGE_PANEL_ICON_CLASS_NAME,
+  SQL_PAGE_SECTION_MARKER_CLASS_NAME,
   SqlPageIcon as Activity,
   SqlPageIcon as BarChart3,
   SqlPageIcon as Database,
@@ -8,6 +8,7 @@ import {
   SqlPageIcon as Maximize2,
   SqlPageIcon as RotateCcw,
   SqlPageIcon as Table2,
+  SqlSectionMarker,
 } from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
@@ -299,9 +300,8 @@ export function SqlResultsPanel({
         ) : (
           <>
             <PanelHeader
-              icon={<Table2 size={16} />}
-              iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
-              iconVariant="outline"
+              icon={<SqlSectionMarker />}
+              iconClassName={SQL_PAGE_SECTION_MARKER_CLASS_NAME}
               size="section"
               title="결과 대기 중"
             />
