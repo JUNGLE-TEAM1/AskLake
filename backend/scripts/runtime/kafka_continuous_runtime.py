@@ -6,7 +6,6 @@ import re
 import signal
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -29,7 +28,6 @@ from runtime.contracts import (
     CHECKPOINT_CONTRACT_SCHEMA_VERSION,
     RUNTIME_REPORT_SCHEMA_VERSION,
     ShutdownCoordinator,
-    atomic_write_json,
     bounded_int_env,
     canonical_hash,
     json_array_env,
@@ -39,6 +37,14 @@ from runtime.config import KafkaWorkerConfig
 from runtime.kafka_state import (
     normalize_stream_partition_cursors,
     stream_partition_cursor_payload,
+)
+from runtime.runtime_documents import (
+    catalog_ack_batch_id,
+    requested_runtime_action,
+    runtime_document_exists,
+    runtime_document_with_suffix,
+    write_runtime_document_json,
+    write_runtime_marker,
 )
 
 
@@ -164,95 +170,6 @@ CURRENT_BATCH_CONTEXT: dict[str, Any] = {}
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def runtime_document_is_object_store(path: str) -> bool:
-    return path.lower().startswith(("s3://", "s3a://"))
-
-
-def runtime_document_with_suffix(path: str, suffix: str) -> str:
-    parent, separator, filename = path.rpartition("/")
-    stem, extension_separator, _extension = filename.rpartition(".")
-    updated = f"{stem if extension_separator else filename}{suffix}"
-    return f"{parent}{separator}{updated}" if separator else updated
-
-
-def runtime_document_filesystem(path_value: str):
-    if RECOVERY_SPARK is None:
-        raise RuntimeError("Spark must be initialized before accessing an object-store runtime document.")
-    jvm = RECOVERY_SPARK.sparkContext._jvm
-    hadoop = RECOVERY_SPARK.sparkContext._jsc.hadoopConfiguration()
-    path = jvm.org.apache.hadoop.fs.Path(path_value)
-    return path, path.getFileSystem(hadoop)
-
-
-def read_runtime_document(path_value: str) -> str:
-    if not runtime_document_is_object_store(path_value):
-        try:
-            with open(path_value, encoding="utf-8") as source:
-                return source.read()
-        except OSError:
-            return ""
-    try:
-        path, filesystem = runtime_document_filesystem(path_value)
-        if not filesystem.exists(path):
-            return ""
-        source = filesystem.open(path)
-        try:
-            return bytes(source.readAllBytes()).decode("utf-8")
-        finally:
-            source.close()
-    except Exception:  # Runtime report reads must not stop the streaming query.
-        return ""
-
-
-def write_runtime_document_json(path_value: str, payload: dict[str, Any]) -> None:
-    if not runtime_document_is_object_store(path_value):
-        atomic_write_json(
-            Path(path_value),
-            payload,
-            schema_field="runtimeReportSchemaVersion",
-            schema_version=RUNTIME_REPORT_SCHEMA_VERSION,
-        )
-        return
-    path, filesystem = runtime_document_filesystem(path_value)
-    parent = path.getParent()
-    if parent is not None:
-        filesystem.mkdirs(parent)
-    output = filesystem.create(path, True)
-    try:
-        output.write(bytearray(json.dumps({
-            "runtimeReportSchemaVersion": RUNTIME_REPORT_SCHEMA_VERSION,
-            **payload,
-        }, ensure_ascii=False).encode("utf-8")))
-    finally:
-        output.close()
-
-
-def runtime_document_exists(path_value: str) -> bool:
-    if not runtime_document_is_object_store(path_value):
-        return os.path.exists(path_value)
-    try:
-        path, filesystem = runtime_document_filesystem(path_value)
-        return bool(filesystem.exists(path))
-    except Exception:
-        return False
-
-
-def write_runtime_marker(path_value: str) -> None:
-    if not runtime_document_is_object_store(path_value):
-        with open(path_value, "w", encoding="utf-8") as target:
-            target.write(now())
-        return
-    path, filesystem = runtime_document_filesystem(path_value)
-    parent = path.getParent()
-    if parent is not None:
-        filesystem.mkdirs(parent)
-    output = filesystem.create(path, True)
-    try:
-        output.write(bytearray(now().encode("utf-8")))
-    finally:
-        output.close()
 
 
 def duration_label(value: Any) -> str:
@@ -466,18 +383,9 @@ def fail_current_batch(error: Exception) -> None:
     LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
-def catalog_ack_batch_id() -> int:
-    ack_path = runtime_document_with_suffix(REPORT_FILE, ".catalog-ack.json")
-    try:
-        payload = json.loads(read_runtime_document(ack_path))
-        return int(payload.get("batchId"))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        return -1
-
-
 def apply_catalog_ack() -> None:
     global CATALOG_ACK_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
-    acknowledged_batch = catalog_ack_batch_id()
+    acknowledged_batch = catalog_ack_batch_id(REPORT_FILE, RECOVERY_SPARK)
     if acknowledged_batch <= CATALOG_ACK_BATCH_ID:
         return
     previous_acknowledged_batch = CATALOG_ACK_BATCH_ID
@@ -583,21 +491,12 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         **continuous_sql.report_metadata(CONTINUOUS_SQL_PLAN),
         "lastError": error,
     }
-    write_runtime_document_json(REPORT_FILE, payload)
-
-
-def requested_action() -> str:
-    try:
-        raw = read_runtime_document(COMMAND_FILE).strip()
-        if not raw:
-            return ""
-        command = json.loads(raw)
-        command_attempt_id = str(command.get("workerAttemptId") or "")
-        if command_attempt_id and command_attempt_id != str(WORKER_ATTEMPT_ID or ""):
-            return ""
-        return str(command.get("action") or "")
-    except (OSError, json.JSONDecodeError):
-        return ""
+    write_runtime_document_json(
+        REPORT_FILE,
+        payload,
+        RECOVERY_SPARK,
+        schema_version=RUNTIME_REPORT_SCHEMA_VERSION,
+    )
 
 
 def on_signal(_signum: int, _frame: Any) -> None:
@@ -1412,7 +1311,7 @@ def main() -> None:
     RECOVERY_ROOT = output_path
     configure_s3a(spark)
     ensure_checkpoint_contract(spark, checkpoint_path, output_path, iceberg_target)
-    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id()
+    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id(REPORT_FILE, RECOVERY_SPARK)
     recovered = recover_published_state(
         spark,
         output_path,
@@ -1763,8 +1662,8 @@ def main() -> None:
         })
         if os.environ.get("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", "").lower() == "true":
             fault_marker = runtime_document_with_suffix(REPORT_FILE, ".publish-fault-applied")
-            if not runtime_document_exists(fault_marker):
-                write_runtime_marker(fault_marker)
+            if not runtime_document_exists(fault_marker, RECOVERY_SPARK):
+                write_runtime_marker(fault_marker, now(), RECOVERY_SPARK)
                 raise RuntimeError("Injected failure after data write and before manifest publication.")
         published_at = now()
         stage_durations["manifestDurationMs"] = 0
@@ -1845,15 +1744,20 @@ def main() -> None:
     if STOP_REQUESTED:
         QUERY.stop()
     report("running")
+    await_query_termination()
+    action = requested_runtime_action(COMMAND_FILE, RECOVERY_SPARK, WORKER_ATTEMPT_ID)
+    report("paused" if action == "pause" else "stopped")
+
+
+def await_query_termination() -> None:
     while QUERY.isActive:
         QUERY.awaitTermination(5)
         if QUERY.isActive:
-            if requested_action() in {"pause", "stop"}:
+            if requested_runtime_action(COMMAND_FILE, RECOVERY_SPARK, WORKER_ATTEMPT_ID) in {"pause", "stop"}:
                 QUERY.stop()
                 continue
             refresh_query_metrics(QUERY)
             report("running")
-    report("paused" if requested_action() == "pause" else "stopped")
 
 
 def run_cli() -> None:

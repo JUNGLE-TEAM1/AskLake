@@ -57,7 +57,7 @@ PR02는 기반시설을 구현했지만 V2 data path를 활성화하지 않는�
 - `clickhouse-realtime-v2` profile에 단일 Keeper, ClickHouse 26.3.17.4 LTS와 공식 Sink plugin이 설치된 Kafka Connect worker를 추가했다.
 - local은 loopback HTTP를 사용한다. production은 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하고 Connect worker에 CA를 mount하지만, 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 단일 노드 topology는 demo/staging이며 HA가 아니다.
 - 다섯 V2 설정과 단일 owner startup/Job generation guard를 추가했다. V2가 enabled이면 live probe가 없는 PR02의 `/api/health/realtime`은 HTTP 503으로 fail closed한다.
-- Alembic `0012_clickhouse_realtime_v2_foundation`은 신규 metadata table 10개만 expand한다. 기존 revision/event publication table은 PR06 전까지 변경하지 않는다.
+- Alembic `0016_clickhouse_realtime_v2_foundation`은 신규 metadata table 10개만 expand한다. 기존 revision/event publication table은 PR06 전까지 변경하지 않는다.
 - connector instance 등록, raw/serving DDL, Kafka ingest, receipt audit와 materialization은 PR03 이후 범위다.
 
 Exact artifact, account, migration command와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 고정한다.
@@ -645,7 +645,7 @@ Dashboard, parity, target row count, checksum, repair 검증은 base table을 �
 
 모든 table은 Alembic migration으로 생성한다. runtime startup의 CREATE/ALTER 보강 코드는 migration 완료 후 제거한다. 기존 `dataset_freshness`와 `dataset_revision_commits`가 공개 revision의 source of truth이므로, 별도 `dataset_serving_revisions`를 만들지 않고 두 table을 확장한다.
 
-PR02의 `0012_clickhouse_realtime_v2_foundation`은 아래 신규 metadata 10개를 만드는 expand revision이다. 신규 table은 ORM startup `create_all`에 등록하지 않으며 Alembic이 schema authority다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`의 target field는 PR06 migration 전에는 아직 존재한다고 가정하지 않는다. Production rollback은 flag/owner를 끄고 expand schema를 보존하며, destructive downgrade는 disposable development DB의 migration test에서만 사용한다.
+PR02의 `0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음에 아래 신규 metadata 10개를 만드는 expand revision이다. 신규 table은 ORM startup `create_all`에 등록하지 않으며 Alembic이 schema authority다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`의 target field는 PR06 migration 전에는 아직 존재한다고 가정하지 않는다. Production rollback은 flag/owner를 끄고 expand schema를 보존하며, destructive downgrade는 disposable development DB의 migration test에서만 사용한다.
 
 ### 10.1 realtime_pipelines
 

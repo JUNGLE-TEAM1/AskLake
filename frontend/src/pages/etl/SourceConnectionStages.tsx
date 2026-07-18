@@ -51,7 +51,7 @@ export function SourceChoiceStage({
               <Button
                 aria-label={`${meta.label} 소스 선택`}
                 aria-pressed={sourceType === connector}
-                className="source-choice-button relative grid h-auto min-h-36 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-8 text-left"
+                className="source-choice-button relative grid h-auto min-h-28 w-full grid-cols-[64px_minmax(0,1fr)] items-center justify-items-start gap-5 whitespace-normal px-10 py-6 text-left"
                 key={connector}
                 type="button"
                 variant={sourceType === connector ? "subtle" : "outline"}
@@ -59,10 +59,7 @@ export function SourceChoiceStage({
               >
                 {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
                 <span className="inline-flex size-16 items-center justify-center">{meta.icon}</span>
-                <span className="grid min-w-0 gap-1.5">
-                  <span className="text-lg font-bold text-slate-950">{meta.label}</span>
-                  <span className="text-[13px] font-medium leading-5 text-slate-500">{meta.description}</span>
-                </span>
+                <span className="min-w-0 text-lg font-bold text-slate-950">{meta.label}</span>
               </Button>
             );
           })}

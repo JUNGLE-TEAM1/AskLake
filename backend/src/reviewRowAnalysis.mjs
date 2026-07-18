@@ -1,6 +1,5 @@
-﻿import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+﻿import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
@@ -10,69 +9,26 @@ import { defaultRawBucket, objectStorageProvider, resolveObjectStorageConfig, s3
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = path.resolve(process.env.ASKLAKE_REVIEW_ANALYSIS_DIR || path.join(backendDir, "tmp", "review-row-analysis"));
-const latestSummaryPath = path.join(outputRoot, "cellphones-latest-summary.json");
-
-const sourceBucket = process.env.ASKLAKE_CELLPHONES_REVIEW_BUCKET || defaultRawBucket();
-const sourceKey = process.env.ASKLAKE_CELLPHONES_REVIEW_KEY || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
-const defaultLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_DEFAULT_LIMIT, 50000, 1, 500000);
+const defaultLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_DEFAULT_LIMIT, 25, 1, 500000);
 const maxInteractiveLimit = boundedPositiveInt(process.env.ASKLAKE_REVIEW_ANALYSIS_MAX_LIMIT, 200000, 1000, 1000000);
-const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT || "http://127.0.0.1:1234/v1/chat/completions";
-const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
-const localLlmTimeoutMs = boundedPositiveInt(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS, 120000, 1000, 600000);
-const localLlmMaxInputChars = boundedPositiveInt(process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS, 9000, 1000, 50000);
-
-const categoryRules = [
-  {
-    id: "safety_battery",
-    label: "Safety / battery risk",
-    subcategory: "overheat_fire_swelling",
-    keywords: ["fire", "burn", "burned", "burning", "smoke", "smoking", "explode", "exploded", "explosion", "overheat", "overheated", "hot", "swollen", "swelling", "shock"],
-  },
-  {
-    id: "charging_power",
-    label: "Charging / power",
-    subcategory: "charge_cable_battery",
-    keywords: ["charge", "charging", "charger", "cable", "cord", "battery", "power", "plug", "usb", "lightning", "watt"],
-  },
-  {
-    id: "screen_display",
-    label: "Screen / display",
-    subcategory: "screen_glass_touch",
-    keywords: ["screen", "display", "protector", "glass", "touch", "digitizer", "cracked", "scratch", "bubble"],
-  },
-  {
-    id: "compatibility_fit",
-    label: "Compatibility / fit",
-    subcategory: "fit_size_model",
-    keywords: ["doesn't fit", "does not fit", "didn't fit", "not fit", "fit my", "compatible", "compatibility", "wrong size", "too small", "too big", "model"],
-  },
-  {
-    id: "audio_bluetooth",
-    label: "Audio / Bluetooth",
-    subcategory: "sound_pairing_connection",
-    keywords: ["bluetooth", "speaker", "headset", "earbud", "earbuds", "sound", "audio", "pair", "paired", "pairing", "volume", "mic", "microphone"],
-  },
-  {
-    id: "durability_quality",
-    label: "Durability / quality",
-    subcategory: "broken_defective_stopped",
-    keywords: ["broke", "broken", "defective", "defect", "cheap", "flimsy", "stopped working", "doesn't work", "does not work", "dead", "failed", "poor quality", "junk"],
-  },
-  {
-    id: "delivery_packaging",
-    label: "Delivery / packaging",
-    subcategory: "arrived_missing_return",
-    keywords: ["arrived", "missing", "package", "packaging", "box", "return", "returned", "refund", "replacement", "damaged"],
-  },
-  {
-    id: "listing_accuracy",
-    label: "Listing accuracy",
-    subcategory: "color_image_description",
-    keywords: ["not as described", "description", "picture", "photo", "image", "color", "clear", "white background", "wrong item", "different"],
-  },
-];
-
-const positiveKeywords = ["works well", "worked great", "great price", "perfect", "love", "excellent", "recommend", "happy", "good quality", "easy to install"];
+const reviewAiMaxRows = boundedPositiveInt(process.env.ASKLAKE_REVIEW_AI_MAX_ROWS, 100, 1, 1000);
+const reviewAiConcurrency = boundedPositiveInt(process.env.ASKLAKE_REVIEW_AI_CONCURRENCY, 4, 1, 8);
+const aiGatewayBaseUrl = String(process.env.AI_GATEWAY_BASE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");
+const aiGatewayToken = String(process.env.AI_GATEWAY_SERVICE_TOKEN || "");
+const aiGatewayTimeoutMs = boundedPositiveInt(
+  process.env.AI_GATEWAY_TIMEOUT_MS,
+  boundedPositiveInt(process.env.AI_GATEWAY_TIMEOUT_SECONDS, 120, 1, 600) * 1000,
+  1000,
+  600000,
+);
+const aiGatewayMaxResponseBytes = boundedPositiveInt(
+  process.env.AI_GATEWAY_MAX_RESPONSE_BYTES,
+  1024 * 1024,
+  16 * 1024,
+  8 * 1024 * 1024,
+);
+const reviewAiMaxInputChars = boundedPositiveInt(process.env.ASKLAKE_REVIEW_AI_MAX_INPUT_CHARS, 9000, 1000, 50000);
+const defaultReviewSchemaTemplateId = "amazon-review-structured-v1";
 
 const supportedReviewAnalysisMethods = [
   "copy",
@@ -104,115 +60,64 @@ const reviewAnalysisMethodAliases = {
 };
 
 export async function getCellphonesReviewAnalysisStatus() {
-  if (!existsSync(latestSummaryPath)) {
-    return {
-      status: "idle",
-      message: "Cell_Phones_and_Accessories.jsonl 실행 결과가 아직 없습니다.",
-      source: sourceDescriptor(),
-    };
-  }
-
-  return JSON.parse(readFileSync(latestSummaryPath, "utf8"));
+  return {
+    status: "idle",
+    message: "실행 상태는 FastAPI의 영속 실행 레코드에서 조회합니다.",
+    source: sourceDescriptor(defaultReviewSource()),
+  };
 }
 
 export async function suggestReviewAnalysisSchema(request = {}) {
-  const endpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT || "http://127.0.0.1:1234/v1/chat/completions";
-  const model = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-issue-labeler";
   const sourceColumns = Array.isArray(request.sourceColumns) ? request.sourceColumns.slice(0, 40) : [];
   const sampleRows = Array.isArray(request.sampleRows) ? request.sampleRows.slice(0, 3) : [];
-  const prompt = [
-    "You design a structured output schema for source rows that contain free text.",
-    "Return one minified valid JSON object only. No markdown. No comments. No prose.",
-    "The user wants a draft schema only; humans will edit it later.",
-    "Recommend columns that can be produced per source row for classification, extraction, copied fields, and summarization.",
-    "Prefer concise snake_case targetName values.",
-    "Each column must have: targetName, label, type, nullable.",
-    `Each column must include method. Supported methods: ${supportedReviewAnalysisMethods.join(", ")}.`,
-    "Use method copy for copied fields.",
-    "Use method one_of_values only when the output must be selected from allowedValues.",
-    "Use method instruction for summary, evidence, reason, or other free-form extraction/generation.",
-    "Use allowedValues only for method one_of_values.",
-    "Allowed types: String, Integer, Long, Double, Boolean, Timestamp.",
-    "Use English label values to avoid escaping problems.",
-    "Do not put quotes inside string values.",
-    "Include columns for copied identifiers when present, sentiment when useful, issue/category when useful, severity/risk when useful, short summary, and evidence/reason.",
-    "Do not include confidence, score, accuracy, or quality columns in the suggested output schema.",
-    "",
-    `Source columns: ${JSON.stringify(sourceColumns)}`,
-    `Sample rows: ${JSON.stringify(sampleRows).slice(0, 6000)}`,
-    "",
-    "JSON shape: {\"columns\":[{\"targetName\":\"sentiment\",\"label\":\"sentiment\",\"type\":\"String\",\"nullable\":false,\"method\":\"one_of_values\",\"allowedValues\":[\"positive\",\"mixed\",\"negative\"]}]}",
-  ].join("\n");
-
-  const response = await fetch(endpoint, {
-    body: JSON.stringify({
-      messages: [
-        { role: "system", content: "You return strict JSON for data engineering schema suggestions." },
-        { role: "user", content: prompt },
-      ],
-      model,
-      temperature: 0.1,
-    }),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-    signal: AbortSignal.timeout(120000),
-  });
-  if (!response.ok) {
-    throw Object.assign(new Error(`Local LLM schema suggestion failed: HTTP ${response.status}`), {
-      code: "REVIEW_SCHEMA_SUGGESTION_FAILED",
-      status: 502,
-    });
-  }
-
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content ?? "";
-  const parsed = parseLlmJson(content);
-  const columns = normalizeSuggestedColumns(parsed?.columns);
+  const payload = await callAiGateway(
+    "review_schema",
+    "Suggest an editable structured review-analysis schema.",
+    { sourceColumns, sampleRows },
+  );
+  const columns = normalizeSuggestedColumns(payload.output?.columns);
   if (columns.length === 0) {
-    throw Object.assign(new Error("Local LLM returned no usable schema columns."), {
+    throw Object.assign(new Error("AI Gateway returned no usable schema columns."), {
       code: "REVIEW_SCHEMA_SUGGESTION_EMPTY",
       status: 502,
     });
   }
   return {
     columns,
-    model,
-    source: "local-llm",
+    model: payload.model,
+    source: "ai-gateway",
     status: "success",
   };
 }
 
-export async function runCellphonesReviewAnalysis(request = {}) {
-  const requestedLimit = Number(request.limit);
-  const full = request.full === true || requestedLimit === 0;
-  const limit = full ? 0 : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
-  const outputSchema = normalizeOutputSchema(request.schemaColumns ?? request.columns);
-  const runtime = normalizeReviewAnalysisRuntime(request.runtime);
+export async function runReviewAnalysis(request = {}) {
+  const { limit, outputSchema, runtime, usesDefaultSchemaTemplate } = reviewRunConfiguration(request);
   const startedAt = new Date();
-  const runId = `cellphones_${startedAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
-  const runDir = path.join(outputRoot, runId);
-  const outputPath = path.join(runDir, "review_issue_rows.jsonl");
-  const csvOutputPath = path.join(runDir, "review_issue_rows.csv");
-  const summaryPath = path.join(runDir, "summary.json");
+  const sourceConfig = normalizeReviewSource(request.source);
+  const requestedRunId = safeRunId(request.runId);
+  const runId = requestedRunId || `review_${startedAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
+  const { runDir, outputPath, csvOutputPath, summaryPath } = reviewRunPaths(runId);
 
   mkdirSync(runDir, { recursive: true });
-
   const result = initialSummary({
     limit,
     csvOutputPath,
     outputPath,
     outputSchema,
+    schemaSource: usesDefaultSchemaTemplate ? "builtin_template" : "user_defined",
     runId,
     runtime,
+    sourceConfig,
     startedAt,
     summaryPath,
   });
   const output = createWriteStream(outputPath, { encoding: "utf8" });
   const csvOutput = createWriteStream(csvOutputPath, { encoding: "utf8" });
+  const trainingRows = [];
+  const gatewayUsage = [];
   csvOutput.write(`${outputSchema.map((column) => csvEscape(column.targetName)).join(",")}\n`);
-  const source = await openReviewSource(limit);
+  const source = await openReviewSource(sourceConfig);
   let stderr = "";
-
   source.stderr?.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     if (stderr.length > 12000) stderr = stderr.slice(-12000);
@@ -224,29 +129,23 @@ export async function runCellphonesReviewAnalysis(request = {}) {
   });
 
   try {
-    for await (const line of lineReader) {
-      if (!line.trim()) continue;
-      const row = parseJsonLine(line, result);
-      if (!row) continue;
-      const analyzed = runtime === "local_llm"
-        ? await analyzeReviewRowWithLocalLlm(row, outputSchema, result.processedRows + 1)
-        : analyzeReviewRowScalable(row, outputSchema, result.processedRows + 1);
-      const projected = analyzed.projected;
-      recordClassifiedRow(result, analyzed.metricsRow, projected);
-      output.write(`${JSON.stringify(projected)}\n`);
-      csvOutput.write(`${outputSchema.map((column) => csvEscape(projected[column.targetName])).join(",")}\n`);
-      if (limit > 0 && result.processedRows >= limit) {
-        source.stop();
-        break;
-      }
-    }
+    const sourceRows = await readReviewSourceRows(lineReader, source, result, limit);
+    await analyzeAndWriteReviewRows({
+      sourceRows,
+      outputSchema,
+      result,
+      output,
+      csvOutput,
+      trainingRows,
+      gatewayUsage,
+    });
   } finally {
     await Promise.all([closeWritable(output), closeWritable(csvOutput)]);
   }
 
   const exit = await source.wait;
   if (exit !== 0 && result.processedRows === 0) {
-    throw Object.assign(new Error(`Cell phones review stream failed. ${stderr || `exit=${exit}`}`), {
+    throw Object.assign(new Error(`Review source stream failed. ${stderr || `exit=${exit}`}`), {
       code: "REVIEW_ANALYSIS_STREAM_FAILED",
       status: 502,
     });
@@ -257,28 +156,115 @@ export async function runCellphonesReviewAnalysis(request = {}) {
     stderr,
   });
   writeFileSync(summaryPath, JSON.stringify(result, null, 2), "utf8");
-  writeFileSync(latestSummaryPath, JSON.stringify(result, null, 2), "utf8");
-  return result;
+  return {
+    ...result,
+    __gatewayUsage: gatewayUsage,
+    __trainingColumns: outputSchema,
+    __trainingRows: trainingRows,
+  };
 }
 
-function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, runtime, startedAt, summaryPath }) {
-  const usesLocalLlm = runtime === "local_llm";
+function reviewRunConfiguration(request) {
+  const requestedLimit = Number(request.limit);
+  const full = request.full === true || requestedLimit === 0;
+  const limit = full
+    ? 0
+    : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
+  const requestedSchema = request.schemaColumns ?? request.columns;
+  const usesDefaultSchemaTemplate = !Array.isArray(requestedSchema) || requestedSchema.length === 0;
+  const outputSchema = normalizeOutputSchema(requestedSchema);
+  const requiresAi = outputSchema.some(
+    (column) => normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy") !== "copy",
+  );
+  if (full || limit > reviewAiMaxRows) {
+    throw Object.assign(
+      new Error(`AI Gateway review analysis is limited to ${reviewAiMaxRows} rows per interactive run. Submit bounded batches.`),
+      { code: "REVIEW_AI_ROW_LIMIT_EXCEEDED", status: 422 },
+    );
+  }
+  return {
+    limit,
+    outputSchema,
+    runtime: requiresAi ? "gateway" : "direct_copy",
+    usesDefaultSchemaTemplate,
+  };
+}
+
+function reviewRunPaths(runId) {
+  const runDir = path.join(outputRoot, runId);
+  return {
+    runDir,
+    outputPath: path.join(runDir, "review_issue_rows.jsonl"),
+    csvOutputPath: path.join(runDir, "review_issue_rows.csv"),
+    summaryPath: path.join(runDir, "summary.json"),
+  };
+}
+
+async function readReviewSourceRows(lineReader, source, result, limit) {
+  const sourceRows = [];
+  for await (const line of lineReader) {
+    if (!line.trim()) continue;
+    const row = parseJsonLine(line, result);
+    if (!row) continue;
+    sourceRows.push(row);
+    if (limit > 0 && sourceRows.length >= limit) {
+      source.stop();
+      break;
+    }
+  }
+  return sourceRows;
+}
+
+async function analyzeAndWriteReviewRows({
+  sourceRows,
+  outputSchema,
+  result,
+  output,
+  csvOutput,
+  trainingRows,
+  gatewayUsage,
+}) {
+  const analyzedRows = await mapWithConcurrency(
+    sourceRows,
+    reviewAiConcurrency,
+    (row, index) => analyzeReviewRowWithGateway(row, outputSchema, index + 1),
+  );
+  for (let index = 0; index < analyzedRows.length; index += 1) {
+    const row = sourceRows[index];
+    const analyzed = analyzedRows[index];
+    const projected = analyzed.projected;
+    if (analyzed.model && !result.analysis.models.includes(analyzed.model)) result.analysis.models.push(analyzed.model);
+    if (analyzed.provider && !result.analysis.providers.includes(analyzed.provider)) result.analysis.providers.push(analyzed.provider);
+    if (analyzed.usageRecord) gatewayUsage.push(analyzed.usageRecord);
+    trainingRows.push(buildTrainingRow(row, projected, outputSchema));
+    recordClassifiedRow(result, analyzed.metricsRow, projected);
+    output.write(`${JSON.stringify(projected)}\n`);
+    csvOutput.write(`${outputSchema.map((column) => csvEscape(projected[column.targetName])).join(",")}\n`);
+  }
+}
+
+export async function runCellphonesReviewAnalysis(request = {}) {
+  return runReviewAnalysis({ ...request, source: request.source ?? defaultReviewSource() });
+}
+
+function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, runtime, schemaSource, sourceConfig, startedAt, summaryPath }) {
   const storageLabel = objectStorageProvider() === "aws" ? "AWS S3" : "MinIO";
   return {
     analysis: {
       engine: "text-row-to-structured-csv",
       fallbackUsed: false,
-      mode: usesLocalLlm ? "local_llm_explicit" : "scalable_text_signal",
-      modelArtifact: usesLocalLlm ? localLlmModel : "spark-compatible text signal pipeline",
-      rowRuntime: usesLocalLlm
+      mode: runtime === "gateway" ? "ai_gateway" : "direct_copy",
+      models: [],
+      providers: [],
+      schemaSource,
+      schemaTemplateId: schemaSource === "builtin_template" ? defaultReviewSchemaTemplateId : null,
+      rowRuntime: runtime === "gateway"
         ? {
-          endpoint: redactEndpoint(localLlmEndpoint),
-          timeoutMs: localLlmTimeoutMs,
+          endpoint: redactEndpoint(aiGatewayBaseUrl),
+          maxResponseBytes: aiGatewayMaxResponseBytes,
+          timeoutMs: aiGatewayTimeoutMs,
         }
-        : {
-          endpoint: "",
-          timeoutMs: 0,
-        },
+        : null,
       holdoutEvaluation: {
         metrics: [],
         reason: "Final quality is measured against labeled holdout data outside the transform definition.",
@@ -300,9 +286,9 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
     },
     method: {
       name: "text-row-structuring",
-      note: usesLocalLlm
-        ? `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema. Local LLM row calls are explicit opt-in.`
-        : `Streams the real ${storageLabel} JSONL source and writes the user-defined final CSV schema with scalable text-signal transforms.`,
+      note: runtime === "gateway"
+        ? `Streams the real ${storageLabel} JSONL source through the AskLake AI Gateway and writes the user-defined final CSV schema.`
+        : `Copies the requested fields from the real ${storageLabel} JSONL source without invoking an AI model.`,
       schema: outputSchema.map((column) => column.targetName),
     },
     output: {
@@ -315,107 +301,230 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
     runId,
     sentimentBreakdown: [],
     severityBreakdown: [],
-    source: sourceDescriptor(),
+    source: sourceDescriptor(sourceConfig),
     startedAt: startedAt.toISOString(),
     status: "running",
     stoppedAtLimit: limit > 0,
   };
 }
 
-function sourceDescriptor() {
+function defaultReviewSource() {
+  return {
+    bucket: process.env.ASKLAKE_CELLPHONES_REVIEW_BUCKET || defaultRawBucket(),
+    key: process.env.ASKLAKE_CELLPHONES_REVIEW_KEY || "amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl",
+  };
+}
+
+function normalizeReviewSource(source) {
+  const fallback = defaultReviewSource();
+  const bucket = String(source?.bucket || fallback.bucket).trim();
+  const key = String(source?.key || fallback.key).trim();
+  if (!bucket || !key || /[\r\n\0]/.test(`${bucket}${key}`)) {
+    throw Object.assign(new Error("Review source bucket and key are required."), {
+      code: "REVIEW_SOURCE_INVALID",
+      status: 422,
+    });
+  }
+  return { bucket, key };
+}
+
+function sourceDescriptor(source) {
   const provider = objectStorageProvider();
   return {
-    bucket: sourceBucket,
-    key: sourceKey,
-    object: `s3://${sourceBucket}/${sourceKey}`,
+    bucket: source.bucket,
+    key: source.key,
+    object: `s3://${source.bucket}/${source.key}`,
     provider,
-    runtime: provider === "minio" ? "docker exec m3-minio mc cat" : "AWS SDK default credential chain",
+    runtime: provider === "minio" ? "S3-compatible streaming client" : "AWS SDK default credential chain",
   };
 }
 
-function normalizeReviewAnalysisRuntime(value) {
-  const runtime = String(value || process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable").trim().toLowerCase();
-  return ["local_llm", "llm", "row_llm"].includes(runtime) ? "local_llm" : "scalable";
+function safeRunId(value) {
+  const normalized = String(value ?? "").trim();
+  return /^[a-zA-Z0-9_-]{1,120}$/.test(normalized) ? normalized : "";
 }
 
-function analyzeReviewRowScalable(rawRow, outputSchema, ordinal) {
-  const metricsRow = classifyReview(rawRow, ordinal);
-  return {
-    metricsRow,
-    projected: projectClassifiedRow(metricsRow, outputSchema, rawRow),
-  };
-}
-
-async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
-  const requestBody = {
-    model: localLlmModel,
-    temperature: 0,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You analyze source rows that may contain free text and return strict JSON only.",
-          "Do not return markdown, comments, prose, or nested objects.",
-          "Use only the requested output keys.",
-          "For enum-like methods, choose one allowed value exactly.",
-          "For classification/category fields, use concise snake_case labels.",
-          "For summary and evidence, quote or summarize only facts present in the row.",
-        ].join(" "),
-      },
-      {
-        role: "user",
-        content: buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal),
-      },
-    ],
-  };
-
-  const response = await fetch(localLlmEndpoint, {
-    body: JSON.stringify(requestBody),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-    signal: AbortSignal.timeout(localLlmTimeoutMs),
-  });
-  if (!response.ok) {
-    throw Object.assign(new Error(`Local LLM text row analysis failed: HTTP ${response.status}`), {
-      code: "REVIEW_ROW_LOCAL_LLM_FAILED",
-      status: 502,
-    });
+function redactEndpoint(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.origin;
+  } catch {
+    return "internal-ai-gateway";
   }
+}
 
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content ?? "";
-  const parsed = parseLlmJson(content);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw Object.assign(new Error("Local LLM text row analysis did not return a JSON object."), {
-      code: "REVIEW_ROW_LOCAL_LLM_BAD_JSON",
-      status: 502,
-    });
+async function analyzeReviewRowWithGateway(rawRow, outputSchema, ordinal) {
+  const requestedColumns = outputSchema
+    .map((column) => ({
+      allowedValues: allowedValuesForMethod(column),
+      instruction: String(column?.instruction || "").trim(),
+      method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
+      targetName: column.targetName,
+      type: normalizeSchemaType(column.type),
+    }))
+    .filter((column) => column.method !== "copy");
+  if (requestedColumns.length === 0) {
+    const projected = coerceLlmProjectedRow({}, outputSchema, rawRow, ordinal);
+    return {
+      metricsRow: metricsRowFromProjected(projected, outputSchema, rawRow, ordinal),
+      model: "",
+      projected,
+      provider: "",
+      usageRecord: null,
+    };
   }
+  const payload = await callAiGateway(
+    "review_row",
+    `Analyze source review row ${ordinal}.`,
+    {
+      requestedColumns,
+      rowOrdinal: ordinal,
+      sourceRow: boundedSourceRow(rawRow, reviewAiMaxInputChars),
+    },
+  );
+  const values = Array.isArray(payload.output?.values) ? payload.output.values : [];
+  if (values.length !== requestedColumns.length) {
+    throw invalidGatewayRow("AI Gateway omitted or added review-analysis columns.");
+  }
+  const seenTargets = new Set();
+  for (let index = 0; index < requestedColumns.length; index += 1) {
+    const expected = requestedColumns[index];
+    const actual = values[index];
+    if (!actual || actual.targetName !== expected.targetName || seenTargets.has(actual.targetName)) {
+      throw invalidGatewayRow("AI Gateway review-analysis targets were duplicated or returned out of order.");
+    }
+    seenTargets.add(actual.targetName);
+    if (expected.method === "one_of_values" && !canonicalAllowedValue(actual.value, expected.allowedValues)) {
+      throw invalidGatewayRow(`AI Gateway returned a value outside allowedValues for '${expected.targetName}'.`);
+    }
+  }
+  const parsed = Object.fromEntries(values.map((item) => [item?.targetName, item?.value]));
   const projected = coerceLlmProjectedRow(parsed, outputSchema, rawRow, ordinal);
   return {
     metricsRow: metricsRowFromProjected(projected, outputSchema, rawRow, ordinal),
+    model: String(payload.model || ""),
     projected,
+    provider: String(payload.provider || ""),
+    usageRecord: {
+      model: payload.model,
+      provider: payload.provider,
+      requestId: payload.request_id,
+      usage: payload.usage,
+    },
   };
 }
 
-function buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal) {
-  const columns = outputSchema.map((column) => ({
-    allowedValues: allowedValuesForMethod(column),
-    method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
-    targetName: column.targetName,
-    type: normalizeSchemaType(column.type),
-  }));
-  const rowText = JSON.stringify(rawRow ?? {});
-  return [
-    "Analyze this one source row into one final structured CSV output row.",
-    "Return one minified JSON object whose keys exactly match the requested columns.",
-    "If the source row contains a copied identifier or numeric field, preserve it exactly where possible.",
-    "Use null only when the requested value cannot be inferred from the row.",
-    "",
-    `rowOrdinal: ${ordinal}`,
-    `requestedColumns: ${JSON.stringify(columns)}`,
-    `sourceRow: ${truncate(rowText, localLlmMaxInputChars)}`,
-  ].join("\n");
+function invalidGatewayRow(message) {
+  return Object.assign(new Error(message), {
+    code: "REVIEW_AI_GATEWAY_INVALID_RESPONSE",
+    status: 502,
+  });
+}
+
+function buildTrainingRow(rawRow, projected, outputSchema) {
+  const labels = {};
+  for (const column of outputSchema) {
+    if (normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy") !== "one_of_values") continue;
+    labels[column.targetName] = projected[column.targetName];
+  }
+  return {
+    labels,
+    rating: rawValueForColumn(rawRow, "rating") ?? rawValueForColumn(rawRow, "overall") ?? null,
+    text: truncate(String(rawValueForColumn(rawRow, "text") ?? rawValueForColumn(rawRow, "review_text") ?? rawValueForColumn(rawRow, "reviewText") ?? ""), reviewAiMaxInputChars),
+    title: truncate(String(rawValueForColumn(rawRow, "title") ?? rawValueForColumn(rawRow, "summary") ?? ""), 2_000),
+  };
+}
+
+async function callAiGateway(mode, prompt, context) {
+  if (!aiGatewayToken) {
+    throw Object.assign(new Error("AI Gateway service token is not configured."), {
+      code: "AI_GATEWAY_UNCONFIGURED",
+      status: 503,
+    });
+  }
+  const requestId = randomUUID();
+  const response = await fetch(`${aiGatewayBaseUrl}/v1/generate`, {
+    body: JSON.stringify({ context, mode, prompt, request_id: requestId, selected_dataset_ids: [] }),
+    headers: {
+      Authorization: `Bearer ${aiGatewayToken}`,
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+    },
+    method: "POST",
+    signal: AbortSignal.timeout(aiGatewayTimeoutMs),
+  });
+  if (!response.ok) {
+    throw Object.assign(new Error(`AI Gateway review analysis failed: HTTP ${response.status}`), {
+      code: "REVIEW_AI_GATEWAY_FAILED",
+      status: response.status >= 500 ? 502 : response.status,
+    });
+  }
+  const payload = await readBoundedJson(response, aiGatewayMaxResponseBytes);
+  if (
+    payload?.request_id !== requestId
+    || payload?.mode !== mode
+    || !payload?.output
+    || typeof payload.output !== "object"
+    || Array.isArray(payload.output)
+    || !validGatewayIdentity(payload.provider, 100)
+    || !validGatewayIdentity(payload.model, 255)
+    || !validGatewayUsage(payload.usage)
+  ) {
+    throw Object.assign(new Error("AI Gateway returned an invalid review-analysis response."), {
+      code: "REVIEW_AI_GATEWAY_INVALID_RESPONSE",
+      status: 502,
+    });
+  }
+  return payload;
+}
+
+async function readBoundedJson(response, maxBytes) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw invalidGatewayRow("AI Gateway review-analysis response exceeded the configured size limit.");
+  }
+  if (!response.body) {
+    throw invalidGatewayRow("AI Gateway returned an empty review-analysis response.");
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw invalidGatewayRow("AI Gateway review-analysis response exceeded the configured size limit.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw invalidGatewayRow("AI Gateway returned invalid review-analysis JSON.");
+  }
+}
+
+function validGatewayIdentity(value, maxLength) {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= maxLength
+    && !/[\r\n\0]/.test(value);
+}
+
+function validGatewayUsage(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const integerKeys = ["inputTokens", "outputTokens", "totalTokens"];
+  if (!integerKeys.every((key) => Number.isSafeInteger(value[key]) && value[key] >= 0)) return false;
+  if (!Number.isFinite(value.estimatedCostUsd) || value.estimatedCostUsd < 0) return false;
+  return value.totalTokens >= value.inputTokens + value.outputTokens;
 }
 
 function allowedValuesForMethod(column) {
@@ -468,35 +577,20 @@ function metricsRowFromProjected(projected, outputSchema, rawRow, ordinal) {
     asin: stringValue(projected.asin ?? rawRow.asin),
     evidence: stringValue(projected.evidence ?? projected.supporting_evidence ?? projected.reason),
     helpful_vote: Number(projected.helpful_vote ?? rawRow.helpful_vote ?? rawRow.helpfulVote ?? 0) || 0,
-    issue_category: stringValue(projected.issue_category ?? "unclassified"),
-    issue_label: stringValue(projected.issue_category ?? "unclassified"),
-    issue_subcategory: stringValue(projected.issue_subcategory ?? "unclassified"),
+    issue_category: stringValue(projected.issue_category),
+    issue_label: stringValue(projected.issue_category),
+    issue_subcategory: stringValue(projected.issue_subcategory),
     parent_asin: stringValue(projected.parent_asin ?? rawRow.parent_asin),
     rating,
     review_id: stringValue(projected.review_id ?? reviewId(rawRow, ordinal)),
-    sentiment: stringValue(projected.sentiment ?? "mixed"),
-    severity: stringValue(projected.severity ?? "low"),
+    sentiment: stringValue(projected.sentiment),
+    severity: stringValue(projected.severity),
     summary: stringValue(projected.summary),
     timestamp: Number(projected.timestamp ?? rawRow.timestamp ?? 0) || null,
     title: stringValue(projected.title ?? rawRow.title),
     user_id: stringValue(projected.user_id ?? rawRow.user_id),
     verified_purchase: Boolean(projected.verified_purchase ?? rawRow.verified_purchase),
   };
-}
-
-function parseLlmJson(content) {
-  if (typeof content !== "string") return null;
-  try {
-    return JSON.parse(content);
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
 }
 
 function normalizeSuggestedColumns(columns) {
@@ -507,6 +601,7 @@ function normalizeSuggestedColumns(columns) {
       label: String(column?.label ?? column?.targetName ?? "").trim(),
       method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
       nullable: column?.nullable !== false,
+      sourceField: safeColumnName(column?.sourceField ?? ""),
       targetName: safeColumnName(column?.targetName ?? column?.name ?? ""),
       type: normalizeSchemaType(column?.type),
       allowedValues: normalizeAllowedValues(column?.allowedValues),
@@ -520,7 +615,7 @@ function normalizeSchemaType(value) {
 }
 
 function normalizeOutputSchema(columns) {
-  const fallback = [
+  const defaultTemplate = [
     { instruction: "원본 row에서 리뷰 고유 ID를 생성", method: "copy", targetName: "review_id", type: "String" },
     { instruction: "상품 ASIN", method: "copy", targetName: "asin", type: "String" },
     { instruction: "상위 상품 ASIN", method: "copy", targetName: "parent_asin", type: "String" },
@@ -532,7 +627,7 @@ function normalizeOutputSchema(columns) {
     { instruction: "Summarize the review in one short factual sentence.", method: "instruction", targetName: "summary", type: "String" },
     { instruction: "Extract the source sentence that best supports the output.", method: "instruction", targetName: "evidence", type: "String" },
   ];
-  const source = Array.isArray(columns) && columns.length > 0 ? columns : fallback;
+  const source = Array.isArray(columns) && columns.length > 0 ? columns : defaultTemplate;
   const seen = new Set();
   const normalized = [];
   for (const column of source) {
@@ -544,33 +639,13 @@ function normalizeOutputSchema(columns) {
       label: String(column?.label ?? targetName),
       method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
       nullable: column?.nullable !== false,
+      sourceField: safeColumnName(column?.sourceField ?? ""),
       targetName,
       type: normalizeSchemaType(column?.type),
       allowedValues: normalizeAllowedValues(column?.allowedValues),
     });
   }
-  return normalized.length > 0 ? normalized.slice(0, 80) : fallback;
-}
-
-function projectClassifiedRow(row, outputSchema, rawRow = {}) {
-  return Object.fromEntries(outputSchema.map((column) => [
-    column.targetName,
-    valueForRequestedColumn(row, column, rawRow),
-  ]));
-}
-
-function valueForRequestedColumn(row, column, rawRow = {}) {
-  const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy");
-  switch (method) {
-    case "copy":
-      return copyOrExtractFieldValue(row, column, rawRow);
-    case "one_of_values":
-      return oneOfValuesForColumn(row, column, rawRow);
-    case "instruction":
-      return customInstructionValue(row, column, rawRow);
-    default:
-      return "";
-  }
+  return normalized.length > 0 ? normalized.slice(0, 80) : defaultTemplate;
 }
 
 function normalizeReviewAnalysisMethod(value, fallback = "copy") {
@@ -600,59 +675,6 @@ function copyOrExtractFieldValue(row, column, rawRow) {
   return "";
 }
 
-function oneOfValuesForColumn(row, column, rawRow) {
-  const allowedValues = normalizeAllowedValues(column?.allowedValues);
-  if (allowedValues.length === 0) return "";
-
-  const targetName = safeColumnName(column?.targetName ?? column?.name ?? "");
-  const candidates = [
-    rawValueForColumn(rawRow, targetName),
-    Object.prototype.hasOwnProperty.call(row, targetName) ? row[targetName] : undefined,
-    row.sentiment,
-    row.action_needed_status,
-    row.issue_category && row.issue_category !== "positive_value" ? "issue" : "no_issue",
-    row.issue_category,
-    row.issue_subcategory,
-    row.severity,
-    booleanValueFromRow(rawRow),
-  ];
-  for (const candidate of candidates) {
-    const matched = canonicalAllowedValue(candidate, allowedValues);
-    if (matched !== undefined) return matched;
-  }
-
-  const sourceText = reviewTextForRow(rawRow).toLowerCase();
-  const textMatch = allowedValues.find((value) => sourceText.includes(String(value).toLowerCase()));
-  return textMatch ?? allowedValues[0];
-}
-
-function customInstructionValue(row, column, rawRow = {}) {
-  const targetName = safeColumnName(column?.targetName ?? column?.name ?? "").toLowerCase();
-  const instruction = String(column?.instruction ?? column?.description ?? "").toLowerCase();
-  const rawTargetValue = rawValueForColumn(rawRow, targetName);
-  if (rawTargetValue !== undefined && rawTargetValue !== null && rawTargetValue !== "") return rawTargetValue;
-  if (Object.prototype.hasOwnProperty.call(row, targetName) && row[targetName]) return row[targetName];
-  if (targetName.includes("summary") || instruction.includes("summar") || instruction.includes("요약")) {
-    return row.summary || compactReviewText(rawRow, 180);
-  }
-  if (
-    targetName.includes("evidence")
-    || targetName.includes("reason")
-    || instruction.includes("evidence")
-    || instruction.includes("reason")
-    || instruction.includes("근거")
-  ) {
-    return row.evidence || compactReviewText(rawRow, 240);
-  }
-  return row.summary || row.evidence || compactReviewText(rawRow, 240);
-}
-
-function compactReviewText(row, maxLength) {
-  const cleaned = reviewTextForRow(row).replace(/\s+/g, " ").trim();
-  if (!cleaned) return "";
-  return cleaned.length > maxLength ? cleaned.slice(0, Math.max(0, maxLength - 3)) + "..." : cleaned;
-}
-
 function canonicalAllowedValue(value, allowedValues) {
   const normalizedValue = normalizedScalar(value);
   if (!normalizedValue) return undefined;
@@ -677,28 +699,6 @@ function normalizedScalar(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function reviewTextForRow(row) {
-  return cleanText([
-    row?.title,
-    row?.text,
-    row?.reviewText,
-    row?.review_text,
-    row?.body,
-    row?.content,
-    row?.message,
-    row?.description,
-    row?.payload,
-    row?.value,
-    row?.summary,
-  ].filter(Boolean).join(" "));
-}
-
-function booleanValueFromRow(row) {
-  const text = reviewTextForRow(row).toLowerCase();
-  const matched = /(click|clicked|tap|tapped|pressed|selected|subscribe|subscribed|buy|bought|purchase|purchased|클릭|선택|구매)/i.test(text);
-  return matched ? "Y" : "N";
-}
-
 function safeColumnName(value) {
   return String(value ?? "")
     .trim()
@@ -707,40 +707,12 @@ function safeColumnName(value) {
     .slice(0, 80);
 }
 
-function spawnMinioCat(limit) {
-  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
-  const endpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://127.0.0.1:9000";
-  const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
-  const secretKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
-  const target = `local/${sourceBucket}/${sourceKey}`;
-  const readCommand = limit > 0
-    ? `mc cat ${shellQuote(target)} | head -n ${limit}`
-    : `mc cat ${shellQuote(target)}`;
-  const script = [
-    `mc alias set local ${shellQuote(endpoint)} ${shellQuote(accessKey)} ${shellQuote(secretKey)} >/dev/null`,
-    readCommand,
-  ].join(" && ");
-  return spawn("docker", ["exec", "-i", container, "sh", "-lc", script], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-async function openReviewSource(limit) {
-  if (objectStorageProvider() === "minio") {
-    const child = spawnMinioCat(limit);
-    return {
-      input: child.stdout,
-      stderr: child.stderr,
-      stop: () => child.stdout.destroy(),
-      wait: waitForProcess(child),
-    };
-  }
-
+async function openReviewSource(source) {
   const config = resolveObjectStorageConfig();
   const client = new S3Client(s3ClientOptions(config));
   const response = await client.send(new GetObjectCommand({
-    Bucket: sourceBucket,
-    Key: sourceKey,
+    Bucket: source.bucket,
+    Key: source.key,
   }));
   if (!response.Body || typeof response.Body[Symbol.asyncIterator] !== "function") {
     throw Object.assign(new Error("AWS S3 review object did not return a readable body."), {
@@ -765,129 +737,6 @@ function parseJsonLine(line, result) {
   }
 }
 
-function classifyReview(row, ordinal) {
-  const rating = Number(row.rating ?? row.overall ?? 0) || 0;
-  const title = cleanText(row.title);
-  const text = cleanText(row.text ?? row.reviewText ?? row.review_text ?? row.body ?? row.content ?? row.message ?? row.description ?? row.payload ?? row.value ?? "");
-  const haystack = `${title} ${text}`.toLowerCase();
-  const category = findCategory(haystack, rating);
-  const sentiment = inferSentiment(rating, haystack, category);
-  const severity = inferSeverity(rating, category, haystack);
-  const evidence = evidenceFor(text || title, category.keyword);
-  const action = inferActionNeeded(rating, haystack);
-
-  return {
-    action_needed_status: action.status,
-    action_reason_signal: action.reasons.join("|"),
-    asin: stringValue(row.asin),
-    evidence,
-    helpful_vote: Number(row.helpful_vote ?? row.helpfulVote ?? 0) || 0,
-    issue_category: category.id,
-    issue_label: category.label,
-    issue_subcategory: category.subcategory,
-    parent_asin: stringValue(row.parent_asin),
-    rating,
-    review_id: reviewId(row, ordinal),
-    sentiment,
-    severity,
-    summary: summaryFor({ category, evidence, rating, sentiment, title }),
-    timestamp: Number(row.timestamp ?? 0) || null,
-    title,
-    user_id: stringValue(row.user_id),
-    verified_purchase: Boolean(row.verified_purchase),
-  };
-}
-
-function inferActionNeeded(rating, haystack) {
-  const checks = [
-    ["rating_low", rating > 0 && rating <= 2],
-    ["not_working", /(not working|doesn.?t work|does not work|didn.?t work|stopped working|won.?t turn on|fails?)/i.test(haystack)],
-    ["broken", /(broken|broke|cracked|shattered|dead|defective|fell apart)/i.test(haystack)],
-    ["refund_return", /(refund|return|replacement|replace|warranty)/i.test(haystack)],
-    ["wrong_or_fake", /(wrong item|wrong product|wrong cable|fake|counterfeit|never arrived|missing)/i.test(haystack)],
-    ["fit_failure", /(doesn.?t fit|does not fit|didn.?t fit|not fit|wrong size)/i.test(haystack)],
-    ["charge_failure", /(won.?t charge|does not charge|doesn.?t charge|stopped charging|will not charge)/i.test(haystack)],
-    ["safety", /(fire|smoke|explode|burn|overheat|unsafe|danger|shock|swollen)/i.test(haystack)],
-  ];
-  const reasons = checks.filter(([, matched]) => matched).map(([reason]) => reason);
-  return {
-    reasons,
-    status: reasons.length > 0 ? "action_needed" : "low_or_none",
-  };
-}
-
-function findCategory(haystack, rating) {
-  const negativeSignal = hasNegativeSignal(haystack);
-  for (const rule of categoryRules) {
-    const keyword = rule.keywords.find((item) => haystack.includes(item));
-    if (!keyword) continue;
-    if (rating >= 4 && !negativeSignal && !["listing_accuracy", "safety_battery"].includes(rule.id)) {
-      return positiveCategory();
-    }
-    return { ...rule, keyword };
-  }
-
-  if (rating >= 4 || positiveKeywords.some((keyword) => haystack.includes(keyword))) {
-    return positiveCategory();
-  }
-
-  return {
-    id: "general_negative",
-    keyword: "",
-    label: "General negative",
-    subcategory: "unspecified_complaint",
-  };
-}
-
-function inferSentiment(rating, haystack, category) {
-  const negativeSignal = hasNegativeSignal(haystack);
-  if (rating <= 2) return "negative";
-  if (rating === 3 || negativeSignal) return category.id === "positive_value" ? "mixed" : "negative";
-  if (category.id !== "positive_value" && negativeSignal) return "mixed";
-  return "positive";
-}
-
-function inferSeverity(rating, category, haystack) {
-  if (category.id === "safety_battery") return "critical";
-  if (/(fire|explode|smoke|shock|burn|swollen|overheat)/i.test(haystack)) return "critical";
-  if (rating >= 4 && !hasNegativeSignal(haystack)) return "low";
-  if (rating <= 1 && ["charging_power", "durability_quality", "screen_display"].includes(category.id)) return "high";
-  if (rating <= 2 || ["charging_power", "durability_quality", "screen_display", "compatibility_fit"].includes(category.id)) return "medium";
-  return "low";
-}
-
-function hasNegativeSignal(haystack) {
-  return /(not|never|no|bad|poor|disappointed|waste|return|refund|broken|broke|defective|wrong|failed|cracked|pissed|doesn.?t work|does not work|stopped working)/i.test(haystack);
-}
-
-function positiveCategory() {
-  return {
-    id: "positive_value",
-    keyword: "",
-    label: "Positive / value",
-    subcategory: "works_value_recommend",
-  };
-}
-
-function summaryFor({ category, evidence, rating, sentiment, title }) {
-  const lead = sentiment === "positive"
-    ? "긍정 리뷰"
-    : `${category.label} 이슈`;
-  const source = evidence || title || "근거 문장 없음";
-  return `${lead}: rating ${rating || "n/a"} · ${source}`.slice(0, 260);
-}
-
-function evidenceFor(text, keyword) {
-  const source = cleanText(text);
-  if (!source) return "";
-  const sentences = source.split(/(?<=[.!?])\s+/).filter(Boolean);
-  if (keyword) {
-    const matched = sentences.find((sentence) => sentence.toLowerCase().includes(keyword));
-    if (matched) return truncate(matched, 190);
-  }
-  return truncate(sentences[0] || source, 190);
-}
-
 function recordClassifiedRow(result, row, projectedRow = row) {
   result.processedRows += 1;
   result.metrics.totalHelpfulVotes += row.helpful_vote;
@@ -895,14 +744,16 @@ function recordClassifiedRow(result, row, projectedRow = row) {
   if (row.action_needed_status === "action_needed") result.metrics.actionNeededRows += 1;
   if (row.sentiment === "negative") result.metrics.negativeRows += 1;
   if (row.sentiment === "positive") result.metrics.positiveRows += 1;
-  if (row.issue_category !== "positive_value") result.metrics.issueRows += 1;
+  const hasIssue = Boolean(row.issue_category)
+    && !["no_issue", "positive_value", "none"].includes(row.issue_category);
+  if (hasIssue) result.metrics.issueRows += 1;
   if (row.severity === "critical" || row.severity === "high") result.metrics.highSeverityRows += 1;
 
-  incrementBreakdown(result, "categoryBreakdown", row.issue_category, row.issue_label);
-  incrementBreakdown(result, "sentimentBreakdown", row.sentiment, row.sentiment);
-  incrementBreakdown(result, "severityBreakdown", row.severity, row.severity);
+  if (row.issue_category) incrementBreakdown(result, "categoryBreakdown", row.issue_category, row.issue_label);
+  if (row.sentiment) incrementBreakdown(result, "sentimentBreakdown", row.sentiment, row.sentiment);
+  if (row.severity) incrementBreakdown(result, "severityBreakdown", row.severity, row.severity);
 
-  if (result.rows.length < 40 && (row.issue_category !== "positive_value" || result.rows.length < 8)) {
+  if (result.rows.length < 40 && (hasIssue || result.rows.length < 8)) {
     result.rows.push(projectedRow);
   }
 }
@@ -933,14 +784,6 @@ function finalizeSummary(result, { finishedAt, stderr }) {
   result.warning = stderr && /error|fail/i.test(stderr) ? truncate(stderr, 500) : "";
 }
 
-function cleanText(value) {
-  return String(value ?? "")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function reviewId(row, ordinal) {
   const seed = [
     row.asin ?? "",
@@ -955,6 +798,37 @@ function reviewId(row, ordinal) {
 
 function stringValue(value) {
   return String(value ?? "").trim();
+}
+
+function boundedSourceRow(rawRow, maxChars) {
+  if (!rawRow || typeof rawRow !== "object" || Array.isArray(rawRow)) return {};
+  const priority = [
+    "title",
+    "text",
+    "reviewText",
+    "review_text",
+    "rating",
+    "overall",
+    "asin",
+    "parent_asin",
+    "verified_purchase",
+    "helpful_vote",
+    "timestamp",
+  ];
+  const fields = [...new Set([...priority, ...Object.keys(rawRow).sort()])].slice(0, 64);
+  const output = {};
+  let remaining = maxChars;
+  for (const field of fields) {
+    if (!Object.prototype.hasOwnProperty.call(rawRow, field) || remaining <= 0) continue;
+    let value = rawRow[field];
+    if (value && typeof value === "object") value = JSON.stringify(value);
+    if (typeof value === "string") value = value.slice(0, Math.min(2_000, remaining));
+    const size = String(value ?? "").length + field.length;
+    if (size > remaining && Object.keys(output).length > 0) continue;
+    output[field] = value;
+    remaining -= Math.min(size, remaining);
+  }
+  return output;
 }
 
 function truncate(value, length) {
@@ -983,13 +857,20 @@ function closeWritable(stream) {
   });
 }
 
-function waitForProcess(child) {
-  return new Promise((resolve) => {
-    child.on("close", (code) => resolve(code ?? 0));
-    child.on("error", () => resolve(1));
-  });
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  const failed = settled.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+  return results;
 }

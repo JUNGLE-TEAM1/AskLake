@@ -180,7 +180,7 @@ class DashboardWidgetConfigBase(CamelModel):
 
 class DashboardWidgetColorConfig(CamelModel):
     colors: list[str] = Field(default_factory=list)
-    # Legacy fields kept only so older local mock rows do not fail validation.
+    # Legacy persisted fields remain accepted during the dashboard schema migration.
     palette_id: DashboardWidgetPaletteId | None = None
     custom_colors: list[str] | None = None
 
@@ -455,43 +455,49 @@ class DashboardAssistantWidgetContext(CamelModel):
 
 
 class DashboardAssistantRequest(CamelModel):
-    dashboard_id: str | None = None
+    dashboard_id: str | None = Field(default=None, max_length=255)
     mode: DashboardAssistantMode
-    page_id: str | None = None
-    prompt: str = Field(min_length=1)
-    selected_widget_id: str | None = None
-    widget_id: str | None = None
-    widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list)
+    page_id: str | None = Field(default=None, max_length=255)
+    prompt: str = Field(min_length=1, max_length=8_000)
+    selected_widget_id: str | None = Field(default=None, max_length=255)
+    widget_id: str | None = Field(default=None, max_length=255)
+    widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list, max_length=100)
+    semantic_model_id: str | None = Field(default=None, max_length=255)
+    current_dataset_id: str | None = Field(default=None, max_length=255)
+    surface: Literal["dashboard", "catalog", "semantic"] = "dashboard"
 
 
 class DashboardAssistantWidgetPatch(CamelModel):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=255)
     type: DashboardRuntimeWidgetType | None = None
-    dataset_id: str | None = None
+    dataset_id: str | None = Field(default=None, max_length=255)
     config: dict[str, Any] | None = None
 
 
 class DashboardAssistantCreateWidgetInput(CamelModel):
-    title: str
+    title: str = Field(max_length=255)
     type: DashboardRuntimeWidgetType
-    dataset_id: str
+    dataset_id: str = Field(max_length=255)
     config: dict[str, Any]
 
 
 class DashboardAssistantCreateWidgetAction(CamelModel):
     type: Literal["create_widget"] = "create_widget"
     widget: DashboardAssistantCreateWidgetInput
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 class DashboardAssistantUpdateWidgetAction(CamelModel):
     type: Literal["update_widget"] = "update_widget"
-    widget_id: str
+    widget_id: str = Field(max_length=255)
     patch: DashboardAssistantWidgetPatch
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 class DashboardAssistantReportAction(CamelModel):
     type: Literal["report"] = "report"
-    markdown: str
+    markdown: str = Field(max_length=8_000)
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
 
 
 DashboardAssistantAction = (
@@ -502,9 +508,15 @@ DashboardAssistantAction = (
 
 
 class DashboardAssistantResponse(CamelModel):
-    message: str
-    actions: list[DashboardAssistantAction] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
+    message: str = Field(max_length=8_000)
+    request_id: str | None = Field(default=None, max_length=255)
+    actions: list[DashboardAssistantAction] = Field(default_factory=list, max_length=8)
+    warnings: list[str] = Field(default_factory=list, max_length=16)
+    model: str | None = Field(default=None, max_length=200)
+    provider: str | None = Field(default=None, max_length=100)
     # Backward-compatible fields used by the current visualization request widget.
     config_patch: dict[str, Any] | None = None
     widget_patch: DashboardAssistantWidgetPatch | None = None
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval: dict[str, Any] | None = None
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)

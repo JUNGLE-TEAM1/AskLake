@@ -541,6 +541,8 @@ export type PermissionDraft = {
     access: string[];
     checked: boolean;
     name: string;
+    principalId?: string;
+    principalType?: "group" | "public" | "role" | "user";
   }>;
   summary: string;
   template?: string;

@@ -51,13 +51,19 @@ class QueryAiSuggestionRequest(CamelModel):
     current_query: str | None = Field(default=None, max_length=20_000)
     mode: QueryAiMode = "draft_sql"
     prompt: str = Field(min_length=1, max_length=8_000)
+    semantic_model_id: str | None = Field(default=None, max_length=255)
     selected_dataset_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class QueryAiSuggestionResponse(CamelModel):
     body: str
     mode: QueryAiMode = "draft_sql"
+    request_id: str = Field(min_length=1, max_length=255)
     model: str | None = None
+    provider: str | None = None
     notices: list[str] = Field(default_factory=list)
+    retrieval: dict[str, object] | None = None
+    sources: list[dict[str, object]] = Field(default_factory=list)
     sql: str
     title: str
+    used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
