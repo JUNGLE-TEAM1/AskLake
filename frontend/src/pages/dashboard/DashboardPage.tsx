@@ -97,7 +97,7 @@ export function DashboardPage({
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
-  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(false);
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);

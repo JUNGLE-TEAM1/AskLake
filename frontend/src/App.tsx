@@ -5,11 +5,10 @@ import { wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
-import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
+import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
-import { AiChatPage } from "./pages/ai/AiChatPage";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage } from "./pages/ingest/jobs/JobDetailPage";
@@ -53,6 +52,7 @@ type DashboardRouteState =
   | { view: "list" };
 
 type AppRouteState = {
+  catalogView?: CatalogView;
   dashboardRoute: DashboardRouteState | null;
   datasetId?: string;
   flow: FlowId;
@@ -68,6 +68,7 @@ type FlowPathContext = {
 };
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
+const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -109,7 +110,11 @@ function encodePathSegment(segment: string) {
   return encodeURIComponent(segment);
 }
 
-function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow): AppRouteState {
+function parseCatalogView(search: string): CatalogView {
+  return new URLSearchParams(search).get("view") === "semantic" ? "semantic" : "catalog";
+}
+
+function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow, search = ""): AppRouteState {
   const dashboardRoute = parseDashboardRoute(pathname);
   if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
 
@@ -132,10 +137,10 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (area === "catalog") {
     const datasetId = decodePathSegment(id);
     if (datasetId) return { dashboardRoute: null, datasetId, flow: "catalogDetail" };
-    return { dashboardRoute: null, flow: "catalog" };
+    return { catalogView: parseCatalogView(search), dashboardRoute: null, flow: "catalog" };
   }
   if (area === "sql") return { dashboardRoute: null, flow: "sql" };
-  if (area === "ai") return { dashboardRoute: null, flow: "ai" };
+  if (semanticCatalogCompatibilityPaths.has(pathname)) return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
@@ -157,7 +162,6 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
     if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
     return "/dashboards";
   }
-  if (flow === "ai") return "/ai";
   if (flow === "admin") return "/admin";
   if (flow === "profile") return "/profile";
   if (flow === "login") return "/login";
@@ -197,10 +201,28 @@ function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
   return jobId !== emptyJobId && jobs.some((job) => job.id === jobId);
 }
 
+function useCatalogViewNavigation(
+  writeAuditLog: ReturnType<typeof useAuditLogs>["writeAuditLog"],
+  setActiveFlow: (flow: FlowId) => void,
+) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const changeCatalogView = (view: CatalogView) => {
+    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
+    writeAuditLog("catalog.view_changed", nextPath, view);
+    setActiveFlow("catalog");
+    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
+  };
+  useEffect(() => {
+    if (semanticCatalogCompatibilityPaths.has(location.pathname)) navigate("/catalog?view=semantic", { replace: true });
+  }, [location.pathname, navigate]);
+  return changeCatalogView;
+}
+
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
+  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow, window.location.search);
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
   const [completedWizardFlows, setCompletedWizardFlows] = useState<Set<FlowId>>(() => new Set());
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
@@ -263,7 +285,6 @@ export function App() {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
     if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "ai") return "ai";
     if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
@@ -307,8 +328,8 @@ export function App() {
     [completedWizardFlows, wizardActiveIndex, wizardStepFlows],
   );
   const routeState = useMemo(
-    () => parseAppRoute(location.pathname, lastScheduleFlow),
-    [lastScheduleFlow, location.pathname],
+    () => parseAppRoute(location.pathname, lastScheduleFlow, location.search),
+    [lastScheduleFlow, location.pathname, location.search],
   );
   useJobRouteHydration({
     flow: routeState.flow,
@@ -317,6 +338,7 @@ export function App() {
     setJobs,
     setSelectedJob,
   });
+  const changeCatalogView = useCatalogViewNavigation(writeAuditLog, setActiveFlow);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -585,11 +607,10 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => completeWizardFlowAndMove("target", "review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => completeWizardFlowAndMove("permission", "target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={catalogError} loading={catalogLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={catalogError} loading={catalogLoading} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} currentUser={currentUser} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
-          {activeFlow === "ai" && <AiChatPage datasets={datasets} onAction={writeAuditLog} />}
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
             </>

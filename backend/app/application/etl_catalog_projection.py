@@ -41,6 +41,14 @@ from app.application.etl_job_projection import (
     target_dataset_tags,
     tuple_rows_to_lists,
 )
+from app.application.rag_source_manifest import rag_source_manifest_from_spark_result
+from app.application.etl_runtime_support import dag_step, is_kafka_job
+from app.application.etl_source_window import (
+    normalize_s3_etag,
+    normalize_s3_version_id,
+    object_last_modified_iso,
+    s3_object_size,
+)
 from app.core.errors import ApiError
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,
@@ -66,14 +74,6 @@ from app.models import (
 from app.services.materialization_projection import (
     aggregate_materialization_runs,
     upsert_materialization_run,
-)
-
-from app.application.etl_runtime_support import dag_step, is_kafka_job
-from app.application.etl_source_window import (
-    normalize_s3_etag,
-    normalize_s3_version_id,
-    object_last_modified_iso,
-    s3_object_size,
 )
 
 SPARK_OUTPUT_FORMAT = "parquet"
@@ -112,6 +112,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         status="available",
         freshness="latest",
         source=job.name,
+        source_manifest=dataset_payload.get("sourceManifest"),
         rows=format_rows(result.get("outputRows")),
         size=display_size,
         quality=quality_summary_from_spark_result(job, result),
@@ -124,6 +125,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         upstream=[job.source_label, job.name],
         downstream=dataset_payload["downstream"],
     )
+
 
 def spark_result_schema(value: Any) -> list[list[str]]:
     if not isinstance(value, list):
@@ -233,6 +235,11 @@ def dataset_payload_from_spark_result(
             "sourceRunId": aggregate["latestRunId"],
             "storageSizeBytes": previous_payload.get("storageSizeBytes", current_storage_size_bytes),
         }
+    source_manifest = rag_source_manifest_from_spark_result(
+        result=result,
+        dataset_id=dataset_id,
+        schema_json=schema_json,
+    )
     return {
         "description": target_dataset_description(job),
         "downstream": downstream,
@@ -256,6 +263,7 @@ def dataset_payload_from_spark_result(
         "schema": schema_json,
         "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
         "source": job.name,
+        **({"sourceManifest": source_manifest} if source_manifest else {}),
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": storage_format,

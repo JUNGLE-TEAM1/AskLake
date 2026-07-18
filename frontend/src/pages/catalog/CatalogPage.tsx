@@ -1,2 +1,2 @@
-export { CatalogPage } from "./CatalogExplorerPage";
+export { CatalogPage, type CatalogView } from "./CatalogWorkspacePage";
 export { CatalogDetailPage, DatasetStatusBadge } from "./CatalogDetailPage";

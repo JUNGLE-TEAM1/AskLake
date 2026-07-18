@@ -57,10 +57,10 @@ export function DashboardCanvas({
   deletingWidgetId?: string | null;
   editable: boolean;
   onDeleteWidget?: (widgetId: string) => void;
-  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
-  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<boolean>;
   onRetryWidgetData?: (widgetId: string) => void;
   onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;

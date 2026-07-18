@@ -66,7 +66,7 @@ export function useDraftWidgetMutations({
   };
 
   const updateWidget = async (widgetId: string, input: UpdateDraftWidgetFormInput) => {
-    if (mode !== "draft" || updatingWidgetId) return;
+    if (mode !== "draft" || updatingWidgetId) return false;
     setUpdatingWidgetId(widgetId);
     setNotice({ message: "위젯 변경사항을 저장하는 중입니다.", tone: "info" });
     try {
@@ -76,12 +76,14 @@ export function useDraftWidgetMutations({
       setSelectedWidgetId(widgetId);
       setNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
       onAction("dashboard.widget.updated", `/api/dashboards/${dashboardId}/draft/widgets/${widgetId}`, widgetId);
+      return true;
     } catch (error) {
       setNotice({
         message: dashboardRuntimeErrorMessage(error, "위젯 변경사항을 저장하지 못했습니다."),
         tone: "error",
       });
       onAction("dashboard.widget.update_failed", `/api/dashboards/${dashboardId}/draft/widgets/${widgetId}`, widgetId, "failed");
+      return false;
     } finally {
       setUpdatingWidgetId(null);
     }

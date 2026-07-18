@@ -94,6 +94,24 @@ class ETLRunModel(TimestampMixin, Base):
     sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
+class ReviewAnalysisRunModel(TimestampMixin, Base):
+    __tablename__ = "review_analysis_runs"
+    __table_args__ = (
+        Index("ix_review_analysis_runs_status", "status"),
+        Index("ix_review_analysis_runs_created_by", "created_by"),
+    )
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)
+    request_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class KafkaSnapshotModel(TimestampMixin, Base):
     __tablename__ = "kafka_snapshots"
     __table_args__ = (
