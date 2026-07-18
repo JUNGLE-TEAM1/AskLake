@@ -85,7 +85,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetScrollTarget: () => void;
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
-  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
@@ -109,7 +109,7 @@ type DashboardRuntimeViewActions = {
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
-  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
 };
 
 type DashboardRuntimeViewProps = {
@@ -152,6 +152,20 @@ function PublishedDashboardWidgetGrid({
         <WidgetFrame key={widget.id} widget={widget} onRetryData={onRetryData} />
       ))}
     </div>
+  );
+}
+
+function RuntimeActionButton({
+  onClick,
+  primary = false,
+}: {
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <Button type="button" variant={primary ? undefined : "outline"} onClick={onClick}>
+      {primary ? "위젯 편집" : "다시 시도"}
+    </Button>
   );
 }
 
@@ -235,21 +249,9 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
-  const openDraftAction = (
-    <Button type="button" onClick={onOpenDraft}>
-      위젯 편집
-    </Button>
-  );
-  const retryAction = (
-    <Button type="button" variant="outline" onClick={onRetryPublished}>
-      다시 시도
-    </Button>
-  );
-  const draftRetryAction = (
-    <Button type="button" variant="outline" onClick={onRetryDraft}>
-      다시 시도
-    </Button>
-  );
+  const openDraftAction = <RuntimeActionButton onClick={onOpenDraft} primary />;
+  const retryAction = <RuntimeActionButton onClick={onRetryPublished} />;
+  const draftRetryAction = <RuntimeActionButton onClick={onRetryDraft} />;
   const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
     config: {
       ...widget.config,
@@ -490,6 +492,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         inspector={isAssistantInspectorOpen ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
+              currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
               pageId={selectedPageId}

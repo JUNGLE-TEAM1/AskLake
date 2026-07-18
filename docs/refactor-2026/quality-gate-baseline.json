@@ -7,7 +7,7 @@
         "backend/app/repositories/etl_repository.py": 1140,
         "backend/app/services/catalog_service.py": 1239,
         "backend/app/services/dashboard_runtime_service.py": 1180,
-        "backend/app/services/etl_service.py": 2251,
+        "backend/app/services/etl_service.py": 2259,
         "backend/scripts/run_eks_day17_hpa_race.py": 1303,
         "backend/scripts/runtime/spark_job_runtime.py": 1421,
         "backend/src/sparkRunner.mjs": 1633

@@ -42,6 +42,73 @@ export type SqlAiWriterDialogProps = {
   suggestion: QueryAiSuggestion | null;
 };
 
+function SqlAiSuggestionSummary({ suggestion }: { suggestion: QueryAiSuggestion }) {
+  return (
+    <Bubble className="max-w-full" variant="secondary">
+      <BubbleContent className="max-w-full">
+        <span className="flex min-w-0 items-center justify-between gap-3">
+          <strong className="truncate">{suggestion.title}</strong>
+          <span className="flex shrink-0 items-center gap-2">
+            {(suggestion.provider || suggestion.model) && (
+              <span className="text-xs text-muted-foreground">
+                {[suggestion.provider, suggestion.model].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            <Badge size="sm" variant="secondary">SQL 초안</Badge>
+          </span>
+        </span>
+        <span className="mt-1 block text-sm text-muted-foreground">{suggestion.body}</span>
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
+function SqlAiSuggestionEvidence({ suggestion }: { suggestion: QueryAiSuggestion }) {
+  const retrieval = suggestion.retrieval;
+  const sources = suggestion.sources ?? [];
+  if (!retrieval || sources.length === 0) return null;
+
+  return (
+    <Bubble className="max-w-full" variant="tinted">
+      <BubbleContent className="max-w-full text-sm">
+        <strong>RAG 근거</strong>
+        <span className="mt-1 block">
+          Semantic model: {(retrieval.semanticModelNames ?? []).join(", ") || "없음"}
+          {retrieval.semanticModelVersions?.some(Boolean)
+            ? ` · version ${retrieval.semanticModelVersions.filter(Boolean).join(", ")}`
+            : ""}
+        </span>
+        <span className="mt-1 block text-muted-foreground">
+          Dataset: {(retrieval.datasetIds ?? []).join(", ") || "-"}
+          {` · ${retrieval.status ?? "unknown"} · ${retrieval.resultCount ?? sources.length} source chunks`}
+        </span>
+        {(retrieval.queryPlannerProvider || retrieval.queryPlannerModel) && (
+          <span className="mt-1 block text-muted-foreground">
+            검색 계획: {[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}
+          </span>
+        )}
+        {Object.entries(retrieval.queryEmbeddings ?? {}).map(([datasetId, embedding]) => (
+          <span className="mt-1 block text-muted-foreground" key={`embedding-${datasetId}`}>
+            쿼리 임베딩({datasetId}): {[embedding.provider, embedding.model, embedding.dimensions ? `${embedding.dimensions}차원` : null].filter(Boolean).join(" · ")}
+          </span>
+        ))}
+        {(retrieval.relevanceProvider || retrieval.relevanceModel) && (
+          <span className="mt-1 block text-muted-foreground">
+            근거 관련성 검증: {[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}
+          </span>
+        )}
+        {sources.map((source, index) => (
+          <span className="mt-1 block text-muted-foreground" key={`${source.parentDocumentId ?? "source"}-${index}`}>
+            {index + 1}. {source.title || source.body?.trim().slice(0, 180) || source.datasetId || "source chunk"}
+            {source.chunkIndex !== undefined ? ` · chunk ${source.chunkIndex}` : ""}
+            {source.embeddingProvider || source.embeddingModel ? ` · 임베딩 ${[source.embeddingProvider, source.embeddingModel].filter(Boolean).join(" · ")}` : ""}
+          </span>
+        ))}
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
 export function SqlAiWriterDialog({
   disabled = false,
   error,
@@ -172,15 +239,8 @@ export function SqlAiWriterDialog({
 
         {suggestion?.sql && (
           <BubbleGroup aria-live="polite">
-            <Bubble className="max-w-full" variant="secondary">
-              <BubbleContent className="max-w-full">
-                <span className="flex min-w-0 items-center justify-between gap-3">
-                  <strong className="truncate">{suggestion.title}</strong>
-                  <Badge size="sm" variant="secondary">SQL 초안</Badge>
-                </span>
-                <span className="mt-1 block text-sm text-muted-foreground">{suggestion.body}</span>
-              </BubbleContent>
-            </Bubble>
+            <SqlAiSuggestionSummary suggestion={suggestion} />
+            <SqlAiSuggestionEvidence suggestion={suggestion} />
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">
                 <ScrollArea className={styles.preview} scrollbars="both" type="always">

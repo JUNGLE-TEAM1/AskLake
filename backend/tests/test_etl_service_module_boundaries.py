@@ -190,6 +190,7 @@ EXTRACTED_EXPORTS = {
         "target_identity_changed",
         "trino_query_run_belongs_to_actor",
         "trino_sql_job_permission_roles",
+        "trino_sql_job_permission_summary",
         "validate_create_request",
         "validate_requested_permission_grants",
         "validate_target_contract",
@@ -205,7 +206,7 @@ REVIEWED_FUNCTION_DIGESTS = {
     etl_source_window: "4002bc295053f657e696c40158e6773b567b83913e63b6585f85e42b9ea308c9",
     etl_run_projection: "ff493b426e96da4accd3b07a6d86d2454d9e16aa37064746d164dbe90e727b78",
     etl_catalog_projection: "ebb140d6fbc27163ee37e70e441fb4b38714748f48d2f58db58453328fb7fb87",
-    etl_pipeline_policy: "7775ae03c5ac2c10906023b4e3b3d2819c783bc7f899230530cae49d080b62cc",
+    etl_pipeline_policy: "dc2e6e17bd8a2eca553c2079fd2b910f53ed761f45ec401a0a0e76693f5f90c3",
 }
 
 RUNTIME_FACADE_MODULES = (

@@ -131,18 +131,36 @@ export function SqlJobGovernanceStep({
   disabled,
   governance,
   onChange,
+  projectGroups,
   showErrors,
 }: {
   disabled: boolean;
   governance: SqlJobWizardGovernance;
   onChange: (patch: Partial<SqlJobWizardGovernance>) => void;
+  projectGroups: Array<{ id: string; name: string }>;
   showErrors: boolean;
 }) {
+  const projectGroupOptions = projectGroups.map((group) => ({ label: group.name, value: group.id }));
+  const setAccessScope = (accessScope: SqlJobWizardGovernance["accessScope"]) => {
+    const selectedGroup = projectGroups.find((group) => group.id === governance.principalId) ?? projectGroups[0];
+    const principalId = accessScope === "private"
+      ? governance.owner.trim()
+      : accessScope === "organization"
+        ? "authenticated-users"
+        : selectedGroup?.id ?? "";
+    const principalLabel = accessScope === "project" ? selectedGroup?.name ?? "" : governance.owner.trim();
+    onChange({ accessScope, principalId, permissionSummary: buildPermissionSummary(accessScope, principalLabel) });
+  };
   return (
     <FieldGroup className="grid-cols-2 max-[760px]:grid-cols-1">
       <Field>
         <FieldLabel htmlFor="sql-job-wizard-owner">데이터 오너</FieldLabel>
-        <Input id="sql-job-wizard-owner" value={governance.owner} onChange={(event) => onChange({ owner: event.target.value })} />
+        <Input id="sql-job-wizard-owner" value={governance.owner} onChange={(event) => {
+          const owner = event.target.value;
+          onChange(governance.accessScope === "private"
+            ? { owner, principalId: owner.trim(), permissionSummary: buildPermissionSummary("private", owner.trim()) }
+            : { owner });
+        }} />
         {showErrors && !governance.owner.trim() ? <FieldError>데이터 오너는 필수입니다.</FieldError> : null}
       </Field>
       <WizardSelectField
@@ -151,11 +169,27 @@ export function SqlJobGovernanceStep({
         label="접근 범위"
         options={accessScopeOptions}
         value={governance.accessScope}
-        onValueChange={(accessScope) => onChange({ accessScope, permissionSummary: buildPermissionSummary(accessScope) })}
+        onValueChange={setAccessScope}
       />
+      {governance.accessScope === "project" && projectGroupOptions.length > 0 ? (
+        <WizardSelectField
+          disabled={disabled}
+          id="sql-job-wizard-project-group"
+          label="프로젝트 그룹"
+          options={projectGroupOptions}
+          value={governance.principalId}
+          onValueChange={(principalId) => {
+            const label = projectGroups.find((group) => group.id === principalId)?.name ?? principalId;
+            onChange({ principalId, permissionSummary: buildPermissionSummary("project", label) });
+          }}
+        />
+      ) : null}
+      {governance.accessScope === "project" && projectGroupOptions.length === 0 ? (
+        <Field><FieldError>현재 계정에 연결된 프로젝트 그룹이 없습니다. 관리자에서 실제 그룹을 먼저 연결해 주세요.</FieldError></Field>
+      ) : null}
       <Field className="col-span-2 max-[760px]:col-span-1">
         <FieldLabel htmlFor="sql-job-wizard-permission-summary">권한 정책 요약</FieldLabel>
-        <Textarea id="sql-job-wizard-permission-summary" rows={3} value={governance.permissionSummary} onChange={(event) => onChange({ permissionSummary: event.target.value })} />
+        <Textarea id="sql-job-wizard-permission-summary" readOnly rows={3} value={governance.permissionSummary} />
         {showErrors && !governance.permissionSummary.trim() ? <FieldError>권한 정책 요약은 필수입니다.</FieldError> : null}
       </Field>
     </FieldGroup>

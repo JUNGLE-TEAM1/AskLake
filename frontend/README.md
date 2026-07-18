@@ -17,6 +17,8 @@ Vite prints the local URL after startup.
 
 For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`.
 
+The Semantic/RAG workspace is available at `/catalog?view=semantic`. It uses the live Semantic Model and RAG endpoints while reusing the Catalog dataset list for selection and schema context.
+
 ## Build
 
 ```powershell
