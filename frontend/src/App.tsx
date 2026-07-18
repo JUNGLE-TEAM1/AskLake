@@ -252,6 +252,7 @@ export function App() {
     selectedRunIdByJobId,
     selectRunForJob,
     setSelectedDataset,
+    setJobs,
     setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
@@ -313,6 +314,7 @@ export function App() {
     flow: routeState.flow,
     jobId: routeState.jobId,
     jobs,
+    setJobs,
     setSelectedJob,
   });
 
@@ -518,13 +520,11 @@ export function App() {
     writeAuditLog("etl.job.detail_opened", `/api/etl/jobs/${job.id}`, job.id);
     moveToFlow("jobDetail", { selectedJob: job });
   };
-
   const openJobRunsWithRoute = (job: JobRowData) => {
     setSelectedJob(job);
     writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
     moveToFlow("jobRuns", { selectedJob: job });
   };
-
   if (!authChecked && activeFlow !== "login") {
     return <div className="workspace-route-loading" role="status">로그인 상태를 확인하는 중...</div>;
   }

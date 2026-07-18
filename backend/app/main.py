@@ -71,7 +71,7 @@ def initialize_auth_on_startup() -> None:
     with SessionLocal() as db:
         # Some operational tests inject an auth-only session sentinel. Real
         # SQLAlchemy sessions always expose get_bind().
-        if hasattr(db, "get_bind"):
+        if settings.startup_schema_management_enabled and hasattr(db, "get_bind"):
             migrate_dashboard_schema(db)
             ensure_dashboard_live_schema(db)
             ensure_realtime_event_schema(db)
@@ -83,9 +83,10 @@ def initialize_auth_on_startup() -> None:
 async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
     snapshot_airflow_task = asyncio.create_task(snapshot_airflow_sync_loop())
-    continuous_task = asyncio.create_task(continuous_runtime_sync_loop())
     scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
-    background_tasks = [snapshot_airflow_task, continuous_task, scheduled_task]
+    background_tasks = [snapshot_airflow_task, scheduled_task]
+    if settings.continuous_control_plane == "embedded":
+        background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     if settings.realtime_events_enabled:
         background_tasks.append(asyncio.create_task(
             realtime_event_dispatcher.run(),

@@ -159,7 +159,12 @@ def write_continuous_catalog_ack(
     *,
     document_store: RuntimeDocumentStore | None = None,
 ) -> None:
-    ack_path = continuous_runtime_report_path(job_id).with_suffix(".catalog-ack.json")
+    report_path = continuous_runtime_report_path(job_id)
+    ack_path = (
+        f"{report_path.rsplit('.', 1)[0]}.catalog-ack.json"
+        if isinstance(report_path, str)
+        else report_path.with_suffix(".catalog-ack.json")
+    )
     try:
         write_runtime_json_atomic(
             ack_path,

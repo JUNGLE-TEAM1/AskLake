@@ -10,6 +10,7 @@ import unittest
 from app.core.errors import ApiError
 from app.infrastructure.runtime_io import (
     Boto3ObjectManifestAdapter,
+    Boto3RuntimeDocumentStore,
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
     VersionedNodeBridge,
@@ -28,6 +29,41 @@ class SpyBridge:
 
 
 class RuntimeIoPortTests(unittest.TestCase):
+    def test_s3_runtime_document_store_round_trips_json_and_normalizes_s3a(self) -> None:
+        class Body:
+            def __init__(self, value: bytes) -> None:
+                self.value = value
+
+            def read(self) -> bytes:
+                return self.value
+
+        class Client:
+            def __init__(self) -> None:
+                self.objects: dict[tuple[str, str], bytes] = {}
+
+            def put_object(self, **request) -> None:
+                self.objects[(request["Bucket"], request["Key"])] = request["Body"]
+
+            def get_object(self, **request):
+                key = (request["Bucket"], request["Key"])
+                if key not in self.objects:
+                    error = RuntimeError("not found")
+                    error.response = {"Error": {"Code": "NoSuchKey"}}
+                    raise error
+                return {"Body": Body(self.objects[key])}
+
+        client = Client()
+        store = Boto3RuntimeDocumentStore(client)
+        path = "s3a://asklake-runtime/continuous/job-1.json"
+
+        self.assertEqual(store.read_json(path).state, JsonDocumentState.MISSING)
+        store.write_json_atomic(path, {"status": "running", "storedCount": 42})
+
+        document = store.read_json("s3://asklake-runtime/continuous/job-1.json")
+        self.assertTrue(document.found)
+        self.assertEqual(document.value, {"status": "running", "storedCount": 42})
+        self.assertIn(("asklake-runtime", "continuous/job-1.json"), client.objects)
+
     def test_service_facade_accepts_fake_bridge_without_subprocess(self) -> None:
         bridge = SpyBridge()
 
