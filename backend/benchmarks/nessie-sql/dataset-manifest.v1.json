@@ -1,0 +1,50 @@
+{
+  "fixture_id": "asklake-commerce",
+  "fixture_version": "1.0.0",
+  "generator_version": "trino-ctas-v1",
+  "seed": 9610718,
+  "catalog": "iceberg",
+  "schema": "asklake_benchmark",
+  "scale": 1,
+  "snapshot_policy": "capture-after-load-and-pin",
+  "runtime_profile": "local-trino-482-minio-bounded-v1",
+  "tables": [
+    {
+      "name": "customers_v1",
+      "role": "dimension",
+      "row_count": 10000,
+      "partition_spec": [],
+      "primary_key": ["customer_id"],
+      "column_statistics": {
+        "customer_id": {"min": 1, "max": 10000, "distinct_count": 10000},
+        "segment": {"distinct_count": 8},
+        "region": {"distinct_count": 16}
+      }
+    },
+    {
+      "name": "products_v1",
+      "role": "dimension",
+      "row_count": 1000,
+      "partition_spec": [],
+      "primary_key": ["product_id"],
+      "column_statistics": {
+        "product_id": {"min": 1, "max": 1000, "distinct_count": 1000},
+        "category": {"distinct_count": 24}
+      }
+    },
+    {
+      "name": "orders_v1",
+      "role": "fact",
+      "row_count": 1000000,
+      "partition_spec": ["month(order_date)"],
+      "primary_key": ["order_id"],
+      "column_statistics": {
+        "order_id": {"min": 1, "max": 1000000, "distinct_count": 1000000},
+        "order_date": {"min": "2024-01-01", "max": "2025-12-30", "distinct_count": 730},
+        "customer_id": {"distinct_count": 10000},
+        "product_id": {"distinct_count": 1000},
+        "status": {"distinct_count": 5}
+      }
+    }
+  ]
+}

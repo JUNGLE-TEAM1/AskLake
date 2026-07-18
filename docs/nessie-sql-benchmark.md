@@ -76,6 +76,28 @@ Benchmark가 SQL을 직접 실행하거나 공개 API의 자동 실행 동작을
 - 페이즈 4: preflight와 명시적 live confirmation을 분리한 bounded runner를 구현한다.
 - 페이즈 5 이후: 동일 snapshot·suite·runtime cohort에서 baseline과 candidate를 비교한다.
 
+## 기준 Dataset v1
+
+최초 fixture는 실제 고객 데이터가 아닌 결정론적 합성 commerce 데이터다. `seed=9610718`, `generatorVersion=trino-ctas-v1`로 고정하며 customers 10,000건, products 1,000건, orders 1,000,000건을 만든다. Orders는 2024-01-01부터 730일 범위이고 `month(order_date)`로 partition되어 filter·집계·partition pruning·fact-dimension join을 한 fixture에서 측정할 수 있다. 최초 fact 크기를 100만 건으로 제한한 이유는 로컬 Trino에서도 반복 campaign 비용을 통제하면서 24개 월 partition의 scan 차이를 관측할 수 있기 때문이다.
+
+Manifest는 `backend/benchmarks/nessie-sql/dataset-manifest.v1.json`, 최초 로컬 적재 증거는 `dataset-load-evidence.v1.json`에 둔다. 증거에는 합성 table의 snapshot/row/file/storage metadata만 포함하고 endpoint나 raw row는 포함하지 않는다. 현재 고정 orders snapshot은 1,000,000 rows, 24 files, 5,690,924 bytes다.
+
+```bash
+cd backend
+
+# manifest/schema와 생성 SQL만 검증
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
+  --manifest benchmarks/nessie-sql/dataset-manifest.v1.json
+
+# 격리된 local Trino/MinIO에 최초 적재하거나 명시적으로 재생성
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
+  --manifest benchmarks/nessie-sql/dataset-manifest.v1.json \
+  --live --confirm LOAD_BENCHMARK_DATASET --replace \
+  --receipt /tmp/asklake-nessie-dataset-receipt.json
+```
+
+`--replace`는 benchmark 전용 schema의 기존 v1 table을 삭제하고 새 snapshot을 만들므로 active campaign이 없을 때만 사용한다. 새 receipt의 snapshot ID가 tracked evidence와 다르면 기존 baseline과 직접 비교하지 않고 새 fixture version/evidence를 승인해야 한다. 정리는 전용 schema의 세 table을 drop하는 방식으로 수행하며 application Dataset이나 다른 schema를 삭제하지 않는다. 규모 확장은 generator version을 유지한 채 orders row count를 1,000 단위로 늘릴 수 있지만, manifest fixture version과 snapshot evidence를 새로 발급하고 기존 baseline cohort와 분리한다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.
