@@ -76,7 +76,13 @@ def _merge_source_fields(fields: Sequence[Any]) -> list[dict[str, Any]]:
     return list(merged.values())
 
 
-def _valid_refined_segments(raw: Sequence[dict[str, Any]], sentence_count: int) -> list[ChunkSegment] | None:
+def _valid_refined_segments(
+    raw: Sequence[dict[str, Any]],
+    sentences: Sequence[Any],
+    *,
+    structural_suffix_start: int | None = None,
+) -> list[ChunkSegment] | None:
+    sentence_count = len(sentences)
     if not raw or sentence_count <= 0:
         return None
     segments: list[ChunkSegment] = []
@@ -91,7 +97,35 @@ def _valid_refined_segments(raw: Sequence[dict[str, Any]], sentence_count: int) 
             return None
         segments.append(ChunkSegment(start, end + 1, 0, 0, 0, ambiguous=False))
         expected = end + 1
-    return segments if expected == sentence_count else None
+    if expected == sentence_count:
+        return segments
+    # OpenAI models can correctly cover every semantic sentence while
+    # omitting the final render wrapper (for example ``[/BODY]``). Accept
+    # only that exact, offset-proven structural suffix and fold it into the
+    # final segment. Any missing user-content sentence still fails closed.
+    omitted = sentences[expected:]
+    if (
+        segments
+        and structural_suffix_start is not None
+        and omitted
+        and all(
+            str(getattr(sentence, "text", "")).strip() == "[/BODY]"
+            and int(getattr(sentence, "start", -1)) >= structural_suffix_start
+            for sentence in omitted
+        )
+    ):
+        last = segments[-1]
+        segments[-1] = ChunkSegment(
+            last.start_sentence,
+            sentence_count,
+            0,
+            0,
+            0,
+            last.boundary_score,
+            last.ambiguous,
+        )
+        return segments
+    return None
 
 
 def _with_offsets(segments: Sequence[ChunkSegment], sentences: Sequence[Any]) -> list[ChunkSegment]:
@@ -173,13 +207,16 @@ def chunk_parent_document(
     title, canonical_title_blocks = render_field_section(title_blocks, "TITLE")
     body = body.strip()
     title = title.strip() or None
-    if not body:
+    if not body and not title:
         return []
     # Repeating an oversized title on every body chunk can make every
-    # embedding request invalid.  Fold its labeled fields into the chunkable
-    # body stream instead: no title content is dropped, while the original
-    # title remains available on each indexed document for display/BM25.
-    title_folded_into_body = bool(title and estimate_tokens(title) >= max_tokens)
+    # embedding request invalid. A row can also have a valid title while all
+    # of its body fields are null. Fold either case into the chunkable body
+    # stream: no title-only row or title content is dropped, while the
+    # original title remains available on each indexed document for display.
+    title_folded_into_body = bool(
+        title and (not body or estimate_tokens(title) >= max_tokens)
+    )
     embedding_title = title
     if title_folded_into_body:
         body, canonical_body_blocks = render_field_section(
@@ -190,6 +227,8 @@ def chunk_parent_document(
         embedding_title = None
     full_text = build_embedding_text(embedding_title, body)
     sentences = split_sentences(body)
+    closing_body_marker_start = body.rfind("[/BODY]") if body.endswith("[/BODY]") else -1
+    structural_suffix_start = closing_body_marker_start if closing_body_marker_start >= 0 else None
     title_tokens = estimate_tokens(embedding_title or "")
     body_render_overhead = _field_section_overhead(canonical_body_blocks, "BODY")
     body_max_tokens = max(1, max_tokens - title_tokens - body_render_overhead)
@@ -218,7 +257,11 @@ def chunk_parent_document(
             context_sentences = [{"index": sentence.index, "text": sentence.text} for sentence in sentences]
             try:
                 refined_raw = refine_boundaries(context_sentences, candidate_boundaries)
-                refined = _valid_refined_segments(refined_raw, len(sentences))
+                refined = _valid_refined_segments(
+                    refined_raw,
+                    sentences,
+                    structural_suffix_start=structural_suffix_start,
+                )
                 if not refined:
                     fallback_reason = "invalid_segment_response"
             except TimeoutError:
@@ -246,11 +289,6 @@ def chunk_parent_document(
 
     if title_folded_into_body:
         strategy = f"{strategy}_title_folded"
-        fallback_reason = (
-            "title_exceeds_chunk_budget"
-            if not fallback_reason
-            else f"title_exceeds_chunk_budget;{fallback_reason}"
-        )
 
     result: list[dict[str, Any]] = []
     metadata = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}

@@ -25,6 +25,11 @@ from runtime.contracts import (
     write_report,
 )
 from runtime.config import SparkJobConfig
+from runtime.spark_iceberg_identifiers import (
+    quote_spark_identifier,
+    required_iceberg_identifier,
+    spark_iceberg_source_identifier,
+)
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -506,13 +511,6 @@ def parse_iceberg_target(value):
     return target
 
 
-def required_iceberg_identifier(value, field):
-    identifier = str(value or "").strip()
-    if not identifier or len(identifier) > 255 or any(character in identifier for character in ('`', '"', "'", ";", "\x00")):
-        raise ValueError(f"ICEBERG_TARGET_INVALID {field}")
-    return identifier
-
-
 def safe_identifier(value):
     return re.sub(r"[^0-9A-Za-z_-]+", "_", str(value or "value")).strip("_") or "value"
 
@@ -522,29 +520,6 @@ def spark_iceberg_catalog_name():
         os.environ.get("ASKLAKE_SPARK_ICEBERG_CATALOG_NAME") or "asklake",
         "sparkCatalog",
     )
-
-
-def quote_spark_identifier(value):
-    return f"`{str(value).replace('`', '``')}`"
-
-
-def spark_iceberg_source_identifier(value):
-    raw = str(value or "").strip()
-    lowered = raw.lower()
-    if lowered.startswith("iceberg://"):
-        parts = raw[len("iceberg://"):].split("/")
-    elif lowered.startswith("iceberg:"):
-        parts = raw[len("iceberg:"):].split(".")
-    else:
-        parts = raw.split(".")
-    if len(parts) != 3 or any(not str(part).strip() for part in parts):
-        raise ValueError("ICEBERG_SOURCE_INVALID expected catalog.namespace.table")
-    names = (
-        required_iceberg_identifier(parts[0], "source.catalog"),
-        required_iceberg_identifier(parts[1], "source.namespace"),
-        required_iceberg_identifier(parts[2], "source.table"),
-    )
-    return ".".join(quote_spark_identifier(name) for name in names)
 
 
 def spark_iceberg_table_identifier(target):

@@ -159,32 +159,74 @@ def parent_rows_from_local_rows(rows: list[dict], manifest: dict) -> list[dict]:
     return output
 
 
-def main() -> int:
-    started = time.time()
-    manifest = load_manifest()
+def parent_stage_context(manifest: dict) -> dict[str, Any]:
     dataset_id = str(manifest.get("datasetId") or "").strip()
     job_id = str(manifest.get("jobId") or "").strip()
     source_path = str(manifest.get("sourcePath") or "").strip()
     source_format = str(manifest.get("sourceFormat") or "").strip().lower()
     base_path = str(manifest.get("stagingBasePath") or "").strip()
     source_fingerprint = str(manifest.get("sourceFingerprint") or "").strip()
-    if not all((dataset_id, job_id, source_path, source_format, base_path, source_fingerprint)):
+    if not all(
+        (
+            dataset_id,
+            job_id,
+            source_path,
+            source_format,
+            base_path,
+            source_fingerprint,
+        )
+    ):
         raise ValueError("RAG_PARENT_MANIFEST_REQUIRED_FIELDS_MISSING")
-    paths = build_staging_paths(base_path=base_path, dataset_id=dataset_id, job_id=job_id)
-    failed_rate_threshold = float(manifest.get("failedRowRateThreshold") if manifest.get("failedRowRateThreshold") is not None else 0.05)
-    failure_report: dict[str, Any] = {}
-    failure_row_count = 0
-    failure_count = 0
-    manifest["checkpointPath"] = paths["checkpoint"]
-    schema = manifest.get("schema") or []
-    source_columns = [{"sourceName": str(item.get("name")), "dataType": str(item.get("dataType") or item.get("data_type") or "string")} for item in schema if isinstance(item, dict) and item.get("name")]
     target = manifest.get("icebergTarget")
     if not isinstance(target, dict):
         raise ValueError("RAG_PARENT_ICEBERG_TARGET_REQUIRED")
+    schema = manifest.get("schema") or []
+    source_columns = [
+        {
+            "sourceName": str(item.get("name")),
+            "dataType": str(
+                item.get("dataType") or item.get("data_type") or "string"
+            ),
+        }
+        for item in schema
+        if isinstance(item, dict) and item.get("name")
+    ]
     catalog = str(target.get("catalog") or "asklake")
     namespace = str(target.get("namespace") or "rag")
     table = str(target.get("table") or f"parents_{dataset_id}")
-    table_id = ".".join(f"`{value.replace('`', '``')}`" for value in (catalog, namespace, table))
+    return {
+        "datasetId": dataset_id,
+        "jobId": job_id,
+        "sourcePath": source_path,
+        "sourceFormat": source_format,
+        "sourceFingerprint": source_fingerprint,
+        "paths": build_staging_paths(
+            base_path=base_path,
+            dataset_id=dataset_id,
+            job_id=job_id,
+        ),
+        "failedRateThreshold": float(
+            manifest.get("failedRowRateThreshold")
+            if manifest.get("failedRowRateThreshold") is not None
+            else 0.05
+        ),
+        "sourceColumns": source_columns,
+        "catalog": catalog,
+        "namespace": namespace,
+        "table": table,
+        "tableId": ".".join(
+            f"`{value.replace('`', '``')}`"
+            for value in (catalog, namespace, table)
+        ),
+    }
+
+
+def begin_parent_stage(
+    manifest: dict,
+    *,
+    dataset_id: str,
+    job_id: str,
+) -> int | None:
     try:
         callback(
             manifest,
@@ -198,141 +240,360 @@ def main() -> int:
             },
         )
     except RagJobAlreadyComplete as exc:
-        print(f"ASKLAKE_RAG_PARENT_SKIPPED={canonical_json({'jobId': job_id, 'reason': str(exc)})}")
+        print(
+            f"ASKLAKE_RAG_PARENT_SKIPPED={canonical_json({'jobId': job_id, 'reason': str(exc)})}"
+        )
         return 0
     except RagStageRejectedError as exc:
-        print(f"ASKLAKE_RAG_PARENT_REJECTED={canonical_json({'jobId': job_id, 'reason': str(exc)})}", file=sys.stderr)
+        print(
+            f"ASKLAKE_RAG_PARENT_REJECTED={canonical_json({'jobId': job_id, 'reason': str(exc)})}",
+            file=sys.stderr,
+        )
         return 1
     except Exception as exc:
-        print(f"ASKLAKE_RAG_PARENT_CALLBACK_ERROR={canonical_json({'jobId': job_id, 'error': str(exc)})}", file=sys.stderr)
+        print(
+            f"ASKLAKE_RAG_PARENT_CALLBACK_ERROR={canonical_json({'jobId': job_id, 'error': str(exc)})}",
+            file=sys.stderr,
+        )
         return 1
+    return None
+
+
+def convert_parent_row(
+    row: Any,
+    ordinal: int,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    values = row.asDict(recursive=True)
+    try:
+        document = build_parent_document(
+            dataset_id=context["datasetId"],
+            source_fingerprint=context["sourceFingerprint"],
+            row=values,
+            schema_columns=context["schemaNames"],
+            body_columns=context["bodyColumns"],
+            title_columns=context["titleColumns"],
+            metadata_columns=context["metadataColumns"],
+            identifier_columns=context["identifierColumns"],
+            included_columns=context["schemaNames"],
+            semantic_bindings=context["semanticBindings"],
+            ordinal=int(ordinal),
+            job_id=context["jobId"],
+            policy_fingerprint=context["policyFingerprint"],
+            body_fields=context["bodyFields"],
+            title_fields=context["titleFields"],
+            metadata_fields=context["metadataFields"],
+            identifier_fields=context["identifierFields"],
+            logical_to_physical=context["physicalColumnMapping"],
+        )
+        validate_parent_document(document)
+        document["row_status"] = "valid"
+        document["error_reason"] = None
+    except Exception as exc:
+        selected = normalized_row(values, context["schemaNames"])
+        source_id = f"invalid-row:{sha256_hex(selected)[:32]}"
+        content_hash = sha256_hex({"row": selected, "error": str(exc)})
+        return {
+            "schema_version": RAG_PARENT_SCHEMA_VERSION,
+            "dataset_id": context["datasetId"],
+            "source_fingerprint": context["sourceFingerprint"],
+            "source_row_id": source_id,
+            "row_ordinal": int(ordinal),
+            "parent_document_id": parent_document_id(
+                context["datasetId"],
+                source_id,
+                content_hash,
+            ),
+            "title": None,
+            "title_blocks_json": "[]",
+            "body_blocks_json": "[]",
+            "body": "",
+            "metadata_json": "{}",
+            "metadata_display_json": "{}",
+            "normalized_row_json": json.dumps(
+                selected,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+            "source_columns": sorted(set(context["schemaNames"])),
+            "source_fields_json": "[]",
+            "content_hash": content_hash,
+            "embedding_input_version": "title_body_fields_v2",
+            "field_rendering_version": FIELD_RENDERING_VERSION,
+            "policy_fingerprint": context["policyFingerprint"],
+            "job_id": context["jobId"],
+            "semantic_bindings_json": json.dumps(
+                context["semanticBindings"],
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+            "staged_at": datetime.now(timezone.utc).isoformat(),
+            "row_status": "failed",
+            "error_reason": f"{exc.__class__.__name__}: {str(exc)[:900]}",
+        }
+    return serialize_parent_document(document)
+
+
+def serialize_parent_document(document: dict[str, Any]) -> dict[str, Any]:
+    document["metadata_json"] = json.dumps(
+        document.pop("metadata"),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    document["metadata_display_json"] = json.dumps(
+        document.pop("metadata_display"),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    document["normalized_row_json"] = json.dumps(
+        document.pop("normalized_row"),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    for source, target in (
+        ("title_blocks", "title_blocks_json"),
+        ("body_blocks", "body_blocks_json"),
+        ("source_fields", "source_fields_json"),
+        ("semantic_bindings", "semantic_bindings_json"),
+    ):
+        document[target] = json.dumps(
+            document.pop(source),
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    return document
+
+
+def inspect_existing_parent_stage(
+    spark: Any,
+    stage: dict[str, Any],
+    *,
+    started: float,
+) -> dict[str, Any] | None:
+    catalog = stage["catalog"]
+    namespace = stage["namespace"]
+    table = stage["table"]
+    if not spark.catalog.tableExists(f"{catalog}.{namespace}.{table}"):
+        return None
+    existing = spark.table(stage["tableId"])
+    if "schema_version" not in existing.columns:
+        raise RuntimeError("RAG_PARENT_SCHEMA_VERSION_MISMATCH")
+    versions = {
+        str(row[0])
+        for row in existing.select("schema_version").distinct().collect()
+    }
+    if versions and versions != {RAG_PARENT_SCHEMA_VERSION}:
+        raise RuntimeError("RAG_PARENT_SCHEMA_VERSION_MISMATCH")
+    valid = existing.filter("row_status = 'valid'")
+    duplicate_source_ids = (
+        valid.groupBy("source_row_id").count().filter("count > 1").limit(1).count()
+    )
+    duplicate_parent_ids = (
+        valid.groupBy("parent_document_id").count().filter("count > 1").limit(1).count()
+    )
+    if duplicate_source_ids or duplicate_parent_ids:
+        raise RuntimeError(
+            "RAG parent identifier integrity check failed: "
+            "duplicate source_row_id or parent_document_id"
+        )
+    count = valid.count() if "row_status" in existing.columns else existing.count()
+    failed_count = (
+        existing.filter("row_status = 'failed'").count()
+        if "row_status" in existing.columns
+        else 0
+    )
+    row_count = count + failed_count
+    failed_rate = failed_count / row_count if row_count else 0.0
+    report = failed_row_report(
+        row_count=row_count,
+        failed_count=failed_count,
+        threshold=stage["failedRateThreshold"],
+        quarantined_table=f"{catalog}.{namespace}.{table}",
+    )
+    return {
+        "count": count,
+        "failedCount": failed_count,
+        "rowCount": row_count,
+        "failedRate": failed_rate,
+        "report": report,
+        "result": {
+            "status": "success",
+            "schemaVersion": RAG_PARENT_SCHEMA_VERSION,
+            "datasetId": stage["datasetId"],
+            "jobId": stage["jobId"],
+            "sourceFingerprint": stage["sourceFingerprint"],
+            "parentCount": count,
+            "rowCount": row_count,
+            "failedCount": failed_count,
+            "failedRate": failed_rate,
+            "failedRowReport": report,
+            "table": f"{catalog}.{namespace}.{table}",
+            "checkpointPath": stage["paths"]["checkpoint"],
+            "resumed": True,
+            "durationMs": int((time.time() - started) * 1000),
+        },
+    }
+
+
+def write_parent_stage(
+    spark: Any,
+    manifest: dict,
+    stage: dict[str, Any],
+    *,
+    started: float,
+) -> dict[str, Any]:
+    source_df = read_source(
+        spark,
+        stage["sourceFormat"],
+        stage["sourcePath"],
+        stage["sourceColumns"],
+        source_collection=manifest.get("sourceCollection") or {},
+    )
+    normalized_df = normalize_columns(source_df, stage["sourceColumns"])
+    role_body, role_title, role_metadata, role_identifiers = role_columns(manifest)
+    body_fields = role_field_specs(manifest, "body")
+    title_fields = role_field_specs(manifest, "title")
+    metadata_fields = role_field_specs(manifest, "metadata")
+    identifier_fields = role_field_specs(manifest, "identifier")
+    schema_names = sorted(
+        set(role_body + role_title + role_metadata + role_identifiers)
+    )
+    conversion_context = {
+        "datasetId": stage["datasetId"],
+        "sourceFingerprint": stage["sourceFingerprint"],
+        "schemaNames": schema_names,
+        "bodyColumns": role_body,
+        "titleColumns": role_title,
+        "metadataColumns": role_metadata,
+        "identifierColumns": role_identifiers,
+        "semanticBindings": manifest.get("semanticBindings") or {},
+        "jobId": stage["jobId"],
+        "policyFingerprint": str(manifest.get("policyFingerprint")),
+        "bodyFields": body_fields,
+        "titleFields": title_fields,
+        "metadataFields": metadata_fields,
+        "identifierFields": identifier_fields,
+        "physicalColumnMapping": manifest.get("physicalColumnMapping") or {},
+    }
+    spark.sparkContext.setCheckpointDir(stage["paths"]["checkpoint"])
+    indexed = normalized_df.rdd.zipWithIndex().map(
+        lambda pair: convert_parent_row(pair[0], pair[1], conversion_context)
+    )
+    indexed.checkpoint()
+    indexed.count()
+    parent_df = spark.createDataFrame(indexed, schema=parent_schema())
+    valid_df = parent_df.filter("row_status = 'valid'")
+    duplicate_source_ids = (
+        valid_df.groupBy("source_row_id").count().filter("count > 1").limit(1).count()
+    )
+    duplicate_parent_ids = (
+        valid_df.groupBy("parent_document_id").count().filter("count > 1").limit(1).count()
+    )
+    if duplicate_source_ids or duplicate_parent_ids:
+        raise RuntimeError(
+            "RAG parent identifier integrity check failed: "
+            "duplicate source_row_id or parent_document_id"
+        )
+    spark.sql(
+        f"CREATE NAMESPACE IF NOT EXISTS `{stage['catalog']}`.`{stage['namespace']}`"
+    )
+    (
+        parent_df.writeTo(stage["tableId"])
+        .using("iceberg")
+        .tableProperty("format-version", "2")
+        .createOrReplace()
+    )
+    count = valid_df.count()
+    failed_count = parent_df.filter("row_status = 'failed'").count()
+    row_count = count + failed_count
+    failed_rate = failed_count / row_count if row_count else 0.0
+    table_name = f"{stage['catalog']}.{stage['namespace']}.{stage['table']}"
+    report = failed_row_report(
+        row_count=row_count,
+        failed_count=failed_count,
+        threshold=stage["failedRateThreshold"],
+        quarantined_table=table_name,
+    )
+    return {
+        "status": "failed" if failed_rate > stage["failedRateThreshold"] else "success",
+        "schemaVersion": RAG_PARENT_SCHEMA_VERSION,
+        "datasetId": stage["datasetId"],
+        "jobId": stage["jobId"],
+        "sourceFingerprint": stage["sourceFingerprint"],
+        "parentCount": count,
+        "rowCount": row_count,
+        "failedCount": failed_count,
+        "failedRate": failed_rate,
+        "failedRowReport": report,
+        "table": table_name,
+        "checkpointPath": stage["paths"]["checkpoint"],
+        "durationMs": int((time.time() - started) * 1000),
+    }
+
+
+def main() -> int:
+    started = time.time()
+    manifest = load_manifest()
+    stage = parent_stage_context(manifest)
+    dataset_id = stage["datasetId"]
+    job_id = stage["jobId"]
+    source_path = stage["sourcePath"]
+    source_format = stage["sourceFormat"]
+    source_fingerprint = stage["sourceFingerprint"]
+    paths = stage["paths"]
+    failed_rate_threshold = stage["failedRateThreshold"]
+    failure_report: dict[str, Any] = {}
+    failure_row_count = 0
+    failure_count = 0
+    manifest["checkpointPath"] = paths["checkpoint"]
+    source_columns = stage["sourceColumns"]
+    catalog = stage["catalog"]
+    namespace = stage["namespace"]
+    table = stage["table"]
+    table_id = stage["tableId"]
+    early_exit = begin_parent_stage(
+        manifest,
+        dataset_id=dataset_id,
+        job_id=job_id,
+    )
+    if early_exit is not None:
+        return early_exit
 
     spark = make_spark(manifest.get("sourceCollection") or {}, manifest.get("icebergTarget"), disable_speculation=True)
     try:
         # Iceberg table replacement is atomic. Reuse a committed stage when
         # the driver died after the write and before the callback.
-        if spark.catalog.tableExists(f"{catalog}.{namespace}.{table}"):
-            existing = spark.table(table_id)
-            if "schema_version" not in existing.columns:
-                raise RuntimeError("RAG_PARENT_SCHEMA_VERSION_MISMATCH")
-            versions = {str(row[0]) for row in existing.select("schema_version").distinct().collect()}
-            if versions and versions != {RAG_PARENT_SCHEMA_VERSION}:
-                raise RuntimeError("RAG_PARENT_SCHEMA_VERSION_MISMATCH")
-            if existing.filter("row_status = 'valid'").groupBy("source_row_id").count().filter("count > 1").limit(1).count() or existing.filter("row_status = 'valid'").groupBy("parent_document_id").count().filter("count > 1").limit(1).count():
-                raise RuntimeError("RAG parent identifier integrity check failed: duplicate source_row_id or parent_document_id")
-            count = existing.filter("row_status = 'valid'").count() if "row_status" in existing.columns else existing.count()
-            failed_count = existing.filter("row_status = 'failed'").count() if "row_status" in existing.columns else 0
-            row_count = count + failed_count
-            failed_rate = failed_count / row_count if row_count else 0.0
-            report = failed_row_report(row_count=row_count, failed_count=failed_count, threshold=failed_rate_threshold, quarantined_table=f"{catalog}.{namespace}.{table}")
-            failure_report, failure_row_count, failure_count = report, row_count, failed_count
+        resumed = inspect_existing_parent_stage(spark, stage, started=started)
+        if resumed is not None:
+            failure_report = resumed["report"]
+            failure_row_count = resumed["rowCount"]
+            failure_count = resumed["failedCount"]
+            failed_rate = resumed["failedRate"]
             if failed_rate > failed_rate_threshold:
                 raise RuntimeError(f"RAG parent failed-row rate {failed_rate:.4f} exceeds threshold {failed_rate_threshold:.4f}")
-            result = {"status": "success", "schemaVersion": RAG_PARENT_SCHEMA_VERSION, "datasetId": dataset_id, "jobId": job_id, "sourceFingerprint": source_fingerprint, "parentCount": count, "rowCount": row_count, "failedCount": failed_count, "failedRate": failed_rate, "failedRowReport": report, "table": f"{catalog}.{namespace}.{table}", "checkpointPath": paths["checkpoint"], "resumed": True, "durationMs": int((time.time() - started) * 1000)}
+            result = resumed["result"]
             print(f"ASKLAKE_RAG_PARENT_RESULT={canonical_json(result)}")
-            callback(manifest, {"status": "parent_staged", "parentCount": count, "rowCount": row_count, "failedCount": failed_count, "failedRate": failed_rate, "failedRowReport": report, "parentTable": result["table"], "checkpointPath": paths["checkpoint"], "resumed": True})
+            callback(manifest, {"status": "parent_staged", "parentCount": resumed["count"], "rowCount": resumed["rowCount"], "failedCount": resumed["failedCount"], "failedRate": failed_rate, "failedRowReport": resumed["report"], "parentTable": result["table"], "checkpointPath": paths["checkpoint"], "resumed": True})
             return 0
-        source_df = read_source(spark, source_format, source_path, source_columns, source_collection=manifest.get("sourceCollection") or {})
-        normalized_df = normalize_columns(source_df, source_columns)
-        role_body, role_title, role_metadata, role_identifiers = role_columns(manifest)
-        body_fields, title_fields = role_field_specs(manifest, "body"), role_field_specs(manifest, "title")
-        metadata_fields, identifier_fields = role_field_specs(manifest, "metadata"), role_field_specs(manifest, "identifier")
-        schema_names = sorted(set(role_body + role_title + role_metadata + role_identifiers))
-        semantic_bindings = manifest.get("semanticBindings") or {}
-        policy_fingerprint = str(manifest.get("policyFingerprint"))
-
-        def convert(row, ordinal):
-            values = row.asDict(recursive=True)
-            try:
-                document = build_parent_document(
-                    dataset_id=dataset_id,
-                    source_fingerprint=source_fingerprint,
-                    row=values,
-                    schema_columns=schema_names,
-                    body_columns=role_body,
-                    title_columns=role_title,
-                    metadata_columns=role_metadata,
-                    identifier_columns=role_identifiers,
-                    included_columns=schema_names,
-                    semantic_bindings=semantic_bindings,
-                    ordinal=int(ordinal),
-                    job_id=job_id,
-                    policy_fingerprint=policy_fingerprint,
-                    body_fields=body_fields,
-                    title_fields=title_fields,
-                    metadata_fields=metadata_fields,
-                    identifier_fields=identifier_fields,
-                    logical_to_physical=manifest.get("physicalColumnMapping") or {},
-                )
-                validate_parent_document(document)
-                document["row_status"] = "valid"
-                document["error_reason"] = None
-            except Exception as exc:
-                selected = normalized_row(values, schema_names)
-                source_id = f"invalid-row:{sha256_hex(selected)[:32]}"
-                content_hash = sha256_hex({"row": selected, "error": str(exc)})
-                return {
-                    "schema_version": RAG_PARENT_SCHEMA_VERSION,
-                    "dataset_id": dataset_id,
-                    "source_fingerprint": source_fingerprint,
-                    "source_row_id": source_id,
-                    "row_ordinal": int(ordinal),
-                    "parent_document_id": parent_document_id(dataset_id, source_id, content_hash),
-                    "title": None,
-                    "title_blocks_json": "[]",
-                    "body_blocks_json": "[]",
-                    "body": "",
-                    "metadata_json": "{}",
-                    "metadata_display_json": "{}",
-                    "normalized_row_json": json.dumps(selected, ensure_ascii=False, sort_keys=True, default=str),
-                    "source_columns": sorted(set(schema_names)),
-                    "source_fields_json": "[]",
-                    "content_hash": content_hash,
-                    "embedding_input_version": "title_body_fields_v2",
-                    "field_rendering_version": FIELD_RENDERING_VERSION,
-                    "policy_fingerprint": policy_fingerprint,
-                    "job_id": job_id,
-                    "semantic_bindings_json": json.dumps(semantic_bindings, ensure_ascii=False, sort_keys=True, default=str),
-                    "staged_at": datetime.now(timezone.utc).isoformat(),
-                    "row_status": "failed",
-                    "error_reason": f"{exc.__class__.__name__}: {str(exc)[:900]}",
-                }
-            document["metadata_json"] = json.dumps(document.pop("metadata"), ensure_ascii=False, sort_keys=True, default=str)
-            document["metadata_display_json"] = json.dumps(document.pop("metadata_display"), ensure_ascii=False, sort_keys=True, default=str)
-            document["normalized_row_json"] = json.dumps(document.pop("normalized_row"), ensure_ascii=False, sort_keys=True, default=str)
-            document["title_blocks_json"] = json.dumps(document.pop("title_blocks"), ensure_ascii=False, sort_keys=True, default=str)
-            document["body_blocks_json"] = json.dumps(document.pop("body_blocks"), ensure_ascii=False, sort_keys=True, default=str)
-            document["source_fields_json"] = json.dumps(document.pop("source_fields"), ensure_ascii=False, sort_keys=True, default=str)
-            document["semantic_bindings_json"] = json.dumps(document.pop("semantic_bindings"), ensure_ascii=False, sort_keys=True, default=str)
-            return document
-
-        spark.sparkContext.setCheckpointDir(paths["checkpoint"])
-        indexed = normalized_df.rdd.zipWithIndex().map(lambda pair: convert(pair[0], pair[1]))
-        indexed.checkpoint()
-        indexed.count()
-        parent_df = spark.createDataFrame(indexed, schema=parent_schema())
-        duplicate_source_ids = parent_df.filter("row_status = 'valid'").groupBy("source_row_id").count().filter("count > 1").limit(1).count()
-        duplicate_parent_ids = parent_df.filter("row_status = 'valid'").groupBy("parent_document_id").count().filter("count > 1").limit(1).count()
-        if duplicate_source_ids or duplicate_parent_ids:
-            raise RuntimeError("RAG parent identifier integrity check failed: duplicate source_row_id or parent_document_id")
-        spark.sql(f"CREATE NAMESPACE IF NOT EXISTS `{catalog}`.`{namespace}`")
-        (parent_df.writeTo(table_id).using("iceberg").tableProperty("format-version", "2").createOrReplace())
-        count = parent_df.filter("row_status = 'valid'").count()
-        failed_count = parent_df.filter("row_status = 'failed'").count()
-        row_count = count + failed_count
-        failed_rate = failed_count / row_count if row_count else 0.0
-        report = failed_row_report(row_count=row_count, failed_count=failed_count, threshold=failed_rate_threshold, quarantined_table=f"{catalog}.{namespace}.{table}")
-        failure_report, failure_row_count, failure_count = report, row_count, failed_count
-        result_status = "failed" if failed_rate > failed_rate_threshold else "success"
-        result = {"status": result_status, "schemaVersion": RAG_PARENT_SCHEMA_VERSION, "datasetId": dataset_id, "jobId": job_id, "sourceFingerprint": source_fingerprint, "parentCount": count, "rowCount": row_count, "failedCount": failed_count, "failedRate": failed_rate, "failedRowReport": report, "table": f"{catalog}.{namespace}.{table}", "checkpointPath": paths["checkpoint"], "durationMs": int((time.time() - started) * 1000)}
-        if result_status == "failed":
+        result = write_parent_stage(spark, manifest, stage, started=started)
+        failure_report = result["failedRowReport"]
+        failure_row_count = result["rowCount"]
+        failure_count = result["failedCount"]
+        if result["status"] == "failed":
+            failed_rate = result["failedRate"]
             raise RuntimeError(f"RAG parent failed-row rate {failed_rate:.4f} exceeds threshold {failed_rate_threshold:.4f}")
         report_path = str(manifest.get("reportPath") or "").strip()
         if report_path:
             with open(report_path, "w", encoding="utf-8") as handle:
                 json.dump(result, handle, ensure_ascii=False, indent=2)
         print(f"ASKLAKE_RAG_PARENT_RESULT={canonical_json(result)}")
-        callback(manifest, {"status": "parent_staged", "parentCount": count, "rowCount": row_count, "failedCount": failed_count, "failedRate": failed_rate, "failedRowReport": report, "parentTable": result["table"], "checkpointPath": paths["checkpoint"]})
+        callback(manifest, {"status": "parent_staged", "parentCount": result["parentCount"], "rowCount": result["rowCount"], "failedCount": result["failedCount"], "failedRate": result["failedRate"], "failedRowReport": result["failedRowReport"], "parentTable": result["table"], "checkpointPath": paths["checkpoint"]})
         return 0
     except RagJobAlreadyComplete as exc:
         print(f"ASKLAKE_RAG_PARENT_SKIPPED={canonical_json({'jobId': job_id, 'reason': str(exc)})}")

@@ -449,6 +449,26 @@ npm run verify:ui-regressions
 npm run build
 ```
 
+### RAG Data Plane 검증
+
+Semantic RAG 색인은 backend control plane이 만든 manifest를 `asklake_rag_index` Airflow DAG에 전달한 뒤, Spark parent staging → chunk staging → embedding worker/OpenSearch publication 순서로 실행한다. Spark 단계는 Catalog가 승인한 Iceberg source identity와 role column만 읽고, checkpoint가 있는 deterministic parent/chunk ID를 생성한다. embedding worker는 provider key를 직접 받지 않고 private AI Gateway의 `/v1/embeddings`만 호출하며, 완성된 generation index를 alias로 원자 전환한다.
+
+빠른 회귀는 실제 provider 호출 없이 다음 명령으로 확인한다. OpenSearch 통합 테스트는 고유 index/alias를 만들고 자신이 만든 리소스만 정리하며 `OPENSEARCH_INTEGRATION_URL`이 있을 때만 실행된다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q \
+  tests/test_rag_airflow_data_plane.py \
+  tests/test_rag_parent_contract.py \
+  tests/test_rag_preview_production_parity.py \
+  tests/test_rag_chunk_staging_transport.py
+
+cd ../embedding-worker
+PYTHONPATH=. ../backend/.venv/bin/python -m pytest -q
+```
+
+`.github/workflows/rag-opensearch-integration.yml`은 RAG backend/Spark/worker 경로가 바뀐 push와 PR에서 OpenSearch 2.19.1 service, Spark import smoke, backend RAG 회귀, quality gate, embedding worker test를 실행한다. 로컬 live 확인은 `docker compose up -d opensearch` 뒤 `OPENSEARCH_INTEGRATION_URL=http://127.0.0.1:9200`으로 integration marker를 명시한다.
+
 생성된 Job의 수정 hydrate 계약은 아래 명령으로 별도 확인한다. 이 검증은 Kafka source와 schema/rule/permission/target metadata가 `GET /api/etl/jobs/{jobId}` 형태의 `JobRowData`로 다시 나오는지 확인한다.
 
 ```bash
@@ -720,6 +740,8 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_object_storage_mode tests.t
 
 로컬 root Compose는 MinIO를 사용한다. Production Compose는 실제 AWS S3만 사용하며, `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, Raw/Output/Warehouse/Query Result bucket을 설정하고 EC2 IAM Role/default credential chain으로 인증한다. Warehouse와 Query Result bucket은 `TRINO_ENABLED=true`일 때만 runtime에 사용하며 배포 전에 생성하고 readiness 대상에 포함한다. Production frontend image에는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 `VITE_SPARK_OUTPUT_BUCKET`으로 주입하므로 Target UI와 Spark writer가 같은 bucket을 사용한다. Production `.env`에는 장기 AWS access key/secret 또는 MinIO credential을 넣지 않는다.
 
+RAG Data Plane 배포는 private `opensearch`, `embedding-worker`, `rag-artifact-cleanup` service를 함께 올린다. `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, `OPENSEARCH_PASSWORD`, `RAG_WORKER_TOKEN`은 server `deploy/.env`에만 저장하고 host port로 노출하지 않는다. Airflow는 read-only로 mount한 backend RAG script와 Spark REST endpoint를 사용하며, worker는 `AI_GATEWAY_SERVICE_TOKEN`으로 private Gateway에만 접근한다. 모델과 index의 vector dimension은 `RAG_EMBEDDING_DIMENSIONS`에서 동일해야 하고, staging artifact는 `RAG_STAGING_BASE_PATH` 아래 Job별 경로로 격리한다.
+
 Production에서 Trino를 켜기 전에는 TLS/auth/JDBC role, read-only query identity, materializer CTAS/`DESCRIBE`/drop, Warehouse와 Query Result bucket round trip을 아래 readiness로 확인한다.
 
 ```bash
@@ -731,14 +753,7 @@ ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
-Production은 알려진 legacy demo 계정을 기본 비활성화한다. 재시작 가능한 데모 서버에서 해당 계정을 유지하려면 server `deploy/.env`의 backend/frontend 플래그를 반드시 함께 켠다. 한쪽만 켜면 preflight가 실패한다. 이 설정은 기존 DB status를 보존하므로 이전 startup이 이미 `disabled`로 만든 계정은 opt-in 배포 전후에 한 번만 `active`로 복구하고, 이후 재시작에서는 추가 DB 수정이 없어야 한다.
-
-```bash
-AUTH_LEGACY_DEMO_USERS_ENABLED=true
-VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
-```
-
-Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
+Production은 알려진 legacy demo 계정을 허용하지 않는다. `scripts/verify-deploy-env.sh`는 `AUTH_LEGACY_DEMO_USERS_ENABLED`가 `false`가 아니거나 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 존재하면 preflight를 실패시킨다. legacy identity 호환은 backend test 환경에만 남기며, 실제 배포는 bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단을 유지한다.
 
 dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 

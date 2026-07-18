@@ -253,9 +253,6 @@ if output="$(run_preflight "$ROOT_DIR/deploy/docker-compose.prod.yml" 2>&1)"; th
   record_pass 'Trino-enabled production Compose passes strict preflight'
 else
   record_fail 'Trino-enabled production Compose passes strict preflight (unexpected failure)'
-  if [[ "$output" != *"$SECRET_SENTINEL"* ]]; then
-    printf '%s\n' "$output" >&2
-  fi
 fi
 
 write_valid_clickhouse_trino_aws_env "$ENV_FILE"

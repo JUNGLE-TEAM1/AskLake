@@ -67,12 +67,7 @@ def post_index(endpoint: str, token: str, dataset_id: str, dataset_name: str, ta
     return payload
 
 
-def main() -> int:
-    started = time.time()
-    manifest = load_manifest()
-    chunk_table = str(manifest.get("chunkTable") or "")
-    if len(chunk_table.split(".")) != 3:
-        raise ValueError("RAG_INDEX_CHUNK_TABLE_REQUIRED")
+def begin_embedding_stage(manifest: dict) -> int | None:
     try:
         callback(
             manifest,
@@ -86,14 +81,98 @@ def main() -> int:
             },
         )
     except RagJobAlreadyComplete as exc:
-        print(f"ASKLAKE_RAG_INDEX_SKIPPED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}")
+        print(
+            f"ASKLAKE_RAG_INDEX_SKIPPED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}"
+        )
         return 0
     except RagStageRejectedError as exc:
-        print(f"ASKLAKE_RAG_INDEX_REJECTED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}", file=sys.stderr)
+        print(
+            f"ASKLAKE_RAG_INDEX_REJECTED={canonical_json({'jobId': manifest.get('jobId'), 'reason': str(exc)})}",
+            file=sys.stderr,
+        )
         return 1
     except Exception as exc:
-        print(f"ASKLAKE_RAG_INDEX_CALLBACK_ERROR={canonical_json({'jobId': manifest.get('jobId'), 'error': str(exc)})}", file=sys.stderr)
+        print(
+            f"ASKLAKE_RAG_INDEX_CALLBACK_ERROR={canonical_json({'jobId': manifest.get('jobId'), 'error': str(exc)})}",
+            file=sys.stderr,
+        )
         return 1
+    return None
+
+
+def build_partition_dispatch(
+    *,
+    endpoint: str,
+    token: str,
+    dataset_id: str,
+    dataset_name: str,
+    target_index: str,
+    embedding_model: str | None,
+    embedding_dimensions: int | None,
+    metadata_types: dict[str, str],
+    job_id: str,
+):
+    def partition_dispatch(iterator):
+        batch = []
+        for row in iterator:
+            chunk = row.asDict(recursive=True)
+            chunk["metadata"] = json.loads(chunk.pop("metadata_json") or "{}")
+            chunk["metadata_display"] = json.loads(
+                chunk.pop("metadata_display_json") or "{}"
+            )
+            chunk["title_blocks"] = json.loads(
+                chunk.pop("title_blocks_json") or "[]"
+            )
+            chunk["body_blocks"] = json.loads(
+                chunk.pop("body_blocks_json") or "[]"
+            )
+            chunk["source_fields"] = json.loads(
+                chunk.pop("source_fields_json") or "[]"
+            )
+            chunk["parent_source_fields"] = json.loads(
+                chunk.pop("parent_source_fields_json") or "[]"
+            )
+            batch.append(chunk)
+            if len(batch) >= 64:
+                yield post_index(
+                    endpoint,
+                    token,
+                    dataset_id,
+                    dataset_name,
+                    target_index,
+                    batch,
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                    metadata_types=metadata_types,
+                    job_id=job_id,
+                )
+                batch = []
+        if batch:
+            yield post_index(
+                endpoint,
+                token,
+                dataset_id,
+                dataset_name,
+                target_index,
+                batch,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+                metadata_types=metadata_types,
+                job_id=job_id,
+            )
+
+    return partition_dispatch
+
+
+def main() -> int:
+    started = time.time()
+    manifest = load_manifest()
+    chunk_table = str(manifest.get("chunkTable") or "")
+    if len(chunk_table.split(".")) != 3:
+        raise ValueError("RAG_INDEX_CHUNK_TABLE_REQUIRED")
+    early_exit = begin_embedding_stage(manifest)
+    if early_exit is not None:
+        return early_exit
     spark = make_spark({}, {"catalog": chunk_table.split(".")[0], "namespace": chunk_table.split(".")[1], "table": chunk_table.split(".")[2], "writeMode": "replace", "tableUri": f"iceberg://{chunk_table}"}, disable_speculation=True)
     try:
         chunks = spark.table(".".join(quote_spark_identifier(item) for item in chunk_table.split("."))).persist()
@@ -106,22 +185,17 @@ def main() -> int:
         embedding_dimensions = int(manifest["embeddingDimensions"]) if manifest.get("embeddingDimensions") else None
         metadata_types = manifest.get("metadataTypes") if isinstance(manifest.get("metadataTypes"), dict) else {}
 
-        def partition_dispatch(iterator):
-            batch = []
-            for row in iterator:
-                chunk = row.asDict(recursive=True)
-                chunk["metadata"] = json.loads(chunk.pop("metadata_json") or "{}")
-                chunk["metadata_display"] = json.loads(chunk.pop("metadata_display_json") or "{}")
-                chunk["title_blocks"] = json.loads(chunk.pop("title_blocks_json") or "[]")
-                chunk["body_blocks"] = json.loads(chunk.pop("body_blocks_json") or "[]")
-                chunk["source_fields"] = json.loads(chunk.pop("source_fields_json") or "[]")
-                chunk["parent_source_fields"] = json.loads(chunk.pop("parent_source_fields_json") or "[]")
-                batch.append(chunk)
-                if len(batch) >= 64:
-                    yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types, job_id=str(manifest.get("jobId") or ""))
-                    batch = []
-            if batch:
-                yield post_index(endpoint, token, dataset_id, dataset_name, target_index, batch, embedding_model=embedding_model, embedding_dimensions=embedding_dimensions, metadata_types=metadata_types, job_id=str(manifest.get("jobId") or ""))
+        partition_dispatch = build_partition_dispatch(
+            endpoint=endpoint,
+            token=token,
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            target_index=target_index,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+            metadata_types=metadata_types,
+            job_id=str(manifest.get("jobId") or ""),
+        )
 
         document_count = chunks.count()
         parent_count = int(chunks.select("parent_document_id").distinct().count())
