@@ -126,6 +126,35 @@ Run metadata는 application PostgreSQL/RDS의 `benchmark_runs`에 저장한다. 
 
 Migration은 `0016_benchmark_runs`가 소유한다. 기본 retention은 30일이며 만료 레코드 정리 worker는 후속 운영 작업이다. Baseline/candidate 요약 artifact에는 raw result row를 포함하지 않으며 private SQL reference의 실제 object lifecycle은 해당 evidence store의 정책을 따른다.
 
+## Bounded 측정 runner
+
+`nessie-sql-benchmark-run.py`는 snapshot preflight, candidate 생성, SQLGlot read-only/scope/금지 패턴 검증, scan upper-bound estimate, bounded Trino 실행과 golden hash 판정을 순서대로 수행한다. `reference` source는 CI에서 runner 자체를 결정론적으로 검증하기 위한 oracle이며 실제 Nessie baseline으로 부르지 않는다. 실제 provider가 생성한 private candidate receipt는 `provider-receipt` source로 입력한다. Candidate SQL은 private 입력과 DB hash로만 취급하며 개별 공개 receipt에는 원문이나 result row가 없다.
+
+```bash
+cd backend
+
+# 생성·정적 검증·snapshot drift만 확인하고 실행하지 않음
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-run.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --dataset-evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --receipt-dir /tmp/asklake-nessie-preflight \
+  --campaign-id preflight-v1 --role baseline --mode preflight
+
+# bounded live 실행
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-run.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --dataset-evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --receipt-dir /tmp/asklake-nessie-live \
+  --campaign-id baseline-v1 --role baseline --mode live \
+  --confirm RUN_BOUNDED_BENCHMARK --source provider-receipt \
+  --candidate-receipt /private/path/provider-candidates.json \
+  --cache-mode warm --repetitions 5 --timeout-seconds 30
+```
+
+Receipt directory는 Git worktree 밖이어야 한다. 같은 디렉터리의 active campaign lock이 동시 실행을 차단하며 signal/실패 시 lock을 정리한다. `--resume`은 이미 존재하는 receipt를 읽고 빠진 실행만 계속하지만 실패를 재실행하지 않는다. Retry는 기존 receipt를 덮지 않고 명시적으로 증가시킨 `--attempt`로 새 idempotency key와 파일을 만든다. Timeout은 active Trino next URI를 cancel한다. Snapshot drift, 기존 receipt 충돌, active campaign은 실행 전에 fail closed한다.
+
+Runner는 correctness, generation latency/regeneration, estimate/processed bytes·rows, elapsed/wall/queued/CPU/peak memory, spill, result row count, state/error를 기록한다. Trino 482에서 제공되지 않거나 현재 collector가 매핑하지 않는 file/partition pruning 값은 `null`이다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.
