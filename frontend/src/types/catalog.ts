@@ -159,6 +159,44 @@ export type CatalogDatasetRowsResponse = {
   rows: string[][];
 };
 
+export type CatalogDatasetDeletionStatus = "queued" | "validating" | "purging" | "metadata_cleanup" | "succeeded" | "failed";
+
+export type CatalogDatasetDeletionBlocker = {
+  reason: string;
+  resourceId: string;
+  resourceName: string;
+  resourceType: string;
+};
+
+export type CatalogDatasetDeletionArtifact = {
+  kind: string;
+  location: string;
+};
+
+export type CatalogDatasetDeletionImpact = {
+  artifacts: CatalogDatasetDeletionArtifact[];
+  blockers: CatalogDatasetDeletionBlocker[];
+  canDelete: boolean;
+  datasetId: string;
+  datasetName: string;
+  estimatedSizeBytes: number;
+  retainedResources: string[];
+};
+
+export type CatalogDatasetDeletionAcceptedResponse = {
+  datasetId: string;
+  deletionId: string;
+  status: CatalogDatasetDeletionStatus;
+};
+
+export type CatalogDatasetDeletionStatusResponse = CatalogDatasetDeletionAcceptedResponse & {
+  createdAt: string;
+  datasetName: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  updatedAt: string;
+};
+
 export type CatalogModelArtifact = {
   allowedValues?: string[];
   artifactType: "model";
