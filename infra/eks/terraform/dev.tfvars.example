@@ -208,3 +208,5 @@ observability_owner                       = null
 observability_application_retention_days  = 7
 observability_control_plane_retention_days = 7
 observability_rds_retention_days          = 7
+observability_daily_log_ingest_warning_gib = 3
+observability_stored_log_warning_gib       = 20

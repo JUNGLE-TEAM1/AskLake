@@ -13,6 +13,8 @@ output "day18_observability_handoff" {
     application_signals        = false
     classic_container_insights = false
     otel_container_insights    = local.observability_enabled
+    application_log_delivery   = local.observability_enabled ? "addon-managed-fluent-bit" : "disabled"
+    application_log_scope      = local.observability_enabled ? var.namespace : null
     standalone_fluent_bit      = false
     standalone_adot            = false
     post_apply_reconcile       = "scripts/reconcile-eks-day18-observability-runtime.sh"
@@ -21,6 +23,12 @@ output "day18_observability_handoff" {
       application    = var.observability_application_retention_days
       control_plane  = var.observability_control_plane_retention_days
       rds_postgresql = var.observability_rds_retention_days
+    }
+    cost_guardrails = {
+      daily_ingest_warning_gib = var.observability_daily_log_ingest_warning_gib
+      stored_log_warning_gib   = var.observability_stored_log_warning_gib
+      alarm_actions_enabled    = false
+      notification_target      = "phase-3-follow-up"
     }
     log_groups_preserved_on_destroy = true
     runtime_evidence = [

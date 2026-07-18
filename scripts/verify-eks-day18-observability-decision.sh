@@ -23,8 +23,9 @@ jq -e '
   and .selected.containerInsights == "otel"
   and .selected.applicationSignals == false
   and .selected.classicContainerInsights == false
-  and .selected.containerLogs == false
-  and .selected.otelNativeLogs == true
+  and .selected.containerLogs == true
+  and .selected.otelNativeLogs == false
+  and .selected.managedFluentBitLogs == true
   and .selected.standaloneFluentBit == false
   and .selected.standaloneAdot == false
   and .compatibility.eksAutoMode == true
@@ -39,7 +40,8 @@ jq -e '
   and .collection.kubernetesEvents.source == "kubernetes-api-read-only"
   and .collection.kubernetesEvents.cloudWatchDelivery == false
   and .collection.dropDebugLogs == false
-  and .collection.debugFilterStatus == "deferred-runtime-schema-unsupported"
+  and .collection.namespaceScope == "asklake-dev-file-path-include-filter"
+  and .collection.debugFilterStatus == "namespace-first-cost-boundary"
   and .retentionDays.application == 7
   and .retentionDays.controlPlane == 7
   and .retentionDays.rdsPostgresql == 7
@@ -51,7 +53,7 @@ jq -e '
   and .runtime.addonStatus == "ACTIVE"
   and .runtime.allAddonWorkloadsReady == true
   and .runtime.applicationLogDelivered == true
-  and .runtime.legacyFluentBitPods == 0
+  and .runtime.managedFluentBit == "enabled-and-namespace-scoped"
   and .runtime.accessDenied == 0
   and .runtime.clusterScraperNetwork == "pod-network-post-apply-reconcile"
   and .runtime.metricsDelivery == "partial-success-with-http-400-drops"

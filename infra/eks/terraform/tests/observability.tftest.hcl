@@ -54,13 +54,15 @@ run "observability_disabled_is_empty" {
       length(aws_eks_addon.cloudwatch_observability) == 0 &&
       length(aws_iam_role.cloudwatch_observability) == 0 &&
       length(aws_cloudwatch_log_group.observability_application) == 0 &&
+      length(aws_cloudwatch_metric_alarm.observability_daily_log_ingest) == 0 &&
+      length(aws_cloudwatch_metric_alarm.observability_stored_logs) == 0 &&
       output.day18_observability_handoff.mode == "disabled"
     )
     error_message = "disabled observability must not create add-on, IAM or log-group resources."
   }
 }
 
-run "observability_enabled_is_otel_only" {
+run "observability_enabled_is_scoped_managed" {
   command = apply
 
   variables {
@@ -73,9 +75,25 @@ run "observability_enabled_is_otel_only" {
     condition = (
       length(aws_eks_addon.cloudwatch_observability) == 1 &&
       aws_eks_addon.cloudwatch_observability[0].addon_name == "amazon-cloudwatch-observability" &&
-      aws_eks_addon.cloudwatch_observability[0].addon_version == "v6.3.0-eksbuild.1"
+      aws_eks_addon.cloudwatch_observability[0].addon_version == "v6.3.0-eksbuild.1" &&
+      output.day18_observability_handoff.application_log_delivery == "addon-managed-fluent-bit" &&
+      output.day18_observability_handoff.application_log_scope == "asklake-dev"
     )
     error_message = "enabled mode must pin the managed CloudWatch Observability add-on."
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_metric_alarm.observability_daily_log_ingest) == 1 &&
+      length(aws_cloudwatch_metric_alarm.observability_stored_logs) == 1 &&
+      aws_cloudwatch_metric_alarm.observability_daily_log_ingest[0].threshold == 3 * 1024 * 1024 * 1024 &&
+      aws_cloudwatch_metric_alarm.observability_stored_logs[0].threshold == 20 * 1024 * 1024 * 1024 &&
+      aws_cloudwatch_metric_alarm.observability_daily_log_ingest[0].actions_enabled == false &&
+      aws_cloudwatch_metric_alarm.observability_stored_logs[0].actions_enabled == false &&
+      aws_cloudwatch_metric_alarm.observability_daily_log_ingest[0].treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.observability_stored_logs[0].treat_missing_data == "notBreaching"
+    )
+    error_message = "cost alarms must use reviewed ingest/storage thresholds without unapproved notification actions."
   }
 
   assert {
@@ -83,14 +101,18 @@ run "observability_enabled_is_otel_only" {
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).applicationSignals.enabled == false &&
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerInsights.enabled == false &&
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).otelContainerInsights.enabled == true &&
-      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).otelContainerInsights.logs.enabled == true &&
-      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.enabled == false &&
+      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).otelContainerInsights.logs.enabled == false &&
+      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.enabled == true &&
+      strcontains(jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.fluentBit.config.extraFiles["application-log.conf"], "/var/log/containers/*_asklake-dev_*.log") &&
+      strcontains(jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.fluentBit.config.extraFiles["application-log.conf"], "Use_Pod_Association Off") &&
+      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.fluentBit.config.extraFiles["dataplane-log.conf"] == "" &&
+      jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).containerLogs.fluentBit.config.extraFiles["host-log.conf"] == "" &&
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).nodeExporter.resources.requests.cpu == "25m" &&
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).agents[0].env[0].value == "NODE" &&
       jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).agents[1].env[0].value == "LEADER" &&
       !can(jsondecode(aws_eks_addon.cloudwatch_observability[0].configuration_values).agents[1].otelConfig)
     )
-    error_message = "add-on configuration must keep Application Signals, Classic and legacy containerLogs off while enabling OTel metrics/logs."
+    error_message = "add-on configuration must keep Application Signals and Classic off, retain OTel metrics, and scope managed Fluent Bit logs to AskLake only."
   }
 
   assert {

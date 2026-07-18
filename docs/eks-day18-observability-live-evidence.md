@@ -1,5 +1,10 @@
 # EKS Day 18 Pair A Phase 2 관찰 기반 적용 기록
 
+> 이 문서는 Phase 2 최초 적용 시점의 기록이다. Phase 3 비용 실측 뒤 application log는
+> OTel cluster-wide file receiver에서 `asklake-dev` 한정 add-on-managed Fluent Bit으로
+> 전환됐다. 현재 계약은 [Phase 3 비용·정리 기록](eks-day18-cost-cleanup-evidence.md)을
+> 함께 따른다.
+
 ## 결과
 
 2026-07-18 dev EKS에 `amazon-cloudwatch-observability`
@@ -33,7 +38,8 @@ Node에서 Ready를 확인했다. 이는 dev MVP 값이며 운영 용량 권장�
 
 `containerLogs=true`는 OTel native logs와 별도로 bundled Fluent Bit을 설치해 legacy
 log group 권한을 요구했다. OTel 전송 성공과 Fluent Bit AccessDenied를 분리 확인한
-뒤 `containerLogs=false`로 고정했다. 최종 legacy Fluent Bit Pod는 0개다.
+뒤 Phase 2 당시에는 `containerLogs=false`로 고정했고 Fluent Bit Pod는 0개였다.
+이 상태는 위의 Phase 3 전환으로 대체됐다.
 
 ## 통과한 검증
 
@@ -60,8 +66,8 @@ metric exporter는 인증과 endpoint 연결에는 성공하지만 일부 Summar
 processor를 검증하는 후속 phase가 필요하다.
 
 bundled OTel filelog parser는 일부 기존 container line을 CRI 형식으로 해석하지 못하는
-경고도 남긴다. 전체 파이프라인을 중단하지는 않고 최근 application event는 계속
-유입되지만, 해당 line의 누락 가능성은 후속 parser 검증 전까지 알려진 제한이다.
+경고도 남겼다. Phase 3에서 OTel log를 끄고 managed Fluent Bit으로 전환해 이 parser
+경로는 더 이상 현재 application log 수집에 사용하지 않는다.
 
 private Event receipt의 30분 창에는 적용·재생성 과정에서 생긴 scheduling/backoff 등
 Warning이 포함됐다. 최종 steady 검증은 별도로 통과했으며 receipt 자체는 저장소 밖

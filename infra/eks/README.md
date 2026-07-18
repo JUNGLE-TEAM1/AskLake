@@ -150,13 +150,23 @@ Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service, Fronten
 
 Day 17 동시 bounded fixture는 전용 `asklake-runtime-config` release의 non-secret `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`을 사용한다. tracked test values는 Day 16 기본 group/table 한 쌍만 보존한다. Pair A가 MSK IAM group 범위를 승인한 뒤에만 private values에 최대 4개의 exact scale group/table 쌍을 추가한다. live ConfigMap raw patch와 기본 slot을 공유하는 동시 Job은 금지한다.
 
-Day 18 관찰 기반은 exact-version CloudWatch Observability EKS add-on, OTel native logs와
-전용 Pod Identity를 사용한다. Application Signals, Classic/legacy container logs,
-standalone Fluent Bit/ADOT과 Node role 권한은 비활성이다. add-on apply/update 뒤에는
+Day 18 관찰 기반은 exact-version CloudWatch Observability EKS add-on, OTel metrics,
+namespace-scoped managed Fluent Bit application log와 전용 Pod Identity를 사용한다.
+Application Signals, Classic, OTel native log, standalone Fluent Bit/ADOT과 Node role
+권한은 비활성이다. add-on apply/update 뒤에는
 `scripts/reconcile-eks-day18-observability-runtime.sh`를 실행해 cluster scraper를 Pod
 network로 전환해야 한다. 실제 application log는 유입되지만 OTel metric exporter의
-일부 HTTP 400 drop과 bundled CRI parser warning은 후속 gate이며, 상세 결과는
+일부 HTTP 400 metric drop은 후속 gate이며, 상세 결과는
 [Day 18 Phase 2 적용 기록](../../docs/eks-day18-observability-live-evidence.md)을 따른다.
+
+Day 18 Phase 3에서 짧은 실측을 24시간으로 보정한 결과 기존 control-plane/RDS와
+OTel cluster-wide application log의 합산이 비용 경계를 넘을 가능성이 확인됐다.
+OTel metric은 유지하고 application log는
+add-on-managed Fluent Bit으로 전환해 `asklake-dev` container path만 수집한다. Terraform은
+관리 log group 합산 `3 GiB/day`와 `20 GiB stored` alarm을 만들지만 승인된 notification
+target 전까지 action은 비활성이다. 비용·scale-in·임시 resource 판정은
+`scripts/capture-eks-day18-cost-cleanup-evidence.sh --capture`와
+[Phase 3 기록](../../docs/eks-day18-cost-cleanup-evidence.md)을 따른다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 

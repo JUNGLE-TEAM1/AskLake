@@ -7,8 +7,9 @@
     "containerInsights": "otel",
     "applicationSignals": false,
     "classicContainerInsights": false,
-    "containerLogs": false,
-    "otelNativeLogs": true,
+    "containerLogs": true,
+    "otelNativeLogs": false,
+    "managedFluentBitLogs": true,
     "standaloneFluentBit": false,
     "standaloneAdot": false
   },
@@ -31,9 +32,9 @@
   "collection": {
     "applicationLogGroup": "/aws/otel/containerinsights/{clusterName}/application",
     "applicationLogSource": "container-stdout-stderr",
-    "namespaceScope": "cluster-until-compatible-schema-proves-include-filter",
+    "namespaceScope": "asklake-dev-file-path-include-filter",
     "dropDebugLogs": false,
-    "debugFilterStatus": "deferred-runtime-schema-unsupported",
+    "debugFilterStatus": "namespace-first-cost-boundary",
     "nodeExporterCpuRequest": "25m",
     "agentRoles": {
       "node": "CWAGENT_ROLE=NODE",
@@ -64,12 +65,12 @@
     "addonStatus": "ACTIVE",
     "allAddonWorkloadsReady": true,
     "applicationLogDelivered": true,
-    "legacyFluentBitPods": 0,
+    "managedFluentBit": "enabled-and-namespace-scoped",
     "accessDenied": 0,
     "clusterScraperNetwork": "pod-network-post-apply-reconcile",
     "metricsDelivery": "partial-success-with-http-400-drops",
     "metricsLiveGate": "open-follow-up-required",
-    "criParserWarnings": "known-bundled-runtime-limitation"
+    "criParserWarnings": "removed-by-phase3-managed-fluent-bit-switch"
   },
   "rollback": {
     "removeAddonSoftwareOnRollback": true,

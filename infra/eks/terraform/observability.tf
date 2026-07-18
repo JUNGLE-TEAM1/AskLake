@@ -11,11 +11,72 @@ locals {
       enabled          = true
       metricResolution = "30s"
       logs = {
-        enabled = true
+        enabled = false
       }
     }
     containerLogs = {
-      enabled = false
+      enabled = true
+      fluentBit = {
+        tolerations = [{
+          key      = "asklake.io/workload-class"
+          operator = "Equal"
+          value    = "spark"
+          effect   = "NoSchedule"
+        }]
+        config = {
+          extraFiles = {
+            "application-log.conf" = <<-EOT
+              [INPUT]
+                Name                tail
+                Tag                 application.*
+                Path                /var/log/containers/*_${var.namespace}_*.log
+                multiline.parser    docker, cri
+                DB                  /var/fluent-bit/state/flb_asklake_application.db
+                Mem_Buf_Limit       25MB
+                Skip_Long_Lines     On
+                Refresh_Interval    10
+                Rotate_Wait         30
+                storage.type        filesystem
+                Read_from_Head      $${READ_FROM_HEAD}
+
+              [FILTER]
+                Name                aws
+                Match               application.*
+                az                  false
+                ec2_instance_id     false
+                Enable_Entity       true
+
+              [FILTER]
+                Name                kubernetes
+                Match               application.*
+                Kube_URL            https://kubernetes.default.svc:443
+                Kube_Tag_Prefix     application.var.log.containers.
+                Merge_Log           On
+                Merge_Log_Key       log_processed
+                K8S-Logging.Parser  On
+                K8S-Logging.Exclude Off
+                Labels              Off
+                Annotations         Off
+                Use_Kubelet         On
+                Kubelet_Port        10250
+                Buffer_Size         0
+                Use_Pod_Association Off
+
+              [OUTPUT]
+                Name                cloudwatch_logs
+                Match               application.*
+                region              $${AWS_REGION}
+                log_group_name      ${local.observability_application_log_group}
+                log_stream_prefix   $${HOST_NAME}-
+                auto_create_group   false
+                extra_user_agent    asklake-container-logs
+                add_entity          true
+            EOT
+            "dataplane-log.conf"   = ""
+            "host-log.conf"        = ""
+          }
+        }
+      }
     }
     agents = [
       {
@@ -58,6 +119,15 @@ locals {
   observability_rds_log_group = local.create_rds ? (
     "/aws/rds/instance/${aws_db_instance.metadata[0].identifier}/postgresql"
   ) : null
+  observability_managed_log_groups = local.observability_enabled ? merge(
+    {
+      application   = aws_cloudwatch_log_group.observability_application[0].name
+      control_plane = aws_cloudwatch_log_group.observability_control_plane[0].name
+    },
+    local.create_rds ? {
+      rds_postgresql = aws_cloudwatch_log_group.observability_rds[0].name
+    } : {},
+  ) : {}
 }
 
 check "observability_contract" {
@@ -121,6 +191,94 @@ resource "aws_cloudwatch_log_group" "observability_rds" {
     Name      = "${var.name_prefix}-${var.environment}-rds-postgresql"
     Owner     = var.observability_owner
     Lifecycle = "shared-preserved"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "observability_daily_log_ingest" {
+  count = local.observability_enabled ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-${var.environment}-daily-log-ingest-warning"
+  alarm_description   = "Day 18 warning when managed EKS/RDS logs exceed the reviewed daily ingest boundary."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  threshold           = var.observability_daily_log_ingest_warning_gib * 1024 * 1024 * 1024
+  treat_missing_data  = "notBreaching"
+  actions_enabled     = false
+
+  dynamic "metric_query" {
+    for_each = local.observability_managed_log_groups
+
+    content {
+      id          = "m_${metric_query.key}"
+      return_data = false
+
+      metric {
+        metric_name = "IncomingBytes"
+        namespace   = "AWS/Logs"
+        period      = 86400
+        stat        = "Sum"
+        dimensions = {
+          LogGroupName = metric_query.value
+        }
+      }
+    }
+  }
+
+  metric_query {
+    id          = "total"
+    expression  = "SUM(METRICS())"
+    label       = "Managed log ingest bytes per day"
+    return_data = true
+  }
+
+  tags = {
+    Name      = "${var.name_prefix}-${var.environment}-daily-log-ingest-warning"
+    Owner     = var.observability_owner
+    Lifecycle = "mvp-owned"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "observability_stored_logs" {
+  count = local.observability_enabled ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-${var.environment}-stored-log-warning"
+  alarm_description   = "Day 18 warning when managed EKS/RDS stored logs exceed the reviewed storage boundary."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  threshold           = var.observability_stored_log_warning_gib * 1024 * 1024 * 1024
+  treat_missing_data  = "notBreaching"
+  actions_enabled     = false
+
+  dynamic "metric_query" {
+    for_each = local.observability_managed_log_groups
+
+    content {
+      id          = "m_${metric_query.key}"
+      return_data = false
+
+      metric {
+        metric_name = "StoredBytes"
+        namespace   = "AWS/Logs"
+        period      = 86400
+        stat        = "Maximum"
+        dimensions = {
+          LogGroupName = metric_query.value
+        }
+      }
+    }
+  }
+
+  metric_query {
+    id          = "total"
+    expression  = "SUM(METRICS())"
+    label       = "Managed stored log bytes"
+    return_data = true
+  }
+
+  tags = {
+    Name      = "${var.name_prefix}-${var.environment}-stored-log-warning"
+    Owner     = var.observability_owner
+    Lifecycle = "mvp-owned"
   }
 }
 

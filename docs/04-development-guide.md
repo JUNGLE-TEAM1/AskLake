@@ -1029,6 +1029,18 @@ mode `0600`이며 type/reason/object kind/namespace class/UTC/count만 포함한
 log 적용 결과와 아직 닫히지 않은 OTel metric/CRI parser gate는
 [Day 18 Phase 2 실제 적용 기록](eks-day18-observability-live-evidence.md)을 따른다.
 
+Phase 3 비용 검증은 `scripts/capture-eks-day18-cost-cleanup-evidence.sh --capture`로
+수행한다. Day 17 private scale evidence를 입력하고 현재 collector 시작 이후 application
+유입량을 24시간으로 보정해 관리 대상 전체의 `3 GiB/day`, `20 GiB stored`, 월 `75 USD`
+검토 경계를 판정한다. 5분 미만 관찰은 실패하며 24시간 전 receipt는 full-window 완료가
+아니다. 기존 control-plane/RDS와 최초 OTel cluster-wide file log의 합산 예측이
+일일 경계를 넘을 것으로 확인돼 OTel metric은 유지하고 add-on-managed Fluent Bit
+log로 전환했다. Fluent Bit은
+`/var/log/containers/*_asklake-dev_*.log`만 읽고 dataplane·host 입력은 비활성이다.
+Spark Node가 최근 완료 application의 기본 1시간 TTL 때문에 남아 있으면 runner는 이를
+bounded cleanup pending으로만 기록하고 완전 scale-in으로 표시하거나 durable evidence를
+삭제하지 않는다. 상세 결과는 [Day 18 Phase 3 비용·정리 가드레일](eks-day18-cost-cleanup-evidence.md)을 따른다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.

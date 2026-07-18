@@ -3,9 +3,10 @@
 ## 결정
 
 AskLake dev EKS의 Day 18 관찰 기반은 AWS가 관리하는
-`amazon-cloudwatch-observability` EKS add-on을 선택한다. add-on 안에서는 현재
-AWS가 권장하는 OTel Container Insights만 사용한다. 별도 Fluent Bit 또는 별도 ADOT
-add-on을 중복 설치하지 않는다.
+`amazon-cloudwatch-observability` EKS add-on을 선택한다. metric은 AWS가 권장하는
+OTel Container Insights를 사용한다. Phase 3 비용 실측 뒤 application log만 같은
+add-on이 관리하는 Fluent Bit으로 좁혔으며, standalone Fluent Bit 또는 별도 ADOT
+add-on은 설치하지 않는다.
 
 2026-07-18 조회 시 dev cluster는 Kubernetes `1.36`이고 호환되는 최신 add-on은
 `v6.3.0-eksbuild.1`, 지원 architecture는 AMD64와 ARM64였다. 이 exact version을
@@ -15,9 +16,9 @@ Phase 2 입력으로 고정하되 apply 직전에 `describe-addon-versions`와
 
 Application Signals는 끈다. 현재 목표는 workload stdout/stderr, Pod·Node 상태와
 장애 시점의 상관관계이지 자동 instrumentation, trace와 SLO가 아니다. Classic
-Container Insights도 끄고 OTel과 dual publish하지 않는다. OTel native container log
-pipeline을 사용하며 `containerLogs` 레거시 파이프라인과 별도 Fluent Bit DaemonSet은
-사용하지 않는다.
+Container Insights도 끄고 OTel과 dual publish하지 않는다. 최종 상태는 OTel metric과
+namespace-scoped managed Fluent Bit application log를 사용하며 OTel native log,
+dataplane log와 host log는 비활성이다.
 
 ## 이 선택이 현재 구조에 맞는 이유
 
@@ -57,20 +58,21 @@ SSM, EC2 action과 Node role 권한은 계속 허용하지 않는다.
 
 ## 로그와 Event 범위
 
-OTel container log는 node의 `/var/log/pods`에서 stdout/stderr를 읽어 cluster별
-`/aws/otel/containerinsights/{cluster}/application` log group으로 보낸다. 현재
-`v6.3.0-eksbuild.1`의 live configuration schema에는 AWS 문서가 설명하는 namespace
-include 필드가 노출되지 않으므로, 지원이 확인되지 않은 key를 억지로 넣지 않는다.
-Phase 2에서 exact schema validation을 다시 수행하고 include filter가 실제 지원될
-때만 `asklake-dev`로 좁힌다. 그 전에는 짧은 retention과 ingest guardrail로 제어한다.
+Phase 2 최초 OTel container log는 node의 stdout/stderr 전체를 cluster별 application
+log group으로 보냈다. Phase 3 실측을 관찰 시간으로 보정하자 일일 비용 경계를 넘었다.
+agent `otelConfig`의 supplemental receiver override는 add-on 설정에는 저장됐지만 생성된
+collector config에서 기본 receiver에 덮여 효과가 없었으므로 즉시 철회했다. 대신 AWS가
+공식 지원하는 managed Fluent Bit custom `application-log.conf`를 사용해
+`/var/log/containers/*_asklake-dev_*.log`만 같은 log group으로 보낸다. 이는 namespace
+admission selector가 아니라 실제 로그 파일 경로의 namespace segment를 사용하는 수집
+경계다.
 
 Phase 2 최초 적용에서는 AWS advanced configuration 문서의 `exclude_filters`가 EKS
 add-on schema를 통과했지만 실제 bundled CloudWatch Agent `1.0`이 해당 field를
 거절했다. CrashLoop evidence를 확인한 즉시 Terraform 대기를 중단하고 custom agent
-config를 제거했다. 따라서 DEBUG filter는 현재 적용됐다고 표현하지 않고
-`deferred-runtime-schema-unsupported`로 남긴다. add-on 기본 OTel pipeline이 정상화된
-뒤 지원되는 collector processor나 namespace filter가 exact runtime schema에
-나타날 때 별도 변경으로 적용한다.
+config를 제거했다. 따라서 DEBUG filter는 현재 적용됐다고 표현하지 않는다. 먼저
+지원되는 file include로 namespace를 좁히고, 세부 DEBUG 제거는 bundled collector가
+지원하는 processor를 검증한 뒤 별도 변경으로 적용한다.
 
 초기 live 배치에서는 기존 workload가 CPU request의 98~99%를 사용 중인 general
 node에서 기본 `50m` node-exporter가 Pending이 됐다. exporter limit과 memory request는
@@ -89,11 +91,10 @@ add-on schema는 agent별 `otelConfig`를 받지만 operator가 생성한 scrape
 group은 열지 않는다. add-on version이 이 제한을 해결하면 이 후처리를 제거하고
 Terraform add-on configuration만 사용한다.
 
-또한 `otelContainerInsights.logs`와 `containerLogs`를 함께 켜면 OTel과 bundled Fluent
-Bit이 동시에 설치되고, 후자는 legacy host/dataplane/application log group 권한을
-요구했다. OTel agent의 metric·log 전송은 전용 policy로 성공한 반면 Fluent Bit에서만
-AccessDenied가 발생한 것을 분리 확인했다. dual publish와 불필요한 권한 확장을 피하기
-위해 `containerLogs=false`로 고정하고 OTel native log pipeline만 유지한다.
+`otelContainerInsights.logs`와 `containerLogs`를 함께 켜지 않는다. Phase 3 최종값은
+OTel log를 끄고 `containerLogs=true`의 application config만 사용한다. dataplane/host
+config는 빈 문자열로 덮고 output은 이미 권한과 retention을 가진 OTel application log
+group을 그대로 사용한다. 따라서 dual publish와 새 legacy log group 권한은 없다.
 
 Kubernetes Event는 application log와 다른 데이터다. Phase 2의 read-only observer가
 Kubernetes API에서 bounded 시간창의 Event를 수집하고 reason, type, UTC 시각과
