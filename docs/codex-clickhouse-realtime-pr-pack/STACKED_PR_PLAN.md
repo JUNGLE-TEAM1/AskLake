@@ -18,6 +18,24 @@
 | 08 | `feature` / `feat-#<issue>` | frontend live cache·오류 UX·legacy 제거 | Dataset cursor cache, freshness UX, route race 방지, live mock 차단 | PR07 merge, browser targeted refetch 검증 |
 | 09 | `feature` / `feat-#<issue>` | archive parity·rebuild·cutover·전체 E2E/CI | Bronze/Gold parity, boundary-safe rebuild, canary/rollback, required gates | PR08 merge, full-stack/rollback evidence |
 
+## 2026-07-18 생성 상태
+
+아래 PR은 모두 직전 branch HEAD에서 만든 누적 stack이며 base는 `dev`, 상태는 Ready, merge는 수행하지 않았다.
+
+| 순서 | Issue | Branch | PR |
+| ---: | ---: | --- | ---: |
+| 01 | #948 | `docs-#948` | #951 |
+| 02 | #952 | `feat-#952` | #959 |
+| 03 | #960 | `feat-#960` | #963 |
+| 04 | #964 | `feat-#964` | #965 |
+| 05 | #966 | `feat-#966` | #968 |
+| 06 | #969 | `feat-#969` | #970 |
+| 07 | #971 | `feat-#971` | #973 |
+| 08 | #974 | `feat-#974` | #976 |
+| 09 | #977 | `feat-#977` | 이 branch의 Ready PR |
+
+PR09 local integration은 54개 V2 release contract, PostgreSQL concurrent switch, ClickHouse 100-position parity, backend 831 tests, frontend 144 checks와 deploy 58 checks를 통과했다. 실제 production 10만 건, 72시간 shadow, browser cutover/rollback DOM, chaos/HA/backup은 미실행 operator gate이며 merge 조건을 자동 충족한 것으로 표시하지 않는다.
+
 ## 브랜치와 GitHub PR 규칙
 
 1. PR01은 최신 `origin/dev`에서 시작한다.

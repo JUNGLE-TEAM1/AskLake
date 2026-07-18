@@ -1536,3 +1536,64 @@ curl --fail http://127.0.0.1:18123/ping
 ```
 
 이 smoke는 process와 plugin만 확인한다. connector definition은 PR03 전에는 등록하지 않으므로 Kafka→ClickHouse ingest 검증이 아니다. PR03 전에는 `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`로 전환하지 않는다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
+
+### PR09 archive/recovery와 최종 release gate
+
+누적 branch의 deterministic backend 계약과 migration lifecycle은 한 번에 실행한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-release
+npm run verify:clickhouse-realtime-v2-recovery
+```
+
+`verify:clickhouse-realtime-v2-release`는 PR02~09의 feature flag, Alembic, ingest, dimension, materializer, Catalog publication, Dashboard/SSE와 archive recovery module을 한 suite로 실행한다. `0018_realtime_archive_recovery`가 새 head이며 disposable DB에서 `0015 → head → 0015 → head`가 가능해야 한다. production에서는 downgrade하지 않는다.
+
+실제 PostgreSQL은 이미 head migration이 적용된 disposable database에서만 검증한다.
+
+```bash
+ASKLAKE_VERIFY_REALTIME_POSTGRES=true \
+DATABASE_URL=postgresql+psycopg://asklake:asklake_test@127.0.0.1:5432/asklake_test \
+npm run verify:realtime-recovery-postgres
+```
+
+이 검증은 독립 실행을 위해 disposable DB에 없는 legacy Catalog/freshness/revision/event table만 `checkfirst`로 준비한다. V2 table은 계속 Alembic이 소유한다. 같은 cutover idempotency key를 두 session에서 동시에 실행하고 단일 epoch/revision/event만 생성됐는지 확인한 뒤 자기 fixture를 삭제한다. 공유 production DB에 실행하지 않는다.
+
+ClickHouse live parity smoke는 migration 권한을 가진 disposable instance에 hot/archive fixture table 두 개를 만들고 100개 source position의 partition boundary, count, checksum과 numeric sum을 비교한 뒤 table을 삭제한다.
+
+```bash
+ASKLAKE_VERIFY_CLICKHOUSE_RECOVERY=true \
+CLICKHOUSE_URL=http://127.0.0.1:18123 \
+CLICKHOUSE_USER=asklake_v2_admin \
+CLICKHOUSE_PASSWORD='<test-only-secret>' \
+CLICKHOUSE_DATABASE=asklake_realtime_v2 \
+npm run verify:clickhouse-realtime-v2-recovery-live
+```
+
+Docker Desktop가 선언된 loopback port를 publish하지 않는 로컬 환경만 `CLICKHOUSE_DOCKER_CONTAINER=asklake-clickhouse-v2`를 사용할 수 있다. CI/Linux는 HTTP 경로를 사용한다. 이 smoke의 100행은 실제 10만 건 cutover gate를 대체하지 않는다.
+
+독립 evidence JSON은 다음 preflight로 비교한다. mismatch는 exit 1이며 DB를 변경하지 않는다.
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/verify-hot-archive-parity.py \
+  --hot /secure/evidence/hot.json \
+  --archive /secure/evidence/archive.json
+```
+
+PR09 통합 단계에서는 중복되는 PR별 suite 대신 아래 전체 회귀를 한 번만 수행한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run test:dashboard-realtime-v2
+npm run build
+
+cd ..
+bash tests/deploy/deploy-scripts-regression.sh
+docker compose --profile clickhouse-realtime-v2 config --quiet
+```
+
+실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

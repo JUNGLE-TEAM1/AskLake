@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = BACKEND_ROOT / "alembic.ini"
-V2_REVISION = "0017_catalog_realtime_publication"
+V2_REVISION = "0018_realtime_archive_recovery"
 PREVIOUS_REVISION = "0015_ai_generation_evidence_audit"
 EXPECTED_V2_TABLES = {
     "realtime_dimension_versions",
@@ -26,6 +26,8 @@ EXPECTED_V2_TABLES = {
     "realtime_pipelines",
     "realtime_routing_assignments",
     "realtime_unmatched_events",
+    "realtime_parity_checks",
+    "realtime_recovery_operations",
 }
 
 

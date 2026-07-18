@@ -700,6 +700,17 @@ Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLIC
 
 Alembic `0016_clickhouse_realtime_v2_foundation`은 최신 `0015_ai_generation_evidence_audit` 다음에 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 
+### 누적 PR06~09 publication·recovery 경계
+
+- `0017_catalog_realtime_publication`은 기존 freshness/revision/event log에 binding epoch, serving/archive identity, source boundary, checksum과 mutation evidence를 additive하게 확장한다.
+- `0018_realtime_archive_recovery`는 `realtime_parity_checks`와 `realtime_recovery_operations`를 추가한다. `realtime_routing_assignments`는 0016의 sticky Dataset/Dashboard row를 재사용하며 competing routing table을 만들지 않는다.
+- `ArchiveParityReport`는 같은 partition boundary vector, pipeline/dimension version, distinct source position count, schema fingerprint, null/error count, numeric sums, canonical checksum과 sample hash를 모두 비교한다. count만 같은 다른 boundary는 mismatch다.
+- rebuild는 검증된 archive boundary B와 immutable version set을 고정하고, shadow tail의 각 시작점을 `B[p] + 1`로 기록한다. 같은 요청은 deterministic idempotency key와 기존 operation evidence를 재사용한다.
+- cutover/rollback은 외부 ClickHouse/Iceberg 작업이 끝난 뒤 짧은 PostgreSQL transaction에서 freshness와 Catalog를 잠근다. 검증된 parity와 expected epoch/pointer를 다시 확인한 후 Catalog binding, sticky assignment, global revision, 새 binding epoch, `replace` revision commit과 schema v2 event를 함께 기록한다.
+- rollback도 offset을 reset하거나 hot data를 삭제하지 않는다. Trino archive로 돌아갈 때 active routing engine은 freshness/assignment로 표현하고 ClickHouse binding은 `stale`로 보존한다. 이후 재-cutover도 더 큰 public epoch/revision을 사용한다.
+
+Recovery application/repository는 backend-owned 내부 경계다. 현재 외부 repair/cutover HTTP endpoint를 새로 열지 않으며 운영자는 raw SQL로 pointer를 편집해서는 안 된다. 실제 전환 전제와 미실행 evidence는 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)에 기록한다.
+
 ### 전환 불변식
 
 1. 같은 Job generation과 consumer group을 Kafka Engine V1과 Kafka Connect V2가 동시에 claim하지 않는다.
