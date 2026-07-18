@@ -18,6 +18,7 @@ try {
   assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
+  assert(actionBudget.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected canonical row counters to replace the duplicate output count: ${JSON.stringify(actionBudget.report.quality)}`);
   const sourceReadMarker = "FileScanRDD: Reading File path: file:///work/fixtures/rules/snapshot-pipeline-input.jsonl";
   const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
   assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
@@ -32,6 +33,7 @@ try {
   assert(success.report.quality?.invalidRowCount === 2, `Expected two invalid quality rows: ${JSON.stringify(success.report.quality)}`);
   assert(success.report.quality?.quarantinedCount === 1, `Expected one quarantined row: ${JSON.stringify(success.report.quality)}`);
   assert(success.report.quality?.droppedCount === 1, `Expected one dropped row: ${JSON.stringify(success.report.quality)}`);
+  assert(success.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected dropped/quarantined counters to derive the exact final row count: ${JSON.stringify(success.report.quality)}`);
   assert(parquetFiles(path.join(tempDir, "success-output")).length > 0, "Success target Parquet was not created.");
   assert(parquetFiles(path.join(tempDir, "success-output_quarantine")).length > 0, "Quarantine Parquet was not created.");
 

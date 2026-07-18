@@ -257,6 +257,8 @@ Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-con
 
 Snapshot Rule runtime은 transform-only Job에서 빈 Quality 단계를 별도 Spark action으로 평가하지 않는다. Job runner는 확정 schema projection을 `MEMORY_AND_DISK`로 persist하고 schema count/null 집계로 한 번 materialize한 뒤 Rule, Quality, sample, target write까지 같은 cache lineage를 재사용한다. 각 transform은 이전 output row count를 재사용한다. 직접 컬럼 복사와 `TRIM(CAST(<input> AS STRING))`으로 제한한 total·row-preserving SQL subset은 rule별 `count()` 없이 typed Column으로 컴파일하고 `transform.rowPreservingSqlExpressionCount`에 그 수를 남긴다. 임의 SQL expression과 `SELECT`는 기존 validation action 및 오류 처리를 유지한다. legacy Quality rule은 전체 행·규칙별 실패·union 실패를 한 번의 aggregate action으로 계산한다. `npm run verify:snapshot-rule-conformance`와 `npm run verify:spark-schema-contract`는 rule/필수 컬럼 수가 늘어도 action 수가 증가하지 않는지 확인한다. `npm run verify:snapshot-spark-pipeline`의 action-budget case는 단일 cast Snapshot을 실제 JSONL에서 Parquet까지 실행하고 Spark `FileScanRDD` 로그에서 해당 원본 경로의 물리 read가 전체 pipeline 동안 정확히 1회인지 검증한다.
 
+canonical Quality의 `evaluatedRowCount - droppedCount - quarantinedCount`가 유효하면 final projection 뒤 `outputRows`도 이 counter를 재사용하고 `quality.outputRowCountSource=canonical_quality_counters`를 기록한다. counter가 없거나 잘못되면 `spark_count_fallback` 전체 count를 유지한다. counter 경로에서는 publish가 final frame을 모두 materialize할 때까지 source cache를 해제하지 않아 raw source read 1회 예산을 지킨다.
+
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
 ## 7. Create/Run Spark Pipeline Verification

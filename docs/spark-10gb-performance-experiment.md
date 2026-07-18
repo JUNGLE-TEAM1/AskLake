@@ -45,6 +45,7 @@ CloudWatch 자원 값은 30초 간격 17개 표본의 합계다. Spark UI에서�
 
 - 확정 schema projection을 `MEMORY_AND_DISK`로 한 번 materialize하고 Rule, Quality, sample, write가 재사용한다.
 - 이 fixture의 `TRIM(CAST(event_id AS STRING))`, `TRIM(CAST(user_id AS STRING))`처럼 total·row-preserving으로 증명되는 SQL transform은 이전 row count를 재사용하고 rule별 `count()`를 실행하지 않는다. 임의 SQL/`SELECT`는 이 fast path에 포함하지 않는다.
+- canonical Quality가 이미 계산한 evaluated/drop/quarantine counter로 최종 `outputRows`를 산출하고, counter가 유효할 때만 중복 final `count()`를 생략한다. 이 경로에서는 target publish가 final frame을 모두 materialize할 때까지 source cache를 유지한다.
 - legacy Quality rule의 전체 행, rule별 failure, union invalid를 하나의 aggregate action으로 계산한다.
 - output frame과 quarantine frame cache를 성공·규칙 실패·예외 경로에서 모두 `unpersist`한다.
 - Iceberg exact snapshot summary의 `total-data-files`를 Spark와 Catalog가 교차 검증한다.

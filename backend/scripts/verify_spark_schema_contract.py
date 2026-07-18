@@ -6,6 +6,7 @@ from pyspark.sql import types as T
 from spark_job_run import (
     apply_schema_contract,
     apply_schema_contract_with_count,
+    canonical_output_row_count,
     evaluate_quality_rules,
     normalize_columns,
     read_source,
@@ -23,6 +24,7 @@ def main():
     )
     spark.sparkContext.setLogLevel("ERROR")
     try:
+        verify_canonical_output_row_count_evidence()
         verify_required_column_job_count_does_not_scale(spark)
         verify_input_count_and_required_validation_share_action(spark)
         verify_legacy_quality_action_budget_does_not_scale(spark)
@@ -33,6 +35,33 @@ def main():
     finally:
         spark.stop()
     print("verify-spark-schema-contract: ok")
+
+
+def verify_canonical_output_row_count_evidence():
+    assert canonical_output_row_count({
+        "droppedCount": 1,
+        "evaluatedRowCount": 5,
+        "quarantinedCount": 2,
+    }) == 2
+    assert canonical_output_row_count({
+        "droppedCount": "0",
+        "evaluatedRowCount": "3",
+        "quarantinedCount": "0",
+    }) == 3
+    assert canonical_output_row_count({
+        "droppedCount": 0,
+        "quarantinedCount": 0,
+    }) is None
+    assert canonical_output_row_count({
+        "droppedCount": 2,
+        "evaluatedRowCount": 1,
+        "quarantinedCount": 0,
+    }) is None
+    assert canonical_output_row_count({
+        "droppedCount": 0,
+        "evaluatedRowCount": 3.5,
+        "quarantinedCount": 0,
+    }) is None
 
 
 def verify_json_contract_avoids_inference_and_flattens_nested_fields(spark, fixture_path):

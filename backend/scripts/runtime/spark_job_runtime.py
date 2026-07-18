@@ -309,13 +309,22 @@ def main():
             write_df = output_df.repartition(min(input_file_count, max_partitions))
         written_df = persist_reusable_frame(write_df)
         cached_frames.append(written_df)
+        written_df_fully_materialized = False
         quality_phase = begin_phase()
         try:
             if canonical_snapshot:
-                output_rows = written_df.count()
+                output_rows = canonical_output_row_count(quality)
+                if output_rows is None:
+                    output_rows = written_df.count()
+                    written_df_fully_materialized = True
+                    quality["outputRowCountSource"] = "spark_count_fallback"
+                else:
+                    quality["outputRowCountSource"] = "canonical_quality_counters"
             else:
                 quality = evaluate_quality_rules(written_df, quality_rules)
                 output_rows = int(quality.get("sampleRows") or 0)
+                quality["outputRowCountSource"] = "legacy_quality_aggregate"
+                written_df_fully_materialized = True
                 classifier_checks = evaluate_custom_csv_classifier_checks(
                     written_df,
                     transform_steps,
@@ -408,7 +417,8 @@ def main():
                     "path": f"{output_path.rstrip('/')}_quarantine",
                 }
                 quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
-            release_cached_frame(contracted_df, cached_frames)
+            if written_df_fully_materialized:
+                release_cached_frame(contracted_df, cached_frames)
             if iceberg_target:
                 output_write_started = True
                 iceberg_commit = commit_iceberg_table(
@@ -448,6 +458,8 @@ def main():
                 output_file_count = len(staged_output.inputFiles())
                 publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
         finally:
+            if not written_df_fully_materialized:
+                release_cached_frame(contracted_df, cached_frames)
             finish_phase(phase_timings, "targetPublish", publish_phase)
         ended_at = now_iso()
         result = {
@@ -1007,6 +1019,38 @@ def snapshot_quality_report(quality):
     report["score"] = pass_rate
     report["status"] = "fail" if report.get("blockingFailures", 0) else report.get("status", "pass")
     return report
+
+
+def canonical_output_row_count(quality):
+    if not isinstance(quality, dict):
+        return None
+    required_counters = (
+        "evaluatedRowCount",
+        "droppedCount",
+        "quarantinedCount",
+    )
+    if any(name not in quality for name in required_counters):
+        return None
+    counters = {
+        name: exact_nonnegative_integer(quality.get(name))
+        for name in required_counters
+    }
+    if any(value is None for value in counters.values()):
+        return None
+    removed_rows = counters["droppedCount"] + counters["quarantinedCount"]
+    if removed_rows > counters["evaluatedRowCount"]:
+        return None
+    return counters["evaluatedRowCount"] - removed_rows
+
+
+def exact_nonnegative_integer(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
+        return int(value.strip())
+    return None
 
 
 def cleanup_failed_output_paths(spark, output_path):
