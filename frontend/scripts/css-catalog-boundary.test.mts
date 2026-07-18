@@ -147,6 +147,7 @@ test("CSS and catalog entrypoints stay within their ownership budgets", () => {
   assert.ok(lineCount(read("src/pages/catalog/CatalogExplorerPage.tsx")) <= 500);
   assert.ok(lineCount(read("src/pages/catalog/CatalogDetailPage.tsx")) <= 700);
   assert.ok(lineCount(read("src/pages/catalog/CatalogLineage.tsx")) <= 600);
+  assert.ok(lineCount(read("src/pages/catalog/catalogLineageProjection.ts")) <= 200);
   assert.ok(lineCount(read("src/pages/catalog/catalogModel.ts")) <= 400);
   assert.ok(lineCount(read("src/pages/catalog/useCatalogExplorerState.ts")) <= 300);
 });
@@ -161,4 +162,17 @@ test("catalog query and selection state are owned outside the presentation modul
   assert.match(state, /let cancelled = false/);
   assert.match(state, /setSelectedSqlDatasetId\(dataset\.id\)/);
   assert.match(state, /catalog\.page_changed/);
+});
+
+test("catalog workspace wrappers preserve the full-width page layout", () => {
+  const catalogCss = read("src/styles/catalog.css");
+
+  assert.match(
+    catalogCss,
+    /\.page-body > \.catalog-explorer-with-view,\s*\.page-body > \.catalog-semantic-page\s*\{[\s\S]*?max-width:\s*none;/,
+  );
+  assert.match(
+    catalogCss,
+    /\.catalog-explorer-with-view,\s*\.catalog-semantic-page\s*\{[\s\S]*?gap:\s*20px;/,
+  );
 });

@@ -94,6 +94,14 @@
     display: inline-flex;
   }
 
+  .catalog-view-switcher {
+    width: 100%;
+  }
+
+  .catalog-view-button {
+    flex: 1 1 0;
+  }
+
   .dag-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

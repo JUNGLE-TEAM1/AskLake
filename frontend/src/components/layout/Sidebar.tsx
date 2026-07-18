@@ -52,14 +52,13 @@ export function Sidebar({
       </nav>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button aria-label="계정 메뉴 열기" className="account-button" type="button">
+          <button aria-label={`${displayName} 계정 메뉴 열기`} className="account-button" title={`${displayName} · ${email}`} type="button">
             <UserIdentity
               avatarInitials={currentUser.profile.avatarInitials}
               className="min-w-0 flex-1"
               name={displayName}
-              nameClassName="text-base"
-              secondary={email}
-              secondaryClassName="text-sm"
+              nameClassName="text-sm"
+              size="sm"
             />
             <ChevronUp aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
           </button>
@@ -70,7 +69,7 @@ export function Sidebar({
           side="top"
           sideOffset={8}
           style={{
-            maxWidth: "calc(var(--sidebar-width) - 32px)",
+            maxWidth: "calc(var(--sidebar-width) - 20px)",
             width: "var(--radix-dropdown-menu-trigger-width)",
           }}
         >

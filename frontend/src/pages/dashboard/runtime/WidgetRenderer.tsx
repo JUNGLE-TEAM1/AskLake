@@ -21,6 +21,7 @@ import {
   type DashboardAssistantCreateWidgetAction,
   type DashboardAssistantResponse,
   type DashboardAssistantUpdateWidgetAction,
+  dashboardEvidenceSummary,
   type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
@@ -698,8 +699,8 @@ function VisualizationRequestWidget({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   widget: DashboardRuntimeWidget;
 }) {
   const [message, setMessage] = useState<string | null>(null);
@@ -742,7 +743,8 @@ function VisualizationRequestWidget({
     assistantContext?.onWorkingWidgetChange?.(widget.id);
     try {
       if (!isDashboardAssistantConfigured()) {
-        await onPatchConfig({ prompt: nextPrompt });
+        const applied = await onPatchConfig({ prompt: nextPrompt });
+        if (applied !== true) throw new Error("시각화 요청 저장에 실패했습니다.");
         setRequestTone("info");
         setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
         setIsPromptEditing(false);
@@ -752,6 +754,7 @@ function VisualizationRequestWidget({
       const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
+        currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
         mode: "visualization_request",
         pageId: assistantContext?.pageId ?? widget.pageId,
         prompt: nextPrompt,
@@ -761,42 +764,32 @@ function VisualizationRequestWidget({
       });
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
       const configPatch = widgetPatch?.config ?? response.configPatch;
-      const isMockFallback = responseUsesMockFallback(response);
       if (widgetPatch && onApplyWidgetPatch) {
         if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
-          await onPatchConfig({ prompt: nextPrompt, ...(widgetPatch.config ?? {}) });
-          setRequestTone(isMockFallback ? "info" : "success");
-          setMessage(
-            isMockFallback
-              ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
-              : response.message?.trim() || "요청 내용을 저장했습니다.",
-          );
-          setIsPromptEditing(false);
-          return;
+          throw new Error("AI가 시각화 위젯으로 변환할 type 또는 datasetId를 만들지 못했습니다.");
         }
         if (!patchCanRenderVisualization(widget, widgetPatch, assistantContext?.activeDatasetId)) {
-          await onPatchConfig({ prompt: nextPrompt });
-          setRequestTone("info");
-          setMessage(response.message?.trim() || "데이터셋이나 필드를 먼저 선택한 뒤 시각화를 요청해 주세요.");
-          setIsPromptEditing(false);
-          return;
+          throw new Error("데이터셋이나 필드가 없어 생성된 시각화를 렌더링할 수 없습니다.");
         }
-        await onApplyWidgetPatch({
+        const applied = await onApplyWidgetPatch({
           ...widgetPatch,
           config: {
             prompt: nextPrompt,
             ...(widgetPatch.config ?? {}),
           },
         });
+        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else if (configPatch && Object.keys(configPatch).length > 0) {
-        await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+        const applied = await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
+      } else {
+        throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
-      setRequestTone(isMockFallback ? "info" : "success");
-      setMessage(
-        isMockFallback
-          ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
-          : response.message?.trim() || "Assistant 요청을 보냈습니다.",
-      );
+      setRequestTone("success");
+      setMessage([
+        "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
+        dashboardEvidenceSummary(response),
+      ].filter(Boolean).join(" "));
       setIsPromptEditing(false);
     } catch (error) {
       setRequestTone("error");
@@ -877,16 +870,11 @@ function patchConvertsVisualizationRequest(widget: DashboardRuntimeWidget, patch
   return Boolean(patch.type || patch.datasetId);
 }
 
-function responseUsesMockFallback(response: DashboardAssistantResponse) {
-  return response.warnings.some((warning) => warning.toLowerCase().includes("mock fallback"))
-    || response.message.toLowerCase().includes("mock fallback");
-}
-
 function TextPlaceholderWidget({
   onPatchConfig,
   widget,
 }: {
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   widget: DashboardRuntimeWidget;
 }) {
   const [body, setBody] = useState(() => configText(widget, "body"));
@@ -1417,8 +1405,8 @@ export const WidgetRenderer = memo(function WidgetRenderer({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: DashboardRuntimeWidget;
 }) {

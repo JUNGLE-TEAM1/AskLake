@@ -1,11 +1,10 @@
-import json
 import re
-import urllib.error
-import urllib.request
 from typing import Any
 from uuid import uuid4
 
 from fastapi import status
+from sqlglot import exp, parse_one
+from sqlglot.errors import ParseError
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
@@ -16,6 +15,12 @@ from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
 from app.services.governance_enforcement import require_governed_access
 from app.services.ai_gateway_client import AiGatewayClient
+from app.services.ai_evidence import retain_used_rag_evidence
+from app.services.ai_generation_audit import (
+    evidence_candidate_ids,
+    persist_verified_generation_evidence,
+    verified_used_evidence_ids,
+)
 from app.mcp.context import issue_ai_context_token
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
@@ -25,8 +30,8 @@ from app.services.sql_service import (
     unique_dataset_ids,
     validate_read_only_query,
 )
+from app.services.semantic_rag_context import build_semantic_rag_context
 
-OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 PREVIEW_LIMIT = 100
 QUERY_AI_SAMPLE_ROW_LIMIT = 5
 
@@ -41,6 +46,31 @@ class QueryAiService:
         actor: ActorContext | None = None,
     ) -> QueryAiSuggestionResponse:
         actor_context = actor or ActorContext()
+        prompt, context_dataset_ids = self._validated_context(request)
+        datasets = self._authorized_datasets(context_dataset_ids, actor_context)
+        base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
+        request_id, rag_context, raw_suggestion = self._generate_suggestion(
+            request,
+            actor_context,
+            prompt,
+            context_dataset_ids,
+            datasets,
+            base_dataset,
+        )
+        return self._verified_response(
+            request=request,
+            actor=actor_context,
+            prompt=prompt,
+            context_dataset_ids=context_dataset_ids,
+            datasets=datasets,
+            base_dataset=base_dataset,
+            request_id=request_id,
+            rag_context=rag_context,
+            raw_suggestion=raw_suggestion,
+        )
+
+    @staticmethod
+    def _validated_context(request: QueryAiSuggestionRequest) -> tuple[str, list[str]]:
         if request.mode != "draft_sql":
             raise ApiError(
                 ErrorCode.VALIDATION_ERROR,
@@ -56,7 +86,6 @@ class QueryAiService:
                 "Natural language prompt is required",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-
         context_dataset_ids = unique_dataset_ids(
             [
                 *(request.selected_dataset_ids or []),
@@ -69,7 +98,13 @@ class QueryAiService:
                 "At least one selected dataset is required",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
+        return prompt, context_dataset_ids
 
+    def _authorized_datasets(
+        self,
+        context_dataset_ids: list[str],
+        actor: ActorContext,
+    ) -> list[CatalogDatasetResponse]:
         datasets = [
             self.get_catalog_dataset(dataset_id)
             for dataset_id in context_dataset_ids
@@ -77,7 +112,7 @@ class QueryAiService:
         for dataset in datasets:
             require_governed_access(
                 self.catalog_repository.db,
-                actor_context,
+                actor,
                 action="query",
                 api_path="/api/query/ai-suggestions",
                 http_method="POST",
@@ -87,56 +122,142 @@ class QueryAiService:
                 resource_type="dataset",
             )
             require_permission(
-                actor_context,
+                actor,
                 "query",
                 owner=dataset.owner,
                 grants=dataset.permission_grants,
                 resource_label="dataset",
             )
-        base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
-        if settings.ai_query_provider == "gateway":
+        return datasets
+
+    def _generate_suggestion(
+        self,
+        request: QueryAiSuggestionRequest,
+        actor: ActorContext,
+        prompt: str,
+        context_dataset_ids: list[str],
+        datasets: list[CatalogDatasetResponse],
+        base_dataset: CatalogDatasetResponse,
+    ) -> tuple[str, dict[str, Any], dict[str, object]]:
+        rag_context = build_semantic_rag_context(
+            db=self.catalog_repository.db,
+            settings=settings,
+            actor=actor,
+            query=prompt,
+            dataset_ids=context_dataset_ids,
+            semantic_model_id=request.semantic_model_id,
+        )
+        generation_prompt = _build_query_generation_prompt(prompt, datasets)
+        for attempt in range(2):
             request_id = str(uuid4())
             context_token = issue_ai_context_token(
                 request_id=request_id,
-                actor=actor_context,
+                actor=actor,
                 allowed_dataset_ids=context_dataset_ids,
                 dataset_permissions={dataset.id: ["query"] for dataset in datasets},
             )
             raw_suggestion = AiGatewayClient().generate_query_sql(
                 request_id=request_id,
-                prompt=prompt,
+                prompt=generation_prompt,
                 current_query=request.current_query or "",
                 base_dataset_id=base_dataset.id,
                 selected_dataset_ids=context_dataset_ids,
                 context_token=context_token,
+                rag_context=rag_context,
             )
-        else:
-            client = OpenAiResponsesClient(
-                api_key=settings.openai_api_key,
-                model=settings.openai_query_ai_model,
-            )
-            raw_suggestion = client.create_json_response(
-                system_prompt=build_system_prompt(),
-                user_payload=build_user_payload(
-                    base_dataset=base_dataset,
-                    current_query=request.current_query or "",
-                    datasets=datasets,
-                    prompt=prompt,
-                ),
-            )
+            if not isinstance(raw_suggestion, dict):
+                raise ApiError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "AI gateway returned an invalid SQL suggestion",
+                    status.HTTP_502_BAD_GATEWAY,
+                )
 
-        suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else parse_ai_suggestion(raw_suggestion)
+            sql = ensure_preview_limit(raw_suggestion.get("sql", ""))
+            statement = validate_read_only_query(sql)
+            validate_selected_dataset_scope(statement, datasets)
+            try:
+                validate_query_intent_contract(prompt, statement, datasets)
+            except ApiError as exc:
+                violations = list((exc.details or {}).get("violations") or [])
+                if attempt > 0 or not violations:
+                    raise
+                generation_prompt = _build_query_generation_prompt(
+                    prompt,
+                    datasets,
+                    failed_violations=violations,
+                )
+                continue
+            return request_id, rag_context, raw_suggestion
+
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "AI gateway did not return a verified SQL suggestion",
+            status.HTTP_502_BAD_GATEWAY,
+        )
+
+    def _verified_response(
+        self,
+        *,
+        request: QueryAiSuggestionRequest,
+        actor: ActorContext,
+        prompt: str,
+        context_dataset_ids: list[str],
+        datasets: list[CatalogDatasetResponse],
+        base_dataset: CatalogDatasetResponse,
+        request_id: str,
+        rag_context: dict[str, Any],
+        raw_suggestion: dict[str, object],
+    ) -> QueryAiSuggestionResponse:
+        if not isinstance(raw_suggestion, dict):
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "AI gateway returned an invalid SQL suggestion",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+        suggestion = raw_suggestion
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
         validate_selected_dataset_scope(statement, datasets)
+        validate_query_intent_contract(prompt, statement, datasets)
+        used_evidence_ids = [str(item) for item in suggestion.get("usedEvidenceIds") or []]
+        used_rag_context = retain_used_rag_evidence(rag_context, used_evidence_ids) or {
+            "sources": [],
+            "retrieval": None,
+        }
+        verified_evidence_ids = verified_used_evidence_ids(used_rag_context)
+        provider = str(raw_suggestion.get("provider") or "").strip()
+        model = str(raw_suggestion.get("model") or "").strip()
+        persist_verified_generation_evidence(
+            self.catalog_repository.db,
+            actor=actor,
+            candidate_ids=evidence_candidate_ids(rag_context),
+            context_payload={
+                "baseDatasetId": base_dataset.id,
+                "currentQuery": request.current_query or "",
+                "prompt": prompt,
+                "selectedDatasetIds": context_dataset_ids,
+                "semanticModelId": request.semantic_model_id,
+            },
+            mode="query_sql",
+            model=model,
+            output_payload={"sql": sql},
+            provider=provider,
+            request_id=request_id,
+            used_ids=verified_evidence_ids,
+        )
 
         return QueryAiSuggestionResponse(
             body=suggestion.get("body")
             or "Read-only SQL draft generated from the selected dataset context.",
-            model=(str(raw_suggestion.get("model")) if isinstance(raw_suggestion, dict) and raw_suggestion.get("model") else settings.openai_query_ai_model),
+            model=model,
+            provider=provider,
+            request_id=request_id,
             notices=normalize_notices(suggestion.get("notices")),
+            retrieval=used_rag_context.get("retrieval"),
+            sources=list(used_rag_context.get("sources") or []),
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
+            used_evidence_ids=verified_evidence_ids,
         )
 
     def get_catalog_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
@@ -165,191 +286,6 @@ class QueryAiService:
         return datasets[0]
 
 
-class OpenAiResponsesClient:
-    def __init__(self, api_key: str | None, model: str) -> None:
-        self.api_key = api_key
-        self.model = model
-
-    def create_json_response(
-        self,
-        *,
-        system_prompt: str,
-        user_payload: dict[str, Any],
-    ) -> str:
-        if not self.api_key:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OPENAI_API_KEY is not configured",
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        request_body = {
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        user_payload,
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            "max_output_tokens": 900,
-            "model": self.model,
-            "store": False,
-            "temperature": 0.2,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "query_ai_suggestion",
-                    "description": "A safe read-only SQL suggestion for the selected AskLake datasets.",
-                    "strict": True,
-                    "schema": query_ai_response_schema(),
-                },
-            },
-        }
-        request = urllib.request.Request(
-            OPENAI_RESPONSES_URL,
-            data=json.dumps(request_body).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            details = read_openai_error(exc)
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI query suggestion request failed",
-                status.HTTP_502_BAD_GATEWAY,
-                details,
-            ) from exc
-        except (TimeoutError, urllib.error.URLError) as exc:
-            raise ApiError(
-                ErrorCode.BACKEND_TIMEOUT,
-                "OpenAI query suggestion request timed out",
-                status.HTTP_504_GATEWAY_TIMEOUT,
-            ) from exc
-
-        return extract_response_text(payload)
-
-
-def build_system_prompt() -> str:
-    return "\n".join(
-        [
-            "You are AskLake Query AI.",
-            "Create one read-only SQL draft from the user's natural language request.",
-            "Use only the selected dataset table names exactly as provided.",
-            "Prefer current non-legacy datasets. Do not use a dataset whose name or tags indicate legacy unless it is the only selected dataset.",
-            "Do not silently ignore requested filters, dimensions, or business qualifiers.",
-            "If the request mentions a qualifier such as VIP, region, channel, product category, payment method, status, or date range, include the matching WHERE, GROUP BY, or JOIN logic when selected schemas contain matching columns.",
-            "Generate JOIN or multi-table SQL when the selected datasets and joinHints contain the needed tables and keys.",
-            "When using joins, keep every physical table reference inside the selected dataset context.",
-            "If a requested JOIN key is unclear, still return a safe exploratory SQL draft but put a notice starting with 'JOIN 확인 필요:'.",
-            "If the selected datasets cannot satisfy an important part of the user request, still return a safe exploratory SQL draft but put a notice starting with '필요한 데이터셋/컬럼 누락:'.",
-            "Allowed SQL starts with SELECT or WITH and must not mutate data.",
-            f"Always keep the preview bounded with LIMIT {PREVIEW_LIMIT}.",
-            "Return JSON only with keys: title, body, sql, notices.",
-            "notices must be a short string array.",
-        ]
-    )
-
-
-def build_user_payload(
-    *,
-    base_dataset: CatalogDatasetResponse,
-    current_query: str,
-    datasets: list[CatalogDatasetResponse],
-    prompt: str,
-) -> dict[str, Any]:
-    return {
-        "baseDatasetId": base_dataset.id,
-        "currentQuery": current_query,
-        "joinHints": build_join_hints(datasets),
-        "naturalLanguageRequest": prompt,
-        "previewLimit": PREVIEW_LIMIT,
-        "selectedDatasets": [
-            {
-                "description": dataset.description,
-                "id": dataset.id,
-                "layer": dataset.layer,
-                "name": dataset.name,
-                "sampleRows": dataset.sample_rows[:QUERY_AI_SAMPLE_ROW_LIMIT],
-                "schema": [
-                    {"name": column_name, "type": column_type}
-                    for column_name, column_type in dataset.schema_
-                ],
-                "tags": dataset.tags,
-                "upstream": dataset.upstream,
-            }
-            for dataset in datasets
-        ],
-    }
-
-
-def build_join_hints(
-    datasets: list[CatalogDatasetResponse],
-) -> list[dict[str, str]]:
-    join_hints: list[dict[str, str]] = []
-
-    for left_index, left_dataset in enumerate(datasets):
-        left_columns = {column_name for column_name, _ in left_dataset.schema_}
-        for right_dataset in datasets[left_index + 1:]:
-            right_columns = {column_name for column_name, _ in right_dataset.schema_}
-            shared_columns = sorted(left_columns & right_columns)
-            for column_name in shared_columns:
-                if not is_likely_join_key(column_name):
-                    continue
-                join_hints.append({
-                    "leftColumn": column_name,
-                    "leftTable": left_dataset.name,
-                    "rightColumn": column_name,
-                    "rightTable": right_dataset.name,
-                })
-
-    return join_hints
-
-
-def is_likely_join_key(column_name: str) -> bool:
-    normalized_column = column_name.lower()
-    return normalized_column == "id" or normalized_column.endswith("_id")
-
-
-def parse_ai_suggestion(raw_text: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(strip_json_fence(raw_text))
-    except json.JSONDecodeError as exc:
-        json_candidate = extract_json_object(raw_text)
-        if json_candidate is None:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI response was not valid JSON",
-                status.HTTP_502_BAD_GATEWAY,
-            ) from exc
-        try:
-            parsed = json.loads(json_candidate)
-        except json.JSONDecodeError as candidate_exc:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                "OpenAI response was not valid JSON",
-                status.HTTP_502_BAD_GATEWAY,
-            ) from candidate_exc
-
-    if not isinstance(parsed, dict):
-        raise ApiError(
-            ErrorCode.INTERNAL_ERROR,
-            "OpenAI response JSON must be an object",
-            status.HTTP_502_BAD_GATEWAY,
-        )
-
-    return parsed
-
-
 def ensure_preview_limit(sql: str) -> str:
     cleaned_sql = sql.strip()
     if not cleaned_sql:
@@ -359,34 +295,162 @@ def ensure_preview_limit(sql: str) -> str:
             status.HTTP_502_BAD_GATEWAY,
         )
 
-    trailing_limit_match = re.search(r"\blimit\s+(\d+)\s*;?\s*$", cleaned_sql, re.IGNORECASE)
-    if trailing_limit_match:
-        limit_value = int(trailing_limit_match.group(1))
-        if limit_value <= PREVIEW_LIMIT:
-            return cleaned_sql
-        return f"{cleaned_sql[:trailing_limit_match.start()].rstrip().rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+    statement = validate_read_only_query(cleaned_sql)
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError as exc:
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "AI returned SQL that could not be parsed",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
 
-    if re.search(r"\blimit\s+\d+\b", cleaned_sql, re.IGNORECASE):
-        return cleaned_sql
+    root_limit = expression.args.get("limit")
+    if isinstance(root_limit, exp.Limit):
+        limit_expression = root_limit.expression
+        if isinstance(limit_expression, exp.Literal) and limit_expression.is_int:
+            if int(limit_expression.this) <= PREVIEW_LIMIT:
+                return cleaned_sql
 
-    return f"{cleaned_sql.rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+    bounded = expression.limit(PREVIEW_LIMIT, copy=True)
+    return f"{bounded.sql(dialect='trino')};"
 
 
-def query_ai_response_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "title": {"type": "string"},
-            "body": {"type": "string"},
-            "sql": {"type": "string"},
-            "notices": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-        },
-        "required": ["title", "body", "sql", "notices"],
+def validate_query_intent_contract(
+    prompt: str,
+    statement: str,
+    datasets: list[CatalogDatasetResponse],
+) -> None:
+    """Reject SQL drafts that visibly contradict explicit analytical intent."""
+
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError as exc:
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "AI returned SQL that could not be parsed",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
+
+    normalized_prompt = prompt.casefold()
+    violations: list[str] = []
+    if re.search(r"평균|\baverage\b|\bavg\b", normalized_prompt) and not any(
+        expression.find_all(exp.Avg)
+    ):
+        violations.append("missing_average")
+    if re.search(
+        r"상품\s*(?:수|개수)|제품\s*(?:수|개수)|건수|개수|\bnumber\s+of\b|\bcount\s+of\b",
+        normalized_prompt,
+    ) and not any(expression.find_all(exp.Count)):
+        violations.append("missing_count")
+    if re.search(r"[0-9a-z가-힣_]+\s*별(?:로)?|\bby\s+[a-z_]", normalized_prompt) and not any(
+        expression.find_all(exp.Group)
+    ):
+        violations.append("missing_grouping")
+    if _uses_dataset_qualifier_as_row_filter(normalized_prompt, expression, datasets):
+        violations.append("dataset_qualifier_filter")
+
+    if violations:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "AI SQL did not satisfy the requested analysis intent",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"violations": violations},
+        )
+
+
+def _uses_dataset_qualifier_as_row_filter(
+    normalized_prompt: str,
+    expression: exp.Expression,
+    datasets: list[CatalogDatasetResponse],
+) -> bool:
+    explicit_filter_markers = (
+        "where",
+        "like",
+        "필터",
+        "조건",
+        "제목",
+        "타이틀",
+        "title",
+        "이름",
+        "name",
+        "포함",
+        "일치",
+        "검색",
+        "찾아",
+    )
+    if any(marker in normalized_prompt for marker in explicit_filter_markers):
+        return False
+
+    filter_literals = " ".join(
+        str(literal.this).casefold()
+        for clause in expression.find_all(exp.Where, exp.Having)
+        for literal in clause.find_all(exp.Literal)
+        if literal.is_string
+    )
+    if not filter_literals:
+        return False
+
+    return any(
+        token in normalized_prompt and token in filter_literals
+        for token in _dataset_qualifier_tokens(datasets)
+    )
+
+
+def _dataset_qualifier_tokens(datasets: list[CatalogDatasetResponse]) -> set[str]:
+    generic_tokens = {
+        "catalog",
+        "data",
+        "dataset",
+        "gold",
+        "product",
+        "products",
+        "table",
     }
+    tokens: set[str] = set()
+    for dataset in datasets:
+        metadata_values = (
+            dataset.id,
+            dataset.name,
+            dataset.source,
+            dataset.description,
+            *dataset.tags,
+        )
+        for value in metadata_values:
+            tokens.update(
+                token
+                for token in re.findall(r"[0-9a-z가-힣]+", str(value).casefold())
+                if len(token) >= 3 and token not in generic_tokens
+            )
+    return tokens
+
+
+def _build_query_generation_prompt(
+    prompt: str,
+    datasets: list[CatalogDatasetResponse],
+    *,
+    failed_violations: list[str] | None = None,
+) -> str:
+    dataset_labels = ", ".join(
+        f"{dataset.id} ({dataset.name}; source={dataset.source})"
+        for dataset in datasets
+    )
+    lines = [
+        prompt,
+        "",
+        "SQL 생성 계약:",
+        f"- 선택 데이터셋: {dataset_labels}",
+        "- 데이터셋명·출처명은 사용자가 열 조건을 명시하지 않은 한 행 필터 값이 아닙니다.",
+        "- 요청한 집계(평균·개수)와 그룹 기준을 SQL에 빠짐없이 반영하세요.",
+        "- 선택 데이터셋만 참조하는 읽기 전용 SQL 한 개를 반환하세요.",
+    ]
+    if failed_violations:
+        lines.extend((
+            "",
+            f"이전 SQL 검증 실패: {', '.join(failed_violations)}",
+            "검증 실패 항목을 모두 고쳐 SQL을 다시 생성하세요.",
+        ))
+    return "\n".join(lines)
 
 
 def validate_selected_dataset_scope(
@@ -428,62 +492,3 @@ def normalize_notices(value: object) -> list[str]:
             "AI generated this draft. Review it before running the existing checks.",
         ]
     return [str(item) for item in value if str(item).strip()]
-
-
-def extract_response_text(payload: dict[str, Any]) -> str:
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
-
-    text_parts: list[str] = []
-    for output_item in payload.get("output", []):
-        if not isinstance(output_item, dict):
-            continue
-        for content_item in output_item.get("content", []):
-            if not isinstance(content_item, dict):
-                continue
-            text = content_item.get("text")
-            if isinstance(text, str):
-                text_parts.append(text)
-
-    text = "\n".join(text_parts).strip()
-    if not text:
-        raise ApiError(
-            ErrorCode.INTERNAL_ERROR,
-            "OpenAI response did not include text output",
-            status.HTTP_502_BAD_GATEWAY,
-        )
-    return text
-
-
-def strip_json_fence(value: str) -> str:
-    text = value.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-
-def extract_json_object(value: str) -> str | None:
-    start = value.find("{")
-    end = value.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    return value[start : end + 1]
-
-
-def read_openai_error(exc: urllib.error.HTTPError) -> dict[str, Any]:
-    try:
-        payload = json.loads(exc.read().decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"status": exc.code}
-
-    error = payload.get("error") if isinstance(payload, dict) else None
-    if not isinstance(error, dict):
-        return {"status": exc.code}
-
-    return {
-        "openaiCode": error.get("code"),
-        "openaiType": error.get("type"),
-        "status": exc.code,
-    }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, Database } from "lucide-react";
+import { Check, Copy, Database, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,6 +33,7 @@ export function DashboardRuntimeShell({
   datasetSidebarOpen = false,
   hasPublishedRevision,
   inspector,
+  inspectorOpen = false,
   isAddingPage,
   isPublishing,
   isRenamingTitle,
@@ -51,6 +52,7 @@ export function DashboardRuntimeShell({
   onSelectPage,
   onShare,
   onToggleDatasetSidebar,
+  onToggleInspector,
   pages,
   realtimeConnectionState,
   renamingPageId,
@@ -63,6 +65,7 @@ export function DashboardRuntimeShell({
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
   inspector?: ReactNode;
+  inspectorOpen?: boolean;
   isAddingPage?: boolean;
   isPublishing?: boolean;
   isRenamingTitle?: boolean;
@@ -81,6 +84,7 @@ export function DashboardRuntimeShell({
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
+  onToggleInspector?: () => void;
   pages: DashboardPageTab[];
   realtimeConnectionState?: RealtimeConnectionState;
   renamingPageId?: string | null;
@@ -91,6 +95,7 @@ export function DashboardRuntimeShell({
   const [copyFeedback, setCopyFeedback] = useState<"idle" | "success" | "error">("idle");
   const hasDatasetSidebar = Boolean(datasetSidebar);
   const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
+  const canToggleInspector = Boolean(onToggleInspector);
   const workspaceClassName = [
     "asklake-dashboard-workspace",
     hasDatasetSidebar && "has-dataset-sidebar",
@@ -227,6 +232,21 @@ export function DashboardRuntimeShell({
               onRenamePage={onRenamePage}
               onSelectPage={onSelectPage}
             />
+          ) : null}
+          {canToggleInspector ? (
+            <Button
+              aria-controls="asklake-dashboard-inspector"
+              aria-expanded={inspectorOpen}
+              aria-label={inspectorOpen ? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"}
+              className="asklake-dashboard-inspector-toggle"
+              size="sm"
+              type="button"
+              variant="ghost"
+              onClick={onToggleInspector}
+            >
+              {inspectorOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              설정
+            </Button>
           ) : null}
         </div>
       </div>

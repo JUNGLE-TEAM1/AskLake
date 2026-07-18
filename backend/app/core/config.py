@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     rag_query_intelligence_enabled: bool = True
     rag_relevance_min_score: float = Field(default=0.6, ge=0.0, le=1.0)
     rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    rag_job_stale_seconds: int = Field(default=7_200, ge=300, le=604_800)
     rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
     rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
     rag_runtime_create_schema: bool = False
@@ -115,6 +116,7 @@ class Settings(BaseSettings):
     realtime_cleanup_interval_seconds: int = Field(default=3_600, ge=60, le=86_400)
     realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
+    review_analysis_worker_interval_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"
