@@ -249,7 +249,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(result["data"], [{"category": "phones", "amount": 15.0}])
         self.assertEqual(len(client.queries), 2)
         self.assertIn('FROM "iceberg"."asklake"."catalog_dataset"', client.queries[1])
-        self.assertIn('GROUP BY "category"', client.queries[1])
+        self.assertIn('GROUP BY "__asklake_source"."category"', client.queries[1])
         self.assertNotIn("GROUP BY ALL", client.queries[1])
         self.assertNotIn("_asklake_run_id", client.queries[1])
 
@@ -272,7 +272,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(state["rows"][0]["__asklake_state_sum"], 15.0)
         self.assertEqual(len(client.queries), 2)
         self.assertIn('FROM "iceberg"."asklake"."catalog_dataset"', client.queries[1])
-        self.assertIn('GROUP BY "category"', client.queries[1])
+        self.assertIn('GROUP BY "__asklake_source"."category"', client.queries[1])
         self.assertNotIn("GROUP BY ALL", client.queries[1])
         self.assertNotIn("FOR VERSION AS OF", client.queries[1])
         self.assertNotIn("_asklake_run_id", client.queries[1])

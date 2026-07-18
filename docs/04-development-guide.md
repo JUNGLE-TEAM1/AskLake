@@ -1119,6 +1119,8 @@ Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUO
 
 ClickHouse mode의 정적 snapshot 적재 기본 한도는 relation당 15,000,000행이고 insert batch는 20,000행이다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 실제 운영 데이터가 한도를 넘으면 값을 무조건 올리지 말고 dimension 크기·참조 열·ClickHouse 메모리와 disk를 먼저 확인한다. exact Dataset·snapshot·schema·mapping·참조 열·JOIN key identity는 `asklake_static_cache_registry`에 검증 완료 table과 row count를 기록하며 다른 Job과 resume에서 재사용한다. cache miss의 key 검사는 `uniqExact` 대신 정렬 key 기반 exact duplicate query를 기본 512MiB·2 thread로 제한한다. 새 적재는 기본 2GiB reserve와 행 수 기반 임시 byte 예산을 합친 disk free-space를 먼저 확인한다. Production Compose는 ClickHouse container를 기본 6GiB hard limit, 2GiB reservation으로 제한한다.
 
+ClickHouse Dashboard 회귀에는 `event_time`을 X축과 output alias로 함께 쓰는 `dateUnit=month` line chart를 포함한다. 생성 SQL은 `FROM <table> AS __asklake_source FINAL` 순서와 qualified SELECT/GROUP BY를 유지해야 한다.
+
 대형 정적 snapshot 회귀는 같은 identity의 두 Job을 순서대로 시작해 두 번째 시작에서 Trino count/page 호출과 key scan이 없고 registry table이 첫 번째 static table을 가리키는지 확인한다. cache miss에서는 구조화 로그 `clickhouse_static_cache_load_started|progress|completed|registered`, cache hit에서는 `clickhouse_static_cache_hit`을 correlation ID와 함께 확인한다. `CLICKHOUSE_STATIC_DISK_LOW`가 발생하면 row 한도나 reserve를 즉시 올리지 말고 stale failed Job table과 volume 사용량을 먼저 감사한다.
 
 실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 operator gate에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다. 절차와 판정은 `docs/realtime-2026/final-audit.md`, `docs/realtime-2026/production-runbook.md`를 따른다.

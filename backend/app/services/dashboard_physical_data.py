@@ -411,6 +411,8 @@ def dashboard_aggregation_query(
         raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
+    source_alias = "__asklake_source"
+    source_table = dashboard_aliased_source_table(table, source_alias)
     select_parts: list[str] = []
     group_expressions: list[str] = []
     dimension_aliases: list[str] = []
@@ -418,7 +420,7 @@ def dashboard_aggregation_query(
         if not column:
             continue
         require_dashboard_column(column, columns)
-        expression = quote_duckdb_identifier(column)
+        expression = qualified_dashboard_column(column, source_alias)
         if date_unit in {"day", "month", "year"}:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
@@ -437,7 +439,7 @@ def dashboard_aggregation_query(
         else str(configured_value_key)
     )
     select_parts.append(
-        f"{dashboard_aggregate_expression(aggregation, configured_value_key)} "
+        f"{dashboard_aggregate_expression(aggregation, configured_value_key, source_alias)} "
         f"AS {quote_duckdb_identifier(value_alias)}"
     )
 
@@ -457,7 +459,7 @@ def dashboard_aggregation_query(
     else:
         order_sql = ""
     limit_sql = f" LIMIT {DASHBOARD_CHART_ROW_LIMIT}" if dimension_aliases else ""
-    return f"SELECT {', '.join(select_parts)} FROM {table}{group_sql}{order_sql}{limit_sql}", runtime_config
+    return f"SELECT {', '.join(select_parts)} FROM {source_table}{group_sql}{order_sql}{limit_sql}", runtime_config
 
 
 def dashboard_aggregate_state_query(
@@ -473,6 +475,8 @@ def dashboard_aggregate_state_query(
         raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
+    source_alias = "__asklake_source"
+    source_table = dashboard_aliased_source_table(table, source_alias)
     select_parts: list[str] = []
     group_expressions: list[str] = []
     dimension_keys: list[str] = []
@@ -480,7 +484,7 @@ def dashboard_aggregate_state_query(
         if not column:
             continue
         require_dashboard_column(column, columns)
-        expression = quote_duckdb_identifier(column)
+        expression = qualified_dashboard_column(column, source_alias)
         if date_unit in {"day", "month", "year"}:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
@@ -506,7 +510,10 @@ def dashboard_aggregate_state_query(
             "CAST(NULL AS DOUBLE) AS __asklake_state_max",
         ])
     else:
-        numeric_value = f"TRY_CAST({quote_duckdb_identifier(str(configured_value_key))} AS DOUBLE)"
+        numeric_value = (
+            f"TRY_CAST({qualified_dashboard_column(str(configured_value_key), source_alias)} "
+            "AS DOUBLE)"
+        )
         select_parts.extend([
             f"COUNT({numeric_value}) AS __asklake_state_count",
             f"SUM({numeric_value}) AS __asklake_state_sum",
@@ -515,7 +522,7 @@ def dashboard_aggregate_state_query(
         ])
     group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
     query = (
-        f"SELECT {', '.join(select_parts)} FROM {table}{where_sql}{group_sql} "
+        f"SELECT {', '.join(select_parts)} FROM {source_table}{where_sql}{group_sql} "
         f"LIMIT {MAX_DASHBOARD_INCREMENTAL_GROUPS + 1}"
     )
     return query, {
@@ -685,12 +692,31 @@ def dashboard_widget_query_fields(
     raise ValueError(f"Unsupported dashboard widget type: {widget_type}")
 
 
-def dashboard_aggregate_expression(aggregation: str, value_key: Any) -> str:
+def dashboard_aggregate_expression(
+    aggregation: str,
+    value_key: Any,
+    source_alias: str | None = None,
+) -> str:
     if aggregation == "count":
         return "COUNT(*)"
-    column = quote_duckdb_identifier(str(value_key))
+    column = qualified_dashboard_column(str(value_key), source_alias)
     function = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
     return f"{function}(TRY_CAST({column} AS DOUBLE))"
+
+
+def qualified_dashboard_column(column: str, source_alias: str | None = None) -> str:
+    quoted_column = quote_duckdb_identifier(column)
+    if not source_alias:
+        return quoted_column
+    return f"{quote_duckdb_identifier(source_alias)}.{quoted_column}"
+
+
+def dashboard_aliased_source_table(table: str, source_alias: str) -> str:
+    normalized = table.rstrip()
+    alias_sql = f"AS {quote_duckdb_identifier(source_alias)}"
+    if normalized.casefold().endswith(" final"):
+        return f"{normalized[:-6].rstrip()} {alias_sql} FINAL"
+    return f"{normalized} {alias_sql}"
 
 
 def require_dashboard_column(column: str, columns: set[str]) -> None:

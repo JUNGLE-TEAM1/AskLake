@@ -423,6 +423,7 @@ Continuous SQL은 새 Job에서 5초 trigger를 기본으로 사용하고, `CONT
 
 ClickHouse Continuous SQL은 exact `(datasetId, snapshotId, schemaFingerprint, queryEngineTable, referencedColumns, joinColumns)` identity별 검증 registry를 사용한다. registry의 table schema와 row count가 맞으면 다른 Job도 같은 immutable static table을 사용해 수천만 행 재적재와 재검사를 피한다. cache miss의 exact key 검증은 정렬 key 기반 aggregation-in-order, query memory/thread hard limit을 사용하고 새 적재 전 disk reserve를 확인한다. 이 최적화는 Catalog 사전 unique-key 검증, pinned snapshot, Kafka raw offset, output publication gate를 생략하지 않는다.
 Continuous SQL reconciler는 start/resume/recover가 외부 worker를 준비하는 기본 300초 동안 `starting|recovering + missing`을 유지한다. 이 유예는 동기식 provision과 1초 상태 동기화의 race만 막으며, 이미 running인 worker 소실이나 유예 만료 뒤 missing은 `CONTINUOUS_SQL_WORKER_MISSING`으로 실패 처리한다.
+ClickHouse Dashboard 시간 집계는 source alias를 `FINAL` 앞에 배치하고 SELECT/GROUP BY의 원본 column을 모두 한정한다. output alias와 원본 시간 column 이름이 같아도 ClickHouse alias 치환으로 `NOT_AN_AGGREGATE`가 발생하지 않는다.
 `seed_dashboard_demo`에는 커머스 데모용 원본 dataset 2개(`commerce_orders_daily`, `commerce_marketing_spend_daily`)와 조인 결과처럼 보이는 `gold_commerce_channel_roi` GOLD dataset이 포함된다.
 
 Runtime table 보강 코드는 Alembic migration 도입 전까지 로컬 PostgreSQL smoke를 막지 않기 위한 임시 안전장치다. `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`에 `created_at`, `updated_at`, JSON snapshot 컬럼이 빠져 있으면 repository에서 `ADD COLUMN IF NOT EXISTS`로 보강하지만, 장기 운영 기준의 source of truth는 후속 Alembic migration으로 옮겨야 한다.

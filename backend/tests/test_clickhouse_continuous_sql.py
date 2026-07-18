@@ -57,7 +57,12 @@ class FakeDashboardClickHouseClient:
         if query.startswith("DESCRIBE TABLE"):
             return ClickHouseRows(
                 columns=["name", "type"],
-                rows=[["event_id", "Nullable(Int64)"], ["user_name", "Nullable(String)"]],
+                rows=[
+                    ["event_id", "Nullable(Int64)"],
+                    ["user_name", "Nullable(String)"],
+                    ["event_time", "Nullable(DateTime64(3))"],
+                    ["event_type", "Nullable(String)"],
+                ],
             )
         return ClickHouseRows(
             columns=["user_name", "__asklake_widget_value"],
@@ -470,6 +475,39 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(result["data"][0]["user_name"], "Alice")
         self.assertTrue(any("FINAL" in query for query in client.queries))
         self.assertTrue(client.closed)
+
+    def test_clickhouse_date_bucket_qualifies_source_column_behind_output_alias(self) -> None:
+        client = FakeDashboardClickHouseClient()
+        session = DashboardDatasetQuerySession(
+            {
+                "id": "dataset-hot",
+                "name": "hot",
+                "schema": [["event_time", "timestamp"], ["event_type", "string"]],
+                "storageFormat": "clickhouse",
+                "clickhouseTable": {"database": "asklake", "table": "hot_join"},
+            },
+            clickhouse_client=client,
+        )
+        try:
+            session.read_widget(
+                "line_chart",
+                {
+                    "aggregation": "count",
+                    "xKey": "event_time",
+                    "yKey": "__asklake_widget_value",
+                    "seriesKey": "event_type",
+                    "dateUnit": "month",
+                },
+            )
+        finally:
+            session.close()
+
+        query = client.queries[-1]
+        self.assertIn('AS "__asklake_source" FINAL', query)
+        self.assertGreaterEqual(
+            query.count('"__asklake_source"."event_time"'),
+            2,
+        )
 
     def test_offset_progress_publishes_catalog_revision_idempotently(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:")
