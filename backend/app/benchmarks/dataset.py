@@ -102,6 +102,17 @@ CROSS JOIN UNNEST(sequence(1, 1000)) AS y(b)''',
     return statements
 
 
+def render_cleanup_sql(manifest: BenchmarkDatasetManifest) -> list[str]:
+    """Render cleanup limited to the schema and tables declared by the fixture."""
+    prefix = f'"{manifest.catalog}"."{manifest.schema_name}"'
+    statements = [
+        f'DROP TABLE IF EXISTS {prefix}."{table.name}"'
+        for table in reversed(manifest.tables)
+    ]
+    statements.append(f'DROP SCHEMA IF EXISTS {prefix}')
+    return statements
+
+
 def execute_statement(client: TrinoClient, sql: str) -> tuple[list[str], list[list[Any]], dict[str, Any]]:
     page = client.submit(sql)
     columns = list(page.columns)
@@ -160,4 +171,18 @@ def load_dataset(
         "runtimeProfile": manifest.runtime_profile,
         "capturedAt": datetime.now(timezone.utc).isoformat(),
         "tables": tables,
+    }
+
+
+def cleanup_dataset(manifest: BenchmarkDatasetManifest, client: TrinoClient) -> dict[str, Any]:
+    statements = render_cleanup_sql(manifest)
+    for statement in statements:
+        execute_statement(client, statement)
+    return {
+        "cleanupVersion": "1",
+        "fixtureId": manifest.fixture_id,
+        "fixtureVersion": manifest.fixture_version,
+        "manifestHash": manifest.canonical_hash(),
+        "schema": manifest.schema_name,
+        "tablesRemoved": [table.name for table in manifest.tables],
     }

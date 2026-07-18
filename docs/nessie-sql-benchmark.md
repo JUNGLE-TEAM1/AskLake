@@ -94,9 +94,17 @@ PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
   --manifest benchmarks/nessie-sql/dataset-manifest.v1.json \
   --live --confirm LOAD_BENCHMARK_DATASET --replace \
   --receipt /tmp/asklake-nessie-dataset-receipt.json
+
+# campaign 종료 후 benchmark 전용 table/schema만 제거
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
+  --manifest benchmarks/nessie-sql/dataset-manifest.v1.json \
+  --live --cleanup --confirm CLEANUP_BENCHMARK_DATASET \
+  --receipt /tmp/asklake-nessie-dataset-cleanup.json
 ```
 
 `--replace`는 benchmark 전용 schema의 기존 v1 table을 삭제하고 새 snapshot을 만들므로 active campaign이 없을 때만 사용한다. 새 receipt의 snapshot ID가 tracked evidence와 다르면 기존 baseline과 직접 비교하지 않고 새 fixture version/evidence를 승인해야 한다. 정리는 전용 schema의 세 table을 drop하는 방식으로 수행하며 application Dataset이나 다른 schema를 삭제하지 않는다. 규모 확장은 generator version을 유지한 채 orders row count를 1,000 단위로 늘릴 수 있지만, manifest fixture version과 snapshot evidence를 새로 발급하고 기존 baseline cohort와 분리한다.
+
+Cleanup receipt는 private 실행 증거이며 Git에 올리지 않는다. Catalog의 임시 `benchmark_*` Dataset도 별도 cleanup command로 지운다. Shared Trino/MinIO container 자체는 benchmark 소유가 아니므로 중지하거나 삭제하지 않는다.
 
 ## 질문과 Golden 결과 v1
 

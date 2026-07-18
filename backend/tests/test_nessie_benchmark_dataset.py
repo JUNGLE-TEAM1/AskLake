@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.benchmarks.dataset import BenchmarkDatasetManifest, load_dataset_manifest, render_dataset_sql
+from app.benchmarks.dataset import BenchmarkDatasetManifest, load_dataset_manifest, render_cleanup_sql, render_dataset_sql
 
 
 MANIFEST = Path(__file__).parents[1] / "benchmarks/nessie-sql/dataset-manifest.v1.json"
@@ -37,3 +37,15 @@ def test_manifest_rejects_duplicate_tables() -> None:
 
     with pytest.raises(ValueError, match="unique"):
         BenchmarkDatasetManifest.model_validate(payload)
+
+
+def test_cleanup_is_limited_to_manifest_schema_and_tables() -> None:
+    manifest = load_dataset_manifest(MANIFEST)
+    statements = render_cleanup_sql(manifest)
+
+    assert statements == [
+        'DROP TABLE IF EXISTS "iceberg"."asklake_benchmark"."orders_v1"',
+        'DROP TABLE IF EXISTS "iceberg"."asklake_benchmark"."products_v1"',
+        'DROP TABLE IF EXISTS "iceberg"."asklake_benchmark"."customers_v1"',
+        'DROP SCHEMA IF EXISTS "iceberg"."asklake_benchmark"',
+    ]
