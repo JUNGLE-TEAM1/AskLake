@@ -198,6 +198,79 @@ services:
       trino-postgres-bootstrap:
         condition: service_completed_successfully
 
+  redpanda:
+    image: redpandadata/redpanda:v24.3.1
+    container_name: asklake-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    volumes:
+      - asklake_redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --api-urls localhost:9644 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8.28.1
+    container_name: asklake-clickhouse
+    environment:
+      CLICKHOUSE_DB: asklake
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_PASSWORD: asklake_clickhouse_dev
+      CLICKHOUSE_USER: asklake
+    ports:
+      - "8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - asklake_clickhouse_data:/var/lib/clickhouse
+      - ./deploy/clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user asklake --password asklake_clickhouse_dev --query 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    container_name: asklake-opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - asklake_opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   postgres:
     image: postgres:16-alpine
     container_name: asklake-postgres
@@ -218,5 +291,8 @@ services:
 
 volumes:
   asklake_airflow_postgres_data:
+  asklake_clickhouse_data:
   asklake_minio_data:
   asklake_postgres_data:
+  asklake_redpanda_data:
+  asklake_opensearch_data:

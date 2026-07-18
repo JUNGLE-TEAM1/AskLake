@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
+import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
+import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
+import { useDraftPageMutations } from "./runtime/useDraftPageMutations";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
+import { useDraftWidgetMutations } from "./runtime/useDraftWidgetMutations";
 import { DashboardLandingPage } from "./DashboardLandingPage";
 import type { ExpandedChart } from "./DashboardParts";
 import { DashboardLegacyBuilderView } from "./legacy/DashboardLegacyBuilderView";
@@ -17,18 +21,14 @@ import {
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
 import {
-  createDraftPage,
-  deleteDraftPage,
   deleteDraftWidget,
   publishDashboard as publishRuntimeDashboard,
-  updateDraftPageTitle,
-  updateDraftWidget,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
-import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
+import type { DashboardDatasetOption } from "./runtime/dashboardRuntimeTypes";
 
 type RuntimeNotice = {
   message: string;
@@ -81,7 +81,6 @@ export function DashboardPage({
   onRuntimeNavigate,
 }: {
   dataset: CatalogDataset;
-  datasets?: CatalogDataset[];
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -106,16 +105,12 @@ export function DashboardPage({
     mode: entry.runtimeMode ?? "published",
   }));
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
-  const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
-  const [deletingRuntimeWidgetId, setDeletingRuntimeWidgetId] = useState<string | null>(null);
-  const [updatingRuntimeWidgetId, setUpdatingRuntimeWidgetId] = useState<string | null>(null);
   const [isRenamingRuntimeTitle, setIsRenamingRuntimeTitle] = useState(false);
-  const [renamingRuntimePageId, setRenamingRuntimePageId] = useState<string | null>(null);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
-  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(false);
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
@@ -147,7 +142,7 @@ export function DashboardPage({
     datasets: dashboardDatasets,
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
-  } = useDashboardDatasets();
+  } = useDashboardDatasets(view === "runtime" || view === "builder");
   const availableDashboardDatasets = useMemo(
     () => sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
@@ -185,10 +180,10 @@ export function DashboardPage({
     pages: runtimePages,
     publishedRuntime,
     realtimeConnectionState,
+    retryWidgetData,
     runtimeError,
     runtimeLoading,
     selectedPageId: selectedRuntimePageId,
-    setDraftError,
     setDraftRuntime,
     setPublishedRuntime,
     setSelectedPageId: setSelectedRuntimePageId,
@@ -242,6 +237,30 @@ export function DashboardPage({
     [publishedRuntime?.revision, publishedRuntime?.widgetsByPageId, runtimeSelection.mode, selectedRuntimePageId],
   );
 
+  const pageMutations = useDraftPageMutations({
+    dashboardId: runtimeSelection.dashboardId,
+    draftRuntime,
+    mode: runtimeSelection.mode,
+    onAction,
+    selectedPageId: selectedRuntimePageId,
+    setDraftRuntime,
+    setNotice: setRuntimeNotice,
+    setSelectedPageId: setSelectedRuntimePageId,
+    setSelectedWidgetId,
+  });
+  const widgetMutations = useDraftWidgetMutations({
+    dashboardId: runtimeSelection.dashboardId,
+    mode: runtimeSelection.mode,
+    onAction,
+    previewWidget: previewDraftWidget,
+    selectedWidgetId,
+    selectedWidgets: selectedDraftWidgets,
+    setDraftRuntime,
+    setNotice: setRuntimeNotice,
+    setPreviewWidget: setPreviewDraftWidget,
+    setSelectedWidgetId,
+  });
+
   useEffect(() => {
     if (!selectedDatasetId) return;
     if (availableDashboardDatasets.some((datasetOption) => datasetOption.id === selectedDatasetId)) return;
@@ -258,10 +277,8 @@ export function DashboardPage({
     defaultLayouts: defaultDraftWidgetLayout,
     mode: runtimeSelection.mode,
     onAction,
-    reloadDraftRuntime: loadDraftRuntime,
     selectedPageId: selectedRuntimePageId,
     selectedWidgets: selectedDraftWidgets,
-    setDraftError,
     setDraftRuntime,
     setRuntimeNotice,
     setSelectedWidgetId,
@@ -270,9 +287,9 @@ export function DashboardPage({
 
   const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
     dashboardId: runtimeSelection.dashboardId,
+    draftRuntime,
     onAction,
     selectedPageId: selectedRuntimePageId,
-    setDraftError,
     setDraftRuntime,
     setRuntimeNotice,
   });
@@ -453,80 +470,6 @@ export function DashboardPage({
     onAction("dashboard.shared", "/api/dashboards/share", activeDashboardId);
   };
 
-  const addRuntimePage = async () => {
-    if (runtimeSelection.mode !== "draft" || isAddingRuntimePage) return;
-    const nextPageNumber = (draftRuntime?.pages.length ?? 0) + 1;
-    const title = nextPageNumber > 1 ? `제목 없는 페이지 ${nextPageNumber}` : "제목 없는 페이지";
-    setIsAddingRuntimePage(true);
-    setDraftError(null);
-    setRuntimeNotice({ message: "페이지를 추가하는 중입니다.", tone: "info" });
-    try {
-      const page = await createDraftPage(runtimeSelection.dashboardId, { title });
-      setSelectedRuntimePageId(page.id);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
-      setRuntimeNotice({ message: `${page.title} 페이지를 추가했습니다.`, tone: "success" });
-      onAction("dashboard.page.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create a draft page.";
-      setDraftError(message);
-      setRuntimeNotice({ message: `페이지를 추가하지 못했습니다. ${message}`, tone: "error" });
-    } finally {
-      setIsAddingRuntimePage(false);
-    }
-  };
-
-  const deleteRuntimePage = async (pageId: string) => {
-    if (runtimeSelection.mode !== "draft") return;
-    try {
-      await deleteDraftPage(runtimeSelection.dashboardId, pageId);
-      if (selectedRuntimePageId === pageId) {
-        setSelectedRuntimePageId(null);
-      }
-      setSelectedWidgetId(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
-      onAction("dashboard.page.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${pageId}`, runtimeSelection.dashboardId);
-    } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to delete a draft page.");
-    }
-  };
-
-  const deleteRuntimeWidget = async (widgetId: string) => {
-    if (runtimeSelection.mode !== "draft" || deletingRuntimeWidgetId) return;
-    const targetWidget = selectedDraftWidgets.find((widget) => widget.id === widgetId);
-    const targetTitle = targetWidget?.title || "제목 없는 위젯";
-    const confirmed = window.confirm(`'${targetTitle}' 위젯을 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.`);
-    if (!confirmed) return;
-
-    setDeletingRuntimeWidgetId(widgetId);
-    setDraftError(null);
-    setRuntimeNotice({ message: "위젯을 삭제하는 중입니다.", tone: "info" });
-    try {
-      await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
-      if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
-      if (previewDraftWidget?.id === widgetId) setPreviewDraftWidget(null);
-      setDraftRuntime((runtime) => runtime
-        ? {
-          ...runtime,
-          widgetsByPageId: Object.fromEntries(
-            Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
-              pageId,
-              widgets.filter((widget) => widget.id !== widgetId),
-            ]),
-          ),
-        }
-        : runtime);
-      setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
-      onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to delete the draft widget.";
-      setDraftError(message);
-      setRuntimeNotice({ message: "위젯을 삭제하지 못했습니다.", tone: "error" });
-      onAction("dashboard.widget.delete_failed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId, "failed");
-    } finally {
-      setDeletingRuntimeWidgetId(null);
-    }
-  };
-
   const selectRuntimeWidget = (widgetId: string) => {
     const nextWidgetId = widgetId || null;
     const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
@@ -555,29 +498,6 @@ export function DashboardPage({
     setSelectedDatasetId(datasetId);
   };
 
-  const updateRuntimeWidget = async (widgetId: string, input: UpdateDraftWidgetFormInput) => {
-    if (runtimeSelection.mode !== "draft" || updatingRuntimeWidgetId) return;
-
-    setUpdatingRuntimeWidgetId(widgetId);
-    setDraftError(null);
-    setRuntimeNotice({ message: "위젯 변경사항을 저장하는 중입니다.", tone: "info" });
-    try {
-      await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
-      setPreviewDraftWidget(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId, { silent: true });
-      setSelectedWidgetId(widgetId);
-      setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
-      onAction("dashboard.widget.updated", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update the draft widget.";
-      setDraftError(message);
-      setRuntimeNotice({ message: "위젯 변경사항을 저장하지 못했습니다.", tone: "error" });
-      onAction("dashboard.widget.update_failed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId, "failed");
-    } finally {
-      setUpdatingRuntimeWidgetId(null);
-    }
-  };
-
   const renameRuntimeDashboardTitle = async (title: string) => {
     if (runtimeSelection.mode !== "draft" || isRenamingRuntimeTitle) return;
     const nextTitle = title.trim();
@@ -587,7 +507,6 @@ export function DashboardPage({
     }
 
     setIsRenamingRuntimeTitle(true);
-    setDraftError(null);
     try {
       const { dashboard } = await updateDashboardTitle(runtimeSelection.dashboardId, nextTitle);
       const savedTitle = dashboard.name ?? nextTitle;
@@ -617,42 +536,13 @@ export function DashboardPage({
       setRuntimeNotice({ message: "대시보드 제목을 저장했습니다.", tone: "success" });
       onAction("dashboard.title.updated", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update dashboard title.";
-      setDraftError(message);
-      setRuntimeNotice({ message: "대시보드 제목을 저장하지 못했습니다.", tone: "error" });
+      setRuntimeNotice({
+        message: dashboardRuntimeErrorMessage(error, "대시보드 제목을 저장하지 못했습니다."),
+        tone: "error",
+      });
+      onAction("dashboard.title.update_failed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId, "failed");
     } finally {
       setIsRenamingRuntimeTitle(false);
-    }
-  };
-
-  const renameRuntimePage = async (pageId: string, title: string) => {
-    if (runtimeSelection.mode !== "draft" || renamingRuntimePageId) return;
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      setRuntimeNotice({ message: "페이지 이름을 입력해 주세요.", tone: "error" });
-      return;
-    }
-
-    setRenamingRuntimePageId(pageId);
-    setDraftError(null);
-    try {
-      const page = await updateDraftPageTitle(runtimeSelection.dashboardId, pageId, { title: nextTitle });
-      setDraftRuntime((runtime) => runtime
-        ? {
-          ...runtime,
-          pages: runtime.pages.map((runtimePage) => runtimePage.id === page.id
-            ? { ...runtimePage, title: page.title, orderIndex: page.orderIndex }
-            : runtimePage),
-        }
-        : runtime);
-      setRuntimeNotice({ message: "페이지 이름을 저장했습니다.", tone: "success" });
-      onAction("dashboard.page.renamed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${pageId}`, pageId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update draft page title.";
-      setDraftError(message);
-      setRuntimeNotice({ message: "페이지 이름을 저장하지 못했습니다.", tone: "error" });
-    } finally {
-      setRenamingRuntimePageId(null);
     }
   };
 
@@ -683,15 +573,7 @@ export function DashboardPage({
     await Promise.all(widgetIds.map((widgetId) => deleteDraftWidget(runtimeSelection.dashboardId, widgetId)));
     const deletedWidgetIds = new Set(widgetIds);
     setDraftRuntime((runtime) => runtime
-      ? {
-        ...runtime,
-        widgetsByPageId: Object.fromEntries(
-          Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
-            pageId,
-            widgets.filter((widget) => !deletedWidgetIds.has(widget.id)),
-          ]),
-        ),
-      }
+      ? widgetIds.reduce(removeRuntimeWidget, runtime)
       : runtime);
     if (selectedWidgetId && deletedWidgetIds.has(selectedWidgetId)) setSelectedWidgetId(null);
     if (previewDraftWidget && deletedWidgetIds.has(previewDraftWidget.id)) setPreviewDraftWidget(null);
@@ -704,7 +586,6 @@ export function DashboardPage({
   const publishDraftRuntime = async () => {
     if (runtimeSelection.mode !== "draft" || isPublishingRuntime) return;
     setIsPublishingRuntime(true);
-    setDraftError(null);
     try {
       await cleanupEmptyVisualizationRequestWidgets();
       await publishRuntimeDashboard(runtimeSelection.dashboardId);
@@ -714,8 +595,11 @@ export function DashboardPage({
       onAction("dashboard.runtime.published", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId);
       openRuntimeDashboard(runtimeSelection.dashboardId, "published");
     } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to publish the draft dashboard.");
-      setRuntimeNotice({ message: "대시보드를 게시하지 못했습니다.", tone: "error" });
+      setRuntimeNotice({
+        message: dashboardRuntimeErrorMessage(error, "대시보드를 게시하지 못했습니다."),
+        tone: "error",
+      });
+      onAction("dashboard.runtime.publish_failed", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId, "failed");
     } finally {
       setIsPublishingRuntime(false);
     }
@@ -849,14 +733,14 @@ export function DashboardPage({
 
   if (view === "runtime") {
     const runtimeViewActions = {
-      addPage: addRuntimePage,
+      addPage: pageMutations.addPage,
       clearWidgetScrollTarget: () => setWidgetScrollTargetId(null),
       clearWidgetSelection: clearRuntimeWidgetSelection,
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
       createToolbarWidget: createToolbarDraftWidget,
-      deletePage: deleteRuntimePage,
-      deleteWidget: deleteRuntimeWidget,
+      deletePage: pageMutations.deletePage,
+      deleteWidget: widgetMutations.deleteWidget,
       layoutCommit: layoutHistory.commit,
       layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
       openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
@@ -864,10 +748,11 @@ export function DashboardPage({
       publishDraft: publishDraftRuntime,
       redoLayout: layoutHistory.redo,
       refresh: refreshRuntimeDashboard,
-      renamePage: renameRuntimePage,
+      renamePage: pageMutations.renamePage,
       renameTitle: renameRuntimeDashboardTitle,
       retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
       retryPublished: () => void loadPublishedRuntime(runtimeSelection.dashboardId),
+      retryWidgetData,
       selectDataset: selectRuntimeDataset,
       selectWidgetDataset: selectRuntimeWidgetDataset,
       selectPage: setSelectedRuntimePageId,
@@ -876,7 +761,7 @@ export function DashboardPage({
       toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
       previewWidget: previewRuntimeWidget,
       undoLayout: layoutHistory.undo,
-      updateWidget: updateRuntimeWidget,
+      updateWidget: widgetMutations.updateWidget,
     };
     const runtimeDatasetState = {
       datasets: availableDashboardDatasets,
@@ -887,14 +772,14 @@ export function DashboardPage({
       selectedDatasetId: editorDatasetId,
     };
     const runtimeViewState = {
-      deletingWidgetId: deletingRuntimeWidgetId,
+      deletingWidgetId: widgetMutations.deletingWidgetId,
       draftError,
       draftLoading,
       draftRuntime,
       canRedoLayout: layoutHistory.canRedo,
       canUndoLayout: layoutHistory.canUndo,
       hasPublishedRevision: runtimeHasPublishedRevision,
-      isAddingPage: isAddingRuntimePage,
+      isAddingPage: pageMutations.isAddingPage,
       isDatasetSidebarOpen,
       isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
@@ -905,7 +790,7 @@ export function DashboardPage({
       pages: runtimePages,
       publishedRuntime,
       realtimeConnectionState,
-      renamingPageId: renamingRuntimePageId,
+      renamingPageId: pageMutations.renamingPageId,
       runtimeError,
       runtimeLoading,
       selectedDraftWidgets: previewDraftWidgets,
@@ -915,7 +800,7 @@ export function DashboardPage({
       selectedWidgetId,
       shareLink: runtimeShareLink,
       title: runtimeTitle,
-      updatingWidgetId: updatingRuntimeWidgetId,
+      updatingWidgetId: widgetMutations.updatingWidgetId,
       widgetScrollTargetId,
     };
 

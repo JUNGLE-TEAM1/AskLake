@@ -11,7 +11,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
+
+
+RuntimeDocumentPath: TypeAlias = Path | str
 
 
 class JsonDocumentState(StrEnum):
@@ -68,9 +71,9 @@ class VersionedNodeBridgePort(Protocol):
 
 
 class RuntimeDocumentStore(Protocol):
-    def read_json(self, path: Path) -> JsonDocument: ...
+    def read_json(self, path: RuntimeDocumentPath) -> JsonDocument: ...
 
-    def write_json_atomic(self, path: Path, payload: dict[str, Any]) -> None: ...
+    def write_json_atomic(self, path: RuntimeDocumentPath, payload: dict[str, Any]) -> None: ...
 
 
 class ObjectManifestPort(Protocol):

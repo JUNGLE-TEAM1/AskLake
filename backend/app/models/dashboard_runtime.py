@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -48,3 +48,27 @@ class DashboardWidget(TimestampMixin, Base):
     layout: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     data: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+
+class DashboardBatchWidgetResult(Base):
+    __tablename__ = "dashboard_batch_widget_results"
+    __table_args__ = (
+        Index(
+            "dashboard_batch_widget_results_dataset_idx",
+            "dataset_id",
+            "dataset_version",
+        ),
+    )
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    dataset_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    widget_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_scope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

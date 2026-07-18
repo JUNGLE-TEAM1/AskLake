@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 
+AWS_BIN="${ASKLAKE_AWS_BIN:-aws}"
+CURL_BIN="${ASKLAKE_CURL_BIN:-curl}"
+PYTHON_BIN="${ASKLAKE_PYTHON_BIN:-python3}"
+SSH_BIN="${ASKLAKE_SSH_BIN:-ssh}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EC2_INSTANCE_ID="${ASKLAKE_EC2_INSTANCE_ID:-${EC2_INSTANCE_ID:-}}"
 EC2_HOST="${ASKLAKE_EC2_HOST:-${EC2_HOST:-}}"
@@ -18,6 +22,7 @@ HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
 AI_HEALTH_PATH="${ASKLAKE_AI_HEALTH_PATH:-/api/health/ai}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
 HEALTH_RETRY_DELAY="${ASKLAKE_HEALTH_RETRY_DELAY:-5}"
+DEPLOY_DIAGNOSTIC_PATH="${ASKLAKE_DEPLOY_DIAGNOSTIC_PATH:-${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -i "$SSH_KEY")
 
 usage() {
@@ -31,6 +36,7 @@ Commands:
   deploy     Start if needed, pull the deploy branch, rebuild Compose, and health check.
   restart    Recreate the Compose stack on the running EC2 instance.
   health     Check HTTPS/API health and remote Compose status.
+  diagnose   Record read-only deployment diagnostics as JSON.
   logs       Tail remote Compose logs. Use ASKLAKE_LOG_SERVICE and ASKLAKE_LOG_LINES.
   ssh        Open an SSH shell to the EC2 instance.
 
@@ -48,6 +54,7 @@ Optional:
   ASKLAKE_APP_URL          Default: https://<resolved-host>, or http://<ipv4-host>
   ASKLAKE_HEALTH_RETRIES   Default: 18
   ASKLAKE_HEALTH_RETRY_DELAY Default: 5 seconds
+  ASKLAKE_DEPLOY_DIAGNOSTIC_PATH Default: \${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json
 EOF
 }
 
@@ -66,7 +73,7 @@ require_instance_id() {
 
 instance_field() {
   local query="$1"
-  aws ec2 describe-instances \
+  "$AWS_BIN" ec2 describe-instances \
     --region "$AWS_REGION" \
     --instance-ids "$EC2_INSTANCE_ID" \
     --query "$query" \
@@ -107,7 +114,11 @@ resolve_app_url() {
 ssh_run() {
   local host
   host="$(resolve_host)"
-  ssh "${SSH_OPTS[@]}" "$EC2_USER@$host" "$@"
+  if ! command -v "$SSH_BIN" >/dev/null 2>&1; then
+    printf 'error: missing command: %s\n' "$SSH_BIN" >&2
+    return 127
+  fi
+  "$SSH_BIN" "${SSH_OPTS[@]}" "$EC2_USER@$host" "$@"
 }
 
 compose_cmd() {
@@ -127,12 +138,25 @@ remote_deploy_preflight() {
 }
 
 remote_trino_enabled() {
-  remote_compose 'config --format json' | python3 -c '
+  remote_compose 'config --format json' | "$PYTHON_BIN" -c '
 import json
 import sys
 
 try:
     enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("TRINO_ENABLED")
+except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+print("true" if str(enabled).strip().lower() == "true" else "false")
+'
+}
+
+remote_clickhouse_enabled() {
+  remote_compose 'config --format json' | "$PYTHON_BIN" -c '
+import json
+import sys
+
+try:
+    enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED")
 except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
     raise SystemExit(1)
 print("true" if str(enabled).strip().lower() == "true" else "false")
@@ -145,7 +169,7 @@ wait_for_ssh() {
 
   printf 'Waiting for SSH on %s...\n' "$host"
   for _ in $(seq 1 60); do
-    if ssh "${SSH_OPTS[@]}" -o ConnectTimeout=5 "$EC2_USER@$host" 'true' >/dev/null 2>&1; then
+    if "$SSH_BIN" "${SSH_OPTS[@]}" -o ConnectTimeout=5 "$EC2_USER@$host" 'true' >/dev/null 2>&1; then
       printf 'SSH is ready.\n'
       return
     fi
@@ -165,12 +189,12 @@ ensure_started() {
       ;;
     stopped)
       printf 'Starting EC2 instance %s...\n' "$EC2_INSTANCE_ID"
-      aws ec2 start-instances --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" >/dev/null
-      aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
+      "$AWS_BIN" ec2 start-instances --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" >/dev/null
+      "$AWS_BIN" ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
       ;;
     pending)
       printf 'EC2 instance is pending; waiting...\n'
-      aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
+      "$AWS_BIN" ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
       ;;
     *)
       die "cannot start from EC2 state: $state"
@@ -181,7 +205,7 @@ ensure_started() {
 }
 
 health_payload_ready() {
-  python3 -c '
+  "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -201,39 +225,50 @@ raise SystemExit(0 if ready else 1)
 '
 }
 
-health_check() {
-  local url
-  local health_payload
-
-  need_command python3
-  url="$(resolve_app_url)"
-
-  for attempt in $(seq 1 "$HEALTH_RETRIES"); do
-    printf 'Checking frontend: %s (attempt %s/%s)\n' "$url" "$attempt" "$HEALTH_RETRIES"
-    if curl -fsSI --max-time 20 "$url" >/dev/null; then
-      printf 'Checking backend: %s%s (attempt %s/%s)\n' "$url" "$HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
-      if health_payload="$(curl -fsS --max-time 20 "${url}${HEALTH_PATH}")"; then
-        if printf '%s' "$health_payload" | health_payload_ready; then
-          printf 'Backend health is deployment-ready.\n'
-          printf 'Checking AI gateway: %s%s (attempt %s/%s)\n' "$url" "$AI_HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
-          if ai_health_payload="$(curl -fsS --max-time 20 "${url}${AI_HEALTH_PATH}")"; then
-            if printf '%s' "$ai_health_payload" | python3 -c '
+ai_health_payload_ready() {
+  "$PYTHON_BIN" -c '
 import json
 import sys
+
 try:
     payload = json.load(sys.stdin)
 except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
     raise SystemExit(1)
+
 raise SystemExit(0 if isinstance(payload, dict) and payload.get("ok") is True else 1)
-'; then
+'
+}
+
+health_check() {
+  local url
+  local health_payload
+
+  need_command "$PYTHON_BIN"
+  url="$(resolve_app_url)"
+
+  for attempt in $(seq 1 "$HEALTH_RETRIES"); do
+    printf 'Checking frontend: %s (attempt %s/%s)\n' "$url" "$attempt" "$HEALTH_RETRIES"
+    if "$CURL_BIN" -fsSI --location --max-time 20 "$url" >/dev/null; then
+      printf 'Checking backend: %s%s (attempt %s/%s)\n' "$url" "$HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
+      if health_payload="$("$CURL_BIN" -fsS --location --max-time 20 "${url}${HEALTH_PATH}")"; then
+        if printf '%s' "$health_payload" | health_payload_ready; then
+          printf 'Backend health is deployment-ready.\n'
+          printf 'Checking AI gateway: %s%s (attempt %s/%s)\n' "$url" "$AI_HEALTH_PATH" "$attempt" "$HEALTH_RETRIES"
+          if ai_health_payload="$("$CURL_BIN" -fsS --location --max-time 20 "${url}${AI_HEALTH_PATH}")"; then
+            if printf '%s' "$ai_health_payload" | ai_health_payload_ready; then
               printf 'AI gateway health is deployment-ready.\n'
               return
             fi
           fi
-          printf 'AI gateway health is not ready.\n' >&2
+          printf 'AI gateway health is not ready after redirect resolution.\n' >&2
+        else
+          printf 'Backend health JSON is not ready after redirect resolution; expected .ok=true and .database.ok=true with .statusCode=200.\n' >&2
         fi
-        printf 'Backend health is not ready; expected JSON booleans .ok=true and .database.ok=true with .statusCode=200.\n' >&2
+      else
+        printf 'Backend health request failed after redirect resolution.\n' >&2
       fi
+    else
+      printf 'Frontend reachability or redirect check failed.\n' >&2
     fi
 
     if [[ "$attempt" -lt "$HEALTH_RETRIES" ]]; then
@@ -293,13 +328,191 @@ verify_trino_runtime() {
   die "Trino production readiness failed"
 }
 
+prepare_clickhouse_runtime() {
+  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
+    printf 'ClickHouse Continuous JOIN is disabled; removing any stale profiled runtime container.\n'
+    remote_compose 'rm -sf clickhouse'
+    return
+  fi
+  remote_compose 'up -d redpanda clickhouse'
+}
+
+bootstrap_metadata_schema() {
+  remote_compose 'up -d --wait postgres'
+  remote_compose 'run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'
+}
+
+verify_clickhouse_runtime() {
+  local attempt
+  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
+    printf 'ClickHouse Continuous JOIN is disabled; runtime readiness check skipped.\n'
+    return
+  fi
+  for attempt in $(seq 1 12); do
+    if remote_compose 'exec -T backend python -c "from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient(); assert client.ping(); client.close()"'; then
+      return
+    fi
+    if [[ "$attempt" -lt 12 ]]; then
+      printf 'ClickHouse readiness is not ready yet (attempt %s/12).\n' "$attempt"
+      sleep 5
+    fi
+  done
+  die "ClickHouse production readiness failed"
+}
+
+DIAGNOSTIC_CHECKS=()
+DIAGNOSTIC_FAILED=false
+
+record_diagnostic_check() {
+  local name="$1"
+  local check_status="$2"
+
+  DIAGNOSTIC_CHECKS+=("${name}=${check_status}")
+  if [[ "$check_status" == "failed" ]]; then
+    DIAGNOSTIC_FAILED=true
+  fi
+}
+
+run_diagnostic_check() {
+  local name="$1"
+  shift
+
+  if "$@" >/dev/null 2>&1; then
+    record_diagnostic_check "$name" passed
+  else
+    record_diagnostic_check "$name" failed
+  fi
+}
+
+diagnostic_backend_health() {
+  local url="$1"
+  local health_payload
+
+  health_payload="$("$CURL_BIN" -fsSL --max-time 20 "${url}${HEALTH_PATH}")" || return 1
+  printf '%s' "$health_payload" | health_payload_ready
+}
+
+diagnostic_ai_health() {
+  local url="$1"
+  local health_payload
+
+  health_payload="$("$CURL_BIN" -fsSL --max-time 20 "${url}${AI_HEALTH_PATH}")" || return 1
+  printf '%s' "$health_payload" | ai_health_payload_ready
+}
+
+diagnose_trino_runtime() {
+  local enabled
+
+  if ! enabled="$(remote_trino_enabled 2>/dev/null)"; then
+    record_diagnostic_check trino_runtime failed
+  elif [[ "$enabled" != "true" ]]; then
+    record_diagnostic_check trino_runtime skipped
+  else
+    run_diagnostic_check trino_runtime \
+      remote_compose 'exec -T backend python scripts/verify-trino-production-readiness.py'
+  fi
+}
+
+diagnose_clickhouse_runtime() {
+  local enabled
+
+  if ! enabled="$(remote_clickhouse_enabled 2>/dev/null)"; then
+    record_diagnostic_check clickhouse_runtime failed
+  elif [[ "$enabled" != "true" ]]; then
+    record_diagnostic_check clickhouse_runtime skipped
+  else
+    run_diagnostic_check clickhouse_runtime \
+      remote_compose 'exec -T backend python -c "from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient(); assert client.ping(); client.close()"'
+  fi
+}
+
+write_deploy_diagnostic() {
+  local app_url="$1"
+  local instance_state_value="$2"
+  local arguments=(
+    --output "$DEPLOY_DIAGNOSTIC_PATH"
+    --command diagnose
+  )
+  local check
+
+  if [[ -n "$app_url" ]]; then
+    arguments+=(--app-url "$app_url")
+  fi
+  if [[ -n "$instance_state_value" ]]; then
+    arguments+=(--instance-state "$instance_state_value")
+  fi
+  for check in "${DIAGNOSTIC_CHECKS[@]}"; do
+    arguments+=(--check "$check")
+  done
+
+  "$PYTHON_BIN" scripts/write-deploy-diagnostic.py "${arguments[@]}"
+}
+
+diagnose_stack() {
+  local state=""
+  local url=""
+
+  DIAGNOSTIC_CHECKS=()
+  DIAGNOSTIC_FAILED=false
+
+  if state="$(instance_state 2>/dev/null)"; then
+    if [[ "$state" == "running" ]]; then
+      record_diagnostic_check ec2_running passed
+    else
+      record_diagnostic_check ec2_running failed
+    fi
+  else
+    record_diagnostic_check ec2_running failed
+  fi
+
+  if url="$(resolve_app_url 2>/dev/null)"; then
+    record_diagnostic_check canonical_url passed
+  else
+    record_diagnostic_check canonical_url failed
+  fi
+
+  if [[ "$state" != "running" ]]; then
+    record_diagnostic_check deploy_env_preflight skipped
+    record_diagnostic_check frontend_health skipped
+    record_diagnostic_check backend_health skipped
+    record_diagnostic_check ai_health skipped
+    record_diagnostic_check compose_status skipped
+    record_diagnostic_check trino_runtime skipped
+    record_diagnostic_check clickhouse_runtime skipped
+  else
+    run_diagnostic_check deploy_env_preflight remote_deploy_preflight
+    if [[ -n "$url" ]]; then
+      run_diagnostic_check frontend_health "$CURL_BIN" -fsSIL --max-time 20 "$url"
+      run_diagnostic_check backend_health diagnostic_backend_health "$url"
+      run_diagnostic_check ai_health diagnostic_ai_health "$url"
+    else
+      record_diagnostic_check frontend_health skipped
+      record_diagnostic_check backend_health skipped
+      record_diagnostic_check ai_health skipped
+    fi
+    run_diagnostic_check compose_status remote_compose 'ps --format json'
+    diagnose_trino_runtime
+    diagnose_clickhouse_runtime
+  fi
+
+  if ! write_deploy_diagnostic "$url" "$state"; then
+    die "could not write deploy diagnostic: $DEPLOY_DIAGNOSTIC_PATH"
+  fi
+
+  printf 'Deploy diagnostic record: %s\n' "$DEPLOY_DIAGNOSTIC_PATH"
+  [[ "$DIAGNOSTIC_FAILED" == "false" ]] || return 1
+}
+
 start_stack() {
   ensure_started
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 
@@ -319,8 +532,8 @@ stop_stack() {
 
   if [[ "$state" != "stopped" ]]; then
     printf 'Stopping EC2 instance %s...\n' "$EC2_INSTANCE_ID"
-    aws ec2 stop-instances --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" >/dev/null
-    aws ec2 wait instance-stopped --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
+    "$AWS_BIN" ec2 stop-instances --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" >/dev/null
+    "$AWS_BIN" ec2 wait instance-stopped --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID"
   fi
 
   printf 'EC2 instance is stopped.\n'
@@ -330,20 +543,26 @@ deploy_stack() {
   ensure_started
   ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 
 restart_stack() {
   ensure_started
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
+  prepare_clickhouse_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
+  verify_clickhouse_runtime
   remote_compose 'ps'
 }
 
@@ -361,7 +580,7 @@ tail_logs() {
 open_ssh() {
   local host
   host="$(resolve_host)"
-  ssh "${SSH_OPTS[@]}" "$EC2_USER@$host"
+  "$SSH_BIN" "${SSH_OPTS[@]}" "$EC2_USER@$host"
 }
 
 main() {
@@ -378,10 +597,8 @@ main() {
       ;;
   esac
 
-  need_command aws
-  need_command curl
-  need_command python3
-  need_command ssh
+  need_command "$AWS_BIN"
+  need_command "$PYTHON_BIN"
   require_instance_id
 
   case "$command" in
@@ -391,6 +608,7 @@ main() {
     deploy) deploy_stack ;;
     restart) restart_stack ;;
     health) health_check && remote_compose 'ps' ;;
+    diagnose) diagnose_stack ;;
     logs) tail_logs ;;
     ssh) open_ssh ;;
     *)

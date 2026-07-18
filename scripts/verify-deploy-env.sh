@@ -109,6 +109,20 @@ case "$trino_enabled_value" in
     ;;
 esac
 
+clickhouse_enabled_value="$(printf '%s' "$(env_value_for CLICKHOUSE_CONTINUOUS_JOIN_ENABLED)" | tr '[:upper:]' '[:lower:]')"
+case "$clickhouse_enabled_value" in
+  true|1|yes)
+    clickhouse_enabled=true
+    ;;
+  ""|false|0|no)
+    clickhouse_enabled=false
+    ;;
+  *)
+    printf 'error: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
+    exit 1
+    ;;
+esac
+
 has_compose_profile() {
   local requested_profile="$1"
   local configured_profiles
@@ -124,6 +138,21 @@ if [[ "$trino_enabled" == "true" ]]; then
   }
 elif has_compose_profile trino; then
   printf 'error: COMPOSE_PROFILES must not include trino when TRINO_ENABLED=false\n' >&2
+  exit 1
+fi
+
+
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  [[ "$trino_enabled" == "true" ]] || {
+    printf 'error: TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
+    exit 1
+  }
+  has_compose_profile clickhouse || {
+    printf 'error: COMPOSE_PROFILES must include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
+    exit 1
+  }
+elif has_compose_profile clickhouse; then
+  printf 'error: COMPOSE_PROFILES must not include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false\n' >&2
   exit 1
 fi
 
@@ -145,9 +174,12 @@ required_keys=(
   ASKLAKE_REPLAY_HOST_INPUT_DIR
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
+  OPENSEARCH_INITIAL_ADMIN_PASSWORD
+  OPENSEARCH_PASSWORD
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
+  RAG_WORKER_TOKEN
   VITE_API_BASE_URL
 )
 
@@ -201,6 +233,15 @@ if [[ "$trino_enabled" == "true" ]]; then
     TRINO_TLS_KEYSTORE_FILE
     TRINO_TLS_KEYSTORE_PASSWORD
     TRINO_USER
+  )
+fi
+
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  required_keys+=(
+    CLICKHOUSE_DATABASE
+    CLICKHOUSE_PASSWORD
+    CLICKHOUSE_URL
+    CLICKHOUSE_USER
   )
 fi
 
@@ -282,6 +323,28 @@ if [[ "$trino_enabled" == "true" ]]; then
   done
 fi
 
+if [[ "$clickhouse_enabled" == "true" ]]; then
+  [[ "$(env_value_for CLICKHOUSE_URL)" == "http://clickhouse:8123" ]] || {
+    printf 'error: CLICKHOUSE_URL must be http://clickhouse:8123 for the production Compose service\n' >&2
+    exit 1
+  }
+  clickhouse_password="$(env_value_for CLICKHOUSE_PASSWORD)"
+  if (( ${#clickhouse_password} < 16 )) || [[ "$clickhouse_password" == *replace-with-* ]]; then
+    printf 'error: CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters\n' >&2
+    exit 1
+  fi
+  clickhouse_database="$(env_value_for CLICKHOUSE_DATABASE)"
+  clickhouse_user="$(env_value_for CLICKHOUSE_USER)"
+  [[ "$clickhouse_database" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    printf 'error: CLICKHOUSE_DATABASE must be a safe identifier\n' >&2
+    exit 1
+  }
+  [[ "$clickhouse_user" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    printf 'error: CLICKHOUSE_USER must be a safe identifier\n' >&2
+    exit 1
+  }
+fi
+
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
 import base64
@@ -342,15 +405,13 @@ app_env="$(env_value_for APP_ENV)"
 backend_legacy_demo_users="$(env_value_for AUTH_LEGACY_DEMO_USERS_ENABLED)"
 frontend_legacy_demo_users="$(env_value_for VITE_AUTH_LEGACY_DEMO_USERS_ENABLED)"
 backend_legacy_demo_users="${backend_legacy_demo_users:-false}"
-frontend_legacy_demo_users="${frontend_legacy_demo_users:-false}"
-for value in "$backend_legacy_demo_users" "$frontend_legacy_demo_users"; do
-  if [[ "$value" != "true" && "$value" != "false" ]]; then
-    printf 'error: legacy demo user flags must be lowercase true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-  fi
-done
-if [[ "$backend_legacy_demo_users" != "$frontend_legacy_demo_users" ]]; then
-  printf 'error: AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match in %s\n' "$ENV_FILE" >&2
+if [[ "$backend_legacy_demo_users" != "false" || -n "$frontend_legacy_demo_users" ]]; then
+  printf 'error: legacy demo identities are test-only and must not be configured in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+frontend_mock_mode="$(env_value_for VITE_USE_MOCK_API)"
+if [[ -n "$frontend_mock_mode" && "$frontend_mock_mode" != "false" ]]; then
+  printf 'error: VITE_USE_MOCK_API is no longer supported by the production frontend\n' >&2
   exit 1
 fi
 
@@ -430,6 +491,7 @@ export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUC
 export ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
+export ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED="$clickhouse_enabled"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -447,6 +509,7 @@ try:
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
     trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
+    clickhouse_enabled = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED"] == "true"
     profiled_trino_services = {
         "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
     }
@@ -454,6 +517,9 @@ try:
         profiled_trino_services.issubset(services)
         if trino_enabled
         else profiled_trino_services.isdisjoint(services)
+    )
+    profile_wiring_valid = profile_wiring_valid and (
+        ("clickhouse" in services) if clickhouse_enabled else ("clickhouse" not in services)
     )
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
@@ -504,6 +570,16 @@ try:
             ))
         else:
             valid = valid and backend.get("TRINO_ENABLED") == "false"
+        if clickhouse_enabled:
+            clickhouse = services["clickhouse"]["environment"]
+            valid = valid and all((
+                backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "true",
+                backend.get("CLICKHOUSE_URL") == "http://clickhouse:8123",
+                backend.get("CLICKHOUSE_USER") == clickhouse.get("CLICKHOUSE_USER"),
+                backend.get("CLICKHOUSE_PASSWORD") == clickhouse.get("CLICKHOUSE_PASSWORD"),
+            ))
+        else:
+            valid = valid and backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "false"
     else:
         minio = services["minio"]["environment"]
         minio_init = services["minio-init"]["environment"]
@@ -543,6 +619,7 @@ unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
+unset ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED
 
 if (( compose_wiring_status != 0 )); then
   printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2

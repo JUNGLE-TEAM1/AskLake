@@ -2,7 +2,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -104,16 +104,40 @@ def blocked_principal_for_actor(db: Session, actor: Any) -> PrincipalControlMode
         if value:
             candidates.append(("user", value))
     candidates.extend(("group", group) for group in actor.groups if group)
-    for principal_type, principal_id in candidates:
-        row = db.scalar(
-            select(PrincipalControlModel)
-            .where(PrincipalControlModel.principal_type == principal_type)
-            .where(PrincipalControlModel.principal_id == principal_id)
-            .where(PrincipalControlModel.status == "blocked")
+    if not candidates:
+        return None
+    return db.scalar(
+        select(PrincipalControlModel)
+        .where(
+            tuple_(
+                PrincipalControlModel.principal_type,
+                PrincipalControlModel.principal_id,
+            ).in_(list(dict.fromkeys(candidates)))
         )
-        if row is not None:
-            return row
-    return None
+        .where(PrincipalControlModel.status == "blocked")
+        .limit(1)
+    )
+
+
+def locked_resource_ids(
+    db: Session,
+    *,
+    resource_ids: list[str],
+    resource_type: str,
+) -> set[str]:
+    normalized_ids = list(dict.fromkeys(
+        validate_required(resource_id, "resourceId")
+        for resource_id in resource_ids
+    ))
+    if not normalized_ids:
+        return set()
+    ensure_governance_tables(db)
+    return set(db.scalars(
+        select(ResourceLockModel.resource_id)
+        .where(ResourceLockModel.resource_type == validate_resource_type(resource_type))
+        .where(ResourceLockModel.resource_id.in_(normalized_ids))
+        .where(ResourceLockModel.locked.is_(True))
+    ).all())
 
 
 def resource_lock_for_action(db: Session, *, action: str, resource_id: str, resource_type: str) -> ResourceLockModel | None:

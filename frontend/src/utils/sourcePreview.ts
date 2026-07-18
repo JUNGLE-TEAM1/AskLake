@@ -36,10 +36,32 @@ export function shouldShowRawTextPreview({
   rawLines: string[];
   sourceType: string;
 }): boolean {
-  if (sourceType === "Stream / Kafka") return rawLines.length > 0;
+  if (sourceType === "Stream / Kafka") {
+    return detectedFormat?.toUpperCase() === "TXT"
+      && requiresRecordParsing === true
+      && rawLines.length > 0;
+  }
 
   return sourceType === "File / S3"
     && detectedFormat?.toUpperCase() === "TXT"
     && requiresRecordParsing === true
+    && rawLines.length > 0;
+}
+
+export function shouldShowJsonPreview({
+  detectedFormat,
+  requiresRecordParsing,
+  rawLines,
+  sourceType,
+}: {
+  detectedFormat?: string;
+  requiresRecordParsing?: boolean;
+  rawLines: string[];
+  sourceType: string;
+}): boolean {
+  const normalizedFormat = detectedFormat?.toUpperCase();
+  return sourceType === "Stream / Kafka"
+    && requiresRecordParsing !== true
+    && ["JSON", "JSONL", "NDJSON"].includes(normalizedFormat ?? "")
     && rawLines.length > 0;
 }

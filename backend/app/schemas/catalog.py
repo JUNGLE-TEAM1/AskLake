@@ -53,6 +53,11 @@ class QueryEngineTableRef(CamelModel):
     partition_columns: list[str] = Field(default_factory=list)
 
 
+class ClickHouseTableRef(CamelModel):
+    database: str
+    table: str
+
+
 class DatasetMaterializationRun(CamelModel):
     created_at: str
     iceberg_committed_at: str | None = None
@@ -103,6 +108,7 @@ class CatalogDatasetResponse(CamelModel):
     schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
+    source_manifest: dict[str, Any] | None = None
     source_run_id: str | None = None
     status: DatasetStatus
     storage_format: str | None = None
@@ -113,6 +119,7 @@ class CatalogDatasetResponse(CamelModel):
     query_engine_table: QueryEngineTableRef | None = None
     query_engine_status: QueryEngineStatus = "unavailable"
     query_engine_error: str | None = None
+    clickhouse_table: ClickHouseTableRef | None = None
     query_engine_required: bool = False
     index_columns: list[str] | None = None
     index_columns_unique: bool = False
@@ -159,6 +166,19 @@ class CatalogDatasetRowsResponse(CamelModel):
     returned_rows: int
     row_count: int
     rows: list[list[str]]
+
+
+class VerifyCatalogUniqueKeyRequest(CamelModel):
+    columns: list[str] = Field(min_length=1, max_length=16)
+
+
+class VerifyCatalogUniqueKeyResponse(CamelModel):
+    columns: list[str]
+    dataset: CatalogDatasetResponse
+    distinct_keys: int = Field(ge=0)
+    invalid_key_rows: int = Field(ge=0)
+    total_rows: int = Field(ge=0)
+    verified: Literal[True] = True
 
 
 class DeleteMaterializationRunResponse(CamelModel):

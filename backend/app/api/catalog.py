@@ -15,6 +15,8 @@ from app.schemas.catalog import (
     CreateDerivedDatasetResponse,
     DeleteMaterializationRunResponse,
     LineageGraphResponse,
+    VerifyCatalogUniqueKeyRequest,
+    VerifyCatalogUniqueKeyResponse,
 )
 from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
@@ -71,6 +73,19 @@ def get_dataset_lineage(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> LineageGraphResponse:
     return service.get_dataset_lineage(dataset_id, actor)
+
+
+@router.post(
+    "/datasets/{dataset_id}/unique-keys/verify-and-register",
+    response_model=VerifyCatalogUniqueKeyResponse,
+)
+def verify_and_register_dataset_unique_key(
+    dataset_id: str,
+    request: VerifyCatalogUniqueKeyRequest,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> VerifyCatalogUniqueKeyResponse:
+    return service.verify_and_register_unique_key(dataset_id, request, actor)
 
 
 @router.delete(

@@ -37,11 +37,15 @@ from app.schemas.continuous_sql import (
     ContinuousSqlPlanRequest,
     ContinuousSqlPlanResponse,
     ContinuousSqlRelationBinding,
+    continuous_sql_serving_mode,
 )
 from app.services.continuous_sql_catalog import ContinuousSqlCatalogResolver
+from app.services.clickhouse_continuous_publication import (
+    ClickHouseContinuousSqlPublicationService,
+)
 from app.services.continuous_sql_gateway import (
     ContinuousSqlWorkerGateway,
-    NodeContinuousSqlWorkerGateway,
+    RoutedContinuousSqlWorkerGateway,
 )
 from app.services.continuous_sql_planner import (
     ContinuousSqlPlanner,
@@ -67,6 +71,7 @@ class ContinuousSqlService:
         runtime_settings: Settings | None = None,
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
+        clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
@@ -74,8 +79,12 @@ class ContinuousSqlService:
         self.catalog_repository = CatalogRepository(db)
         self.catalog_resolver = ContinuousSqlCatalogResolver(db)
         self.planner = ContinuousSqlPlanner()
-        self.gateway = gateway or NodeContinuousSqlWorkerGateway()
+        self.gateway = gateway or RoutedContinuousSqlWorkerGateway(self.settings)
         self.publication_service = publication_service or ContinuousSqlPublicationService(db)
+        self.clickhouse_publication_service = (
+            clickhouse_publication_service
+            or ClickHouseContinuousSqlPublicationService(db)
+        )
 
     def validate(
         self,
@@ -91,6 +100,15 @@ class ContinuousSqlService:
         actor: ActorContext,
     ) -> ContinuousSqlJob:
         self._require_enabled()
+        if request.output.serving_mode == "clickhouse":
+            self._require_clickhouse_enabled()
+            if request.static_binding_policy != "PINNED_AT_START":
+                raise ApiError(
+                    "CONTINUOUS_SQL_CLICKHOUSE_STATIC_BINDING_UNSUPPORTED",
+                    "ClickHouse Continuous SQL currently requires PINNED_AT_START static bindings.",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"staticBindingPolicy": request.static_binding_policy},
+                )
         request_fingerprint = canonical_hash(
             request.model_dump(mode="json", by_alias=True, exclude={"client_request_id"})
         )
@@ -123,10 +141,26 @@ class ContinuousSqlService:
 
         compiled = self._compile(request, actor, api_path="/api/query/continuous-jobs")
         job_id = f"csql_{uuid4().hex}"
-        checkpoint_path = (
-            request.checkpoint_path
-            or f"{request.output.storage_path}/_checkpoints/{job_id}"
-        )
+        if request.output.serving_mode == "clickhouse":
+            if request.output.clickhouse_target is None:
+                raise RuntimeError("Validated ClickHouse output target is missing")
+            output_target = request.output.clickhouse_target
+            output_storage_path = request.output.storage_path or output_target.table_uri
+            checkpoint_path = request.checkpoint_path or (
+                f"{output_target.table_uri}/_consumer/{job_id}"
+            )
+        else:
+            if request.output.iceberg_target is None or request.output.storage_path is None:
+                raise RuntimeError("Validated Iceberg output target is missing")
+            output_target = request.output.iceberg_target
+            output_storage_path = request.output.storage_path
+            checkpoint_path = request.checkpoint_path or (
+                f"{request.output.storage_path}/_checkpoints/{job_id}"
+            )
+        compiled_plan = {
+            **compiled.compiled_plan,
+            "servingMode": request.output.serving_mode,
+        }
         job = ContinuousSqlJobModel(
             id=job_id,
             name=request.name.strip(),
@@ -138,7 +172,7 @@ class ContinuousSqlService:
             normalized_sql=compiled.normalized_sql,
             plan_version=compiled.plan_version,
             plan_hash=compiled.plan_hash,
-            compiled_plan=compiled.compiled_plan,
+            compiled_plan=compiled_plan,
             relation_bindings=[
                 item.model_dump(mode="json", by_alias=True)
                 for item in compiled.relations
@@ -149,8 +183,8 @@ class ContinuousSqlService:
             output_dataset_id=request.output.dataset_id,
             output_dataset_name=request.output.dataset_name,
             output_layer=request.output.layer,
-            output_storage_path=request.output.storage_path,
-            output_target=request.output.iceberg_target.model_dump(mode="json", by_alias=True),
+            output_storage_path=output_storage_path,
+            output_target=output_target.model_dump(mode="json", by_alias=True),
             desired_state="stopped",
             observed_state="stopped",
             generation=0,
@@ -195,6 +229,8 @@ class ContinuousSqlService:
             self._require_enabled()
         job = self._require_job(job_id, actor, for_update=True)
         if request.command in {"start", "resume", "recover"}:
+            if continuous_sql_serving_mode(job) == "clickhouse":
+                self._require_clickhouse_enabled()
             self._require_relation_access(job, actor)
         fingerprint = canonical_hash({"command": request.command})
         existing_command = self.repository.get_command(job.id, request.command_id)
@@ -341,6 +377,52 @@ class ContinuousSqlService:
             else:
                 self._apply_worker_report(job, run, report)
                 self._reconcile_publications(job, run, report)
+        elif (
+            continuous_sql_serving_mode(job) == "clickhouse"
+            and container_state == "running"
+            and run is not None
+        ):
+            if job.desired_state == "running":
+                job.observed_state = "running"
+                run.status = "running"
+            try:
+                self.clickhouse_publication_service.reconcile_progress(job, run, worker)
+                job.last_error_code = None
+                job.last_error_message = None
+                run.last_error_code = None
+                run.last_error_message = None
+            except ValueError as exc:
+                job.last_error_code = "CLICKHOUSE_PUBLICATION_INVALID"
+                job.last_error_message = str(exc)[:2000]
+                run.last_error_code = job.last_error_code
+                run.last_error_message = job.last_error_message
+        elif (
+            continuous_sql_serving_mode(job) == "clickhouse"
+            and container_state == "starting"
+            and run is not None
+        ):
+            if job.desired_state == "running":
+                job.observed_state = "starting"
+                run.status = "starting"
+            job.last_error_code = None
+            job.last_error_message = None
+            run.last_error_code = None
+            run.last_error_message = None
+        elif (
+            continuous_sql_serving_mode(job) == "clickhouse"
+            and container_state == "failed"
+            and run is not None
+        ):
+            job.observed_state = "failed"
+            job.last_error_code = str(
+                worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
+            )
+            job.last_error_message = str(
+                worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
+            )[:2000]
+            run.status = "failed"
+            run.last_error_code = job.last_error_code
+            run.last_error_message = job.last_error_message
         elif container_state in {"exited", "missing", "not_running"}:
             if job.desired_state == "paused":
                 job.observed_state = "paused"
@@ -531,9 +613,22 @@ class ContinuousSqlService:
         container_state = str(worker.get("containerState") or "")
         worker_id = str(worker.get("containerId") or worker.get("workerAttemptId") or "") or None
         if command_name in {"start", "resume", "recover"}:
-            job.observed_state = "running" if container_state == "running" else "starting"
+            if container_state == "failed":
+                job.observed_state = "failed"
+                job.last_error_code = str(
+                    worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
+                )
+                job.last_error_message = str(
+                    worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
+                )[:2000]
+            else:
+                job.observed_state = "running" if container_state == "running" else "starting"
+                job.last_error_code = None
+                job.last_error_message = None
             if run is not None:
                 run.status = job.observed_state
+                run.last_error_code = job.last_error_code
+                run.last_error_message = job.last_error_message
         elif command_name == "pause":
             job.observed_state = "paused" if container_state in {"exited", "not_running"} else "pausing"
             if run is not None:
@@ -550,9 +645,11 @@ class ContinuousSqlService:
                 run.worker_id = worker_id
         command = self.db.get(ContinuousSqlCommandModel, command_record_id)
         if command is not None:
-            command.status = "completed"
+            command.status = "failed" if container_state == "failed" else "completed"
             command.result = {
                 "containerState": container_state or None,
+                "code": job.last_error_code if container_state == "failed" else None,
+                "message": job.last_error_message if container_state == "failed" else None,
                 "workerId": worker_id,
             }
             self.db.add(command)
@@ -658,6 +755,16 @@ class ContinuousSqlService:
             "Continuous SQL JOIN is disabled.",
             status.HTTP_409_CONFLICT,
             {"setting": "CONTINUOUS_SQL_JOIN_ENABLED"},
+        )
+
+    def _require_clickhouse_enabled(self) -> None:
+        if self.settings.clickhouse_continuous_join_enabled:
+            return
+        raise ApiError(
+            "CLICKHOUSE_CONTINUOUS_SQL_DISABLED",
+            "ClickHouse Continuous SQL serving is disabled.",
+            status.HTTP_409_CONFLICT,
+            {"setting": "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED"},
         )
 
     def _require_job(

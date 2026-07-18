@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath } from "../src/pages/etl/stepRegistry.ts";
+import { buildEtlWizardSteps, etlFlowFromRoute, etlFlowPath, etlStyleRoute } from "../src/pages/etl/stepRegistry.ts";
 
 test("snapshot wizard includes optional record parsing and schedule", () => {
   const steps = buildEtlWizardSteps({ continuousKafka: false, requiresRecordParsing: true, scheduleFlow: "repeat" });
@@ -22,4 +22,8 @@ test("registry preserves legacy routes and schedule fallback", () => {
   assert.equal(etlFlowFromRoute("schedule", "manual", 3, "repeat"), "manual");
   assert.equal(etlFlowPath("rules"), "/etl/rules");
   assert.equal(etlFlowPath("repeat"), "/etl/schedule");
+  assert.equal(etlStyleRoute("source"), "source");
+  assert.equal(etlStyleRoute("recordParsing"), "record-parsing");
+  assert.equal(etlStyleRoute("manual"), "schedule");
+  assert.equal(etlStyleRoute("catalog"), null);
 });

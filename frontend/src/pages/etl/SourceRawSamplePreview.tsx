@@ -3,10 +3,11 @@ import { FileText } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 
 type SourceRawSamplePreviewProps = {
+  ariaLabel?: string;
   lines: string[];
 };
 
-export function SourceRawSamplePreview({ lines }: SourceRawSamplePreviewProps) {
+export function SourceRawSamplePreview({ ariaLabel = "원본 로그 샘플", lines }: SourceRawSamplePreviewProps) {
   if (lines.length === 0) {
     return (
       <EmptyState
@@ -23,7 +24,7 @@ export function SourceRawSamplePreview({ lines }: SourceRawSamplePreviewProps) {
   return (
     <div className="source-raw-sample-preview">
       <textarea
-        aria-label="원본 로그 샘플"
+        aria-label={ariaLabel}
         className="source-raw-sample-textarea"
         readOnly
         spellCheck={false}

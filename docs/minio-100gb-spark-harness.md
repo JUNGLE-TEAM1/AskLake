@@ -288,6 +288,31 @@ Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample
 
 Text structuring runs must also verify `quality.reviewRowAnalysisChecks`, `textStructuring.execution`, `runHistory[].textStructuringExecution`, and Catalog `materializationRuns[].textStructuringExecution`. `one_of_values` columns without a compatible model fail preflight unless the column explicitly sets `fallbackAllowed: true`.
 
+### 7.1 Semantic RAG Spark/OpenSearch Harness
+
+RAG parent staging은 API request의 임의 경로를 읽지 않고 control plane manifest의 Catalog/Iceberg source identity를 `spark_iceberg_source_identifier`로 해석한다. 승인된 body/title/metadata/identifier role만 deterministic parent document로 만들고, row validation 실패율이 `RAG_FAILED_ROW_RATE_THRESHOLD`를 넘으면 후속 chunk/index 단계를 실행하지 않는다. driver 재시작 뒤에는 Iceberg schema version과 identifier 중복을 확인한 다음 이미 commit된 parent stage를 재사용한다.
+
+chunk staging은 parent Iceberg table을 읽고 token target/overlap/max 계약으로 generation별 JSONL을 만든다. embedding worker는 input source allowlist, 요청 token, SQLite idempotency record를 확인하고 AI Gateway에서 받은 vector dimension을 검증한 뒤 OpenSearch generation index를 완성한다. alias는 성공한 generation으로만 전환하며 실패한 실행은 이전 serving index를 유지한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q \
+  tests/test_rag_airflow_data_plane.py \
+  tests/test_rag_parent_contract.py \
+  tests/test_rag_preview_production_parity.py \
+  tests/test_rag_chunk_staging_transport.py \
+  tests/test_runtime_script_contracts.py \
+  tests/test_spark_source_identity.py
+
+# disposable/local OpenSearch가 준비된 경우에만 실행
+OPENSEARCH_INTEGRATION_URL=http://127.0.0.1:9200 \
+OPENSEARCH_VERIFY_TLS=false \
+PYTHONPATH=. .venv/bin/python -m pytest -q -m integration \
+  tests/test_opensearch_integration.py
+```
+
+통합 테스트와 cleanup script는 고유 prefix의 index/alias와 지정된 staging artifact만 대상으로 삼는다. 공유 OpenSearch 전체 삭제, warehouse root 삭제, checkpoint 수동 삭제는 정상 검증·복구 절차로 사용하지 않는다.
+
 ## 8. Kafka Continuous Large-Data Soak
 
 Continuous soak는 `ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true`일 때만 실행한다. `ASKLAKE_CONTINUOUS_SOAK_INPUT`을 생략하면 synthetic event를 만들고, 지정하면 `.jsonl` 또는 `.jsonl.gz`를 line streaming으로 읽는다. 전체 Electronics 파일은 CI가 아니라 수동 환경에서 실행하며, `ASKLAKE_CONTINUOUS_SOAK_COUNT`를 생략하면 파일 끝까지 replay한다.
@@ -370,7 +395,7 @@ npm run test:dashboard-live-refresh
 
 실제 Kafka/MinIO/Spark/Catalog 경로는 기존 opt-in `npm run verify:kafka-continuous-e2e`를 사용한다. 이 검증은 published metric 생성, 최초 결과 저장, 새 revision 뒤 widget result 증가까지 포함한다. production compose에서는 관리자 session을 만들 수 있도록 `ASKLAKE_CONTINUOUS_E2E_EMAIL/PASSWORD` 또는 `ASKLAKE_CONTINUOUS_E2E_SESSION_COOKIE`를 전달한다. 대시보드 viewer는 `/dashboards/{dashboardId}` published route에서만 Continuous dataset을 polling하고, 평소에는 서버 권장주기 `clamp(triggerIntervalSeconds * 500, 1000, 60000)`을 따른다. 여러 revision을 따라잡을 때는 응답이 실제 전진한 경우에만 250ms 뒤 다음 revision을 요청한다.
 
-Continuous SQL은 먼저 `npm run verify:continuous-sql-contract`로 plan hash, 지원/거절 SQL, static binding retry, generation/fencing, lifecycle과 publication identity를 검증한다. 실제 harness에서는 Kafka streaming fixture 1개와 unique-key metadata가 있는 작은/큰 Iceberg dimension을 사용해 INNER/LEFT 결과, pinned update 미반영, latest-per-batch update 반영, duplicate key 차단, broadcast threshold, commit 후 fault와 restart 중복 방지를 확인해야 한다. 이 실제 통합 시나리오는 STACK-04 opt-in gate이며 계약 테스트 통과만으로 Spark/Iceberg E2E가 끝났다고 판정하지 않는다.
+Continuous SQL은 먼저 `npm run verify:continuous-sql-contract`로 plan hash, 지원/거절 SQL, static binding retry, generation/fencing, lifecycle과 publication identity를 검증한다. ClickHouse mode는 `npm run verify:clickhouse-kafka-join`으로 실제 Kafka raw-text → RawBLOB parser → raw/output ClickHouse table → Catalog → published Dashboard 경로를 추가 검증한다. 이 smoke는 pause 상태에서 event를 넣어 offset/revision이 그대로인지 확인하고 resume 후 queued event와 이후 event가 Dashboard에 누적되는지 확인한다. static reader는 exact count/page fixture이며 `CLICKHOUSE_E2E_LIVE_TRINO=true`에서 실제 Iceberg snapshot round trip으로 확장한다. Spark/Iceberg mode의 실제 harness에서는 Kafka streaming fixture 1개와 unique-key metadata가 있는 작은/큰 Iceberg dimension을 사용해 INNER/LEFT 결과, pinned update 미반영, latest-per-batch update 반영, duplicate key 차단, broadcast threshold, commit 후 fault와 restart 중복 방지를 확인해야 한다. 이 실제 통합 시나리오는 STACK-04 opt-in gate이며 계약 테스트 통과만으로 전체 E2E가 끝났다고 판정하지 않는다.
 
 운영 로그에서는 다음 event를 확인한다.
 

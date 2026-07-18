@@ -11,6 +11,8 @@ import type {
   DashboardWidgetLayout,
 } from "../../../types";
 import { findNextAvailableLayout, toCollisionLayout } from "./dashboardLayoutUtils";
+import { upsertRuntimeWidget } from "./dashboardRuntimeMutations";
+import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
 import type { CreateDraftWidgetFormInput, ToolbarDraftWidgetKind } from "./dashboardRuntimeTypes";
 import { defaultWidgetColorConfig } from "./widgetDefinitions";
 
@@ -24,10 +26,8 @@ type UseDraftWidgetCreatorParams = {
   defaultLayouts: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout>;
   mode: DashboardRuntimeMode;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  reloadDraftRuntime: (dashboardId: string, options?: { silent?: boolean }) => Promise<unknown>;
   selectedPageId: string | null;
   selectedWidgets: DashboardRuntimeWidget[];
-  setDraftError: (message: string | null) => void;
   setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
   setSelectedWidgetId: (widgetId: string) => void;
   setWidgetScrollTargetId?: (widgetId: string | null) => void;
@@ -75,46 +75,13 @@ function cloneWidgetData(data: Array<Record<string, unknown>>) {
   return data.map((row) => ({ ...row }));
 }
 
-function appendToolbarWidgetToRuntime({
-  id,
-  input,
-  pageId,
-  setDraftRuntime,
-}: {
-  id: string;
-  input: {
-    config: DashboardRuntimeWidgetConfig;
-    data: Array<Record<string, unknown>>;
-    datasetId: null;
-    layout: DashboardWidgetLayout;
-    title: string;
-    type: DashboardRuntimeWidgetType;
-  };
-  pageId: string;
-  setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
-}) {
-  const widget = {
-    config: input.config,
-    data: input.data,
-    datasetId: input.datasetId,
-    id,
-    layout: input.layout,
-    pageId,
-    queryId: null,
-    title: input.title,
-    type: input.type,
-  } as DashboardRuntimeWidget;
-
+function applySavedWidget(
+  widget: DashboardRuntimeWidget,
+  setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>,
+) {
   setDraftRuntime((currentRuntime) => {
     if (!currentRuntime) return currentRuntime;
-    const pageWidgets = currentRuntime.widgetsByPageId[pageId] ?? [];
-    return {
-      ...currentRuntime,
-      widgetsByPageId: {
-        ...currentRuntime.widgetsByPageId,
-        [pageId]: [...pageWidgets.filter((existingWidget) => existingWidget.id !== id), widget],
-      },
-    };
+    return upsertRuntimeWidget(currentRuntime, widget);
   });
 }
 
@@ -123,10 +90,8 @@ export function useDraftWidgetCreator({
   defaultLayouts,
   mode,
   onAction,
-  reloadDraftRuntime,
   selectedPageId,
   selectedWidgets,
-  setDraftError,
   setDraftRuntime,
   setRuntimeNotice,
   setSelectedWidgetId,
@@ -136,16 +101,15 @@ export function useDraftWidgetCreator({
   const [isCreatingToolbarWidget, setIsCreatingToolbarWidget] = useState(false);
 
   const createDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
-    if (mode !== "draft" || !selectedPageId || isCreatingDatasetWidget) return;
+    if (mode !== "draft" || !selectedPageId || isCreatingDatasetWidget) return false;
     const layout = findNextAvailableLayout(
       toCollisionLayout(selectedWidgets),
       defaultLayouts[input.type],
     );
 
     setIsCreatingDatasetWidget(true);
-    setDraftError(null);
     try {
-      const widget = await createDraftWidget(dashboardId, selectedPageId, {
+      const response = await createDraftWidget(dashboardId, selectedPageId, {
         config: input.config,
         data: input.data,
         datasetId: input.datasetId,
@@ -153,14 +117,19 @@ export function useDraftWidgetCreator({
         title: input.title,
         type: input.type,
       });
-      await reloadDraftRuntime(dashboardId, { silent: true });
-      setSelectedWidgetId(widget.id);
-      setWidgetScrollTargetId?.(widget.id);
+      applySavedWidget(response.widget, setDraftRuntime);
+      setSelectedWidgetId(response.widget.id);
+      setWidgetScrollTargetId?.(response.widget.id);
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
       onAction("dashboard.widget.dataset_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId);
+      return true;
     } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
+      setRuntimeNotice({
+        message: dashboardRuntimeErrorMessage(error, "데이터셋 기반 위젯을 추가하지 못했습니다."),
+        tone: "error",
+      });
+      onAction("dashboard.widget.dataset_add_failed", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId, "failed");
+      return false;
     } finally {
       setIsCreatingDatasetWidget(false);
     }
@@ -185,9 +154,8 @@ export function useDraftWidgetCreator({
       };
 
       setIsCreatingToolbarWidget(true);
-      setDraftError(null);
       try {
-        const widget = await createDraftWidget(dashboardId, selectedPageId, {
+        const response = await createDraftWidget(dashboardId, selectedPageId, {
           config: input.config,
           data: input.data,
           datasetId: input.datasetId,
@@ -195,22 +163,20 @@ export function useDraftWidgetCreator({
           title: input.title,
           type: input.type,
         });
-        appendToolbarWidgetToRuntime({
-          id: widget.id,
-          input,
-          pageId: selectedPageId,
-          setDraftRuntime,
-        });
-        setSelectedWidgetId(widget.id);
-        setWidgetScrollTargetId?.(widget.id);
+        applySavedWidget(response.widget, setDraftRuntime);
+        setSelectedWidgetId(response.widget.id);
+        setWidgetScrollTargetId?.(response.widget.id);
         setRuntimeNotice({
           message: kind === "text" ? "텍스트 위젯을 추가했습니다." : "시각화 요청 위젯을 추가했습니다.",
           tone: "success",
         });
         onAction("dashboard.widget.toolbar_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, kind);
       } catch (error) {
-        setDraftError(error instanceof Error ? error.message : "Failed to create a toolbar widget.");
-        setRuntimeNotice({ message: "위젯을 추가하지 못했습니다.", tone: "error" });
+        setRuntimeNotice({
+          message: dashboardRuntimeErrorMessage(error, "위젯을 추가하지 못했습니다."),
+          tone: "error",
+        });
+        onAction("dashboard.widget.toolbar_add_failed", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, kind, "failed");
       } finally {
         setIsCreatingToolbarWidget(false);
       }

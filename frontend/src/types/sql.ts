@@ -65,6 +65,7 @@ export type TrinoQueryRun = {
   engine: "trino";
   estimate?: TrinoQueryRunEstimate | null;
   error?: { code: string; message: string };
+  mode: "preview" | "run";
   query: string;
   referenceDatasetIds: string[];
   result?: {
@@ -108,6 +109,7 @@ export type TrinoQueryRun = {
     totalSplits?: number;
   };
   status: TrinoQueryRunStatus;
+  sourceRunId?: string;
   submittedAt: string;
   trinoQueryId?: string;
 };
@@ -140,6 +142,7 @@ export type CreateDerivedDatasetRequest = {
     databaseName?: string;
     fileFormat?: "csv" | "json" | "parquet";
     owner: string;
+    principalId?: string;
     overlapPolicy: ScheduleOverlapPolicy;
     partitionColumn?: string;
     partitionColumns?: string[];
@@ -173,6 +176,7 @@ export type CreateTrinoSqlJobRequest = {
     accessScope: "organization" | "private" | "project";
     owner: string;
     permissionSummary: string;
+    principalId?: string;
   };
   jobName?: string;
   query: string;

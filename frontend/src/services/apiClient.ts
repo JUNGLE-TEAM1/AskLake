@@ -1,16 +1,13 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 import { resolveMockApiMode } from "./apiRuntimeMode.ts";
+import { apiBaseUrl } from "./apiOrigin.ts";
 
-// Keep production images environment-neutral. The ingress routes the same
-// browser origin to the API, while local development can still opt into an
-// explicit backend URL through VITE_API_BASE_URL.
-const defaultApiBaseUrl = "";
 const mockApiRequested = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 const useMockApi = resolveMockApiMode(mockApiRequested, import.meta.env.DEV);
 
 export const apiConfig = {
-  baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
+  baseUrl: apiBaseUrl,
   useMock: useMockApi,
 };
 
@@ -90,6 +87,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       const detailMessage = typeof payload.error?.details?.message === "string" ? payload.error.details.message : "";
       throw new ApiError({
         code: payload.error?.code ?? fallback.error.code,
+        details: payload.error?.details ?? null,
         diagnosticId: payload.error?.diagnosticId ?? response.headers.get("X-Correlation-ID") ?? undefined,
         message: payload.error?.userMessage || detailMessage || payload.error?.message || validationDetail || fallback.error.message,
         retryable: payload.error?.retryable ?? response.status >= 500,

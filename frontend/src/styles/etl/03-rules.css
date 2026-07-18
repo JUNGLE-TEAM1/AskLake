@@ -213,33 +213,6 @@
   flex: 0 0 auto;
 }
 
-.hegun-rule-segmented {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  border: 1px solid #dbe3ef;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 4px;
-}
-
-.hegun-rule-segmented button {
-  min-height: 30px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 10px;
-}
-
-.hegun-rule-segmented button.active {
-  background: #2563eb;
-  color: #fff;
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.18);
-}
-
 .hegun-rule-field {
   display: grid;
   gap: 8px;
@@ -272,44 +245,6 @@
   line-height: 1.35;
 }
 
-.hegun-rule-options,
-.hegun-rule-toggle {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-height: 44px;
-  align-items: center;
-  border: 1px solid #dbe3ef;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 7px;
-}
-
-.hegun-rule-options.compact {
-  min-height: 42px;
-}
-
-.hegun-rule-options button,
-.hegun-rule-toggle button {
-  min-height: 30px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 10px;
-}
-
-.hegun-rule-options button.active,
-.hegun-rule-toggle button.active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #3730a3;
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.12);
-}
-
 .hegun-rule-select,
 .hegun-rule-expression {
   display: grid;
@@ -331,10 +266,6 @@
   font-weight: 850;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.hegun-rule-expression code {
-  font-family: "SFMono-Regular", Consolas, monospace;
 }
 
 .hegun-rule-select em,
@@ -381,26 +312,6 @@
   flex: 0 0 auto;
 }
 
-.hegun-rule-checkboxes {
-  display: grid;
-  align-content: end;
-  gap: 9px;
-  min-height: 58px;
-  color: #475569;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.hegun-rule-checkboxes label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.hegun-rule-checkboxes input {
-  accent-color: #2563eb;
-}
-
 .hegun-rule-form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -409,34 +320,6 @@
   border-top: 1px solid #eef2f7;
   margin-top: 20px;
   padding-top: 18px;
-}
-
-.python-transform-panel {
-  border-color: #bfdbfe;
-  background: #f8fbff;
-}
-
-.python-code-editor {
-  width: 100%;
-  min-height: 168px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #0f172a;
-  color: #dbeafe;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  padding: 14px;
-  resize: vertical;
-}
-
-.python-preview-table-wrap {
-  margin-top: 16px;
-  overflow-x: auto;
-}
-
-.python-preview-table {
-  min-width: 620px;
 }
 
 .hegun-data-chip {
@@ -946,36 +829,6 @@
   font-size: 12px;
 }
 
-.hegun-validation-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  background: #fef2f2;
-  padding: 12px;
-}
-
-.hegun-validation-summary strong {
-  color: #b91c1c;
-}
-
-.hegun-validation-summary span {
-  border-radius: 999px;
-  background: #fff;
-  color: #991b1b;
-  font-weight: 800;
-  padding: 5px 8px;
-  white-space: normal;
-}
-
 .hegun-invalid-panel {
   border-color: #fecaca;
 }
-
-.lineage-connector {
-  height: 2px;
-  background: #94a3b8;
-}
-

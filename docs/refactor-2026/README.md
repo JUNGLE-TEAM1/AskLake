@@ -18,6 +18,13 @@
 12. [contracts/frontend-state-etl-wizard.md](./contracts/frontend-state-etl-wizard.md): frontend 요청·draft·route·mutation 소유권과 ETL Wizard 모듈 경계
 13. [final-audit.md](./final-audit.md): 정량 재감사, 잔여 위험, END_STATE 증거와 guarded Go/No-Go
 14. [operations/staged-rollout-and-rollback.md](./operations/staged-rollout-and-rollback.md): production 전 수동 gate, canary, 관찰, rollback template
+15. [contracts/deployed-ui-no-reactivation.md](./contracts/deployed-ui-no-reactivation.md): 배포 UI 무변경, compatibility façade 비활성, production mock/legacy 차단 계약
+16. [contracts/etl-job-query-boundary.md](./contracts/etl-job-query-boundary.md): Job list/detail runtime refresh, hydrate, permission과 facet application 경계
+17. [contracts/etl-job-command-boundary.md](./contracts/etl-job-command-boundary.md): Job delete 권한, active workload 보호, 종속 정리와 commit/rollback 경계
+18. [contracts/etl-job-write-boundary.md](./contracts/etl-job-write-boundary.md): 일반 Pipeline create/update validation, identity, mapping, permission과 repository write 경계
+19. [contracts/airflow-execution-publication-boundary.md](./contracts/airflow-execution-publication-boundary.md): Snapshot Airflow Spark 실행 lease·finalize와 Catalog reconciliation transaction 경계
+20. [contracts/source-connector-authority-boundary.md](./contracts/source-connector-authority-boundary.md): Source connector Python use case와 Node runtime adapter 권위 경계
+21. [contracts/control-plane-deployment-ownership.md](./contracts/control-plane-deployment-ownership.md): EKS·EC2 Continuous deployment cell의 단일-owner 선언과 정적 검증 계약
 
 ## 기준선 재생성
 

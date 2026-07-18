@@ -3,7 +3,7 @@ from typing import Iterable
 from uuid import uuid4
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -36,15 +36,27 @@ def list_permission_grants_by_resource(
 
     ensure_permission_grant_table(db)
     grouped: dict[PermissionResourceKey, list[PermissionGrant]] = defaultdict(list)
-    for resource_type, resource_id in keys:
-        rows = db.scalars(
-            select(PermissionGrantModel)
-            .where(PermissionGrantModel.resource_type == resource_type)
-            .where(PermissionGrantModel.resource_id == resource_id)
-            .where(PermissionGrantModel.source != DELETED_SEED_SOURCE)
-            .order_by(PermissionGrantModel.created_at.asc(), PermissionGrantModel.id.asc())
+    for key in keys:
+        grouped[key]
+
+    rows = db.scalars(
+        select(PermissionGrantModel)
+        .where(
+            tuple_(
+                PermissionGrantModel.resource_type,
+                PermissionGrantModel.resource_id,
+            ).in_(keys)
         )
-        grouped[(resource_type, resource_id)].extend(row_to_permission_grant(row) for row in rows)
+        .where(PermissionGrantModel.source != DELETED_SEED_SOURCE)
+        .order_by(
+            PermissionGrantModel.resource_type.asc(),
+            PermissionGrantModel.resource_id.asc(),
+            PermissionGrantModel.created_at.asc(),
+            PermissionGrantModel.id.asc(),
+        )
+    ).all()
+    for row in rows:
+        grouped[(row.resource_type, row.resource_id)].append(row_to_permission_grant(row))
     return dict(grouped)
 
 

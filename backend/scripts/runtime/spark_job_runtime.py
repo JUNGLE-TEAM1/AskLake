@@ -34,6 +34,11 @@ from runtime.contracts import (
     write_report,
 )
 from runtime.config import SparkJobConfig
+from runtime.spark_iceberg_identifiers import (
+    quote_spark_identifier,
+    read_spark_iceberg_source,
+    required_iceberg_identifier,
+)
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -726,13 +731,6 @@ def parse_iceberg_target(value):
     return target
 
 
-def required_iceberg_identifier(value, field):
-    identifier = str(value or "").strip()
-    if not identifier or len(identifier) > 255 or any(character in identifier for character in ('`', '"', "'", ";", "\x00")):
-        raise ValueError(f"ICEBERG_TARGET_INVALID {field}")
-    return identifier
-
-
 def safe_identifier(value):
     return re.sub(r"[^0-9A-Za-z_-]+", "_", str(value or "value")).strip("_") or "value"
 
@@ -742,10 +740,6 @@ def spark_iceberg_catalog_name():
         os.environ.get("ASKLAKE_SPARK_ICEBERG_CATALOG_NAME") or "asklake",
         "sparkCatalog",
     )
-
-
-def quote_spark_identifier(value):
-    return f"`{str(value).replace('`', '``')}`"
 
 
 def spark_iceberg_table_identifier(target):
@@ -1109,7 +1103,7 @@ def cleanup_failed_output_paths(spark, output_path):
     return errors
 
 
-def make_spark(source_collection=None, iceberg_target=None):
+def make_spark(source_collection=None, iceberg_target=None, *, disable_speculation=False):
     change_detection_source = source_change_detection_mode(source_collection)
     builder = configure_spark_builder(
         SparkSession.builder.appName(os.environ.get("ASKLAKE_SPARK_APP_NAME", "asklake-pipeline-run"))
@@ -1118,6 +1112,11 @@ def make_spark(source_collection=None, iceberg_target=None):
         .config("spark.hadoop.fs.s3a.change.detection.mode", "server")
         .config("spark.hadoop.fs.s3a.change.detection.version.required", "true")
     )
+    if disable_speculation:
+        # RAG stages perform idempotent-but-external HTTP work per partition.
+        # A speculative duplicate would waste provider calls and can race the
+        # stage callback even though the final writes are job scoped.
+        builder = builder.config("spark.speculation", "false")
     if iceberg_target:
         catalog = spark_iceberg_catalog_name()
         jdbc_url = required_env("ASKLAKE_SPARK_ICEBERG_JDBC_URL")
@@ -1201,8 +1200,11 @@ def read_source(
     record_parsing=None,
     source_collection=None,
     transform_steps=None,
+    source_snapshot_id=None,
 ):
     source_collection = source_collection or {}
+    if source_format == "iceberg":
+        return read_spark_iceberg_source(spark, source_path, source_snapshot_id)
     exact_paths = incremental_source_paths(source_path, source_collection)
     if exact_paths == []:
         return empty_source_frame(spark, schema_columns)
