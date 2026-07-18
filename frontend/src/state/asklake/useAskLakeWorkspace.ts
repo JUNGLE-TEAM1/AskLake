@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import type { FlowId } from "../../types";
+import { wizardFlows } from "../../data/appShellData";
 import type { WriteAuditLog } from "./contracts";
 import { getWorkspaceDataRequirements } from "./routeDataRequirements";
 import { useCatalogHydration } from "./useCatalogHydration";
@@ -22,12 +24,22 @@ export function useAskLakeWorkspace({
   writeAuditLog: WriteAuditLog;
 }) {
   const state = useAskLakeWorkspaceState();
+  const previousFlowRef = useRef<FlowId | null>(null);
   const dataRequirements = getWorkspaceDataRequirements(activeFlow);
   const jobsHydration = useJobsHydration({ enabled: enabled && dataRequirements.jobs, showToast, state });
   const catalogHydration = useCatalogHydration({ enabled: enabled && dataRequirements.catalog, showToast, state });
   const pipeline = usePipelineMutations({ onFlowChange, showToast, state, writeAuditLog });
   const catalog = useCatalogController({ onFlowChange, showToast, state, writeAuditLog });
   const jobs = useJobController({ enabled: enabled && dataRequirements.jobs, onFlowChange, showToast, state, writeAuditLog });
+
+  useEffect(() => {
+    const previousFlow = previousFlowRef.current;
+    previousFlowRef.current = activeFlow;
+    if (!previousFlow || !wizardFlows.includes(previousFlow) || wizardFlows.includes(activeFlow)) return;
+    pipeline.resetDraftPipeline();
+    window.localStorage.removeItem("asklake.targetConfigDraft");
+  }, [activeFlow, pipeline]);
+
   const refreshData = async () => {
     if (dataRequirements.jobs) return jobsHydration.refreshJobs();
     if (dataRequirements.catalog) return catalogHydration.refreshCatalog();
@@ -60,12 +72,14 @@ export function useAskLakeWorkspace({
     openJobDetail: jobs.openJobDetail,
     openJobRuns: jobs.openJobRuns,
     refreshData,
+    resetDraftPipeline: pipeline.resetDraftPipeline,
     runsByJobId: state.runsByJobId,
     selectedDataset: state.selectedDataset,
     selectedJob: state.selectedJob,
     selectedRunIdByJobId: state.selectedRunIdByJobId,
     selectRunForJob: jobs.selectRunForJob,
     setSelectedDataset: state.setSelectedDataset,
+    setJobs: state.setJobs,
     setSelectedJob: state.setSelectedJob,
     setSqlResultDraft: state.setSqlResultDraft,
     sqlResultDraft: state.sqlResultDraft,

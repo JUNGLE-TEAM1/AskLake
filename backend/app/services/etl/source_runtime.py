@@ -7,6 +7,7 @@ RUNTIME_NAMES = {
     'ApiError',
     'BACKEND_DIR',
     'Boto3ObjectManifestAdapter',
+    'Boto3RuntimeDocumentStore',
     'DashboardLiveRepository',
     'Exception',
     'IcebergWriterTarget',
@@ -58,6 +59,7 @@ RUNTIME_NAMES = {
     'read_continuous_maintenance_result_candidate',
     'read_continuous_replay_manifest',
     'read_runtime_json',
+    'runtime_document_store_for_path',
     'repair_incomplete_airflow_successes',
     'reversed',
     'run_node_bridge',
@@ -565,22 +567,28 @@ def bounded_environment_integer(name: str, *, default: int, minimum: int, maximu
 
 
 def read_runtime_json(
-    path: Path,
+    path: Path | str,
     *,
     document_store: RuntimeDocumentStore | None = None,
 ) -> JsonDocument:
-    store = document_store or JsonFileRuntimeDocumentStore()
+    store = document_store or runtime_document_store_for_path(path)
     return store.read_json(path)
 
 
 def write_runtime_json_atomic(
-    path: Path,
+    path: Path | str,
     payload: dict[str, Any],
     *,
     document_store: RuntimeDocumentStore | None = None,
 ) -> None:
-    store = document_store or JsonFileRuntimeDocumentStore()
+    store = document_store or runtime_document_store_for_path(path)
     store.write_json_atomic(path, payload)
+
+
+def runtime_document_store_for_path(path: Path | str) -> RuntimeDocumentStore:
+    if isinstance(path, str) and re.match(r"^s3a?://", path, re.IGNORECASE):
+        return Boto3RuntimeDocumentStore(build_catalog_s3_client())
+    return JsonFileRuntimeDocumentStore()
 
 
 def object_manifest_port(client: Any | None = None) -> ObjectManifestPort:
@@ -667,6 +675,7 @@ EXPORTED_FUNCTIONS = (
     'bounded_environment_integer',
     'read_runtime_json',
     'write_runtime_json_atomic',
+    'runtime_document_store_for_path',
     'object_manifest_port',
     'marker_payload',
     'persisted_stream_partition_cursors',

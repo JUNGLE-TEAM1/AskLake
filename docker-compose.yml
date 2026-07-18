@@ -254,6 +254,23 @@ services:
       timeout: 5s
       retries: 30
 
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    container_name: asklake-opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - asklake_opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   postgres:
     image: postgres:16-alpine
     container_name: asklake-postgres
@@ -278,3 +295,4 @@ volumes:
   asklake_minio_data:
   asklake_postgres_data:
   asklake_redpanda_data:
+  asklake_opensearch_data:

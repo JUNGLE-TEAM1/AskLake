@@ -15,7 +15,7 @@
 ## Production activation
 
 - production build의 `VITE_USE_MOCK_API` 기본값은 `false`다. production에서 `true`를 요청하면 `resolveMockApiMode`가 fail closed 한다.
-- `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED` 기본값은 Dockerfile, Compose와 배포 예시 환경 모두 `false`다.
+- `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`의 Dockerfile·Compose 기본값은 `false`다. Production env 예시에는 이 변수를 선언하지 않으며 deploy preflight가 변수 존재 자체를 거부한다.
 - 후속 리팩토링은 mock source, legacy demo identity, compatibility UI를 편의를 위해 활성화하지 않는다.
 
 ## UI 불변 범위

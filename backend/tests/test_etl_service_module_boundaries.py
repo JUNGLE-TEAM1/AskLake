@@ -204,7 +204,7 @@ REVIEWED_FUNCTION_DIGESTS = {
     etl_runtime_support: "807791fb9c47f2383f8dc53c5242a3305678360feae98d6a9f00ee427712c154",
     etl_source_window: "4002bc295053f657e696c40158e6773b567b83913e63b6585f85e42b9ea308c9",
     etl_run_projection: "ff493b426e96da4accd3b07a6d86d2454d9e16aa37064746d164dbe90e727b78",
-    etl_catalog_projection: "7b28d8b194fc76ccd3a8dee96ff5cd3dd1691fd2e16e5665e166657a37a41265",
+    etl_catalog_projection: "ebb140d6fbc27163ee37e70e441fb4b38714748f48d2f58db58453328fb7fb87",
     etl_pipeline_policy: "7775ae03c5ac2c10906023b4e3b3d2819c783bc7f899230530cae49d080b62cc",
 }
 
@@ -222,14 +222,14 @@ RUNTIME_FACADE_MODULES = (
 
 RUNTIME_FACADE_DIGESTS = {
     api_job_operations: "75e6bd3df869cca9e2bda400cde9a7a064c46011b5af93a61550aba108ff01c0",
-    api_review_operations: "f5b13351b299fadb0e631b5652d2fe64c7faabc73cfe9228a54e6a45d47dc6ce",
+    api_review_operations: "2be232ab29999cf95de561949640ac487ce10c8a3837132c0d3a74779c66ebab",
     snapshot_operations: "a810d372db02d45cb3b2b55cdf8fcdcef22ae7301dded7cc663bb3d33d49f1bc",
     airflow_operations: "ff02895cabbf2decc920a8d2162a9f54fa6fdd56ab2a4c1ef641e950e533d32e",
-    source_runtime: "40ba602faeab826682f2bfecfe07981a6ee1bdd2b6040219b8ba1ae88120a535",
+    source_runtime: "22a2c6dbc4bc1381fab573d847985c674c02775023b5d0adf3ddfa06a14b5417",
     continuous_maintenance: "8adaf231c1e8f7c4e3c839be8d9f5ecdc34b1b567e0bda7f03cf8e7025fcf75a",
     continuous_session: "38179b3174532a806441c973e20f3ebd16806194750e513ce44657f32c4fd9ee",
-    continuous_publication: "5acad030640e9b1d08559aaf9e064693bd9492f17b202be44e226cc5327db768",
-    replay_schedule: "525764a61a9e84ae1cddcad7a80754c85d45eb7817cc4b633a6b0801368d0e89",
+    continuous_publication: "c931caacd76029934f696b626c76b329bd9338e30f63abcf1bb918c62a1daab9",
+    replay_schedule: "02df7315c31da09c0b2505f40c19dd5a153272d52342851a70e5a3db2aafc69d",
 }
 
 

@@ -2,7 +2,7 @@
 
 ## 목적
 
-Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 Continuous control plane을 함께 사용한다. 두 deployment cell이 같은 장기 reconciliation loop를 동시에 소유한다고 선언하면 동일 Job에 중복 명령이 전달될 수 있으므로, 배포 전에 machine-readable topology에서 owner 수를 검증한다.
+Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Continuous worker를 함께 사용한다. 두 deployment cell이 같은 장기 reconciliation loop를 동시에 소유한다고 선언하면 동일 Job에 중복 명령이 전달될 수 있으므로, 배포 전에 machine-readable topology에서 owner 수를 검증한다.
 
 이 계약은 현재 실행 위치를 옮기거나 FastAPI background task를 켜고 끄지 않는다. 현재 배포 기준을 명시하고 이후 manifest 변경에서 중복 claim을 차단하는 정적 guard다.
 
@@ -12,10 +12,12 @@ Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 Continuous co
 
 | Control plane | Runtime entrypoint evidence | 현재 owner |
 | --- | --- | --- |
-| Kafka Continuous runtime reconciliation | `backend/app/main.py::sync_active_kafka_continuous_runtimes` | `ec2-continuous-control-plane` |
-| Continuous SQL runtime reconciliation | `backend/app/main.py::sync_active_continuous_sql_jobs` | `ec2-continuous-control-plane` |
+| Kafka Continuous runtime reconciliation | `backend/app/continuous_worker.py::sync_active_kafka_continuous_runtimes` | `ec2-continuous-worker` |
+| Continuous SQL runtime reconciliation | `backend/app/continuous_worker.py::sync_active_continuous_sql_jobs` | `ec2-continuous-worker` |
 
 `eks-web-finite-batch`는 현재 배포 topology에 존재하지만 위 두 장기 control plane을 claim하지 않는다. EKS/EC2의 실제 rollout 또는 역할 이동은 manifest 한 줄만 바꾸는 작업이 아니며, 대상 runtime 설정과 배포 증거를 같은 PR에 포함해야 한다.
+
+EKS Continuous gateway와 worker template은 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `deploy/kubernetes/continuous-worker.yaml.template`은 `asklake-backend` service account의 SparkApplication RBAC를 재사용하는 future rollout artifact이며, apply 전에 EC2 worker를 제거하고 canonical ownership manifest를 같은 release에서 바꿔야 한다.
 
 ## 실패 조건
 

@@ -19,10 +19,41 @@ from app.models.dashboard_runtime import (
     DashboardRevision,
     DashboardWidget,
 )
-from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
-from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
+from app.models.etl import (
+    ContinuousControlLeaseModel,
+    ETLJobModel,
+    ETLRunModel,
+    KafkaContinuousBatchModel,
+    KafkaContinuousMaintenanceRunModel,
+    KafkaContinuousRuntimeModel,
+    KafkaContinuousSessionModel,
+    KafkaSnapshotModel,
+    ReviewAnalysisRunModel,
+)
+from app.models.identity import (
+    AiContextConsumptionModel,
+    AiGenerationUsageModel,
+    AuditEventModel,
+    PermissionGrantModel,
+    PrincipalControlModel,
+    ResourceLockModel,
+)
 from app.models.realtime import RealtimeEventModel
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
+from app.models.semantic_rag import (
+    RagClassificationRunModel,
+    RagColumnRecommendationModel,
+    RagDatasetProfileModel,
+    RagIndexJobModel,
+    RagIndexManifestModel,
+    SemanticDimensionModel,
+    SemanticMetricModel,
+    SemanticModelDatasetModel,
+    SemanticModelModel,
+    SemanticModelVersionModel,
+    SemanticRelationshipModel,
+    SemanticVocabularyModel,
+)
 
 __all__ = [
     "CatalogDatasetModel",
@@ -40,16 +71,32 @@ __all__ = [
     "DashboardWidget",
     "ETLJobModel",
     "ETLRunModel",
+    "ReviewAnalysisRunModel",
+    "ContinuousControlLeaseModel",
     "KafkaContinuousRuntimeModel",
     "KafkaContinuousSessionModel",
     "KafkaContinuousBatchModel",
     "KafkaContinuousMaintenanceRunModel",
     "KafkaSnapshotModel",
     "AuditEventModel",
+    "AiGenerationUsageModel",
+    "AiContextConsumptionModel",
     "PermissionGrantModel",
     "PrincipalControlModel",
     "ResourceLockModel",
     "RealtimeEventModel",
     "SqlRunModel",
     "SqlRunResultPageModel",
+    "SemanticModelModel",
+    "SemanticModelVersionModel",
+    "SemanticModelDatasetModel",
+    "SemanticMetricModel",
+    "SemanticDimensionModel",
+    "SemanticRelationshipModel",
+    "SemanticVocabularyModel",
+    "RagDatasetProfileModel",
+    "RagClassificationRunModel",
+    "RagColumnRecommendationModel",
+    "RagIndexJobModel",
+    "RagIndexManifestModel",
 ]

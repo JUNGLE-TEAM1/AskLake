@@ -11,6 +11,7 @@ import re
 import subprocess
 import threading
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import status
@@ -328,7 +329,9 @@ class VersionedNodeBridge:
 class JsonFileRuntimeDocumentStore:
     """Read and atomically write runtime-owned JSON documents."""
 
-    def read_json(self, path: Path) -> JsonDocument:
+    def read_json(self, path: Path | str) -> JsonDocument:
+        if isinstance(path, str):
+            raise ValueError("JsonFileRuntimeDocumentStore only accepts local paths.")
         try:
             raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -351,7 +354,9 @@ class JsonFileRuntimeDocumentStore:
             )
         return JsonDocument(JsonDocumentState.FOUND, value=value)
 
-    def write_json_atomic(self, path: Path, payload: dict[str, Any]) -> None:
+    def write_json_atomic(self, path: Path | str, payload: dict[str, Any]) -> None:
+        if isinstance(path, str):
+            raise ValueError("JsonFileRuntimeDocumentStore only accepts local paths.")
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
         try:
@@ -362,6 +367,70 @@ class JsonFileRuntimeDocumentStore:
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+class Boto3RuntimeDocumentStore:
+    """Read and replace runtime JSON documents in S3-compatible object storage.
+
+    S3 object replacement is atomic from readers' perspective. This adapter is
+    deliberately limited to a single object key; it does not pretend that S3
+    offers filesystem-style rename semantics.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def read_json(self, path: Path | str) -> JsonDocument:
+        bucket, key = _s3_runtime_document_location(path)
+        try:
+            body = self._client.get_object(Bucket=bucket, Key=key).get("Body")
+            raw = body.read() if body is not None and hasattr(body, "read") else body
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw or "")
+        except Exception as exc:  # boto3 exposes provider-specific exception types.
+            if _is_missing_s3_object(exc):
+                return JsonDocument(JsonDocumentState.MISSING)
+            return JsonDocument(JsonDocumentState.UNREADABLE, error=str(exc))
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return JsonDocument(
+                JsonDocumentState.INVALID,
+                error=str(exc),
+                line=exc.lineno,
+                column=exc.colno,
+            )
+        if not isinstance(value, dict):
+            return JsonDocument(
+                JsonDocumentState.INVALID,
+                error="Runtime JSON document must contain an object.",
+            )
+        return JsonDocument(JsonDocumentState.FOUND, value=value)
+
+    def write_json_atomic(self, path: Path | str, payload: dict[str, Any]) -> None:
+        bucket, key = _s3_runtime_document_location(path)
+        self._client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json; charset=utf-8",
+        )
+
+
+def _s3_runtime_document_location(path: Path | str) -> tuple[str, str]:
+    raw = str(path)
+    parsed = urlparse(re.sub(r"^s3a://", "s3://", raw, flags=re.IGNORECASE))
+    bucket = parsed.netloc.strip()
+    key = parsed.path.lstrip("/").strip()
+    if parsed.scheme != "s3" or not bucket or not key:
+        raise ValueError(f"Runtime document path must be an S3 object URI: {raw}")
+    return bucket, key
+
+
+def _is_missing_s3_object(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    code = str(error.get("Code") or "") if isinstance(error, dict) else ""
+    return code in {"NoSuchKey", "404", "NotFound", "NoSuchObject"}
 
 
 _SECRET_FIELD_PATTERN = re.compile(

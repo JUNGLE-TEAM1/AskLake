@@ -22,7 +22,7 @@ def settings_with_env(**values: str) -> Settings:
     environment = {key: value for key, value in os.environ.items() if key not in REALTIME_ENV_KEYS}
     environment.update(values)
     with patch.dict(os.environ, environment, clear=True):
-        return Settings(_env_file=None)
+        return Settings(app_env="test", _env_file=None)
 
 
 class RealtimeFeatureFlagTests(unittest.TestCase):

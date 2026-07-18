@@ -79,6 +79,10 @@ class EtlEndpointAuthTests(unittest.TestCase):
 
     def test_job_statuses_static_route_collects_repeated_job_ids(self) -> None:
         app = create_app()
+        app.dependency_overrides[get_actor_context] = lambda: ActorContext(
+            name="Admin User",
+            role="admin",
+        )
         client = TestClient(app)
         with patch.object(
             etl_api.etl_service,

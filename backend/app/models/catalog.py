@@ -19,6 +19,7 @@ class CatalogDatasetModel(TimestampMixin, Base):
     status: Mapped[str | None] = mapped_column(String(64), default="available")
     freshness: Mapped[str | None] = mapped_column(String(64), default="latest")
     source: Mapped[str | None] = mapped_column(String(255))
+    source_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     rows: Mapped[str | None] = mapped_column(String(120), default="0")
     size: Mapped[str | None] = mapped_column(String(120), default="Pending")
     quality: Mapped[str | None] = mapped_column(String(255), default="확인 대기")

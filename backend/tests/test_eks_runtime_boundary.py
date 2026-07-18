@@ -138,6 +138,56 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
         scheduled_tick.assert_awaited_once()
         continuous_sync.assert_not_called()
 
+    def test_lifespan_starts_continuous_sync_only_for_embedded_local_owner(self) -> None:
+        scenarios = (
+            ("local", "embedded", True),
+            ("local", "disabled", False),
+            ("local", "worker", False),
+            ("external_ec2", "embedded", False),
+        )
+
+        for pair_control_plane, runtime_control_plane, should_start in scenarios:
+            with self.subTest(
+                pair_control_plane=pair_control_plane,
+                runtime_control_plane=runtime_control_plane,
+            ):
+                @asynccontextmanager
+                async def internal_mcp_lifespan():
+                    yield
+
+                app = SimpleNamespace(
+                    state=SimpleNamespace(internal_mcp_lifespan=internal_mcp_lifespan),
+                )
+                continuous_sync = AsyncMock()
+
+                async def exercise_lifespan() -> None:
+                    with (
+                        patch.object(
+                            main_module.settings,
+                            "asklake_continuous_control_plane",
+                            pair_control_plane,
+                        ),
+                        patch.object(
+                            main_module.settings,
+                            "continuous_control_plane",
+                            runtime_control_plane,
+                        ),
+                        patch.object(main_module, "initialize_auth_on_startup"),
+                        patch.object(main_module, "snapshot_airflow_sync_loop", AsyncMock()),
+                        patch.object(main_module, "scheduled_job_tick_loop", AsyncMock()),
+                        patch.object(main_module, "review_analysis_worker_loop", AsyncMock()),
+                        patch.object(main_module, "continuous_runtime_sync_loop", continuous_sync),
+                    ):
+                        async with main_module.lifespan(app):
+                            await asyncio.sleep(0)
+
+                asyncio.run(exercise_lifespan())
+
+                if should_start:
+                    continuous_sync.assert_awaited_once()
+                else:
+                    continuous_sync.assert_not_called()
+
     def test_external_ec2_rejects_continuous_dataset_freshness_read(self) -> None:
         catalog_repository = Mock()
         catalog_repository.get_dataset_payload.return_value = {"id": "DATASET-CONTINUOUS"}

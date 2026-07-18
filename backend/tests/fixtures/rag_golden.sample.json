@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "review-delivery",
+      "datasetId": "customer_reviews",
+      "query": "배송이 늦었다는 리뷰",
+      "filters": {"rating": {"operator": "lte", "value": 2}},
+      "k": 8,
+      "relevantParentDocumentIds": ["review-parent-001"],
+      "relevantChunkDocumentIds": ["review-chunk-001"],
+      "parentRelevance": {"review-parent-001": 2},
+      "chunkRelevance": {"review-chunk-001": 2}
+    }
+  ]
+}

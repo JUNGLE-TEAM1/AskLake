@@ -135,6 +135,7 @@ def list_job_statuses(
             updated_at=job.updated_at,
             latest_run=(job.run_history or [None])[0],
             dag_steps=job.dag_steps or [],
+            continuous_runtime=job.continuous_runtime,
         )
         for job_id in normalized_job_ids
         if (job := jobs_by_id.get(job_id)) is not None
