@@ -56,6 +56,16 @@ AskLake/
 
 ## 3) 기술 스택
 
+### Continuous Control Plane Ownership
+
+Kafka Continuous Job의 API 명령은 PostgreSQL metadata에 desired state만 저장한다. production web/API process는 `CONTINUOUS_CONTROL_PLANE=disabled`로 실행하며 Spark 시작·중지·재조정 side effect를 수행하지 않는다. 별도 `continuous-worker`만 `worker` mode와 PostgreSQL lease를 통해 동일 DB의 intent를 읽고 실행한다. lease의 `generation`은 control-plane owner fencing이며, stream runtime의 `workerAttemptId`와 별개다.
+
+Continuous runtime report, command, Catalog ACK는 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX`가 비어 있으면 Compose의 mounted local report directory를 사용한다. 값이 `s3://` 또는 `s3a://` URI이면 FastAPI/worker는 S3 object adapter로, Spark driver는 Hadoop S3A filesystem으로 같은 JSON object를 읽고 쓴다. 따라서 API pod와 Spark driver pod가 서로 다른 local volume을 공유하지 않아도 status hydration과 pause/stop command를 전달할 수 있다. S3 object replacement는 reader 관점에서 atomic하지만, 이 문서는 lock이 아니며 command ordering/fencing의 authority는 PostgreSQL `stateRevision`과 worker attempt token이다.
+
+EKS Continuous 실행은 `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes`일 때 전용 SparkApplication gateway가 Spark Operator API로 `Python` cluster-mode application을 생성한다. application은 Job ID와 worker attempt ID label을 갖고, digest-pinned `ASKLAKE_SPARK_KUBERNETES_IMAGE`, service account, private runtime-document S3 prefix를 모두 요구한다. JDBC URL/user/password는 SparkApplication spec에 평문으로 넣지 않고 `ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME`의 `secretKeyRef`로만 전달한다. pause/stop command도 worker attempt token을 포함해 새 attempt가 이전 command를 적용하지 않게 하며, SparkApplication `COMPLETED`는 공통 runtime의 정상 종료 상태 `exited`로 정규화한다. 이 모드는 일반 유한 Spark batch runner의 `ASKLAKE_SPARK_RUNNER`와 분리되어 있다.
+
+브라우저는 `/api/etl/jobs/statuses`의 persisted `continuousRuntime`을 일반 Job status polling과 같은 경로로 읽는다. 따라서 새로고침 후에도 frontend memory가 아니라 metadata DB의 Job/detail/runtime 상태로 hydrate한다. SSE는 dashboard domain event에만 사용하며 Continuous 상태의 canonical source는 status API다.
+
 | 영역 | 현재 선택 | 상태 | 메모 |
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |

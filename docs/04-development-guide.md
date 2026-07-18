@@ -633,7 +633,44 @@ cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-Backend는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+
+API/worker와 Spark driver가 같은 mounted report directory를 공유하지 않는 배포(EKS SparkApplication 등)는 두 process에 같은 private S3 prefix를 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>`로 설정한다. `s3://`도 API 설정에서 허용한다. 이 prefix에는 runtime report, command, catalog ACK가 저장되므로 warehouse나 일반 dataset prefix와 분리하고 해당 workload role에 그 prefix의 `GetObject`, `PutObject`, `ListBucket`만 부여한다. 로컬 Compose는 이 값을 비워 mounted local report directory를 계속 사용한다.
+
+EKS에서만 Continuous SparkApplication gateway를 켜려면 worker workload에 다음을 함께 설정한다.
+
+```bash
+ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes
+ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<private-runtime-bucket>/asklake/continuous
+ASKLAKE_SPARK_KUBERNETES_NAMESPACE=asklake-dev
+ASKLAKE_SPARK_KUBERNETES_IMAGE=<registry>/<image>@sha256:<digest>
+ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT=asklake-spark
+ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME=asklake-spark-runtime
+```
+
+worker service account에는 Spark Operator의 `sparkapplications`에 대한 `get`, `create`, `delete` 권한이 필요하다. Spark driver/executor service account에는 runtime prefix의 `GetObject`, `PutObject`, `ListBucket`과 Iceberg warehouse 권한이 필요하다. `asklake-spark-runtime` Secret은 `ASKLAKE_SPARK_ICEBERG_JDBC_URL`, `ASKLAKE_SPARK_ICEBERG_JDBC_USER`, `ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD` key를 제공해야 하며, 실제값을 ConfigMap 또는 SparkApplication YAML에 넣으면 안 된다. node selector, toleration, S3A/IRSA Hadoop 설정은 `ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR`, `ASKLAKE_SPARK_KUBERNETES_TOLERATIONS`, `ASKLAKE_SPARK_KUBERNETES_HADOOP_CONF` JSON 설정으로 현재 EKS workload와 맞춘다. `ASKLAKE_CONTINUOUS_SPARK_RUNNER`를 비워 두면 기존 Compose REST/Docker 흐름을 유지한다.
+
+### EKS Continuous worker 렌더와 사전 점검
+
+`deploy/kubernetes/continuous-worker.yaml.template`은 현재 EKS의 `asklake-backend` service account와 `asklake-backend-sparkapplications` Role을 재사용하는 단일 replica worker template이다. 이 template은 EC2 owner를 중지하거나 `deploy/control-plane-ownership.json`을 바꾸지 않는다. owner transfer 승인 전에는 apply하지 않는다.
+
+```bash
+cd backend
+export ASKLAKE_K8S_NAMESPACE=asklake-dev
+export ASKLAKE_BACKEND_IMAGE='<backend>@sha256:<digest>'
+export ASKLAKE_SPARK_KUBERNETES_IMAGE='<spark>@sha256:<digest>'
+export ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT=asklake-spark
+export ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX='s3a://<private-runtime-bucket>/asklake/continuous'
+
+npm run verify:kubernetes-continuous-worker
+npm run verify:kubernetes-continuous-contract
+npm run render:kubernetes-continuous-worker -- --output /tmp/asklake-continuous-worker.yaml
+kubectl -n "$ASKLAKE_K8S_NAMESPACE" apply --dry-run=server -f /tmp/asklake-continuous-worker.yaml
+kubectl -n "$ASKLAKE_K8S_NAMESPACE" auth can-i create sparkapplications.sparkoperator.k8s.io \
+  --as=system:serviceaccount:"$ASKLAKE_K8S_NAMESPACE":asklake-backend
+```
+
+사전 점검은 manifest render와 RBAC만 확인한다. 실제 S3 runtime document read/write, SparkApplication 생성, start/pause/stop/restart E2E는 owner transfer 승인 이후 canary에서 별도로 확인해야 한다. apply 전에 EC2 `continuous-worker`를 유지한 채 EKS worker를 기동하면 owner가 둘이 된다. 실제 전환은 EC2 worker 중지, ownership manifest/evidence 변경, EKS worker canary, Kafka job start/pause/stop 및 S3 report 확인을 하나의 승인된 rollout으로 처리한다.
 
 일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 
