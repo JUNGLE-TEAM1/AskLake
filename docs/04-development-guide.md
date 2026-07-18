@@ -751,6 +751,17 @@ npm run test:spark-kubernetes
 
 위 테스트는 lost response의 동일 UID 복구, terminal-failed attempt의 다음 UID 생성, non-terminal replacement 거부, 최대 attempt 초과 거부, MSK `AUTHORIZATION` 1회/ack 0의 같은 RDS Run 연결, fault 뒤 같은 Run의 성공 Spark result 보존을 검증한다. 실제 deny Job, driver/executor fault와 live retry는 immutable candidate 재승격, clean baseline, exact private Run 입력과 필요한 기존 Kubernetes 권한이 모두 확인된 뒤에만 실행한다. 권한이 없으면 IAM/RBAC/NodePool을 늘리지 않고 blocker로 남긴다.
 
+Day 18 live approval에는 capability boolean을 직접 입력하지 않는다. candidate Git
+tree의 구현·회귀 blob SHA-256, 구현 ancestry, 공식 image receipt를 binder가 검증해
+private contract에 연결한다. 명령과 현재 blocker는
+[EKS Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)을 따른다.
+
+```bash
+node --test \
+  scripts/test-eks-day18-execution-contract.mjs \
+  scripts/test-eks-day18-execution-binding.mjs
+```
+
 작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
 ```bash
@@ -1247,7 +1258,8 @@ Pair B 변경이 합쳐진 뒤 Phase 7 confirmation으로 실행한다. static �
 `scripts/run-eks-day18-backend-rollout-round-trip.sh`가 소유하며,
 `bash scripts/test-eks-day18-backend-rollout-round-trip.sh`가 preflight 무변경,
 confirmation fail-closed, 정상 순서와 rollback/재승격 실패 시 추가 mutation 중단을
-검증한다. formal image receipt는
+검증한다. runner 전에 [EKS Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)의
+image/capability binding과 private preflight를 통과해야 한다. formal image receipt는
 Git ignore 대상 `infra/eks/delivery/*.image-receipt.json`, 일반 evidence는 저장소 밖의 고유
 경로와 mode `0600`을 사용한다. preflight/rollout은 private `deploy/ec2.env`에서 exact 보존
 instance를 `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 전달하며 파일 누락·권한 drift를 추측으로
