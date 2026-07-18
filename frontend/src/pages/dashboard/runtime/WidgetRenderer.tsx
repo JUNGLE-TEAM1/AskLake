@@ -699,8 +699,8 @@ function VisualizationRequestWidget({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void | boolean> | void;
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   widget: DashboardRuntimeWidget;
 }) {
   const [message, setMessage] = useState<string | null>(null);
@@ -743,7 +743,8 @@ function VisualizationRequestWidget({
     assistantContext?.onWorkingWidgetChange?.(widget.id);
     try {
       if (!isDashboardAssistantConfigured()) {
-        await onPatchConfig({ prompt: nextPrompt });
+        const applied = await onPatchConfig({ prompt: nextPrompt });
+        if (applied !== true) throw new Error("시각화 요청 저장에 실패했습니다.");
         setRequestTone("info");
         setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
         setIsPromptEditing(false);
@@ -777,9 +778,10 @@ function VisualizationRequestWidget({
             ...(widgetPatch.config ?? {}),
           },
         });
-        if (applied === false) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
+        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else if (configPatch && Object.keys(configPatch).length > 0) {
-        await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+        const applied = await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
@@ -872,7 +874,7 @@ function TextPlaceholderWidget({
   onPatchConfig,
   widget,
 }: {
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   widget: DashboardRuntimeWidget;
 }) {
   const [body, setBody] = useState(() => configText(widget, "body"));
@@ -1403,8 +1405,8 @@ export const WidgetRenderer = memo(function WidgetRenderer({
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
-  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void | boolean> | void;
-  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<boolean>;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<boolean>;
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: DashboardRuntimeWidget;
 }) {

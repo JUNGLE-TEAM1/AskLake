@@ -21,8 +21,8 @@ type DashboardAssistantPanelProps = {
   currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;

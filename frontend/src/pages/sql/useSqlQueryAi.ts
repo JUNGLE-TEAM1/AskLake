@@ -53,6 +53,8 @@ export function useSqlQueryAi({
   useEffect(() => () => requests.current.invalidate(), []);
 
   const changePrompt = (nextPrompt: string) => {
+    requests.current.invalidate();
+    setPending(false);
     setPrompt(nextPrompt);
     setSuggestion(null);
     setError(null);

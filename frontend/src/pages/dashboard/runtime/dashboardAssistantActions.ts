@@ -12,8 +12,8 @@ import type {
 
 type DashboardAssistantActionHandlers = {
   datasets: DashboardDatasetOption[];
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   response: DashboardAssistantResponse;
   widgets: DashboardRuntimeWidget[];
 };
@@ -55,7 +55,7 @@ export function hasWidgetMutationAction(response: DashboardAssistantResponse) {
 
 async function applyCreateWidgetAction(
   action: DashboardAssistantCreateWidgetAction,
-  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void,
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>,
 ) {
   if (!onCreateWidget) throw new Error("위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.");
   const applied = await onCreateWidget({
@@ -64,7 +64,7 @@ async function applyCreateWidgetAction(
     title: action.widget.title || "AI 추천 위젯",
     type: action.widget.type,
   });
-  if (applied === false) throw new Error("위젯 생성 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
+  if (applied !== true) throw new Error("위젯 생성 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
   return "AI가 제안한 위젯을 추가했습니다.";
 }
 
@@ -72,7 +72,7 @@ async function applyUpdateWidgetAction(
   action: DashboardAssistantUpdateWidgetAction,
   datasets: DashboardDatasetOption[],
   widgets: DashboardRuntimeWidget[],
-  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void,
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>,
 ) {
   if (!onUpdateWidget) throw new Error("위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.");
 
@@ -94,6 +94,6 @@ async function applyUpdateWidgetAction(
     title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
     type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
   });
-  if (applied === false) throw new Error("위젯 변경사항 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
+  if (applied !== true) throw new Error("위젯 변경사항 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
   return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }

@@ -95,3 +95,23 @@ test("failed persistence is surfaced instead of claiming a chart was applied", a
     /저장에 실패/,
   );
 });
+
+test("missing persistence confirmation fails closed", async () => {
+  await assert.rejects(
+    applyAssistantWidgetActions({
+      datasets: [],
+      onCreateWidget: (async () => undefined) as never,
+      response: {
+        actions: [{
+          type: "create_widget",
+          widget: { config: {}, datasetId: "sales", title: "차트", type: "bar_chart" },
+          usedEvidenceIds: [],
+        }],
+        message: "created",
+        warnings: [],
+      },
+      widgets: [],
+    }),
+    /저장에 실패/,
+  );
+});

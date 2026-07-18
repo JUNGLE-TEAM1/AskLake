@@ -343,9 +343,8 @@ def validate_query_intent_contract(
         normalized_prompt,
     ) and not any(expression.find_all(exp.Count)):
         violations.append("missing_count")
-    if re.search(r"[0-9a-z가-힣_]+\s*별(?:로)?|\bby\s+[a-z_]", normalized_prompt) and not isinstance(
-        expression.args.get("group"),
-        exp.Group,
+    if re.search(r"[0-9a-z가-힣_]+\s*별(?:로)?|\bby\s+[a-z_]", normalized_prompt) and not any(
+        expression.find_all(exp.Group)
     ):
         violations.append("missing_grouping")
     if _uses_dataset_qualifier_as_row_filter(normalized_prompt, expression, datasets):

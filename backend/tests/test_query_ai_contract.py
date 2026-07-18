@@ -82,6 +82,18 @@ class QueryAiContractTests(unittest.TestCase):
         self.assertIn("missing_count", violations)
         self.assertIn("missing_grouping", violations)
 
+    def test_grouping_inside_a_cte_satisfies_explicit_group_intent(self) -> None:
+        validate_query_intent_contract(
+            "상품 카테고리별 평균 가격과 상품 수를 보여줘",
+            (
+                "WITH category_summary AS ("
+                "SELECT category, AVG(price) AS average_price, COUNT(*) AS product_count "
+                "FROM amazon_products GROUP BY category"
+                ") SELECT * FROM category_summary LIMIT 100"
+            ),
+            [amazon_products_dataset()],
+        )
+
     def test_amazon_aggregate_prompt_retries_once_and_returns_matching_sql(self) -> None:
         repository = type("Repository", (), {"db": object()})()
         service = QueryAiService(repository)

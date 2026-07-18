@@ -11,6 +11,7 @@ test("SQL AI owns one cancellable request and ignores stale completion paths", (
   assert.match(hook, /requests\.current\.isCurrent\(lease\)/);
   assert.match(hook, /requests\.current\.complete\(lease\)/);
   assert.match(hook, /requests\.current\.invalidate\(\)/);
+  assert.match(hook, /const changePrompt[\s\S]*requests\.current\.invalidate\(\);[\s\S]*setPrompt\(nextPrompt\)/);
 });
 
 test("SQL AI preserves backend and timeout diagnostics instead of swallowing them", () => {

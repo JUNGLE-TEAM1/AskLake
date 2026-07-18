@@ -85,7 +85,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetScrollTarget: () => void;
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
-  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
@@ -109,7 +109,7 @@ type DashboardRuntimeViewActions = {
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
-  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void | boolean> | void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
 };
 
 type DashboardRuntimeViewProps = {
@@ -250,8 +250,8 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       다시 시도
     </Button>
   );
-  const patchWidgetConfig = async (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => {
-    await onUpdateWidget(widget.id, {
+  const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => {
+    return onUpdateWidget(widget.id, {
       config: {
         ...widget.config,
         ...patch,
