@@ -20,12 +20,17 @@ import type { DashboardRuntimeMode, DashboardRuntimeResponse } from "../../../ty
 import {
   DASHBOARD_LIVE_REFRESH_DEFAULT_MS,
   DASHBOARD_LIVE_CATCH_UP_MS,
+  dashboardCursorFromFreshness,
+  dashboardFreshnessRequiresSnapshot,
   dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
   dashboardLivePollingStrategy,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
+  planDashboardRealtimeRefresh,
   staleDashboardWidgetIds,
+  type DashboardDatasetCursor,
+  type DashboardLiveDataState,
 } from "./dashboardLiveRefresh";
 
 
@@ -52,6 +57,7 @@ export function usePublishedDashboardLiveRefresh({
   setPublishedRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
 }) {
   const [realtimeConnectionState, setRealtimeConnectionState] = useState<RealtimeConnectionState>("closed");
+  const [realtimeDataState, setRealtimeDataState] = useState<DashboardLiveDataState>("fresh");
   const runtimeRef = useRef(publishedRuntime);
   runtimeRef.current = publishedRuntime;
 
@@ -64,6 +70,7 @@ export function usePublishedDashboardLiveRefresh({
   useEffect(() => {
     if (!active || mode !== "published" || liveDatasetIds.length === 0) {
       setRealtimeConnectionState("closed");
+      setRealtimeDataState("fresh");
       return;
     }
 
@@ -82,6 +89,7 @@ export function usePublishedDashboardLiveRefresh({
     let realtimeConnection: RealtimeEventConnection | null = null;
     let snapshotResyncInFlight = false;
     const pendingRealtimeEvents = new Map<string, RealtimeEventEnvelope>();
+    const datasetCursors = new Map<string, DashboardDatasetCursor>();
     const eligibleDatasetIds = new Set(liveDatasetIds);
     const nextCheckAtByDatasetId = new Map(
       liveDatasetIds.map((datasetId) => [datasetId, Date.now()]),
@@ -170,16 +178,35 @@ export function usePublishedDashboardLiveRefresh({
         enqueueRealtimeEvent(event);
         return;
       }
+      const refreshPlan = planDashboardRealtimeRefresh(
+        datasetCursors.get(event.resourceId),
+        event,
+      );
+      if (refreshPlan.action === "ignore") return;
+      if (refreshPlan.action === "snapshot") {
+        setRealtimeDataState("stale");
+        await resyncFromSnapshot();
+        return;
+      }
       const freshness: DashboardDatasetFreshness[] = [{
+        activeArchiveSnapshotId: null,
+        activeServingEngine: refreshPlan.nextCursor.engine,
+        activeServingVersionId: refreshPlan.nextCursor.servingVersionId,
+        bindingEpoch: refreshPlan.nextCursor.bindingEpoch ?? 0,
         datasetId: event.resourceId,
         isContinuous: true,
+        latestChecksum: null,
+        latestMutationType: event.schemaVersion === 2 ? event.payload.mutationType : "append",
         latestRevision: event.aggregateRevision,
+        latestSourceBoundary: event.schemaVersion === 2 ? event.payload.sourceBoundary : null,
         nextCheckAfterMs: DASHBOARD_LIVE_REFRESH_DEFAULT_MS,
         updatedAt: event.occurredAt,
       }];
       const staleWidgetIds = staleDashboardWidgetIds(runtimeRef.current, freshness);
       if (staleWidgetIds.length === 0) {
+        datasetCursors.set(event.resourceId, refreshPlan.nextCursor);
         updateRuntimeEventCursor(event.eventId);
+        setRealtimeDataState("fresh");
         return;
       }
 
@@ -215,12 +242,17 @@ export function usePublishedDashboardLiveRefresh({
           return updated;
         });
         if (needsCatchUp) {
+          setRealtimeDataState("stale");
           enqueueRealtimeEvent(event, DASHBOARD_LIVE_CATCH_UP_MS);
+        } else {
+          datasetCursors.set(event.resourceId, refreshPlan.nextCursor);
+          setRealtimeDataState("fresh");
         }
       } catch {
         // Keep the last successful result and retry the canonical REST read.
         // The per-dataset map bounds memory while the endpoint is unavailable.
         if (!cancelled && !controller.signal.aborted) {
+          setRealtimeDataState("degraded");
           enqueueRealtimeEvent(event, DASHBOARD_LIVE_REFRESH_DEFAULT_MS);
         }
       } finally {
@@ -268,6 +300,7 @@ export function usePublishedDashboardLiveRefresh({
         });
       } catch {
         if (!cancelled && !controller.signal.aborted) {
+          setRealtimeDataState("degraded");
           const retryAt = Date.now() + DASHBOARD_LIVE_REFRESH_DEFAULT_MS;
           dueDatasetIds.forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, retryAt));
         }
@@ -280,6 +313,14 @@ export function usePublishedDashboardLiveRefresh({
       const freshnessByDatasetId = new Map(
         freshnessDatasets.map((dataset) => [dataset.datasetId, dataset]),
       );
+      if (freshnessDatasets.some((dataset) => dashboardFreshnessRequiresSnapshot(
+        datasetCursors.get(dataset.datasetId),
+        dataset,
+      ))) {
+        setRealtimeDataState("stale");
+        await resyncFromSnapshot();
+        return;
+      }
       const scheduledAt = Date.now();
       const strategy = pollingStrategy();
       dueDatasetIds.forEach((datasetId) => {
@@ -301,7 +342,14 @@ export function usePublishedDashboardLiveRefresh({
         );
       });
       const staleWidgetIds = staleDashboardWidgetIds(runtimeRef.current, freshnessDatasets);
-      if (staleWidgetIds.length === 0) return;
+      if (staleWidgetIds.length === 0) {
+        freshnessDatasets.forEach((dataset) => datasetCursors.set(
+          dataset.datasetId,
+          dashboardCursorFromFreshness(dataset, datasetCursors.get(dataset.datasetId)),
+        ));
+        setRealtimeDataState("fresh");
+        return;
+      }
       try {
         const widgetResponse = await queryPublishedDashboardWidgets(dashboardId, staleWidgetIds, {
           signal: controller.signal,
@@ -310,15 +358,30 @@ export function usePublishedDashboardLiveRefresh({
         if (cancelled || controller.signal.aborted) return;
         const refreshedWidgets = Array.isArray(widgetResponse.widgets) ? widgetResponse.widgets : [];
         const catchUpAt = Date.now() + DASHBOARD_LIVE_CATCH_UP_MS;
-        dashboardLiveCatchUpDatasetIds(runtimeRef.current, refreshedWidgets, freshnessDatasets)
-          .forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, catchUpAt));
+        const catchUpDatasetIds = dashboardLiveCatchUpDatasetIds(
+          runtimeRef.current,
+          refreshedWidgets,
+          freshnessDatasets,
+        );
+        catchUpDatasetIds.forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, catchUpAt));
+        const catchUpDatasetIdSet = new Set(catchUpDatasetIds);
         setPublishedRuntime((current) => {
           const merged = mergePublishedDashboardWidgets(current, dashboardId, refreshedWidgets);
           runtimeRef.current = merged;
           return merged;
         });
+        freshnessDatasets.forEach((dataset) => {
+          if (!catchUpDatasetIdSet.has(dataset.datasetId)) {
+            datasetCursors.set(
+              dataset.datasetId,
+              dashboardCursorFromFreshness(dataset, datasetCursors.get(dataset.datasetId)),
+            );
+          }
+        });
+        setRealtimeDataState(catchUpDatasetIds.length > 0 ? "stale" : "fresh");
       } catch {
         // Background refresh keeps the last successfully rendered widget result.
+        if (!cancelled && !controller.signal.aborted) setRealtimeDataState("degraded");
       }
     }
 
@@ -368,6 +431,7 @@ export function usePublishedDashboardLiveRefresh({
           eligibleDatasetIds.forEach((datasetId) => nextCheckAtByDatasetId.set(datasetId, safetyAt));
         }
       } else if (state !== "closed") {
+        setRealtimeDataState((current) => current === "degraded" ? current : "stale");
         markPollingDueNow();
       }
       scheduleNextPoll();
@@ -382,17 +446,29 @@ export function usePublishedDashboardLiveRefresh({
         onEvent: (event) => {
           if (cancelled) return;
           if (event.eventType === "dashboard.published") {
-            if (event.resourceId === dashboardId) void resyncFromSnapshot();
+            if (event.resourceId === dashboardId) {
+              setRealtimeDataState("stale");
+              void resyncFromSnapshot();
+            }
             return;
           }
           if (!eligibleDatasetIds.has(event.resourceId)) return;
+          setRealtimeDataState("stale");
           enqueueRealtimeEvent(event);
         },
         onInvalidEvent: () => {
-          // Invalid/unknown events are ignored. Safety or fallback polling
-          // remains the canonical recovery path.
+          setRealtimeDataState("degraded");
+          void resyncFromSnapshot();
+        },
+        onReady: (currentCursor) => {
+          if (cancelled) return;
+          const appliedCursor = Math.max(0, runtimeRef.current?.eventCursor ?? 0);
+          setRealtimeDataState(
+            currentCursor !== null && currentCursor <= appliedCursor ? "fresh" : "stale",
+          );
         },
         onResyncRequired: () => {
+          setRealtimeDataState("stale");
           void resyncFromSnapshot();
         },
         onStateChange: handleConnectionState,
@@ -406,11 +482,14 @@ export function usePublishedDashboardLiveRefresh({
       try {
         const runtime = await reloadPublishedRuntime(dashboardId, { silent: true });
         if (cancelled || !runtime) {
+          if (!cancelled) setRealtimeDataState("degraded");
           markPollingDueNow();
           scheduleNextPoll();
           return;
         }
         runtimeRef.current = runtime;
+        datasetCursors.clear();
+        setRealtimeDataState("fresh");
         realtimeConnection?.restart(Math.max(0, runtime.eventCursor ?? 0));
       } finally {
         snapshotResyncInFlight = false;
@@ -454,6 +533,7 @@ export function usePublishedDashboardLiveRefresh({
         syncMode = "polling";
         connectionState = "fallback_polling";
         setRealtimeConnectionState("fallback_polling");
+        setRealtimeDataState("stale");
         scheduleNextPoll();
       });
 
@@ -475,5 +555,5 @@ export function usePublishedDashboardLiveRefresh({
     setPublishedRuntime,
   ]);
 
-  return realtimeConnectionState;
+  return { realtimeConnectionState, realtimeDataState };
 }

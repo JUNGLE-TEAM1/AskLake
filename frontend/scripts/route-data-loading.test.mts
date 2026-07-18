@@ -66,6 +66,19 @@ test("Dashboard Catalog loading is enabled only for views that use datasets", ()
   const dashboardPage = read("src/pages/dashboard/DashboardPage.tsx");
   const dashboardDatasets = read("src/pages/dashboard/runtime/useDashboardDatasets.ts");
 
-  assert.match(dashboardPage, /useDashboardDatasets\(view === "runtime" \|\| view === "builder"\)/);
+  assert.match(dashboardPage, /useDashboardDatasets\(view === "runtime"\)/);
   assert.match(dashboardDatasets, /export function useDashboardDatasets\(enabled = true\)/);
+});
+
+test("Dashboard route loads reject stale responses and live routes do not import legacy mock storage", () => {
+  const loaders = read("src/pages/dashboard/runtime/useDashboardRuntimeLoaders.ts");
+  const dashboardPage = read("src/pages/dashboard/DashboardPage.tsx");
+  const dashboardTypes = read("src/types/dashboard.ts");
+
+  assert.match(loaders, /LatestRequestGate/);
+  assert.match(loaders, /\.isCurrent\(lease\)/);
+  assert.match(loaders, /\.invalidate\(\)/);
+  assert.doesNotMatch(dashboardPage, /services\/mockApi/);
+  assert.doesNotMatch(dashboardPage, /DashboardLegacy(?:Builder|Detail)View/);
+  assert.match(dashboardTypes, /DashboardView = "list" \| "runtime"/);
 });

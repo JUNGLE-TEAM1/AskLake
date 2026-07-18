@@ -15,6 +15,7 @@ export function useDashboardRuntimeResources({
 }) {
   const [selectedPageId, setSelectedPageId] = useState<string | null>("page-1");
   const {
+    cancelDraftRuntimeLoad, cancelPublishedRuntimeLoad,
     draftError, draftLoading, draftRuntime, loadDraftRuntime,
     loadPublishedRuntime, publishedRuntime, runtimeError, runtimeLoading,
     setDraftError, setDraftLoading, setDraftRuntime, setPublishedRuntime,
@@ -27,23 +28,27 @@ export function useDashboardRuntimeResources({
 
   useEffect(() => {
     if (!active || mode !== "published") {
+      cancelPublishedRuntimeLoad();
       setRuntimeError(null);
       setRuntimeLoading(false);
-      return;
+      return undefined;
     }
 
     void loadPublishedRuntime(dashboardId);
-  }, [active, dashboardId, loadPublishedRuntime, mode]);
+    return cancelPublishedRuntimeLoad;
+  }, [active, cancelPublishedRuntimeLoad, dashboardId, loadPublishedRuntime, mode]);
 
   useEffect(() => {
     if (!active || mode !== "draft") {
+      cancelDraftRuntimeLoad();
       setDraftError(null);
       setDraftLoading(false);
-      return;
+      return undefined;
     }
 
     void loadDraftRuntime(dashboardId);
-  }, [active, dashboardId, loadDraftRuntime, mode]);
+    return cancelDraftRuntimeLoad;
+  }, [active, cancelDraftRuntimeLoad, dashboardId, loadDraftRuntime, mode]);
 
   useEffect(() => {
     if (!active) return;
@@ -72,7 +77,7 @@ export function useDashboardRuntimeResources({
     setRuntime: setActiveRuntime,
   });
 
-  const realtimeConnectionState = usePublishedDashboardLiveRefresh({
+  const { realtimeConnectionState, realtimeDataState } = usePublishedDashboardLiveRefresh({
     active,
     dashboardId,
     mode,
@@ -90,6 +95,7 @@ export function useDashboardRuntimeResources({
     pages,
     publishedRuntime,
     realtimeConnectionState,
+    realtimeDataState,
     retryWidgetData,
     runtimeError,
     runtimeLoading,

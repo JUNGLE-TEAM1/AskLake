@@ -16,6 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
+import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -53,6 +54,7 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar,
   pages,
   realtimeConnectionState,
+  realtimeDataState,
   renamingPageId,
   selectedPageId,
   shareLink,
@@ -83,6 +85,7 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
   realtimeConnectionState?: RealtimeConnectionState;
+  realtimeDataState?: DashboardLiveDataState;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -139,6 +142,7 @@ export function DashboardRuntimeShell({
         isRefreshing={isRefreshing}
         mode={mode}
         realtimeConnectionState={realtimeConnectionState}
+        realtimeDataState={realtimeDataState}
         title={title}
         onOpenDraft={onOpenDraft}
         onOpenPublished={onOpenPublished}
@@ -147,6 +151,20 @@ export function DashboardRuntimeShell({
         onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
+      {mode === "published" && realtimeDataState && realtimeDataState !== "fresh" ? (
+        <Alert
+          aria-live="polite"
+          className={`asklake-dashboard-runtime-notice ${realtimeDataState === "degraded" ? "error" : ""}`}
+          role="status"
+          variant={realtimeDataState === "degraded" ? "destructive" : "default"}
+        >
+          <AlertDescription>
+            {realtimeDataState === "degraded"
+              ? "최신 데이터 확인에 실패했습니다. 마지막으로 확인된 결과를 표시하고 있으며 수동 새로고침이 필요할 수 있습니다."
+              : "실시간 동기화가 지연되어 마지막으로 확인된 결과를 표시하고 있습니다."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {notice && (
         <Alert
           className={`asklake-dashboard-runtime-notice ${notice.tone}`}

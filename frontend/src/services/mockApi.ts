@@ -33,10 +33,6 @@ type DashboardsResponse = PageEnvelope & {
   dashboards: SavedDashboardCard[];
 };
 
-type DashboardResponse = {
-  dashboard: SavedDashboardCard;
-};
-
 export type DashboardQuery = {
   owner?: string;
   page?: number;
@@ -303,15 +299,6 @@ export async function getDashboards(query: DashboardQuery = {}): Promise<Dashboa
   }
 
   return resolveMock(getMockDashboards(query));
-}
-
-export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
-  if (!apiConfig.useMock) {
-    const result = await apiClient.patch<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
-    return result.dashboard;
-  }
-
-  return resolveMock(card);
 }
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {

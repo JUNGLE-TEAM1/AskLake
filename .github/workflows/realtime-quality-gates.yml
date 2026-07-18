@@ -148,11 +148,11 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Verify SSE transport and polling request strategy
+      - name: Verify frontend realtime cache, route ownership, and production boundary
         working-directory: frontend
         run: |
-          npm run test:realtime-events
-          npm run test:dashboard-live-refresh
+          npm run test:dashboard-realtime-v2
+          npm run build
 
       - name: Render production Compose
         run: |

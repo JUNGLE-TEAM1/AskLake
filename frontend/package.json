@@ -8,6 +8,7 @@
     "dev": "vite --config vite.config.ts --host 127.0.0.1 --port 5174 --strictPort",
     "db:seed": "node server/seed.js",
     "test:dashboard-live-refresh": "node --experimental-strip-types --test scripts/dashboard-live-refresh.test.mts",
+    "test:dashboard-realtime-v2": "npm run test:realtime-events && npm run test:dashboard-live-refresh && npm run test:route-data-loading && npm run test:compatibility-runtime",
     "test:dashboard-draft-layout-persistence": "node --experimental-strip-types --test scripts/dashboard-draft-layout-persistence.test.mts",
     "test:dashboard-runtime-mutations": "node --experimental-strip-types --test scripts/dashboard-runtime-mutations.test.mts",
     "test:dashboard-runtime-errors": "node --experimental-strip-types --test scripts/dashboard-runtime-errors.test.mts",
