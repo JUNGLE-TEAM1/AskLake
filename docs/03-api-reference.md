@@ -45,7 +45,7 @@ TRINO_USER=asklake-api
 TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-warehouse
 TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
 TRINO_QUERY_TIMEOUT_SECONDS=300
-TRINO_MAX_RESPONSE_BYTES=2000000
+TRINO_MAX_RESPONSE_BYTES=20000000
 TRINO_RESULT_RETENTION_SECONDS=86400
 TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
@@ -71,9 +71,9 @@ CLICKHOUSE_URL=http://clickhouse:8123
 CLICKHOUSE_USER=asklake
 CLICKHOUSE_PASSWORD=<server-only secret>
 CLICKHOUSE_DATABASE=asklake
-CLICKHOUSE_QUERY_TIMEOUT_SECONDS=15
-CLICKHOUSE_STATIC_LOAD_MAX_ROWS=1000000
-CLICKHOUSE_INSERT_BATCH_ROWS=5000
+CLICKHOUSE_QUERY_TIMEOUT_SECONDS=60
+CLICKHOUSE_STATIC_LOAD_MAX_ROWS=15000000
+CLICKHOUSE_INSERT_BATCH_ROWS=20000
 LATEST_STATIC_PER_BATCH_ENABLED=false
 STATIC_CHANGE_BACKFILL_ENABLED=false
 CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS=100000
@@ -194,16 +194,24 @@ Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 s
 | POST | `/api/query/continuous-jobs/{jobId}/commands` | `start|pause|resume|stop|recover`, `commandId` 필수 |
 | GET | `/api/query/continuous-jobs/{jobId}/batches?limit=100` | generation/batch 내림차순 publication lineage |
 
+정적 JOIN key 증적이 없으면 UI는 다음 Catalog API를 자동 호출한 뒤 Continuous SQL validate를 재시도한다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| POST | `/api/catalog/datasets/{datasetId}/unique-keys/verify-and-register` | `manage` 권한으로 정적 Iceberg 전체 key를 exact scan하고 null·빈 값·중복이 없을 때만 `uniqueKeySets` 등록 |
+
+요청은 `{ "columns": ["user_id"] }`이고 응답은 `verified`, `totalRows`, `invalidKeyRows`, `distinctKeys`, 갱신된 `dataset`을 포함한다. 실패는 `CATALOG_UNIQUE_KEY_VERIFICATION_FAILED`와 동일 count를 반환하며 SQL 문에 별도 metadata 구문을 넣지 않는다.
+
 validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
 
 - 기본 `servingMode=iceberg`: 기존처럼 `storagePath`, append `icebergTarget`, optional `checkpointPath`를 사용한다.
-- opt-in `servingMode=clickhouse`: `clickhouseTarget: { engine: "clickhouse", database, table }`만 사용한다. `storagePath`, `icebergTarget`, `checkpointPath`를 함께 보내면 `422`다. 정적 S3/Iceberg relation은 Job 시작 때 Trino로 한 번 읽어 ClickHouse local static table에 고정하고, Kafka row는 ClickHouse Kafka Engine과 materialized view가 raw table과 JOIN output table에 연속 반영한다. 이 mode는 `PINNED_AT_START`만 지원한다.
+- opt-in `servingMode=clickhouse`: `clickhouseTarget: { engine: "clickhouse", database, table }`만 사용한다. `storagePath`, `icebergTarget`, `checkpointPath`를 함께 보내면 `422`다. 정적 S3/Iceberg relation은 Job 시작 때 참조 열만 Trino page로 읽어 snapshot-scoped ClickHouse local table에 고정하고, 같은 snapshot은 resume에서 재사용한다. Kafka Engine은 메시지를 `RawBLOB`으로 받고 Dataset의 `recordParsing/schemaColumns`에 따라 typed raw table로 변환한 뒤 JOIN output table에 연속 반영한다. 이 mode는 `PINNED_AT_START`만 지원한다.
 
 Job 응답은 `servingMode`와 mode별 `outputTarget`을 반환한다. ClickHouse 결과 Dataset은 Catalog에 `storageFormat=clickhouse`와 `clickhouseTable`을 기록하며 Dataset row와 Dashboard widget API는 output table을 `FINAL`로 읽는다. 일반 Trino SQL mapping은 만들지 않는다. plan relation의 `cacheHint`는 서버가 Catalog 통계와 안전 한도로 계산한 실행 hint이며 client가 임의로 지정하는 입력이 아니다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
-SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `clickhouseContinuousJoinEnabled`가 모두 true인지 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. 성공하면 `servingMode=clickhouse`, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. UI 기본 trigger는 빠른 시작을 위해 1초를 명시하지만 backend request 기본값 5초와 기존 Job 값은 변경하지 않는다. 첫 `catalog_ready` publication 전에는 출력 Catalog가 아직 보이지 않을 수 있다.
+SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `clickhouseContinuousJoinEnabled`가 모두 true인지 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact verification API를 자동 호출하고 validate를 재시도한다. 성공하면 `servingMode=clickhouse`, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. UI 기본 trigger는 빠른 시작을 위해 1초를 명시하지만 backend request 기본값 5초와 기존 Job 값은 변경하지 않는다. Job `running`과 첫 실제 offset이 게시되어 Catalog row가 조회되는 시점을 구분하므로 첫 publication 전에는 완료로 표시하지 않는다.
 
 Canonical status values:
 

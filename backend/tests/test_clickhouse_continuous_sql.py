@@ -18,15 +18,20 @@ from app.repositories.dashboard_live_repository import (
 )
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.continuous_sql import ContinuousSqlOutput
-from app.services.clickhouse_client import ClickHouseClient, ClickHouseRows
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError, ClickHouseRows
 from app.services.clickhouse_continuous_publication import (
     ClickHouseContinuousSqlPublicationService,
 )
 from app.services.clickhouse_continuous_sql import (
+    ClickHouseContinuousSqlWorkerGateway,
     clickhouse_ingest_materialized_view_ddl,
     clickhouse_kafka_table_ddl,
     clickhouse_raw_table_ddl,
+    clickhouse_static_table_ddl,
+    clickhouse_static_runtime_table,
+    continuous_sql_static_join_columns,
     replace_runtime_table,
+    referenced_relation_schema,
     clickhouse_runtime_sql,
     clickhouse_type,
 )
@@ -57,6 +62,50 @@ class FakeDashboardClickHouseClient:
 
     def close(self) -> None:
         self.closed = True
+
+
+class FakeContinuousStatusClient:
+    def __init__(
+        self,
+        *,
+        consumer_error: str = "",
+        consumer_ready: bool = True,
+        last_exception_ms: int = 0,
+        last_poll_ms: int = 0,
+    ) -> None:
+        self.consumer_error = consumer_error
+        self.consumer_ready = consumer_ready
+        self.last_exception_ms = last_exception_ms
+        self.last_poll_ms = last_poll_ms
+
+    def query(self, query: str, **_kwargs) -> ClickHouseRows:
+        if "FROM system.tables" in query:
+            return ClickHouseRows(
+                columns=["name"],
+                rows=[
+                    ["asklake_1a82dae6b2097fb1_kafka"],
+                    ["asklake_1a82dae6b2097fb1_raw"],
+                    ["asklake_1a82dae6b2097fb1_ingest_mv"],
+                    ["asklake_1a82dae6b2097fb1_join_mv"],
+                    ["joined_events"],
+                ],
+            )
+        if "FROM system.kafka_consumers" in query:
+            return ClickHouseRows(
+                columns=["is_currently_used", "num_messages_read", "exception_text", "last_poll_ms", "last_exception_ms"],
+                rows=[[
+                    self.consumer_ready,
+                    3,
+                    self.consumer_error,
+                    self.last_poll_ms,
+                    self.last_exception_ms,
+                ]],
+            )
+        if "GROUP BY kafka_partition" in query:
+            return ClickHouseRows(columns=[], rows=[])
+        if "count() AS row_count" in query:
+            return ClickHouseRows(columns=["row_count"], rows=[[0]])
+        raise AssertionError(query)
 
 
 class ClickHouseContinuousSqlTests(unittest.TestCase):
@@ -97,12 +146,16 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
             database="asklake",
             kafka_table="events_kafka",
             static_tables={"__asklake_relation_1": "users_static"},
+            output_schema=[["event_id", "long"], ["user_name", "string"]],
         )
 
         self.assertIn('FROM "asklake"."events_kafka" AS e', query)
         self.assertIn('LEFT JOIN "asklake"."users_static" AS u', query)
         self.assertIn("e._offset AS kafka_offset", query)
         self.assertIn("now64(3) AS ingested_at", query)
+        self.assertIn('e.event_id AS "event_id"', query)
+        self.assertIn('u.name AS "user_name"', query)
+        self.assertNotIn('AS user_name AS "user_name"', query)
         self.assertEqual(clickhouse_type("bigint", nullable=True), "Nullable(Int64)")
 
     def test_runtime_table_replacement_does_not_match_relation_name_prefix(self) -> None:
@@ -130,6 +183,8 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         )
 
         self.assertIn("kafka_group_name = 'asklake_clickhouse_", ddl)
+        self.assertIn("`_raw_message` String", ddl)
+        self.assertIn("kafka_format = 'RawBLOB'", ddl)
         self.assertIn("kafka_commit_every_batch = 1", ddl)
         self.assertIn("kafka_poll_timeout_ms = 100", ddl)
         raw_ddl = clickhouse_raw_table_ddl(
@@ -145,6 +200,134 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertIn("ReplacingMergeTree", raw_ddl)
         self.assertIn("_offset AS kafka_offset", ingest_ddl)
         self.assertIn("TO `asklake`.`events_raw`", ingest_ddl)
+
+    def test_whitespace_kafka_ingest_uses_saved_parsing_contract(self) -> None:
+        stream = {
+            "schema": [["event_time", "timestamp"], ["event_id", "long"], ["user_id", "string"]],
+            "streamingSource": {
+                "recordParsing": {
+                    "enabled": True,
+                    "delimiterKind": "whitespace",
+                    "delimiterPattern": "\\s+",
+                    "header": False,
+                    "expectedFieldCount": 3,
+                    "columns": [
+                        {"position": 0, "name": "time"},
+                        {"position": 1, "name": "event"},
+                        {"position": 2, "name": "user"},
+                    ],
+                },
+                "schemaColumns": [
+                    {"included": True, "sourceName": "time", "targetName": "event_time"},
+                    {"included": True, "sourceName": "event", "targetName": "event_id"},
+                    {"included": True, "sourceName": "user", "targetName": "user_id"},
+                ],
+            },
+        }
+
+        ddl = clickhouse_ingest_materialized_view_ddl(
+            "asklake", "events_ingest_mv", "events_kafka", "events_raw", stream
+        )
+
+        self.assertIn("splitByRegexp('\\\\s+'", ddl)
+        self.assertIn("parseDateTime64BestEffortOrNull", ddl)
+        self.assertIn("_record_fields[2]", ddl)
+        self.assertIn("throwIf(length(_record_fields) != 3", ddl)
+
+    def test_json_kafka_ingest_supports_nested_source_paths(self) -> None:
+        stream = {
+            "schema": [["event_id", "long"], ["user_id", "string"]],
+            "streamingSource": {
+                "recordParsing": {},
+                "schemaColumns": [
+                    {"sourceName": "raw.event_id", "targetName": "event_id"},
+                    {"sourceName": "raw.user_id", "targetName": "user_id"},
+                ],
+            },
+        }
+
+        ddl = clickhouse_ingest_materialized_view_ddl(
+            "asklake", "events_ingest_mv", "events_kafka", "events_raw", stream
+        )
+
+        self.assertIn("JSON_VALUE(_raw_message, '$.\"raw\".\"event_id\"')", ddl)
+        self.assertIn("isValidJSON(_raw_message)", ddl)
+
+    def test_static_snapshot_table_is_scoped_and_only_referenced_columns_are_loaded(self) -> None:
+        relation = {
+            "schema": [["id", "bigint"], ["name", "string"], ["unused", "string"]],
+            "referencedColumns": ["id", "name"],
+        }
+
+        self.assertEqual(referenced_relation_schema(relation), [("id", "bigint"), ("name", "string")])
+        first = clickhouse_static_runtime_table("asklake_prefix", 1, {"snapshotId": "101"})
+        replay = clickhouse_static_runtime_table("asklake_prefix", 1, {"snapshotId": "101"})
+        changed = clickhouse_static_runtime_table("asklake_prefix", 1, {"snapshotId": "102"})
+        self.assertEqual(first, replay)
+        self.assertNotEqual(first, changed)
+        ddl = clickhouse_static_table_ddl(
+            "asklake",
+            first,
+            referenced_relation_schema(relation),
+            order_by=["id"],
+        )
+        self.assertIn("ORDER BY (`id`)", ddl)
+        self.assertIn("SETTINGS allow_nullable_key = 1", ddl)
+
+    def test_compiled_static_join_key_is_used_for_runtime_exact_verification(self) -> None:
+        job = self._job()
+        self.assertEqual(
+            continuous_sql_static_join_columns(job, "dataset-users"),
+            ["id"],
+        )
+
+        class DuplicateStaticClient:
+            def query(self, query: str, **_kwargs) -> ClickHouseRows:
+                self.query_text = query
+                return ClickHouseRows(
+                    columns=["total_rows", "invalid_key_rows", "distinct_keys"],
+                    rows=[[3, 0, 2]],
+                )
+
+        client = DuplicateStaticClient()
+        with self.assertRaises(ClickHouseError) as caught:
+            ClickHouseContinuousSqlWorkerGateway._verify_static_unique_key(
+                client,
+                "asklake",
+                "users_static",
+                ["id"],
+            )
+        self.assertEqual(caught.exception.code, "CLICKHOUSE_STATIC_KEY_NOT_UNIQUE")
+        self.assertIn("uniqExact(tuple(`id`))", client.query_text)
+
+    def test_status_reports_kafka_consumer_failure_instead_of_false_running(self) -> None:
+        job = self._job()
+        gateway = ClickHouseContinuousSqlWorkerGateway(Settings(_env_file=None, app_env="test"))
+        worker = gateway._status(
+            FakeContinuousStatusClient(consumer_error="Cannot parse Kafka message"),
+            job,
+            job_target(job),
+        )
+
+        self.assertEqual(worker["containerState"], "failed")
+        self.assertEqual(worker["lastErrorCode"], "CLICKHOUSE_KAFKA_CONSUMER_ERROR")
+        self.assertIn("Cannot parse", worker["lastErrorMessage"])
+
+    def test_status_ignores_consumer_exception_after_a_new_successful_poll(self) -> None:
+        job = self._job()
+        gateway = ClickHouseContinuousSqlWorkerGateway(Settings(_env_file=None, app_env="test"))
+        worker = gateway._status(
+            FakeContinuousStatusClient(
+                consumer_error="Temporary broker error",
+                last_exception_ms=100,
+                last_poll_ms=200,
+            ),
+            job,
+            job_target(job),
+        )
+
+        self.assertEqual(worker["containerState"], "running")
+        self.assertIsNone(worker["lastErrorCode"])
 
     def test_http_client_parses_json_rows_without_driver_dependency(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -267,6 +450,17 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
                 "outputSchema": [["event_id", "long"], ["user_name", "string"]],
                 "streamingSource": {"broker": "redpanda:9092", "topic": "events"},
                 "servingMode": "clickhouse",
+                "joins": [{
+                    "type": "LEFT",
+                    "rightAlias": "u",
+                    "rightDatasetId": "dataset-users",
+                    "keys": [{
+                        "leftAlias": "e",
+                        "leftColumn": "user_id",
+                        "rightAlias": "u",
+                        "rightColumn": "id",
+                    }],
+                }],
             },
             relation_bindings=[
                 {

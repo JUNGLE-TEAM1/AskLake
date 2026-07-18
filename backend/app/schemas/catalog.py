@@ -167,6 +167,19 @@ class CatalogDatasetRowsResponse(CamelModel):
     rows: list[list[str]]
 
 
+class VerifyCatalogUniqueKeyRequest(CamelModel):
+    columns: list[str] = Field(min_length=1, max_length=16)
+
+
+class VerifyCatalogUniqueKeyResponse(CamelModel):
+    columns: list[str]
+    dataset: CatalogDatasetResponse
+    distinct_keys: int = Field(ge=0)
+    invalid_key_rows: int = Field(ge=0)
+    total_rows: int = Field(ge=0)
+    verified: Literal[True] = True
+
+
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str

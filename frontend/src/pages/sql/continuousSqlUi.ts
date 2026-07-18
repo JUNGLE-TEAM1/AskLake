@@ -1,4 +1,17 @@
 import type { CatalogDataset } from "../../types";
+import { ApiError } from "../../types/audit.ts";
+
+export type ContinuousSqlUniqueKeyIssue = { columns: string[]; datasetId: string };
+
+export function getContinuousSqlUniqueKeyIssue(error: unknown): ContinuousSqlUniqueKeyIssue | null {
+  if (!(error instanceof ApiError) || error.code !== "CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE") return null;
+  const datasetId = typeof error.details?.datasetId === "string" ? error.details.datasetId : "";
+  const rawColumns = error.details?.joinColumns ?? error.details?.columns;
+  const columns = Array.isArray(rawColumns)
+    ? rawColumns.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    : [];
+  return datasetId && columns.length ? { columns, datasetId } : null;
+}
 
 export type ContinuousSqlRelationMix = {
   staticDatasets: CatalogDataset[];

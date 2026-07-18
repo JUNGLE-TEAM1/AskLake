@@ -613,3 +613,11 @@ FastAPI ingress는 `X-Correlation-ID`를 요청 단위 ContextVar에 바인딩�
 ETL 수직 흐름은 제품 service에 테스트 분기를 추가하지 않고 application fake/ephemeral 계약, 실제 Node Spark REST process, Docker UID 185 runtime mount, 격리 Kafka/Spark/object storage stack을 `pr → release → nightly` 프로필로 누적 검증한다. 선언형 시나리오는 초기 상태·fault·기대 canonical state·timeout·복구 주체를 가진다.
 
 결과는 동일 correlation ID의 JSON/JUnit/Markdown artifact로 남긴다. public status 하나가 아니라 desired/observed revision, worker fence, checkpoint/cursor, immutable manifest, Catalog/Dashboard idempotency가 함께 수렴해야 성공이다. 자세한 경계는 [ETL Full-stack E2E·장애 복구 하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)을 따른다.
+
+## Continuous SQL ClickHouse 실행 경계
+
+Continuous SQL JOIN 생성 UI는 검증 응답의 `CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE`를 구조화된 오류로 처리한다. Backend Catalog API가 Trino로 정적 Iceberg snapshot의 전체 key count, invalid count, distinct count를 정확히 비교하고 통과한 key set만 Catalog에 저장한다. UI는 검증을 다시 수행한 뒤 ClickHouse Job 생성·시작까지 이어간다. Trino는 이 사전 검증과 고정 snapshot 로딩에만 사용되며 실시간 JOIN과 Dashboard serving은 ClickHouse가 담당한다.
+
+ClickHouse Kafka table은 source payload 형식을 추정하지 않고 메시지 전체를 `RawBLOB` 한 열로 소비한다. ingest materialized view가 Catalog에 저장된 `recordParsing`과 `schemaColumns`를 적용해 공백 원문 또는 nested JSON을 typed raw table로 투영한다. 정적 relation은 SQL이 참조한 열만 exact snapshot에서 page 단위로 적재하며 snapshot identity가 같은 local table은 pause/resume에서 재사용한다. 적재된 snapshot에서도 compiled JOIN key의 null·빈 값·`uniqExact` count를 다시 검사해 사전 검증과 snapshot pin 사이 경합을 차단한다. worker readiness는 table 존재뿐 아니라 `system.kafka_consumers`의 active consumer와 복구되지 않은 parser exception까지 확인한다.
+
+Catalog output은 raw offset과 query 가능한 JOIN output이 실제로 생긴 첫 publication 이후에만 나타난다. SQL UI는 Job과 Catalog를 1초 간격으로 확인해 준비 중, Kafka JOIN 실행 중, 첫 이벤트 게시 완료를 구분하며 start API 응답만으로 완료를 표시하지 않는다. pause는 Kafka table과 materialized view만 내리고 raw/output/static table과 안정적인 consumer group identity를 보존하므로, pause 중 쌓인 Kafka event는 resume 후 같은 offset 경계에서 이어서 처리된다.

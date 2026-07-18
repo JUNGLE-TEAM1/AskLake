@@ -570,18 +570,18 @@ npm run verify:kafka-continuous-contract
 npm run verify:kafka-continuous-rules
 ```
 
-ClickHouse serving mode를 변경할 때는 기존 Spark/Iceberg 검증을 대신하지 말고 아래 실동작 smoke를 추가로 실행한다. 스크립트는 고유 Kafka topic, ClickHouse table, PostgreSQL metadata를 만들고 정확한 이름만 종료 시 정리한다. 실제 Continuous SQL Job 생성/시작, 13개 Kafka 입력 중 INNER JOIN 12개 output, Catalog revision, published Dashboard의 10개 widget type, pause/resume과 `(partition, offset)` 중복 제거를 한 번에 확인한다.
+ClickHouse serving mode를 변경할 때는 기존 Spark/Iceberg 검증을 대신하지 말고 아래 실동작 smoke를 추가로 실행한다. 스크립트는 고유 Kafka topic, ClickHouse table, PostgreSQL metadata를 만들고 정확한 이름만 종료 시 정리한다. 공백 구분 원문을 `RawBLOB` Kafka Engine으로 넣어 실제 Continuous SQL Job 생성/시작, 최초 3개 입력 중 INNER JOIN 2개 output, pause 중 적재한 1개 event의 미소비와 resume 후 처리, 이후 10개 event 반영, Catalog revision, published Dashboard의 10개 widget type과 `(partition, offset)` 중복 제거를 한 번에 확인한다. fixed sleep은 pause 상태 불변 확인용 0.5초뿐이며 완료 판정은 offset·revision·widget 값으로 한다.
 
 ```bash
 # 저장소 root
 docker compose up -d postgres redpanda clickhouse
 
 cd backend
-PYTHONPATH=. python -m unittest tests.test_clickhouse_continuous_sql tests.test_realtime_feature_flags -v
+PYTHONPATH=. python -m unittest tests.test_clickhouse_continuous_sql tests.test_catalog_unique_key_verification tests.test_realtime_feature_flags -v
 npm run verify:clickhouse-kafka-join
 ```
 
-이 smoke의 static relation은 exact snapshot reader 계약을 재현하는 bounded fixture를 사용하고 Kafka·ClickHouse·PostgreSQL·Catalog·Dashboard 경로는 실제 container와 application service를 사용한다. 실제 S3/Iceberg/Trino static snapshot round trip은 기존 Trino/Iceberg readiness와 함께 배포 환경에서 별도로 확인한다.
+이 smoke의 static relation은 count query와 page reader를 포함한 exact snapshot 계약을 재현하는 bounded fixture를 사용하고 Kafka·ClickHouse·PostgreSQL·Catalog·Dashboard 경로는 실제 container와 application service를 사용한다. 실제 S3/Iceberg/Trino static snapshot round trip은 기존 Trino/Iceberg readiness와 함께 배포 환경에서 별도로 확인한다.
 
 로컬 MinIO S3에 실제 Iceberg static table을 만들고 exact snapshot을 Trino로 ClickHouse에 적재하는 전체 경계까지 확인하려면 Trino를 함께 올리고 live option을 사용한다. 고유 Iceberg table은 검증 종료 시 `DROP TABLE`로 정리한다.
 
@@ -1079,7 +1079,7 @@ git diff --check
 
 `Realtime Quality Gates / realtime-contracts`는 같은 계약에 disposable PostgreSQL event log/NOTIFY·publication concurrency와 Caddy/NGINX container parser를 추가한다. `realtime-live-e2e`는 매일 schedule 또는 `workflow_dispatch`의 `run_live_iceberg=true`에서 Kafka/Spark/Iceberg fault·restart harness를 실행한다. 실제 ALB와 browser, production-like Continuous SQL stream-static JOIN 증거는 operator gate이며 CI parser나 fake writer test로 대체하지 않는다.
 
-static Dataset JOIN key는 Catalog `uniqueKeySets` 또는 `uniqueKeyColumns`로 명시한다. 기존 `indexColumns`가 실제 unique index임을 보장하는 경우에만 `indexColumnsUnique=true`를 함께 저장한다. `CONTINUOUS_SQL_JOIN_ENABLED=false`가 기본이며 실제 Spark/Iceberg end-to-end, fault/restart와 soak는 STACK-04 gate다.
+static Dataset JOIN key는 Catalog `uniqueKeySets` 또는 `uniqueKeyColumns`로 명시한다. 기존 `indexColumns`가 실제 unique index임을 보장하는 경우에만 `indexColumnsUnique=true`를 함께 저장한다. SQL 분석 UI에서 key 증적만 없는 경우에는 `POST /api/catalog/datasets/{datasetId}/unique-keys/verify-and-register`가 exact Trino count를 수행하고 성공한 key만 등록하므로 사용자가 SQL이나 metadata를 수동 편집하지 않는다. `CONTINUOUS_SQL_JOIN_ENABLED=false`가 기본이며 실제 Spark/Iceberg end-to-end, fault/restart와 soak는 STACK-04 gate다.
 
 SQL 분석에서 ClickHouse Continuous Job 생성 UI를 변경할 때는 아래 검증을 추가로 실행한다. 이 테스트는 Kafka delta relation 감지, stream 1개 + static N개 조합, 안전한 ClickHouse table identifier와 editor action 계약을 확인한다. 실제 create/start와 Catalog/Dashboard 반영은 backend Continuous SQL 계약 및 operator E2E로 검증한다.
 
@@ -1091,6 +1091,8 @@ npm run build
 ```
 
 Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 두 경로를 사용한다. cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
+
+ClickHouse mode의 정적 snapshot 적재 기본 한도는 relation당 15,000,000행이고 insert batch는 20,000행이다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 실제 운영 데이터가 한도를 넘으면 값을 무조건 올리지 말고 dimension 크기·참조 열·ClickHouse 메모리와 disk를 먼저 확인한다. 동일 snapshot의 참조 열 table은 resume에서 재사용되며 source count와 local count가 다르면 truncate 후 다시 적재한다.
 
 실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 operator gate에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다. 절차와 판정은 `docs/realtime-2026/final-audit.md`, `docs/realtime-2026/production-runbook.md`를 따른다.
 
