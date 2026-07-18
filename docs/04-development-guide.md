@@ -1062,6 +1062,15 @@ script와 EKS `external_ec2` process 0을 함께 검증한다. 이 audit은 현�
 실제 결과와 남은 legacy/probe 경계는
 [Day 18 Phase 5 EC2 rollback 경로 검증](eks-day18-ec2-rollback-evidence.md)을 따른다.
 
+Phase 6 운영 대응은 [EKS Day 18 운영 runbook](eks-day18-operations-runbook.md)을 따른다.
+초기 `kubectl`·ALB·Continuous·CloudWatch 조회, 격리 Pod/Node 복구, immutable digest
+preflight/rollout, 보존 EC2 fallback과 비용·cleanup을 한 순서로 사용하되 조회·조정·변경을
+구분한다. Phase 6에서는 runbook과 preflight만 고정하고 실제 새 digest rolling update는
+Pair B 변경이 합쳐진 뒤 Phase 7 confirmation으로 실행한다. static 계약은
+`bash scripts/verify-eks-day18-operations-runbook.sh`로 검사한다. evidence는 저장소 밖의
+고유 경로와 mode `0600`을 사용하며 EC2 `start` 성공을 트래픽 cutover 성공으로 확대하지
+않는다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
