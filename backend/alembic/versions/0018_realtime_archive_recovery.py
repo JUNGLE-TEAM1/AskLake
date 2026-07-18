@@ -5,8 +5,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0014_realtime_archive_recovery"
-down_revision = "0013_catalog_realtime_publication"
+revision = "0018_realtime_archive_recovery"
+down_revision = "0017_catalog_realtime_publication"
 branch_labels = None
 depends_on = None
 

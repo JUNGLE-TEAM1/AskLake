@@ -18,7 +18,7 @@
 ## 1. 사전 조건
 
 1. 모든 선행 V2 PR이 순서대로 merge됐고 해당 branch CI가 green인지 확인한다.
-2. `alembic current`가 `0014_realtime_archive_recovery`인지 확인한다.
+2. `alembic current`가 `0018_realtime_archive_recovery`인지 확인한다.
 3. V1/V2 consumer owner가 한 Job generation을 동시에 claim하지 않는지 확인한다.
 4. hot receipt와 archive receipt가 partition별 contiguous한 boundary B까지 도달했는지 확인한다.
 5. pipeline version과 모든 dimension version을 고정한다.

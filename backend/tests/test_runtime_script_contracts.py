@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,19 @@ class RuntimeScriptContractTests(unittest.TestCase):
             source = (SCRIPTS_DIR / name).read_text(encoding="utf-8")
             self.assertLessEqual(len(source.splitlines()), 20)
             self.assertIn("sys.modules[__name__] = _implementation", source)
+
+    def test_rag_spark_runtime_supports_non_speculative_partition_work(self) -> None:
+        runtime_path = SCRIPTS_DIR / "runtime" / "spark_job_runtime.py"
+        source = runtime_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        make_spark = next(
+            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "make_spark"
+        )
+
+        self.assertIn("disable_speculation", [arg.arg for arg in make_spark.args.kwonlyargs])
+        self.assertIn('.config("spark.speculation", "false")', source)
+        for name in ("rag_parent_staging.py", "rag_chunk_staging.py", "rag_index_dispatch.py"):
+            self.assertIn("disable_speculation=True", (SCRIPTS_DIR / name).read_text(encoding="utf-8"))
 
     def test_atomic_report_adds_version_and_legacy_reader_stays_compatible(self) -> None:
         reset_runtime_compatibility_path_counts_for_test()

@@ -8,7 +8,7 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 
 현재 Pair A 브랜치의 기준 경계는 다음과 같다.
 
-- Source, Schema, Create, Run은 `VITE_API_BASE_URL`을 통해 live backend를 호출한다.
+- Source, Schema, Create, Run은 기본적으로 같은 출처의 `/api`를 통해 live backend를 호출한다. `VITE_API_BASE_URL`은 다른 API origin이 필요한 경우에만 사용한다.
 - 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log` 또는 Kafka raw text 메시지가 이름 없는 `line_number + value` 샘플로 반환될 때 활성화한다.
 - Record Parsing Preview와 File/S3 batch, Kafka Snapshot, Kafka Continuous runtime은 Job에 저장된 동일 `recordParsing` 계약을 사용한다. Preview는 제한 샘플을, runtime은 전체 입력을 검증하며 어느 쪽도 부족한 필드를 null로 채우거나 초과 필드를 버리지 않는다. Kafka replay producer의 `raw_text` 모드는 입력 파일의 비어 있지 않은 각 줄을 JSON envelope 없이 메시지 value 그대로 전송한다.
 - File / S3 source는 단일 object와 prefix 데이터셋을 구분한다. Prefix 선택은 `Path / Prefix`와 `__Selection Kind=prefix`를 Job의 `sourceConfig`에 저장하고 개별 object 배열은 저장하지 않는다. Backend는 prefix를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체와 선택 형식이 아닌 객체를 제외한다. Preview는 사전식 첫 데이터 파일을 대표 파일로 사용하고 모든 데이터 파일의 bounded schema fingerprint가 호환될 때만 Schema 단계로 진행한다.
@@ -17,7 +17,7 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 - 초기 ETL job과 Catalog dataset은 backend hydrate 결과를 따른다. 둘 다 비어 있을 수 있다.
 - 파이프라인 생성은 Job과 pending `catalogTarget`을 만들고, Catalog dataset은 실행 성공 후 생성 또는 갱신한다.
 - 같은 Job 또는 표시명이 정확히 같은 `targetDataset`으로 다시 생성/실행한 결과는 기존 Catalog row의 `materializationRuns` history에 run-keyed로 누적한다. 일반 ETL/SQL full-refresh Run은 `materializationMode=snapshot`, Kafka의 새 offset/micro-batch Run은 `materializationMode=delta`다. 현재 Dataset은 newest-first 성공 history에서 첫 snapshot까지의 active segment만 사용하므로 새 snapshot은 이전 snapshot을 논리적으로 교체하고, snapshot 이후 delta만 누적한다. 다른 표시명은 ASCII slug가 같더라도 별도 Job/dataset identity를 가져야 한다. backend는 안전한 소문자 ASCII 이름에는 기존 `ds_<name>`을 유지하고, 한글·공백·특수문자·대소문자 변환처럼 slug에서 정보가 손실되는 이름에는 원문 기반 안정 해시 suffix를 붙인다. backend가 storage path를 자동 생성할 때도 같은 충돌 방지 key를 사용한다. Catalog 검색 목록은 dataset row를 하나만 유지하며 이전 snapshot의 물리 파일과 Run metadata는 history로 보존한다.
-- ETL 컬럼 리니지는 source와 target에 같은 스키마를 복제하지 않는다. source node는 실제 입력/transform input 컬럼만 가지며, transform step의 `input -> output`을 source-to-job edge로, 실제 output column 이름 일치를 job-to-target edge로 저장한다. source engine은 파일 확장자나 connector type을, 가운데 Spark job은 dataset layer가 아닌 `PROCESS` node를, target engine은 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용한다. `_asklake_*` 실행 메타데이터는 Spark job에서 생성되므로 source edge를 만들지 않는다.
+- ETL 컬럼 리니지는 source와 target에 같은 스키마를 복제하지 않는다. source node는 실제 입력/transform input 컬럼만 가지며, transform step의 `input -> output`을 source-to-job edge로, 실제 output column 이름 일치를 job-to-target edge로 저장한다. source engine은 파일 확장자나 connector type을, 가운데 Spark job은 dataset layer가 아닌 `PROCESS` node를, target engine은 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용한다. `_asklake_*` 실행 메타데이터는 Spark job에서 생성되므로 source edge를 만들지 않는다. Catalog UI는 이 저장 graph를 수정하지 않고 `PROCESS` node의 동일 컬럼으로 이어지는 두 edge를 source→target edge로 축약해 표시한다.
 - Run state는 `runId` 기준으로 관리한다.
 - 일반 File/Data Lake/PostgreSQL Snapshot Run은 `Frontend -> FastAPI command -> Airflow DAG -> token-authenticated FastAPI internal execution -> source export 또는 direct object read -> Spark runner -> Run/Catalog transaction` 순서다. Airflow에는 Job 전체나 source credential을 넘기지 않고 `jobId`, `runId`, `command`만 전달한다.
 - 내부 `Data Lake` 소스는 Catalog의 `Source Dataset ID`를 권한과 가용 상태 기준으로 검증한 뒤, 등록된 Iceberg table identity를 Spark catalog 입력으로 사용한다. 외부 object-storage 경로를 직접 읽는 `Data Lake Parquet` 소스는 기존 S3 path 계약을 유지한다.
@@ -217,36 +217,37 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
 - ETL Schedule step은 한 개의 shadcn `Card` 안에서 `직접 실행`과 `반복 실행`을 `ToggleGroup`으로 선택한다. `직접 실행`은 저장 계약의 `스케줄링 건너뛰기`에 대응하며, 저장 후 사용자가 Job 목록/상세에서 `즉시 실행`으로 1회 Run을 만든다. 반복 실행을 선택한 때만 주기, 시각, IANA timezone, 겹침 처리(`skip_if_running` 기본값)를 노출하고, 재시도 정책은 `Switch` 상태에 따라 상세 필드를 조건부 표시한다. watermark 수집 기준과 지수 백오프 정책은 생성 계약에 계속 포함하지만, 실제 production-grade scheduler 엔진은 MVP 후속 범위다.
-- catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`. 스키마 상세 modal은 dataset schema와 `GET /api/catalog/datasets/{datasetId}/rows` sample page를 함께 표시하며, 페이지 이동·새로고침·수평 스크롤을 modal 안에서 처리한다.
+- catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`. `CatalogPage.tsx`는 public import façade이고 `CatalogWorkspacePage.tsx`가 데이터 카탈로그와 Semantic/RAG 작업공간의 view 전환을 소유한다. 스키마 상세 modal은 dataset schema와 `GET /api/catalog/datasets/{datasetId}/rows` sample page를 함께 표시하며, 페이지 이동·새로고침·수평 스크롤을 modal 안에서 처리한다. `catalogLineageProjection.ts`는 API graph의 `PROCESS` node를 삭제하지 않고 사용자-facing graph에서만 matching column edge를 직접 연결한다.
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
-- API boundary: 공통 HTTP wrapper는 `frontend/src/services/apiClient.ts`, SQL Query Run 호출은 `frontend/src/services/sqlQueryApi.ts`, ETL pipeline 호출은 `frontend/src/services/pipelineApi.ts`, 개발 호환 실행은 `frontend/src/services/mockApi.ts`
+- API boundary: 공통 HTTP wrapper는 `frontend/src/services/apiClient.ts`, SQL Query Run 호출은 `frontend/src/services/sqlQueryApi.ts`, ETL pipeline 호출은 `frontend/src/services/pipelineApi.ts`, Semantic Model·RAG 호출은 `frontend/src/services/semanticApi.ts`, 개발 호환 실행은 `frontend/src/services/mockApi.ts`
 - Query AI helper: `frontend/src/services/queryAiService.ts`
 - 화면별 AI 진입점 계약: `docs/ai-chat-ui-contract.md`
 - dashboard list/runtime API adapter: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
 - ETL 소스·S3 경로·JSON 샘플·SQL 데이터셋·Dashboard 데이터셋의 계층 탐색은 `react-arborist`를 동작 엔진으로 사용한다. 공통 `frontend/src/components/ui/explorer-tree.tsx`가 가상화, 키보드 탐색, 선택/펼침과 AskLake/shadcn 계열 행 UI를 합성하고, 각 페이지는 노드 데이터·아이콘·활성화 callback만 제공한다. 페이지에서 별도 재귀 트리 상태나 독자적인 tree row CSS를 만들지 않는다.
-- Dashboard frontend composition은 `DashboardPage.tsx`가 route/list/legacy 전환과 상위 상태를 조정하고, `legacy/`가 기존 builder/detail/chart 표시와 순수 view model을, `runtime/useDashboardRuntimeResources.ts`가 published/draft hydrate와 page 선택을, `runtime/useDraftPageMutations.ts`와 `runtime/useDraftWidgetMutations.ts`가 page/widget 변경 상태를, `runtime/useDashboardLayoutHistory.ts`가 layout undo/redo를 소유한다. 전체 runtime을 못 불러온 오류만 canvas 수준 오류로 처리하고, page/widget/title/layout/publish 변경 실패는 현재 화면을 유지한 채 작업 notice로 표시한다. API 오류에는 안전한 code·stage·diagnostic ID를 붙여 운영자가 같은 요청을 추적할 수 있다. `DashboardRuntimeView.tsx`는 runtime 화면 composition을 유지하고 편집 toolbar는 `DashboardEditToolbar.tsx`로 분리한다. `dashboard.css`와 `dashboard-runtime.css`는 `styles.css`의 기존 import 위치를 보존하는 manifest이며, 하위 `dashboard-*` CSS 모듈을 base/list/builder/detail과 shell/dataset/canvas/widget/config/assistant/responsive 순서로 import해 기존 cascade를 유지한다.
-- SQL 결과 저장 UI는 `SqlJobWizardDialog`가 SQL 화면 안에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 로컬로 유지한다. DuckDB compatibility 결과의 저장 및 검토 단계는 ETL Target과 같은 `DatabaseField`, `S3PathField`를 재사용하고 DB, 파일 포맷, 압축, 태그, 다중 파티션을 `SqlJobWizardTarget`에 보존한 뒤 `useAskLakeData.createSqlDatasetJob`이 기존 `POST /api/etl/jobs` 경로로 보낸다. Trino mode에서는 같은 wizard가 managed Iceberg/full-refresh와 단일 파티션 범위만 명시하고 `POST /api/etl/sql-jobs`로 SQL recipe Job을 만든다. 어느 경로도 ETL Review route로 이동하지 않는다.
+- Dashboard frontend composition은 `DashboardPage.tsx`가 route/list/legacy 전환과 상위 상태를 조정하고, `legacy/`가 기존 builder/detail/chart 표시와 순수 view model을, `runtime/useDashboardRuntimeResources.ts`가 published/draft hydrate와 page 선택을, `runtime/useDraftPageMutations.ts`와 `runtime/useDraftWidgetMutations.ts`가 page/widget 변경 상태를, `runtime/useDashboardLayoutHistory.ts`가 layout undo/redo를 소유한다. `dashboardAssistantIntent.ts`는 질문과 실제 시각화 변경 의도를 분류하고 `dashboardAssistantActions.ts`는 검증된 create/update action을 기존 widget persistence callback으로만 적용한다. callback이 `true`를 반환한 경우에만 성공으로 표시하며 실패하면 기존 draft를 유지하고 오류를 노출한다. 전체 runtime을 못 불러온 오류만 canvas 수준 오류로 처리하고, page/widget/title/layout/publish 변경 실패는 현재 화면을 유지한 채 작업 notice로 표시한다. API 오류에는 안전한 code·stage·diagnostic ID를 붙여 운영자가 같은 요청을 추적할 수 있다. `DashboardRuntimeView.tsx`는 runtime 화면 composition을 유지하고 편집 toolbar는 `DashboardEditToolbar.tsx`로 분리한다. Draft editor의 데이터 sidebar는 닫힌 상태로 시작하며, 데이터 sidebar와 inspector의 open/close는 persisted Dashboard payload가 아닌 local UI state다. inspector를 접어도 선택 widget, dataset, 설정 draft를 초기화하지 않는다. `dashboard.css`와 `dashboard-runtime.css`는 `styles.css`의 기존 import 위치를 보존하는 manifest이며, 하위 `dashboard-*` CSS 모듈을 base/list/builder/detail과 shell/dataset/canvas/widget/config/assistant/responsive 순서로 import해 기존 cascade를 유지한다.
+- SQL 결과 저장 UI는 `SqlJobWizardDialog`가 SQL 화면 안에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 로컬로 유지한다. 기본 owner는 현재 session actor이고 프로젝트 범위는 현재 actor가 속한 실제 group ID를 `principalId`로 선택해야 한다. private은 owner fallback만, organization은 인증 사용자 principal만 저장하며 임의의 demo 그룹명을 생성하지 않는다. DuckDB compatibility 결과의 저장 및 검토 단계는 ETL Target과 같은 `DatabaseField`, `S3PathField`를 재사용하고 DB, 파일 포맷, 압축, 태그, 다중 파티션을 `SqlJobWizardTarget`에 보존한 뒤 `useAskLakeData.createSqlDatasetJob`이 기존 `POST /api/etl/jobs` 경로로 보낸다. Trino mode에서는 같은 wizard가 managed Iceberg/full-refresh와 단일 파티션 범위만 명시하고 `POST /api/etl/sql-jobs`로 SQL recipe Job을 만든다. 어느 경로도 ETL Review route로 이동하지 않는다.
 - SQL 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보` 세 view를 같은 panel 안에서 제공한다. `실행 정보`에는 실행 평가와 preview의 `쿼리 실행 -> 첫 결과 준비` timeline을 둔다. 평가/timeline을 editor 아래 sibling card로 렌더링해 workspace 높이를 늘리지 않는다. 결과 action은 전체 보기, CSV 다운로드, 처리 Job 생성을 제공한다. 전체 보기와 CSV는 별도 full run을 시작하고, 처리 Job은 preview SQL recipe만 저장한다. Trino에서는 1회성 Iceberg CTAS API를 toolbar에서 노출하지 않으며 SQL 화면에서는 Dashboard 생성 action을 제공하지 않는다.
 - SQL 분석 화면은 오른쪽 `선택 테이블`/schema 사이드바 없이, 왼쪽 `분석 테이블` 트리에서 테이블 행을 클릭해 선택한다. 기준 테이블과 추가 참조 테이블 모두 선택된 행을 다시 클릭해 해제할 수 있다. 기준 테이블만 선택된 상태에서 해제하면 전체 선택과 editor context를 비우고, 참조 테이블이 남아 있으면 가장 먼저 선택한 참조 테이블을 새 기준 테이블로 승격한다. 선택된 행은 왼쪽 파란 체크로 표시한다. SQL editor의 사용자가 직접 작성한 query text가 실행 기준 source of truth이며 UI 선택 상태로 역동기화하지 않는다. 참조 테이블만 해제할 때는 SQL text를 자동 재작성하지 않고, 해제된 table을 계속 참조하면 preview 전 table context 검증에서 차단한다. 기준 테이블 해제 후 참조 테이블이 승격되는 경우는 dataset 변경으로 취급해 새 기준 테이블의 기본 쿼리로 초기화한다. 편집기를 전체 삭제한 빈 문자열도 사용자 입력으로 유지하며, 기본 쿼리 복원은 초기 dataset 선택·dataset 변경·명시적 reset로 한정한다. UI에서는 base/reference를 구분하지 않고, 내부 API payload만 기존 `sourceDatasetId`/`referenceDatasetIds` 계약을 유지한다.
 - SQL 분석 route는 `SqlAnalysisPage.tsx`가 데이터셋·query·result 사이의 orchestration만 맡고, 화면 composition은 `SqlDatasetContextPanel.tsx`, `SqlQueryEditorPanel.tsx`, `SqlResultsPanel.tsx`로 분리한다. 데이터셋 검색·pagination·접힘 상태는 `useSqlContextPanel.ts`, Query AI 요청·적용 상태는 `useSqlQueryAi.ts`, Trino preview polling·첫 page·cursor pagination·취소는 `useTrinoPreviewRun.ts`, SQL 검증·estimate·확인 dialog는 `useTrinoQueryPreflight.ts`, on-demand 전체 결과 요청·polling·cursor pagination·CSV 준비는 `useTrinoFullResult.ts`, SQL Job request 조립은 `useSqlJobCreation.ts`가 소유한다. `SqlPreviewTable.tsx`, `SqlResultChart.tsx`, `SqlDatasetRow.tsx`는 결과 표·위젯·데이터셋 표시를 맡는다. `SqlChartConfigurator.tsx`는 SQL 결과와 선택 데이터셋을 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`을 그대로 합성해 설정 draft를 받는다. 명시적인 생성/적용 시점에만 페이지 widget config를 갱신한다.
+- 수집/처리, 검색/카탈로그, SQL 분석, 대시보드 목록은 공용 `PageHeader size="sm"` 규격으로 제목과 아이콘의 높이를 통일한다. SQL의 주요 action과 탭은 텍스트 label을 접근성 이름의 source of truth로 사용하고 장식 glyph를 반복하지 않는다. SQL 도구 panel toggle은 펼침 상태의 왼쪽 화살표와 접힘 상태의 오른쪽 화살표로 방향을 표시하며, `SQL 도구`, editor, 결과 header는 큰 박스형 glyph 대신 같은 하늘색 점 marker를 사용한다. 이 표현 변경은 Dataset 선택, query, panel 접힘 상태나 API payload를 변경하지 않는다.
 - SQL 분석의 streaming+static 관계 감지는 `continuousSqlUi.ts`가 Catalog의 Kafka delta materialization과 source metadata를 이용해 보조한다. Kafka 1개와 static 1개 이상일 때 `SqlQueryEditorPanel` action 가장 왼쪽에 `실시간 JOIN 만들기`를 노출하고, `ContinuousSqlJoinDialog`가 출력 이름과 trigger를 받는다. `useContinuousSqlJoin.ts`는 feature config와 validate → ClickHouse create → start command 상태를 소유해 `SqlAnalysisPage.tsx`의 크기 한도를 유지한다. 최종 relation mode, SQL AST, 권한, static unique key 판정은 frontend 추론이 아니라 backend validate가 담당하며 일반 Trino preview/materialization 상태와 섞지 않는다.
 - `sqlLogic.ts`는 기존 import 경로를 보존하는 호환 façade다. 실제 책임은 AST/참조 분석(`sqlAst.ts`), preflight(`sqlPreflight.ts`), autocomplete(`sqlAutocomplete.ts`), JOIN 검증(`sqlJoinLogic.ts`), identifier·결과 formatting·derived dataset helper 모듈로 나눈다. `queryAiService.ts`는 SQL 초안 생성 요청을 담당한다.
 - `SqlAiWriterDialog.tsx`는 파일명 호환을 유지하면서 내부에서 shadcn `Popover`, `Bubble`, `Collapsible`로 Nessie prompt, 생성 상태, 초안 적용을 구성한다. SQL 결과 기반 Job wizard는 `SqlJobWizardDialog.tsx`가 dialog 흐름, `SqlJobWizardSteps.tsx`가 단계별 composition, `SqlJobWizardTargetSettings.tsx`가 저장 대상 form, `sqlJobWizardModel.ts`가 request formatting을 담당한다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 유지하고, Trino mode에서는 `POST /api/query/validate` 성공 뒤 Query Run을 제출해 상태 polling과 signed cursor 결과 page를 사용한다. Trino 문법의 최종 판정은 backend parser/compiler이며 frontend PostgreSQL parser는 UX 보조다.
 - SQL route 전용 layout·interaction style은 각 component의 CSS Module에 함께 둔다. global stylesheet는 App Shell과 공용 token만 소유하며, `.page-body.sql-body` gutter 외의 SQL 내부 component selector를 추가하지 않는다. Editor wrapper와 textarea는 약 10행을 보이는 동일 viewport 높이를 공유하고 textarea 하나만 세로 스크롤을 소유한다. Trino 통합은 editor wrapper 높이, toolbar, textarea scroll contract를 변경하지 않는다.
-- Query AI 생성 기능은 SQL editor 상단의 `Nessie로 SQL 작성` 버튼에 붙는 shadcn `Popover`에서 진입한다. prompt 제출 후 `Collapsible` 입력 폼을 접고 `Bubble`로 생성 중·완료·적용 상태를 표시한다. `frontend/src/services/queryAiService.ts`가 `POST /api/query/ai-suggestions`를 호출하고, FastAPI가 권한·범위·검증을 수행한 뒤 private AI Gateway로 요청한다. AI는 선택 테이블 context 안에서만 SQL 초안을 만들 수 있고, backend는 AI 응답도 read-only SQL과 선택 dataset scope로 재검증한다. AI가 만든 SQL은 자동 실행하지 않고 editor 적용 후 기존 read-only/preflight 검증을 다시 통과해야 실행된다. Gateway 실패 시 로컬 SQL을 위조하지 않는다.
+- Query AI 생성 기능은 SQL editor 상단의 `Nessie로 SQL 작성` 버튼에 붙는 shadcn `Popover`에서 진입한다. prompt 제출 후 `Collapsible` 입력 폼을 접고 `Bubble`로 생성 중·완료·적용 상태를 표시한다. `useSqlQueryAi.ts`의 `LatestRequestGate`가 prompt·선택 Dataset·dialog context가 바뀐 이전 요청을 취소하고 stale 응답 적용을 차단한다. `frontend/src/services/queryAiService.ts`가 `POST /api/query/ai-suggestions`를 호출하고, FastAPI가 권한·범위·검증을 수행한 뒤 private AI Gateway로 요청한다. AI는 선택 테이블 context 안에서만 SQL 초안을 만들 수 있고, backend는 AI 응답도 read-only SQL, 선택 dataset scope, 사용자가 명시한 집계·그룹화·분석 의도에 맞는지 재검증한다. 의도 위반은 위반 목록을 포함해 한 번만 재생성하고 두 번째 실패는 오류로 반환한다. AI가 만든 SQL은 자동 실행하지 않고 editor 적용 후 기존 read-only/preflight 검증을 다시 통과해야 실행된다. Gateway 실패 시 로컬 SQL을 위조하지 않는다.
 - SQL desktop layout은 좌측 분석 테이블 panel과 우측 editor/result workspace가 같은 height token을 공유한다. 결과 전/후 모두 하단 경계를 맞추고 결과 panel의 현재 view만 남은 높이 안에서 scroll한다. Trino 평가/timeline은 `실행 정보` view 내부에서 scroll하며 별도 block으로 좌우 하단 정렬을 깨지 않는다. Catalog 미리보기의 `SQL 분석에서 열기`는 선택 Dataset을 `App.tsx`의 `openDatasetInSqlWithSelection`에 전달해 `/sql` route와 editor context를 함께 갱신한다.
 - `/login`은 `AuthPage`와 `/api/auth/*` session API를 사용하고, workspace hydrate는 session actor 확인 이후 시작한다.
 - `AdminConsolePage`는 admin actor에게만 노출하고 `/api/admin/*`를 통해 사용자·그룹·permission grant·governance control·감사 로그를 관리한다.
-- AI 활용 메뉴는 SQL Query AI와 Dashboard Assistant를 대체하지 않는 독립 대화형 UI surface다. 초기에는 `CatalogDataset` 중 `available` 상태이면서 `permissions.canQuery !== false`인 Dataset만 대화 context로 고를 수 있으며, 질문과 선택 상태는 브라우저 메모리에만 둔다. UI-only 단계는 OpenAI 호출, RAG index, vector DB, sessionStorage 대화 영속화를 만들지 않는다. 실제 runtime 연결 전에는 답변·근거·SQL·결과 테이블을 위조하지 않는다. 화면 구조와 후속 response contract는 [AI Chat UI Contract](ai-chat-ui-contract.md)를 따른다.
+- 검색/카탈로그의 `분석 기준` view는 독립 AI 대화 메뉴를 대신해 Semantic Model과 RAG 준비 상태를 관리한다. `/catalog?view=semantic`에서 Catalog Dataset 선택, metric·dimension 정의, RAG 분류·승인·색인·작업 이력을 실제 backend endpoint로 처리한다. `/semantic-layer`와 기존 `/ai`는 같은 화면으로 redirect하는 legacy 호환 route이며, 화면은 제공받은 Catalog 목록을 schema context로 사용하되 Semantic Model과 RAG 상태를 frontend fixture로 성공 처리하지 않는다.
 - 수집/처리 Transform 화면의 필드 transform은 사용자가 quick function 또는 expression을 직접 선택/입력하는 범위로 둔다. 여러 quick function은 현재 SQL 표현식을 다음 함수가 감싸는 단일 중첩 표현식으로 합성하고, 선택된 quick function을 다시 누르면 해당 wrapper만 제거한다. 편집기와 필드 행은 적용된 함수 선택 상태와 최종 SQL 표현식을 동일하게 표시한다. AI 기반 field transform/SQL transform 보조 버튼은 SQL 분석 Query AI와 역할이 겹치고 backend 계약이 없으므로 현재 MVP 화면에 노출하지 않는다.
 
 라우팅은 `frontend/src/main.tsx`에서 React Router Declarative Mode의 `BrowserRouter`를 사용한다. `/`는 shell 밖의 랜딩이고 `/login` 및 workspace route는 `App`의 session guard를 통과한다.
 
 현재 AI runtime 계약에서는 SQL Query AI와 Dashboard Assistant가 published Semantic Model과 serving RAG index를 조회하고, 모델이 실제 사용한 retrieval source만 근거로 표시한다. Dashboard Assistant의 `visualization_request`는 검증된 draft widget create/update action으로 저장되며, Gateway가 비활성화되었거나 실패하면 action 없이 명시적 unavailable 상태를 반환한다.
-`frontend/src/App.tsx`는 Router Shell 역할을 맡아 `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs`, `/etl/source`, `/etl/schema`, `/etl/schedule`, `/etl/permission`, `/etl/target`, `/etl/review`, `/catalog`, `/catalog/:datasetId`, `/sql`, `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`를 기존 flow state와 매핑한다.
+`frontend/src/App.tsx`는 Router Shell 역할을 맡아 `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs`, `/etl/source`, `/etl/schema`, `/etl/schedule`, `/etl/permission`, `/etl/target`, `/etl/review`, `/catalog`, `/catalog?view=semantic`, `/catalog/:datasetId`, `/sql`, `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`를 기존 flow state와 매핑한다. `/semantic-layer`와 기존 `/ai`는 독립 화면을 렌더링하지 않고 `/catalog?view=semantic`으로 replace 이동한다.
 route param은 기존 `selectedJob`, `selectedDataset`, `dashboardEntry` 상태와 동기화하지만, 데이터 로딩은 React Router loader/action으로 옮기지 않는다.
 수집/처리 생성 flow의 상단 stepper는 같은 `App.tsx` 상태 이동을 사용해 소스, 처리, 스케줄, 권한, 타겟, 검토 단계로 이동하며, 화면 전환은 `useNavigate` 기반으로 URL도 함께 갱신한다. 새 파이프라인에서는 각 화면의 검증을 통과한 `다음` callback만 해당 단계를 완료 처리하고, 상단 stepper는 완료된 단계의 바로 다음 단계까지만 전진을 허용한다. 이전 단계 이동은 항상 허용하며, 기존 Job 수정은 backend에서 hydrate한 저장 설정을 완료 상태로 시작한다.
 생성 wizard에서 Catalog, SQL, Dashboard, Job 목록 등 wizard 밖의 화면으로 이동하면 아직 제출되지 않은 `DraftPipeline`과 Target 단계의 localStorage 초안을 즉시 폐기한다. 이는 서버 Job, Run, Catalog 데이터에는 영향을 주지 않으며, 수집/처리 생성을 다시 시작하면 항상 초기 초안에서 시작한다.
@@ -294,13 +295,13 @@ FastAPI가 현재 소유하는 책임:
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
-- Dashboard Assistant OpenAI-backed response endpoint
+- Dashboard Assistant private AI Gateway + Semantic RAG response endpoint
 - 공통 error envelope
 
 후속으로 넘길 책임:
 
 - 운영 IdP/SSO, production session hardening, auth/permission Alembic migration, deny/policy 고도화
-- RAG 검색 기반 Dashboard Assistant 고도화
+- AI Gateway 운영 관측과 provider별 비용 정책 고도화
 
 ### Permission/Governance 경계
 
@@ -312,7 +313,7 @@ Frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query 
 
 프로필/관리 화면은 Phase 0 기준에서 별도 Identity/Admin resource로 취급한다. 프로필 페이지는 `GET /api/users/me`로 현재 actor의 표시 프로필, role, group, 권한 요약을 읽고, 관리 페이지는 `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs` API를 사용한다. 로그인/회원가입은 `/api/auth/login`, `/api/auth/signup`, `/api/auth/session`, `/api/auth/logout`의 로컬 session API로 제공하며, backend는 httpOnly `asklake_session` 쿠키를 actor context로 변환한다. 기존 smoke와 수동 검증 호환을 위해 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback을 유지한다. 이 header fallback은 로컬/검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client가 보낸 header만으로 admin actor를 허용하면 안 된다. 프론트는 `/login`의 로그인/회원가입 화면만 공개 route로 취급하고, 그 외 앱 route는 `/api/auth/session` 확인 전에는 앱 shell을 렌더링하지 않는다. 세션이 없으면 직접 URL 진입도 `/login`으로 대체하며, 로그인 후에만 사이드바/상단바와 업무 화면을 표시한다. `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔은 사용자 탭에서 user 차단/해제, 그룹 탭에서 group 차단/해제, 권한 탭에서 permission grant 추가/수정/삭제와 resource lock/unlock을 지원한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며, 일반 사용자-facing 메시지에는 노출하지 않는다. ETL Job의 owner 권한은 backend fallback으로 계산하고 table grant로 저장하지 않는다. 이전 payload의 `permissionRoles`는 최초 권한 조회 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다. 서버 감사 로그는 `audit_events` table에 저장하며, admin permission grant 생성/수정/삭제, governance control 변경, auth login/logout/login 실패, Dataset/Job/Dashboard의 직접 접근 또는 실행 403 이벤트를 저장한다. `/api/admin/audit-logs`는 actor/resource/result/text/date/limit 필터로 조회한다. Topbar 최근 API 호출 로그는 frontend local/localStorage 상태로 유지하며 서버 감사 로그와 합치지 않는다.
 
-Production startup은 기본적으로 알려진 legacy demo 계정(`admin.user@asklake.local`, `demo.user@asklake.local`)을 `disabled`로 만들고 기존 세션을 폐기한다. 데모 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정하면 startup이 기존 계정 상태와 세션을 보존하고 frontend도 같은 계정 안내를 표시한다. 이 opt-in은 기존 `active`를 유지하지만 관리자가 명시적으로 저장한 `disabled`를 자동 해제하지 않으므로, 처음 전환할 때 필요한 계정 활성화는 한 번만 별도로 수행한다. Production bootstrap admin 요구사항과 client header fallback 차단은 opt-in과 무관하게 유지한다.
+Production startup은 알려진 legacy demo 계정(`admin.user@asklake.local`, `demo.user@asklake.local`)을 `disabled`로 만들고 기존 세션을 폐기한다. `AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 test 환경에서만 허용하며 production 설정 검증은 이를 거부한다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`도 production env 예시에 두지 않고 deploy preflight가 존재 자체를 거부한다. Production은 bootstrap admin 요구사항과 client header fallback 차단을 항상 유지한다.
 
 세션 쿠키의 `Secure` 속성은 운영 환경에서 기본 활성화된다. HTTPS 인증서가 아직 없는 제한된 dev HTTP ALB만 `AUTH_SESSION_COOKIE_SECURE=false`를 명시해 로그인 세션을 유지할 수 있으며, 이 예외는 header-auth fallback, public signup, legacy demo 계정을 활성화하지 않는다. HTTPS 전환 시 해당 override를 제거하거나 `true`로 복구한다.
 
@@ -320,11 +321,23 @@ Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한�
 이 endpoint는 `get_actor_context`를 필수 dependency로 사용하고, `dashboardId`가 있으면 해당 actor의 dashboard `view` 권한을 확인한 뒤에만 Assistant context를 구성한다. 운영 환경의 유효한 session이 없는 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`을 반환한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
 현재 actor의 dataset `query` permission과 governance 검사를 통과한 available catalog dataset과 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI에 전달한다. 제외된 dataset의 `sampleRows`와 widget data sample은 provider context에 포함하지 않는다.
-OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
+Gateway 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
 데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
 AI provider key가 없거나 private AI Gateway 호출이 실패하면 endpoint는 명시적인 unavailable/error 응답을 반환하고 action을 비운다. 시각화 요청에서도 결정론적 chart action이나 성공 문구를 대신 만들지 않는다.
 현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
 RAG 검색은 published Semantic Model과 approved serving index를 공통 resolver로 확인하며, `semantic_layer_rag` provenance와 source evidence를 응답에 포함한다.
+
+### AI Gateway, MCP, evidence 경계
+
+브라우저가 provider를 직접 호출하지 않는다. SQL Query AI, Dashboard Assistant, ETL transform, Semantic RAG 분류·검색, 리뷰 분석은 FastAPI 공개 API를 거쳐 private `ai-server`의 `/v1/generate` 또는 `/v1/embeddings`로 전달된다. Provider API key는 `ai-server`에만 있고 FastAPI는 service token만 가진다.
+
+Frontend AI adapter는 `apiClient`의 세션 포함 요청과 상대 `/api` 경로를 사용한다. Vite 개발 서버는 `/api`를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 같은 경로를 Compose `backend:8080`으로 전달한다. Realtime event client도 같은 base URL 규칙을 사용하며 Nginx의 정확한 `/api/realtime/events` location은 SSE buffering을 끈다. AI adapter는 개발용 `VITE_USE_MOCK_API`를 참조하지 않으며 Gateway/backend 오류를 SQL·차트·분석 성공으로 바꾸지 않는다. Nginx는 운영 쿠키의 `Secure` 속성을 제거하지 않고, 명시적인 로컬 HTTP Compose만 backend에 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다.
+
+Dataset metadata가 필요한 요청은 FastAPI가 먼저 actor의 권한과 governance를 검사한 뒤 request ID, actor, 허용 Dataset ID와 permission을 담은 짧은 수명의 signed context token을 발급한다. AI Gateway가 내부 MCP Catalog를 조회할 때 이 token을 한 번만 소비한다. 소비 기록은 PostgreSQL `ai_context_consumptions`에 저장해 여러 FastAPI replica에서도 재사용을 거부한다. MCP 응답은 schema·sample row 수를 제한하고 PII/credential 계열 컬럼과 값을 redaction한다.
+
+SQL과 Dashboard 생성은 published Semantic Model에 연결되고 승인된 serving RAG index만 검색한다. Gateway가 반환한 `usedEvidenceIds`는 검색 후보 ID의 부분집합이어야 하며 FastAPI는 실제 사용 ID와 일치하는 source만 공개 응답에 남긴다. 후보·사용 ID, actor, provider/model, 입력·출력 fingerprint는 `ai_generation_usage`에 감사 증적으로 저장한다. Provider/RAG가 unavailable이거나 응답 provenance가 mock/fallback이면 가짜 SQL·차트·근거를 만들지 않고 fail closed 한다.
+
+리뷰 분석은 `/api/review-analysis/runs`의 persisted run과 allow-list Node bridge로 실제 object-storage JSONL을 bounded batch 처리한다. FastAPI worker tick이 중단 뒤 남은 `queued` run을 다시 claim하고 lease가 만료된 `running` run을 실패로 종결한다. Catalog Dataset 권한과 연결되지 않은 임의 object 경로는 일반 actor에게 허용하지 않으며, 일반 actor는 설정된 review source만 사용할 수 있다. `review_schema`와 `review_row` 생성 provenance를 보존하고, 분류형 출력은 최소 class row·holdout accuracy/macro-F1·모든 class coverage를 통과한 portable artifact만 digest와 함께 latest model registry에 원자적으로 게시한다.
 
 ## 8) 데이터 모델 요약
 
@@ -344,6 +357,9 @@ RAG 검색은 published Semantic Model과 approved serving index를 공통 resol
 | Identity Profile | session actor 또는 current actor header + demo identity catalog | FastAPI `/api/users/me` profile resource |
 | Admin Console | admin users/groups/permissions/audit APIs + 관리 UI | FastAPI admin users/groups/permissions/audit resource |
 | Permission Grant | resource payload grant + `permission_grants` table | backend-enforced access control resource and admin edit target |
+| AI Generation Usage | `ai_generation_usage` | provider/model usage와 검증된 후보·실사용 evidence 감사 기록 |
+| AI Context Consumption | `ai_context_consumptions` | request-scoped MCP context token의 단일 사용 fence |
+| Review Analysis Run | `review_analysis_runs` | queued/running/success/failed 리뷰 분석 요청과 결과 |
 
 Catalog dataset은 `materializationRuns` version history를 가질 수 있다. 각 Run의 `materializationMode`는 전체 기준점인 `snapshot` 또는 이후 추가분인 `delta`다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 snapshot까지의 active segment만 기준으로 계산한다. active 결과를 모두 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 materialization 결과 삭제는 별도 UX/API로 분리한다.
 
@@ -361,7 +377,8 @@ Runtime chart widget은 backend가 Catalog 물리 데이터에서 만든 bounded
 
 Live mode 진입:
 
-- `VITE_API_BASE_URL=http://localhost:8080`
+- 같은 출처 `/api`가 기본값이며, 다른 origin이 필요할 때만 `VITE_API_BASE_URL=http://localhost:8080`
+- Vite proxy backend를 바꿀 때만 `VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080`
 - `frontend/src/services/apiClient.ts`
 
 FastAPI 현재 구현 범위:
@@ -393,6 +410,8 @@ FastAPI 현재 구현 범위:
 - `GET /api/catalog/datasets/{datasetId}/lineage`
 - `POST /api/catalog/derived-datasets`
 - `POST /api/query/runs`
+- `POST /api/query/ai-suggestions`: signed MCP context와 Semantic RAG evidence를 사용하는 SQL 초안 생성
+- `POST /api/ai/generate-sql`: ETL field/SQL transform용 검증된 scalar expression 또는 read-only SELECT 생성
 - `GET /api/query/runs`: 현재 actor의 Trino 실행 이력 조회
 - `GET /api/query/runs/{runId}`: Trino lifecycle 또는 legacy DuckDB snapshot 조회
 - `GET /api/query/runs/{runId}/results`: Trino signed-cursor 결과 page 조회
@@ -418,6 +437,13 @@ FastAPI 현재 구현 범위:
 - `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
+- `POST /api/dashboards/assistant`: 검증된 action과 실제 사용 evidence만 반환
+- `POST /api/review-analysis/schema-suggestion`
+- `POST /api/review-analysis/preview`
+- `POST /api/review-analysis/runs`
+- `GET /api/review-analysis/runs/latest`
+- `GET /api/review-analysis/runs/{runId}`
+- `GET /api/catalog/models`: 검증·게시된 portable review model artifact 조회
 - `GET /api/datasets/{datasetId}/freshness`
 - `POST /api/datasets/freshness/query`
 - `POST /api/dashboards/{dashboardId}/widgets/query`
@@ -606,7 +632,7 @@ Jobs·Job 상세·실행 이력 route는 Job 목록만 요청한다. Catalog·Ca
 
 `etl.css`는 `etl/facade.css`만 노출하고 `/etl/*` URL façade와 shared façade가 기존 cascade 순서로 실제 규칙을 연결한다. `layout.css`도 기존 cascade 순서를 보존하는 import entrypoint다. ETL 단계와 shell/account/admin/workflow 규칙은 feature stylesheet가 소유하며 review된 원문 SHA-256과 정확한 selector inventory를 회귀 계약으로 고정한다. 배포 소스에서 참조되지 않는 feature selector만 제거했고, 남은 반응형 중복 20개는 시각·computed-style 근거 없이 합치지 않는다.
 
-Catalog의 기존 `CatalogPage` public import는 façade로 유지한다. 목록·미리보기 표현, 상세, lineage, 순수 model, 검색·선택·상세 조회 state를 독립 module로 분리한다. 상세 요청 cleanup과 명시적 SQL dataset 선택 규칙은 state hook이 소유하고 표현 module은 API를 직접 호출하지 않는다.
+Catalog의 기존 `CatalogPage` public import는 façade로 유지한다. `CatalogWorkspacePage`가 Catalog/Semantic view switch와 query-string route를 합성하고, 목록·미리보기 표현, 상세, lineage, 순수 model, 검색·선택·상세 조회 state는 독립 module로 분리한다. 상세 요청 cleanup과 명시적 SQL dataset 선택 규칙은 state hook이 소유하고 표현 module은 API를 직접 호출하지 않는다. 두 workspace wrapper는 `page-body`의 폭 제한을 상속하지 않고 동일한 full-width·font token 계약을 사용한다.
 
 상세 CSS ownership, selector inventory, 접근성·호환 계약은 [Frontend CSS·Catalog·Layout 경계](refactor-2026/contracts/frontend-css-catalog-layout.md)를 따른다.
 
@@ -672,12 +698,12 @@ PR02는 기존 V1 옆에 기본 비활성 `clickhouse-realtime-v2` Compose profi
 
 Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`을 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. 다만 PR02에는 실제 consumer adapter가 없으므로 이 guard를 claim 직전에 호출하고 connector를 등록하는 책임은 PR03에 있다. `/api/health/realtime`의 `v2.ready`는 configuration-only 기반 단계에서 항상 `false`이고, V2 flag를 켜면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다.
 
-Alembic `0012_clickhouse_realtime_v2_foundation`은 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+Alembic `0016_clickhouse_realtime_v2_foundation`은 최신 `0015_ai_generation_evidence_audit` 다음에 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 
 ### 누적 PR06~09 publication·recovery 경계
 
-- `0013_catalog_realtime_publication`은 기존 freshness/revision/event log에 binding epoch, serving/archive identity, source boundary, checksum과 mutation evidence를 additive하게 확장한다.
-- `0014_realtime_archive_recovery`는 `realtime_parity_checks`와 `realtime_recovery_operations`를 추가한다. `realtime_routing_assignments`는 0012의 sticky Dataset/Dashboard row를 재사용하며 competing routing table을 만들지 않는다.
+- `0017_catalog_realtime_publication`은 기존 freshness/revision/event log에 binding epoch, serving/archive identity, source boundary, checksum과 mutation evidence를 additive하게 확장한다.
+- `0018_realtime_archive_recovery`는 `realtime_parity_checks`와 `realtime_recovery_operations`를 추가한다. `realtime_routing_assignments`는 0016의 sticky Dataset/Dashboard row를 재사용하며 competing routing table을 만들지 않는다.
 - `ArchiveParityReport`는 같은 partition boundary vector, pipeline/dimension version, distinct source position count, schema fingerprint, null/error count, numeric sums, canonical checksum과 sample hash를 모두 비교한다. count만 같은 다른 boundary는 mismatch다.
 - rebuild는 검증된 archive boundary B와 immutable version set을 고정하고, shadow tail의 각 시작점을 `B[p] + 1`로 기록한다. 같은 요청은 deterministic idempotency key와 기존 operation evidence를 재사용한다.
 - cutover/rollback은 외부 ClickHouse/Iceberg 작업이 끝난 뒤 짧은 PostgreSQL transaction에서 freshness와 Catalog를 잠근다. 검증된 parity와 expected epoch/pointer를 다시 확인한 후 Catalog binding, sticky assignment, global revision, 새 binding epoch, `replace` revision commit과 schema v2 event를 함께 기록한다.

@@ -11,7 +11,7 @@ PR02는 다음 기반만 추가한다.
 - 공식 ClickHouse Kafka Connect Sink plugin이 포함된 worker image build
 - 관리자와 ingest/materializer/reader/migration/observer 계정을 분리하는 초기화 script
 - backend의 V2 설정 검증, 단일 consumer owner guard와 secret-free health/config 응답
-- Alembic revision `0012_clickhouse_realtime_v2_foundation`의 10개 expand-only metadata table
+- Alembic revision `0016_clickhouse_realtime_v2_foundation`의 10개 expand-only metadata table
 
 PR02는 connector instance를 등록하지 않고 Kafka message를 소비하지 않는다. raw/serving ClickHouse table, receipt auditor, materializer, Catalog publication, Dashboard routing도 만들지 않는다. `KAFKA_CONNECT_SINK_ENABLED=true`는 connector 등록이나 수집 시작 명령이 아니며, 실제 raw ingest는 PR03부터 구현한다.
 
@@ -120,7 +120,7 @@ V2 flag가 켜지면 `v2.status`는 `configuration_validated`가 되지만 PR02�
 
 ## Alembic expand migration
 
-`0012_clickhouse_realtime_v2_foundation`은 단일 head `0011_rag_control_plane_fencing` 다음에 아래 10개 table을 만든다.
+`0016_clickhouse_realtime_v2_foundation`은 단일 head `0015_ai_generation_evidence_audit` 다음에 아래 10개 table을 만든다.
 
 | Table | PR02 schema 목적 |
 | --- | --- |
@@ -227,4 +227,4 @@ PR02 repository 변경만으로 다음 증거를 충족했다고 주장하지 �
 
 ## 누적 PR03~09 구현 상태
 
-PR02 단독 경계는 위 설명대로 유지된다. 누적 branch에는 이후 raw receipt/live probe, dimension, materializer, Catalog/event publication, Dashboard/SSE/frontend cache와 `0014_realtime_archive_recovery`가 추가됐다. Local integration에서 PostgreSQL concurrent switch와 ClickHouse 100-position parity smoke는 통과했지만, 이는 actual production certificate/host reboot, 10만 건/72시간, multi-node failover와 backup/restore를 대신하지 않는다. 최신 검증 명령과 No-Go 조건은 [개발 가이드](04-development-guide.md#pr09-archiverecovery와-최종-release-gate), [readiness](backend-integration-readiness.md#clickhouse-realtime-serving-v2-readiness), [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+PR02 단독 경계는 위 설명대로 유지된다. 누적 branch에는 이후 raw receipt/live probe, dimension, materializer, Catalog/event publication, Dashboard/SSE/frontend cache와 `0018_realtime_archive_recovery`가 추가됐다. Local integration에서 PostgreSQL concurrent switch와 ClickHouse 100-position parity smoke는 통과했지만, 이는 actual production certificate/host reboot, 10만 건/72시간, multi-node failover와 backup/restore를 대신하지 않는다. 최신 검증 명령과 No-Go 조건은 [개발 가이드](04-development-guide.md#pr09-archiverecovery와-최종-release-gate), [readiness](backend-integration-readiness.md#clickhouse-realtime-serving-v2-readiness), [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

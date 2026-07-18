@@ -21,12 +21,10 @@ Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-m
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
-AUTH_LEGACY_DEMO_USERS_ENABLED=false
 AUTH_SESSION_COOKIE_SECURE=true
 ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
@@ -90,9 +88,9 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 최대 100행 Trino preview는 PostgreSQL inline page로 저장하고, 사용자 요청형 full result만 private gzip page object와 PostgreSQL manifest/page metadata로 저장한다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
 
-- 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
-- frontend는 Source connector, create/run/query/catalog/dashboard 요청을 실제 backend로 보낸다. 별도 mock 전환 환경변수는 없다.
-- Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
+- `VITE_API_BASE_URL`을 생략하거나 빈 문자열로 두면 개발·production build 모두 같은 출처의 `/api`를 호출한다. Realtime event URL도 같은 규칙을 사용한다. Vite는 이를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 Compose `backend:8080`으로 전달하되 `/api/realtime/events`는 SSE buffering을 끈다.
+- SQL Query AI, Dashboard Assistant, ETL transform, 리뷰 분석 frontend client는 세션을 포함한 live API만 호출한다. 개발 전용 `VITE_USE_MOCK_API` 호환 모드는 이 AI client들에 적용되지 않으며, production에서는 계속 비활성화된다.
+- Legacy demo 계정 활성화 플래그는 test 전용이다. Production은 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 거부하고 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 env에 존재해도 preflight를 실패시킨다. 운영 로그인은 bootstrap admin 또는 승인된 IdP/session 경로만 사용한다.
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
@@ -116,8 +114,8 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. 목록은 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 나머지 `S3_ALLOWED_BUCKETS`를 뒤에 합친다. local MinIO demo만 설정이 없을 때 `asklake-output`을 사용하며, AWS mode의 설정 누락은 `503 SERVICE_UNAVAILABLE`이다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`와 runtime 응답 전체에서 공유하는 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS` 예산을 적용한다. DuckDB 기본 경계는 query당 15초, memory/temp 각 256 MiB, 2 threads이며 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`, `ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`, `ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 더 낮거나 제한된 운영값을 지정할 수 있다.
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
-- Query AI live mode는 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며, 브라우저 env에는 provider key를 두지 않는다. `AI_QUERY_PROVIDER=direct`는 롤백 호환 모드다.
-- Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
+- 모든 AI 생성은 backend가 private `ai-server` Gateway를 호출한다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저와 FastAPI에는 provider key를 두지 않는다. FastAPI는 Gateway service token과 MCP context signing secret만 사용한다.
+- Query AI 요청은 선택된 dataset ID만 전달한다. Backend가 actor의 `query` 권한과 governance를 확인하고 짧은 수명의 단일 사용 signed context를 발급하며, Gateway는 내부 MCP로 bounded/redacted Catalog context를 읽는다. Backend는 read-only·Dataset scope뿐 아니라 prompt의 명시적 집계/그룹화 의도도 검증하고, 위반 시 한 번만 교정 재요청한다. Frontend는 선택 Dataset·query·dialog context가 달라진 요청을 취소하고 stale 응답을 적용하지 않는다. Provider/RAG 실패 시 frontend가 로컬 SQL이나 근거를 대신 만들지 않는다.
 - `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 최대 100행 Trino preview Query Run을 `202 Accepted`로 접수한다. 전체 보기/CSV는 `/api/query/runs/{previewRunId}/full-results`의 별도 full run, cursor 결과, CSV export lifecycle을 사용한다. `POST /api/query/estimates`는 Iceberg metadata 또는 plan/Catalog fallback으로 스캔량을 추정하고 `POST /api/query/validate`가 canonical Trino 문법·Dataset context·권한을 판정한다.
 - Trino 전환 시 backend만 coordinator continuation URL을 보관한다. `trino-result-collector`만 continuation을 소비하고 상태/결과 API는 persisted state만 읽는다. QueryInfo 샘플링은 진행 통계를 보강하되 result page를 소비하지 않는다.
 - `clientRequestId`는 actor 범위 idempotency key다. 같은 key/fingerprint는 기존 run을 반환하고 다른 요청에 같은 key를 쓰면 `409`, actor별 동시 실행 slot을 넘으면 `429`다.
@@ -286,11 +284,16 @@ Canonical status values:
 | `POST` | `/api/query/runs/{runId}/cancel` | `query` | queued/running Trino run 취소 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/estimates` | `query` | 실행 전 Iceberg 참조 컬럼 스캔량·위험도 추정 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/validate` | `query` | 실행 없이 canonical Trino 문법·Dataset context·권한 검증 | `docs/trino-query-run-contract.md` |
-| `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
+| `POST` | `/api/query/ai-suggestions` | 모든 선택 Dataset의 `query` | signed MCP context와 Semantic RAG 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
+| `POST` | `/api/ai/generate-sql` | authenticated actor | ETL field/SQL transform용 Gateway SQL 생성 후 relation·column·read-only 검증 | 이 문서 |
 | `GET` | `/api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 최신 성공 materialization의 실제 row를 최대 500행 page로 조회 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run의 1회성 Iceberg CTAS 등록 시작. SQL 결과 toolbar에는 노출하지 않음 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin + current `query` access | persisted CTAS/등록 상태 조회 | `docs/trino-query-run-contract.md` |
+
+### AI SQL transform 생성
+
+`POST /api/ai/generate-sql`은 `{ question, promptType, metadata, context?, engine }`을 받고 `{ sql, schemaContext, model, provider }`를 반환한다. `promptType`은 `query_page`, `field_transform`, `sql_transform`, `partition`, `general` 중 하나다. `field_transform`은 scalar expression만, `sql_transform` 또는 SELECT 응답은 단일 read-only query만 허용한다. Backend는 Gateway 출력에서 supplied metadata 밖의 column/relation, wildcard field transform, Spark script transform과 `reflect`/`java_method` 계열 위험 함수를 거부한다. Gateway 미설정·timeout·invalid provenance·invalid SQL은 성공 초안으로 대체하지 않고 공통 error envelope로 반환한다.
 
 `GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "...", "kafkaTopic": "...", "s3Bucket": "...", "s3Prefix": "..." }`를 반환한다. 새 빈 Kafka/S3 Source draft만 build-time 상수 대신 이 값을 한 번 채우며 저장된 설정과 사용자가 편집한 값은 보존한다. 응답에는 access key, secret, token 같은 인증 정보를 포함하지 않는다.
 
@@ -309,6 +312,8 @@ File / S3 Prefix Job의 `run`/`retry`는 저장된 `Path / Prefix` 아래에서 
 `publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. 일반 batch에서는 backend가 저장된 `sparkResult.status=success`, persisted `icebergTarget`, snapshot/fingerprint identity, Trino `DESCRIBE`/`$snapshots`/`$files`, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 snapshot ID, data-file count, storage location을 보존한다.
 
 Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다.
+
+검증된 Spark Catalog publication은 `sourceManifest`를 함께 저장한다. Iceberg Dataset의 manifest는 `manifestVersion`, `datasetId`, `sparkPath`, `format=iceberg`, `fingerprint`, `expiresAt`, `runId`, `icebergSnapshotId`를 포함하며, RAG parent staging은 table 최신 상태가 아니라 이 검증된 snapshot ID를 읽는다. snapshot 증적이 없는 Iceberg 결과에는 RAG용 manifest를 발급하지 않는다.
 
 Airflow DAG Run은 Catalog endpoint가 성공한 뒤에만 `success`가 된다. Jobs 화면의 상태 조회는 Job 상태만 갱신하며 Catalog 목록을 함께 요청하지 않는다. Catalog·SQL·AI 화면에 들어갈 때 해당 화면의 loader가 최신 Catalog 목록을 읽는다.
 
@@ -517,6 +522,13 @@ type ScheduledJobRunResponse = {
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
+| `POST` | `/api/dashboards/assistant` | Dashboard 질문/시각화 요청을 private Gateway로 처리하고 검증된 action·실사용 근거 반환 |
+| `POST` | `/api/review-analysis/schema-suggestion` | bounded source schema/sample 기반 review output schema 제안 |
+| `POST` | `/api/review-analysis/preview` | 최대 10개 실제 row를 Gateway로 분석해 요청 컬럼만 반환 |
+| `POST` | `/api/review-analysis/runs` | bounded review analysis run을 `202 queued`로 저장·실행 |
+| `GET` | `/api/review-analysis/runs/latest` | 현재 actor의 최신 review analysis run 조회 |
+| `GET` | `/api/review-analysis/runs/{runId}` | 현재 actor 또는 admin이 지정 run 조회 |
+| `GET` | `/api/catalog/models` | provenance·quality gate·digest를 통과해 게시된 portable model 조회 |
 | `GET` | `/api/datasets/{datasetId}/freshness` | Continuous dataset의 최신 revision과 권장 재확인 시간 조회 |
 | `POST` | `/api/datasets/freshness/query` | 대시보드가 사용하는 dataset freshness를 최대 100개까지 묶음 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/widgets/query` | `mode`의 선택 widget만 계산·조회. published는 `view`, draft는 `manage` 필요 |
@@ -564,7 +576,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | 최대 100행 Trino preview Query Run 제출, 상태 polling, on-demand 전체 결과 run, signed-cursor page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
-| Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | 선택 Dataset ID와 prompt를 FastAPI에 보내고 private Gateway + 단일 사용 MCP context + Semantic RAG로 초안을 생성한다. 실제 사용 근거만 표시하며 로컬 SQL fallback은 없다. | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 SQL 내부 다단계 모달에서 스케줄·거버넌스·저장 설정을 완료하고 `createSqlDatasetJob`으로 명시적 draft를 제출; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter와 draft/published runtime. Assistant 시각화는 검증된 widget action만 적용하며 local/mock chart fallback 없음 | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | 서버 `audit_events` 조회 + local/localStorage 최근 호출 | `GET /api/admin/audit-logs` |
@@ -849,6 +861,7 @@ Schema Transform UI는 원본 `SchemaColumnDraft.sourceType`과 target `type`을
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - 같은 Job 또는 표시명이 정확히 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns` history에 추가한다. 일반 ETL/SQL full refresh는 `materializationMode: "snapshot"`, Kafka 추가분은 `materializationMode: "delta"`다. 현재 Dataset은 최신 성공 snapshot과 그보다 최신인 성공 delta만 사용한다. 대상 판정은 손실 가능한 slug가 아니라 저장된 `targetDataset` 표시명으로 수행한다. 새 dataset의 내부 `datasetId`는 안전한 소문자 ASCII 이름이면 `ds_<name>`, 그 외에는 `ds_<slug>_<stable-hash>` 형식이므로 서로 다른 한글·공백·특수문자 이름이 같은 ID로 합쳐지지 않는다. Catalog 목록 row는 하나만 보이고, row 펼침에서 version history를 최대 5개씩 pagination으로 표시한다.
 - Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDatabase`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다. 다중 파티션 컬럼은 선택 순서를 유지한 `partitionColumns` 배열과 `/`로 연결한 하위 호환용 `partition` 문자열로 함께 전송한다. SQL 결과 처리 Job wizard도 같은 target metadata를 구성한 뒤 기존 create request로 변환한다.
+- SQL 결과 처리 Job wizard의 owner는 현재 session actor를 사용한다. `private`은 owner fallback, `organization`은 `authenticated-users` public principal, `project`는 현재 actor가 속한 실제 group ID를 `principalId`로 전송한다. Backend는 이 값으로 권한 역할과 요약을 canonical하게 만들며 고정 demo 그룹명은 사용하지 않는다.
 - `POST /api/etl/jobs`의 `job.icebergTarget`은 frontend 입력이 아니라 backend가 `targetDataset`과 Dataset ID로 만든 optional writer 계약이다. 새 ETL Job은 `catalog`, `namespace`, `table`, `tableUri`, `writeMode`, `partitionColumns`를 저장하며 기존 Job은 첫 일반 batch 실행 전에 같은 규칙으로 backfill된다. 일반 full batch는 `replace`, 증분 S3/Data Lake folder는 `append`, Kafka는 `append`다. 이 선언만으로 Catalog `queryEngineTable`이나 SQL 권한을 만들지 않으며 실제 commit과 Trino 검증이 필요하다.
 - Target 화면은 `targetLayer`를 노출하지 않는다. 기존 create/update 계약 호환을 위해 frontend가 source/execution별 내부 기본값을 전송하고 backend는 기존 조합 검증을 유지한다. Kafka Snapshot은 JSONL, Kafka Continuous는 Parquet 포맷만 사용자에게 노출하며 두 실행의 최종 target은 backend-owned Iceberg table이다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
@@ -949,7 +962,7 @@ type LineageContext = {
 ```
 
 정식 Catalog lineage modal은 `LineageGraph` contract를 React Flow node/edge로 변환해 표시한다.
-ETL graph의 source는 `SOURCE · <fileFormat|connectorType>`, 가운데 Job은 `PROCESS · SPARK`, target은 `<targetLayer> LAYER · <persistedFormat>`으로 표시한다. 현재 Spark runner는 physical output을 Parquet로 저장하므로 요청 `targetFormat`과 무관하게 target engine은 `PARQUET`이다. 따라서 Parquet source에서 GOLD로 처리한 결과는 `SOURCE · PARQUET -> PROCESS · SPARK -> GOLD LAYER · PARQUET`이며 Job을 BRONZE dataset이나 ICEBERG target으로 추정하지 않는다. 화면의 상위 데이터셋 수에는 `PROCESS` node를 포함하지 않는다.
+ETL API graph의 source는 `SOURCE · <fileFormat|connectorType>`, 가운데 Job은 `PROCESS · SPARK`, target은 `<targetLayer> LAYER · <persistedFormat>`을 유지한다. 현재 Spark runner는 physical output을 Parquet로 저장하므로 요청 `targetFormat`과 무관하게 target engine은 `PARQUET`이다. Catalog 화면은 실행 provenance용 `PROCESS` payload를 변경하지 않고, 같은 PROCESS 컬럼으로 이어지는 source-to-job과 job-to-target edge를 source-to-target edge로 축약해 `SOURCE · PARQUET -> GOLD LAYER · PARQUET`처럼 표시한다. matching 입력 edge가 없는 `_asklake_*` 실행 컬럼에는 가짜 source edge를 만들지 않는다. 화면의 상위 데이터셋 수에도 `PROCESS` node를 포함하지 않는다.
 Lineage API가 unavailable이면 화면은 오류와 재시도를 표시한다. `CatalogDataset.upstream`/`downstream` fixture를 실제 lineage로 대신 표시하지 않는다.
 
 ### Optional Large-Scale Evidence Extension
@@ -978,11 +991,11 @@ type DataProcessingResult = {
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint에 연결할 수 있다.
 endpoint는 인증 actor를 요구하며 `dashboardId`가 있으면 Assistant 실행 전에 dashboard `view` 권한을 검사한다. 익명 운영 요청은 `401`, dashboard별 접근 권한이 없으면 `403`이다.
-이 endpoint는 `OPENAI_API_KEY`가 설정되어 있고 `OPENAI_ASSISTANT_ENABLED=true`이면 OpenAI Responses API를 호출한다.
+이 endpoint는 FastAPI가 private AI Gateway를 호출한다. `AI_PROVIDER_API_KEY`는 Gateway에만 두고 FastAPI는 `AI_GATEWAY_SERVICE_TOKEN`을 사용한다.
 서버는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
-대시보드에서 사용할 수 있는 available catalog dataset, 현재 page widget, 지원 가능한 widget type/config option만 OpenAI 컨텍스트에 넣는다.
+대시보드에서 사용할 수 있는 available catalog dataset, 현재 page widget, 지원 가능한 widget type/config option만 Gateway 컨텍스트에 넣는다.
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
-OpenAI 응답은 backend guard가 한 번 더 검증하며, 없는 dataset/widget/column 또는 지원하지 않는 widget type/config는 action에서 제외하고 `warnings`에 이유를 담는다.
+Gateway 응답은 backend guard가 한 번 더 검증하며, 없는 dataset/widget/column 또는 지원하지 않는 widget type/config는 action에서 제외하고 `warnings`에 이유를 담는다.
 Private AI Gateway 설정이 없거나 provider 호출이 실패하면 명시적인 unavailable/error 응답과 빈 action을 반환한다.
 프론트는 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보내며, `VITE_DASHBOARD_ASSISTANT_API_PATH`로 다른 경로 또는 origin을 지정할 수 있다.
 
@@ -996,6 +1009,9 @@ type DashboardAssistantRequest = {
   prompt: string;
   selectedWidgetId?: string | null;
   widgetId?: string | null;
+  semanticModelId?: string | null;
+  currentDatasetId?: string | null;
+  surface?: "dashboard" | "catalog" | "semantic";
   widgets: Array<{
     id: string;
     title: string;
@@ -1013,6 +1029,7 @@ type DashboardAssistantRequest = {
 ```ts
 type DashboardAssistantResponse = {
   message: string;
+  requestId?: string | null;
   actions: Array<
     | {
         type: "create_widget";
@@ -1022,6 +1039,7 @@ type DashboardAssistantResponse = {
           datasetId: string;
           config: DashboardRuntimeWidgetConfig;
         };
+        usedEvidenceIds: string[];
       }
     | {
         type: "update_widget";
@@ -1032,13 +1050,20 @@ type DashboardAssistantResponse = {
           datasetId?: string | null;
           config?: Record<string, unknown>;
         };
+        usedEvidenceIds: string[];
       }
     | {
         type: "report";
         markdown: string;
+        usedEvidenceIds: string[];
       }
   >;
   warnings: string[];
+  model?: string | null;
+  provider?: string | null;
+  sources: Array<Record<string, unknown>>;
+  retrieval?: Record<string, unknown> | null;
+  usedEvidenceIds: string[];
   // 현재 visualization request 위젯 호환용 임시 필드.
   configPatch?: Record<string, unknown>;
   widgetPatch?: {
@@ -1052,11 +1077,33 @@ type DashboardAssistantResponse = {
 
 `dashboard_question` 모드는 리포트/분석 결과를 `actions: [{ type: "report", markdown }]` 형태로 받을 수 있다.
 `visualization_request` 모드는 `actions`의 `create_widget` 또는 `update_widget`을 적용한다.
+프론트는 현재 선택한 Dataset을 `currentDatasetId`로 고정하고, 명시적인 시각화 생성/수정 의도만 mutation으로 분류한다. 검증된 action도 기존 draft widget create/update API가 실제 성공한 경우에만 적용 성공으로 표시한다. 저장 callback이 실패하거나 `false`를 반환하면 현재 draft와 편집 입력을 유지하고 오류를 표시한다.
 현재 시각화 요청 위젯은 기존 구현과의 호환을 위해 `configPatch` 또는 `widgetPatch.config`가 내려오면 현재 위젯 config에 병합한다.
-`VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 기본 경로 `/api/dashboards/assistant`를 사용한다.
+`VITE_DASHBOARD_ASSISTANT_API_PATH`가 없거나 Docker build arg가 빈 문자열이면 기본 경로 `/api/dashboards/assistant`를 사용한다. 절대 URL override에도 세션 credential을 포함하며 서버 CORS 정책을 통과해야 한다.
 `widgets`는 구버전/테스트 호환 fallback payload로 유지하지만, `dashboardId`가 있으면 서버 DB runtime 컨텍스트가 우선이다.
 `selectedWidgetId` 또는 `widgetId`가 있으면 서버는 해당 위젯만 `update_widget` 대상에 포함한다.
-서버 guard는 Assistant가 없는 컬럼이나 문자열 값축을 반환하면 catalog schema/sample rows 기준으로 보정한다. 차원-only 요청은 `count` 집계 차트로 보정하고, `revenue`/`total_amount` 같은 금액 alias는 실제 dataset 컬럼에 맞춰 정규화한다. OpenAI 응답에서 적용 가능한 action이 남지 않으면 서버가 요청 문장과 available dataset 기준의 기본 막대 차트 `create_widget`/`update_widget` action을 생성할 수 있다.
+서버 guard는 Assistant가 없는 컬럼이나 문자열 값축을 반환하면 catalog schema/sample rows 기준으로 보정한다. 차원-only 요청은 `count` 집계 차트로 보정하고, `revenue`/`total_amount` 같은 금액 alias는 실제 dataset 컬럼에 맞춰 정규화한다. 적용 가능한 action, provider/model provenance 또는 검증된 실제 사용 evidence가 없으면 성공 action을 합성하지 않고 unavailable/error와 빈 action을 반환한다.
+
+### Review Analysis Gateway/Run 계약
+
+`POST /api/review-analysis/schema-suggestion`은 최대 40개 source column과 최대 3개 sample row를 private Gateway의 `review_schema` mode로 전달한다. `POST /api/review-analysis/preview`는 최대 10개 실제 row와 최대 64개 요청 output column을 `review_row` mode로 분석하고 요청한 `targetName`만 문자열 row로 반환한다. `one_of_values` 결과가 `allowedValues` 밖이면 `502`로 실패하며 provider/model provenance가 없는 응답도 성공으로 취급하지 않는다.
+
+`POST /api/review-analysis/runs` request:
+
+```ts
+type ReviewAnalysisRunRequest = {
+  limit?: number; // default 25; interactive Gateway 상한 이내
+  schemaColumns?: Array<Record<string, unknown>>;
+  full?: false;
+  runtime?: "gateway";
+  source?: { bucket: string; key: string };
+  trainModels?: boolean;
+};
+```
+
+성공 시 `202 Accepted`와 `{ runId, status: "queued", source, result, error, createdAt, startedAt, finishedAt }`를 반환한다. `GET /api/review-analysis/runs/latest`는 현재 actor의 최신 run을, `GET /api/review-analysis/runs/{runId}`는 해당 actor 또는 admin이 볼 수 있는 지정 run을 반환한다. Run은 `review_analysis_runs`에 `queued -> running -> success|failed`로 저장되고 Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick이 같은 atomic claim을 사용해 allow-list Node bridge로 실제 object-storage JSONL을 처리한다. 일반 actor가 `source`를 생략하면 설정된 review source를 사용하며, 그와 다른 bucket/key 지정은 Catalog resource 권한 계약이 추가되기 전까지 `403`이다. Admin만 운영 목적으로 명시 source를 지정할 수 있다. `full=true`, `limit=0`, 또는 `ASKLAKE_REVIEW_AI_MAX_ROWS`를 넘는 interactive 요청은 `422`이며 bounded batch로 나눠야 한다.
+
+`trainModels=true`이면 AI Gateway가 라벨링한 분류형 output을 학습 후보로 사용한다. 최소 8개 학습 row, class별 최소 row, holdout accuracy/macro-F1, 모든 allowed class validation coverage를 모두 통과한 artifact만 SHA-256 digest와 label provider/model/source provenance를 포함한 manifest로 원자 게시한다. `GET /api/catalog/models`는 이 published manifest와 digest를 다시 검증한 artifact만 반환한다. 기존 `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다. 새 frontend client는 canonical `/runs`, `/runs/latest`, `/runs/{runId}`, `/preview`만 호출한다.
 
 ## 8.1) ETL Review Snapshot
 

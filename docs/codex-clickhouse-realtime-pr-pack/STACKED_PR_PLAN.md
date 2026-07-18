@@ -34,7 +34,7 @@
 | 08 | #974 | `feat-#974` | #976 |
 | 09 | #977 | `feat-#977` | 이 branch의 Ready PR |
 
-PR09 local integration은 54개 V2 release contract, PostgreSQL concurrent switch, ClickHouse 100-position parity, backend 722 tests, frontend 138 checks와 deploy 54 checks를 통과했다. 실제 production 10만 건, 72시간 shadow, browser cutover/rollback DOM, chaos/HA/backup은 미실행 operator gate이며 merge 조건을 자동 충족한 것으로 표시하지 않는다.
+PR09 local integration은 54개 V2 release contract, PostgreSQL concurrent switch, ClickHouse 100-position parity, backend 831 tests, frontend 144 checks와 deploy 58 checks를 통과했다. 실제 production 10만 건, 72시간 shadow, browser cutover/rollback DOM, chaos/HA/backup은 미실행 operator gate이며 merge 조건을 자동 충족한 것으로 표시하지 않는다.
 
 ## 브랜치와 GitHub PR 규칙
 

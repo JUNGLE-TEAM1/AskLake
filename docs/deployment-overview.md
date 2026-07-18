@@ -392,6 +392,6 @@ docker compose --env-file .env -f docker-compose.prod.yml run --rm --no-deps \
   backend python -m alembic -c alembic.ini upgrade head
 ```
 
-`0012_clickhouse_realtime_v2_foundation`은 신규 V2 table 10개만 추가한다. disabled rollback은 owner와 두 flag를 끄고 schema/volume을 보존한다. production downgrade, offset reset, volume 삭제는 금지한다.
+`0016_clickhouse_realtime_v2_foundation`은 신규 V2 table 10개만 추가한다. disabled rollback은 owner와 두 flag를 끄고 schema/volume을 보존한다. production downgrade, offset reset, volume 삭제는 금지한다.
 
 현재 topology는 demo/staging이며 HA가 아니다. 격리 production profile에서 생성한 test certificate로 clean start/restart, strict CA 9440 health, 8443/9440-only listener와 six-account RBAC는 확인했다. 실제 EC2 certificate/hostname, clean host reboot, connector task/Kafka ingest와 backup/restore는 아직 실행 증거가 없다. profile을 production traffic에 연결하는 것은 PR03 이후 integration과 PR09 operator gate 및 별도 승인 전까지 No-Go다. exact artifact, local/prod 차이와 검증 결과는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.

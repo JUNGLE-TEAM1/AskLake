@@ -19,8 +19,25 @@ from app.models.dashboard_runtime import (
     DashboardRevision,
     DashboardWidget,
 )
-from app.models.etl import ContinuousControlLeaseModel, ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
-from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
+from app.models.etl import (
+    ContinuousControlLeaseModel,
+    ETLJobModel,
+    ETLRunModel,
+    KafkaContinuousBatchModel,
+    KafkaContinuousMaintenanceRunModel,
+    KafkaContinuousRuntimeModel,
+    KafkaContinuousSessionModel,
+    KafkaSnapshotModel,
+    ReviewAnalysisRunModel,
+)
+from app.models.identity import (
+    AiContextConsumptionModel,
+    AiGenerationUsageModel,
+    AuditEventModel,
+    PermissionGrantModel,
+    PrincipalControlModel,
+    ResourceLockModel,
+)
 from app.models.realtime import (
     RealtimeEventModel,
     RealtimeParityCheckModel,
@@ -59,6 +76,7 @@ __all__ = [
     "DashboardWidget",
     "ETLJobModel",
     "ETLRunModel",
+    "ReviewAnalysisRunModel",
     "ContinuousControlLeaseModel",
     "KafkaContinuousRuntimeModel",
     "KafkaContinuousSessionModel",
@@ -66,6 +84,8 @@ __all__ = [
     "KafkaContinuousMaintenanceRunModel",
     "KafkaSnapshotModel",
     "AuditEventModel",
+    "AiGenerationUsageModel",
+    "AiContextConsumptionModel",
     "PermissionGrantModel",
     "PrincipalControlModel",
     "ResourceLockModel",

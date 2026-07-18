@@ -133,7 +133,7 @@ class CatalogRealtimePublicationTests(unittest.TestCase):
         }.issubset(revisions))
         heads = _run_alembic(self.database_path, "heads").stdout
         self.assertEqual(heads.count("(head)"), 1)
-        self.assertIn("0014_realtime_archive_recovery (head)", heads)
+        self.assertIn("0018_realtime_archive_recovery (head)", heads)
 
     def test_publication_advances_all_evidence_atomically_and_is_idempotent(self) -> None:
         with Session(self.engine) as session, session.begin():

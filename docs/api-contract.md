@@ -78,7 +78,8 @@ ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS=15
 TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
-- `VITE_API_BASE_URL`: 백엔드 base URL입니다.
+- `VITE_API_BASE_URL`: 선택적인 백엔드 base URL입니다. 생략하거나 빈 문자열이면 같은 출처의 `/api` 경로를 사용합니다.
+- `VITE_DEV_PROXY_TARGET`: Vite 개발 서버가 상대 `/api` 요청을 전달할 backend origin입니다. 기본값은 `http://127.0.0.1:8080`입니다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 호출합니다. 다른 Assistant API 경로 또는 origin이 필요할 때만 지정합니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
@@ -101,6 +102,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 날짜/시간은 ISO 8601 문자열을 사용합니다.
 - ID는 문자열입니다.
 - 프론트는 세션 쿠키 기반 endpoint를 위해 `credentials: "include"`로 `fetch`를 호출합니다.
+- SQL Query AI, Dashboard Assistant, ETL transform, 리뷰 분석 client도 공통 `apiClient` 또는 동일한 credential 규칙을 사용하며 개발 mock으로 성공 응답을 합성하지 않습니다.
 
 권장 header:
 
@@ -113,7 +115,7 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
-Production startup은 알려진 legacy demo 계정을 기본적으로 `disabled`로 바꾸고 해당 세션을 폐기합니다. 데모 운영에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 명시하면 기존 demo 계정의 저장된 상태와 세션을 재시작 후에도 보존하며, 누락된 demo 계정은 초기 `active` 상태로 생성합니다. 이 모드도 `BOOTSTRAP_ADMIN_*` 설정, Secure session cookie, client header fallback 차단을 유지합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 같은 배포의 로그인 UI에 demo 기본값을 표시하는 build-time 짝이며 두 플래그는 `scripts/verify-deploy-env.sh`에서 동일해야 합니다. Opt-in은 이미 저장된 `disabled`를 자동으로 되돌리지 않습니다.
+Production startup은 알려진 legacy demo 계정을 `disabled`로 바꾸고 해당 세션을 폐기합니다. `AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 test 환경에서만 허용되고 production config validation이 거부합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`도 production env에 둘 수 없으며 `scripts/verify-deploy-env.sh`가 존재 자체를 실패로 처리합니다. 운영 인증은 `BOOTSTRAP_ADMIN_*`, Secure session cookie, client header fallback 차단 계약을 유지합니다.
 
 운영 세션 쿠키는 기본적으로 `Secure`, `HttpOnly`, `SameSite=Lax`를 사용합니다. HTTPS가 아직 없는 제한된 dev HTTP ALB는 `AUTH_SESSION_COOKIE_SECURE=false`를 명시할 수 있지만 `HttpOnly`와 `SameSite=Lax`는 유지되며, 이 예외는 header-auth fallback, public signup, legacy demo 계정 정책을 변경하지 않습니다. HTTPS 전환 뒤에는 반드시 `true`로 복구합니다.
 
@@ -872,6 +874,7 @@ type CreateTrinoSqlJobRequest = {
     accessScope: "organization" | "private" | "project";
     owner: string;
     permissionSummary: string;
+    principalId?: string;
   };
   jobName?: string;
   query: string;
@@ -890,6 +893,8 @@ type CreateTrinoSqlJobRequest = {
   };
 };
 ```
+
+`governance.owner`는 현재 session actor를 기본으로 하며 공백 제거 후 비어 있으면 거부합니다. `accessScope="private"`는 owner의 자동 권한만 사용하고 별도 role을 중복 생성하지 않습니다. `organization`은 `principalType="public"`, `principalId="authenticated-users"`를 사용합니다. `project`는 현재 actor가 선택한 실제 group ID를 `principalId`로 반드시 전달해야 하며 누락하면 `422 VALIDATION_ERROR`입니다. Backend는 이 canonical principal metadata로 `permissionRoles`와 `permissionSummary`를 다시 계산하므로 client가 임의 demo 그룹명을 저장할 수 없습니다.
 
 Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="trino_sql_materialization"`, `job.sqlRecipe`, `catalogTarget.status="pending_run"`을 포함합니다. Job 생성 자체는 Dataset을 만들지 않습니다.
 
@@ -2092,6 +2097,7 @@ type QueryAiSuggestionRequest = {
   currentQuery?: string;
   mode?: "draft_sql";
   prompt: string;
+  semanticModelId?: string;
   selectedDatasetIds: string[];
 };
 ```
@@ -2104,23 +2110,8 @@ Request 예시:
   "currentQuery": "SELECT order_id, customer_id FROM orders_clean LIMIT 100;",
   "mode": "draft_sql",
   "prompt": "고객별 주문과 클릭 이벤트를 조인해서 보고 싶다",
-  "selectedDatasetIds": ["ds_orders_clean", "ds_clickstream_events"],
-  "selectedDatasets": [
-    {
-      "id": "ds_orders_clean",
-      "name": "orders_clean",
-      "description": "전체 채널 통합 고객 주문 정제 데이터",
-      "layer": "GOLD",
-      "schema": [["order_id", "string"], ["customer_id", "string"], ["total_amount", "decimal"]]
-    },
-    {
-      "id": "ds_clickstream_events",
-      "name": "clickstream_events",
-      "description": "웹/모바일 앱 실시간 클릭 스트림 이벤트",
-      "layer": "SILVER",
-      "schema": [["event_id", "string"], ["user_id", "string"], ["event_time", "timestamp"]]
-    }
-  ]
+  "semanticModelId": "semantic_customer_orders_v3",
+  "selectedDatasetIds": ["ds_orders_clean", "ds_clickstream_events"]
 }
 ```
 
@@ -2130,6 +2121,7 @@ Response `200 OK`:
 type QueryAiSuggestionResponse = {
   body: string;
   mode: "draft_sql";
+  requestId: string;
   model?: string | null;
   provider?: string | null;
   notices: string[];
@@ -2147,12 +2139,21 @@ Response 예시:
 {
   "body": "orders_clean에서 customer_id별 total_amount 합계를 조회하는 읽기 전용 SQL 초안입니다.",
   "mode": "draft_sql",
+  "requestId": "85afbfc4-e3ac-4b3d-9281-c8beaa0fe020",
   "model": "gpt-4.1-mini",
+  "provider": "openai",
   "notices": [
     "AI가 생성한 초안입니다. 실행 전 기존 점검 결과를 확인해 주세요."
   ],
+  "retrieval": {
+    "provenance": "semantic_layer_rag",
+    "status": "ready",
+    "resultCount": 1
+  },
+  "sources": [{"documentId": "rag_doc_orders_17", "datasetId": "ds_orders_clean"}],
   "sql": "SELECT customer_id, SUM(total_amount) AS total_amount_sum\nFROM orders_clean\nGROUP BY customer_id\nORDER BY total_amount_sum DESC\nLIMIT 100;",
-  "title": "고객별 주문 금액 SQL 초안"
+  "title": "고객별 주문 금액 SQL 초안",
+  "usedEvidenceIds": ["rag_doc_orders_17"]
 }
 ```
 
@@ -2163,20 +2164,47 @@ Validation:
 - backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 평균, 합계, 개수, 그룹화처럼 prompt에 명시된 분석 의도가 SQL select/group/aggregation에 반영됐는지 검증합니다. 위반하면 위반 목록을 포함해 Gateway에 한 번만 교정 재요청하고 두 번째 응답도 위반하면 `422 VALIDATION_ERROR`를 반환합니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
 - frontend는 Gateway가 검증된 SQL 초안을 반환하지 않으면 오류를 표시하며 로컬 SQL 초안을 대신 만들지 않습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
 - AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.
-- OpenAI 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
+- private AI Gateway 또는 Semantic RAG 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
 - `sources`는 검색 후보 전체가 아니라 `usedEvidenceIds`와 정확히 일치하는 실제 사용 근거만 포함합니다.
+- `usedEvidenceIds`는 검색 후보 ID의 부분집합이어야 한다. Backend는 후보·실사용 ID, actor, provider/model, context/output fingerprint를 `ai_generation_usage`에 저장하며 검증되지 않은 ID나 mock/fallback provenance는 `502`로 거부합니다.
+- Gateway의 내부 Catalog 조회는 request-scoped signed context token을 한 번만 소비한다. token 재사용, 만료, Dataset 범위 이탈은 context를 반환하기 전에 거부하며 MCP projection은 schema/sample 수를 제한하고 PII·credential 값을 redaction합니다.
 
 프론트 기대 동작:
 
 - Query AI 제안은 자동 실행하지 않고 SQL editor 적용 버튼을 통해서만 반영합니다.
+- 한 번에 하나의 cancellable 요청만 소유하며 prompt, 선택 Dataset, editor query 또는 dialog context가 바뀌면 이전 요청을 무효화하고 늦게 도착한 응답을 적용하지 않습니다.
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
 - provider 실패나 RAG 선행 조건 부족을 가짜 SQL·근거로 대체하지 않습니다.
+
+### 7.8.1 ETL transform AI 생성
+
+`POST /api/ai/generate-sql`
+
+```ts
+type AiSqlGenerationRequest = {
+  question: string;
+  promptType?: "query_page" | "field_transform" | "sql_transform" | "partition" | "general";
+  metadata?: Record<string, unknown>;
+  context?: string;
+  engine?: string;
+};
+
+type AiSqlGenerationResponse = {
+  sql: string;
+  schemaContext: string;
+  model?: string | null;
+  provider?: string | null;
+};
+```
+
+FastAPI는 private Gateway의 `etl_transform` mode만 호출한다. `field_transform`은 supplied metadata column만 참조하는 scalar expression이어야 하고, `sql_transform` 또는 SELECT 결과는 `input`과 자체 CTE만 참조하는 단일 read-only query여야 한다. Wildcard field transform, Spark script transform, `reflect`, `java_method`, input 밖 relation/column은 `502 SQL_SYNTAX_ERROR`로 거부한다. Provider key는 Gateway에만 있고 Gateway 실패·mock/fallback provenance·invalid SQL은 성공 응답으로 대체하지 않는다.
 
 ### 7.9 DuckDB compatibility SQL 결과 기반 Lake Dataset 생성
 
@@ -2205,6 +2233,7 @@ type CreateDerivedDatasetRequest = {
     accessScope: "organization" | "private" | "project";
     compression: "Gzip" | "None" | "Snappy";
     owner: string;
+    principalId?: string;
     overlapPolicy: "skip_if_running" | "queue_after_current" | "allow_parallel";
     partitionColumn?: string;
     permissionSummary: string;
@@ -2222,6 +2251,8 @@ type CreateDerivedDatasetRequest = {
   validationKey?: string;
 };
 ```
+
+Compatibility Job의 `job.principalId`도 같은 정책을 따릅니다. private은 owner fallback만, organization은 인증 사용자 public principal, project는 선택한 실제 group principal을 `permission.roles`에 보존하며 `Data Engineer Group` 같은 고정 demo 역할을 만들지 않습니다.
 
 Request 예시:
 
@@ -2338,6 +2369,7 @@ Response `200 OK`:
 - 생성 직후에는 Catalog에 추가하지 않습니다.
 - 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. `publish_run_result`가 저장한 dataset과 materialization history는 Catalog·SQL·AI route 진입 시 Catalog domain loader가 `GET /api/catalog/datasets`로 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
+- 검증된 Spark/Iceberg publication은 같은 payload와 `catalog_datasets.source_manifest`에 RAG source contract를 저장합니다. `sourceManifest`는 `manifestVersion=1`, Dataset/Run identity, Spark-readable Iceberg table path, source fingerprint, expiry, exact `icebergSnapshotId`를 포함합니다. RAG Spark parent stage는 이 snapshot을 `snapshot-id` option으로 읽으며 최신 table head로 조용히 이동하지 않습니다. Iceberg snapshot 증적이 없으면 manifest를 발급하지 않고 RAG dispatch가 fail-closed 합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
@@ -3343,15 +3375,15 @@ Frontend는 published `/dashboards/{dashboardId}`에서 Continuous dataset만 po
 
 ### 8.5.12 Dashboard Assistant UI Hook
 
-대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint를 통해 OpenAI 기반 응답을 요청한다.
-이 endpoint는 `get_actor_context`로 인증된 actor만 허용한다. 요청에 `dashboardId`가 있으면 Assistant context 또는 OpenAI 호출 전에 해당 dashboard의 `view` 권한을 검사하며, 운영 환경의 익명 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`이다.
-이 endpoint는 `OPENAI_API_KEY`가 설정되어 있고 `OPENAI_ASSISTANT_ENABLED=true`이면 OpenAI Responses API를 호출한다.
+대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint를 통해 private AI Gateway 응답을 요청한다.
+이 endpoint는 `get_actor_context`로 인증된 actor만 허용한다. 요청에 `dashboardId`가 있으면 Assistant context 또는 Gateway 호출 전에 해당 dashboard의 `view` 권한을 검사하며, 운영 환경의 익명 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`이다.
+Provider key는 `ai-server`에만 주입하고 FastAPI는 Gateway service token과 request-scoped MCP context token만 사용한다.
 서버는 `dashboardId`/`pageId`를 기준으로 DB에서 draft revision을 우선 조회하고, 없으면 published revision을 조회한다.
-그 다음 actor의 dataset `query` permission과 governance를 통과한 available catalog dataset, 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI 컨텍스트로 전달한다. 제외된 dataset의 `sampleRows`와 연결 widget의 `dataSample`은 provider request에 포함하지 않는다.
+그 다음 actor의 dataset `query` permission과 governance를 통과한 available catalog dataset, 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 Gateway 컨텍스트로 전달한다. 제외된 dataset의 `sampleRows`와 연결 widget의 `dataSample`은 provider request에 포함하지 않는다.
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
-OpenAI 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
+Gateway 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
 Private AI Gateway 설정이 없거나 provider 호출이 실패하면 명시적인 unavailable/error 응답과 빈 action을 반환한다.
-프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 미설정이거나 빈 Docker build arg이면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
 값을 지정하면 해당 경로로 요청하며, `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
 
 Request:
@@ -3364,6 +3396,9 @@ type DashboardAssistantRequest = {
   prompt: string;
   selectedWidgetId?: string | null;
   widgetId?: string | null;
+  semanticModelId?: string | null;
+  currentDatasetId?: string | null;
+  surface?: "dashboard" | "catalog" | "semantic";
   widgets: Array<{
     id: string;
     title: string;
@@ -3387,6 +3422,7 @@ Response:
 ```ts
 type DashboardAssistantResponse = {
   message: string;
+  requestId?: string | null;
   actions: Array<
     | {
         type: "create_widget";
@@ -3396,6 +3432,7 @@ type DashboardAssistantResponse = {
           datasetId: string;
           config: DashboardRuntimeWidgetConfig;
         };
+        usedEvidenceIds: string[];
       }
     | {
         type: "update_widget";
@@ -3406,13 +3443,20 @@ type DashboardAssistantResponse = {
           datasetId?: string | null;
           config?: Record<string, unknown>;
         };
+        usedEvidenceIds: string[];
       }
     | {
         type: "report";
         markdown: string;
+        usedEvidenceIds: string[];
       }
   >;
   warnings: string[];
+  model?: string | null;
+  provider?: string | null;
+  sources: Array<Record<string, unknown>>;
+  retrieval?: Record<string, unknown> | null;
+  usedEvidenceIds: string[];
   // 현재 visualization request 위젯 호환용 임시 필드.
   configPatch?: Record<string, unknown>;
   widgetPatch?: {
@@ -3429,11 +3473,52 @@ type DashboardAssistantResponse = {
 - `message`는 사용자에게 요청 결과 안내로 표시한다.
 - `actions.type: "report"`는 AskLake 보조 패널의 분석/리포트 응답에 사용한다.
 - `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 시각화 요청 위젯에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
+- `currentDatasetId`는 현재 선택 Dataset context를 고정하며 명시적인 생성/수정 의도만 mutation action으로 보낸다.
+- create/update persistence callback이 `true`를 반환한 경우에만 적용 성공으로 표시한다. 실패 또는 `false`이면 기존 draft와 편집 입력을 유지하고 오류를 표시한다.
 - `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
 - `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 시각화 요청 위젯을 실제 차트로 변환할 때 자동 적용한다.
 - provider/model과 실제 사용 근거 ID가 없는 응답은 AI 생성 성공으로 취급하지 않는다.
 
-Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema/sample rows 기준으로 검증한다. 없는 컬럼은 alias로 보정하고, 차원 컬럼만 제시된 막대/선/면 차트 요청은 `count` 집계로 보정한다. 그래도 적용 가능한 action이 없으면 `visualization_request`에 한해 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성할 수 있다.
+Assistant guard는 Gateway 응답을 그대로 신뢰하지 않고 catalog schema/sample rows 기준으로 검증한다. 없는 컬럼은 alias로 보정하고, 차원 컬럼만 제시된 막대/선/면 차트 요청은 `count` 집계로 보정한다. 각 action의 `usedEvidenceIds`는 검색 후보의 부분집합이어야 하고 공개 `sources`는 실제 사용 ID와 정확히 일치해야 한다. 적용 가능한 action, provider/model provenance 또는 검증된 evidence가 없으면 기본 차트나 성공 결과를 합성하지 않는다.
+
+### 8.5.13 Review Analysis Gateway와 model publication
+
+공개 endpoint:
+
+| Method | Endpoint | Contract |
+| --- | --- | --- |
+| `POST` | `/api/review-analysis/schema-suggestion` | 최대 40개 source column과 3개 sample row를 `review_schema` mode로 분석 |
+| `POST` | `/api/review-analysis/preview` | 최대 10개 row/64개 output column을 `review_row` mode로 분석 |
+| `POST` | `/api/review-analysis/runs` | persisted run을 `202 queued`로 생성 |
+| `GET` | `/api/review-analysis/runs/latest` | 현재 actor의 최신 run 조회 |
+| `GET` | `/api/review-analysis/runs/{runId}` | 소유 actor 또는 admin의 지정 run 조회 |
+| `GET` | `/api/catalog/models` | published manifest와 digest를 재검증한 portable artifact 조회 |
+
+```ts
+type ReviewAnalysisRunRequest = {
+  limit?: number; // default 25
+  schemaColumns?: Array<Record<string, unknown>>;
+  full?: false;
+  runtime?: "gateway";
+  source?: { bucket: string; key: string };
+  trainModels?: boolean;
+};
+
+type ReviewAnalysisRunResponse = {
+  runId: string;
+  status: "queued" | "running" | "success" | "failed";
+  source: { bucket: string; key: string };
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+```
+
+Run state는 `review_analysis_runs`에 저장한다. Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick은 같은 atomic claim으로 allow-list versioned Node bridge를 호출하므로 재시작 뒤 남은 `queued` run도 재개되고, stale `running` lease는 실패로 종결된다. 일반 actor는 설정된 review source만 사용할 수 있고 다른 `source.bucket`/`source.key`는 `403`이며, admin만 운영 목적으로 명시 source를 선택할 수 있다. `full=true`, `limit=0`, `ASKLAKE_REVIEW_AI_MAX_ROWS` 초과 요청은 `422`로 거부한다. Preview와 Run의 `one_of_values` 결과는 요청 `allowedValues` 밖의 값을 허용하지 않고 provider/model이 없는 row도 실패한다. `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다. 신규 frontend 호출에는 이 alias를 사용하지 않는다.
+
+`trainModels=true`인 run은 AI Gateway label provenance를 포함한 분류형 row만 학습에 사용한다. 최소 8개 row, class별 최소 row, holdout accuracy·macro-F1 기준, 모든 allowed class validation coverage를 통과해야 한다. 성공 artifact는 SHA-256 digest와 source/provider model provenance를 포함한 manifest와 함께 latest registry에 atomic replace하며, 일부 target이라도 gate를 실패하면 새 manifest를 게시하지 않는다.
 
 ## 9. P2 API
 
@@ -4082,9 +4167,9 @@ frontend mock API는 개발 빌드에서만 허용한다. production build에서
 
 ### Persisted state 확장
 
-- PR02의 Alembic revision `0012_clickhouse_realtime_v2_foundation`은 기존 단일 head 다음에 `realtime_pipelines`, `realtime_pipeline_versions`, `realtime_pipeline_deployments`, `realtime_partition_checkpoints`, `realtime_materializations`, `realtime_partition_receipt_ranges`, `realtime_ingest_exceptions`, `realtime_dimension_versions`, `realtime_unmatched_events`, `realtime_routing_assignments`를 expand-only로 추가한다.
-- PR02는 기존 publication table을 변경하지 않았다. PR06의 `0013_catalog_realtime_publication`이 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`를 additive 확장하며 `dataset_serving_revisions`를 만들지 않는다.
-- PR09의 `0014_realtime_archive_recovery`는 immutable `realtime_parity_checks`와 idempotent `realtime_recovery_operations`를 추가한다. sticky routing은 0012의 `realtime_routing_assignments`를 재사용한다.
+- PR02의 Alembic revision `0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음에 `realtime_pipelines`, `realtime_pipeline_versions`, `realtime_pipeline_deployments`, `realtime_partition_checkpoints`, `realtime_materializations`, `realtime_partition_receipt_ranges`, `realtime_ingest_exceptions`, `realtime_dimension_versions`, `realtime_unmatched_events`, `realtime_routing_assignments`를 expand-only로 추가한다.
+- PR02는 기존 publication table을 변경하지 않았다. PR06의 `0017_catalog_realtime_publication`이 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`를 additive 확장하며 `dataset_serving_revisions`를 만들지 않는다.
+- PR09의 `0018_realtime_archive_recovery`는 immutable `realtime_parity_checks`와 idempotent `realtime_recovery_operations`를 추가한다. sticky routing은 0016의 `realtime_routing_assignments`를 재사용한다.
 - 신규 metadata table은 runtime startup `create_all`이 아니라 Alembic이 schema authority다. production downgrade는 지원하지 않고 disabled-mode rollback에서 table을 보존한다.
 - 공개 Dataset revision은 기존 `dataset_freshness.latest_revision`과 `dataset_revision_commits`를 확장한다. 별도 public revision table을 만들지 않는다.
 - `dataset_freshness`에는 optional `binding_epoch`, active serving/archive version과 latest source boundary/checksum/mutation type을 추가한다.
