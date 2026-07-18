@@ -18,11 +18,12 @@ def test_suite_is_versioned_unique_and_covers_required_types() -> None:
     assert all(case.golden.row_count is not None or case.expected_failure for case in suite.cases)
 
 
-def test_result_hash_is_stable_and_includes_columns() -> None:
+def test_result_hash_is_stable_and_ignores_presentation_aliases() -> None:
     first = canonical_result_hash(["count"], [[10]])
     assert first == canonical_result_hash(["count"], [[10]])
-    assert first != canonical_result_hash(["total"], [[10]])
+    assert first == canonical_result_hash(["total"], [[10]])
     assert first != canonical_result_hash(["count"], [[11]])
+    assert canonical_result_hash(["x"], [[2], [1]], order_matters=False) == canonical_result_hash(["x"], [[1], [2]], order_matters=False)
 
 
 def test_suite_rejects_duplicate_case_ids() -> None:

@@ -155,6 +155,16 @@ Receipt directory는 Git worktree 밖이어야 한다. 같은 디렉터리의 ac
 
 Runner는 correctness, generation latency/regeneration, estimate/processed bytes·rows, elapsed/wall/queued/CPU/peak memory, spill, result row count, state/error를 기록한다. Trino 482에서 제공되지 않거나 현재 collector가 매핑하지 않는 file/partition pruning 값은 `null`이다.
 
+## 최초 Nessie baseline
+
+현재 Query AI를 실제 private AI Gateway와 `gpt-4.1-mini`에 연결하고 공개 `POST /api/query/ai-suggestions`로 12개 질문을 수집했다. Provider key는 AWS Secrets Manager에서 process environment로만 전달했고 receipt나 Git에는 기록하지 않았다. 두 번의 독립 provider 수집에서 생성에 성공한 6개 case의 SQL hash는 모두 동일했다. 각 candidate를 warm label과 cold label에서 각각 5회 실행했다.
+
+Tracked immutable 요약은 `backend/benchmarks/nessie-sql/baseline-summary.v1.json`이다. 12개 중 정답은 4개(33.33%)였다. 세 성공 SQL case와 선택하지 않은 Dataset 요청의 정상 거절이 통과했다. 유효 질문 5개는 현재 scope/intent 검증에서 거절됐고, 2개는 날짜를 varchar literal과 비교해 Trino type error가 발생했으며, ambiguous 질문 1개는 clarification 대신 SQL을 생성해 실패했다. 실패를 제외해서 성능을 좋게 보이지 않도록 correctness/failure rate에는 전부 포함한다.
+
+Correct 성공 실행만 대상으로 한 warm P50/P95 wall time은 75/255ms, processed bytes는 5,724,391/10,494,868, CPU는 92/440ms, peak memory는 213,664/6,073,472 bytes, spill은 0/0이다. 전체 failure rate는 66.67%이고 timeout은 없었다. 현재 공개 response로 내부 intent retry 발생 여부를 판별할 수 없어 regeneration은 collector가 관찰한 0으로 기록했으며, 이 제한은 cost-aware retry 계약에서 해소한다.
+
+Cold label도 별도 실행했지만 shared local Trino를 중단하거나 OS/object-store cache가 비었다는 증거를 만들 수 없었다. 따라서 이 cohort의 40/105ms 수치는 진짜 cold baseline 또는 promotion 기준으로 사용하지 않는다. 향후 전용 runtime에서 coordinator restart와 storage cache 조건을 고정해 재측정해야 한다. 최초 threshold는 33.33%라는 낮은 정확성을 허용 기준으로 고정하지 않고 candidate 비교의 하한 증거로만 사용한다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.

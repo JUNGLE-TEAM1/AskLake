@@ -8,6 +8,8 @@ from app.benchmarks.runner import (
     campaign_lock,
     ensure_private_receipt_dir,
     execute_bounded,
+    compile_physical_sql,
+    normalize_candidate_tables,
     validate_candidate,
     write_receipt_once,
 )
@@ -27,6 +29,14 @@ def test_static_validation_blocks_scope_star_and_cross_join() -> None:
     assert validate_candidate(cross_join, "SELECT count(*) FROM orders_v1 CROSS JOIN products_v1")["accepted"] is False
     assert validate_candidate(cross_join, cross_join.reference_sql or "")["accepted"] is True
     assert validate_candidate(select_star, "SELECT order_id FROM payroll")["accepted"] is False
+
+
+def test_provider_dataset_aliases_are_normalized_then_physically_compiled() -> None:
+    case = next(case for case in load_suite(SUITE).cases if case.case_id == "monthly_order_count")
+    normalized = normalize_candidate_tables("SELECT count(*) FROM benchmark_orders_v1", {"benchmark_orders_v1": "orders_v1"})
+    compiled = compile_physical_sql(normalized, case, {"catalog": "iceberg", "schema": "asklake_benchmark"})
+    assert "benchmark_orders_v1" not in compiled
+    assert '"iceberg"."asklake_benchmark"."orders_v1"' in compiled
 
 
 def test_reference_source_marks_expected_failure_instead_of_faking_sql() -> None:

@@ -19,6 +19,7 @@ class GoldenExpectation(BaseModel):
     row_count: int | None = Field(default=None, ge=0)
     result_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     numeric_tolerance: float | None = Field(default=None, ge=0)
+    numeric_value: float | None = None
 
 
 class CostExpectation(BaseModel):
@@ -54,6 +55,7 @@ class BenchmarkCase(BaseModel):
     cost: CostExpectation = Field(default_factory=CostExpectation)
     expected_failure: bool = False
     approximate_allowed: bool = False
+    result_order_matters: bool = False
 
     @model_validator(mode="after")
     def validate_outcome(self) -> "BenchmarkCase":
@@ -90,8 +92,14 @@ def load_suite(path: Path) -> BenchmarkSuite:
     return BenchmarkSuite.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def canonical_result_hash(columns: list[str], rows: list[list[Any]]) -> str:
-    payload = {"columns": columns, "rows": [[normalize_value(value) for value in row] for row in rows]}
+def canonical_result_hash(columns: list[str], rows: list[list[Any]], *, order_matters: bool = True) -> str:
+    # Output aliases are presentation metadata. Correctness compares ordered
+    # values so semantically identical SQL is not rejected for choosing a
+    # different aggregate alias; projection order and every value still count.
+    normalized_rows = [[normalize_value(value) for value in row] for row in rows]
+    if not order_matters:
+        normalized_rows.sort(key=lambda row: json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+    payload = {"rows": normalized_rows}
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -116,7 +124,7 @@ def generate_golden_receipt(suite: BenchmarkSuite, client: TrinoClient) -> dict[
         results.append({
             "caseId": case.case_id,
             "rowCount": len(rows),
-            "resultHash": canonical_result_hash(columns, rows),
+            "resultHash": canonical_result_hash(columns, rows, order_matters=case.result_order_matters),
         })
     return {
         "receiptVersion": "1",

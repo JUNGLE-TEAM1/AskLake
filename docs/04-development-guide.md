@@ -157,6 +157,26 @@ cd backend
 .venv/bin/python -m pytest -q tests/test_nessie_benchmark_runner.py
 ```
 
+실제 Query AI candidate는 synthetic Dataset을 임시 Catalog에 등록한 뒤 공개 API를 통해 private receipt로 수집한다. 등록과 정리는 benchmark 전용 `benchmark_*` ID만 다룬다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-catalog.py register \
+  --evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --map-output /tmp/asklake-benchmark-dataset-map.json \
+  --confirm REGISTER_SYNTHETIC_BENCHMARK
+
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-candidates.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --dataset-map /tmp/asklake-benchmark-dataset-map.json \
+  --receipt /tmp/asklake-provider-candidates.json \
+  --confirm CALL_LIVE_QUERY_AI
+
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-catalog.py cleanup \
+  --evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --confirm REMOVE_SYNTHETIC_BENCHMARK
+```
+
 ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
 
 ETL 화면의 표는 `DataTable`을 사용한다. 이 컴포넌트가 TanStack Table의 row/column model과 shadcn `Table` primitives를 함께 제공하므로, 미리보기·검증 결과·편집 셀도 별도 `<table>` 마크업을 만들지 않고 `ColumnDef`의 `cell` renderer로 구현한다. 화면별 스타일은 최소 너비, 말줄임, 상태 표현처럼 데이터 의미에 필요한 범위만 `tableClassName`, `viewportClassName`, column meta로 추가한다.

@@ -35,6 +35,7 @@ class SqlCandidate:
     model: str
     provider: str
     semantic_context_version: str
+    source_sql_hash: str | None = None
 
 
 class CandidateSource(Protocol):
@@ -57,6 +58,7 @@ class ReferenceCandidateSource:
             model="deterministic-reference",
             provider="fixture",
             semantic_context_version="fixture-context-v1",
+            source_sql_hash=None,
         )
 
 
@@ -65,6 +67,7 @@ class ReceiptCandidateSource:
 
     def __init__(self, path: Path) -> None:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        self.aliases = {str(key): str(value) for key, value in payload.get("datasetAliases", {}).items()}
         self.candidates = {str(item["caseId"]): item for item in payload.get("candidates", [])}
 
     def generate(self, case: BenchmarkCase) -> SqlCandidate:
@@ -73,8 +76,9 @@ class ReceiptCandidateSource:
             raise CandidateRejected("provider receipt has no candidate for case")
         if item.get("rejected") is True:
             raise CandidateRejected(str(item.get("reason") or "provider rejected case"))
+        source_sql = str(item["sql"])
         return SqlCandidate(
-            sql=str(item["sql"]),
+            sql=normalize_candidate_tables(source_sql, self.aliases),
             request_id=str(item["requestId"]),
             generation_latency_ms=int(item.get("generationLatencyMs") or 0),
             regeneration_count=int(item.get("regenerationCount") or 0),
@@ -83,6 +87,7 @@ class ReceiptCandidateSource:
             model=str(item["model"]),
             provider=str(item["provider"]),
             semantic_context_version=str(item["semanticContextVersion"]),
+            source_sql_hash=hashlib.sha256(source_sql.encode()).hexdigest(),
         )
 
 
@@ -172,12 +177,22 @@ class BenchmarkRunner:
         estimate_bytes = self._upper_bound_bytes(case)
         try:
             columns, rows, stats, query_id, wall_ms = execute_bounded(
-                self.trino, candidate.sql, timeout_seconds=config.timeout_seconds,
+                self.trino,
+                compile_physical_sql(candidate.sql, case, self.dataset_evidence),
+                timeout_seconds=config.timeout_seconds,
             )
-            result_hash = canonical_result_hash(columns, rows)
-            correctness = "passed" if (
-                len(rows) == case.golden.row_count and result_hash == case.golden.result_hash
-            ) else "failed"
+            result_hash = canonical_result_hash(columns, rows, order_matters=case.result_order_matters)
+            result_matches = len(rows) == case.golden.row_count and result_hash == case.golden.result_hash
+            if (
+                case.approximate_allowed
+                and case.golden.numeric_value is not None
+                and len(rows) == 1
+                and len(rows[0]) == 1
+                and isinstance(rows[0][0], (int, float))
+            ):
+                expected = float(case.golden.numeric_value)
+                result_matches = abs(float(rows[0][0]) - expected) / max(1.0, abs(expected)) <= float(case.golden.numeric_tolerance or 0)
+            correctness = "passed" if result_matches else "failed"
             terminal = self.run_service.finish(
                 record.run_id,
                 status="succeeded" if correctness == "passed" else "failed",
@@ -235,7 +250,7 @@ class BenchmarkRunner:
             "provider": candidate.provider,
             "semantic_context_version": candidate.semantic_context_version,
             "request_id": candidate.request_id or None,
-            "sanitized_sql_hash": hashlib.sha256(candidate.sql.encode()).hexdigest() if candidate.sql else None,
+            "sanitized_sql_hash": candidate.source_sql_hash or (hashlib.sha256(candidate.sql.encode()).hexdigest() if candidate.sql else None),
             "private_sql_reference": None,
             "validation_result": validation_result,
             "runtime_profile": config.runtime_profile,
@@ -264,6 +279,31 @@ def validate_candidate(case: BenchmarkCase, sql: str) -> dict[str, Any]:
         if re.search(re.escape(pattern), sql, flags=re.IGNORECASE):
             violations.append("forbidden_pattern:" + pattern)
     return {"accepted": not violations, "violations": violations, "referencedTables": sorted(tables)}
+
+
+def normalize_candidate_tables(sql: str, aliases: dict[str, str]) -> str:
+    if not aliases:
+        return sql
+    statement = parse_one(sql, read="trino")
+    for table in statement.find_all(exp.Table):
+        logical_name = aliases.get(table.name)
+        if logical_name and not table.db and not table.catalog:
+            table.set("this", exp.to_identifier(logical_name))
+    return statement.sql(dialect="trino")
+
+
+def compile_physical_sql(sql: str, case: BenchmarkCase, evidence: dict[str, Any]) -> str:
+    statement = parse_one(sql, read="trino")
+    allowed = set(case.allowed_datasets)
+    catalog = str(evidence["catalog"])
+    schema = str(evidence["schema"])
+    for table in statement.find_all(exp.Table):
+        if table.name not in allowed or table.db or table.catalog:
+            continue
+        table.set("this", exp.to_identifier(table.name, quoted=True))
+        table.set("db", exp.to_identifier(schema, quoted=True))
+        table.set("catalog", exp.to_identifier(catalog, quoted=True))
+    return statement.sql(dialect="trino")
 
 
 def execute_bounded(
