@@ -60,7 +60,11 @@ def run() -> dict[str, object]:
     first_table = f"asklake_cache_refresh_{suffix}_v1"
     second_table = f"asklake_cache_refresh_{suffix}_v2"
     source = qualified_trino_table(iceberg_table)
-    trino = TrinoClient(settings)
+    trino = TrinoClient(
+        settings,
+        username=settings.trino_materializer_username,
+        password=settings.trino_materializer_password,
+    )
     clickhouse = ClickHouseClient(settings)
     cache = ClickHouseStaticSnapshotCache(settings, trino)
     relation = {
@@ -77,10 +81,6 @@ def run() -> dict[str, object]:
         "referencedColumns": ["id", "name"],
     }
     try:
-        execute_trino_rows(
-            trino,
-            f"CREATE SCHEMA IF NOT EXISTS {quote_trino_identifier(settings.trino_catalog)}.asklake",
-        )
         execute_trino_rows(trino, f"DROP TABLE IF EXISTS {source}")
         execute_trino_rows(
             trino,
