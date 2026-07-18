@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
-from app.application.eks_airflow_execution import (
+from app.application.eks_msk_fault_execution import (
     record_eks_msk_authorization_fault,
 )
 from app.schemas.etl import ScheduledJobRunRequest

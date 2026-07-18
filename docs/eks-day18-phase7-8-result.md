@@ -47,7 +47,7 @@ AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM
 | 명령 | 결과 |
 | --- | --- |
 | Python 전체 backend test | `873 passed, 4 skipped` |
-| EKS fault/retry focused Python test | `52 passed, 1 skipped` |
+| EKS fault/retry focused Python test | `55 passed, 1 skipped` |
 | Spark Kubernetes Node test | `18 passed` |
 | Node syntax check | PASS |
 | `npm run verify` | LOCAL BLOCKED — MinIO `127.0.0.1:9000` 미기동 |

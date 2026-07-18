@@ -8,7 +8,6 @@ while the SparkApplication continues to run.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
@@ -35,10 +34,9 @@ from app.services.eks_execution_contract import (
     run_execution_lease_lost,
     spark_execution_identity_mismatch,
     spark_execution_lease_seconds,
-    spark_kubernetes_max_attempts,
-    spark_kubernetes_terminal_failure,
     spark_kubernetes_execution_progress_callback,
 )
+from app.application.eks_spark_retry import prepare_eks_spark_attempt
 from app.services.etl.eks_fixture import (
     is_eks_mvp_bounded_fixture_job,
     persisted_eks_mvp_fixture_source_boundary,
@@ -49,129 +47,6 @@ from app.services.etl.eks_fixture import (
 
 SparkRunner = Callable[..., dict[str, Any]]
 ManifestBuilder = Callable[[dict[str, Any], str], dict[str, Any]]
-
-
-def record_eks_msk_authorization_fault(
-    db: Session,
-    *,
-    acknowledged_records: int,
-    attempted_records: int,
-    category: str,
-    evidence_sha256: str,
-    job_id: str,
-    run_id: str,
-) -> dict[str, Any]:
-    """Attach one deny-only MSK write attempt to an existing EKS fixture Run."""
-    job = etl_repository.get_job(db, job_id)
-    run = etl_repository.get_run_model(db, run_id)
-    if (
-        job is None
-        or run is None
-        or run.job_id != job.id
-        or run.airflow_dag_run_id != run_id
-    ):
-        raise ApiError(
-            "AIRFLOW_RUN_MISMATCH",
-            "MSK fault evidence does not match a persisted AskLake Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    if not is_eks_mvp_bounded_fixture_job(job):
-        raise ApiError(
-            "MSK_FAULT_RUN_NOT_ISOLATED",
-            "MSK fault evidence is accepted only for an isolated EKS fixture Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    if (
-        category != "AUTHORIZATION"
-        or attempted_records != 1
-        or acknowledged_records != 0
-    ):
-        raise ApiError(
-            "MSK_FAULT_EVIDENCE_INVALID",
-            "MSK fault evidence must prove one denied write with zero acknowledgements.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    normalized_digest = str(evidence_sha256 or "").strip().lower()
-    if (
-        len(normalized_digest) != 64
-        or any(character not in "0123456789abcdef" for character in normalized_digest)
-    ):
-        raise ApiError(
-            "MSK_FAULT_EVIDENCE_INVALID",
-            "MSK fault evidence SHA-256 is invalid.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    existing_attempts = (
-        list((run.task_states or {}).get("faultAttempts") or [])
-        if isinstance((run.task_states or {}).get("faultAttempts"), list)
-        else []
-    )
-    if existing_attempts:
-        existing = existing_attempts[0]
-        if (
-            isinstance(existing, dict)
-            and existing.get("kind") == "msk_authorization"
-            and existing.get("evidenceSha256") == normalized_digest
-        ):
-            return existing
-        raise ApiError(
-            "MSK_FAULT_ALREADY_RECORDED",
-            "A different MSK fault attempt is already attached to this Run.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    if isinstance((run.task_states or {}).get("sparkResult"), dict):
-        raise ApiError(
-            "MSK_FAULT_AFTER_TERMINAL_RESULT",
-            "MSK fault evidence cannot be attached after Spark terminal result.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-
-    lease = etl_repository.claim_run_execution_lease(
-        db,
-        run_id,
-        owner=FASTAPI_EXECUTION_OWNER,
-        lease_seconds=spark_execution_lease_seconds(),
-    )
-    if lease is None:
-        raise ApiError(
-            "SPARK_RUN_ALREADY_EXECUTING",
-            "The Run is already owned by an active execution.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job_id, "runId": run_id},
-        )
-    run = etl_repository.get_run_for_execution_fence(
-        db,
-        run_id,
-        owner=FASTAPI_EXECUTION_OWNER,
-        generation=lease.generation,
-    )
-    if run is None:
-        raise run_execution_lease_lost(job_id, run_id)
-    attempt = {
-        "acknowledgedRecords": 0,
-        "attemptedRecords": 1,
-        "category": "AUTHORIZATION",
-        "evidenceSha256": normalized_digest,
-        "generation": lease.generation,
-        "kind": "msk_authorization",
-        "observedAt": datetime.now(timezone.utc).isoformat(),
-        "owner": FASTAPI_EXECUTION_OWNER,
-        "status": "failed",
-    }
-    run.task_states = {
-        **(run.task_states or {}),
-        "faultAttempts": [attempt],
-    }
-    run.execution_owner = None
-    run.execution_lease_expires_at = None
-    db.commit()
-    return attempt
 
 
 def execute_eks_airflow_spark_run(
@@ -242,71 +117,18 @@ def execute_eks_airflow_spark_run(
     if run is None:
         raise run_execution_lease_lost(job_id, run_id)
     try:
-        previous_execution = (run.task_states or {}).get("sparkExecution")
-        previous_kubernetes_execution = (
-            previous_execution.get("kubernetesExecution")
-            if isinstance(previous_execution, dict)
-            and isinstance(previous_execution.get("kubernetesExecution"), dict)
-            else None
+        (
+            run.task_states,
+            previous_kubernetes_execution,
+            spark_attempt_generation,
+        ) = prepare_eks_spark_attempt(
+            run.task_states or {},
+            attempt_id=attempt_id,
+            lease_generation=lease.generation,
+            job_id=job_id,
+            run_id=run_id,
+            started_at=iso_now(),
         )
-        if previous_kubernetes_execution is not None:
-            previous_kubernetes_execution = normalize_spark_kubernetes_execution(
-                previous_kubernetes_execution,
-                job_id=job_id,
-                run_id=run_id,
-            )
-        previous_attempts = (
-            list(previous_execution.get("kubernetesAttempts") or [])
-            if isinstance(previous_execution, dict)
-            and isinstance(previous_execution.get("kubernetesAttempts"), list)
-            else []
-        )
-        terminal_replacement = spark_kubernetes_terminal_failure(
-            previous_kubernetes_execution
-        )
-        if terminal_replacement:
-            previous_attempt_generation = int(
-                previous_kubernetes_execution.get("attemptGeneration") or 1
-            )
-            spark_attempt_generation = previous_attempt_generation + 1
-            if spark_attempt_generation > spark_kubernetes_max_attempts():
-                raise ApiError(
-                    "SPARK_TERMINAL_RETRY_EXHAUSTED",
-                    "Spark terminal retry exceeded the configured bounded attempt limit.",
-                    status.HTTP_409_CONFLICT,
-                    {
-                        "jobId": job_id,
-                        "runId": run_id,
-                        "attemptGeneration": previous_attempt_generation,
-                    },
-                )
-            if not any(
-                isinstance(item, dict)
-                and item.get("attemptGeneration") == previous_attempt_generation
-                for item in previous_attempts
-            ):
-                previous_attempts.append(previous_kubernetes_execution)
-        else:
-            spark_attempt_generation = int(
-                (previous_kubernetes_execution or {}).get("attemptGeneration")
-                or 1
-            )
-        run.task_states = {
-            **(run.task_states or {}),
-            "sparkExecution": {
-                "attemptId": attempt_id,
-                "generation": lease.generation,
-                "startedAt": iso_now(),
-                "status": "running",
-                "kubernetesAttempts": previous_attempts,
-                **(
-                    {"kubernetesExecution": previous_kubernetes_execution}
-                    if previous_kubernetes_execution is not None
-                    and not terminal_replacement
-                    else {}
-                ),
-            },
-        }
         db.commit()
     except Exception:
         db.rollback()

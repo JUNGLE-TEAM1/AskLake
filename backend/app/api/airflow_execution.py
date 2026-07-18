@@ -9,10 +9,10 @@ from app.core.errors import ApiError
 from app.schemas.etl import (
     AirflowCatalogReconciliationRequest,
     AirflowCatalogReconciliationResponse,
-    AirflowMskAuthorizationFaultRequest,
     AirflowSparkExecutionRequest,
 )
-from app.application.eks_airflow_execution import (
+from app.schemas.eks_execution import AirflowMskAuthorizationFaultRequest
+from app.application.eks_msk_fault_execution import (
     record_eks_msk_authorization_fault,
 )
 from app.services import etl_service

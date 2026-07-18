@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +11,13 @@ import {
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
+import {
+  kubernetesIdentifier,
+  normalizeSparkAttemptGeneration,
+  sparkKubernetesAnnotations,
+  sparkKubernetesApplicationName,
+} from "./sparkKubernetesIdentity.mjs";
+export { sparkKubernetesApplicationName } from "./sparkKubernetesIdentity.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
@@ -280,8 +286,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
         jars,
         jobId: job.id,
         packages,
-        runId,
-        attemptGeneration: options.sparkAttemptGeneration,
+        runId, attemptGeneration: options.sparkAttemptGeneration,
       }),
       positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
       process.env,
@@ -422,26 +427,6 @@ export function createSparkRestSubmission({
   };
 }
 
-function kubernetesIdentifier(value, fallback = "run") {
-  const normalized = String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-+/g, "-");
-  return normalized || fallback;
-}
-
-export function sparkKubernetesApplicationName(runId, attemptGeneration = 1) {
-  const normalized = kubernetesIdentifier(runId);
-  const digest = createHash("sha256").update(String(runId || "")).digest("hex").slice(0, 10);
-  const generation = positiveInteger(attemptGeneration, 1);
-  const suffix = generation > 1 ? `-g${generation}` : "";
-  const identity = normalized
-    .slice(0, 38 - suffix.length)
-    .replace(/-+$/g, "");
-  return `asklake-run-${identity}-${digest}${suffix}`;
-}
-
 function kubernetesEnvironmentVariables(environmentVariables) {
   return Object.entries(stringValues(environmentVariables))
     .filter(([, value]) => value !== "")
@@ -485,8 +470,7 @@ function sparkKubernetesPodPlacement() {
 }
 
 export function createSparkKubernetesApplication({
-  appName,
-  attemptGeneration = 1,
+  appName, attemptGeneration = 1,
   environmentVariables = {},
   jars = [],
   jobId,
@@ -499,12 +483,7 @@ export function createSparkKubernetesApplication({
   const imageDigest = image.slice(image.lastIndexOf("@") + 1);
   const fixtureBatchId = String(environmentVariables.ASKLAKE_KAFKA_FIXTURE_BATCH_ID || "").trim();
   const executorInstances = sparkExecutorInstances(environment);
-  const normalizedAttemptGeneration = positiveInteger(attemptGeneration, 1);
-  if (normalizedAttemptGeneration > 3) {
-    throw sparkConfigurationError(
-      "Spark Kubernetes attempt generation must be between 1 and 3.",
-    );
-  }
+  const normalizedAttemptGeneration = normalizeSparkAttemptGeneration(attemptGeneration);
   const name = sparkKubernetesApplicationName(runId, normalizedAttemptGeneration);
   const runLabel = kubernetesIdentifier(runId).slice(0, 63).replace(/-+$/g, "") || "run";
   const jobLabel = kubernetesIdentifier(jobId, "job").slice(0, 63).replace(/-+$/g, "") || "job";
@@ -531,14 +510,9 @@ export function createSparkKubernetesApplication({
     apiVersion: "sparkoperator.k8s.io/v1beta2",
     kind: "SparkApplication",
     metadata: {
-      annotations: {
-        "asklake.io/image-digest": imageDigest,
-        "asklake.io/job-id": String(jobId),
-        "asklake.io/run-id": String(runId),
-        "asklake.io/executor-instances": String(executorInstances),
-        "asklake.io/execution-generation": String(normalizedAttemptGeneration),
-        ...(fixtureBatchId ? { "asklake.io/fixture-batch-id": fixtureBatchId } : {}),
-      },
+      annotations: sparkKubernetesAnnotations({
+        executorInstances, fixtureBatchId, imageDigest, jobId, normalizedAttemptGeneration, runId,
+      }),
       labels: {
         "app.kubernetes.io/name": "asklake-spark",
         "app.kubernetes.io/part-of": "asklake",

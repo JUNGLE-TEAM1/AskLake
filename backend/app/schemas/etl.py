@@ -726,14 +726,6 @@ class AirflowSparkExecutionRequest(CamelModel):
     source_boundary: dict[str, Any] | None = None
 
 
-class AirflowMskAuthorizationFaultRequest(CamelModel):
-    acknowledged_records: Literal[0]
-    attempted_records: Literal[1]
-    category: Literal["AUTHORIZATION"]
-    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    job_id: str
-
-
 class AirflowCatalogReconciliationRequest(CamelModel):
     job_id: str
 
