@@ -70,6 +70,25 @@ EKS Continuous 실행은 `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes`일 때 전
 
 Day 18 MSK authorization fault는 별도 public Run을 만들지 않는다. 기존 EKS bounded fixture Run에 대해 internal bearer 경계가 정확히 한 번의 write 시도, `AUTHORIZATION`, acknowledgement 0과 private evidence SHA-256을 검증한 뒤 RDS execution lease generation에 `faultAttempts`를 기록한다. 이후 정상 Spark 실행은 같은 Run의 다음 RDS generation을 claim한다. 이 adapter는 기존 Describe-only identity의 실제 deny evidence를 연결할 뿐 IAM, RBAC 또는 NodePool을 변경하지 않는다.
 
+Day 18 Phase 8 운영 runner는 이 제품 경계를 바꾸는 새 실행 엔진이 아니라 승인된
+dev fault/E2E campaign을 순서대로 조정하는 fail-closed adapter다. Run D는 새 logical
+Run을 Airflow 호출 없이 먼저 예약하고 Describe-only identity의 실제 MSK deny를 기록한
+뒤 같은 Run을 Airflow에 제출한다. Run E는 새 logical Run의 첫 Spark attempt를 internal
+경계로 직접 시작하고 exact SparkApplication owner UID가 확인된 driver Pod 하나만
+삭제한다. 첫 attempt가 제품의 terminal failure 상태가 된 뒤에만 같은 예약 Run을
+Airflow에 제출해 attempt generation 2를 만든다. 따라서 Airflow DAG retry 설정이나
+runtime image를 바꾸지 않으며, Run D/E 모두 RDS owner/generation과 logical `runId`가
+중복 snapshot/materialization을 막는 최종 authority로 남는다.
+
+runner의 checkpoint는 승인 contract, live input, candidate receipt와 target-selection
+hash에 묶인 private mode-`0600` state다. 재시작은 완료된 deny, driver delete 또는
+Airflow submit을 다시 실행하지 않고 다음 검증 단계만 수행한다. checkpoint와 실제
+SparkApplication 상태가 모호하면 추측 복구하지 않는다. Kubernetes Event와 CloudWatch는
+같은 campaign window의 type/reason/kind별 count만 state에 보존하고 raw Run, Pod,
+Application, log message와 endpoint는 저장하지 않는다. cleanup은 runner가 만든 exact
+temporary Job만 UID precondition으로 삭제하고 RDS, S3, Iceberg, Catalog와
+SparkApplication durable evidence는 보존한다.
+
 브라우저는 `/api/etl/jobs/statuses`의 persisted `continuousRuntime`을 일반 Job status polling과 같은 경로로 읽는다. 따라서 새로고침 후에도 frontend memory가 아니라 metadata DB의 Job/detail/runtime 상태로 hydrate한다. SSE는 dashboard domain event에만 사용하며 Continuous 상태의 canonical source는 status API다.
 
 | 영역 | 현재 선택 | 상태 | 메모 |
