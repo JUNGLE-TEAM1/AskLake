@@ -29,7 +29,7 @@ class RealtimeFeatureConfigResponse(CamelModel):
 class RealtimeEventEnvelope(CamelModel):
     event_id: int = Field(ge=1)
     event_type: str
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     scope_id: Literal["deployment"] = "deployment"
     resource_type: str
     resource_id: str

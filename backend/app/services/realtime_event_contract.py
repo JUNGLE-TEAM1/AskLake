@@ -6,6 +6,7 @@ from app.core.config import settings
 
 
 REALTIME_EVENT_SCHEMA_VERSION = 1
+REALTIME_EVENT_SCHEMA_VERSION_V2 = 2
 REALTIME_SCOPE_ID = "deployment"
 EVENT_TYPE_REGISTRY: dict[str, tuple[str, frozenset[str]]] = {
     "dataset.revision.committed": (
@@ -38,6 +39,7 @@ def validate_realtime_event(
     correlation_id: str,
     invalidations: list[str],
     payload: dict[str, Any],
+    schema_version: int = REALTIME_EVENT_SCHEMA_VERSION,
 ) -> None:
     registry_entry = EVENT_TYPE_REGISTRY.get(event_type)
     if registry_entry is None:
@@ -53,11 +55,29 @@ def validate_realtime_event(
         raise ValueError("Realtime event requires a bounded correlation id")
     if len(invalidations) > 20 or any(not item or len(item) > 256 for item in invalidations):
         raise ValueError("Realtime event invalidation list is invalid")
-    unexpected_payload_keys = set(payload) - set(allowed_payload_keys)
+    effective_allowed_keys = set(allowed_payload_keys)
+    required_v2_keys: set[str] = set()
+    if schema_version == REALTIME_EVENT_SCHEMA_VERSION_V2:
+        if event_type != "dataset.revision.committed":
+            raise ValueError("Realtime event schema v2 currently supports Dataset revisions only")
+        required_v2_keys = {
+            "bindingEpoch", "materializationId", "mutationType", "sourceBoundary",
+            "servingVersionId", "pipelineVersionId",
+        }
+        effective_allowed_keys = required_v2_keys
+    elif schema_version != REALTIME_EVENT_SCHEMA_VERSION:
+        raise ValueError("Unsupported realtime event schema version")
+    unexpected_payload_keys = set(payload) - effective_allowed_keys
     if unexpected_payload_keys:
         raise ValueError(
             "Realtime event payload contains unsupported fields: "
             + ", ".join(sorted(unexpected_payload_keys))
+        )
+    missing_payload_keys = required_v2_keys - set(payload)
+    if missing_payload_keys:
+        raise ValueError(
+            "Realtime event schema v2 payload is missing fields: "
+            + ", ".join(sorted(missing_payload_keys))
         )
     _reject_secret_fields(payload)
     encoded = json.dumps(
