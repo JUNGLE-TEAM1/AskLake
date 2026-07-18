@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     realtime_cleanup_interval_seconds: int = Field(default=3_600, ge=60, le=86_400)
     realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
+    review_analysis_worker_interval_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"

@@ -394,7 +394,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
 
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
-현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
+현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 검증하고 private AI Gateway를 호출한다.
 
 ```bash
 # VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
@@ -409,16 +409,19 @@ cd backend
 .venv/bin/python -m app.seed.seed_dashboard_demo
 ```
 
-OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
+Provider API key는 프론트나 FastAPI가 아니라 `ai-server` env에만 둔다. FastAPI는 `backend/.env`에서 Gateway service token과 MCP signing/service secret만 사용한다.
 AI provider key가 없거나 private AI Gateway가 unavailable이면 backend는 실패를 명시하고 action을 비운다. Assistant guard는 provider가 반환한 action의 Dataset·컬럼·값축을 catalog schema 기준으로 검증하지만, 응답이 비었다고 기본 막대 차트나 성공 결과를 만들어 내지 않는다.
 
 ```bash
-OPENAI_API_KEY=sk-...
-OPENAI_ASSISTANT_ENABLED=true
-OPENAI_ASSISTANT_MODEL=gpt-4o-mini
-OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
-OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
-OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
+# ai-server/.env (secret 값은 commit하지 않는다)
+AI_PROVIDER_API_KEY=...
+AI_GATEWAY_SERVICE_TOKEN=...
+
+# backend/.env
+AI_GATEWAY_BASE_URL=http://ai-server:8090
+AI_GATEWAY_SERVICE_TOKEN=...
+AI_MCP_SERVICE_TOKEN=...
+AI_CONTEXT_SIGNING_SECRET=...
 ```
 
 ```bash
@@ -443,6 +446,24 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
 6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
 7. Gateway나 serving index가 없을 때 가짜 SQL·차트·근거 대신 명시적인 unavailable/empty 상태가 보이는지 확인한다.
+8. 리뷰 분석 Preview와 persisted Run이 실제 row를 처리하고, backend 재시작 뒤 남은 `queued` Run도 worker tick이 다시 claim하는지 확인한다. 일반 사용자의 임의 object source는 `403`이어야 하며, `trainModels=true`에서는 provenance·class coverage·quality gate를 통과한 artifact만 `/api/catalog/models`에 나타나야 한다.
+
+```bash
+cd backend
+alembic upgrade head
+python -m pytest -q \
+  tests/test_ai_gateway_mcp.py \
+  tests/test_ai_generation_evidence_audit.py \
+  tests/test_query_ai_contract.py \
+  tests/test_dashboard_assistant_evidence.py \
+  tests/test_review_model_publication.py \
+  tests/test_unified_ai_services.py
+
+cd ../ai-server
+python -m pytest -q
+```
+
+현재 RAG control-plane head `0011_rag_control_plane_fencing` 다음 AI migration 순서는 `0012_ai_generation_usage -> 0013_ai_context_consumptions -> 0014_review_analysis_runs -> 0015_ai_generation_evidence_audit`이다. Fresh DB와 기존 `0011` DB 모두 `alembic upgrade head`로 검증한다.
 
 ```bash
 cd frontend
@@ -747,7 +768,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. Query AI gateway mode는 `AI_PROVIDER_API_KEY`를 `ai-server` 환경에만 두고, backend는 service token과 signed context secret만 사용한다. `AI_QUERY_PROVIDER=direct` 롤백 모드의 `OPENAI_API_KEY`와 Dashboard Assistant 설정은 별도 호환 경로다.
+로컬 환경 변수는 `backend/.env.example`과 `ai-server/.env.example`을 기준으로 둔다. `AI_PROVIDER_API_KEY`는 `ai-server`에만 두고, FastAPI는 service token과 signed context secret만 사용한다. Query AI, Dashboard Assistant, ETL transform, RAG, 리뷰 분석은 같은 Gateway를 사용하며 direct/mock provider fallback은 지원하지 않는다.
 
 SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
 
