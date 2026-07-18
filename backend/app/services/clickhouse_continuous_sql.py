@@ -185,23 +185,37 @@ class ClickHouseContinuousSqlWorkerGateway:
             for key in ("catalog", "schema", "table")
         )
         projection = ", ".join(quote_trino_identifier(item) for item in columns)
-        limit = int(self.settings.clickhouse_static_load_max_rows) + 1
-        result = execute_trino_rows(
+        max_rows = int(self.settings.clickhouse_static_load_max_rows)
+        count_result = execute_trino_rows(
             self.trino_client,
-            f"SELECT {projection} FROM {source} FOR VERSION AS OF {int(snapshot_id)} LIMIT {limit}",
+            f"SELECT count(*) FROM {source} FOR VERSION AS OF {int(snapshot_id)}",
             timeout_seconds=self.settings.trino_query_timeout_seconds,
         )
-        if len(result.rows) >= limit:
+        total_rows = int(count_result.rows[0][0]) if count_result.rows and count_result.rows[0] else 0
+        if total_rows > max_rows:
             raise ValueError(
                 "ClickHouse static snapshot exceeds CLICKHOUSE_STATIC_LOAD_MAX_ROWS"
             )
         batch_size = int(self.settings.clickhouse_insert_batch_rows)
-        for start in range(0, len(result.rows), batch_size):
-            client.insert_json_rows(
-                database,
-                table,
-                columns,
-                result.rows[start:start + batch_size],
+        page = self.trino_client.submit(
+            f"SELECT {projection} FROM {source} FOR VERSION AS OF {int(snapshot_id)}",
+            timeout_seconds=self.settings.trino_query_timeout_seconds,
+        )
+        while True:
+            if page.error is not None:
+                raise RuntimeError(f"{page.error.code}: {page.error.message}")
+            for start in range(0, len(page.rows), batch_size):
+                client.insert_json_rows(
+                    database,
+                    table,
+                    columns,
+                    page.rows[start:start + batch_size],
+                )
+            if not page.next_uri:
+                break
+            page = self.trino_client.fetch(
+                page.next_uri,
+                timeout_seconds=self.settings.trino_query_timeout_seconds,
             )
 
     def _stop(
