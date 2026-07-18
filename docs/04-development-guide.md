@@ -1041,6 +1041,17 @@ Spark Node가 최근 완료 application의 기본 1시간 TTL 때문에 남아 �
 bounded cleanup pending으로만 기록하고 완전 scale-in으로 표시하거나 durable evidence를
 삭제하지 않는다. 상세 결과는 [Day 18 Phase 3 비용·정리 가드레일](eks-day18-cost-cleanup-evidence.md)을 따른다.
 
+Phase 4 Pair A 격리 복구는 `scripts/run-eks-day18-isolated-recovery-smoke.sh`를 사용한다.
+실행기는 private image receipt, exclusive steady namespace와 explicit confirmation을 요구하고,
+Service·Secret·ServiceAccount 없이 임시 Deployment 하나만 만든다. 기존 General Node에
+들어가지 않는 instance CPU selector와 request를 사용하며 NodePool CPU·memory limit은
+실행 중에만 확장하고 trap과 정상 cleanup 모두 원래 값으로 복구한다. 신규 Node에 임시 Pod
+외 비-DaemonSet workload가 있으면 NodeClaim을 삭제하지 않는다. 1초 감시는 ALB
+Frontend/Backend, RDS와 HPA를 집계하며 HTTP/RDS는 1% 이하·연속 2회 이하, HPA는 `2..6`
+범위를 요구한다. 완료는 Pod·Node 교체, CloudWatch 시작 marker 2건, General Node
+scale-out/in과 release 0개를 모두 충족해야 한다. 실제 결과와 B 범위는
+[Day 18 Pair A 격리 Pod·Node 복구 검증](eks-day18-isolated-recovery-evidence.md)을 따른다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.
