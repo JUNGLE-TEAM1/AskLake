@@ -260,7 +260,7 @@ export function SqlJobWizardDialog({
         {activeStep.id === "governance" ? (
           <SqlJobGovernanceStep
             disabled={isBusy}
-            governance={configuration.governance}
+            governance={configuration.governance} projectGroups={defaultMetadata?.projectGroups ?? []}
             onChange={updateGovernance}
             showErrors={showErrors}
           />
