@@ -822,6 +822,8 @@ EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain�
 AWS EC2 demo 서버는 `scripts/deploy.sh`로 켜고, 재배포하고, 끈다.
 실제 EC2 id, host, SSH key path는 `deploy/ec2.env`처럼 git에 올리지 않는 개인 환경 파일에서 관리한다.
 
+배포 성공은 Compose 기동만으로 판단하지 않는다. public health, Spark REST, Continuous session heartbeat를 분리해 확인하는 현재 기준선과 후속 자동화 범위는 [배포 파이프라인 Phase 0 기준선](./deployment-phase-0-baseline.md)을 따른다. 이 기준선은 관찰 문서이며 배포 스크립트의 현재 동작을 바꾸지 않는다.
+
 ```bash
 cp deploy/ec2.env.example deploy/ec2.env
 source deploy/ec2.env
