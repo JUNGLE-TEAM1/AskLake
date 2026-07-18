@@ -597,6 +597,29 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 
 현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다. 자동화가 추가됐더라도 새 workflow의 성공 run과 production-like operator evidence 전에는 realtime flag 활성화가 No-Go다. 상세 판정은 `docs/realtime-2026/final-audit.md`를 따른다.
 
+## ClickHouse Realtime Serving V2 readiness
+
+현재 기준선은 Kafka Engine 기반 opt-in ClickHouse V1, Continuous SQL V1, `dataset_freshness`/`dataset_revision_commits`, durable `realtime_event_log`, Dashboard `FINAL` reader와 hybrid SSE다. 아래 항목은 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 V2 완료 상태이며 기존 V1 체크리스트를 대체하지 않는다.
+
+- [x] 최신 `dev` V1 기준선과 Kafka Connect V2 gap을 문서화
+- [x] 기존 Continuous SQL API, revision table, event log와 Catalog 호환 field를 재사용하는 expand-only 계약 확정
+- [x] `scope_id="deployment"`와 resource ACL 유지, tenant foundation 비포함을 확정
+- [x] 같은 Job generation에서 Kafka Engine V1/Kafka Connect V2 동시 consumer ownership 금지
+- [x] PR01~09 merge 순서, disabled-mode rollback과 production 미전환 원칙 문서화
+- [ ] PR02: ClickHouse 26.3 exact image/digest, Kafka Connect, 계정·health, V2 기본-off flag와 Alembic expand migration
+- [ ] PR03: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
+- [ ] PR04: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
+- [ ] PR05: SQL classifier/compiler, version-scoped shadow materializer, deterministic serving current와 split-failure reconcile
+- [ ] PR06: Catalog `physicalBindings`, binding epoch, 기존 revision/event-log schema v2 원자 publication과 pointer rollback
+- [ ] PR07: bounded ClickHouse Dashboard query, mutation-aware current requery, event-log replica replay와 permission recheck
+- [ ] PR08: frontend Dataset cursor cache, epoch-aware rollback/cutover, stale/degraded UX와 production mock fail-closed
+- [ ] PR09: Bronze/Gold archive parity, rebuild/canary/rollback, browser E2E, chaos와 CI/operator evidence
+- [ ] 100k deterministic fixture 유실·논리 중복 0, restart/rebalance/gap/poison 검증
+- [ ] 최소 72시간 shadow count/checksum과 SLO evidence
+- [ ] production HA topology, backup/restore와 rollback drill에 대한 별도 운영 승인
+
+PR09 merge는 production activation이 아니다. 모든 V2 routing과 consumer flag는 operator evidence와 traffic-promotion 승인 전까지 기본 `false`이며 단일 EC2 Compose는 demo/staging으로만 판정한다.
+
 ## Legacy removal evidence readiness
 
 - [x] production legacy register 10경로와 evidence manifest ID·owner 1:1 검증

@@ -636,3 +636,43 @@ Continuous SQL JOIN 생성 UI는 검증 응답의 `CONTINUOUS_SQL_STATIC_KEY_NOT
 ClickHouse Kafka table은 source payload 형식을 추정하지 않고 메시지 전체를 `RawBLOB` 한 열로 소비한다. ingest materialized view가 Catalog에 저장된 `recordParsing`과 `schemaColumns`를 적용해 공백 원문 또는 nested JSON을 typed raw table로 투영한다. 정적 relation은 SQL이 참조한 열만 exact snapshot에서 page 단위로 적재하며 snapshot identity가 같은 local table은 pause/resume에서 재사용한다. 적재된 snapshot에서도 compiled JOIN key의 null·빈 값·`uniqExact` count를 다시 검사해 사전 검증과 snapshot pin 사이 경합을 차단한다. worker readiness는 table 존재뿐 아니라 `system.kafka_consumers`의 active consumer와 복구되지 않은 parser exception까지 확인한다.
 
 Catalog output은 raw offset과 query 가능한 JOIN output이 실제로 생긴 첫 publication 이후에만 나타난다. SQL UI는 Job과 Catalog를 1초 간격으로 확인해 준비 중, Kafka JOIN 실행 중, 첫 이벤트 게시 완료를 구분하며 start API 응답만으로 완료를 표시하지 않는다. pause는 Kafka table과 materialized view만 내리고 raw/output/static table과 안정적인 consumer group identity를 보존하므로, pause 중 쌓인 Kafka event는 resume 후 같은 offset 경계에서 이어서 처리된다.
+
+## 21) ClickHouse Realtime Serving V2 목표 경계
+
+V2는 위 Continuous SQL ClickHouse V1을 호환 기준선으로 사용한다. 즉시 교체가 아니라 expand → shadow → cutover → 관측 → contract 순서로 전환한다.
+
+```text
+Kafka topic
+├─ V2 hot owner: Kafka Connect Sink → opaque raw envelope → receipt audit
+│  └─ realtime materializer → versioned dimension JOIN → ClickHouse serving_current
+└─ archive owner: Spark Structured Streaming → Bronze Iceberg
+   └─ 동일 pipeline/dimension version → Gold Iceberg JOIN projection
+
+ClickHouse serving commit
+→ 기존 dataset_revision_commits + dataset_freshness transaction
+→ 기존 realtime_event_log
+→ SSE invalidation
+→ bounded Dashboard REST query
+```
+
+### V2 소유권
+
+- Kafka source position은 topic/partition/offset과 read-committed expected position 집합이 소유한다. raw max offset 하나만으로 checkpoint 완료를 판단하지 않는다.
+- ClickHouse raw/serving은 재구축 가능한 hot store다. Dashboard, parity와 checksum은 canonical deduplicated current view만 읽는다.
+- Iceberg Bronze와 immutable dimension history는 replay/rebuild source다. Gold projection은 ClickHouse와 같은 pipeline/dimension version의 archive binding이다.
+- PostgreSQL은 기존 `dataset_freshness`, `dataset_revision_commits`, pipeline/materialization/checkpoint metadata와 durable `realtime_event_log`의 source of truth다.
+- Catalog는 logical Dataset identity와 additive `physicalBindings`를 소유한다. legacy `queryEngineTable`은 archive/Trino 호환, `clickhouseTable`은 V1 호환으로 migration window 동안 유지한다.
+- FastAPI는 ClickHouse credential, permission, query budget, binding routing과 event ACL을 집행한다. Browser는 ClickHouse에 직접 연결하지 않는다.
+- 현재 저장소에는 tenant model이 없으므로 V2도 `scope_id="deployment"`와 기존 resource ACL을 사용한다. tenant isolation은 별도 foundation 없이 암묵적으로 추가하지 않는다.
+- `streaming_required` SQL은 이 프로그램에서 분류만 하고 자동 배포하지 않는다. 현재 Spark V1이 stream-stream/window/retraction을 지원한다고 간주하지 않는다.
+
+### 전환 불변식
+
+1. 같은 Job generation과 consumer group을 Kafka Engine V1과 Kafka Connect V2가 동시에 claim하지 않는다.
+2. V2 publication은 receipt gap을 건너뛰지 않고 stable materialization ID와 source fingerprint를 재사용한다.
+3. static/dimension version, source boundary, serving current count/checksum이 맞아야 revision을 공개한다.
+4. pointer switch와 rollback은 새 global Dataset revision과 단조 증가 `bindingEpoch`를 만든다.
+5. NOTIFY는 wake-up일 뿐이며 기존 durable event cursor가 유실 복구의 근거다.
+6. V2 flag off에서는 현재 V1/Iceberg/polling 동작과 API 필수 field를 바꾸지 않는다.
+
+상세 DDL, transaction, API, failure recovery와 검증은 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md), PR 의존 관계는 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.

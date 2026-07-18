@@ -200,3 +200,20 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 - Dashboard 404 fallback 제거 시점과 공유 링크·export 운영 범위를 결정해야 한다.
 - 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다. 단, Phase 0 기준으로는 표시용 identity metadata와 실제 permission grant를 분리한다.
 - Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.
+
+## 11) ClickHouse Realtime Serving V2 전환 프로그램
+
+현재 `dev`의 Realtime 2026 ClickHouse mode는 Kafka Engine과 `PINNED_AT_START` static snapshot을 사용하는 opt-in V1이다. durable SSE와 Dashboard targeted refetch도 이미 존재하며 운영 기본값은 polling/disabled다.
+
+V2는 이 기준선을 다음 방향으로 단계 확장한다.
+
+- production canonical hot ingest를 Kafka Connect Sink로 전환하고 topic/partition/offset, DLQ, receipt audit와 deterministic retry 근거를 보강한다.
+- user/product/meta relation을 versioned current 또는 temporal dimension으로 게시하고 INNER missing hold, LEFT NULL publish/correction과 bounded repair를 지원한다.
+- Catalog는 기존 Iceberg `queryEngineTable`과 ClickHouse `clickhouseTable`을 즉시 제거하지 않고 additive `physicalBindings`에서 serving/archive 상태, boundary, revision과 binding epoch를 함께 노출한다.
+- 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`를 확장하며 별도 competing revision/event source를 만들지 않는다.
+- archive는 Kafka 원본과 dimension history를 Bronze Iceberg에 보존하고 동일 pipeline/dimension version의 Gold JOIN projection을 만들어 fallback/parity/rebuild 근거로 사용한다.
+- Dashboard는 `(bindingEpoch, revision)` cursor와 mutation type을 기준으로 append만 증분 최적화하고 upsert/replace/retract는 current serving 결과를 다시 조회한다.
+- 첫 V2 release는 현재 `scope_id="deployment"`와 Dataset/Dashboard resource ACL을 유지한다. tenant model은 이 프로그램이 암묵적으로 만들지 않는다.
+- `streaming_required` 분류는 자동 배포 대상이 아니며 stream-stream/window/retraction은 별도 후속 제품 범위다.
+
+전환 중에는 한 Job generation이 Kafka Engine V1과 Kafka Connect V2를 동시에 소비하지 않는다. 모든 V2 flag가 꺼지면 현재 ClickHouse V1, Iceberg Continuous, Dashboard polling/SSE 동작이 그대로 유지돼야 한다. 상세 구현과 merge 순서는 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md)와 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.
