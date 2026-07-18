@@ -15,6 +15,9 @@ npm run dev
 기본 dev server는 Vite 설정을 따른다.
 macOS Homebrew 환경에서는 Vite 5 dev server를 Node 22 LTS로 실행하는 것을 권장한다. Node 26/Homebrew dependency mismatch와 Vite cold start 지연이 겹쳤던 원인 분석은 [frontend-dev-server-incident-analysis.md](./frontend-dev-server-incident-analysis.md)를 참고한다.
 
+로컬 Docker frontend는 HTTP(`http://localhost:5173`)에서 backend의 운영용 `Secure` 세션 쿠키를 사용할 수 있도록 nginx 프록시 경계에서만 `asklake_session`의 `Secure` 플래그를 제거한다. HTTPS 배포의 backend 쿠키 정책은 변경하지 않는다.
+Codex 인앱 브라우저의 localhost `/api/*` 차단을 피해야 하는 로컬 Compose 빌드는 `VITE_API_BASE_URL=/backend`를 사용하며, frontend nginx가 `/backend/*`를 backend의 동일 경로로 전달한다. 일반 브라우저 개발 서버는 기존 `/api` 경로를 그대로 사용해도 된다.
+
 ```bash
 export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
 cd frontend
