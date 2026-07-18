@@ -187,8 +187,37 @@ def sync_kafka_continuous_session(
     runtime: KafkaContinuousRuntimeModel,
     payload: dict[str, Any] | None = None,
 ) -> None:
+    if db is None:
+        return
     session = current_kafka_continuous_session(db, runtime)
-    if session is None or db is None:
+    if (
+        session is not None
+        and session.status in {"stopped", "failed"}
+        and session.ended_at
+        and runtime.status in {"starting", "running"}
+    ):
+        session_id = f"SESSION-{runtime.job_id}-{secrets.token_hex(6)}"
+        session = KafkaContinuousSessionModel(
+            session_id=session_id,
+            job_id=runtime.job_id,
+            status="starting",
+            started_at=iso_now(),
+            checkpoint_path=runtime.checkpoint_path,
+            baseline_counts={
+                "consumedCount": int(runtime.consumed_count or 0),
+                "storedCount": int(runtime.stored_count or 0),
+                "quarantinedCount": int(runtime.quarantined_count or 0),
+                "failedCount": int(runtime.failed_count or 0),
+                "lastBatchId": runtime.last_batch_id,
+            },
+        )
+        runtime.metrics = {
+            **(runtime.metrics or {}),
+            "currentSessionId": session_id,
+            "currentSessionEndReason": None,
+        }
+        etl_repository.stage_kafka_continuous_session(db, session)
+    if session is None:
         return
     if session.status in {"stopped", "failed"} and session.ended_at:
         sync_kafka_continuous_batches(db, runtime, session, payload or {})

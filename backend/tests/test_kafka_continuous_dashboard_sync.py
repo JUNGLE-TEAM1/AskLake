@@ -4,12 +4,51 @@ from io import BytesIO
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.services import etl_service
 
 
 class KafkaContinuousDashboardSyncTests(unittest.TestCase):
+    def test_running_runtime_opens_new_session_after_transient_failed_session(self) -> None:
+        runtime = SimpleNamespace(
+            checkpoint_path="s3://checkpoints/job-live",
+            consumed_count=100,
+            failed_count=1,
+            job_id="job-live",
+            lag=20,
+            last_batch_id="9",
+            last_error=None,
+            last_flush_at="2026-07-18T08:30:00Z",
+            metrics={"currentSessionId": "SESSION-job-live-failed"},
+            quarantined_count=0,
+            status="running",
+            stored_count=90,
+        )
+        failed_session = SimpleNamespace(
+            ended_at="2026-07-18T08:20:03Z",
+            job_id="job-live",
+            session_id="SESSION-job-live-failed",
+            status="failed",
+        )
+        db = SimpleNamespace(add=Mock())
+
+        with (
+            patch.object(etl_service, "current_kafka_continuous_session", return_value=failed_session),
+            patch.object(etl_service.etl_repository, "stage_kafka_continuous_session") as stage_session,
+            patch.object(etl_service, "sync_kafka_continuous_batches"),
+            patch.object(etl_service, "continuous_session_dag_steps", return_value=[]),
+        ):
+            etl_service.sync_kafka_continuous_session(db, runtime, {"status": "running"})
+
+        recovered_session = stage_session.call_args.args[1]
+        self.assertNotEqual(recovered_session.session_id, failed_session.session_id)
+        self.assertEqual(recovered_session.status, "running")
+        self.assertEqual(recovered_session.consumed_count, 0)
+        self.assertEqual(recovered_session.baseline_counts["consumedCount"], 100)
+        self.assertEqual(runtime.metrics["currentSessionId"], recovered_session.session_id)
+        db.add.assert_called_once_with(recovered_session)
+
     def test_runtime_cursor_metrics_merge_by_topic_and_partition(self) -> None:
         merged = etl_service.merge_stream_partition_cursor_metrics(
             [
