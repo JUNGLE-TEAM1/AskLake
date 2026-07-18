@@ -685,7 +685,23 @@ import ssl
 import sys
 
 certificate = ssl._ssl._test_decode_cert(sys.argv[1])
-ssl.match_hostname(certificate, "clickhouse-v2")
+expected_name = "clickhouse-v2"
+dns_names = {
+    str(value).casefold()
+    for name_type, value in certificate.get("subjectAltName", ())
+    if name_type == "DNS"
+}
+if dns_names:
+    valid = expected_name in dns_names
+else:
+    common_names = {
+        str(value).casefold()
+        for relative_name in certificate.get("subject", ())
+        for name_type, value in relative_name
+        if name_type == "commonName"
+    }
+    valid = expected_name in common_names
+raise SystemExit(0 if valid else 1)
 PY
   then
     printf 'error: CLICKHOUSE_V2_TLS_CERT_FILE must include clickhouse-v2 in its SAN or subject name\n' >&2
