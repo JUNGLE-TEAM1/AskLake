@@ -326,9 +326,6 @@ export function CatalogPage({
                                   </Badge>
                                 )}
                               </div>
-                              {dataset.description.trim() ? (
-                                <p className="catalog-result-description">{dataset.description}</p>
-                              ) : null}
                             </div>
                             {dataset.tags.length > 0 ? (
                               <span className="catalog-result-tags" title={dataset.tags.join(" · ")}>{dataset.tags.join(" · ")}</span>

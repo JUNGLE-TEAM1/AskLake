@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -14,6 +14,7 @@ import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { cn } from "@/lib/utils";
 import { LineageColumn, LineageTableNodeData, escapeRegExp, lineageColumnRowHeight, lineageFitViewOptions, lineageGroupGap, lineageNodeHeaderHeight } from "./catalogModel";
+import { collapseProcessLineageGraph } from "./catalogLineageProjection";
 
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
@@ -22,10 +23,9 @@ export function CatalogLineage({ compact = false, dataset }: { compact?: boolean
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
-  const { edges, nodes } = lineageGraph
-    ? buildLineageGraph(lineageGraph, selectedColumnKey, selectedDatasetId, setSelectedColumnKey)
-    : { edges: [], nodes: [] };
-  const selectedLineageDataset = lineageGraph?.datasets.find((item) => item.id === selectedDatasetId) ?? null;
+  const visibleLineageGraph = useMemo(() => lineageGraph ? collapseProcessLineageGraph(lineageGraph) : null, [lineageGraph]);
+  const { edges, nodes } = visibleLineageGraph ? buildLineageGraph(visibleLineageGraph, selectedColumnKey, selectedDatasetId, setSelectedColumnKey) : { edges: [], nodes: [] };
+  const selectedLineageDataset = visibleLineageGraph?.datasets.find((item) => item.id === selectedDatasetId) ?? null;
 
   useEffect(() => {
     let isActive = true;
@@ -59,7 +59,7 @@ export function CatalogLineage({ compact = false, dataset }: { compact?: boolean
               title={dataset.name}
             />
           )}
-          {lineageGraph ? (
+          {visibleLineageGraph ? (
             <div className="catalog-lineage-flow" aria-label={`${dataset.name} 리니지 그래프`}>
               <ReactFlow
                 edges={edges}
@@ -92,7 +92,7 @@ export function CatalogLineage({ compact = false, dataset }: { compact?: boolean
       </Panel>
 
       <Sheet open={selectedLineageDataset !== null} onOpenChange={(open) => !open && setSelectedDatasetId(null)}>
-        {lineageGraph && selectedLineageDataset ? (
+        {visibleLineageGraph && selectedLineageDataset ? (
           <SheetContent className="flex h-full flex-col gap-0 p-0" closeLabel="리니지 상세 닫기" side="right">
             <SheetHeader className="gap-3 p-6 pr-16">
               <Badge className="w-fit" shape="compact" variant={getLineageLayerBadgeVariant(selectedLineageDataset.layer)}>
@@ -107,8 +107,8 @@ export function CatalogLineage({ compact = false, dataset }: { compact?: boolean
                 <section className="flex flex-col gap-3">
                   <h3 className="text-sm font-semibold text-slate-950">연결 정보</h3>
                   <div className="flex flex-wrap gap-2">
-                    <Badge shape="compact" variant="outline">상위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "upstream")}개</Badge>
-                    <Badge shape="compact" variant="outline">하위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "downstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">상위 {countLineageConnections(visibleLineageGraph, selectedLineageDataset.id, "upstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">하위 {countLineageConnections(visibleLineageGraph, selectedLineageDataset.id, "downstream")}개</Badge>
                     <Badge shape="compact" variant="outline">컬럼 {selectedLineageDataset.columns.length}개</Badge>
                   </div>
                 </section>

@@ -950,7 +950,7 @@ type LineageContext = {
 ```
 
 정식 Catalog lineage modal은 `LineageGraph` contract를 React Flow node/edge로 변환해 표시한다.
-ETL graph의 source는 `SOURCE · <fileFormat|connectorType>`, 가운데 Job은 `PROCESS · SPARK`, target은 `<targetLayer> LAYER · <persistedFormat>`으로 표시한다. 현재 Spark runner는 physical output을 Parquet로 저장하므로 요청 `targetFormat`과 무관하게 target engine은 `PARQUET`이다. 따라서 Parquet source에서 GOLD로 처리한 결과는 `SOURCE · PARQUET -> PROCESS · SPARK -> GOLD LAYER · PARQUET`이며 Job을 BRONZE dataset이나 ICEBERG target으로 추정하지 않는다. 화면의 상위 데이터셋 수에는 `PROCESS` node를 포함하지 않는다.
+ETL API graph의 source는 `SOURCE · <fileFormat|connectorType>`, 가운데 Job은 `PROCESS · SPARK`, target은 `<targetLayer> LAYER · <persistedFormat>`을 유지한다. 현재 Spark runner는 physical output을 Parquet로 저장하므로 요청 `targetFormat`과 무관하게 target engine은 `PARQUET`이다. Catalog 화면은 실행 provenance용 `PROCESS` payload를 변경하지 않고, 같은 PROCESS 컬럼으로 이어지는 source-to-job과 job-to-target edge를 source-to-target edge로 축약해 `SOURCE · PARQUET -> GOLD LAYER · PARQUET`처럼 표시한다. matching 입력 edge가 없는 `_asklake_*` 실행 컬럼에는 가짜 source edge를 만들지 않는다. 화면의 상위 데이터셋 수에도 `PROCESS` node를 포함하지 않는다.
 Lineage API가 unavailable이면 화면은 오류와 재시도를 표시한다. `CatalogDataset.upstream`/`downstream` fixture를 실제 lineage로 대신 표시하지 않는다.
 
 ### Optional Large-Scale Evidence Extension
