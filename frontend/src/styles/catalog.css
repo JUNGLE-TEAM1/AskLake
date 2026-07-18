@@ -1,3 +1,22 @@
+.page-body > .catalog-explorer-with-view,
+.page-body > .catalog-semantic-page {
+  width: 100%;
+  max-width: none;
+}
+
+.catalog-explorer-with-view,
+.catalog-semantic-page {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-width: 0;
+  font-family: var(--jobs-font-family);
+}
+
+.catalog-view-switcher {
+  justify-self: start;
+}
+
 .catalog-page {
   display: grid;
   width: 100%;
@@ -18,6 +37,21 @@
 
 .catalog-page-header > div > div:first-child > span {
   margin-top: 0;
+}
+
+.catalog-view-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 4px;
+}
+
+.catalog-view-button {
+  min-height: 34px;
+  white-space: nowrap;
 }
 
 .catalog-content-grid {

@@ -80,6 +80,7 @@ const askLakeDataFiles = [
 
 const catalogPageFiles = [
   "src/pages/catalog/CatalogPage.tsx",
+  "src/pages/catalog/CatalogWorkspacePage.tsx",
   "src/pages/catalog/CatalogExplorerPage.tsx",
   "src/pages/catalog/CatalogDetailPage.tsx",
   "src/pages/catalog/CatalogLineage.tsx",
@@ -524,22 +525,21 @@ const checks = [
     ],
   },
   {
-    name: "AI workspace submits through the governed SQL suggestion contract",
-    file: "src/pages/ai/AiChatPage.tsx",
-    patterns: [
-      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
-      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
-      /previousRequest\?\.controller\.abort\(\);/,
-      /const suggestion = await generateQueryAiSuggestion\(/,
-      /signal: controller\.signal,/,
-      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
-      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
-      /content: getQueryAiErrorMessage\(error\)/,
-      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
-      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
-      /message\.sql \? <pre className="ai-chat-sql">/,
+    name: "Catalog semantic workspace uses live Semantic Model and RAG contracts",
+    files: [
+      "src/pages/catalog/CatalogWorkspacePage.tsx",
+      "src/pages/semantic/SemanticLayerPage.tsx",
+      "src/services/semanticApi.ts",
     ],
-    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+    patterns: [
+      /view === "semantic"/,
+      /<SemanticLayerPage datasets=\{catalogProps\.datasets\}/,
+      /listSemanticModels\(\)/,
+      /apiClient\.get<SemanticModel\[\]>\("\/api\/semantic-models"\)/,
+      /apiClient\.post<RagProfile>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/approve`/,
+      /<RagJobHistory datasetId=\{selectedDatasetId\}/,
+    ],
+    forbiddenPatterns: [/semanticLayerMock/, /services\/mockApi/],
   },
   {
     name: "AI suggestions preserve only the backend-validated response",
@@ -1885,7 +1885,7 @@ const checks = [
     files: askLakeDataFiles,
     patterns: [
       /const jobDataFlows = new Set<FlowId>\(\["jobs", "jobDetail", "jobRuns"\]\);/,
-      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql", "ai"\]\);/,
+      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql"\]\);/,
       /const jobsHydration = useJobsHydration\(\{ enabled: enabled && dataRequirements\.jobs, showToast, state \}\);/,
       /useCatalogHydration\(\{ enabled: enabled && dataRequirements\.catalog, showToast, state \}\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,

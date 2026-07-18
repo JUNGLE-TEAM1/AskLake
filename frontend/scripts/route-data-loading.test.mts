@@ -16,7 +16,7 @@ test("each route enables only the workspace data it consumes", () => {
     assert.deepEqual(getWorkspaceDataRequirements(flow), { catalog: false, jobs: true });
   }
 
-  for (const flow of ["catalog", "catalogDetail", "sql", "ai"] as const) {
+  for (const flow of ["catalog", "catalogDetail", "sql"] as const) {
     assert.deepEqual(getWorkspaceDataRequirements(flow), { catalog: true, jobs: false });
   }
 
