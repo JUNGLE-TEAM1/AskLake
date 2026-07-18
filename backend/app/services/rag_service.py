@@ -816,8 +816,8 @@ class RagService(RagJobLifecycleMixin):
             self._fail_airflow_dispatch(job, "RAG orchestration is not configured: AIRFLOW_API_BASE_URL and Airflow credentials are required")
             return
         source_manifest = dataset.get("sourceManifest") or dataset.get("source_manifest")
-        if not isinstance(source_manifest, dict) or source_manifest.get("manifestVersion") != 1 or source_manifest.get("datasetId") != job.dataset_id or not source_manifest.get("readUrl") or not source_manifest.get("sparkPath") or not source_manifest.get("format") or not source_manifest.get("fingerprint") or not source_manifest.get("expiresAt"):
-            self._fail_airflow_dispatch(job, "Catalog-issued sourceManifest with datasetId, readUrl, sparkPath, format, fingerprint, and expiry is required for Airflow indexing")
+        if not isinstance(source_manifest, dict) or source_manifest.get("manifestVersion") != 1 or source_manifest.get("datasetId") != job.dataset_id or not source_manifest.get("readUrl") or not source_manifest.get("sparkPath") or not source_manifest.get("format") or not source_manifest.get("fingerprint") or not source_manifest.get("expiresAt") or (str(source_manifest.get("format") or "").casefold() == "iceberg" and not source_manifest.get("icebergSnapshotId")):
+            self._fail_airflow_dispatch(job, "Catalog-issued sourceManifest with datasetId, readUrl, sparkPath, format, fingerprint, expiry, and Iceberg snapshot evidence is required for Airflow indexing")
             return
         import httpx
         dag_run_id = f"rag_{job.id}"

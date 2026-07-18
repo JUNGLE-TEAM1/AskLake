@@ -21,12 +21,10 @@ Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-m
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 VITE_OBJECT_STORAGE_PROVIDER=minio
 VITE_S3_REGION=us-east-1
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
-AUTH_LEGACY_DEMO_USERS_ENABLED=false
 AUTH_SESSION_COOKIE_SECURE=true
 ASKLAKE_OBJECT_STORAGE_PROVIDER=minio
 S3_ALLOWED_BUCKETS=asklake-output
@@ -92,7 +90,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - frontend는 Source connector, create/run/query/catalog/dashboard 요청을 실제 backend로 보낸다. 별도 mock 전환 환경변수는 없다.
-- Production demo 계정을 유지하는 배포만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정한다. backend flag는 재시작 시 기존 demo 계정 상태/세션을 보존하고 frontend flag는 로그인 기본값과 안내를 노출한다. 두 값은 preflight에서 일치해야 하며 기본값은 모두 `false`다.
+- Legacy demo 계정 활성화 플래그는 test 전용이다. Production은 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 거부하고 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 env에 존재해도 preflight를 실패시킨다. 운영 로그인은 bootstrap admin 또는 승인된 IdP/session 경로만 사용한다.
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
@@ -289,6 +287,8 @@ File / S3 Prefix Job의 `run`/`retry`는 저장된 `Path / Prefix` 아래에서 
 `publish_run_result` task는 `POST /api/internal/airflow/spark-runs/{runId}/catalog`에 `{ "jobId": "..." }`를 보낸다. 일반 batch에서는 backend가 저장된 `sparkResult.status=success`, persisted `icebergTarget`, snapshot/fingerprint identity, Trino `DESCRIBE`/`$snapshots`/`$files`, Job의 `datasetId`를 검증한 뒤 같은 Run의 materialization과 lineage를 `catalog_datasets.payload`에 저장한다. 성공 response는 `status`, `runId`, `reconciledAt`, `dataset`을 반환하고 `JobRunSummary.taskStates.catalogResult`에도 snapshot ID, data-file count, storage location을 보존한다.
 
 Catalog endpoint는 `runId` 기준으로 멱등하다. `publish_run_result`는 30초 간격으로 최대 2회 재시도하므로 최초 시도를 포함해 최대 3회 같은 `runId`의 Catalog reconciliation을 호출한다. 이 task retry는 upstream의 성공 Spark XCom과 저장된 `sparkResult`를 재사용해 Spark를 다시 실행하지 않으며, `materializationRuns`에는 같은 `runId`가 하나만 남아야 한다. 저장된 Spark 성공 결과가 없으면 `409 SPARK_RESULT_NOT_READY`, identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`, 실제 output 확인 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`를 반환한다. 실패 응답은 재시도 소진 후 `publish_run_result` task와 DAG Run을 실패시키고, AskLake Run의 실패 단계는 `Catalog reconciliation`로 표시한다.
+
+검증된 Spark Catalog publication은 `sourceManifest`를 함께 저장한다. Iceberg Dataset의 manifest는 `manifestVersion`, `datasetId`, `sparkPath`, `format=iceberg`, `fingerprint`, `expiresAt`, `runId`, `icebergSnapshotId`를 포함하며, RAG parent staging은 table 최신 상태가 아니라 이 검증된 snapshot ID를 읽는다. snapshot 증적이 없는 Iceberg 결과에는 RAG용 manifest를 발급하지 않는다.
 
 Airflow DAG Run은 Catalog endpoint가 성공한 뒤에만 `success`가 된다. Jobs 화면의 상태 조회는 Job 상태만 갱신하며 Catalog 목록을 함께 요청하지 않는다. Catalog·SQL·AI 화면에 들어갈 때 해당 화면의 loader가 최신 Catalog 목록을 읽는다.
 

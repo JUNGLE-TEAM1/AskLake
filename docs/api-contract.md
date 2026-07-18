@@ -113,7 +113,7 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
-Production startup은 알려진 legacy demo 계정을 기본적으로 `disabled`로 바꾸고 해당 세션을 폐기합니다. 데모 운영에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 명시하면 기존 demo 계정의 저장된 상태와 세션을 재시작 후에도 보존하며, 누락된 demo 계정은 초기 `active` 상태로 생성합니다. 이 모드도 `BOOTSTRAP_ADMIN_*` 설정, Secure session cookie, client header fallback 차단을 유지합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 같은 배포의 로그인 UI에 demo 기본값을 표시하는 build-time 짝이며 두 플래그는 `scripts/verify-deploy-env.sh`에서 동일해야 합니다. Opt-in은 이미 저장된 `disabled`를 자동으로 되돌리지 않습니다.
+Production startup은 알려진 legacy demo 계정을 `disabled`로 바꾸고 해당 세션을 폐기합니다. `AUTH_LEGACY_DEMO_USERS_ENABLED=true`는 test 환경에서만 허용되고 production config validation이 거부합니다. `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`도 production env에 둘 수 없으며 `scripts/verify-deploy-env.sh`가 존재 자체를 실패로 처리합니다. 운영 인증은 `BOOTSTRAP_ADMIN_*`, Secure session cookie, client header fallback 차단 계약을 유지합니다.
 
 운영 세션 쿠키는 기본적으로 `Secure`, `HttpOnly`, `SameSite=Lax`를 사용합니다. HTTPS가 아직 없는 제한된 dev HTTP ALB는 `AUTH_SESSION_COOKIE_SECURE=false`를 명시할 수 있지만 `HttpOnly`와 `SameSite=Lax`는 유지되며, 이 예외는 header-auth fallback, public signup, legacy demo 계정 정책을 변경하지 않습니다. HTTPS 전환 뒤에는 반드시 `true`로 복구합니다.
 
@@ -2338,6 +2338,7 @@ Response `200 OK`:
 - 생성 직후에는 Catalog에 추가하지 않습니다.
 - 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. `publish_run_result`가 저장한 dataset과 materialization history는 Catalog·SQL·AI route 진입 시 Catalog domain loader가 `GET /api/catalog/datasets`로 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
+- 검증된 Spark/Iceberg publication은 같은 payload와 `catalog_datasets.source_manifest`에 RAG source contract를 저장합니다. `sourceManifest`는 `manifestVersion=1`, Dataset/Run identity, Spark-readable Iceberg table path, source fingerprint, expiry, exact `icebergSnapshotId`를 포함합니다. RAG Spark parent stage는 이 snapshot을 `snapshot-id` option으로 읽으며 최신 table head로 조용히 이동하지 않습니다. Iceberg snapshot 증적이 없으면 manifest를 발급하지 않고 RAG dispatch가 fail-closed 합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`의 `materializationRuns` history를 idempotent하게 갱신합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다. 일반 full-refresh 결과는 snapshot이므로 새 성공 Run이 현재 Dataset을 교체하고, 과거 Run은 history로만 남습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.

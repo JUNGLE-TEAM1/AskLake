@@ -59,7 +59,6 @@ write_valid_env() {
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
-      'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'BACKEND_CORS_ORIGINS=https://deploy.asklake.test' \
       'AIRFLOW_API_AUTH_JWT_SECRET=AirflowJwtSecret_123' \
       'AIRFLOW_EXECUTION_API_TOKEN=AirflowExecutionToken_123' \
@@ -79,9 +78,12 @@ write_valid_env() {
       "MINIO_SECRET_KEY=$SECRET_SENTINEL" \
       'MONGO_INITDB_ROOT_PASSWORD=MongoPassword_123' \
       'MONGO_INITDB_ROOT_USERNAME=MongoRootUser_123' \
+      'OPENSEARCH_INITIAL_ADMIN_PASSWORD=OpenSearchPassword_123!' \
+      'OPENSEARCH_PASSWORD=OpenSearchPassword_123!' \
       'POSTGRES_DB=asklake_metadata' \
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
+      'RAG_WORKER_TOKEN=RagWorkerToken_123456789012345678901234' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -324,8 +326,8 @@ expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
 expect_preflight_failure \
-  'frontend and backend legacy demo flags must match' \
-  'AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match'
+  'production rejects legacy demo identities' \
+  'legacy demo identities are test-only'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA*='

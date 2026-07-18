@@ -204,7 +204,7 @@ job과 manifest에 다음을 저장한다.
 
 실행 전 다음이 준비되어야 한다.
 
-1. Catalog Dataset에 만료 전 source manifest가 있고 Spark가 읽을 수 있는 `sparkPath`가 있어야 한다.
+1. Catalog Dataset에 검증된 Spark publication이 발급한 만료 전 source manifest가 있어야 한다. Iceberg manifest는 Spark가 읽을 수 있는 `sparkPath`와 exact `icebergSnapshotId`를 함께 가지며 parent staging은 해당 snapshot으로 time-travel한다.
 2. Iceberg JDBC catalog와 warehouse가 Spark runtime에 설정되어야 한다.
 3. Spark REST master, Airflow, Chunker/Embedding Worker, AI Gateway, OpenSearch가 같은 내부 네트워크에 있어야 한다.
 4. `alembic upgrade head`로 `0003_rag_pipeline_v2`까지 적용해야 한다.
