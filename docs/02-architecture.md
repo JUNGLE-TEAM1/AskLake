@@ -666,6 +666,14 @@ ClickHouse serving commit
 - 현재 저장소에는 tenant model이 없으므로 V2도 `scope_id="deployment"`와 기존 resource ACL을 사용한다. tenant isolation은 별도 foundation 없이 암묵적으로 추가하지 않는다.
 - `streaming_required` SQL은 이 프로그램에서 분류만 하고 자동 배포하지 않는다. 현재 Spark V1이 stream-stream/window/retraction을 지원한다고 간주하지 않는다.
 
+### PR02 기반시설 경계
+
+PR02는 기존 V1 옆에 기본 비활성 `clickhouse-realtime-v2` Compose profile을 추가한다. 이 profile은 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 기동한다. local은 loopback HTTP 포트로 개발하고 production Compose는 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하며 Connect worker에 CA를 mount한다. 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 현재 단일 Keeper/ClickHouse/Connect topology는 demo/staging이며 HA가 아니다.
+
+Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`을 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. 다만 PR02에는 실제 consumer adapter가 없으므로 이 guard를 claim 직전에 호출하고 connector를 등록하는 책임은 PR03에 있다. `/api/health/realtime`의 `v2.ready`는 configuration-only 기반 단계에서 항상 `false`이고, V2 flag를 켜면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다.
+
+Alembic `0012_clickhouse_realtime_v2_foundation`은 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+
 ### 전환 불변식
 
 1. 같은 Job generation과 consumer group을 Kafka Engine V1과 Kafka Connect V2가 동시에 claim하지 않는다.

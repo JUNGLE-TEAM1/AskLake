@@ -50,6 +50,18 @@
 7. 실제 PR 매핑과 merge 순서는 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md`가 소유한다.
 8. 현재 저장소에는 tenant model이 없으므로 모든 V2 row와 권한 경계는 기존 `scope_id="deployment"`와 resource ACL을 사용한다. tenant 도입은 별도 선행 ADR·migration 없이는 이 작업에 포함하지 않는다.
 
+### 0.3 PR02 구현 상태
+
+PR02는 기반시설을 구현했지만 V2 data path를 활성화하지 않는다.
+
+- `clickhouse-realtime-v2` profile에 단일 Keeper, ClickHouse 26.3.17.4 LTS와 공식 Sink plugin이 설치된 Kafka Connect worker를 추가했다.
+- local은 loopback HTTP를 사용한다. production은 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하고 Connect worker에 CA를 mount하지만, 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 단일 노드 topology는 demo/staging이며 HA가 아니다.
+- 다섯 V2 설정과 단일 owner startup/Job generation guard를 추가했다. V2가 enabled이면 live probe가 없는 PR02의 `/api/health/realtime`은 HTTP 503으로 fail closed한다.
+- Alembic `0012_clickhouse_realtime_v2_foundation`은 신규 metadata table 10개만 expand한다. 기존 revision/event publication table은 PR06 전까지 변경하지 않는다.
+- connector instance 등록, raw/serving DDL, Kafka ingest, receipt audit와 materialization은 PR03 이후 범위다.
+
+Exact artifact, account, migration command와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 고정한다.
+
 ---
 
 ## 1. 결론과 확정 결정
@@ -126,6 +138,8 @@ Connector 배포 계약:
 - 이미지 태그 latest 사용을 금지한다.
 - staging soak를 통과한 exact patch version과 image digest를 deploy 파일에 고정한다.
 - 버전 변경 PR은 Kafka ingest, dependent materialization, restart, dedupe, backup/restore 검증을 포함한다.
+- PR02 repository pin은 `clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49`다. Kafka Connect base는 `confluentinc/cp-kafka-connect:8.2.2@sha256:8a29608d5b87fd1858e0e7307f98dc9ed43685541c3dc89358f71e80b348ebf9`, ClickHouse Sink는 v1.4.0 release asset과 SHA-256 `e146cf1205c3a15630fcdf667556da931cb3269e63b1f3f3bedf7dfd1ffc2cb0`로 고정한다.
+- 위 pin은 repository provenance이며 staging soak, reboot, backup/restore 증거를 대신하지 않는다. artifact 변경은 `deploy/realtime-v2-provenance.json`과 검증 결과를 같은 PR에서 갱신한다.
 
 ---
 
@@ -332,13 +346,13 @@ Connector 배포 계약:
 
 serving key:
 
-    serving_key = SHA256(dataset_id | pipeline_version_id | topic | partition | offset)
+    serving_key = SHA256(scope_id | dataset_id | pipeline_version_id | canonical(output_business_key_values))
 
 source boundary fingerprint:
 
     source_fingerprint = SHA256(pipeline_version_id | sorted(topic, partition, fromExclusive, toInclusive))
 
-같은 serving key의 retry는 새 논리 row를 만들지 않는다.
+Pipeline validation은 출력 business key column과 canonical encoding을 version에 고정한다. 같은 business entity의 update/correction이 여러 Kafka offset에 도착해도 같은 serving key를 사용한다. 명시적인 stable business key가 없는 append-only event는 `event_key`를 output key 값으로 사용해 source event별 row를 보존한다. 같은 source position retry는 같은 event/serving key를 재사용하며 새 논리 row를 만들지 않는다. Unmatched queue는 동일 serving key의 여러 source position을 잃지 않도록 별도 `source_position_hash`를 primary identity로 사용한다.
 
 ### 7.2 Timestamp
 
@@ -631,6 +645,8 @@ Dashboard, parity, target row count, checksum, repair 검증은 base table을 �
 
 모든 table은 Alembic migration으로 생성한다. runtime startup의 CREATE/ALTER 보강 코드는 migration 완료 후 제거한다. 기존 `dataset_freshness`와 `dataset_revision_commits`가 공개 revision의 source of truth이므로, 별도 `dataset_serving_revisions`를 만들지 않고 두 table을 확장한다.
 
+PR02의 `0012_clickhouse_realtime_v2_foundation`은 아래 신규 metadata 10개를 만드는 expand revision이다. 신규 table은 ORM startup `create_all`에 등록하지 않으며 Alembic이 schema authority다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`의 target field는 PR06 migration 전에는 아직 존재한다고 가정하지 않는다. Production rollback은 flag/owner를 끄고 expand schema를 보존하며, destructive downgrade는 disposable development DB의 migration test에서만 사용한다.
+
 ### 10.1 realtime_pipelines
 
 주요 필드:
@@ -651,6 +667,7 @@ Dashboard, parity, target row count, checksum, repair 검증은 base table을 �
 - id
 - pipeline_id
 - version
+- pipeline_generation
 - normalized_sql
 - sql_fingerprint
 - compiled_clickhouse_sql
@@ -687,6 +704,7 @@ immutable row다. 수정은 새 version 생성으로만 수행한다.
 - topic
 - partition
 - last_observed_offset
+- last_contiguously_received_offset
 - last_applied_offset
 - lease_owner
 - lease_generation
@@ -701,7 +719,9 @@ unique key는 pipeline_version_id, topic, partition이다.
 - pipeline_version_id
 - source_boundary JSONB
 - source_fingerprint
+- dimension_version_ids JSONB
 - clickhouse_query_id
+- lease_generation
 - target_row_count
 - target_checksum
 - status
@@ -712,6 +732,8 @@ unique key는 pipeline_version_id, topic, partition이다.
 - last_error_code
 
 unique key는 `(pipeline_version_id, source_fingerprint)`다. 같은 fingerprint를 다른 pipeline version이 재사용할 수는 있지만 같은 version에서 두 materialization으로 발행할 수는 없다.
+
+PR02 status는 `reserved | running | materialized | published | failed | reconciling`이다. `materialized`부터 row count/checksum/commit 시각이 필요하고 `published`만 publication revision을 요구한다. 따라서 PR05의 shadow materialization은 PR06 publication 전에도 `materialized` 상태로 보존할 수 있다.
 
 ### 10.6 realtime_partition_receipt_ranges
 
@@ -731,11 +753,33 @@ unique key는 `(pipeline_version_id, topic, partition, from_offset_inclusive, to
 
 poison record 상세는 `realtime_ingest_exceptions`에 topic/partition/offset, payload hash, quarantine locator, error code, 상태, audit actor/reason을 저장한다. `audited_skip`은 API 권한, 사유, 감사 log 없이는 설정할 수 없고 해당 position을 포함한 range hash를 다시 검증해야 한다.
 
-### 10.7 realtime_unmatched_events
+### 10.7 realtime_dimension_versions
+
+- id
+- scope_id (`deployment` 고정)
+- dimension_dataset_id
+- version
+- semantics: current | temporal
+- schema_fingerprint
+- source_snapshot_id
+- physical_database
+- physical_table
+- status: draft | publishing | active | retired | failed
+- row_count
+- checksum
+- validity_checked_at
+- published_at
+- created_by
+- created_at
+
+unique key는 `(scope_id, dimension_dataset_id, version)`이고 active partial unique index는 Dataset마다 active version 하나만 허용한다. active row는 physical database/table, publish 시각과 validity 검증 시각을 모두 요구한다.
+
+### 10.8 realtime_unmatched_events
 
 - serving_key
 - pipeline_version_id
 - source_position JSONB
+- source_position_hash
 - missing_policy
 - missing_dimension_dataset_id
 - missing_dimension_keys JSONB
@@ -749,7 +793,27 @@ poison record 상세는 `realtime_ingest_exceptions`에 topic/partition/offset, 
 - status
 - resolved_materialization_id
 
-### 10.8 기존 dataset_freshness 확장
+primary key는 `(pipeline_version_id, source_position_hash, missing_dimension_dataset_id)`다. `source_position_hash`는 canonical source-position document의 SHA-256이다. 같은 business `serving_key`가 여러 Kafka offset에서 반복될 수 있으므로 serving key는 identity가 아니라 별도 조회 index다.
+
+### 10.9 realtime_routing_assignments
+
+- scope_id (`deployment` 고정)
+- resource_type: dataset | dashboard
+- resource_id
+- desired_engine: clickhouse | trino
+- pipeline_version_id nullable
+- binding_epoch
+- sticky_bucket nullable
+- status: pending | active | disabled
+- assignment_reason
+- assigned_by
+- expires_at
+- created_at
+- updated_at
+
+primary key는 `(scope_id, resource_type, resource_id)`다. ClickHouse active assignment는 pipeline version을 반드시 가져야 한다. PR02는 table과 constraint만 만들며 routing writer, traffic cutover와 binding publication은 아직 실행하지 않는다.
+
+### 10.10 기존 dataset_freshness 확장
 
 기존 row와 API를 migration으로 유지하며 다음 field를 추가한다.
 
@@ -763,7 +827,7 @@ poison record 상세는 `realtime_ingest_exceptions`에 topic/partition/offset, 
 
 `latest_revision`은 Dataset 전체에서 계속 단조 증가한다. serving pointer switch와 rollback은 `binding_epoch`도 1 증가시키고 새 global revision을 할당한다.
 
-### 10.9 기존 dataset_revision_commits 확장
+### 10.11 기존 dataset_revision_commits 확장
 
 - dataset_id
 - revision
@@ -781,7 +845,7 @@ poison record 상세는 `realtime_ingest_exceptions`에 topic/partition/offset, 
 
 기존 commit field와 호환성을 유지한다. `(dataset_id, revision)`은 unique이고 materialization_id가 있으면 partial unique다. count/checksum은 항상 `serving_current` 또는 같은 source boundary의 deduplicated archive projection에서 계산한다.
 
-### 10.10 기존 realtime_event_log schema v2 확장
+### 10.12 기존 realtime_event_log schema v2 확장
 
 기존 column과 cursor 의미를 유지한다.
 
@@ -861,7 +925,7 @@ etl_service.py에 신규 ClickHouse 기능을 직접 추가하지 않는다.
 8. 같은 materializationId/sourceFingerprint/insert token과 deterministic serving key로 quorum target insert를 수행한다.
 9. `serving_current`에서 target row count, checksum, source boundary와 dimension version을 검증한다.
 10. PostgreSQL 새 transaction에서 `dataset_freshness`를 잠그고 active binding/lease를 재검증한다.
-11. partition checkpoint CAS, materialization committed, `dataset_revision_commits`, `dataset_freshness`, `realtime_event_log` insert를 10.10의 순서로 한 번에 commit한다.
+11. partition checkpoint CAS, materialization committed, `dataset_revision_commits`, `dataset_freshness`, `realtime_event_log` insert를 10.12의 순서로 한 번에 commit한다.
 12. commit 뒤 LISTEN/NOTIFY wake-up을 보내며, 실패해도 SSE replica의 주기적 event-log catch-up이 전달을 복구한다.
 
 ### 11.3 Split failure 복구
@@ -1261,6 +1325,8 @@ stale fallback을 반환할 때 HTTP 200을 사용할 수 있으나 freshnessSta
 
 credential은 repo, compose yaml, log, API 응답에 저장하지 않는다.
 
+PR02는 init admin과 `asklake_v2_ingest`, `asklake_v2_materializer`, `asklake_v2_reader`, `asklake_v2_migration`, `asklake_v2_observer`를 실제 생성한다. ingest/materializer는 V2 database의 SELECT/INSERT, reader는 query budget이 적용된 readonly SELECT, migration만 table/view DDL, observer는 allowlist된 system metric table 조회를 가진다. 여섯 password는 16자 이상, non-placeholder, 상호 중복 금지다.
+
 ### 16.3 Deployment scope와 resource isolation
 
 - 모든 raw/dimension/serving row에 현재 `scope_id="deployment"`를 저장한다.
@@ -1368,6 +1434,8 @@ P2:
 - realtime-event-notifier
 
 local에서도 production과 동일 migration과 connector를 사용한다.
+
+PR02가 실제 추가한 profile service는 `clickhouse-keeper-v2`, `clickhouse-v2`, `kafka-connect-v2` 세 개다. `realtime-materializer`와 `realtime-event-notifier`는 후속 phase target이며 아직 Compose service가 아니다. local V2 HTTP/Connect REST는 각각 loopback `18123`/`18083`으로만 publish되고, profile은 기본 off다.
 
 ### 18.2 Production topology
 
@@ -1651,6 +1719,13 @@ flag는 한 schema에서 검증하고 시작 시 잘못된 조합을 거부한�
 
 - chore/clickhouse-runtime
 - feature/realtime-metadata-migrations
+
+PR02 repository 상태:
+
+- 완료: exact image/plugin pin과 provenance, default-off local/production profile, role-separated account init, production ClickHouse TLS final listeners와 Connect CA mount, config-only health fail-closed, Alembic 10-table expand/development downgrade test
+- 확인: 격리 production profile의 clean container start/restart, test CA 기반 strict 9440 health, 8443/9440-only listener와 six-account RBAC
+- 미완료 operator evidence: clean host/EC2 reboot, 실제 EC2 certificate/hostname handshake, connector 등록·restart/rebalance, backup/restore와 multi-node failover
+- 따라서 Phase 1의 repository foundation은 구현됐지만 위 완료 기준 전체를 production PASS로 표시하지 않는다.
 
 ### Phase 2 — Raw hot ingest
 
@@ -2033,6 +2108,10 @@ release:
 
 ## 31. 공식 기술 근거
 
+- [ClickHouse 26.3.17.4 LTS release](https://github.com/ClickHouse/ClickHouse/releases/tag/v26.3.17.4-lts)
+- [ClickHouse Kafka Connect Sink 문서](https://clickhouse.com/docs/integrations/kafka/clickhouse-kafka-connect-sink)
+- [ClickHouse Kafka Connect v1.4.0 release](https://github.com/ClickHouse/clickhouse-kafka-connect/releases/tag/v1.4.0)
+- [Confluent Docker image reference](https://docs.confluent.io/platform/current/installation/docker/image-reference.html)
 - [ClickHouse Kafka table engine](https://clickhouse.com/docs/engines/table-engines/integrations/kafka)
 - [Incremental Materialized View와 JOIN trigger 제약](https://clickhouse.com/docs/materialized-view/incremental-materialized-view)
 - [Refreshable Materialized View와 dependency](https://clickhouse.com/docs/materialized-view/refreshable-materialized-view)

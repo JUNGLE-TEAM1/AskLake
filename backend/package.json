@@ -103,6 +103,7 @@
     "verify:kafka-continuous-contract": "node scripts/run-python-verification.mjs scripts/verify-kafka-continuous-contract.py",
     "verify:continuous-sql-contract": "node scripts/run-python-verification.mjs scripts/verify-continuous-sql-contract.py",
     "verify:clickhouse-kafka-join": "node scripts/run-python-verification.mjs scripts/verify-clickhouse-kafka-join.py",
+    "verify:clickhouse-realtime-v2-foundation": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_realtime_feature_flags tests.test_clickhouse_realtime_alembic -v",
     "verify:realtime-quality-gates": "node scripts/run-python-verification.mjs scripts/verify-realtime-quality-gates.py",
     "verify:realtime-stack": "node scripts/run-python-verification.mjs scripts/verify-realtime-stack.py",
     "verify:realtime-postgres": "node scripts/run-python-verification.mjs scripts/verify-realtime-postgres.py",

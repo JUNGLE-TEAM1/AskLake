@@ -11,9 +11,15 @@ on:
       - "frontend/**"
       - "deploy/**"
       - "docker-compose.yml"
+      - "scripts/verify-deploy-env.sh"
+      - "tests/deploy/**"
       - "ops/ec2/**"
+      - "docs/02-architecture.md"
+      - "docs/03-api-reference.md"
       - "docs/04-development-guide.md"
+      - "docs/ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md"
       - "docs/backend-integration-readiness.md"
+      - "docs/clickhouse-realtime-v2-foundation.md"
       - "docs/system-guardrails.md"
       - "docs/realtime-2026/**"
   workflow_dispatch:
@@ -90,6 +96,16 @@ jobs:
         working-directory: backend
         run: npm run verify:realtime-stack
 
+      - name: Verify ClickHouse V2 foundation and migration lifecycle
+        working-directory: backend
+        env:
+          ASKLAKE_FASTAPI_PYTHON: python
+        run: |
+          npm run verify:clickhouse-realtime-v2-foundation
+          python -m alembic upgrade head
+          python -m alembic downgrade 0011_rag_control_plane_fencing
+          python -m alembic upgrade head
+
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
         run: npm run verify:realtime-postgres
@@ -109,7 +125,13 @@ jobs:
           npm run test:dashboard-live-refresh
 
       - name: Render production Compose
-        run: docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+        run: |
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml --profile clickhouse-realtime-v2 config --quiet
+          docker compose --profile clickhouse-realtime-v2 config --quiet
+
+      - name: Verify production deployment and Linux secret staging contracts
+        run: bash tests/deploy/deploy-scripts-regression.sh
 
       - name: Validate Caddy and NGINX streaming configuration
         run: |

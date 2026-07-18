@@ -10,6 +10,13 @@ class RealtimeFeatureConfigResponse(CamelModel):
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
     clickhouse_continuous_join_enabled: bool
+    clickhouse_realtime_v2_enabled: bool = False
+    kafka_connect_sink_enabled: bool = False
+    clickhouse_realtime_consumer_owner: Literal[
+        "disabled",
+        "kafka_engine_v1",
+        "kafka_connect_v2",
+    ] = "disabled"
     latest_static_per_batch_enabled: bool
     static_change_backfill_enabled: bool
     feature_scope: Literal["deployment"] = "deployment"

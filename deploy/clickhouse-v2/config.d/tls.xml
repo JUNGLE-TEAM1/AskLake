@@ -1,0 +1,20 @@
+<clickhouse>
+    <!-- Production mounts this file in addition to keeper.xml. Plaintext HTTP
+         is removed here. tcp_port remains available only to the entrypoint's
+         loopback-bound bootstrap server; Compose disables it for final exec. -->
+    <http_port remove="remove"/>
+    <https_port>8443</https_port>
+    <tcp_port_secure>9440</tcp_port_secure>
+    <openSSL>
+        <server>
+            <certificateFile>/run/asklake-clickhouse-v2-secrets/server.crt</certificateFile>
+            <privateKeyFile>/run/asklake-clickhouse-v2-secrets/server.key</privateKeyFile>
+            <caConfig>/run/asklake-clickhouse-v2-secrets/ca.crt</caConfig>
+            <verificationMode>none</verificationMode>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+        </server>
+    </openSSL>
+</clickhouse>

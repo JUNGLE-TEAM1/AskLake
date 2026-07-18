@@ -71,6 +71,11 @@ def get_realtime_feature_config(
         realtime_events_enabled=state.realtime_events_enabled,
         continuous_sql_join_enabled=state.continuous_sql_join_enabled,
         clickhouse_continuous_join_enabled=state.clickhouse_continuous_join_enabled,
+        clickhouse_realtime_v2_enabled=state.clickhouse_realtime_v2_enabled,
+        kafka_connect_sink_enabled=state.kafka_connect_sink_enabled,
+        clickhouse_realtime_consumer_owner=(
+            state.clickhouse_realtime_consumer_owner
+        ),
         latest_static_per_batch_enabled=state.latest_static_per_batch_enabled,
         static_change_backfill_enabled=state.static_change_backfill_enabled,
         fallback_reason=state.fallback_reason,

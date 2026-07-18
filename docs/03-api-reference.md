@@ -157,6 +157,9 @@ FastAPI schema 구현 기준:
   "realtimeEventsEnabled": false,
   "continuousSqlJoinEnabled": false,
   "clickhouseContinuousJoinEnabled": false,
+  "clickhouseRealtimeV2Enabled": false,
+  "kafkaConnectSinkEnabled": false,
+  "clickhouseRealtimeConsumerOwner": "disabled",
   "latestStaticPerBatchEnabled": false,
   "staticChangeBackfillEnabled": false,
   "featureScope": "deployment",
@@ -167,7 +170,7 @@ FastAPI schema 구현 기준:
 }
 ```
 
-`fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 secret이나 raw env 값을 반환하지 않는다.
+`clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
 
 ### Realtime Dashboard stream
 
@@ -175,7 +178,24 @@ FastAPI schema 구현 기준:
 
 Domain event는 `id`, `event`, JSON `data`를 가지며 `dataset.revision.committed`와 `dashboard.published`를 지원한다. `stream.ready`, `system.heartbeat`, `system.resync_required`, `system.authorization_changed`는 client control event다. response는 `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`이며 cursor retention gap 또는 bounded queue overflow에서는 resync를 지시하고 연결을 닫는다.
 
-`GET /api/realtime/status`는 인증된 운영 진단용 JSON으로 effective mode, readiness, cursor bounds와 process metric/capacity snapshot을 반환한다. `GET /api/health/realtime`는 load balancer용 realtime readiness를 일반 `/api/health`와 분리한다.
+`GET /api/realtime/status`는 인증된 운영 진단용 JSON으로 effective mode, readiness, cursor bounds와 process metric/capacity snapshot을 반환한다. `GET /api/health/realtime`는 load balancer용 realtime readiness를 일반 `/api/health`와 분리하고 PR02부터 아래 `v2` object를 additive하게 포함한다.
+
+```json
+{
+  "v2": {
+    "enabled": false,
+    "ready": false,
+    "status": "disabled",
+    "consumerOwner": "disabled",
+    "connector": {
+      "enabled": false,
+      "configured": false
+    }
+  }
+}
+```
+
+V2 flag가 켜지면 `v2.status="configuration_validated"`가 되지만 PR02에서는 live probe가 없으므로 `v2.ready`는 계속 `false`다. 이 경우 endpoint도 HTTP `503`으로 fail closed하며 event backbone이 꺼져 있으면 top-level `status="not_ready"`, 켜져 있으면 `status="unavailable"`이다. `connector.configured`는 sink flag, URL과 name이 설정됐다는 configuration marker이지 Connect REST/plugin/task 또는 ClickHouse write health가 아니다. V2가 꺼지면 기존 realtime health 동작을 유지한다.
 
 Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 snapshot 작성 시작 시점의 `eventCursor`가 포함된다. frontend는 이 cursor 이후를 구독하므로 snapshot fetch와 EventSource 연결 사이의 event도 replay된다.
 
@@ -1124,9 +1144,9 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 - `GET /api/health/live`는 process liveness, `GET /api/health/ready`는 DB readiness, 기존 `GET /api/health`는 호환 readiness다.
 - `GET /api/health/metrics`는 현재 backend process의 진단 counter snapshot을 반환한다.
 
-## 11) ClickHouse Realtime Serving V2 예정 additive API
+## 11) ClickHouse Realtime Serving V2 additive API
 
-이 절은 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md` 순서로 도입할 target contract다. 관련 구현 PR이 merge되기 전에는 request에 V2 field를 보내거나 응답에 존재한다고 가정하지 않는다.
+이 절은 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md` 순서로 도입한다. PR02에서 활성화된 설정/health field는 아래에 명시하고, 나머지는 관련 구현 PR이 merge되기 전에는 request에 보내거나 응답에 존재한다고 가정하지 않는다.
 
 ### 기존 Continuous SQL API 확장
 
@@ -1187,4 +1207,4 @@ widget 응답은 `engine`, `bindingEpoch`, `appliedRevision`, `latestKnownRevisi
 
 기존 `GET /api/realtime/events`와 `realtime_event_log`를 재사용한다. 기존 event 이름 `dataset.revision.committed`, `dashboard.published`와 `system.*` control event를 rename하지 않는다. V2는 schema version 2 allowlist payload에 `bindingEpoch`, revision, `pipelineVersionId`, `materializationId`와 mutation type을 추가하되 event 본문에 row/widget 결과를 넣지 않는다. Browser는 `(bindingEpoch, revision)`을 비교하고 epoch가 증가한 cutover/rollback 결과를 수용한다.
 
-V2 kill switch와 connector 설정 이름은 기반시설 PR에서 config schema, deploy example, fail-closed 검증과 함께 확정한다. 문서만 앞서 env를 production에 설정하지 않는다.
+PR02에서 V2 설정 이름은 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`으로 확정됐다. 모두 기본 비활성이며 모순된 V1/V2 owner 조합은 startup에서 실패한다. connector 등록, raw ingest와 live readiness는 아직 활성 API 계약이 아니므로 production owner를 `kafka_connect_v2`로 전환하지 않는다. 상세 경계는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.

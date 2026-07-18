@@ -62,11 +62,38 @@ def ai_health_check(response: Response) -> dict[str, object]:
 @router.get("/health/realtime")
 def realtime_health_check(response: Response) -> dict[str, object]:
     state = resolve_realtime_feature_state(settings)
+    realtime_v2 = {
+        "enabled": state.clickhouse_realtime_v2_enabled,
+        # This foundation validates configuration but does not claim live
+        # connector readiness. The raw-ingest slice installs that probe.
+        "ready": False,
+        "status": (
+            "configuration_validated"
+            if state.clickhouse_realtime_v2_enabled
+            else "disabled"
+        ),
+        "consumerOwner": state.clickhouse_realtime_consumer_owner,
+        "connector": {
+            "enabled": state.kafka_connect_sink_enabled,
+            "configured": bool(
+                state.kafka_connect_sink_enabled
+                and settings.kafka_connect_url
+                and settings.kafka_connect_connector_name
+            ),
+        },
+    }
     if not state.realtime_events_enabled:
+        if state.clickhouse_realtime_v2_enabled:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
-            "ok": True,
-            "status": "disabled",
+            "ok": not state.clickhouse_realtime_v2_enabled,
+            "status": (
+                "not_ready"
+                if state.clickhouse_realtime_v2_enabled
+                else "disabled"
+            ),
             "effectiveMode": state.dashboard_sync_mode,
+            "v2": realtime_v2,
         }
     database_ok = True
     event_cursor = 0
@@ -75,7 +102,11 @@ def realtime_health_check(response: Response) -> dict[str, object]:
             event_cursor = RealtimeEventRepository(session).max_cursor()
     except SQLAlchemyError:
         database_ok = False
-    ready = database_ok and realtime_event_dispatcher.ready
+    ready = (
+        database_ok
+        and realtime_event_dispatcher.ready
+        and not state.clickhouse_realtime_v2_enabled
+    )
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
     metrics = realtime_metrics.snapshot()
     return {
@@ -87,4 +118,5 @@ def realtime_health_check(response: Response) -> dict[str, object]:
         "listener": {"ready": bool(metrics.get("listenerReady"))},
         "capacity": realtime_event_hub.capacity_snapshot(),
         "eventCursor": event_cursor,
+        "v2": realtime_v2,
     }

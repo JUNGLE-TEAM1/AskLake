@@ -1417,3 +1417,59 @@ npm run build
 ```
 
 Docker/ClickHouse/Kafka가 필요한 `npm run verify:clickhouse-kafka-join`은 PR02 이후의 integration/operator profile에서 실행한다. 공통 빠른 검증으로 분류하지 않는다. PR별 신규 검증 command는 해당 PR에서 `package.json`, 이 문서, `docs/system-guardrails.md`와 CI workflow를 함께 갱신한다. 실행하지 못한 live/production 항목은 PASS로 쓰지 않고 operator gate로 남긴다.
+
+### PR02 V2 기반시설과 migration
+
+PR02의 Compose service는 모두 `clickhouse-realtime-v2` profile 뒤에 있으며 기본 `docker compose up`에는 포함되지 않는다. profile은 기존 V1 옆에 기반 프로세스만 기동하고 backend consumer owner를 이전하거나 connector를 등록하지 않는다.
+
+먼저 외부 runtime이 필요 없는 설정과 migration 계약을 검증한다. 가상환경 Python에 `backend/requirements.txt`의 Alembic/SQLAlchemy dependency가 설치돼 있어야 한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-foundation
+.venv/bin/python -m alembic -c alembic.ini heads
+npm run verify:realtime-stack
+
+cd ..
+docker compose config --quiet
+docker compose --profile clickhouse-realtime-v2 config --quiet
+docker compose --env-file deploy/.env.example \
+  -f deploy/docker-compose.prod.yml \
+  --profile clickhouse-realtime-v2 config --quiet
+tests/deploy/deploy-scripts-regression.sh
+```
+
+`0012_clickhouse_realtime_v2_foundation`은 `0011_rag_control_plane_fencing` 다음 단일 head이며 V2 metadata table 10개만 추가한다. production은 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`를 유지하고 web/worker rollout 전에 명시적으로 upgrade한다.
+
+```bash
+cd backend
+.venv/bin/python -m alembic -c alembic.ini upgrade head
+.venv/bin/python -m alembic -c alembic.ini current
+```
+
+Production image는 `alembic.ini`와 migration directory를 포함한다. 이미 기동한 PostgreSQL에 one-shot으로 적용할 때는 `deploy/`의 실제 server `.env`를 사용한다.
+
+V2 profile을 포함한 production env는 먼저 preflight를 통과해야 한다. Profile-only shadow도 six-account secret, TLS, cert/secret file mode, immutable image digest와 Compose network를 검사한다. Sink/application owner를 enabled로 전환하면 private Connect origin, stable connector name과 단일-owner 조합도 추가로 fail closed한다. 기존 V1 backend ClickHouse credential은 V2 identity로 repurpose하지 않는다.
+
+```bash
+cd ..
+scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
+```
+
+```bash
+cd deploy
+docker compose --env-file .env -f docker-compose.prod.yml run --rm --no-deps \
+  backend python -m alembic -c alembic.ini upgrade head
+```
+
+Local profile smoke를 실행하려면 admin/ingest/materializer/reader/migration/observer의 서로 다른 16자 이상 password를 shell environment에 설정하고, repository 밖의 connector properties file을 read-only mount해야 한다. root `.env`나 tracked example에 실제 secret을 쓰지 않는다. Kafka Connect image는 공식 plugin release checksum을 검증하며 network download가 필요하다.
+
+```bash
+docker build -t asklake/kafka-connect-clickhouse:1.4.0 deploy/kafka-connect
+docker compose --profile clickhouse-realtime-v2 up -d \
+  clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2
+curl --fail http://127.0.0.1:18083/connector-plugins
+curl --fail http://127.0.0.1:18123/ping
+```
+
+이 smoke는 process와 plugin만 확인한다. connector definition은 PR03 전에는 등록하지 않으므로 Kafka→ClickHouse ingest 검증이 아니다. PR03 전에는 `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`로 전환하지 않는다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
