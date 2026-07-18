@@ -24,7 +24,7 @@ def build_semantic_rag_context(
     a UI from showing a generic "RAG ready" label while actually using an
     unrelated Dataset-only search path.
     """
-    requested_dataset_ids = list(dict.fromkeys(str(item) for item in dataset_ids if str(item).strip()))
+    requested_dataset_ids = list(dict.fromkeys(str(item).strip() for item in dataset_ids if str(item).strip()))
     empty = _empty_rag_context(requested_dataset_ids)
     if db is None:
         return empty
@@ -131,18 +131,19 @@ def _resolve_semantic_models(
     if model is None:
         empty["retrieval"].update({"status": "semantic_model_not_available", "semanticModelId": semantic_model_id})
         return [], requested_dataset_ids, empty
-    model_dataset_ids = {
-        str(item)
+    model_dataset_ids = list(dict.fromkeys(
+        str(item).strip()
         for item in model.get("datasetIds", [])
         if str(item).strip()
-    }
+    ))
+    model_dataset_id_set = set(model_dataset_ids)
     if not requested_dataset_ids:
-        requested_dataset_ids = list(model_dataset_ids)
+        requested_dataset_ids = model_dataset_ids
         empty["retrieval"]["datasetIds"] = requested_dataset_ids
     missing_dataset_ids = [
         dataset_id
         for dataset_id in requested_dataset_ids
-        if dataset_id not in model_dataset_ids
+        if dataset_id not in model_dataset_id_set
     ]
     if missing_dataset_ids:
         empty["retrieval"].update({

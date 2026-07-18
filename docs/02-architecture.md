@@ -323,7 +323,7 @@ Dataset metadata가 필요한 요청은 FastAPI가 먼저 actor의 권한과 gov
 
 SQL과 Dashboard 생성은 published Semantic Model에 연결되고 승인된 serving RAG index만 검색한다. Gateway가 반환한 `usedEvidenceIds`는 검색 후보 ID의 부분집합이어야 하며 FastAPI는 실제 사용 ID와 일치하는 source만 공개 응답에 남긴다. 후보·사용 ID, actor, provider/model, 입력·출력 fingerprint는 `ai_generation_usage`에 감사 증적으로 저장한다. Provider/RAG가 unavailable이거나 응답 provenance가 mock/fallback이면 가짜 SQL·차트·근거를 만들지 않고 fail closed 한다.
 
-리뷰 분석은 `/api/review-analysis/runs`의 persisted run과 allow-list Node bridge로 실제 object-storage JSONL을 bounded batch 처리한다. `review_schema`와 `review_row` 생성 provenance를 보존하고, 분류형 출력은 최소 class row·holdout accuracy/macro-F1·모든 class coverage를 통과한 portable artifact만 digest와 함께 latest model registry에 원자적으로 게시한다.
+리뷰 분석은 `/api/review-analysis/runs`의 persisted run과 allow-list Node bridge로 실제 object-storage JSONL을 bounded batch 처리한다. FastAPI worker tick이 중단 뒤 남은 `queued` run을 다시 claim하고 lease가 만료된 `running` run을 실패로 종결한다. Catalog Dataset 권한과 연결되지 않은 임의 object 경로는 일반 actor에게 허용하지 않으며, 일반 actor는 설정된 review source만 사용할 수 있다. `review_schema`와 `review_row` 생성 provenance를 보존하고, 분류형 출력은 최소 class row·holdout accuracy/macro-F1·모든 class coverage를 통과한 portable artifact만 digest와 함께 latest model registry에 원자적으로 게시한다.
 
 ## 8) 데이터 모델 요약
 

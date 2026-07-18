@@ -37,3 +37,13 @@ def test_dashboard_output_rejects_unscoped_top_level_evidence() -> None:
             "warnings": [],
             "usedEvidenceIds": ["doc-unscoped"],
         })
+
+
+def test_dashboard_output_rejects_missing_top_level_action_evidence() -> None:
+    with pytest.raises(ValidationError, match="union of action-scoped evidence"):
+        DashboardAssistantOutput.model_validate({
+            "message": "완료",
+            "actions": [dashboard_action(evidence_ids=["doc-action"])],
+            "warnings": [],
+            "usedEvidenceIds": [],
+        })

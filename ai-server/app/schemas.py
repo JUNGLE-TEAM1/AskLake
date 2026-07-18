@@ -248,7 +248,7 @@ class DashboardAssistantOutput(BaseModel):
             for action in self.actions
             for evidence_id in action.used_evidence_ids
         ))
-        if self.used_evidence_ids and set(self.used_evidence_ids) != set(scoped_ids):
+        if set(self.used_evidence_ids) != set(scoped_ids):
             raise ValueError("Top-level usedEvidenceIds must equal the union of action-scoped evidence IDs")
         self.used_evidence_ids = scoped_ids
         return self

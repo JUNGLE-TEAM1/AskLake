@@ -102,6 +102,60 @@ def test_shared_resolver_can_start_from_a_published_semantic_model() -> None:
     search_service.return_value.search.assert_called_once()
 
 
+def test_explicit_model_preserves_dataset_order_and_normalizes_requested_ids() -> None:
+    actor = ActorContext(name="analyst", role="admin")
+    model = {
+        "id": "sm_multi",
+        "name": "Multi dataset model",
+        "version": 1,
+        "status": "published",
+        "datasetIds": ["dataset-b", "dataset-a"],
+    }
+    profile_by_id = {
+        dataset_id: SimpleNamespace(
+            review_state="approved",
+            serving_status="serving",
+            target_alias=f"alias-{dataset_id}",
+            active_embedding_provider="openai",
+            active_embedding_model="text-embedding-3-small",
+            active_embedding_dimensions=1536,
+        )
+        for dataset_id in model["datasetIds"]
+    }
+
+    with (
+        patch("app.services.semantic_rag_context.SemanticModelService") as semantic_service,
+        patch("app.services.semantic_rag_context.RagService") as rag_service,
+        patch("app.services.semantic_rag_context.RagSearchService") as search_service,
+    ):
+        semantic_service.return_value.published_query_model.return_value = model
+        rag_service.return_value.profile.side_effect = lambda dataset_id, _actor: profile_by_id[dataset_id]
+        rag_service.return_value.search_target_context.side_effect = (
+            lambda dataset_id, _actor, **_kwargs: {"datasetId": dataset_id}
+        )
+        search_service.return_value.search.return_value = {"sources": [], "retrieval": {"status": "ready"}}
+
+        from_model = build_semantic_rag_context(
+            db=object(),
+            settings=SimpleNamespace(),
+            actor=actor,
+            query="query",
+            dataset_ids=[],
+            semantic_model_id="sm_multi",
+        )
+        normalized = build_semantic_rag_context(
+            db=object(),
+            settings=SimpleNamespace(),
+            actor=actor,
+            query="query",
+            dataset_ids=[" dataset-a "],
+            semantic_model_id="sm_multi",
+        )
+
+    assert from_model["retrieval"]["datasetIds"] == ["dataset-b", "dataset-a"]
+    assert normalized["retrieval"]["datasetIds"] == ["dataset-a"]
+
+
 def test_shared_resolver_rejects_partially_mismatched_explicit_model_selection() -> None:
     actor = ActorContext(name="analyst", role="admin")
     model = {

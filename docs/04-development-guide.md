@@ -445,7 +445,7 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
 6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
 7. Gateway나 serving index가 없을 때 가짜 SQL·차트·근거 대신 명시적인 unavailable/empty 상태가 보이는지 확인한다.
-8. 리뷰 분석 Preview와 persisted Run이 실제 row를 처리하고, `trainModels=true`에서는 provenance·class coverage·quality gate를 통과한 artifact만 `/api/catalog/models`에 나타나는지 확인한다.
+8. 리뷰 분석 Preview와 persisted Run이 실제 row를 처리하고, backend 재시작 뒤 남은 `queued` Run도 worker tick이 다시 claim하는지 확인한다. 일반 사용자의 임의 object source는 `403`이어야 하며, `trainModels=true`에서는 provenance·class coverage·quality gate를 통과한 artifact만 `/api/catalog/models`에 나타나야 한다.
 
 ```bash
 cd backend

@@ -69,6 +69,7 @@ class ReviewAnalysisService:
         if self.db is None:
             raise ApiError(ErrorCode.INTERNAL_ERROR, "Review analysis persistence is unavailable", 500)
         payload = self._validated_run_payload(request)
+        self._require_authorized_source(payload["source"], actor)
         run_id = f"review_{uuid4().hex}"
         payload["runId"] = run_id
         row = ReviewAnalysisRunModel(
@@ -464,6 +465,27 @@ class ReviewAnalysisService:
             )
         payload["source"] = {"bucket": bucket, "key": key}
         return payload
+
+    def _require_authorized_source(self, source: dict[str, Any], actor: ActorContext) -> None:
+        """Keep object-store reads within a source the caller is allowed to select.
+
+        Review runs do not yet carry a Catalog Dataset identity, so there is no
+        resource permission to evaluate for an arbitrary object. Until that
+        identity is part of the contract, non-admin callers may run only the
+        configured review source; administrators retain the operational escape
+        hatch for explicitly selected objects.
+        """
+
+        if actor.role == "admin":
+            return
+        configured = self._source_descriptor()
+        if source.get("bucket") == configured["bucket"] and source.get("key") == configured["key"]:
+            return
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Review analysis source is not available to this actor",
+            status.HTTP_403_FORBIDDEN,
+        )
 
     @staticmethod
     def _serialize_run(row: ReviewAnalysisRunModel) -> dict[str, Any]:

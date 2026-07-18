@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, status
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -9,13 +9,14 @@ from app.core.errors import ApiError
 from app.core.auth_context import ActorContext
 from app.models.etl import ReviewAnalysisRunModel
 from app.models.identity import AiGenerationUsageModel
-from app.main import create_app
+from app.main import create_app, run_review_analysis_tick
 from app.schemas.ai_generation import AiSqlGenerationRequest
 from app.schemas.integration import ReviewAnalysisRunRequest
 from app.services.ai_generation_service import AiGenerationService
 from app.services.review_analysis_service import ReviewAnalysisService
 from app.services.ai_gateway_client import AiGatewayClient
 from app.services.ai_evidence import retain_used_rag_evidence
+from app.api.sql_test import with_preview_limit
 
 
 def test_unified_ai_and_review_routes_are_registered() -> None:
@@ -26,6 +27,12 @@ def test_unified_ai_and_review_routes_are_registered() -> None:
     assert "/api/review-analysis/runs" in paths
     assert "/api/review-analysis/runs/{run_id}" in paths
     assert ReviewAnalysisRunRequest().limit == 25
+
+
+def test_sql_transform_preview_enforces_outer_limit() -> None:
+    preview_sql = with_preview_limit("SELECT * FROM input LIMIT 100", 5)
+
+    assert preview_sql == "SELECT * FROM (SELECT * FROM input LIMIT 100) AS xflow_preview LIMIT 5"
 
 
 def test_etl_ai_generation_delegates_to_gateway() -> None:
@@ -332,7 +339,6 @@ def test_review_run_is_queued_and_persisted_without_blocking_request() -> None:
             {
                 "limit": 2,
                 "runtime": "gateway",
-                "source": {"bucket": "raw", "key": "reviews/input.jsonl"},
             },
             actor,
             BackgroundTasks(),
@@ -358,6 +364,36 @@ def test_review_run_is_queued_and_persisted_without_blocking_request() -> None:
 
     assert completed["status"] == "success"
     assert completed["result"]["processedRows"] == 2
+
+
+def test_review_run_rejects_arbitrary_object_source_for_non_admin() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    ReviewAnalysisRunModel.__table__.create(engine)
+    actor = ActorContext(name="analyst", role="viewer", id="user-1")
+
+    with Session(engine) as db, pytest.raises(ApiError) as raised:
+        ReviewAnalysisService(db).enqueue(
+            {
+                "limit": 2,
+                "runtime": "gateway",
+                "source": {"bucket": "private", "key": "secrets/input.jsonl"},
+            },
+            actor,
+            BackgroundTasks(),
+        )
+
+    assert raised.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_review_worker_tick_recovers_queued_runs_and_expires_stale_leases() -> None:
+    with (
+        patch.object(ReviewAnalysisService, "fail_stale_runs", return_value=1) as fail_stale,
+        patch.object(ReviewAnalysisService, "process_next_queued_run", return_value=True) as process_next,
+    ):
+        run_review_analysis_tick()
+
+    fail_stale.assert_called_once_with()
+    process_next.assert_called_once_with()
 
 
 def test_etl_ai_generation_rejects_unknown_metadata_column() -> None:

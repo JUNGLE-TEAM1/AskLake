@@ -303,8 +303,6 @@ def convert_spark_identifiers_to_duckdb(sql: str) -> str:
 
 def with_preview_limit(sql: str, limit: int) -> str:
     statement = sql.strip().rstrip(";")
-    if re.search(r"\blimit\s+\d+\s*$", statement, re.IGNORECASE):
-        return statement
     return f"SELECT * FROM ({statement}) AS xflow_preview LIMIT {limit}"
 
 
