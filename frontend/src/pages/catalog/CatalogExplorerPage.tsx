@@ -10,7 +10,6 @@ import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
 import { FilterToolbar, FilterToolbarActions, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -180,13 +179,6 @@ export function CatalogPage({
   return (
     <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
-      <PageHeader
-        className="catalog-page-header"
-        icon={<Search size={18} />}
-        leadingAlign="center"
-        size="sm"
-        title="검색/카탈로그"
-      />
       {error ? (
         <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
           <AlertCircle />

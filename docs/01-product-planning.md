@@ -46,7 +46,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage와 최신 성공 materialization을 기준으로 한 스키마·실제 sample row 페이지 탐색. 목록은 이름·상태·태그를 우선하고 긴 설명은 반복 노출하지 않으며, lineage는 실행 provenance의 `PROCESS` 데이터를 보존하되 사용자 화면에서는 source→target 관계로 축약한다.
 - Dataset 범위의 read-only SQL 실행. `TRINO_ENABLED=true`의 기본 `실행`은 원본 SQL을 보존한 채 서버가 최대 100행으로 감싼 `preview` Query Run을 제출하고, 작은 결과를 PostgreSQL에 저장해 먼저 표시한다. `전체 보기` 또는 `CSV 다운로드`를 요청할 때만 원본 SQL의 별도 `run` Query Run을 만들고 private object page storage와 signed cursor로 전체 결과를 준비한다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 compatibility 경로로 유지한다. 상세 lifecycle과 저장·retention은 [Trino Query Run Contract](trino-query-run-contract.md), [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다.
-- SQL 편집기는 약 10행 보기 높이와 하나의 스크롤만 사용한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
+- SQL 분석은 데스크톱에서 편집기와 결과/차트 영역을 기존 높이 대비 약 50% 확장하고 각 영역에 하나의 스크롤만 사용한다. 1180px 이하에서는 고정 높이를 해제해 세로 흐름으로 전환한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
 - SQL 좌측 도구의 차트 생성하기: bounded compatibility 결과, 선택 데이터셋, 또는 현재 로드된 Trino preview page를 소스로 Dashboard와 같은 위젯 설정에서 유형, 필드, 집계, 색상을 설정한다. 오른쪽 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 결과 panel 안에서 제공한다. `preview` 실행 정보는 `쿼리 실행 -> 첫 결과 준비`까지만 표시하고, on-demand 전체 결과 준비 상태는 전체 보기/CSV action에서 별도로 표시한다. Trino page 차트는 현재 page 범위의 임시 시각화이고 전체 Query Run 또는 저장 가능한 Dashboard source가 아니다.
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
@@ -131,7 +131,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 3. 사용자는 SQL 화면으로 이동해 read-only SQL을 실행한다. Trino mode에서는 최대 100행 preview Query Run을 먼저 제출해 결과를 표시하고, compatibility mode에서는 저장된 DuckDB snapshot을 `offset`/`limit`로 조회한다.
 4. 사용자는 편집기 상단 `Nessie로 SQL 작성` Popover를 열고 선택 테이블과 schema context를 기반으로 SQL 초안을 받을 수 있다. 제출 후 입력 폼은 접히고 생성 상태와 적용 action이 Bubble로 표시된다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
-6. SQL editor의 높이와 입력 방식은 기존 계약을 유지한다. Trino 실행 평가와 실행 과정은 editor 아래의 독립 블록으로 늘어나지 않고 결과 panel의 세 번째 `실행 정보` 탭에서 확인한다.
+6. SQL editor와 결과/차트 영역은 데스크톱에서 확대된 작업 높이를 사용하고, 좁은 화면에서는 자동 높이로 전환한다. Trino 실행 평가와 실행 과정은 editor 아래의 독립 블록으로 늘어나지 않고 결과 panel의 세 번째 `실행 정보` 탭에서 확인한다.
 7. `실행 정보`는 preview의 실행 전 평가와 `쿼리 실행`, `첫 결과 준비` 경과·실제 처리량만 표시한다. 전체 결과가 필요한 action은 별도 `run`을 만들며 서로 다른 run의 시간과 진행률을 하나로 합치지 않는다.
 8. 사용자가 `전체 보기`를 누르면 별도 전체 결과 run을 시작하거나 재사용하고, 준비된 signed-cursor page부터 100행씩 탐색한다. `CSV 다운로드`는 같은 전체 결과 run이 완료될 때까지 비동기로 기다린 뒤 서버 stream을 시작한다. Backend는 사용자별 실행 이력 조회·재열기 API를 유지하되, 이번 SQL 분석 UI 범위는 현재 실행과 화면에 보존된 결과에 한정하며 별도 최근 실행 선택 목록은 노출하지 않는다.
 9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe만 저장하고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.

@@ -259,21 +259,11 @@ const checks = [
     ],
   },
   {
-    name: "Primary workspace pages share the compact page header density",
-    files: [
-      "src/components/ui/page-header.tsx",
-      "src/pages/ingest/jobs/JobsLandingPage.tsx",
-      "src/pages/catalog/CatalogExplorerPage.tsx",
-      "src/pages/sql/SqlAnalysisPage.tsx",
-      "src/pages/dashboard/DashboardLandingPage.tsx",
-    ],
+    name: "Shared page header retains the compact density option for detail routes",
+    file: "src/components/ui/page-header.tsx",
     patterns: [
       /const compact = size === "sm";/,
       /compact \? "text-2xl sm:text-\[28px\]"/,
-      /size="sm"\s*title="수집\/처리"/,
-      /size="sm"\s*title="검색\/카탈로그"/,
-      /size="sm"\s*title="SQL 분석"/,
-      /size="sm"\s*title="대시보드"/,
     ],
   },
   {
@@ -286,8 +276,6 @@ const checks = [
       /const contextPanel = useSqlContextPanel\(\{/,
       /const queryAi = useSqlQueryAi\(\{/,
       /limit: previewRowLimit,/,
-      /leadingAlign="center"/,
-      /size="sm"/,
       /<SqlDatasetContextPanel/,
       /<SqlQueryEditorPanel/,
       /<SqlResultsPanel/,
@@ -743,10 +731,11 @@ const checks = [
     ],
   },
   {
-    name: "SQL workspace height matches the dataset panel in all result states",
+    name: "SQL workspace keeps the dataset panel aligned in the expanded desktop canvas",
     file: "src/pages/sql/SqlAnalysisPage.module.css",
     patterns: [
-      /--sql-workspace-height:\s*clamp\(800px, calc\(100dvh - 156px\), 860px\);/,
+      /--sql-workspace-height:\s*clamp\(1200px, calc\(150dvh - 234px\), 1290px\);/,
+      /\.editorSurface[\s\S]*height:\s*clamp\(414px, 54vh, 720px\);[\s\S]*min-height:\s*414px;/,
       /\.datasetPanel[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.workspace[\s\S]*height:\s*var\(--sql-workspace-height\);/,
       /\.resultPanel[\s\S]*grid-template-rows:\s*max-content minmax\(0, 1fr\);/,
@@ -1502,7 +1491,6 @@ const checks = [
       /import \{ Avatar, AvatarFallback \} from "@\/components\/ui\/avatar";/,
       /DataTableStackedCell/,
       /DataTableCellPrimary/,
-      /DataTableCellSecondary/,
       /header: "대시보드"/,
       /header: "마지막 수정"/,
       /header: "생성 일시"/,
@@ -1517,6 +1505,9 @@ const checks = [
       /dashboard-row-link/,
       /header: "상태"/,
       /<StatusBadge/,
+      /DataTableCellSecondary/,
+      /localizeDashboardTags/,
+      /태그 없음/,
     ],
   },
   {
@@ -2026,7 +2017,8 @@ const checks = [
     file: "src/App.tsx",
     patterns: [
       /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
-      /<Topbar \/>/,
+      /function resolveTopbarSection\(flow: FlowId, dashboardEntry: DashboardEntry\)/,
+      /<Topbar section=\{resolveTopbarSection\(activeFlow, dashboardEntry\)\} \/>/,
       /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
@@ -2060,10 +2052,16 @@ const checks = [
     ],
   },
   {
-    name: "Global top bar exposes only appearance and language placeholders",
-    file: "src/components/layout/Topbar.tsx",
+    name: "Global top bar exposes the active primary section and utility placeholders",
+    files: [
+      "src/components/layout/Topbar.tsx",
+      "src/styles/base.css",
+    ],
     patterns: [
-      /import \{ Languages, Moon \} from "lucide-react";/,
+      /type TopbarSection = \{/,
+      /<h1>\{section\.label\}<\/h1>/,
+      /className="topbar-section-icon"/,
+      /\.topbar-section[\s\S]*margin-right:\s*auto;/,
       /label="다크 모드"/,
       /label="한국어·영어 전환"/,
     ],
@@ -2071,6 +2069,24 @@ const checks = [
       /RefreshCw/,
       /LogOut/,
       /CircleUser/,
+    ],
+  },
+  {
+    name: "Primary list and analysis routes leave their visible title in the global top bar",
+    files: [
+      "src/pages/ingest/jobs/JobsLandingPage.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+      "src/pages/sql/SqlAnalysisPage.tsx",
+      "src/pages/dashboard/DashboardLandingPage.tsx",
+    ],
+    patterns: [
+      /data-page-actions="jobs"/,
+      /className="catalog-page"/,
+      /className=\{cn\(styles\.page,/,
+      /className="dashboard-list-actions"/,
+    ],
+    forbiddenPatterns: [
+      /PageHeader/,
     ],
   },
   {
