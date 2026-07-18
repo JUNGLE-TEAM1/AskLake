@@ -870,14 +870,9 @@ services:
     profiles: ["clickhouse-realtime-v2"]
     image: ${CLICKHOUSE_V2_IMAGE:-clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49}
     restart: unless-stopped
-    command:
-      - clickhouse-keeper
-      - --config-file=/etc/clickhouse-keeper/keeper-config.xml
-    security_opt:
-      - no-new-privileges:true
-    expose:
-      - "9181"
-      - "9234"
+    command: [clickhouse-keeper, --config-file=/etc/clickhouse-keeper/keeper-config.xml]
+    security_opt: [no-new-privileges:true]
+    expose: ["9181", "9234"]
     volumes:
       - clickhouse_keeper_v2_data:/var/lib/clickhouse-keeper
       - ./clickhouse-v2/keeper-config.xml:/etc/clickhouse-keeper/keeper-config.xml:ro
@@ -887,8 +882,7 @@ services:
       timeout: 5s
       retries: 18
       start_period: 20s
-    networks:
-      - clickhouse_v2_internal
+    networks: [clickhouse_v2_internal]
 
   clickhouse-v2:
     profiles: ["clickhouse-realtime-v2"]
@@ -897,11 +891,8 @@ services:
     # Root exists only for secret staging and the official bootstrap. The
     # pinned official entrypoint exec-drops the final server to 101:101.
     user: "0:0"
-    security_opt:
-      - no-new-privileges:true
-    entrypoint:
-      - /bin/bash
-      - /usr/local/bin/asklake-clickhouse-v2-entrypoint.sh
+    security_opt: [no-new-privileges:true]
+    entrypoint: [/bin/bash, /usr/local/bin/asklake-clickhouse-v2-entrypoint.sh]
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_V2_DATABASE:-asklake_realtime_v2}
       CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "1"
@@ -915,15 +906,12 @@ services:
       CLICKHOUSE_V2_READER_PASSWORD: ${CLICKHOUSE_V2_READER_PASSWORD:-replace-with-clickhouse-v2-reader-password}
       CLICKHOUSE_V2_MIGRATION_PASSWORD: ${CLICKHOUSE_V2_MIGRATION_PASSWORD:-replace-with-clickhouse-v2-migration-password}
       CLICKHOUSE_V2_OBSERVER_PASSWORD: ${CLICKHOUSE_V2_OBSERVER_PASSWORD:-replace-with-clickhouse-v2-observer-password}
-    expose:
-      - "8443"
-      - "9440"
+    expose: ["8443", "9440"]
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
-    tmpfs:
-      - /run/asklake-clickhouse-v2-secrets:rw,noexec,nosuid,nodev,mode=0700,uid=101,gid=101
+    tmpfs: ["/run/asklake-clickhouse-v2-secrets:rw,noexec,nosuid,nodev,mode=0700,uid=101,gid=101"]
     volumes:
       - clickhouse_v2_data:/var/lib/clickhouse
       - ./clickhouse-v2/config.d/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
@@ -934,17 +922,14 @@ services:
       - ${CLICKHOUSE_V2_TLS_CERT_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/server.crt:ro
       - ${CLICKHOUSE_V2_TLS_KEY_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/server.key:ro
       - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/ca.crt:ro
-    depends_on:
-      clickhouse-keeper-v2:
-        condition: service_healthy
+    depends_on: {clickhouse-keeper-v2: {condition: service_healthy}}
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --config-file /etc/clickhouse-client/config.xml --host clickhouse-v2 --secure --port 9440 --user asklake_v2_reader --password \"$$CLICKHOUSE_V2_READER_PASSWORD\" --query 'SELECT 1' >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 18
       start_period: 30s
-    networks:
-      - clickhouse_v2_internal
+    networks: [clickhouse_v2_internal]
 
   kafka-connect-v2:
     profiles: ["clickhouse-realtime-v2"]
@@ -953,10 +938,8 @@ services:
     # The image wrapper stages root-readable host files in tmpfs and then
     # exec-drops the canonical Connect worker to appuser 1000:1000.
     user: "0:0"
-    entrypoint:
-      - /usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh
-    security_opt:
-      - no-new-privileges:true
+    entrypoint: [/usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh]
+    security_opt: [no-new-privileges:true]
     environment:
       CONNECT_BOOTSTRAP_SERVERS: redpanda:9092
       CONNECT_CONFIG_PROVIDERS: file
@@ -980,26 +963,19 @@ services:
       CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
       KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED: "true"
       KAFKA_HEAP_OPTS: ${KAFKA_CONNECT_V2_HEAP_OPTS:--Xms512m -Xmx1g}
-    expose:
-      - "8083"
-    tmpfs:
-      - /run/secrets:rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000
+    expose: ["8083"]
+    tmpfs: ["/run/secrets:rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000"]
     volumes:
       - ${KAFKA_CONNECT_V2_SECRETS_FILE:-/dev/null}:/run/asklake-secrets-source/kafka-connect/asklake-clickhouse-v2.properties:ro
       - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:/run/asklake-secrets-source/kafka-connect/clickhouse-v2-ca.crt:ro
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      clickhouse-v2:
-        condition: service_healthy
+    depends_on: {redpanda: {condition: service_healthy}, clickhouse-v2: {condition: service_healthy}}
     healthcheck:
       test: ["CMD-SHELL", "/usr/sbin/chroot --userspec=1000:1000 / curl --fail --silent http://127.0.0.1:8083/connector-plugins | grep -q com.clickhouse.kafka.connect.ClickHouseSinkConnector"]
       interval: 10s
       timeout: 5s
       retries: 18
       start_period: 30s
-    networks:
-      - clickhouse_v2_internal
+    networks: [clickhouse_v2_internal]
 
 volumes:
   caddy_data:
