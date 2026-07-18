@@ -51,6 +51,12 @@ source deploy/ec2.env
 scripts/deploy.sh status
 ```
 
+기존 Compose stack을 운영 명령으로 다시 제어할 때는 private `deploy/ec2.env`의
+`ASKLAKE_COMPOSE_PROJECT_NAME`을 실제 container의 `com.docker.compose.project` label과
+같게 지정한다. 값이 다르면 public health가 우연히 통과해도 `status`, `start`, `logs`가
+빈 project나 새 project를 대상으로 할 수 있다. 운영 script는 lowercase project 이름만
+허용하며 host의 다른 project를 자동 채택하지 않는다.
+
 Before deploying a branch, run the dependency verification from the repo root:
 
 ```bash
