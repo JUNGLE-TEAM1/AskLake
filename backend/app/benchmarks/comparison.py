@@ -57,53 +57,18 @@ def compare_campaigns(
     if correctness_delta < -policy.maximum_correctness_drop:
         failures.append("overall_correctness_regression")
 
-    case_types = {case.case_id: case.case_type for case in suite.cases}
     case_comparisons: list[dict[str, Any]] = []
+    case_types = {case.case_id: case.case_type for case in suite.cases}
     for case_id in sorted(suite_cases):
-        before = baseline["perCase"][case_id]
-        after = candidate["perCase"][case_id]
-        before_passed = int(before["correct"]) == int(before["runs"])
-        after_passed = int(after["correct"]) == int(after["runs"])
-        case_failures: list[str] = []
-        if before_passed and not after_passed:
-            case_failures.append("correctness_regression")
-        if before_passed and after_passed:
-            compare_metric(case_failures, "scan_p95", before.get("p95ProcessedBytes"), after.get("p95ProcessedBytes"), policy.maximum_scan_p95_regression_ratio, 0)
-            compare_metric(case_failures, "wall_p95", before.get("p95WallMs"), after.get("p95WallMs"), policy.maximum_wall_p95_regression_ratio, policy.wall_p95_absolute_allowance_ms)
-            compare_metric(case_failures, "cpu_p95", before.get("p95CpuMs"), after.get("p95CpuMs"), policy.maximum_cpu_p95_regression_ratio, policy.cpu_p95_absolute_allowance_ms)
-            compare_metric(
-                case_failures,
-                "memory_p95",
-                before.get("p95PeakMemoryBytes"),
-                after.get("p95PeakMemoryBytes"),
-                policy.maximum_memory_p95_regression_ratio,
-                policy.memory_p95_absolute_allowance_bytes,
-            )
-            if not policy.allow_new_spill and int(before.get("p95SpilledBytes") or 0) == 0 and int(after.get("p95SpilledBytes") or 0) > 0:
-                case_failures.append("new_spill")
+        item, case_failures = compare_case(
+            case_id,
+            case_types[case_id],
+            baseline["perCase"][case_id],
+            candidate["perCase"][case_id],
+            policy,
+        )
         failures.extend(f"{case_id}:{reason}" for reason in case_failures)
-        case_comparisons.append({
-            "caseId": case_id,
-            "caseType": case_types[case_id],
-            "baselineCorrect": int(before["correct"]),
-            "candidateCorrect": int(after["correct"]),
-            "runs": int(after["runs"]),
-            "newlyCorrect": not before_passed and after_passed,
-            "metricsComparable": before_passed and after_passed,
-            "scanP95": metric_delta(before.get("p95ProcessedBytes"), after.get("p95ProcessedBytes")),
-            "wallP95": metric_delta(before.get("p95WallMs"), after.get("p95WallMs")),
-            "cpuP95": metric_delta(before.get("p95CpuMs"), after.get("p95CpuMs")),
-            "peakMemoryP95": metric_delta(before.get("p95PeakMemoryBytes"), after.get("p95PeakMemoryBytes")),
-            "spillP95": metric_delta(before.get("p95SpilledBytes"), after.get("p95SpilledBytes")),
-            "failures": case_failures,
-        })
-
-    by_type: dict[str, dict[str, int]] = {}
-    for item in case_comparisons:
-        group = by_type.setdefault(item["caseType"], {"cases": 0, "baselineCorrect": 0, "candidateCorrect": 0})
-        group["cases"] += 1
-        group["baselineCorrect"] += int(item["baselineCorrect"] > 0)
-        group["candidateCorrect"] += int(item["candidateCorrect"] > 0)
+        case_comparisons.append(item)
 
     minimum_runs = min(int(item["runs"]) for item in case_comparisons)
     if minimum_runs < policy.minimum_repetitions:
@@ -130,11 +95,58 @@ def compare_campaigns(
             "peakMemoryP95": metric_delta(baseline["peakMemoryBytes"]["p95"], candidate["peakMemoryBytes"]["p95"]),
             "spillP95": metric_delta(baseline["spilledBytes"]["p95"], candidate["spilledBytes"]["p95"]),
         },
-        "byType": by_type,
+        "byType": group_by_type(case_comparisons),
         "caseComparisons": case_comparisons,
         "failures": failures,
         "promotion": "manual_approval_required",
     }
+
+
+def compare_case(
+    case_id: str,
+    case_type: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    policy: RegressionPolicy,
+) -> tuple[dict[str, Any], list[str]]:
+    before_passed = int(before["correct"]) == int(before["runs"])
+    after_passed = int(after["correct"]) == int(after["runs"])
+    failures: list[str] = []
+    if before_passed and not after_passed:
+        failures.append("correctness_regression")
+    if before_passed and after_passed:
+        compare_metric(failures, "scan_p95", before.get("p95ProcessedBytes"), after.get("p95ProcessedBytes"), policy.maximum_scan_p95_regression_ratio, 0)
+        compare_metric(failures, "wall_p95", before.get("p95WallMs"), after.get("p95WallMs"), policy.maximum_wall_p95_regression_ratio, policy.wall_p95_absolute_allowance_ms)
+        compare_metric(failures, "cpu_p95", before.get("p95CpuMs"), after.get("p95CpuMs"), policy.maximum_cpu_p95_regression_ratio, policy.cpu_p95_absolute_allowance_ms)
+        compare_metric(failures, "memory_p95", before.get("p95PeakMemoryBytes"), after.get("p95PeakMemoryBytes"), policy.maximum_memory_p95_regression_ratio, policy.memory_p95_absolute_allowance_bytes)
+        if not policy.allow_new_spill and int(before.get("p95SpilledBytes") or 0) == 0 and int(after.get("p95SpilledBytes") or 0) > 0:
+            failures.append("new_spill")
+    item = {
+        "caseId": case_id,
+        "caseType": case_type,
+        "baselineCorrect": int(before["correct"]),
+        "candidateCorrect": int(after["correct"]),
+        "runs": int(after["runs"]),
+        "newlyCorrect": not before_passed and after_passed,
+        "metricsComparable": before_passed and after_passed,
+        "scanP95": metric_delta(before.get("p95ProcessedBytes"), after.get("p95ProcessedBytes")),
+        "wallP95": metric_delta(before.get("p95WallMs"), after.get("p95WallMs")),
+        "cpuP95": metric_delta(before.get("p95CpuMs"), after.get("p95CpuMs")),
+        "peakMemoryP95": metric_delta(before.get("p95PeakMemoryBytes"), after.get("p95PeakMemoryBytes")),
+        "spillP95": metric_delta(before.get("p95SpilledBytes"), after.get("p95SpilledBytes")),
+        "failures": failures,
+    }
+    return item, failures
+
+
+def group_by_type(case_comparisons: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    result: dict[str, dict[str, int]] = {}
+    for item in case_comparisons:
+        group = result.setdefault(item["caseType"], {"cases": 0, "baselineCorrect": 0, "candidateCorrect": 0})
+        group["cases"] += 1
+        group["baselineCorrect"] += int(item["baselineCorrect"] > 0)
+        group["candidateCorrect"] += int(item["candidateCorrect"] > 0)
+    return result
 
 
 def compatibility_errors(baseline: dict[str, Any], candidate: dict[str, Any]) -> list[str]:

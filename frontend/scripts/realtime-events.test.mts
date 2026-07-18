@@ -54,8 +54,35 @@ function realtimeEvent(
   };
 }
 
+function realtimeEventV2(
+  eventId: number,
+  revision: number,
+  mutationType: "append" | "upsert" | "replace" | "retract" = "upsert",
+): RealtimeEventEnvelope {
+  return {
+    aggregateRevision: revision,
+    correlationId: `materialization-${eventId}`,
+    eventId,
+    eventType: "dataset.revision.committed",
+    invalidate: ["dataset:dataset-live"],
+    occurredAt: "2026-07-18T00:00:00+00:00",
+    payload: {
+      bindingEpoch: 7,
+      materializationId: `materialization-${eventId}`,
+      mutationType,
+      pipelineVersionId: "pipeline-v7",
+      servingVersionId: "serving-v7",
+      sourceBoundary: { partitions: [] },
+    },
+    resourceId: "dataset-live",
+    resourceType: "dataset",
+    schemaVersion: 2,
+    scopeId: "deployment",
+  };
+}
 
-test("realtime event parser rejects unknown versions and keeps UTF-8 payloads", () => {
+
+test("realtime event parser accepts strict v1/v2 contracts and keeps UTF-8 payloads", () => {
   const valid = realtimeEvent(3, 7);
   valid.payload = { commitKind: "stream", runId: "한글-run" };
 
@@ -72,7 +99,12 @@ test("realtime event parser rejects unknown versions and keeps UTF-8 payloads", 
     ...dashboardEvent,
     resourceType: "dataset",
   })), null);
-  assert.equal(parseRealtimeEvent(JSON.stringify({ ...valid, schemaVersion: 2 })), null);
+  assert.deepEqual(parseRealtimeEvent(JSON.stringify(realtimeEventV2(4, 8))), realtimeEventV2(4, 8));
+  assert.equal(parseRealtimeEvent(JSON.stringify({
+    ...realtimeEventV2(4, 8),
+    payload: { ...realtimeEventV2(4, 8).payload, bindingEpoch: -1 },
+  })), null);
+  assert.equal(parseRealtimeEvent(JSON.stringify({ ...valid, schemaVersion: 3 })), null);
   assert.equal(parseRealtimeEvent("{invalid"), null);
 });
 
@@ -112,6 +144,7 @@ test("single client owns connection state, parses events, and supports resync re
   const states: RealtimeConnectionState[] = [];
   const events: RealtimeEventEnvelope[] = [];
   const resyncReasons: string[] = [];
+  let readyCount = 0;
   const client = new RealtimeEventClient((url) => {
     const source = new FakeEventSource();
     sources.push(source);
@@ -124,10 +157,12 @@ test("single client owns connection state, parses events, and supports resync re
     dashboardId: "dashboard-live",
     datasetIds: ["dataset-live"],
     onEvent: (event) => events.push(event),
+    onReady: (cursor) => { if (cursor === 8) readyCount += 1; },
     onResyncRequired: (reason) => resyncReasons.push(reason),
     onStateChange: (state) => states.push(state),
   });
   sources[0].onopen?.({} as Event);
+  sources[0].emit("stream.ready", JSON.stringify({ currentCursor: 8 }));
   sources[0].emit(
     "dataset.revision.committed",
     JSON.stringify(realtimeEvent(9, 4)),
@@ -138,6 +173,7 @@ test("single client owns connection state, parses events, and supports resync re
   );
 
   assert.deepEqual(events.map((event) => event.eventId), [9]);
+  assert.equal(readyCount, 1);
   assert.deepEqual(resyncReasons, ["cursor_expired"]);
   assert.equal(sources[0].closed, true);
   assert.deepEqual(states.slice(0, 3), ["connecting", "open", "fallback_polling"]);

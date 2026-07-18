@@ -57,8 +57,14 @@ class ClickHouseClient:
         result = self.query("SELECT 1 AS ok")
         return bool(result.rows and int(result.rows[0][0]) == 1)
 
-    def execute(self, query: str, *, database: str | None = None) -> str:
-        response = self._post(query, database=database)
+    def execute(
+        self,
+        query: str,
+        *,
+        database: str | None = None,
+        query_id: str | None = None,
+    ) -> str:
+        response = self._post(query, database=database, query_id=query_id)
         return response.text
 
     def query(
@@ -131,6 +137,7 @@ class ClickHouseClient:
         *,
         database: str | None,
         timeout_seconds: float | None = None,
+        query_id: str | None = None,
     ) -> httpx.Response:
         params = {
             "database": validate_clickhouse_identifier(
@@ -138,6 +145,11 @@ class ClickHouseClient:
             ),
             "wait_end_of_query": "1",
         }
+        if query_id is not None:
+            normalized_query_id = str(query_id).strip()
+            if not normalized_query_id or len(normalized_query_id) > 255:
+                raise ValueError("ClickHouse query_id must contain 1 to 255 characters")
+            params["query_id"] = normalized_query_id
         try:
             response = self._client.post(
                 "/",

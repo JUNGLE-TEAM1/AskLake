@@ -39,7 +39,12 @@ from app.models.identity import (
     PrincipalControlModel,
     ResourceLockModel,
 )
-from app.models.realtime import RealtimeEventModel
+from app.models.realtime import (
+    RealtimeEventModel,
+    RealtimeParityCheckModel,
+    RealtimeRecoveryOperationModel,
+    RealtimeRoutingAssignmentModel,
+)
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
 from app.models.semantic_rag import (
     RagClassificationRunModel,
@@ -87,6 +92,9 @@ __all__ = [
     "PrincipalControlModel",
     "ResourceLockModel",
     "RealtimeEventModel",
+    "RealtimeParityCheckModel",
+    "RealtimeRecoveryOperationModel",
+    "RealtimeRoutingAssignmentModel",
     "SqlRunModel",
     "SqlRunResultPageModel",
     "SemanticModelModel",

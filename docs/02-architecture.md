@@ -232,6 +232,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - SQL 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보` 세 view를 같은 panel 안에서 제공한다. `실행 정보`에는 실행 평가와 preview의 `쿼리 실행 -> 첫 결과 준비` timeline을 둔다. 평가/timeline을 editor 아래 sibling card로 렌더링해 workspace 높이를 늘리지 않는다. 결과 action은 전체 보기, CSV 다운로드, 처리 Job 생성을 제공한다. 전체 보기와 CSV는 별도 full run을 시작하고, 처리 Job은 preview SQL recipe만 저장한다. Trino에서는 1회성 Iceberg CTAS API를 toolbar에서 노출하지 않으며 SQL 화면에서는 Dashboard 생성 action을 제공하지 않는다.
 - SQL 분석 화면은 오른쪽 `선택 테이블`/schema 사이드바 없이, 왼쪽 `분석 테이블` 트리에서 테이블 행을 클릭해 선택한다. 기준 테이블과 추가 참조 테이블 모두 선택된 행을 다시 클릭해 해제할 수 있다. 기준 테이블만 선택된 상태에서 해제하면 전체 선택과 editor context를 비우고, 참조 테이블이 남아 있으면 가장 먼저 선택한 참조 테이블을 새 기준 테이블로 승격한다. 선택된 행은 왼쪽 파란 체크로 표시한다. SQL editor의 사용자가 직접 작성한 query text가 실행 기준 source of truth이며 UI 선택 상태로 역동기화하지 않는다. 참조 테이블만 해제할 때는 SQL text를 자동 재작성하지 않고, 해제된 table을 계속 참조하면 preview 전 table context 검증에서 차단한다. 기준 테이블 해제 후 참조 테이블이 승격되는 경우는 dataset 변경으로 취급해 새 기준 테이블의 기본 쿼리로 초기화한다. 편집기를 전체 삭제한 빈 문자열도 사용자 입력으로 유지하며, 기본 쿼리 복원은 초기 dataset 선택·dataset 변경·명시적 reset로 한정한다. UI에서는 base/reference를 구분하지 않고, 내부 API payload만 기존 `sourceDatasetId`/`referenceDatasetIds` 계약을 유지한다.
 - SQL 분석 route는 `SqlAnalysisPage.tsx`가 데이터셋·query·result 사이의 orchestration만 맡고, 화면 composition은 `SqlDatasetContextPanel.tsx`, `SqlQueryEditorPanel.tsx`, `SqlResultsPanel.tsx`로 분리한다. 데이터셋 검색·pagination·접힘 상태는 `useSqlContextPanel.ts`, Query AI 요청·적용 상태는 `useSqlQueryAi.ts`, Trino preview polling·첫 page·cursor pagination·취소는 `useTrinoPreviewRun.ts`, SQL 검증·estimate·확인 dialog는 `useTrinoQueryPreflight.ts`, on-demand 전체 결과 요청·polling·cursor pagination·CSV 준비는 `useTrinoFullResult.ts`, SQL Job request 조립은 `useSqlJobCreation.ts`가 소유한다. `SqlPreviewTable.tsx`, `SqlResultChart.tsx`, `SqlDatasetRow.tsx`는 결과 표·위젯·데이터셋 표시를 맡는다. `SqlChartConfigurator.tsx`는 SQL 결과와 선택 데이터셋을 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`을 그대로 합성해 설정 draft를 받는다. 명시적인 생성/적용 시점에만 페이지 widget config를 갱신한다.
+- 수집/처리, 검색/카탈로그, SQL 분석, 대시보드 목록의 제목과 아이콘은 `App.tsx`가 현재 주요 route를 `Topbar` section으로 매핑해 공통 상단 바에서 한 번만 표시한다. 각 화면 본문은 생성 같은 업무 action과 실제 콘텐츠만 소유하며 상세·편집 route의 고유 헤더는 별도로 유지한다. SQL 데스크톱 workspace와 editor는 기존 대비 1.5배 높이 토큰을 사용하고 1180px 이하에서는 기존 자동 높이 반응형 계약을 유지한다. SQL의 주요 action과 탭은 텍스트 label을 접근성 이름의 source of truth로 사용하고 장식 glyph를 반복하지 않는다. 이 표현 변경은 Dataset 선택, query, panel 접힘 상태나 API payload를 변경하지 않는다.
 - SQL 분석의 streaming+static 관계 감지는 `continuousSqlUi.ts`가 Catalog의 Kafka delta materialization과 source metadata를 이용해 보조한다. Kafka 1개와 static 1개 이상일 때 `SqlQueryEditorPanel` action 가장 왼쪽에 `실시간 JOIN 만들기`를 노출하고, `ContinuousSqlJoinDialog`가 출력 이름과 trigger를 받는다. `useContinuousSqlJoin.ts`는 feature config와 validate → ClickHouse create → start command 상태를 소유해 `SqlAnalysisPage.tsx`의 크기 한도를 유지한다. 최종 relation mode, SQL AST, 권한, static unique key 판정은 frontend 추론이 아니라 backend validate가 담당하며 일반 Trino preview/materialization 상태와 섞지 않는다.
 - `sqlLogic.ts`는 기존 import 경로를 보존하는 호환 façade다. 실제 책임은 AST/참조 분석(`sqlAst.ts`), preflight(`sqlPreflight.ts`), autocomplete(`sqlAutocomplete.ts`), JOIN 검증(`sqlJoinLogic.ts`), identifier·결과 formatting·derived dataset helper 모듈로 나눈다. `queryAiService.ts`는 SQL 초안 생성 요청을 담당한다.
 - `SqlAiWriterDialog.tsx`는 파일명 호환을 유지하면서 내부에서 shadcn `Popover`, `Bubble`, `Collapsible`로 Nessie prompt, 생성 상태, 초안 적용을 구성한다. SQL 결과 기반 Job wizard는 `SqlJobWizardDialog.tsx`가 dialog 흐름, `SqlJobWizardSteps.tsx`가 단계별 composition, `SqlJobWizardTargetSettings.tsx`가 저장 대상 form, `sqlJobWizardModel.ts`가 request formatting을 담당한다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 유지하고, Trino mode에서는 `POST /api/query/validate` 성공 뒤 Query Run을 제출해 상태 polling과 signed cursor 결과 page를 사용한다. Trino 문법의 최종 판정은 backend parser/compiler이며 frontend PostgreSQL parser는 UX 보조다.
@@ -664,3 +665,62 @@ Continuous SQL JOIN 생성 UI는 검증 응답의 `CONTINUOUS_SQL_STATIC_KEY_NOT
 ClickHouse Kafka table은 source payload 형식을 추정하지 않고 메시지 전체를 `RawBLOB` 한 열로 소비한다. ingest materialized view가 Catalog에 저장된 `recordParsing`과 `schemaColumns`를 적용해 공백 원문 또는 nested JSON을 typed raw table로 투영한다. 정적 relation은 SQL이 참조한 열만 exact snapshot에서 page 단위로 적재하며 snapshot identity가 같은 local table은 pause/resume에서 재사용한다. 적재된 snapshot에서도 compiled JOIN key의 null·빈 값·`uniqExact` count를 다시 검사해 사전 검증과 snapshot pin 사이 경합을 차단한다. worker readiness는 table 존재뿐 아니라 `system.kafka_consumers`의 active consumer와 복구되지 않은 parser exception까지 확인한다.
 
 Catalog output은 raw offset과 query 가능한 JOIN output이 실제로 생긴 첫 publication 이후에만 나타난다. SQL UI는 Job과 Catalog를 1초 간격으로 확인해 준비 중, Kafka JOIN 실행 중, 첫 이벤트 게시 완료를 구분하며 start API 응답만으로 완료를 표시하지 않는다. pause는 Kafka table과 materialized view만 내리고 raw/output/static table과 안정적인 consumer group identity를 보존하므로, pause 중 쌓인 Kafka event는 resume 후 같은 offset 경계에서 이어서 처리된다.
+
+## 21) ClickHouse Realtime Serving V2 목표 경계
+
+V2는 위 Continuous SQL ClickHouse V1을 호환 기준선으로 사용한다. 즉시 교체가 아니라 expand → shadow → cutover → 관측 → contract 순서로 전환한다.
+
+```text
+Kafka topic
+├─ V2 hot owner: Kafka Connect Sink → opaque raw envelope → receipt audit
+│  └─ realtime materializer → versioned dimension JOIN → ClickHouse serving_current
+└─ archive owner: Spark Structured Streaming → Bronze Iceberg
+   └─ 동일 pipeline/dimension version → Gold Iceberg JOIN projection
+
+ClickHouse serving commit
+→ 기존 dataset_revision_commits + dataset_freshness transaction
+→ 기존 realtime_event_log
+→ SSE invalidation
+→ bounded Dashboard REST query
+```
+
+### V2 소유권
+
+- Kafka source position은 topic/partition/offset과 read-committed expected position 집합이 소유한다. raw max offset 하나만으로 checkpoint 완료를 판단하지 않는다.
+- ClickHouse raw/serving은 재구축 가능한 hot store다. Dashboard, parity와 checksum은 canonical deduplicated current view만 읽는다.
+- Iceberg Bronze와 immutable dimension history는 replay/rebuild source다. Gold projection은 ClickHouse와 같은 pipeline/dimension version의 archive binding이다.
+- PostgreSQL은 기존 `dataset_freshness`, `dataset_revision_commits`, pipeline/materialization/checkpoint metadata와 durable `realtime_event_log`의 source of truth다.
+- Catalog는 logical Dataset identity와 additive `physicalBindings`를 소유한다. legacy `queryEngineTable`은 archive/Trino 호환, `clickhouseTable`은 V1 호환으로 migration window 동안 유지한다.
+- FastAPI는 ClickHouse credential, permission, query budget, binding routing과 event ACL을 집행한다. Browser는 ClickHouse에 직접 연결하지 않는다.
+- 현재 저장소에는 tenant model이 없으므로 V2도 `scope_id="deployment"`와 기존 resource ACL을 사용한다. tenant isolation은 별도 foundation 없이 암묵적으로 추가하지 않는다.
+- `streaming_required` SQL은 이 프로그램에서 분류만 하고 자동 배포하지 않는다. 현재 Spark V1이 stream-stream/window/retraction을 지원한다고 간주하지 않는다.
+
+### PR02 기반시설 경계
+
+PR02는 기존 V1 옆에 기본 비활성 `clickhouse-realtime-v2` Compose profile을 추가한다. 이 profile은 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 기동한다. local은 loopback HTTP 포트로 개발하고 production Compose는 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하며 Connect worker에 CA를 mount한다. 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 현재 단일 Keeper/ClickHouse/Connect topology는 demo/staging이며 HA가 아니다.
+
+Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`을 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. 다만 PR02에는 실제 consumer adapter가 없으므로 이 guard를 claim 직전에 호출하고 connector를 등록하는 책임은 PR03에 있다. `/api/health/realtime`의 `v2.ready`는 configuration-only 기반 단계에서 항상 `false`이고, V2 flag를 켜면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다.
+
+Alembic `0016_clickhouse_realtime_v2_foundation`은 최신 `0015_ai_generation_evidence_audit` 다음에 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+
+### 누적 PR06~09 publication·recovery 경계
+
+- `0017_catalog_realtime_publication`은 기존 freshness/revision/event log에 binding epoch, serving/archive identity, source boundary, checksum과 mutation evidence를 additive하게 확장한다.
+- `0018_realtime_archive_recovery`는 `realtime_parity_checks`와 `realtime_recovery_operations`를 추가한다. `realtime_routing_assignments`는 0016의 sticky Dataset/Dashboard row를 재사용하며 competing routing table을 만들지 않는다.
+- `ArchiveParityReport`는 같은 partition boundary vector, pipeline/dimension version, distinct source position count, schema fingerprint, null/error count, numeric sums, canonical checksum과 sample hash를 모두 비교한다. count만 같은 다른 boundary는 mismatch다.
+- rebuild는 검증된 archive boundary B와 immutable version set을 고정하고, shadow tail의 각 시작점을 `B[p] + 1`로 기록한다. 같은 요청은 deterministic idempotency key와 기존 operation evidence를 재사용한다.
+- cutover/rollback은 외부 ClickHouse/Iceberg 작업이 끝난 뒤 짧은 PostgreSQL transaction에서 freshness와 Catalog를 잠근다. 검증된 parity와 expected epoch/pointer를 다시 확인한 후 Catalog binding, sticky assignment, global revision, 새 binding epoch, `replace` revision commit과 schema v2 event를 함께 기록한다.
+- rollback도 offset을 reset하거나 hot data를 삭제하지 않는다. Trino archive로 돌아갈 때 active routing engine은 freshness/assignment로 표현하고 ClickHouse binding은 `stale`로 보존한다. 이후 재-cutover도 더 큰 public epoch/revision을 사용한다.
+
+Recovery application/repository는 backend-owned 내부 경계다. 현재 외부 repair/cutover HTTP endpoint를 새로 열지 않으며 운영자는 raw SQL로 pointer를 편집해서는 안 된다. 실제 전환 전제와 미실행 evidence는 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)에 기록한다.
+
+### 전환 불변식
+
+1. 같은 Job generation과 consumer group을 Kafka Engine V1과 Kafka Connect V2가 동시에 claim하지 않는다.
+2. V2 publication은 receipt gap을 건너뛰지 않고 stable materialization ID와 source fingerprint를 재사용한다.
+3. static/dimension version, source boundary, serving current count/checksum이 맞아야 revision을 공개한다.
+4. pointer switch와 rollback은 새 global Dataset revision과 단조 증가 `bindingEpoch`를 만든다.
+5. NOTIFY는 wake-up일 뿐이며 기존 durable event cursor가 유실 복구의 근거다.
+6. V2 flag off에서는 현재 V1/Iceberg/polling 동작과 API 필수 field를 바꾸지 않는다.
+
+상세 DDL, transaction, API, failure recovery와 검증은 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md), PR 의존 관계는 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.

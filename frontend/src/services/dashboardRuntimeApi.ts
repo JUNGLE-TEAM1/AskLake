@@ -7,9 +7,16 @@ import type {
 import { apiClient, type ApiRequestOptions } from "./apiClient";
 
 export type DashboardDatasetFreshness = {
+  activeArchiveSnapshotId: string | null;
+  activeServingEngine: string | null;
+  activeServingVersionId: string | null;
+  bindingEpoch: number;
   datasetId: string;
   isContinuous: boolean;
+  latestChecksum: string | null;
+  latestMutationType: "append" | "upsert" | "replace" | "retract" | null;
   latestRevision: number;
+  latestSourceBoundary: Record<string, unknown> | null;
   nextCheckAfterMs: number;
   updatedAt: string | null;
 };
@@ -46,10 +53,11 @@ export type UpdateDraftWidgetInput = {
 
 export function getPublishedDashboard(
   dashboardId: string,
-  { includeData = true }: { includeData?: boolean } = {},
+  { includeData = true, ...options }: ApiRequestOptions & { includeData?: boolean } = {},
 ) {
   return apiClient.get<DashboardRuntimeResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/published?includeData=${includeData}`,
+    options,
   );
 }
 
@@ -87,11 +95,12 @@ export function queryPublishedDashboardWidgets(
 
 export function ensureDraftDashboard(
   dashboardId: string,
-  { includeData = true }: { includeData?: boolean } = {},
+  { includeData = true, ...options }: ApiRequestOptions & { includeData?: boolean } = {},
 ) {
   return apiClient.post<DashboardRuntimeResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure?includeData=${includeData}`,
     {},
+    options,
   );
 }
 

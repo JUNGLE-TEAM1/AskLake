@@ -132,7 +132,7 @@ Run metadata는 application PostgreSQL/RDS의 `benchmark_runs`에 저장한다. 
 
 `BenchmarkRunRecord`는 suite/campaign/case, fixture snapshot/schema/partition, generator/prompt/model/provider/Semantic context, request와 SQL hash, validation/estimate, runtime/cache/repetition, 실제 통계, correctness/failure/regeneration, 시작·종료·만료 시각을 하나로 묶는다. 현재 Trino가 제공하지 않는 spill/file/partition metric은 `null`이며 0으로 위조하지 않는다. `idempotency_key`가 같고 입력 fingerprint가 같으면 기존 run을 반환하고, 입력이 다르면 충돌로 거절한다. Terminal receipt에 finish를 재호출해도 첫 결과를 유지한다.
 
-Migration은 `0016_benchmark_runs`가 소유한다. 기본 retention은 30일이며 만료 레코드 정리 worker는 후속 운영 작업이다. Baseline/candidate 요약 artifact에는 raw result row를 포함하지 않으며 private SQL reference의 실제 object lifecycle은 해당 evidence store의 정책을 따른다.
+Migration은 `0019_benchmark_runs`가 소유한다. 기본 retention은 30일이며 만료 레코드 정리 worker는 후속 운영 작업이다. Baseline/candidate 요약 artifact에는 raw result row를 포함하지 않으며 private SQL reference의 실제 object lifecycle은 해당 evidence store의 정책을 따른다.
 
 ## Bounded 측정 runner
 

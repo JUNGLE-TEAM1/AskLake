@@ -13,11 +13,12 @@ type RealtimeEventBase = {
   occurredAt: string;
   payload: Record<string, unknown>;
   resourceId: string;
-  schemaVersion: 1;
   scopeId: "deployment";
 };
 
-export type RealtimeEventEnvelope = RealtimeEventBase & (
+export type RealtimeMutationType = "append" | "upsert" | "replace" | "retract";
+
+export type RealtimeEventV1 = RealtimeEventBase & { schemaVersion: 1 } & (
   | {
     eventType: "dataset.revision.committed";
     resourceType: "dataset";
@@ -27,6 +28,22 @@ export type RealtimeEventEnvelope = RealtimeEventBase & (
     resourceType: "dashboard";
   }
 );
+
+export type RealtimeDatasetEventV2 = RealtimeEventBase & {
+  eventType: "dataset.revision.committed";
+  payload: {
+    bindingEpoch: number;
+    materializationId: string;
+    mutationType: RealtimeMutationType;
+    pipelineVersionId: string;
+    servingVersionId: string;
+    sourceBoundary: Record<string, unknown>;
+  };
+  resourceType: "dataset";
+  schemaVersion: 2;
+};
+
+export type RealtimeEventEnvelope = RealtimeEventV1 | RealtimeDatasetEventV2;
 
 export type RealtimeEventConnection = {
   close: () => void;
@@ -40,6 +57,7 @@ export type RealtimeEventClientOptions = {
   heartbeatTimeoutMs?: number;
   onEvent: (event: RealtimeEventEnvelope) => void;
   onInvalidEvent?: (raw: string) => void;
+  onReady?: (currentCursor: number | null) => void;
   onResyncRequired: (reason: string) => void;
   onStateChange: (state: RealtimeConnectionState) => void;
   reconnectRetryMs?: number;
@@ -171,9 +189,10 @@ export class RealtimeEventClient {
       });
 
       ["stream.ready", "system.heartbeat"].forEach((eventType) => {
-        source?.addEventListener(eventType, (() => {
+        source?.addEventListener(eventType, ((message: MessageEvent<string>) => {
           if (stopped || this.generation !== generation) return;
           armWatchdog();
+          if (eventType === "stream.ready") options.onReady?.(systemEventCursor(message.data));
         }) as EventListener);
       });
 
@@ -249,9 +268,9 @@ export function realtimeEventsUrl(
 
 export function parseRealtimeEvent(raw: string): RealtimeEventEnvelope | null {
   try {
-    const value = JSON.parse(raw) as Partial<RealtimeEventEnvelope>;
+    const value = JSON.parse(raw) as Record<string, unknown>;
     if (
-      value.schemaVersion !== 1
+      (value.schemaVersion !== 1 && value.schemaVersion !== 2)
       || value.scopeId !== "deployment"
       || typeof value.resourceId !== "string"
       || !value.resourceId
@@ -264,8 +283,10 @@ export function parseRealtimeEvent(raw: string): RealtimeEventEnvelope | null {
       || typeof value.correlationId !== "string"
       || typeof value.occurredAt !== "string"
       || !Array.isArray(value.invalidate)
+      || !value.invalidate.every((item) => typeof item === "string")
       || !value.payload
       || typeof value.payload !== "object"
+      || Array.isArray(value.payload)
     ) {
       return null;
     }
@@ -277,10 +298,39 @@ export function parseRealtimeEvent(raw: string): RealtimeEventEnvelope | null {
       && value.resourceType === "dashboard"
     );
     if (!eventMatchesResource) return null;
+    if (value.schemaVersion === 2) {
+      if (value.eventType !== "dataset.revision.committed" || value.resourceType !== "dataset") {
+        return null;
+      }
+      const payload = value.payload as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(payload.bindingEpoch)
+        || (payload.bindingEpoch as number) < 0
+        || !nonEmptyString(payload.materializationId)
+        || !isRealtimeMutationType(payload.mutationType)
+        || !nonEmptyString(payload.pipelineVersionId)
+        || !nonEmptyString(payload.servingVersionId)
+        || !payload.sourceBoundary
+        || typeof payload.sourceBoundary !== "object"
+        || Array.isArray(payload.sourceBoundary)
+      ) {
+        return null;
+      }
+    }
     return value as RealtimeEventEnvelope;
   } catch {
     return null;
   }
+}
+
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && Boolean(value.trim());
+}
+
+
+function isRealtimeMutationType(value: unknown): value is RealtimeMutationType {
+  return value === "append" || value === "upsert" || value === "replace" || value === "retract";
 }
 
 
@@ -316,6 +366,18 @@ function systemEventReason(raw: string, fallback: string) {
     return typeof value.reason === "string" && value.reason ? value.reason : fallback;
   } catch {
     return fallback;
+  }
+}
+
+
+function systemEventCursor(raw: string) {
+  try {
+    const value = JSON.parse(raw) as { currentCursor?: unknown };
+    return Number.isSafeInteger(value.currentCursor) && (value.currentCursor as number) >= 0
+      ? value.currentCursor as number
+      : null;
+  } catch {
+    return null;
   }
 }
 

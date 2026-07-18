@@ -357,6 +357,13 @@ class DatasetFreshnessResponse(CamelModel):
     latest_revision: int = Field(ge=0)
     updated_at: str | None = None
     next_check_after_ms: int = Field(ge=1_000, le=60_000)
+    binding_epoch: int = Field(default=0, ge=0)
+    active_serving_engine: str | None = None
+    active_serving_version_id: str | None = None
+    active_archive_snapshot_id: str | None = None
+    latest_source_boundary: dict[str, Any] | None = None
+    latest_checksum: str | None = None
+    latest_mutation_type: Literal["append", "upsert", "replace", "retract"] | None = None
 
 
 class DatasetFreshnessQueryResponse(CamelModel):

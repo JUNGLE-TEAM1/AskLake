@@ -4059,6 +4059,9 @@ type PermissionGrant = {
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
+| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. 기본 false |
+| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink opt-in의 effective 값. 기본 false |
+| clickhouseRealtimeConsumerOwner | disabled \| kafka_engine_v1 \| kafka_connect_v2 | deployment의 단일 consumer owner 설정. readiness나 실제 claim을 뜻하지 않음 |
 | latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | featureScope | deployment | 현재 저장소에는 tenant model이 없으므로 고정 |
@@ -4067,7 +4070,7 @@ type PermissionGrant = {
 | reconnectRetryMs | integer | EventSource retry hint, 현재 3000 |
 | safetyPollAfterMs | integer | hybrid open 상태의 safety refresh 하한, 현재 60000 |
 
-이 API는 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
+이 API는 Connect URL, connector name, 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
 
 ### GET /api/realtime/events
 
@@ -4089,6 +4092,22 @@ type PermissionGrant = {
 ### GET /api/health/realtime
 
 기능이 꺼져 있으면 `200 disabled`, 켜져 있으면 DB와 dispatcher readiness를 기준으로 `200 ready` 또는 `503 unavailable`을 반환한다. 무한 stream을 healthcheck로 사용하지 않는다.
+
+PR02는 기존 top-level health에 다음 secret-free object를 항상 추가한다.
+
+```json
+{
+  "v2": {
+    "enabled": false,
+    "ready": false,
+    "status": "disabled",
+    "consumerOwner": "disabled",
+    "connector": {"enabled": false, "configured": false}
+  }
+}
+```
+
+`v2.status`는 `disabled | configuration_validated`다. PR02의 `v2.ready`는 항상 false이며 V2가 enabled이면 endpoint 자체도 HTTP `503`으로 fail closed한다. realtime event backbone이 disabled면 top-level `status=not_ready`, enabled면 `status=unavailable`이다. `connector.configured`는 sink flag, Connect origin과 connector name의 설정 여부만 합성한다. Connect REST, plugin, connector task, ClickHouse write와 Kafka lag probe는 PR03 전에는 이 response에 포함하지 않는다. V2가 disabled면 기존 top-level health 의미를 유지한다.
 
 ### Dashboard snapshot cursor
 
@@ -4151,3 +4170,56 @@ Review analysis API request/response는 변경하지 않는다. 내부 Python→
 version field가 없는 runtime report/checkpoint/manifest는 version 0 reader로 읽고, 미래 version은 거절한다. `runtimeContract`가 없는 DB row는 기존 status/error로 투영한다. 구버전 Job의 `permissionRoles`, legacy transform/quality rule, dashboard scalar color와 lineage payload 부재는 제한된 compatibility adapter를 사용하며 활성화 시 `compatibility.path.used` warning/counter가 기록된다.
 
 frontend mock API는 개발 빌드에서만 허용한다. production build에서 `VITE_USE_MOCK_API=true`이면 실제 backend 대신 mock을 사용하지 않고 즉시 실패한다. 전체 owner·제거 조건은 `docs/refactor-2026/legacy-path-register.json`에 고정한다.
+
+## ClickHouse Realtime Serving V2 additive migration contract
+
+이 계약은 누적 PR01~09 branch의 구현 상태다. [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 각 PR이 `dev`에 순서대로 merge될 때 field별로 활성화하며 기존 client request의 required field를 늘리지 않는다.
+
+### Persisted state 확장
+
+- PR02의 Alembic revision `0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음에 `realtime_pipelines`, `realtime_pipeline_versions`, `realtime_pipeline_deployments`, `realtime_partition_checkpoints`, `realtime_materializations`, `realtime_partition_receipt_ranges`, `realtime_ingest_exceptions`, `realtime_dimension_versions`, `realtime_unmatched_events`, `realtime_routing_assignments`를 expand-only로 추가한다.
+- PR02는 기존 publication table을 변경하지 않았다. PR06의 `0017_catalog_realtime_publication`이 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log`를 additive 확장하며 `dataset_serving_revisions`를 만들지 않는다.
+- PR09의 `0018_realtime_archive_recovery`는 immutable `realtime_parity_checks`와 idempotent `realtime_recovery_operations`를 추가한다. sticky routing은 0016의 `realtime_routing_assignments`를 재사용한다.
+- 신규 metadata table은 runtime startup `create_all`이 아니라 Alembic이 schema authority다. production downgrade는 지원하지 않고 disabled-mode rollback에서 table을 보존한다.
+- 공개 Dataset revision은 기존 `dataset_freshness.latest_revision`과 `dataset_revision_commits`를 확장한다. 별도 public revision table을 만들지 않는다.
+- `dataset_freshness`에는 optional `binding_epoch`, active serving/archive version과 latest source boundary/checksum/mutation type을 추가한다.
+- `dataset_revision_commits`에는 optional materialization ID, serving engine/version, binding epoch, dimension version set, source boundary, mutation type과 checksum을 추가한다.
+- durable change event는 기존 `realtime_event_log`를 확장한다. event idempotency key는 Dataset revision/binding event와 1:1이어야 한다.
+- pointer switch와 rollback은 `dataset_freshness` row lock 안에서 새 global revision과 더 큰 binding epoch를 함께 할당한다.
+
+### Catalog 하위 호환
+
+- `queryEngineTable`은 검증된 archive Iceberg/Trino mapping으로 유지한다.
+- `clickhouseTable`은 기존 V1 reader 호환 field로 유지한다.
+- V2는 optional `physicalBindings[]`를 추가하고 `role=serving|archive`, engine, status, physical identity, pipeline/dimension version, boundary, revision/epoch를 명시한다.
+- ClickHouse-only V1 또는 아직 Gold parity가 없는 Dataset은 archive binding이 없거나 `status=pending`일 수 있다. 검증된 Gold projection이 없으면 `queryEngineTable`을 합성하거나 Trino fallback 가능으로 표시하지 않는다.
+- V2 writer는 migration window 동안 호환 field와 `physicalBindings`를 함께 쓰며 reader 전환 근거 없이 기존 field를 제거하지 않는다.
+- ClickHouse physical identifier를 `queryEngineTable`로 저장하지 않는다.
+
+### Revision·Dashboard 하위 호환
+
+- V2 revision은 `mutationType=append|upsert|replace|retract`를 갖는다. field가 없는 기존 revision은 현재 규칙대로 append/delta 또는 full fallback을 추론한다.
+- Dashboard widget query의 optional `clientKnownRevisions`는 목표 extension이며 현재 public request schema에는 아직 노출하지 않는다. 현재 browser는 SSE event와 `/api/datasets/freshness/query`의 Dataset cursor를 조합한다.
+- 현재 widget response는 기존 `appliedRevision`, `calculatedAt`, `dataStatus`, `dataError`를 유지한다. `bindingEpoch`, engine, boundary와 mutation metadata는 freshness/Catalog/SSE 응답에서 additive하게 제공한다.
+- append만 delta merge 후보이며 upsert/replace/retract와 late dimension repair는 canonical current serving 결과를 다시 계산한다.
+- SSE Dataset event는 기존 `dataset.revision.committed` 이름을 유지하고 schema version 2 payload에 binding epoch, mutation type, pipeline/materialization version identity를 작은 allowlist metadata로 추가한다. `dashboard.published`와 `system.*` control event도 rename하지 않으며 row, widget result, credential은 금지한다.
+
+### Consumer·publication 불변식
+
+- 같은 Job generation의 Kafka Engine V1과 Kafka Connect V2 동시 ownership을 거부한다.
+- checkpoint는 Kafka read-committed expected position과 raw/quarantine/audited-skip position이 일치하는 contiguous receipt range까지만 전진한다.
+- 같은 source boundary retry는 같은 materialization ID, source fingerprint와 ClickHouse insert token을 사용한다.
+- ClickHouse count/checksum/widget/parity는 base ReplacingMergeTree가 아니라 canonical current view를 사용한다.
+- external ClickHouse/Kafka/S3 I/O 중 PostgreSQL transaction이나 row lock을 유지하지 않는다.
+- final publication transaction은 freshness lock, checkpoint CAS, materialization commit, revision commit, freshness update, durable event insert 순서로 원자화한다.
+
+### Archive parity·rebuild·binding switch
+
+- hot/archive parity는 동일 partition boundary vector와 pipeline/dimension version을 먼저 확인한 뒤 row count/checksum, distinct source position, schema fingerprint, null/error count, numeric sum과 sample hash를 모두 비교한다.
+- mismatch evidence도 원장에 남지만 rebuild/cutover 입력으로 사용할 수 없다. mismatch가 Dashboard의 마지막 성공 result를 즉시 삭제하지는 않는다.
+- rebuild operation은 고정 boundary B와 partition별 `nextOffset=B[p]+1`을 기록한다. 같은 target/report retry는 같은 deterministic operation/idempotency identity를 사용한다.
+- cutover는 10만 건 fixture, 72시간 shadow, P95, restart/chaos, security, rollback drill, 운영 dashboard/runbook evidence가 전부 승인돼야 한다. rollback은 matched parity와 expected current pointer를 요구하되 긴 관찰 시간을 장애 복구의 선행 조건으로 삼지 않는다.
+- switch transaction은 freshness/Catalog expected pointer를 잠근 뒤 Catalog binding, sticky routing assignment, revision commit, freshness와 schema v2 event를 함께 갱신한다. cutover와 rollback 모두 `mutationType=replace`이고 매번 더 큰 public `bindingEpoch`/global revision을 만든다.
+- 현재 이 경계는 `ArchiveRecoveryService` 내부 application API다. 별도 외부 cutover HTTP route는 없으며 raw SQL pointer 변경은 지원하지 않는다.
+
+상세 endpoint와 error code는 구현 PR마다 `docs/03-api-reference.md`, OpenAPI와 함께 활성화한다. 문서에 target field가 있다는 이유만으로 merge 전 production client가 전송해서는 안 된다.

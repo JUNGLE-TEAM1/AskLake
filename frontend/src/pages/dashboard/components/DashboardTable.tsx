@@ -6,10 +6,9 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import {
   DataTableCellPrimary,
-  DataTableCellSecondary,
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
-import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
+import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner } from "../dashboardListUtils";
 import type { SavedDashboardCard } from "../../../types";
 
 function getOwnerInitials(owner: string) {
@@ -37,7 +36,6 @@ export function DashboardTable({
         accessorKey: "name",
         cell: ({ row }) => {
           const dashboard = row.original;
-          const tags = localizeDashboardTags(dashboard.tags);
           const dashboardName = localizeDashboardName(dashboard);
           return (
             <Button
@@ -49,13 +47,10 @@ export function DashboardTable({
                 onOpenDetail(dashboard);
               }}
             >
-              <DataTableStackedCell className="w-full gap-1.5">
+              <DataTableStackedCell className="w-full">
                 <span className="truncate text-xl font-semibold leading-7 text-slate-950">
                   {dashboardName}
                 </span>
-                <DataTableCellSecondary className="text-base" title={tags.join(" · ")}>
-                  {tags.length ? tags.join(" · ") : "태그 없음"}
-                </DataTableCellSecondary>
               </DataTableStackedCell>
             </Button>
           );

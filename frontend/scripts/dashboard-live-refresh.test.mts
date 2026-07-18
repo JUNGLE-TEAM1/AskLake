@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  dashboardCursorFromFreshness,
+  dashboardFreshnessRequiresSnapshot,
   dashboardLiveCatchUpDatasetIds,
   dashboardLiveDatasetIds,
   dashboardLivePollingStrategy,
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
+  planDashboardRealtimeRefresh,
   staleDashboardWidgetIds,
 } from "../src/pages/dashboard/runtime/dashboardLiveRefresh.ts";
+import type { RealtimeDatasetEventV2 } from "../src/services/realtimeEvents.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
 
 function metricWidget(overrides: Partial<Extract<DashboardRuntimeWidget, { type: "metric" }>> = {}) {
@@ -46,6 +50,70 @@ function publishedRuntime(widgets: DashboardRuntimeWidget[] = [metricWidget()]):
     widgetsByPageId: { "page-1": widgets },
   };
 }
+
+function freshness(overrides: Record<string, unknown> = {}) {
+  return {
+    activeArchiveSnapshotId: "archive-7",
+    activeServingEngine: "clickhouse",
+    activeServingVersionId: "serving-v7",
+    bindingEpoch: 7,
+    datasetId: "clickstream_events",
+    isContinuous: true,
+    latestChecksum: "checksum-7",
+    latestMutationType: "upsert" as const,
+    latestRevision: 7,
+    latestSourceBoundary: { partitions: [] },
+    nextCheckAfterMs: 1_000,
+    updatedAt: "2026-07-18T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function realtimeV2(overrides: Partial<RealtimeDatasetEventV2> = {}): RealtimeDatasetEventV2 {
+  return {
+    aggregateRevision: 8,
+    correlationId: "materialization-8",
+    eventId: 8,
+    eventType: "dataset.revision.committed",
+    invalidate: ["dataset:clickstream_events"],
+    occurredAt: "2026-07-18T00:00:08Z",
+    payload: {
+      bindingEpoch: 7,
+      materializationId: "materialization-8",
+      mutationType: "upsert",
+      pipelineVersionId: "pipeline-v7",
+      servingVersionId: "serving-v7",
+      sourceBoundary: { partitions: [] },
+    },
+    resourceId: "clickstream_events",
+    resourceType: "dataset",
+    schemaVersion: 2,
+    scopeId: "deployment",
+    ...overrides,
+  };
+}
+
+test("dataset cursor plans targeted refresh and promotes gaps, replace, or binding changes to snapshot", () => {
+  const current = dashboardCursorFromFreshness(freshness({ latestRevision: 7 }));
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2()).action, "targeted");
+  assert.equal(planDashboardRealtimeRefresh(
+    { ...current, eventCursor: 8, revision: 8 },
+    realtimeV2(),
+  ).action, "ignore");
+  assert.equal(planDashboardRealtimeRefresh(
+    current,
+    realtimeV2({ aggregateRevision: 10, eventId: 10 }),
+  ).reason, "revision_gap");
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2({
+    payload: { ...realtimeV2().payload, mutationType: "replace" },
+  })).reason, "mutation_replace");
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2({
+    aggregateRevision: 1,
+    eventId: 9,
+    payload: { ...realtimeV2().payload, bindingEpoch: 8 },
+  })).reason, "binding_changed");
+  assert.equal(dashboardFreshnessRequiresSnapshot(current, freshness({ bindingEpoch: 8 })), true);
+});
 
 test("server polling hints use a safe fallback and 1-60 second bounds", () => {
   assert.equal(dashboardLiveRefreshInterval(undefined), 1_000);

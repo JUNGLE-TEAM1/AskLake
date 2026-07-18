@@ -18,6 +18,7 @@ import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
+import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 import type {
   CreateDraftWidgetFormInput,
   DashboardDatasetColumn,
@@ -57,6 +58,7 @@ type DashboardRuntimeState = {
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
   realtimeConnectionState: RealtimeConnectionState;
+  realtimeDataState: DashboardLiveDataState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -530,7 +532,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={runtime.realtimeConnectionState}
+        realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

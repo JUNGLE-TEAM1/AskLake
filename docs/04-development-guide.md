@@ -857,7 +857,7 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`과 `ai-server/.env.example`을 기준으로 둔다. `AI_PROVIDER_API_KEY`는 `ai-server`에만 두고, FastAPI는 service token과 signed context secret만 사용한다. Query AI, Dashboard Assistant, ETL transform, RAG, 리뷰 분석은 같은 Gateway를 사용하며 direct/mock provider fallback은 지원하지 않는다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. 데스크톱 workspace와 editor는 각각 기존 높이의 1.5배 토큰을 사용하며, 1180px 이하에서는 자동 높이로 전환되어 가로·세로 overflow가 생기지 않아야 한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll 계약은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 주요 목록 route에서는 제목과 아이콘이 공통 `Topbar`에 한 번만 표시되고 본문 `PageHeader`가 중복되지 않는지, 대시보드 이름 아래 상태·제품 보조 문구가 제거되면서 소유자와 최근 수정 정보는 유지되는지도 함께 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
 
 Preview/full-result 저장 경계는 아래 격리 검증으로 확인한다. Preview page가 object storage를 호출하지 않고 PostgreSQL inline manifest를 만들며, full-result 요청이 `mode=run`과 source preview ID를 보존하는지 검사한다.
 
@@ -1519,3 +1519,147 @@ npm run verify:etl-e2e-recovery
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
 
 시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.
+
+## 21) ClickHouse Realtime Serving V2 순차 구현
+
+V2 구현은 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 순서를 따른다. 기존 Realtime 2026 STACK-01~04와 refactor 10-PR plan을 대체하거나 다시 실행하지 않는다.
+
+작업 규칙:
+
+1. PR01은 최신 `origin/dev`, PR02~09는 직전 V2 branch에서 시작한다.
+2. 모든 PR base는 `dev`다. 선행 PR merge 전 후속 PR은 Ready 상태여도 merge하지 않는다.
+3. 선행 PR merge 뒤 다음 branch에 최신 `origin/dev`를 merge하고 실제 GitHub diff와 required check를 다시 확인한다.
+4. 이미 공개한 누적 branch는 rebase/force-push하지 않는다. 예외적으로 force가 필요하면 작업을 중단하고 사용자 승인을 받는다.
+5. 한 PR은 한 issue outcome만 소유하고 body 끝에 자기 issue의 `Closes #...`만 둔다.
+6. 기존 dirty workspace의 변경을 새 issue branch로 가져오지 않는다. 별도 clean worktree에서 구현한다.
+7. production deploy, traffic promotion, consumer offset reset, 기존 table/drop은 별도 운영 승인 없이는 실행하지 않는다.
+
+V2 공통 빠른 검증은 기존 suite를 먼저 보존한다.
+
+```bash
+cd backend
+npm run verify:realtime-stack
+npm run verify:continuous-sql-contract
+
+cd ../frontend
+npm run build
+```
+
+Docker/ClickHouse/Kafka가 필요한 `npm run verify:clickhouse-kafka-join`은 PR02 이후의 integration/operator profile에서 실행한다. 공통 빠른 검증으로 분류하지 않는다. PR별 신규 검증 command는 해당 PR에서 `package.json`, 이 문서, `docs/system-guardrails.md`와 CI workflow를 함께 갱신한다. 실행하지 못한 live/production 항목은 PASS로 쓰지 않고 operator gate로 남긴다.
+
+### PR02 V2 기반시설과 migration
+
+PR02의 Compose service는 모두 `clickhouse-realtime-v2` profile 뒤에 있으며 기본 `docker compose up`에는 포함되지 않는다. profile은 기존 V1 옆에 기반 프로세스만 기동하고 backend consumer owner를 이전하거나 connector를 등록하지 않는다.
+
+먼저 외부 runtime이 필요 없는 설정과 migration 계약을 검증한다. 가상환경 Python에 `backend/requirements.txt`의 Alembic/SQLAlchemy dependency가 설치돼 있어야 한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-foundation
+.venv/bin/python -m alembic -c alembic.ini heads
+npm run verify:realtime-stack
+
+cd ..
+docker compose config --quiet
+docker compose --profile clickhouse-realtime-v2 config --quiet
+docker compose --env-file deploy/.env.example \
+  -f deploy/docker-compose.prod.yml \
+  --profile clickhouse-realtime-v2 config --quiet
+tests/deploy/deploy-scripts-regression.sh
+```
+
+`0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음 단일 head이며 V2 metadata table 10개만 추가한다. production은 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`를 유지하고 web/worker rollout 전에 명시적으로 upgrade한다.
+
+```bash
+cd backend
+.venv/bin/python -m alembic -c alembic.ini upgrade head
+.venv/bin/python -m alembic -c alembic.ini current
+```
+
+Production image는 `alembic.ini`와 migration directory를 포함한다. 이미 기동한 PostgreSQL에 one-shot으로 적용할 때는 `deploy/`의 실제 server `.env`를 사용한다.
+
+V2 profile을 포함한 production env는 먼저 preflight를 통과해야 한다. Profile-only shadow도 six-account secret, TLS, cert/secret file mode, immutable image digest와 Compose network를 검사한다. Sink/application owner를 enabled로 전환하면 private Connect origin, stable connector name과 단일-owner 조합도 추가로 fail closed한다. 기존 V1 backend ClickHouse credential은 V2 identity로 repurpose하지 않는다.
+
+```bash
+cd ..
+scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
+```
+
+```bash
+cd deploy
+docker compose --env-file .env -f docker-compose.prod.yml run --rm --no-deps \
+  backend python -m alembic -c alembic.ini upgrade head
+```
+
+Local profile smoke를 실행하려면 admin/ingest/materializer/reader/migration/observer의 서로 다른 16자 이상 password를 shell environment에 설정하고, repository 밖의 connector properties file을 read-only mount해야 한다. root `.env`나 tracked example에 실제 secret을 쓰지 않는다. Kafka Connect image는 공식 plugin release checksum을 검증하며 network download가 필요하다.
+
+```bash
+docker build -t asklake/kafka-connect-clickhouse:1.4.0 deploy/kafka-connect
+docker compose --profile clickhouse-realtime-v2 up -d \
+  clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2
+curl --fail http://127.0.0.1:18083/connector-plugins
+curl --fail http://127.0.0.1:18123/ping
+```
+
+이 smoke는 process와 plugin만 확인한다. connector definition은 PR03 전에는 등록하지 않으므로 Kafka→ClickHouse ingest 검증이 아니다. PR03 전에는 `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`로 전환하지 않는다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
+
+### PR09 archive/recovery와 최종 release gate
+
+누적 branch의 deterministic backend 계약과 migration lifecycle은 한 번에 실행한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-release
+npm run verify:clickhouse-realtime-v2-recovery
+```
+
+`verify:clickhouse-realtime-v2-release`는 PR02~09의 feature flag, Alembic, ingest, dimension, materializer, Catalog publication, Dashboard/SSE와 archive recovery module을 한 suite로 실행한다. `0018_realtime_archive_recovery`가 새 head이며 disposable DB에서 `0015 → head → 0015 → head`가 가능해야 한다. production에서는 downgrade하지 않는다.
+
+실제 PostgreSQL은 이미 head migration이 적용된 disposable database에서만 검증한다.
+
+```bash
+ASKLAKE_VERIFY_REALTIME_POSTGRES=true \
+DATABASE_URL=postgresql+psycopg://asklake:asklake_test@127.0.0.1:5432/asklake_test \
+npm run verify:realtime-recovery-postgres
+```
+
+이 검증은 독립 실행을 위해 disposable DB에 없는 legacy Catalog/freshness/revision/event table만 `checkfirst`로 준비한다. V2 table은 계속 Alembic이 소유한다. 같은 cutover idempotency key를 두 session에서 동시에 실행하고 단일 epoch/revision/event만 생성됐는지 확인한 뒤 자기 fixture를 삭제한다. 공유 production DB에 실행하지 않는다.
+
+ClickHouse live parity smoke는 migration 권한을 가진 disposable instance에 hot/archive fixture table 두 개를 만들고 100개 source position의 partition boundary, count, checksum과 numeric sum을 비교한 뒤 table을 삭제한다.
+
+```bash
+ASKLAKE_VERIFY_CLICKHOUSE_RECOVERY=true \
+CLICKHOUSE_URL=http://127.0.0.1:18123 \
+CLICKHOUSE_USER=asklake_v2_admin \
+CLICKHOUSE_PASSWORD='<test-only-secret>' \
+CLICKHOUSE_DATABASE=asklake_realtime_v2 \
+npm run verify:clickhouse-realtime-v2-recovery-live
+```
+
+Docker Desktop가 선언된 loopback port를 publish하지 않는 로컬 환경만 `CLICKHOUSE_DOCKER_CONTAINER=asklake-clickhouse-v2`를 사용할 수 있다. CI/Linux는 HTTP 경로를 사용한다. 이 smoke의 100행은 실제 10만 건 cutover gate를 대체하지 않는다.
+
+독립 evidence JSON은 다음 preflight로 비교한다. mismatch는 exit 1이며 DB를 변경하지 않는다.
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/verify-hot-archive-parity.py \
+  --hot /secure/evidence/hot.json \
+  --archive /secure/evidence/archive.json
+```
+
+PR09 통합 단계에서는 중복되는 PR별 suite 대신 아래 전체 회귀를 한 번만 수행한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run test:dashboard-realtime-v2
+npm run build
+
+cd ..
+bash tests/deploy/deploy-scripts-regression.sh
+docker compose --profile clickhouse-realtime-v2 config --quiet
+```
+
+실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
