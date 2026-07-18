@@ -12,6 +12,22 @@ import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
 type RuntimeLoadOptions = { silent?: boolean };
 
 
+function useRuntimePageSelection(
+  setSelectedPageId: Dispatch<SetStateAction<string | null>>,
+) {
+  return useCallback((runtime: DashboardRuntimeResponse) => {
+    const requestedPageId = new URLSearchParams(window.location.search).get("page");
+    const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
+    const fallbackPageId = requestedPageExists ? requestedPageId : runtime.pages[0]?.id ?? null;
+    setSelectedPageId((currentPageId) => (
+      currentPageId && runtime.pages.some((page) => page.id === currentPageId)
+        ? currentPageId
+        : fallbackPageId
+    ));
+  }, [setSelectedPageId]);
+}
+
+
 export function useDashboardRuntimeLoaders(
   setSelectedPageId: Dispatch<SetStateAction<string | null>>,
 ) {
@@ -23,17 +39,7 @@ export function useDashboardRuntimeLoaders(
   const [draftError, setDraftError] = useState<string | null>(null);
   const publishedRequests = useRef(new LatestRequestGate());
   const draftRequests = useRef(new LatestRequestGate());
-
-  const selectPageFromResponse = useCallback((runtime: DashboardRuntimeResponse) => {
-    const requestedPageId = new URLSearchParams(window.location.search).get("page");
-    const requestedPageExists = requestedPageId && runtime.pages.some((page) => page.id === requestedPageId);
-    const fallbackPageId = requestedPageExists ? requestedPageId : runtime.pages[0]?.id ?? null;
-    setSelectedPageId((currentPageId) => (
-      currentPageId && runtime.pages.some((page) => page.id === currentPageId)
-        ? currentPageId
-        : fallbackPageId
-    ));
-  }, [setSelectedPageId]);
+  const selectPageFromResponse = useRuntimePageSelection(setSelectedPageId);
 
   const loadPublishedRuntime = useCallback(async (
     dashboardId: string,
