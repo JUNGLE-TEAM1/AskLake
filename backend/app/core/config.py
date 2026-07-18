@@ -262,9 +262,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":
+        self._validate_auth_runtime()
+        self._validate_trino_runtime()
+        self._validate_clickhouse_runtime()
+        self._validate_ai_runtime()
+        self._validate_rag_runtime()
+        return self
+
+    def _validate_auth_runtime(self) -> None:
         if self.auth_legacy_demo_users_enabled and not self.is_test_runtime:
-            raise ValueError("AUTH_LEGACY_DEMO_USERS_ENABLED is restricted to test environments")
-        if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
+            raise ValueError(
+                "AUTH_LEGACY_DEMO_USERS_ENABLED is restricted to test environments"
+            )
+        if bool(self.bootstrap_admin_email) != bool(
+            self.bootstrap_admin_password
+        ):
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be configured together"
             )
@@ -273,13 +285,26 @@ class Settings(BaseSettings):
                 "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are required outside local/dev/test"
             )
         if self.bootstrap_admin_email:
-            normalized_email = str(self.bootstrap_admin_email or "").strip().casefold()
+            normalized_email = str(
+                self.bootstrap_admin_email or ""
+            ).strip().casefold()
             local_part, separator, domain = normalized_email.partition("@")
-            if not separator or not local_part or "." not in domain or domain.startswith(".") or domain.endswith("."):
-                raise ValueError("BOOTSTRAP_ADMIN_EMAIL must be a valid administrator email address")
+            invalid_email = (
+                not separator
+                or not local_part
+                or "." not in domain
+                or domain.startswith(".")
+                or domain.endswith(".")
+            )
+            if invalid_email:
+                raise ValueError(
+                    "BOOTSTRAP_ADMIN_EMAIL must be a valid administrator email address"
+                )
             if len(str(self.bootstrap_admin_password or "")) < 16:
-                raise ValueError("BOOTSTRAP_ADMIN_PASSWORD must contain at least 16 characters")
-        placeholder_values = {
+                raise ValueError(
+                    "BOOTSTRAP_ADMIN_PASSWORD must contain at least 16 characters"
+                )
+        placeholders = {
             "replace-with-admin-email@example.invalid",
             "replace-with-a-unique-bootstrap-password",
             "admin.user@asklake.local",
@@ -288,122 +313,175 @@ class Settings(BaseSettings):
             "asklake-demo",
         }
         if self.bootstrap_admin_email and (
-            str(self.bootstrap_admin_email or "").casefold() in placeholder_values
-            or self.bootstrap_admin_password in placeholder_values
+            str(self.bootstrap_admin_email or "").casefold() in placeholders
+            or self.bootstrap_admin_password in placeholders
         ):
-            raise ValueError("Replace the bootstrap administrator placeholders before startup")
-        if not self.is_development_runtime:
-            for origin in self.backend_cors_origins:
-                parsed = urlparse(origin)
-                if (
-                    origin == "*"
-                    or parsed.scheme != "https"
-                    or not parsed.netloc
-                    or parsed.username is not None
-                    or parsed.password is not None
-                    or parsed.path not in {"", "/"}
-                    or parsed.params
-                    or parsed.query
-                    or parsed.fragment
-                ):
-                    raise ValueError(
-                        "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
-                    )
-        if self.trino_enabled:
-            parsed_trino_url = urlparse(self.trino_base_url)
-            for username_key, username, password_key, password in (
-                (
-                    "TRINO_AUTH_USERNAME",
-                    self.trino_auth_username,
-                    "TRINO_AUTH_PASSWORD",
-                    self.trino_auth_password,
-                ),
-                (
-                    "TRINO_MATERIALIZER_USERNAME",
-                    self.trino_materializer_username,
-                    "TRINO_MATERIALIZER_PASSWORD",
-                    self.trino_materializer_password,
-                ),
+            raise ValueError(
+                "Replace the bootstrap administrator placeholders before startup"
+            )
+        if self.is_development_runtime:
+            return
+        for origin in self.backend_cors_origins:
+            parsed = urlparse(origin)
+            if (
+                origin == "*"
+                or parsed.scheme != "https"
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.params
+                or parsed.query
+                or parsed.fragment
             ):
-                if bool(str(username or "").strip()) != bool(str(password or "").strip()):
-                    raise ValueError(f"{username_key} and {password_key} must be configured together")
-            if parsed_trino_url.scheme == "http" and (
-                self.trino_auth_password or self.trino_materializer_password
+                raise ValueError(
+                    "BACKEND_CORS_ORIGINS must contain only explicit https origins outside local development"
+                )
+
+    def _validate_trino_runtime(self) -> None:
+        if not self.trino_enabled:
+            return
+        parsed_url = urlparse(self.trino_base_url)
+        credential_pairs = (
+            (
+                "TRINO_AUTH_USERNAME",
+                self.trino_auth_username,
+                "TRINO_AUTH_PASSWORD",
+                self.trino_auth_password,
+            ),
+            (
+                "TRINO_MATERIALIZER_USERNAME",
+                self.trino_materializer_username,
+                "TRINO_MATERIALIZER_PASSWORD",
+                self.trino_materializer_password,
+            ),
+        )
+        for username_key, username, password_key, password in credential_pairs:
+            if bool(str(username or "").strip()) != bool(
+                str(password or "").strip()
             ):
-                raise ValueError("Trino Basic authentication requires an https TRINO_BASE_URL")
-
-        if not self.is_development_runtime and self.trino_enabled:
-            if parsed_trino_url.scheme != "https" or not parsed_trino_url.netloc:
-                raise ValueError("TRINO_BASE_URL must be an explicit https URL when Trino is enabled")
-
-            required_trino_values = {
-                "TRINO_AUTH_USERNAME": self.trino_auth_username,
-                "TRINO_AUTH_PASSWORD": self.trino_auth_password,
-                "TRINO_MATERIALIZER_USERNAME": self.trino_materializer_username,
-                "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
-                "TRINO_TLS_CA_FILE": self.trino_tls_ca_file,
-                "TRINO_RESULT_STORAGE_BUCKET": self.trino_result_storage_bucket,
-                "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
-                "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
-            }
-            for key, value in required_trino_values.items():
-                normalized = str(value or "").strip()
-                if not normalized or "replace-with-" in normalized or "asklake-local-" in normalized:
-                    raise ValueError(f"{key} must be a non-placeholder production value when Trino is enabled")
-
-            if self.trino_auth_username == self.trino_materializer_username:
-                raise ValueError("TRINO_AUTH_USERNAME and TRINO_MATERIALIZER_USERNAME must be distinct")
-            if self.trino_auth_password == self.trino_materializer_password:
-                raise ValueError("TRINO_AUTH_PASSWORD and TRINO_MATERIALIZER_PASSWORD must be distinct")
-            for key, secret in {
-                "TRINO_AUTH_PASSWORD": self.trino_auth_password,
-                "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
-            }.items():
-                if len(str(secret or "")) < 16:
-                    raise ValueError(f"{key} must contain at least 16 characters")
-            for key, secret in {
-                "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
-                "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
-            }.items():
-                if len(str(secret or "")) < 32:
-                    raise ValueError(f"{key} must contain at least 32 characters")
-        if not self.allows_header_auth_fallback and self.clickhouse_continuous_join_enabled:
-            if not self.trino_enabled:
                 raise ValueError(
-                    "TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED is true"
+                    f"{username_key} and {password_key} must be configured together"
                 )
-            parsed_clickhouse_url = urlparse(self.clickhouse_url)
-            if parsed_clickhouse_url.scheme not in {"http", "https"} or not parsed_clickhouse_url.netloc:
-                raise ValueError("CLICKHOUSE_URL must be an explicit http(s) URL")
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.clickhouse_database) is None:
-                raise ValueError("CLICKHOUSE_DATABASE must be a safe ClickHouse identifier")
-            if not self.clickhouse_user.strip():
-                raise ValueError("CLICKHOUSE_USER is required")
-            password = str(self.clickhouse_password or "")
-            if len(password) < 16 or "replace-with-" in password:
+        if parsed_url.scheme == "http" and (
+            self.trino_auth_password or self.trino_materializer_password
+        ):
+            raise ValueError(
+                "Trino Basic authentication requires an https TRINO_BASE_URL"
+            )
+        if self.is_development_runtime:
+            return
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError(
+                "TRINO_BASE_URL must be an explicit https URL when Trino is enabled"
+            )
+        required = {
+            "TRINO_AUTH_USERNAME": self.trino_auth_username,
+            "TRINO_AUTH_PASSWORD": self.trino_auth_password,
+            "TRINO_MATERIALIZER_USERNAME": self.trino_materializer_username,
+            "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
+            "TRINO_TLS_CA_FILE": self.trino_tls_ca_file,
+            "TRINO_RESULT_STORAGE_BUCKET": self.trino_result_storage_bucket,
+            "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
+            "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
+        }
+        for key, value in required.items():
+            normalized = str(value or "").strip()
+            if (
+                not normalized
+                or "replace-with-" in normalized
+                or "asklake-local-" in normalized
+            ):
                 raise ValueError(
-                    "CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters"
+                    f"{key} must be a non-placeholder production value when Trino is enabled"
                 )
+        if self.trino_auth_username == self.trino_materializer_username:
+            raise ValueError(
+                "TRINO_AUTH_USERNAME and TRINO_MATERIALIZER_USERNAME must be distinct"
+            )
+        if self.trino_auth_password == self.trino_materializer_password:
+            raise ValueError(
+                "TRINO_AUTH_PASSWORD and TRINO_MATERIALIZER_PASSWORD must be distinct"
+            )
+        for key, secret in {
+            "TRINO_AUTH_PASSWORD": self.trino_auth_password,
+            "TRINO_MATERIALIZER_PASSWORD": self.trino_materializer_password,
+        }.items():
+            if len(str(secret or "")) < 16:
+                raise ValueError(f"{key} must contain at least 16 characters")
+        for key, secret in {
+            "TRINO_RESULT_CURSOR_SECRET": self.trino_result_cursor_secret,
+            "TRINO_QUERY_CONFIRMATION_SECRET": self.trino_query_confirmation_secret,
+        }.items():
+            if len(str(secret or "")) < 32:
+                raise ValueError(f"{key} must contain at least 32 characters")
+
+    def _validate_clickhouse_runtime(self) -> None:
         if (
-            not self.is_development_runtime
-            and self.ai_query_provider == "gateway"
+            self.allows_header_auth_fallback
+            or not self.clickhouse_continuous_join_enabled
         ):
-            required_ai_values = {
-                "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
-                "AI_GATEWAY_SERVICE_TOKEN": self.ai_gateway_service_token,
-                "AI_MCP_SERVICE_TOKEN": self.ai_mcp_service_token,
-                "AI_CONTEXT_SIGNING_SECRET": self.ai_context_signing_secret,
-            }
-            for key, value in required_ai_values.items():
-                normalized = str(value or "").strip()
-                if not normalized or "replace-with-" in normalized or "asklake-local-" in normalized:
-                    raise ValueError(f"{key} must be a non-placeholder production value when AI gateway is enabled")
-            if len(self.ai_context_signing_secret) < 32:
-                raise ValueError("AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters")
-        minimum_embedding_response_budget = self.rag_embedding_batch_size * self.rag_embedding_dimensions * 32 + 16_384
-        if self.ai_gateway_max_embedding_response_bytes < minimum_embedding_response_budget:
-            raise ValueError("AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES is too small for the configured RAG embedding batch contract")
-        return self
+            return
+        if not self.trino_enabled:
+            raise ValueError(
+                "TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED is true"
+            )
+        parsed_url = urlparse(self.clickhouse_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValueError("CLICKHOUSE_URL must be an explicit http(s) URL")
+        if re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*",
+            self.clickhouse_database,
+        ) is None:
+            raise ValueError(
+                "CLICKHOUSE_DATABASE must be a safe ClickHouse identifier"
+            )
+        if not self.clickhouse_user.strip():
+            raise ValueError("CLICKHOUSE_USER is required")
+        password = str(self.clickhouse_password or "")
+        if len(password) < 16 or "replace-with-" in password:
+            raise ValueError(
+                "CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters"
+            )
+
+    def _validate_ai_runtime(self) -> None:
+        if (
+            self.is_development_runtime
+            or self.ai_query_provider != "gateway"
+        ):
+            return
+        required = {
+            "AI_GATEWAY_BASE_URL": self.ai_gateway_base_url,
+            "AI_GATEWAY_SERVICE_TOKEN": self.ai_gateway_service_token,
+            "AI_MCP_SERVICE_TOKEN": self.ai_mcp_service_token,
+            "AI_CONTEXT_SIGNING_SECRET": self.ai_context_signing_secret,
+        }
+        for key, value in required.items():
+            normalized = str(value or "").strip()
+            if (
+                not normalized
+                or "replace-with-" in normalized
+                or "asklake-local-" in normalized
+            ):
+                raise ValueError(
+                    f"{key} must be a non-placeholder production value when AI gateway is enabled"
+                )
+        if len(self.ai_context_signing_secret) < 32:
+            raise ValueError(
+                "AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters"
+            )
+
+    def _validate_rag_runtime(self) -> None:
+        minimum_budget = (
+            self.rag_embedding_batch_size
+            * self.rag_embedding_dimensions
+            * 32
+            + 16_384
+        )
+        if self.ai_gateway_max_embedding_response_bytes < minimum_budget:
+            raise ValueError(
+                "AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES is too small for the configured RAG embedding batch contract"
+            )
 
     @property
     def is_development_runtime(self) -> bool:

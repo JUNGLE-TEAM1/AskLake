@@ -34,175 +34,441 @@ class RagSearchService:
         self.search_client = search_client or OpenSearchClient(self.settings)
         self.gateway_client = gateway_client or AiGatewayClient(self.settings)
 
-    def search(self, *, query: str, aliases: list[str], actor: ActorContext, filters: dict[str, Any] | None = None, embedding_model: str | None = None, targets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def search(
+        self,
+        *,
+        query: str,
+        aliases: list[str],
+        actor: ActorContext,
+        filters: dict[str, Any] | None = None,
+        embedding_model: str | None = None,
+        targets: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         if not aliases or not self.settings.opensearch_base_url:
-            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "not_configured", "aliases": aliases}}
-        requested_targets = targets or [{"alias": alias, "embeddingModel": embedding_model} for alias in aliases]
-        requested_targets = [
-            {
-                **target,
-                "datasetId": str(target.get("datasetId") or target.get("alias") or ""),
-            }
-            for target in requested_targets
-            if str(target.get("alias") or "").strip()
-        ]
+            return self._not_configured(aliases)
+        requested_targets = self._requested_targets(
+            aliases,
+            embedding_model,
+            targets,
+        )
         if not requested_targets:
-            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "not_configured", "aliases": []}}
+            return self._not_configured([])
 
         try:
-            plans, planner_provenance = self._query_plans(query, requested_targets)
+            plans, planner_provenance = self._query_plans(
+                query,
+                requested_targets,
+            )
         except Exception as exc:
-            return {
-                "sources": [],
-                "retrieval": {
-                    "mode": "hybrid",
-                    "status": "query_planning_unavailable",
-                    "reason": exc.__class__.__name__,
-                    "aliases": [str(target["alias"]) for target in requested_targets],
-                    "resultCount": 0,
-                },
-            }
+            return self._planning_unavailable(requested_targets, exc)
 
-        candidates: list[dict[str, Any]] = []
-        degraded = False
-        degradation_reasons: set[str] = set()
-        active_aliases: list[str] = []
-        applied_filters: dict[str, Any] = {}
-        filter_clauses_by_alias: dict[str, list[dict[str, Any]]] = {}
-        query_embedding_provenance: dict[str, dict[str, Any]] = {}
-        for target in requested_targets:
-            alias = str(target.get("alias") or "")
-            dataset_id = str(target.get("datasetId") or alias)
-            plan = plans.get(dataset_id)
-            if not alias or plan is None or not plan["inDomain"]:
-                continue
-            active_aliases.append(alias)
-            semantic_query = str(plan["semanticQuery"] or query).strip()
-            target_filters = {**plan["filters"], **(filters or {})}
-            filter_clauses = build_metadata_filter_clauses(target_filters)
-            filter_clauses_by_alias[alias] = filter_clauses
-            applied_filters[dataset_id] = target_filters
-            model = target.get("embeddingModel") or embedding_model
-            lexical_query: dict[str, Any] = {"must": {"multi_match": {"query": semantic_query, "fields": ["title^2", "body", "embedding_text"]}}}
-            if filter_clauses:
-                lexical_query["filter"] = filter_clauses
-            try:
-                lexical_hits = self.search_client.search(alias, {"size": 30, "query": {"bool": lexical_query}})
-            except Exception:
-                lexical_hits = []
-                degraded = True
-                degradation_reasons.add("lexical_search_unavailable")
-            expected_provider = str(target.get("embeddingProvider") or "").strip()
-            expected_model = str(model or "").strip()
-            expected_dimensions = target.get("embeddingDimensions")
-            try:
-                if not expected_provider:
-                    raise ValueError("Serving embedding provider is missing")
-                if not expected_model:
-                    raise ValueError("Serving embedding model is missing")
-                if isinstance(expected_dimensions, bool) or not isinstance(expected_dimensions, int) or expected_dimensions <= 0:
-                    raise ValueError("Serving embedding dimensions are missing")
-                create_with_metadata = getattr(self.gateway_client, "create_embeddings_with_metadata", None)
-                if not callable(create_with_metadata):
-                    raise ValueError("Query embedding provenance is unavailable")
-                embedding_result = create_with_metadata([semantic_query], model=expected_model)
-                vector = embedding_result["data"][0]
-                if embedding_result.get("provider") != expected_provider:
-                    raise ValueError("Query embedding provider does not match the serving index")
-                if embedding_result.get("model") != expected_model:
-                    raise ValueError("Query embedding model does not match the serving index")
-                if embedding_result.get("dimensions") != expected_dimensions or len(vector) != expected_dimensions:
-                    raise ValueError("Query embedding dimensions do not match the serving manifest")
-                query_embedding_provenance[dataset_id] = {
-                    "provider": embedding_result.get("provider"),
-                    "model": embedding_result.get("model"),
-                    "dimensions": embedding_result.get("dimensions"),
-                }
-                knn: dict[str, Any] = {"vector": vector, "k": 30}
-                if filter_clauses:
-                    knn["filter"] = {"bool": {"filter": filter_clauses}}
-            except Exception as exc:
-                vector_hits = []
-                degraded = True
-                degradation_reasons.add(query_embedding_degradation_reason(exc))
-            else:
-                try:
-                    vector_hits = self.search_client.search(alias, {"size": 30, "query": {"knn": {"body_vector": knn}}})
-                except Exception:
-                    vector_hits = []
-                    degraded = True
-                    degradation_reasons.add("vector_search_unavailable")
-            alias_hits = hybrid_rrf(lexical_hits, vector_hits, final_k=30)
-            for hit in alias_hits:
-                hit["_rag_alias"] = alias
-            candidates.extend(alias_hits)
-        # Diversify before the retrieval budget is cut. Chunk-level top-24
-        # can otherwise be monopolized by one long parent, causing unrelated
-        # parents to disappear before the required parent deduplication step.
-        parent_candidates: dict[str, dict[str, Any]] = {}
-        for hit in sorted(candidates, key=lambda item: float(item.get("retrieval", {}).get("score", 0)), reverse=True):
-            source = hit.get("_source") if isinstance(hit.get("_source"), dict) else hit
-            parent_key = str(source.get("parent_document_id") or hit.get("_id") or hit.get("id") or hit.get("document_id"))
-            parent_candidates.setdefault(parent_key, hit)
-        hits = list(parent_candidates.values())[:24]
+        batch = self._search_targets(
+            query=query,
+            targets=requested_targets,
+            plans=plans,
+            filters=filters,
+            embedding_model=embedding_model,
+        )
+        hits = self._diversified_hits(batch["candidates"])
         try:
             sources = self._merge_parent_context(
                 hits,
-                aliases=active_aliases,
-                filter_clauses_by_alias=filter_clauses_by_alias,
+                aliases=batch["activeAliases"],
+                filter_clauses_by_alias=batch["filterClauses"],
                 final_k=8,
             )
         except Exception:
-            degraded = True
-            degradation_reasons.add("context_expansion_unavailable")
+            batch["degraded"] = True
+            batch["degradationReasons"].add("context_expansion_unavailable")
             sources = [self._source(hit) for hit in hits[:8]]
-        retrieval = {
-            "mode": "hybrid",
-            "status": "degraded" if degraded else "ready",
-            "aliases": active_aliases,
-            "filters": applied_filters,
-            "vectorWeight": 0.7,
-            "lexicalWeight": 0.3,
-            "degradationReasons": sorted(degradation_reasons),
-            "queryPlannerProvider": planner_provenance.get("provider"),
-            "queryPlannerModel": planner_provenance.get("model"),
-            "queryEmbeddings": query_embedding_provenance,
-            "resultCount": 0,
-        }
+
+        retrieval = self._retrieval_payload(batch, planner_provenance)
         if not sources:
             retrieval["status"] = (
                 "no_relevant_evidence"
-                if not active_aliases
+                if not batch["activeAliases"]
                 else "degraded_no_matches"
-                if degraded
+                if batch["degraded"]
                 else "no_matches"
             )
             return {"sources": [], "retrieval": retrieval}
 
+        return self._relevance_response(
+            query=query,
+            sources=sources,
+            batch=batch,
+            retrieval=retrieval,
+        )
+
+    def _relevance_response(
+        self,
+        *,
+        query: str,
+        sources: list[dict[str, Any]],
+        batch: dict[str, Any],
+        retrieval: dict[str, Any],
+    ) -> dict[str, Any]:
         try:
-            sources, relevance_model, relevance_provider = self._filter_relevant_sources(query, sources, applied_filters)
+            sources, relevance_model, relevance_provider = (
+                self._filter_relevant_sources(
+                    query,
+                    sources,
+                    batch["appliedFilters"],
+                )
+            )
         except Exception as exc:
-            retrieval.update({
-                "status": "relevance_unavailable",
-                "reason": exc.__class__.__name__,
-                "resultCount": 0,
-            })
+            retrieval.update(
+                {
+                    "status": "relevance_unavailable",
+                    "reason": exc.__class__.__name__,
+                    "resultCount": 0,
+                }
+            )
             return {"sources": [], "retrieval": retrieval}
-        retrieval.update({
-            "status": "degraded" if degraded and sources else "ready" if sources else "no_relevant_evidence",
-            "relevanceModel": relevance_model,
-            "relevanceProvider": relevance_provider,
-            "relevanceThreshold": self.settings.rag_relevance_min_score,
-            "resultCount": len(sources),
-            "fallbackEvidenceCount": sum(1 for source in sources if source.get("fallbackApplied") is True),
-            "fallbackReasons": sorted({
-                str(reason)
-                for source in sources
-                for reason in source.get("fallbackReasons", [])
-                if str(reason).strip()
-            }),
-        })
+        retrieval.update(
+            {
+                "status": (
+                    "degraded"
+                    if batch["degraded"] and sources
+                    else "ready"
+                    if sources
+                    else "no_relevant_evidence"
+                ),
+                "relevanceModel": relevance_model,
+                "relevanceProvider": relevance_provider,
+                "relevanceThreshold": self.settings.rag_relevance_min_score,
+                "resultCount": len(sources),
+                "fallbackEvidenceCount": sum(
+                    1
+                    for source in sources
+                    if source.get("fallbackApplied") is True
+                ),
+                "fallbackReasons": sorted(
+                    {
+                        str(reason)
+                        for source in sources
+                        for reason in source.get("fallbackReasons", [])
+                        if str(reason).strip()
+                    }
+                ),
+            }
+        )
         return {"sources": sources, "retrieval": retrieval}
+
+    @staticmethod
+    def _not_configured(aliases: list[str]) -> dict[str, Any]:
+        return {
+            "sources": [],
+            "retrieval": {
+                "mode": "hybrid",
+                "status": "not_configured",
+                "aliases": aliases,
+            },
+        }
+
+    @staticmethod
+    def _requested_targets(
+        aliases: list[str],
+        embedding_model: str | None,
+        targets: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        requested = targets or [
+            {
+                "alias": alias,
+                "embeddingModel": embedding_model,
+            }
+            for alias in aliases
+        ]
+        return [
+            {
+                **target,
+                "datasetId": str(
+                    target.get("datasetId")
+                    or target.get("alias")
+                    or ""
+                ),
+            }
+            for target in requested
+            if str(target.get("alias") or "").strip()
+        ]
+
+    @staticmethod
+    def _planning_unavailable(
+        targets: list[dict[str, Any]],
+        error: Exception,
+    ) -> dict[str, Any]:
+        return {
+            "sources": [],
+            "retrieval": {
+                "mode": "hybrid",
+                "status": "query_planning_unavailable",
+                "reason": error.__class__.__name__,
+                "aliases": [str(target["alias"]) for target in targets],
+                "resultCount": 0,
+            },
+        }
+
+    def _search_targets(
+        self,
+        *,
+        query: str,
+        targets: list[dict[str, Any]],
+        plans: dict[str, dict[str, Any]],
+        filters: dict[str, Any] | None,
+        embedding_model: str | None,
+    ) -> dict[str, Any]:
+        batch: dict[str, Any] = {
+            "candidates": [],
+            "degraded": False,
+            "degradationReasons": set(),
+            "activeAliases": [],
+            "appliedFilters": {},
+            "filterClauses": {},
+            "queryEmbeddings": {},
+        }
+        for target in targets:
+            result = self._search_target(
+                query=query,
+                target=target,
+                plan=plans.get(
+                    str(target.get("datasetId") or target.get("alias") or "")
+                ),
+                filters=filters,
+                embedding_model=embedding_model,
+            )
+            if result is None:
+                continue
+            batch["activeAliases"].append(result["alias"])
+            batch["appliedFilters"][result["datasetId"]] = result["filters"]
+            batch["filterClauses"][result["alias"]] = result["filterClauses"]
+            batch["candidates"].extend(result["hits"])
+            if result["embeddingProvenance"] is not None:
+                batch["queryEmbeddings"][result["datasetId"]] = result[
+                    "embeddingProvenance"
+                ]
+            if result["degradationReasons"]:
+                batch["degraded"] = True
+                batch["degradationReasons"].update(
+                    result["degradationReasons"]
+                )
+        return batch
+
+    def _search_target(
+        self,
+        *,
+        query: str,
+        target: dict[str, Any],
+        plan: dict[str, Any] | None,
+        filters: dict[str, Any] | None,
+        embedding_model: str | None,
+    ) -> dict[str, Any] | None:
+        alias = str(target.get("alias") or "")
+        dataset_id = str(target.get("datasetId") or alias)
+        if not alias or plan is None or not plan["inDomain"]:
+            return None
+
+        semantic_query = str(plan["semanticQuery"] or query).strip()
+        target_filters = {
+            **plan["filters"],
+            **(filters or {}),
+        }
+        filter_clauses = build_metadata_filter_clauses(target_filters)
+        lexical_hits, lexical_reason = self._lexical_hits(
+            alias,
+            semantic_query,
+            filter_clauses,
+        )
+        vector_hits, provenance, vector_reason = self._vector_hits(
+            alias=alias,
+            semantic_query=semantic_query,
+            target=target,
+            embedding_model=embedding_model,
+            filter_clauses=filter_clauses,
+        )
+        hits = hybrid_rrf(lexical_hits, vector_hits, final_k=30)
+        for hit in hits:
+            hit["_rag_alias"] = alias
+        return {
+            "alias": alias,
+            "datasetId": dataset_id,
+            "filters": target_filters,
+            "filterClauses": filter_clauses,
+            "hits": hits,
+            "embeddingProvenance": provenance,
+            "degradationReasons": {
+                reason
+                for reason in (lexical_reason, vector_reason)
+                if reason is not None
+            },
+        }
+
+    def _lexical_hits(
+        self,
+        alias: str,
+        query: str,
+        filter_clauses: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        lexical_query: dict[str, Any] = {
+            "must": {
+                "multi_match": {
+                    "query": query,
+                    "fields": ["title^2", "body", "embedding_text"],
+                }
+            }
+        }
+        if filter_clauses:
+            lexical_query["filter"] = filter_clauses
+        try:
+            return (
+                self.search_client.search(
+                    alias,
+                    {
+                        "size": 30,
+                        "query": {
+                            "bool": lexical_query,
+                        },
+                    },
+                ),
+                None,
+            )
+        except Exception:
+            return [], "lexical_search_unavailable"
+
+    def _vector_hits(
+        self,
+        *,
+        alias: str,
+        semantic_query: str,
+        target: dict[str, Any],
+        embedding_model: str | None,
+        filter_clauses: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
+        expected_provider = str(
+            target.get("embeddingProvider") or ""
+        ).strip()
+        expected_model = str(
+            target.get("embeddingModel") or embedding_model or ""
+        ).strip()
+        expected_dimensions = target.get("embeddingDimensions")
+        try:
+            if not expected_provider:
+                raise ValueError("Serving embedding provider is missing")
+            if not expected_model:
+                raise ValueError("Serving embedding model is missing")
+            if (
+                isinstance(expected_dimensions, bool)
+                or not isinstance(expected_dimensions, int)
+                or expected_dimensions <= 0
+            ):
+                raise ValueError("Serving embedding dimensions are missing")
+            create_with_metadata = getattr(
+                self.gateway_client,
+                "create_embeddings_with_metadata",
+                None,
+            )
+            if not callable(create_with_metadata):
+                raise ValueError("Query embedding provenance is unavailable")
+            result = create_with_metadata(
+                [semantic_query],
+                model=expected_model,
+            )
+            vector = result["data"][0]
+            if result.get("provider") != expected_provider:
+                raise ValueError(
+                    "Query embedding provider does not match the serving index"
+                )
+            if result.get("model") != expected_model:
+                raise ValueError(
+                    "Query embedding model does not match the serving index"
+                )
+            if (
+                result.get("dimensions") != expected_dimensions
+                or len(vector) != expected_dimensions
+            ):
+                raise ValueError(
+                    "Query embedding dimensions do not match the serving manifest"
+                )
+            knn: dict[str, Any] = {
+                "vector": vector,
+                "k": 30,
+            }
+            if filter_clauses:
+                knn["filter"] = {
+                    "bool": {
+                        "filter": filter_clauses,
+                    }
+                }
+        except Exception as exc:
+            return [], None, query_embedding_degradation_reason(exc)
+
+        provenance = {
+            "provider": result.get("provider"),
+            "model": result.get("model"),
+            "dimensions": result.get("dimensions"),
+        }
+        try:
+            hits = self.search_client.search(
+                alias,
+                {
+                    "size": 30,
+                    "query": {
+                        "knn": {
+                            "body_vector": knn,
+                        }
+                    },
+                },
+            )
+        except Exception:
+            return [], provenance, "vector_search_unavailable"
+        return hits, provenance, None
+
+    @staticmethod
+    def _diversified_hits(
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        # Apply the retrieval budget after parent diversification. Otherwise a
+        # single long parent can crowd unrelated parents out of the top 24.
+        parents: dict[str, dict[str, Any]] = {}
+        ordered = sorted(
+            candidates,
+            key=lambda item: float(
+                item.get("retrieval", {}).get("score", 0)
+            ),
+            reverse=True,
+        )
+        for hit in ordered:
+            source = (
+                hit.get("_source")
+                if isinstance(hit.get("_source"), dict)
+                else hit
+            )
+            parent_key = str(
+                source.get("parent_document_id")
+                or hit.get("_id")
+                or hit.get("id")
+                or hit.get("document_id")
+            )
+            parents.setdefault(parent_key, hit)
+        return list(parents.values())[:24]
+
+    @staticmethod
+    def _retrieval_payload(
+        batch: dict[str, Any],
+        planner_provenance: dict[str, str | None],
+    ) -> dict[str, Any]:
+        return {
+            "mode": "hybrid",
+            "status": "degraded" if batch["degraded"] else "ready",
+            "aliases": batch["activeAliases"],
+            "filters": batch["appliedFilters"],
+            "vectorWeight": 0.7,
+            "lexicalWeight": 0.3,
+            "degradationReasons": sorted(batch["degradationReasons"]),
+            "queryPlannerProvider": planner_provenance.get("provider"),
+            "queryPlannerModel": planner_provenance.get("model"),
+            "queryEmbeddings": batch["queryEmbeddings"],
+            "resultCount": 0,
+        }
 
     def _query_plans(
         self,
