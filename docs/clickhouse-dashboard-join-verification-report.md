@@ -26,7 +26,7 @@ Dashboard 위젯에서 Alice 6건, Bob 6건 표시
 
 기존 Spark/S3/Iceberg 경로는 삭제하거나 바꾸지 않았다. `servingMode=clickhouse`를 명시하고 두 feature flag를 켠 Continuous JOIN Job만 새 경로를 탄다.
 
-공유 dev 서버 재배포는 완료하지 못했다. 현재 작업공간에는 실제 runtime 배포 대상과 인증 정보가 없고, 확인 가능한 GitHub OIDC workflow는 컨테이너 이미지를 게시할 뿐 실행 환경을 교체하지 않는다. 따라서 아래 실측값은 **공유 dev가 아니라 새 코드를 올린 로컬 Compose 환경**의 결과다.
+2026-07-17 최초 보고 당시에는 공유 dev 서버 재배포 권한을 확인하지 못했으므로 아래 2~10절의 실측값은 로컬 Compose 결과로 작성했다. 이후 2026-07-18에 AWS EC2 Continuous cell의 실제 배포 권한과 SSM 경로를 확인해 재배포·장애 주입·장시간 검증까지 완료했다. 운영 결과는 11절에 별도로 기록한다.
 
 ## 2. 왜 예전보다 짧아질 수 있는가
 
@@ -202,11 +202,36 @@ Windows skip 1건은 POSIX Spark runtime 경로 검사이며 ClickHouse 동작 �
 
 ## 10. 아직 남은 한계
 
-- 공유 dev 서버 runtime 재배포와 브라우저 UI 클릭 검증은 배포 대상·인증 부재로 수행하지 못했다.
+- 2~9절 성능 수치는 최초 로컬 Compose 검증값이며, 운영 장애·복구 실측은 11절 값으로 판단해야 한다.
 - static Iceberg 데이터는 Job 시작 시점의 exact snapshot으로 고정된다. static 데이터가 바뀌면 Job을 다시 시작해야 한다.
 - 한 Job에서 static snapshot을 ClickHouse로 적재하는 크기는 운영 설정의 안전 상한을 넘을 수 없다.
 - ClickHouse 결과 Dataset은 Dashboard와 Dataset row API용이다. 일반 Trino SQL table로 자동 등록하지 않는다.
 - 이번 성능 수치는 로컬 Compose의 기능·동기화 측정값이다. 운영 SLO나 기존 Spark 대비 배수로 해석하면 안 된다.
+
+## 11. 2026-07-18 AWS 운영 복구 검증
+
+AWS EC2 Continuous cell에 `70266ba44a8dd2f898bb21bd6638ab07a8ce3568`을 배포했다. 기존 PostgreSQL, Redpanda, ClickHouse volume과 실행 중 Dataset은 보존하고 backend image만 교체했다.
+
+| 검증 | 운영 결과 |
+| --- | --- |
+| Dashboard 실시간 기준선 | 10초 사이 집계 162,000 → 164,000, Catalog revision 140 → 142 |
+| Kafka 중지·재시작 | 중지 중 `recovering`, 재기동 후 같은 generation 2·같은 active Run으로 `running`; offset 368,999 → 371,999, revision 346 → 349 |
+| backend 재시작 | 같은 generation/Run 유지, raw offset 206,999 → 208,999 |
+| ClickHouse 재시작 | consumer group offset 유지, raw offset 208,999 → 210,999; group committed offset 211,000 |
+| offset 연속성 | raw `count = distinct(partition,offset) = max-min+1`; offset 0부터 공백 없음 |
+| 10분 soak | raw 220,000 → 340,000(+120,000), memory 3,568,607,232 → 3,580,612,608 bytes, 최대 4,125,626,368 bytes/6 GiB |
+| soak 중복 | raw 340,000/identity 340,000, output 339,000/identity 339,000 |
+| 정적 snapshot 교체 | Iceberg snapshot `8339785072495771562` 2행 → `9069373903868998388` 3행; cache key와 ClickHouse table 모두 분리 |
+| Catalog 삭제·자가복구 | row 삭제 뒤 같은 publication으로 복원, revision 398 → 398 유지, Dashboard `ready` |
+| 동일 이름 재시도 | 같은 `clientRequestId`는 같은 Job 반환, 같은 표시 이름의 다른 Dataset ID Job은 충돌 없이 생성; fixture Job 즉시 정리 |
+| Dashboard SQL matrix | `day|month|year` × `count|sum|avg|min|max` 15/15 성공 |
+| 최종 상태 | Job `running`, Catalog 447,000행/revision 424, Dashboard `ready` 8포인트, `/jobs` HTTP 200 |
+| 최종 중복·연속성 | raw 448,000행/identity 448,000/offset 0~447,999, output 447,000행/identity 447,000 |
+| fixture 정리 | 임시 ClickHouse table 0, cache registry row 0, Iceberg table 0, 동일 이름 검증 Job 0 |
+
+Kafka와 ClickHouse를 멈춘 동안 producer는 계속 같은 topic으로 전송했다. 복구 뒤 consumer가 committed offset부터 backlog를 이어 읽었고 generation을 새로 만들거나 수동 start command를 보내지 않았다. broker 연결 오류는 non-terminal `recovering`으로 보이지만 parsing·field-count 오류는 계속 `failed`로 분리한다.
+
+관련 자동 회귀는 ClickHouse/Continuous SQL/Dashboard 82개, 집중 lifecycle 31개, `verify:continuous-sql-contract` 27개가 통과했다. 전체 로컬 `npm run verify`는 Docker Desktop의 MinIO가 꺼져 있어 `127.0.0.1:9000` 연결 단계에서만 중단됐으며, 같은 object storage·Kafka·ClickHouse 경계는 위 AWS 운영 검증으로 확인했다.
 
 ## 딱 기억해
 
