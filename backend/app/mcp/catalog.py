@@ -1,3 +1,5 @@
+import re
+
 from fastapi import status
 from mcp.server.fastmcp import Context
 
@@ -11,13 +13,17 @@ from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
-from app.mcp.context import request_context_token, verify_ai_context_token
+from app.mcp.context import consume_ai_context_token, request_context_token, verify_ai_context_token
 
 
 CATALOG_CONTEXT_TOOL_NAME = "asklake.catalog.get_dataset_context"
 CATALOG_CONTEXT_BATCH_TOOL_NAME = "asklake.catalog.get_datasets_context"
 DEFAULT_SAMPLE_ROW_LIMIT = 5
 MAX_SAMPLE_ROW_LIMIT = 20
+MAX_SCHEMA_COLUMNS = 256
+MAX_SAMPLE_COLUMNS = 64
+MAX_CONTEXT_LIST_ITEMS = 64
+MAX_SAMPLE_VALUE_CHARS = 256
 
 
 def get_dataset_context(
@@ -98,6 +104,7 @@ def _get_datasets_context(
 
     actor = _actor_from_claims(claims)
     with SessionLocal() as db:
+        consume_ai_context_token(db, token, claims)
         repository = CatalogRepository(db)
         contexts: list[CatalogDatasetContext] = []
         for dataset_id in dataset_ids:
@@ -199,34 +206,43 @@ def _safe_dataset_context(
     dataset: CatalogDatasetResponse,
     sample_row_limit: int,
 ) -> CatalogDatasetContext:
+    bounded_schema = list(dataset.schema_[:MAX_SCHEMA_COLUMNS])
+    sample_column_count = min(len(bounded_schema), MAX_SAMPLE_COLUMNS)
     sensitive_columns = {
         index
-        for index, (column_name, _column_type) in enumerate(dataset.schema_)
+        for index, (column_name, _column_type) in enumerate(bounded_schema[:sample_column_count])
         if _is_sensitive_column(column_name)
     }
     sample_rows = []
     for row in dataset.sample_rows[:sample_row_limit]:
         sample_rows.append([
-            "[REDACTED]" if index in sensitive_columns else str(value)
-            for index, value in enumerate(row)
+            _redact_sample_value(value, sensitive=index in sensitive_columns)
+            for index, value in enumerate(row[:sample_column_count])
         ])
     return CatalogDatasetContext(
-        dataset_id=dataset.id,
-        dataset_name=dataset.name,
-        description=dataset.description,
-        layer=dataset.layer,
-        freshness=dataset.freshness,
-        last_updated=dataset.last_updated,
-        quality=dataset.quality,
-        row_count=dataset.rows,
+        dataset_id=str(dataset.id)[:255],
+        dataset_name=str(dataset.name)[:255],
+        description=str(dataset.description)[:2_000],
+        layer=str(dataset.layer)[:64],
+        freshness=str(dataset.freshness)[:64],
+        last_updated=str(dataset.last_updated)[:128],
+        quality=str(dataset.quality)[:128],
+        row_count=str(dataset.rows)[:64],
         schema=[
-            {"name": str(column_name), "type": str(column_type)}
-            for column_name, column_type in dataset.schema_
+            {"name": str(column_name)[:255], "type": str(column_type)[:128]}
+            for column_name, column_type in bounded_schema
         ],
-        tags=[str(tag) for tag in dataset.tags],
-        upstream=[str(dataset_id) for dataset_id in dataset.upstream],
-        downstream=[str(dataset_id) for dataset_id in dataset.downstream],
+        schema_truncated=len(dataset.schema_) > len(bounded_schema),
+        tags=[str(tag)[:255] for tag in dataset.tags[:MAX_CONTEXT_LIST_ITEMS]],
+        upstream=[str(dataset_id)[:255] for dataset_id in dataset.upstream[:MAX_CONTEXT_LIST_ITEMS]],
+        downstream=[str(dataset_id)[:255] for dataset_id in dataset.downstream[:MAX_CONTEXT_LIST_ITEMS]],
+        sample_column_names=[str(column_name)[:255] for column_name, _ in bounded_schema[:sample_column_count]],
         sample_rows=sample_rows,
+        sample_rows_truncated=(
+            len(dataset.sample_rows) > len(sample_rows)
+            or len(bounded_schema) > sample_column_count
+            or any(len(row) > sample_column_count for row in dataset.sample_rows[:sample_row_limit])
+        ),
     )
 
 
@@ -241,5 +257,41 @@ def _is_sensitive_column(column_name: str) -> bool:
         "access_key",
         "token",
         "private_key",
+        "email",
+        "e_mail",
+        "phone",
+        "mobile",
+        "telephone",
+        "address",
+        "passport",
+        "social_security",
+        "national_id",
+        "resident_id",
+        "credit_card",
+        "card_number",
+        "bank_account",
+        "account_number",
+        "iban",
+        "birth_date",
+        "date_of_birth",
+        "ip_address",
+        "user_id",
+        "customer_id",
+        "reviewer_id",
     )
     return any(marker in normalized for marker in sensitive_markers)
+
+
+_EMAIL_VALUE = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
+_PHONE_VALUE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{2,4}\)?[ .-]?)\d{3,4}[ .-]?\d{4}(?!\d)")
+_PAYMENT_CARD_VALUE = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
+
+
+def _redact_sample_value(value: object, *, sensitive: bool) -> str:
+    if sensitive:
+        return "[REDACTED]"
+    text = str(value)
+    text = _EMAIL_VALUE.sub("[REDACTED_EMAIL]", text)
+    text = _PHONE_VALUE.sub("[REDACTED_PHONE]", text)
+    text = _PAYMENT_CARD_VALUE.sub("[REDACTED_CARD]", text)
+    return text[:MAX_SAMPLE_VALUE_CHARS]

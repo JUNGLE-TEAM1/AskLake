@@ -294,13 +294,13 @@ FastAPI가 현재 소유하는 책임:
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
-- Dashboard Assistant OpenAI-backed response endpoint
+- Dashboard Assistant private AI Gateway + Semantic RAG response endpoint
 - 공통 error envelope
 
 후속으로 넘길 책임:
 
 - 운영 IdP/SSO, production session hardening, auth/permission Alembic migration, deny/policy 고도화
-- RAG 검색 기반 Dashboard Assistant 고도화
+- AI Gateway 운영 관측과 provider별 비용 정책 고도화
 
 ### Permission/Governance 경계
 
@@ -320,11 +320,21 @@ Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한�
 이 endpoint는 `get_actor_context`를 필수 dependency로 사용하고, `dashboardId`가 있으면 해당 actor의 dashboard `view` 권한을 확인한 뒤에만 Assistant context를 구성한다. 운영 환경의 유효한 session이 없는 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`을 반환한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
 현재 actor의 dataset `query` permission과 governance 검사를 통과한 available catalog dataset과 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 OpenAI에 전달한다. 제외된 dataset의 `sampleRows`와 widget data sample은 provider context에 포함하지 않는다.
-OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
+Gateway 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
 데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
 AI provider key가 없거나 private AI Gateway 호출이 실패하면 endpoint는 명시적인 unavailable/error 응답을 반환하고 action을 비운다. 시각화 요청에서도 결정론적 chart action이나 성공 문구를 대신 만들지 않는다.
 현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
 RAG 검색은 published Semantic Model과 approved serving index를 공통 resolver로 확인하며, `semantic_layer_rag` provenance와 source evidence를 응답에 포함한다.
+
+### AI Gateway, MCP, evidence 경계
+
+브라우저가 provider를 직접 호출하지 않는다. SQL Query AI, Dashboard Assistant, ETL transform, Semantic RAG 분류·검색, 리뷰 분석은 FastAPI 공개 API를 거쳐 private `ai-server`의 `/v1/generate` 또는 `/v1/embeddings`로 전달된다. Provider API key는 `ai-server`에만 있고 FastAPI는 service token만 가진다.
+
+Dataset metadata가 필요한 요청은 FastAPI가 먼저 actor의 권한과 governance를 검사한 뒤 request ID, actor, 허용 Dataset ID와 permission을 담은 짧은 수명의 signed context token을 발급한다. AI Gateway가 내부 MCP Catalog를 조회할 때 이 token을 한 번만 소비한다. 소비 기록은 PostgreSQL `ai_context_consumptions`에 저장해 여러 FastAPI replica에서도 재사용을 거부한다. MCP 응답은 schema·sample row 수를 제한하고 PII/credential 계열 컬럼과 값을 redaction한다.
+
+SQL과 Dashboard 생성은 published Semantic Model에 연결되고 승인된 serving RAG index만 검색한다. Gateway가 반환한 `usedEvidenceIds`는 검색 후보 ID의 부분집합이어야 하며 FastAPI는 실제 사용 ID와 일치하는 source만 공개 응답에 남긴다. 후보·사용 ID, actor, provider/model, 입력·출력 fingerprint는 `ai_generation_usage`에 감사 증적으로 저장한다. Provider/RAG가 unavailable이거나 응답 provenance가 mock/fallback이면 가짜 SQL·차트·근거를 만들지 않고 fail closed 한다.
+
+리뷰 분석은 `/api/review-analysis/runs`의 persisted run과 allow-list Node bridge로 실제 object-storage JSONL을 bounded batch 처리한다. FastAPI worker tick이 중단 뒤 남은 `queued` run을 다시 claim하고 lease가 만료된 `running` run을 실패로 종결한다. Catalog Dataset 권한과 연결되지 않은 임의 object 경로는 일반 actor에게 허용하지 않으며, 일반 actor는 설정된 review source만 사용할 수 있다. `review_schema`와 `review_row` 생성 provenance를 보존하고, 분류형 출력은 최소 class row·holdout accuracy/macro-F1·모든 class coverage를 통과한 portable artifact만 digest와 함께 latest model registry에 원자적으로 게시한다.
 
 ## 8) 데이터 모델 요약
 
@@ -344,6 +354,9 @@ RAG 검색은 published Semantic Model과 approved serving index를 공통 resol
 | Identity Profile | session actor 또는 current actor header + demo identity catalog | FastAPI `/api/users/me` profile resource |
 | Admin Console | admin users/groups/permissions/audit APIs + 관리 UI | FastAPI admin users/groups/permissions/audit resource |
 | Permission Grant | resource payload grant + `permission_grants` table | backend-enforced access control resource and admin edit target |
+| AI Generation Usage | `ai_generation_usage` | provider/model usage와 검증된 후보·실사용 evidence 감사 기록 |
+| AI Context Consumption | `ai_context_consumptions` | request-scoped MCP context token의 단일 사용 fence |
+| Review Analysis Run | `review_analysis_runs` | queued/running/success/failed 리뷰 분석 요청과 결과 |
 
 Catalog dataset은 `materializationRuns` version history를 가질 수 있다. 각 Run의 `materializationMode`는 전체 기준점인 `snapshot` 또는 이후 추가분인 `delta`다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 snapshot까지의 active segment만 기준으로 계산한다. active 결과를 모두 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 materialization 결과 삭제는 별도 UX/API로 분리한다.
 
@@ -393,6 +406,8 @@ FastAPI 현재 구현 범위:
 - `GET /api/catalog/datasets/{datasetId}/lineage`
 - `POST /api/catalog/derived-datasets`
 - `POST /api/query/runs`
+- `POST /api/query/ai-suggestions`: signed MCP context와 Semantic RAG evidence를 사용하는 SQL 초안 생성
+- `POST /api/ai/generate-sql`: ETL field/SQL transform용 검증된 scalar expression 또는 read-only SELECT 생성
 - `GET /api/query/runs`: 현재 actor의 Trino 실행 이력 조회
 - `GET /api/query/runs/{runId}`: Trino lifecycle 또는 legacy DuckDB snapshot 조회
 - `GET /api/query/runs/{runId}/results`: Trino signed-cursor 결과 page 조회
@@ -418,6 +433,13 @@ FastAPI 현재 구현 범위:
 - `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
+- `POST /api/dashboards/assistant`: 검증된 action과 실제 사용 evidence만 반환
+- `POST /api/review-analysis/schema-suggestion`
+- `POST /api/review-analysis/preview`
+- `POST /api/review-analysis/runs`
+- `GET /api/review-analysis/runs/latest`
+- `GET /api/review-analysis/runs/{runId}`
+- `GET /api/catalog/models`: 검증·게시된 portable review model artifact 조회
 - `GET /api/datasets/{datasetId}/freshness`
 - `POST /api/datasets/freshness/query`
 - `POST /api/dashboards/{dashboardId}/widgets/query`

@@ -145,6 +145,9 @@ def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResp
         message=str(payload.get("message") or "Assistant 응답을 받았습니다."),
         actions=actions,
         warnings=warnings,
+        model=str(payload.get("model") or "") or None,
+        provider=_bounded_provider(payload.get("provider")),
+        used_evidence_ids=_string_list(payload.get("usedEvidenceIds")),
     )
 
 
@@ -170,6 +173,13 @@ def _normalize_update_widget_action(raw_action: dict[str, Any]) -> dict[str, Any
             if value is not None
         },
     }
+
+
+def _bounded_provider(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized[:100] or None
 
 
 def guard_assistant_response(
@@ -214,8 +224,15 @@ def guard_assistant_response(
         message=message,
         actions=guarded_actions,
         warnings=warnings,
+        model=response.model,
+        provider=response.provider,
         config_patch=_config_patch_from_actions(guarded_actions),
         widget_patch=_widget_patch_from_actions(guarded_actions),
+        used_evidence_ids=list(dict.fromkeys(
+            evidence_id
+            for action in guarded_actions
+            for evidence_id in action.used_evidence_ids
+        )),
     )
 
 
