@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowRight, Check, ChevronDown, Database, FileText, Loader2, Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, Table2, Trash2, X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 import type { AuditResult } from "../../types/audit";
-import { apiClient } from "../../services/apiClient";
 import {
   approveRagDataset,
   classifyRagDataset,
@@ -48,10 +47,6 @@ type SemanticPageProps = {
   datasets: CatalogDataset[];
   onAction?: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
 };
-
-function catalogDatasetList(value: { datasets?: CatalogDataset[] } | CatalogDataset[]): CatalogDataset[] {
-  return Array.isArray(value) ? value : value.datasets ?? [];
-}
 
 function schemaFor(dataset: SemanticDataset | undefined, catalog: CatalogDataset[]): SemanticSchemaColumn[] {
   if (dataset?.schema?.length) return dataset.schema;
@@ -107,7 +102,7 @@ function delay(milliseconds: number) {
 
 export function SemanticLayerPage({ datasets: providedDatasets, onAction }: SemanticPageProps) {
   const [models, setModels] = useState<SemanticModel[]>([]);
-  const [catalogDatasets, setCatalogDatasets] = useState<CatalogDataset[]>(providedDatasets);
+  const catalogDatasets = providedDatasets;
   const [selectedModelId, setSelectedModelId] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("datasets");
   const [selectedRagDatasetId, setSelectedRagDatasetId] = useState("");
@@ -119,34 +114,25 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
   const [notice, setNotice] = useState<Notice | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [ragJobsRefreshToken, setRagJobsRefreshToken] = useState(0);
+  const busyRef = useRef(false);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextModels, catalogResponse] = await Promise.all([
-        listSemanticModels(),
-        apiClient
-          .get<{ datasets: CatalogDataset[] } | CatalogDataset[]>("/api/catalog/datasets")
-          .catch(() => providedDatasets),
-      ]);
-      const nextCatalog = catalogDatasetList(catalogResponse);
+      const nextModels = await listSemanticModels();
       setModels(nextModels);
-      setCatalogDatasets(nextCatalog);
       setProfiles({});
       setPreviews({});
       setSelectedModelId((current) => current && nextModels.some((model) => model.id === current) ? current : nextModels[0]?.id ?? "");
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Semantic Model과 Catalog를 불러오지 못했습니다.");
+      setError(loadError instanceof Error ? loadError.message : "Semantic Model을 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => { void load(); }, []);
-  useEffect(() => {
-    if (providedDatasets.length > 0) setCatalogDatasets(providedDatasets);
-  }, [providedDatasets]);
 
   const selected = models.find((model) => model.id === selectedModelId) ?? models[0];
   const linkedCatalog = useMemo(
@@ -161,14 +147,19 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
     setSelectedRagDatasetId((current) => selected.datasets.some((item) => item.datasetId === current) ? current : selected.datasets[0]?.datasetId ?? "");
   }, [selected]);
 
-  const run = async (key: string, action: () => Promise<void>) => {
+  const run = async (key: string, action: () => Promise<void>): Promise<boolean> => {
+    if (busyRef.current) return false;
+    busyRef.current = true;
     setBusy(key);
     setNotice(null);
     try {
       await action();
+      return true;
     } catch (actionError) {
       setNotice({ tone: "error", message: actionError instanceof Error ? actionError.message : "요청을 처리하지 못했습니다." });
+      return false;
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   };
@@ -188,8 +179,8 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
   }, [activeTab, ragDatasetId, profiles]);
 
   const saveModelInfo = async (name: string, description: string) => {
-    if (!selected) return;
-    await run("model", async () => {
+    if (!selected) return false;
+    return run("model", async () => {
       const updated = await updateSemanticModel(selected.id, { name, description });
       setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
       setNotice({ tone: "success", message: "업무 모델 정보가 저장되었습니다." });
@@ -198,8 +189,8 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
   };
 
   const saveDatasets = async (nextDatasets: SemanticDataset[]) => {
-    if (!selected) return;
-    await run("datasets", async () => {
+    if (!selected) return false;
+    return run("datasets", async () => {
       const updated = await replaceSemanticDatasets(selected.id, nextDatasets.map((item) => ({ datasetId: item.datasetId, role: item.role })));
       setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
       setNotice({ tone: "success", message: "연결 Dataset과 전체 schema가 갱신되었습니다." });
@@ -320,13 +311,13 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
   );
 }
 
-function ModelHeader({ model, busy, onSave, onPublish }: { model: SemanticModel; busy: boolean; onSave: (name: string, description: string) => Promise<void>; onPublish: () => Promise<void> }) {
+function ModelHeader({ model, busy, onSave, onPublish }: { model: SemanticModel; busy: boolean; onSave: (name: string, description: string) => Promise<boolean>; onPublish: () => Promise<void> }) {
   const [name, setName] = useState(model.name);
   const [description, setDescription] = useState(model.description);
   const [editing, setEditing] = useState(false);
   useEffect(() => { setName(model.name); setDescription(model.description); setEditing(false); }, [model.id, model.name, model.description]);
   const cancel = () => { setName(model.name); setDescription(model.description); setEditing(false); };
-  const save = async () => { await onSave(name.trim(), description); setEditing(false); };
+  const save = async () => { if (await onSave(name.trim(), description)) setEditing(false); };
   return <Card size="none" className="semantic-real-model-header">
     <div className="semantic-real-model-summary">
       <div>
@@ -360,7 +351,7 @@ function ModelWorkflowNav({ activeTab, onChange }: { activeTab: Tab; onChange: (
   </nav>;
 }
 
-function DatasetsTab({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (datasets: SemanticDataset[]) => Promise<void> }) {
+function DatasetsTab({ model, catalogDatasets, onSave }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; onSave: (datasets: SemanticDataset[]) => Promise<boolean> }) {
   const [datasets, setDatasets] = useState(model.datasets);
   const [pickerOpen, setPickerOpen] = useState(model.datasets.length === 0);
   useEffect(() => { setDatasets(model.datasets); setPickerOpen(model.datasets.length === 0); }, [model.id, model.datasets]);
@@ -369,7 +360,7 @@ function DatasetsTab({ model, catalogDatasets, onSave }: { model: SemanticModel;
   const draftIds = [...datasets.map((item) => item.datasetId)].sort().join("|");
   const hasChanges = savedIds !== draftIds;
   const cancel = () => { setDatasets(model.datasets); setPickerOpen(false); };
-  const save = async () => { await onSave(datasets); setPickerOpen(false); };
+  const save = async () => { if (await onSave(datasets)) setPickerOpen(false); };
   return <div className="semantic-real-tab-content">
     <SectionTitle title="어떤 데이터를 설명할까요?" action={<Button variant="outline" type="button" onClick={() => setPickerOpen(true)}><Plus /> 데이터 변경</Button>} />
     {datasets.length === 0 ? <Card size="none" className="semantic-real-definition-empty"><Database /><strong>연결된 데이터가 없습니다.</strong><p>카탈로그에서 이 업무 모델이 사용할 데이터를 선택해 주세요.</p><Button type="button" onClick={() => setPickerOpen(true)}><Plus /> 데이터 선택</Button></Card> : <div className="semantic-real-connected-list">{datasets.map((dataset) => {
@@ -553,7 +544,7 @@ function DefinitionEmptyState({ title, description, onAdd, buttonLabel, disabled
 }
 
 function PhysicalColumnPicker({ model, catalogDatasets, datasetId, selectedColumns, single = false, inputName, onDatasetChange, onColumnsChange }: { model: SemanticModel; catalogDatasets: CatalogDataset[]; datasetId: string; selectedColumns: string[]; single?: boolean; inputName?: string; onDatasetChange: (datasetId: string) => void; onColumnsChange: (columns: string[]) => void }) {
-  const dataset = modelDataset(model, datasetId);
+  const dataset = model.datasets.find((item) => item.datasetId === datasetId);
   const schema = schemaFor(dataset, catalogDatasets);
   const changeColumn = (columnName: string, checked: boolean) => {
     onColumnsChange(single
