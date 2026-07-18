@@ -61,6 +61,10 @@ export function usePipelineMutations({
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
+  const resetDraftPipeline = () => {
+    setDraftPipeline(initialDraftPipeline);
+  };
+
   const createPipelineFromDraft = async (
     pipelineDraft: DraftPipeline,
     {
@@ -179,5 +183,5 @@ export function usePipelineMutations({
     }
   };
 
-  return { createPipeline, createSqlDatasetJob, createTrinoSqlJob, updateDraftPipeline };
+  return { createPipeline, createSqlDatasetJob, createTrinoSqlJob, resetDraftPipeline, updateDraftPipeline };
 }

@@ -248,6 +248,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 `frontend/src/App.tsx`는 Router Shell 역할을 맡아 `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs`, `/etl/source`, `/etl/schema`, `/etl/schedule`, `/etl/permission`, `/etl/target`, `/etl/review`, `/catalog`, `/catalog/:datasetId`, `/sql`, `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`를 기존 flow state와 매핑한다.
 route param은 기존 `selectedJob`, `selectedDataset`, `dashboardEntry` 상태와 동기화하지만, 데이터 로딩은 React Router loader/action으로 옮기지 않는다.
 수집/처리 생성 flow의 상단 stepper는 같은 `App.tsx` 상태 이동을 사용해 소스, 처리, 스케줄, 권한, 타겟, 검토 단계로 이동하며, 화면 전환은 `useNavigate` 기반으로 URL도 함께 갱신한다. 새 파이프라인에서는 각 화면의 검증을 통과한 `다음` callback만 해당 단계를 완료 처리하고, 상단 stepper는 완료된 단계의 바로 다음 단계까지만 전진을 허용한다. 이전 단계 이동은 항상 허용하며, 기존 Job 수정은 backend에서 hydrate한 저장 설정을 완료 상태로 시작한다.
+생성 wizard에서 Catalog, SQL, Dashboard, Job 목록 등 wizard 밖의 화면으로 이동하면 아직 제출되지 않은 `DraftPipeline`과 Target 단계의 localStorage 초안을 즉시 폐기한다. 이는 서버 Job, Run, Catalog 데이터에는 영향을 주지 않으며, 수집/처리 생성을 다시 시작하면 항상 초기 초안에서 시작한다.
 수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
 수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
 live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.

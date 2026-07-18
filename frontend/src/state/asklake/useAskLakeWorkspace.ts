@@ -60,6 +60,7 @@ export function useAskLakeWorkspace({
     openJobDetail: jobs.openJobDetail,
     openJobRuns: jobs.openJobRuns,
     refreshData,
+    resetDraftPipeline: pipeline.resetDraftPipeline,
     runsByJobId: state.runsByJobId,
     selectedDataset: state.selectedDataset,
     selectedJob: state.selectedJob,
