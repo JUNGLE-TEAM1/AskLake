@@ -67,6 +67,7 @@ class DatasetPhysicalBinding(CamelModel):
     status: PhysicalBindingStatus
     binding_epoch: int = Field(ge=0)
     version_id: str | None = None
+    pipeline_version_id: str | None = None
     database: str | None = None
     table: str
     catalog: str | None = None

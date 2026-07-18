@@ -88,6 +88,23 @@ def dataset_freshness_response(
             else None
         ),
         next_check_after_ms=next_check_after_ms,
+        binding_epoch=int(freshness.binding_epoch or 0) if freshness is not None else 0,
+        active_serving_engine=(freshness.active_serving_engine if freshness is not None else None),
+        active_serving_version_id=(
+            freshness.active_serving_version_id if freshness is not None else None
+        ),
+        active_archive_snapshot_id=(
+            freshness.active_archive_snapshot_id if freshness is not None else None
+        ),
+        latest_source_boundary=(
+            dict(freshness.latest_source_boundary or {})
+            if freshness is not None and freshness.latest_source_boundary is not None
+            else None
+        ),
+        latest_checksum=(freshness.latest_checksum if freshness is not None else None),
+        latest_mutation_type=(
+            freshness.latest_mutation_type if freshness is not None else None
+        ),
     )
 
 
