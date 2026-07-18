@@ -143,6 +143,7 @@ class ClickHouseContinuousSqlWorkerGateway:
             database=target.database,
             stream_table=names["raw"],
             static_tables=static_tables,
+            output_schema=list(job.compiled_plan.get("outputSchema") or []),
         )
         client.execute(
             "CREATE MATERIALIZED VIEW "
@@ -471,6 +472,7 @@ def clickhouse_runtime_sql(
     kafka_table: str | None = None,
     stream_table: str | None = None,
     static_tables: dict[str, str],
+    output_schema: list[Any] | None = None,
 ) -> str:
     if not runtime_sql.strip():
         raise ValueError("ClickHouse runtime SQL is missing")
@@ -514,7 +516,27 @@ def clickhouse_runtime_sql(
     transpiled = sqlglot.transpile(rewritten, read="spark", write="clickhouse")
     if len(transpiled) != 1:
         raise ValueError("ClickHouse runtime SQL must contain exactly one statement")
-    return transpiled[0]
+    expression = sqlglot.parse_one(transpiled[0], read="clickhouse")
+    if not isinstance(expression, sqlglot.expressions.Select):
+        raise ValueError("ClickHouse runtime SQL must be a SELECT")
+    output_names = [
+        str(item[0])
+        for item in output_schema or []
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    ]
+    if output_names and len(expression.expressions) < len(output_names):
+        raise ValueError("ClickHouse runtime SQL output does not match the output schema")
+    for index, output_name in enumerate(output_names):
+        projection = expression.expressions[index]
+        expression.set(
+            "expressions",
+            [
+                *expression.expressions[:index],
+                projection.as_(output_name, quoted=True),
+                *expression.expressions[index + 1:],
+            ],
+        )
+    return expression.sql(dialect="clickhouse")
 
 
 def replace_runtime_table(query: str, runtime_view: str, target: str) -> str:
