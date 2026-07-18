@@ -112,6 +112,10 @@ resolve_app_url() {
 ssh_run() {
   local host
   host="$(resolve_host)"
+  if ! command -v "$SSH_BIN" >/dev/null 2>&1; then
+    printf 'error: missing command: %s\n' "$SSH_BIN" >&2
+    return 127
+  fi
   "$SSH_BIN" "${SSH_OPTS[@]}" "$EC2_USER@$host" "$@"
 }
 
@@ -534,6 +538,7 @@ deploy_stack() {
   ensure_started
   ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
   remote_compose 'up -d --build'
@@ -546,6 +551,7 @@ deploy_stack() {
 restart_stack() {
   ensure_started
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
   remote_compose 'up -d --build'
@@ -587,9 +593,7 @@ main() {
   esac
 
   need_command "$AWS_BIN"
-  need_command "$CURL_BIN"
   need_command "$PYTHON_BIN"
-  need_command "$SSH_BIN"
   require_instance_id
 
   case "$command" in

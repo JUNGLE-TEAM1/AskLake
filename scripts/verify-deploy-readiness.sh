@@ -90,7 +90,10 @@ run_check frontend_image \
     --build-arg "VITE_DASHBOARD_ASSISTANT_API_PATH=${VITE_DASHBOARD_ASSISTANT_API_PATH:-/api/dashboards/assistant}" \
     -t "$FRONTEND_IMAGE" frontend
 
-write_release_record
+if ! write_release_record; then
+  echo "error: could not write deploy readiness record: $RELEASE_RECORD_PATH" >&2
+  exit 1
+fi
 
 if [[ "$has_failure" == "true" ]]; then
   echo "error: deploy readiness checks failed; record: $RELEASE_RECORD_PATH" >&2

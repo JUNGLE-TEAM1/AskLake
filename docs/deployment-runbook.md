@@ -165,6 +165,8 @@ EC2 running 보장
   -> git fetch origin <branch>
   -> git checkout <branch>
   -> git pull --ff-only origin <branch>
+  -> deploy env preflight
+  -> PostgreSQL만 준비한 metadata schema bootstrap
   -> docker compose up -d --build
   -> frontend/API health check
   -> TRINO_ENABLED=true이면 query identity, materializer CTAS, Warehouse/Query Result S3 readiness

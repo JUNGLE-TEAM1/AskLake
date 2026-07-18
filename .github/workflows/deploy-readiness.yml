@@ -9,11 +9,15 @@ on:
       - "backend/**"
       - "frontend/**"
       - "deploy/**"
+      - "scripts/deploy.sh"
       - "scripts/verify-deploy-readiness.sh"
+      - "scripts/write-deploy-diagnostic.py"
       - "scripts/write-release-record.py"
       - "tests/deploy/**"
       - ".github/workflows/deploy-readiness.yml"
       - "docs/04-development-guide.md"
+      - "docs/deployment-runbook.md"
+      - "docs/deployment-phase-*.md"
       - "docs/system-guardrails.md"
   workflow_dispatch:
 

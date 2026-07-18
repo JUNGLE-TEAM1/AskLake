@@ -117,6 +117,22 @@ else
   record_fail 'readiness records an image failure before exiting'
 fi
 
+unwritable_parent="$TEMP_DIR/not-a-directory"
+: >"$unwritable_parent"
+if ASKLAKE_DOCKER_BIN="$TEMP_DIR/docker" \
+  ASKLAKE_NODE_BIN="$TEMP_DIR/node" \
+  ASKLAKE_NPM_BIN="$TEMP_DIR/npm" \
+  ASKLAKE_SKIP_BACKEND_PYTHON_DEPENDENCIES=true \
+  ASKLAKE_DOCKER_CALL_LOG="$call_log" \
+  ASKLAKE_RELEASE_RECORD_PATH="$unwritable_parent/record.json" \
+  GITHUB_SHA="release-record-write-failure-sha" \
+  bash "$ROOT_DIR/scripts/verify-deploy-readiness.sh" >/dev/null 2>&1
+then
+  record_fail 'readiness fails when it cannot write the release record'
+else
+  record_pass 'readiness fails when it cannot write the release record'
+fi
+
 if python3 "$ROOT_DIR/scripts/write-release-record.py" \
   --output "$TEMP_DIR/invalid.json" \
   --check 'compose_config=unknown' >/dev/null 2>&1

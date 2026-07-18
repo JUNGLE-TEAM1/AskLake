@@ -72,9 +72,10 @@ make_fake_ssh
 run_diagnose() {
   local record_path="$1"
   shift
+  local ssh_bin="${ASKLAKE_TEST_SSH_BIN:-$TEMP_DIR/ssh}"
   ASKLAKE_AWS_BIN="$TEMP_DIR/aws" \
     ASKLAKE_CURL_BIN="$TEMP_DIR/curl" \
-    ASKLAKE_SSH_BIN="$TEMP_DIR/ssh" \
+    ASKLAKE_SSH_BIN="$ssh_bin" \
     ASKLAKE_PYTHON_BIN="$PYTHON_BIN" \
     ASKLAKE_EC2_INSTANCE_ID=i-deploy-diagnostic-test \
     ASKLAKE_EC2_HOST=asklake.example.test \
@@ -142,7 +143,9 @@ fi
 
 stopped_record="$TEMP_DIR/stopped.json"
 set +e
-ASKLAKE_FAKE_INSTANCE_STATE=stopped run_diagnose "$stopped_record" env
+ASKLAKE_FAKE_INSTANCE_STATE=stopped \
+  ASKLAKE_TEST_SSH_BIN="$TEMP_DIR/missing-ssh" \
+  run_diagnose "$stopped_record" env
 stopped_status=$?
 set -e
 if [[ "$stopped_status" -ne 0 ]] && "$PYTHON_BIN" - "$stopped_record" <<'PY'
@@ -157,9 +160,9 @@ assert statuses["frontend_health"] == "skipped"
 assert statuses["compose_status"] == "skipped"
 PY
 then
-  record_pass "diagnose writes a bounded record when EC2 is stopped"
+  record_pass "diagnose writes a bounded record when EC2 is stopped without SSH"
 else
-  record_fail "diagnose writes a bounded record when EC2 is stopped"
+  record_fail "diagnose writes a bounded record when EC2 is stopped without SSH"
 fi
 
 if ! "$PYTHON_BIN" "$ROOT_DIR/scripts/write-deploy-diagnostic.py" \

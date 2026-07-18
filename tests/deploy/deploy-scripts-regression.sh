@@ -446,21 +446,32 @@ else
   record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
-mock_metadata_schema_bootstrap() (
-  remote_compose() {
-    printf 'compose:%s\n' "$1"
-  }
+mock_stack_metadata_bootstrap() (
+  local stack_name="$1"
 
-  bootstrap_metadata_schema
+  ensure_started() { printf 'ensure_started\n'; }
+  ssh_run() { printf 'git_pull\n'; }
+  remote_deploy_preflight() { printf 'preflight\n'; }
+  bootstrap_metadata_schema() { printf 'metadata_bootstrap\n'; }
+  bootstrap_trino_dependencies() { printf 'trino_bootstrap\n'; }
+  prepare_clickhouse_runtime() { printf 'clickhouse_prepare\n'; }
+  remote_compose() { printf 'compose:%s\n' "$1"; }
+  health_check() { printf 'health_check\n'; }
+  verify_trino_runtime() { printf 'trino_verify\n'; }
+  verify_clickhouse_runtime() { printf 'clickhouse_verify\n'; }
+
+  "${stack_name}_stack"
 )
 
-if output="$(mock_metadata_schema_bootstrap 2>&1)" \
-  && [[ "$output" == *'compose:up -d --wait postgres'* ]] \
-  && [[ "$output" == *'compose:run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'* ]]; then
-  record_pass 'deploy bootstraps metadata schema before application services'
-else
-  record_fail 'deploy bootstraps metadata schema before application services'
-fi
+for stack_name in start deploy restart; do
+  if output="$(mock_stack_metadata_bootstrap "$stack_name" 2>&1)" \
+    && [[ "$output" == *$'preflight\nmetadata_bootstrap\ntrino_bootstrap'* ]] \
+    && [[ "$output" == *$'metadata_bootstrap\ntrino_bootstrap\nclickhouse_prepare\ncompose:'* ]]; then
+    record_pass "$stack_name bootstraps metadata schema before application services"
+  else
+    record_fail "$stack_name bootstraps metadata schema before application services"
+  fi
+done
 
 mock_health_check() (
   local payload="$1"

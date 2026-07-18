@@ -1,7 +1,7 @@
 # 배포 파이프라인 Phase 6 통합 후보 검증
 
 > Issue: [#955](https://github.com/JUNGLE-TEAM1/AskLake/issues/955)
-> Base: `origin/dev` at `5aa7cc49785db2c717036fe608b6a69c2ddde503`
+> Base: `origin/dev` at `c669b7da` (PR #934 포함)
 > Scope: Phase 0-5 산출물을 통합 후보 브랜치에서 결합하고 회귀를 확인한다. 이 기록은 `dev` 반영 또는 운영 배포 승인이 아니다.
 
 ## 1. 통합 순서
@@ -17,7 +17,9 @@
 
 - `docs/system-guardrails.md`와 backend readiness 체크리스트의 중복 행은 한쪽을 제거하지 않고 Phase별 계약을 함께 기록한다.
 - `scripts/deploy.sh`는 test binary injection과 diagnostic helper를 유지하면서, public frontend/backend/AI health probe에는 `curl --location`을 적용한다.
-- metadata schema bootstrap은 기존 Phase 3의 `start` 흐름 순서를 유지한다. 이 통합은 deploy/restart의 동작 범위를 추가로 확장하지 않는다.
+- metadata schema bootstrap은 start/deploy/restart 모두에서 backend application service 전에 수행한다.
+- readiness release record는 필수 증적이며, record를 쓰지 못하면 check 결과와 무관하게 성공을 선언하지 않는다.
+- stopped EC2 diagnostic은 SSH binary 없이도 bounded record를 남기며, remote command 실행 시점에만 SSH를 요구한다.
 
 ## 3. 통합 검증
 
