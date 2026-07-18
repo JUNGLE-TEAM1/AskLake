@@ -197,7 +197,7 @@ Resource/action 기준:
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
 | `GET /api/datasets/{datasetId}/freshness` | Dataset `query` | 새 S3/Catalog revision 확인 전 dataset 권한 재검사 |
 | `POST /api/datasets/freshness/query` | Dataset `query` | 요청한 dataset 전체에 대해 같은 기준 적용 |
-| `POST /api/dashboards/{dashboardId}/widgets/query` | Dashboard `view` + Dataset `query` | published widget만 조회하고 물리 storage 접근 전 재검사 |
+| `POST /api/dashboards/{dashboardId}/widgets/query` | published: Dashboard `view`, draft: Dashboard `manage`, 둘 다 Dataset `query` | 요청한 mode의 widget만 조회하고 물리 storage 접근 전 재검사 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
@@ -2850,6 +2850,8 @@ type DashboardRuntimeWidget = {
     };
     config: DashboardRuntimeWidgetConfigByType[Type];
     data: Array<Record<string, unknown>>;
+    dataStatus?: "pending" | "ready" | "error";
+    dataError?: string | null;
     queryId?: string | null;
     datasetId?: string | null;
     appliedRevision?: number | null;
@@ -2888,12 +2890,14 @@ type DashboardRuntimeResponse = {
 
 #### 8.5.1 Published 조회
 
-`GET /api/dashboards/{dashboardId}/published`
+`GET /api/dashboards/{dashboardId}/published?includeData=false`
 
 Response `200 OK`:
 
 - published revision이 있으면 해당 revision의 pages/widgets를 반환합니다.
 - published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 정상 응답합니다.
+- `includeData` 기본값은 `true`로 기존 호출을 보존합니다. Frontend 최초 진입은 `false`를 보내 shell만 먼저 받습니다.
+- shell의 Dataset widget은 layout/config를 유지하고 `data: []`, `dataStatus: "pending"`를 반환하며 물리 storage를 열지 않습니다. explicit text/snapshot widget은 `dataStatus: "ready"`입니다.
 
 실패:
 
@@ -2902,13 +2906,15 @@ Response `200 OK`:
 
 #### 8.5.2 Draft 조회/생성
 
-`POST /api/dashboards/{dashboardId}/draft/ensure`
+`POST /api/dashboards/{dashboardId}/draft/ensure?includeData=false`
 
 동작:
 
 1. draft revision이 있으면 그대로 반환합니다.
 2. draft가 없고 published revision이 있으면 published revision을 복사해 draft를 만듭니다.
 3. 둘 다 없으면 빈 draft revision과 기본 page 1개를 만듭니다.
+
+`includeData` 계약은 Published 조회와 같습니다. Frontend는 shell을 먼저 받은 뒤 선택 page의 pending widget만 별도 조회합니다.
 
 실패:
 
@@ -3252,11 +3258,12 @@ Request:
 
 ```json
 {
+  "mode": "published",
   "widgetIds": ["dashwidget_click_count"]
 }
 ```
 
-`widgetIds`는 `1..100`개이며 현재 published revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Dashboard `view`와 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
+`mode`는 `published`가 기본값이며 `draft`도 지원합니다. `widgetIds`는 `1..100`개이고 해당 mode의 현재 revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Published는 Dashboard `view`, draft는 Dashboard `manage` 권한이 필요하며 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
 
 Response `200 OK`:
 
@@ -3273,6 +3280,8 @@ Response `200 OK`:
       "appliedRevision": 105,
       "calculationVersion": "64-character-sha256",
       "calculatedAt": "2026-07-14T12:00:07+00:00",
+      "dataStatus": "ready",
+      "dataError": null,
       "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
       "config": {
         "aggregation": "sum",

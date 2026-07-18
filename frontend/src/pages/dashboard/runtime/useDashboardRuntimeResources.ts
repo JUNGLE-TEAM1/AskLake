@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DashboardRuntimeMode } from "../../../types";
 import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
 import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
+import { useDashboardWidgetData } from "./useDashboardWidgetData";
 
 export function useDashboardRuntimeResources({
   active,
@@ -51,6 +52,26 @@ export function useDashboardRuntimeResources({
     }
   }, [active, pages, selectedPageId]);
 
+  const activeRuntime = mode === "published" ? publishedRuntime : draftRuntime;
+  const setActiveRuntime = useCallback(
+    (update: Parameters<typeof setPublishedRuntime>[0]) => {
+      if (mode === "published") {
+        setPublishedRuntime(update);
+      } else {
+        setDraftRuntime(update);
+      }
+    },
+    [mode, setDraftRuntime, setPublishedRuntime],
+  );
+  const { retryWidgetData } = useDashboardWidgetData({
+    active,
+    dashboardId,
+    mode,
+    runtime: activeRuntime,
+    selectedPageId,
+    setRuntime: setActiveRuntime,
+  });
+
   const realtimeConnectionState = usePublishedDashboardLiveRefresh({
     active,
     dashboardId,
@@ -69,6 +90,7 @@ export function useDashboardRuntimeResources({
     pages,
     publishedRuntime,
     realtimeConnectionState,
+    retryWidgetData,
     runtimeError,
     runtimeLoading,
     selectedPageId,

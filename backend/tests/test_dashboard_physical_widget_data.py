@@ -94,6 +94,7 @@ def render_runtime_widget(
     service: DashboardRuntimeService,
     widget: SimpleNamespace,
     *,
+    include_data: bool = True,
     sessions: dict[str, object] | None = None,
 ):
     return service._widget_to_schema(
@@ -106,6 +107,7 @@ def render_runtime_widget(
         remote_budget=DashboardRemoteScanBudget(max_bytes=1024 * 1024, max_objects=32),
         api_path="/api/dashboards/dashboard-a/published",
         http_method="GET",
+        include_data=include_data,
     )
 
 
@@ -561,6 +563,30 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             ],
         )
         self.assertEqual(response.config.data_mode, "server_aggregated")
+
+    def test_runtime_shell_returns_widget_metadata_without_opening_storage(self) -> None:
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="must/not/be-opened",
+        )
+        service = DashboardRuntimeService(
+            SimpleNamespace(),
+            FakeCatalogRepository({"catalog-dataset": payload}),
+        )
+
+        with patch(
+            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+        ) as query_session:
+            response = render_runtime_widget(
+                service,
+                runtime_widget(),
+                include_data=False,
+            )
+
+        query_session.assert_not_called()
+        self.assertEqual(response.data, [])
+        self.assertEqual(response.data_status, "pending")
+        self.assertEqual(response.dataset_id, "catalog-dataset")
 
     def test_runtime_widget_returns_a_stable_error_when_physical_storage_is_unavailable(self) -> None:
         payload = catalog_dataset_payload(

@@ -44,9 +44,12 @@ export type UpdateDraftWidgetInput = {
   type?: DashboardRuntimeWidgetType;
 };
 
-export function getPublishedDashboard(dashboardId: string) {
+export function getPublishedDashboard(
+  dashboardId: string,
+  { includeData = true }: { includeData?: boolean } = {},
+) {
   return apiClient.get<DashboardRuntimeResponse>(
-    `/api/dashboards/${encodeURIComponent(dashboardId)}/published`,
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/published?includeData=${includeData}`,
   );
 }
 
@@ -61,21 +64,33 @@ export function queryDashboardDatasetFreshness(
   );
 }
 
-export function queryPublishedDashboardWidgets(
+export function queryDashboardWidgets(
   dashboardId: string,
+  mode: "draft" | "published",
   widgetIds: string[],
   options: ApiRequestOptions = {},
 ) {
   return apiClient.post<DashboardWidgetRefreshResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/widgets/query`,
-    { widgetIds },
+    { mode, widgetIds },
     options,
   );
 }
 
-export function ensureDraftDashboard(dashboardId: string) {
+export function queryPublishedDashboardWidgets(
+  dashboardId: string,
+  widgetIds: string[],
+  options: ApiRequestOptions = {},
+) {
+  return queryDashboardWidgets(dashboardId, "published", widgetIds, options);
+}
+
+export function ensureDraftDashboard(
+  dashboardId: string,
+  { includeData = true }: { includeData?: boolean } = {},
+) {
   return apiClient.post<DashboardRuntimeResponse>(
-    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`,
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure?includeData=${includeData}`,
     {},
   );
 }

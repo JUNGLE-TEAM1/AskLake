@@ -101,6 +101,7 @@ type DashboardRuntimeViewActions = {
   renameTitle: (title: string) => Promise<void> | void;
   retryDraft: () => void;
   retryPublished: () => void;
+  retryWidgetData: (widgetId: string) => void;
   selectDataset: (datasetId: string) => void;
   selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
@@ -207,6 +208,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     renameTitle: onRenameTitle,
     retryDraft: onRetryDraft,
     retryPublished: onRetryPublished,
+    retryWidgetData: onRetryWidgetData,
     selectDataset: onSelectDataset,
     selectWidgetDataset: onSelectWidgetDataset,
     selectPage: onSelectPage,
@@ -407,6 +409,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
+        onRetryWidgetData={onRetryWidgetData}
         onScrollTargetHandled={onClearWidgetScrollTarget}
         onSelectWidget={handleSelectWidget}
         onSelectWidgetColorSlot={handleSelectWidgetColorSlot}
@@ -443,7 +446,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     </div>
   ) : (
     <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-      {selectedPublishedWidgets.map((widget) => <WidgetFrame key={widget.id} widget={widget} />)}
+      {selectedPublishedWidgets.map((widget) => (
+        <WidgetFrame
+          key={widget.id}
+          widget={widget}
+          onRetryData={onRetryWidgetData}
+        />
+      ))}
     </div>
   );
 

@@ -40,7 +40,7 @@ export function useDashboardRuntimeLoaders(
       setRuntimeError(null);
     }
     try {
-      const runtime = await getPublishedDashboard(dashboardId);
+      const runtime = await getPublishedDashboard(dashboardId, { includeData: false });
       setPublishedRuntime(runtime);
       setRuntimeError(null);
       selectPageFromResponse(runtime);
@@ -63,7 +63,7 @@ export function useDashboardRuntimeLoaders(
     if (!options.silent) setDraftLoading(true);
     setDraftError(null);
     try {
-      const runtime = await ensureDraftDashboard(dashboardId);
+      const runtime = await ensureDraftDashboard(dashboardId, { includeData: false });
       setDraftRuntime(runtime);
       selectPageFromResponse(runtime);
       return runtime;

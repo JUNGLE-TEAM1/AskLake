@@ -304,6 +304,8 @@ class DashboardRuntimeWidget(CamelModel):
     calculation_version: str | None = None
     calculated_at: str | None = None
     live_refresh: bool = False
+    data_status: Literal["pending", "ready", "error"] = "ready"
+    data_error: str | None = None
 
 
 class DashboardMeta(CamelModel):
@@ -363,6 +365,7 @@ class DatasetFreshnessQueryResponse(CamelModel):
 
 class DashboardWidgetQueryRequest(CamelModel):
     widget_ids: list[str] = Field(min_length=1, max_length=100)
+    mode: DashboardRuntimeMode = DashboardRuntimeMode.PUBLISHED
 
 
 class DashboardWidgetQueryResponse(CamelModel):

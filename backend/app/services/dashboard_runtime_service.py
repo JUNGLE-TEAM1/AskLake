@@ -108,7 +108,13 @@ class DashboardRuntimeService:
         self.live_repository = live_repository
         self._continuous_job_cache: dict[str, object | None] = {}
 
-    def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+    def get_published_runtime(
+        self,
+        dashboard_id: str,
+        actor: ActorContext | None = None,
+        *,
+        include_data: bool = True,
+    ) -> DashboardRuntimeResponse:
         actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
@@ -116,7 +122,14 @@ class DashboardRuntimeService:
         dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "view")
 
         revision = self.repository.get_published_revision(dashboard_id)
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
+        return self._build_runtime_response(
+            dashboard_meta,
+            DashboardRuntimeMode.PUBLISHED,
+            revision,
+            actor_context,
+            dashboard_card,
+            include_data=include_data,
+        )
 
     def query_published_widgets(
         self,
@@ -124,10 +137,29 @@ class DashboardRuntimeService:
         widget_ids: list[str],
         actor: ActorContext | None = None,
     ) -> list[DashboardRuntimeWidget]:
+        return self.query_widgets(
+            dashboard_id,
+            widget_ids,
+            DashboardRuntimeMode.PUBLISHED,
+            actor,
+        )
+
+    def query_widgets(
+        self,
+        dashboard_id: str,
+        widget_ids: list[str],
+        mode: DashboardRuntimeMode,
+        actor: ActorContext | None = None,
+    ) -> list[DashboardRuntimeWidget]:
         actor_context = actor or ActorContext()
         dashboard_meta = self._require_dashboard(dashboard_id)
-        self._require_dashboard_permission(dashboard_id, actor_context, "view")
-        revision = self.repository.get_published_revision(dashboard_id)
+        action = "view" if mode == DashboardRuntimeMode.PUBLISHED else "manage"
+        self._require_dashboard_permission(dashboard_id, actor_context, action)
+        revision = (
+            self.repository.get_published_revision(dashboard_id)
+            if mode == DashboardRuntimeMode.PUBLISHED
+            else self.repository.get_draft_revision(dashboard_id)
+        )
         if revision is None:
             return []
         pages = self.repository.list_pages(revision.id)
@@ -142,7 +174,7 @@ class DashboardRuntimeService:
         if missing:
             raise ApiError(
                 ErrorCode.NOT_FOUND,
-                "Published dashboard widget not found.",
+                f"{mode.value.capitalize()} dashboard widget not found.",
                 status.HTTP_404_NOT_FOUND,
                 {"dashboardId": dashboard_meta.id, "widgetIds": missing},
             )
@@ -161,6 +193,7 @@ class DashboardRuntimeService:
                     remote_budget=remote_budget,
                     api_path=f"/api/dashboards/{dashboard_id}/widgets/query",
                     http_method="POST",
+                    use_live_results=mode == DashboardRuntimeMode.PUBLISHED,
                 )
                 for widget_id in requested_ids
             ]
@@ -171,7 +204,13 @@ class DashboardRuntimeService:
     def require_assistant_access(self, dashboard_id: str, actor: ActorContext) -> None:
         self._require_dashboard_permission(dashboard_id, actor, "view")
 
-    def ensure_draft_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+    def ensure_draft_runtime(
+        self,
+        dashboard_id: str,
+        actor: ActorContext | None = None,
+        *,
+        include_data: bool = True,
+    ) -> DashboardRuntimeResponse:
         actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
@@ -181,7 +220,14 @@ class DashboardRuntimeService:
         revision = self._ensure_draft_revision(dashboard_id)
         self.repository.db.commit()
 
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision, actor_context, dashboard_card)
+        return self._build_runtime_response(
+            dashboard_meta,
+            DashboardRuntimeMode.DRAFT,
+            revision,
+            actor_context,
+            dashboard_card,
+            include_data=include_data,
+        )
 
     def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
@@ -336,6 +382,8 @@ class DashboardRuntimeService:
         revision: DashboardRevisionModel | None,
         actor: ActorContext,
         dashboard_card: DashboardCard,
+        *,
+        include_data: bool = True,
     ) -> DashboardRuntimeResponse:
         snapshot_event_cursor = published_snapshot_event_cursor(self.repository.db, mode)
         has_published_revision = (
@@ -387,6 +435,7 @@ class DashboardRuntimeService:
                             remote_budget=remote_budget,
                             api_path=runtime_api_path,
                             http_method=runtime_http_method,
+                            include_data=include_data,
                         )
                         for widget in widgets
                     ]
@@ -420,6 +469,7 @@ class DashboardRuntimeService:
                 remote_budget=DashboardRemoteScanBudget.from_environment(),
                 api_path=api_path,
                 http_method=http_method,
+                include_data=False,
             )
         finally:
             for session in sessions.values():
@@ -613,11 +663,34 @@ class DashboardRuntimeService:
         remote_budget: DashboardRemoteScanBudget,
         api_path: str,
         http_method: str,
+        include_data: bool = True,
+        use_live_results: bool = True,
     ) -> DashboardRuntimeWidget:
-        if (
+        widget_type = DashboardRuntimeWidgetType(widget.type)
+        config = self._normalize_widget_config(widget_type, widget.config)
+        data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
+        is_live_widget = bool(
             widget.dataset_id
             and self.live_repository is not None
             and self._continuous_job(widget.dataset_id) is not None
+        )
+        if not include_data and widget.dataset_id:
+            return DashboardRuntimeWidget(
+                id=widget.id,
+                page_id=widget.page_id,
+                type=widget_type,
+                title=widget.title,
+                layout=DashboardWidgetLayout(**widget.layout),
+                config=config,
+                data=[],
+                dataset_id=widget.dataset_id,
+                query_id=widget.query_id,
+                live_refresh=is_live_widget,
+                data_status="pending",
+            )
+        if (
+            is_live_widget
+            and use_live_results
         ):
             return self._live_widget_to_schema(
                 widget,
@@ -628,9 +701,6 @@ class DashboardRuntimeService:
                 api_path=api_path,
                 http_method=http_method,
             )
-        widget_type = DashboardRuntimeWidgetType(widget.type)
-        config = self._normalize_widget_config(widget_type, widget.config)
-        data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
         if widget.dataset_id:
             if widget.dataset_id not in catalog_payloads:
                 catalog_payloads[widget.dataset_id] = self.catalog_repository.get_dataset_payload(widget.dataset_id)
@@ -727,6 +797,8 @@ class DashboardRuntimeService:
             data=data,
             dataset_id=widget.dataset_id,
             query_id=widget.query_id,
+            data_status="error" if config.get("error") else "ready",
+            data_error=str(config.get("errorMessage")) if config.get("errorMessage") else None,
         )
 
     def _continuous_job(self, dataset_id: str) -> object | None:
@@ -1103,6 +1175,8 @@ class DashboardRuntimeService:
             calculation_version=calculation_version,
             calculated_at=dashboard_datetime_to_iso(calculated_at),
             live_refresh=True,
+            data_status="error" if config.get("error") else "ready",
+            data_error=str(config.get("errorMessage")) if config.get("errorMessage") else None,
         )
 
     @staticmethod

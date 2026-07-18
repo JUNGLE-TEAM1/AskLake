@@ -477,8 +477,8 @@ type ScheduledJobRunResponse = {
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
-| `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 runtime 조회 |
-| `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
+| `GET` | `/api/dashboards/{dashboardId}/published` | published revision runtime 조회. `includeData=false`이면 shell만 반환 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회/생성. `includeData=false`이면 shell만 반환 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft page 추가 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page 이름 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page와 해당 page widgets 삭제 |
@@ -489,7 +489,7 @@ type ScheduledJobRunResponse = {
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `GET` | `/api/datasets/{datasetId}/freshness` | Continuous dataset의 최신 revision과 권장 재확인 시간 조회 |
 | `POST` | `/api/datasets/freshness/query` | 대시보드가 사용하는 dataset freshness를 최대 100개까지 묶음 조회 |
-| `POST` | `/api/dashboards/{dashboardId}/widgets/query` | published dashboard에서 revision이 바뀐 widget만 재계산·조회 |
+| `POST` | `/api/dashboards/{dashboardId}/widgets/query` | `mode`의 선택 widget만 계산·조회. published는 `view`, draft는 `manage` 필요 |
 | `GET` | `/api/users/me` | 현재 actor 프로필, role, group, 권한 요약 조회 |
 | `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
@@ -504,6 +504,7 @@ type ScheduledJobRunResponse = {
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 Draft page/widget mutation은 변경된 resource를 응답하므로 frontend가 mutation 직후 전체 draft runtime을 다시 조회하지 않는다. 마지막 page 삭제 시에는 backend가 만든 기본 `replacementPage`를 함께 반환한다.
+Dashboard 화면은 runtime shell을 먼저 그리고 선택 page의 `dataStatus=pending` widget만 dataset별로 요청한다. `dataStatus`는 `pending`, `ready`, `error`이며 요청 중 `loading`은 frontend local 상태다.
 
 Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 `dataset`, `etl_job`, `dashboard` resource에 대해 `user`, `group`, `role`, `public` principal grant를 저장할 수 있다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이며, 운영 UI의 기본 흐름은 group grant와 user 예외 grant를 우선 사용한다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여되며, 로컬 demo admin 계정은 groups를 비워 둔다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않는다. Governance controls는 user/group principal을 `blocked`로 전환하거나 resource를 잠글 수 있다. 관리 콘솔에서는 user 차단은 사용자 탭, group 차단은 그룹 탭, resource lock은 권한 탭의 선택 resource action으로 배치한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며 일반 사용자-facing 메시지에는 노출하지 않는다. 차단된 actor는 grant가 있어도 resource 접근/실행에서 403을 받고, 잠긴 resource는 view를 제외한 `query/run/manage/delete/share` action을 403으로 차단한다.
 
