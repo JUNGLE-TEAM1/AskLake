@@ -261,6 +261,61 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
                 {"x": 8, "y": 1, "w": 4, "h": 3},
             )
 
+    def test_widget_mutations_return_only_the_saved_runtime_widget(self) -> None:
+        actor = ActorContext(name="Admin User", role="admin")
+        with Session(self.engine) as db:
+            service = self.service(db)
+            draft = service.ensure_draft_runtime(self.dashboard_id, actor)
+            page_id = draft.pages[0].id
+
+            created = service.create_draft_widget(
+                self.dashboard_id,
+                page_id,
+                CreateDraftWidgetRequest(
+                    type=DashboardRuntimeWidgetType.METRIC,
+                    title="Orders",
+                    layout=DashboardWidgetLayout(x=0, y=0, w=4, h=3),
+                    config=MetricWidgetConfig(
+                        aggregation=DashboardWidgetAggregation.COUNT,
+                        value_key="value",
+                        format=DashboardWidgetFormat.NUMBER,
+                    ),
+                    data=[{"value": 7}],
+                ),
+                actor,
+            )
+
+            self.assertEqual(created.id, created.widget.id)
+            self.assertEqual(created.widget.page_id, page_id)
+            self.assertEqual(created.widget.title, "Orders")
+            self.assertEqual(created.widget.data, [{"value": 7}])
+
+            updated = service.update_draft_widget(
+                self.dashboard_id,
+                created.id,
+                UpdateDraftWidgetRequest(title="Revenue"),
+                actor,
+            )
+
+            self.assertEqual(updated.id, created.id)
+            self.assertEqual(updated.widget.title, "Revenue")
+            self.assertEqual(updated.widget.data, [{"value": 7}])
+
+    def test_deleting_the_last_page_returns_a_replacement_page(self) -> None:
+        actor = ActorContext(name="Admin User", role="admin")
+        with Session(self.engine) as db:
+            service = self.service(db)
+            draft = service.ensure_draft_runtime(self.dashboard_id, actor)
+
+            response = service.delete_draft_page(self.dashboard_id, draft.pages[0].id, actor)
+
+            self.assertTrue(response.ok)
+            self.assertIsNotNone(response.replacement_page)
+            replacement_page = response.replacement_page
+            assert replacement_page is not None
+            self.assertEqual(replacement_page.title, "Untitled page")
+            self.assertEqual(replacement_page.order_index, 0)
+
     def test_cross_page_layout_failure_rolls_back_partial_updates_on_session_close(self) -> None:
         actor = ActorContext(name="Admin User", role="admin")
         with Session(self.engine) as db:

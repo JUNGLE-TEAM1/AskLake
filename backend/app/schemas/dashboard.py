@@ -402,6 +402,7 @@ class UpdateDraftWidgetRequest(CamelModel):
 
 class DashboardWidgetMutationResponse(CamelModel):
     id: str
+    widget: DashboardRuntimeWidget
 
 
 class DeleteDraftWidgetResponse(CamelModel):
@@ -411,6 +412,7 @@ class DeleteDraftWidgetResponse(CamelModel):
 
 class DeleteDraftPageResponse(CamelModel):
     ok: bool = True
+    replacement_page: DashboardPageResponse | None = None
 
 
 class DraftLayoutItem(DashboardWidgetLayout):

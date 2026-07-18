@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
+import {
+  appendRuntimePage,
+  removeRuntimePage,
+  removeRuntimeWidget,
+  upsertRuntimeWidget,
+} from "./runtime/dashboardRuntimeMutations";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
@@ -257,7 +263,6 @@ export function DashboardPage({
     defaultLayouts: defaultDraftWidgetLayout,
     mode: runtimeSelection.mode,
     onAction,
-    reloadDraftRuntime: loadDraftRuntime,
     selectedPageId: selectedRuntimePageId,
     selectedWidgets: selectedDraftWidgets,
     setDraftError,
@@ -462,8 +467,8 @@ export function DashboardPage({
     setRuntimeNotice({ message: "페이지를 추가하는 중입니다.", tone: "info" });
     try {
       const page = await createDraftPage(runtimeSelection.dashboardId, { title });
+      setDraftRuntime((runtime) => runtime ? appendRuntimePage(runtime, page) : runtime);
       setSelectedRuntimePageId(page.id);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
       setRuntimeNotice({ message: `${page.title} 페이지를 추가했습니다.`, tone: "success" });
       onAction("dashboard.page.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
     } catch (error) {
@@ -478,12 +483,21 @@ export function DashboardPage({
   const deleteRuntimePage = async (pageId: string) => {
     if (runtimeSelection.mode !== "draft") return;
     try {
-      await deleteDraftPage(runtimeSelection.dashboardId, pageId);
+      const response = await deleteDraftPage(runtimeSelection.dashboardId, pageId);
+      const remainingPageId = draftRuntime?.pages.find((page) => page.id !== pageId)?.id
+        ?? response.replacementPage?.id
+        ?? null;
+      setDraftRuntime((runtime) => {
+        if (!runtime) return runtime;
+        const runtimeWithoutPage = removeRuntimePage(runtime, pageId);
+        return response.replacementPage
+          ? appendRuntimePage(runtimeWithoutPage, response.replacementPage)
+          : runtimeWithoutPage;
+      });
       if (selectedRuntimePageId === pageId) {
-        setSelectedRuntimePageId(null);
+        setSelectedRuntimePageId(remainingPageId);
       }
       setSelectedWidgetId(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
       onAction("dashboard.page.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${pageId}`, runtimeSelection.dashboardId);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Failed to delete a draft page.");
@@ -504,17 +518,7 @@ export function DashboardPage({
       await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
       if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
       if (previewDraftWidget?.id === widgetId) setPreviewDraftWidget(null);
-      setDraftRuntime((runtime) => runtime
-        ? {
-          ...runtime,
-          widgetsByPageId: Object.fromEntries(
-            Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
-              pageId,
-              widgets.filter((widget) => widget.id !== widgetId),
-            ]),
-          ),
-        }
-        : runtime);
+      setDraftRuntime((runtime) => runtime ? removeRuntimeWidget(runtime, widgetId) : runtime);
       setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
       onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
     } catch (error) {
@@ -562,9 +566,9 @@ export function DashboardPage({
     setDraftError(null);
     setRuntimeNotice({ message: "위젯 변경사항을 저장하는 중입니다.", tone: "info" });
     try {
-      await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
+      const response = await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
       setPreviewDraftWidget(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId, { silent: true });
+      setDraftRuntime((runtime) => runtime ? upsertRuntimeWidget(runtime, response.widget) : runtime);
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
       onAction("dashboard.widget.updated", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);

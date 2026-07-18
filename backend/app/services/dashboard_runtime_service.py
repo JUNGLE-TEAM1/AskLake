@@ -207,8 +207,15 @@ class DashboardRuntimeService:
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         self.repository.delete_page(page)
+        remaining_pages = self.repository.list_pages(revision.id)
+        replacement_page = None
+        if not remaining_pages:
+            replacement_page = self.repository.create_page(revision.id, "Untitled page", 0)
         self.repository.db.commit()
-        return DeleteDraftPageResponse(ok=True)
+        return DeleteDraftPageResponse(
+            ok=True,
+            replacement_page=self._page_response(replacement_page) if replacement_page else None,
+        )
 
     def create_draft_widget(
         self,
@@ -217,7 +224,8 @@ class DashboardRuntimeService:
         request: CreateDraftWidgetRequest,
         actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
-        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        actor_context = actor or ActorContext()
+        self._require_dashboard_permission(dashboard_id, actor_context, "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = dashboard_widget_type_enum(request.type)
@@ -232,7 +240,13 @@ class DashboardRuntimeService:
             data=self._resolve_widget_data(request.data, request.dataset_id),
         )
         self.repository.db.commit()
-        return DashboardWidgetMutationResponse(id=widget.id)
+        return self._build_widget_mutation_response(
+            dashboard_id,
+            widget,
+            actor_context,
+            api_path=f"/api/dashboards/{dashboard_id}/draft/pages/{page_id}/widgets",
+            http_method="POST",
+        )
 
     def update_draft_widget(
         self,
@@ -241,7 +255,8 @@ class DashboardRuntimeService:
         request: UpdateDraftWidgetRequest,
         actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
-        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        actor_context = actor or ActorContext()
+        self._require_dashboard_permission(dashboard_id, actor_context, "manage")
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
         current_type = dashboard_widget_type_enum(widget.type)
         next_type = dashboard_widget_type_enum(request.type or current_type)
@@ -269,7 +284,13 @@ class DashboardRuntimeService:
             update_data=update_data,
         )
         self.repository.db.commit()
-        return DashboardWidgetMutationResponse(id=widget.id)
+        return self._build_widget_mutation_response(
+            dashboard_id,
+            widget,
+            actor_context,
+            api_path=f"/api/dashboards/{dashboard_id}/draft/widgets/{widget_id}",
+            http_method="PATCH",
+        )
 
     def delete_draft_widget(self, dashboard_id: str, widget_id: str, actor: ActorContext | None = None) -> DeleteDraftWidgetResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
@@ -376,6 +397,34 @@ class DashboardRuntimeService:
         finally:
             for session in sessions.values():
                 session.close()
+
+    def _build_widget_mutation_response(
+        self,
+        dashboard_id: str,
+        widget: DashboardWidgetModel,
+        actor: ActorContext,
+        *,
+        api_path: str,
+        http_method: str,
+    ) -> DashboardWidgetMutationResponse:
+        """Return only the saved widget so callers do not reload the entire draft."""
+        sessions: dict[str, DashboardDatasetQuerySession] = {}
+        try:
+            runtime_widget = self._widget_to_schema(
+                widget,
+                sessions,
+                {},
+                {},
+                {},
+                actor=actor,
+                remote_budget=DashboardRemoteScanBudget.from_environment(),
+                api_path=api_path,
+                http_method=http_method,
+            )
+        finally:
+            for session in sessions.values():
+                session.close()
+        return DashboardWidgetMutationResponse(id=widget.id, widget=runtime_widget)
 
     @staticmethod
     def _raise_dashboard_not_found(dashboard_id: str) -> None:

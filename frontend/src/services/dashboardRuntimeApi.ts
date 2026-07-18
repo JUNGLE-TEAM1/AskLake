@@ -22,6 +22,11 @@ export type DashboardWidgetRefreshResponse = {
   widgets: DashboardRuntimeWidget[];
 };
 
+export type DashboardWidgetMutationResponse = {
+  id: string;
+  widget: DashboardRuntimeWidget;
+};
+
 export type CreateDraftWidgetInput = {
   config?: Record<string, unknown>;
   data?: Array<Record<string, unknown>>;
@@ -83,14 +88,17 @@ export function createDraftPage(dashboardId: string, input: { title: string }) {
 }
 
 export function createDraftWidget(dashboardId: string, pageId: string, input: CreateDraftWidgetInput) {
-  return apiClient.post<{ id: string }>(
+  return apiClient.post<DashboardWidgetMutationResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}/widgets`,
     input,
   );
 }
 
 export function deleteDraftPage(dashboardId: string, pageId: string) {
-  return apiClient.delete<{ ok: true }>(
+  return apiClient.delete<{
+    ok: true;
+    replacementPage: { id: string; orderIndex: number; title: string } | null;
+  }>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}`,
   );
 }
@@ -102,7 +110,7 @@ export function deleteDraftWidget(dashboardId: string, widgetId: string) {
 }
 
 export function updateDraftWidget(dashboardId: string, widgetId: string, input: UpdateDraftWidgetInput) {
-  return apiClient.patch<{ id: string }>(
+  return apiClient.patch<DashboardWidgetMutationResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/widgets/${encodeURIComponent(widgetId)}`,
     input,
   );

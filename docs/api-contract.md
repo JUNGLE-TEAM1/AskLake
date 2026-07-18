@@ -2975,13 +2975,18 @@ Response `200 OK`:
 
 1. 현재 draft revision에 속한 page만 삭제합니다.
 2. 해당 page의 widgets는 cascade로 함께 삭제합니다.
-3. 남은 page의 `orderIndex`를 다시 정렬합니다.
+3. 마지막 page를 삭제했다면 빈 draft가 되지 않도록 기본 page를 하나 만듭니다.
 
 Response `200 OK`:
 
 ```json
-{ "ok": true }
+{
+  "ok": true,
+  "replacementPage": null
+}
 ```
+
+마지막 page를 삭제한 경우 `replacementPage`에는 새 기본 page의 `id`, `title`, `orderIndex`가 들어갑니다. 그 외에는 `null`입니다.
 
 실패:
 
@@ -3016,10 +3021,24 @@ Catalog widget runtime 조회는 actor의 dataset `query` permission과 governan
 Response `201 Created`:
 
 ```json
-{ "id": "dashwidget_..." }
+{
+  "id": "dashwidget_...",
+  "widget": {
+    "id": "dashwidget_...",
+    "pageId": "dashpage_...",
+    "type": "bar_chart",
+    "title": "월별 물류비",
+    "datasetId": "gold_logistics_cost_overview",
+    "queryId": null,
+    "layout": { "x": 0, "y": 0, "w": 6, "h": 5, "minW": 3, "minH": 3 },
+    "config": { "xKey": "month", "yKey": "total_cost", "aggregation": "sum" },
+    "data": []
+  }
+}
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
+`widget`은 저장 직후의 전체 `DashboardRuntimeWidget`입니다. Frontend는 이 값만 현재 page에 합치며 전체 draft runtime을 다시 요청하지 않습니다.
 기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. 색상 계약은 문자열이나 팔레트 이름이 아니라 `color: { colors: string[] }` 객체입니다. `metric`과 `table`은 색상 설정을 보내지 않습니다. 단일 색상 차트는 `colors`에 1개 색상을 보내고, 도넛/파이/트리맵처럼 여러 요소 색상이 필요한 차트는 요소 순서대로 여러 색상을 보냅니다. `metric`은 `valueKey`, `aggregation`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`, optional `orientation`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `curve`; `area_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `stacked`; `donut_chart`와 `pie_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`; `radial_bar_chart`는 `valueKey`, `aggregation`, `color`, optional `labelKey`, optional `min`, optional `max`, optional `format`; `heatmap_chart`는 `xKey`, `yKey`, `valueKey`, `aggregation`, `color`; `treemap_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다. 향후 AI widget 생성 기능은 이 type/config 계약을 그대로 재사용합니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, runtime `config`, bounded `data`가 유지되어야 합니다. dataset query 권한 또는 governance가 거부되면 storage를 열지 않고 해당 widget에 `error: "DASHBOARD_DATA_FORBIDDEN"`, `errorMessage`, `data: []`를 반환합니다. Catalog dataset이 삭제되었거나 물리 위치/읽기/설정 오류가 있으면 `error: "DASHBOARD_DATA_UNAVAILABLE"`, `errorMessage`, `data: []`를 반환합니다. 단, `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지합니다. 어느 경우에도 다른 widget까지 포함한 전체 runtime 응답 shape는 유지합니다.
 
@@ -3055,8 +3074,23 @@ Request:
 Response `200 OK`:
 
 ```json
-{ "id": "dashwidget_..." }
+{
+  "id": "dashwidget_...",
+  "widget": {
+    "id": "dashwidget_...",
+    "pageId": "dashpage_...",
+    "type": "line_chart",
+    "title": "월별 물류비 추이",
+    "datasetId": "gold_logistics_cost_overview",
+    "queryId": null,
+    "layout": { "x": 0, "y": 0, "w": 6, "h": 5, "minW": 3, "minH": 3 },
+    "config": { "xKey": "month", "yKey": "total_cost", "aggregation": "sum" },
+    "data": []
+  }
+}
 ```
+
+`widget`은 수정된 한 widget의 최신 runtime 표현이며, 다른 page/widget을 포함하지 않습니다.
 
 실패:
 
