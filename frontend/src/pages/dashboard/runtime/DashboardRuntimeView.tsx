@@ -532,8 +532,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={runtime.realtimeConnectionState}
-        realtimeDataState={runtime.realtimeDataState}
+        realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

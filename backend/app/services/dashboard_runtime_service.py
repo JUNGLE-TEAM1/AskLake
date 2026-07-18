@@ -89,6 +89,10 @@ MAX_EXPLICIT_WIDGET_ROWS = 500
 logger = logging.getLogger(__name__)
 
 
+def _binding_epoch(freshness: Any) -> int | None:
+    return int(getattr(freshness, "binding_epoch", 0) or 0) if freshness is not None else None
+
+
 class DashboardRuntimeService:
     def __init__(
         self,
@@ -882,10 +886,7 @@ class DashboardRuntimeService:
                     saved_state,
                     dataset_id=dataset_id,
                     after_revision=int(saved.applied_revision or 0) if saved is not None else 0,
-                    remote_budget=remote_budget,
-                    expected_binding_epoch=(
-                        int(freshness.binding_epoch or 0) if freshness is not None else None
-                    ),
+                    remote_budget=remote_budget, expected_binding_epoch=_binding_epoch(freshness),
                 )
                 if incremental is not None:
                     computed_result, computed_state, applied_revision, calculation_mode = incremental
@@ -894,10 +895,7 @@ class DashboardRuntimeService:
                     payload,
                     widget_type,
                     config,
-                    remote_budget=remote_budget,
-                    expected_binding_epoch=(
-                        int(freshness.binding_epoch or 0) if freshness is not None else None
-                    ),
+                    remote_budget=remote_budget, expected_binding_epoch=_binding_epoch(freshness),
                 )
                 calculation_mode = "full"
 
