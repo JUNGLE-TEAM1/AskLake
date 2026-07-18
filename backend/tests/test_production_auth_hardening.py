@@ -138,8 +138,8 @@ class SessionCookieHardeningTests(unittest.TestCase):
                 self.assertIn("Max-Age=604800", issued)
                 self.assertIn("Max-Age=0", deleted)
 
-    def test_local_and_test_cookie_headers_are_not_secure_and_remain_aligned(self) -> None:
-        for app_env in ("local", "test"):
+    def test_local_and_test_cookie_headers_follow_runtime_auth_mode(self) -> None:
+        for app_env, secure in (("local", True), ("test", False)):
             with self.subTest(app_env=app_env):
                 configured = Settings(
                     app_env=app_env,
@@ -150,7 +150,7 @@ class SessionCookieHardeningTests(unittest.TestCase):
                 )
                 self._assert_aligned_cookie_options(
                     self._cookie_headers(configured),
-                    secure=False,
+                    secure=secure,
                 )
 
 

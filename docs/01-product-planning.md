@@ -19,7 +19,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 생성 flow의 draft가 실제 backend request와 어긋나지 않아야 한다.
 - Job 실행 결과가 Run History, DAG, Catalog dataset으로 같은 `runId` 기준에 맞게 이어져야 한다.
 - Catalog, SQL, Dashboard 화면은 dataset이 실제로 존재할 때만 분석/생성 동작을 허용해야 한다.
-- FastAPI 전환 중인 endpoint와 아직 Node demo/mock에 남은 endpoint를 문서에서 분명히 구분해야 한다.
+- 사용자 기능은 FastAPI와 private AI Gateway의 live endpoint만 사용해야 하며, 테스트 fixture가 운영 화면의 성공 결과로 노출되면 안 된다.
 
 ## 3) 타겟 사용자
 
@@ -141,7 +141,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ### Flow C. FastAPI live backend 연결
 
-1. 프론트는 기본적으로 live backend API를 호출하며, frontend-only QA는 `VITE_USE_MOCK_API=true`로 mock mode를 명시한다.
+1. 프론트는 live backend API만 호출한다. frontend-only fixture 모드는 제거했으며 QA도 실제 API 또는 명시적으로 격리된 단위 테스트를 사용한다.
 2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
@@ -168,11 +168,11 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 - conflict marker가 남아 있지 않다.
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
-- Dashboard 영역은 FastAPI 연결 범위와 404 local/mock fallback, 아직 남은 운영 범위를 구분한다.
+- Dashboard 영역은 FastAPI 저장 결과와 실제 widget action 적용 여부를 구분한다.
 
 ## 8) 4일 데모 마일스톤
 
-단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL 실행 -> 반복 SQL Job 또는 compatibility Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
+단기 실행 목표는 실제 소스 데이터로 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Semantic/RAG 색인 -> SQL 실행 -> 반복 SQL Job 또는 compatibility Lake Dataset 저장 -> Dashboard widget 생성 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
 이 마일스톤은 demo readiness 기준이며, 실제 production runtime 완성 범위를 과장하지 않는다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |

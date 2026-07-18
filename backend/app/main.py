@@ -26,6 +26,7 @@ from app.services.etl_service import (
 )
 from app.services.realtime_event_service import realtime_event_dispatcher
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
+from app.services.rag_service import RagService
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ async def snapshot_airflow_sync_loop() -> None:
 def run_scheduled_job_tick() -> None:
     with SessionLocal() as db:
         run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False))
+        RagService(db).reconcile_alias_activations()
+        RagService(db).reconcile_source_changes()
 
 
 async def scheduled_job_tick_loop() -> None:

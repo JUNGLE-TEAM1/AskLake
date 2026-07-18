@@ -15,7 +15,7 @@ from app.services.auth_service import SESSION_COOKIE_NAME, load_session_actor
 
 @dataclass(frozen=True)
 class ActorContext:
-    name: str = "demo-user"
+    name: str = "anonymous"
     role: str = "viewer"
     groups: tuple[str, ...] = field(default_factory=tuple)
     id: str | None = None
@@ -39,8 +39,8 @@ class ActorContext:
 
 
 def get_actor_context(
-    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "Admin User",
-    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "admin",
+    actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "anonymous",
+    actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "viewer",
     actor_groups: Annotated[str | None, Header(alias="X-AskLake-Groups")] = None,
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
     db: Annotated[Session, Depends(get_db)] = None,
@@ -71,7 +71,7 @@ def resolve_actor_context(
         session_actor = load_session_actor(db, session_token)
         if session_actor is not None:
             return ActorContext(
-                name=str(session_actor.get("name") or "demo-user"),
+                name=str(session_actor.get("name") or session_actor.get("email") or session_actor.get("id") or "authenticated-user"),
                 role=str(session_actor.get("role") or "viewer"),
                 groups=tuple(str(group) for group in session_actor.get("groups") or []),
                 id=str(session_actor.get("id") or "") or None,
@@ -85,7 +85,7 @@ def resolve_actor_context(
             status.HTTP_401_UNAUTHORIZED,
         )
     return ActorContext(
-        name=(actor_name or "").strip() or "demo-user",
+        name=(actor_name or "").strip() or "anonymous",
         role=(actor_role or "").strip() or "viewer",
         groups=tuple(
             group.strip()
@@ -185,13 +185,15 @@ def permissions_for_actor(
     can_manage = can(actor, "manage", owner=owner, grants=grant_payload_list)
     can_delete = can(actor, "delete", owner=owner, grants=grant_payload_list)
     can_share = can(actor, "share", owner=owner, grants=grant_payload_list)
+    can_publish = can(actor, "publish", owner=owner, grants=grant_payload_list)
     return ResourcePermissions(
-        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share,
+        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share or can_publish,
         can_query=can_query,
         can_run=can_run,
         can_manage=can_manage,
         can_delete=can_delete,
         can_share=can_share,
+        can_publish=can_publish,
         computed_for=actor.name,
         enforced=enforced,
     )
