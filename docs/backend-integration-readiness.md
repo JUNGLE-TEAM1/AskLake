@@ -614,7 +614,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] `scope_id="deployment"`와 resource ACL 유지, tenant foundation 비포함을 확정
 - [x] 같은 Job generation에서 Kafka Engine V1/Kafka Connect V2 동시 consumer ownership 금지
 - [x] PR01~09 merge 순서, disabled-mode rollback과 production 미전환 원칙 문서화
-- [ ] PR02: ClickHouse 26.3 exact image/digest, Kafka Connect, 계정·health, V2 기본-off flag와 Alembic expand migration
+- [x] PR02 repository: ClickHouse 26.3.17.4 exact image/digest, Kafka Connect 8.2.2 base와 공식 Sink v1.4.0 checksum provenance
+- [x] PR02 repository: 기본-off local/production profile, local loopback/prod private TLS 경계와 단일 Keeper/ClickHouse/Connect demo topology
+- [x] PR02 repository: role-separated six-account init, 다섯 V2 설정, V1/V2 owner fail-closed와 config-only health HTTP 503
+- [x] PR02 repository: deploy preflight의 V2 regression cases와 CI의 V2 profile render·Alembic upgrade/downgrade/upgrade lifecycle
+- [x] PR02 repository: Alembic 0012의 신규 metadata 10-table expand, fresh/current/repeat/development-downgrade topology test와 backend image migration 포함
+- [x] PR02 isolated live: clean start/restart, strict CA 9440 health, final 8443/9440-only listener와 six-account RBAC grant
+- [ ] PR02 operator evidence: 실제 production certificate handshake, clean host/EC2 reboot, connector 등록·restart/rebalance, backup/restore와 HA failover
 - [ ] PR03: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
 - [ ] PR04: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
 - [ ] PR05: SQL classifier/compiler, version-scoped shadow materializer, deterministic serving current와 split-failure reconcile
@@ -627,6 +633,8 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] production HA topology, backup/restore와 rollback drill에 대한 별도 운영 승인
 
 PR09 merge는 production activation이 아니다. 모든 V2 routing과 consumer flag는 operator evidence와 traffic-promotion 승인 전까지 기본 `false`이며 단일 EC2 Compose는 demo/staging으로만 판정한다.
+
+PR02의 checkbox는 repository foundation 구현 상태다. Compose는 connector definition을 자동 등록하지 않고 raw ingest를 시작하지 않으며 `/api/health/realtime`의 `v2.ready`도 항상 false다. V2 flag가 true이면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다. 기존 publication table은 PR06 전까지 변경하지 않았다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 
 ## Legacy removal evidence readiness
 
