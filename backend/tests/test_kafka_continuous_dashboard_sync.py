@@ -49,6 +49,16 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
         self.assertEqual(runtime.metrics["currentSessionId"], recovered_session.session_id)
         db.add.assert_called_once_with(recovered_session)
 
+    def test_runtime_report_path_uses_shared_s3_prefix_when_configured(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX": "s3a://runtime-bucket/asklake/continuous/"},
+        ):
+            self.assertEqual(
+                etl_service.continuous_runtime_report_path("Job Live"),
+                "s3a://runtime-bucket/asklake/continuous/kafka-continuous-job-live.json",
+            )
+
     def test_runtime_cursor_metrics_merge_by_topic_and_partition(self) -> None:
         merged = etl_service.merge_stream_partition_cursor_metrics(
             [

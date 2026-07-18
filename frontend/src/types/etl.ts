@@ -291,6 +291,7 @@ export type JobStatusSnapshot = {
   updatedAt?: string | null;
   latestRun?: JobRunSummary | null;
   dagSteps: JobDagStep[];
+  continuousRuntime?: KafkaContinuousRuntime | null;
 };
 
 export type JobStatusListResult = {

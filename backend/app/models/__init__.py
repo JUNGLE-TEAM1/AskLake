@@ -19,7 +19,7 @@ from app.models.dashboard_runtime import (
     DashboardRevision,
     DashboardWidget,
 )
-from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
+from app.models.etl import ContinuousControlLeaseModel, ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
 from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
 from app.models.realtime import RealtimeEventModel
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
@@ -40,6 +40,7 @@ __all__ = [
     "DashboardWidget",
     "ETLJobModel",
     "ETLRunModel",
+    "ContinuousControlLeaseModel",
     "KafkaContinuousRuntimeModel",
     "KafkaContinuousSessionModel",
     "KafkaContinuousBatchModel",

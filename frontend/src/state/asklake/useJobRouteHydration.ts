@@ -12,51 +12,55 @@ export function useJobRouteHydration({
   flow,
   jobId,
   jobs,
+  setJobs,
   setSelectedJob,
 }: {
   flow: FlowId;
   jobId?: string;
   jobs: JobRowData[];
+  setJobs: Dispatch<SetStateAction<JobRowData[]>>;
   setSelectedJob: Dispatch<SetStateAction<JobRowData>>;
 }) {
   const matchedJob = jobId ? jobs.find((job) => job.id === jobId) : undefined;
-  const matchedJobId = matchedJob?.id;
-
-  useEffect(() => {
-    if (!jobId) return;
-    const nextJob = matchedJob ?? buildMissingJobFromRoute(jobId);
-    setSelectedJob((job) => (
-      job === nextJob || (job.id === nextJob.id && job.tag !== "Missing")
-        ? job
-        : nextJob
-    ));
-  }, [jobId, jobs, matchedJob, setSelectedJob]);
 
   useEffect(() => {
     let cancelled = false;
-    const needsFullJobDetail = matchedJobId
+    const needsFullJobDetail = jobId
       && !apiConfig.useMock
       && (flow === "jobDetail" || flow === "jobRuns");
     if (needsFullJobDetail) {
-      void getPipelineJob(matchedJobId)
+      if (matchedJob) setSelectedJob(matchedJob);
+      void getPipelineJob(jobId)
         .then((detail) => {
           if (cancelled) return;
           const normalizedDetail = normalizeJobRow(detail);
+          setJobs((currentJobs) => {
+            const existing = currentJobs.find((job) => job.id === normalizedDetail.id);
+            if (!existing) return [...currentJobs, normalizedDetail];
+            return currentJobs.map((job) => (
+              job.id === normalizedDetail.id
+                ? mergeJobDetailWithCurrentStatus(job, normalizedDetail)
+                : job
+            ));
+          });
           setSelectedJob((job) => (
-            job.id === normalizedDetail.id
+            job.id === normalizedDetail.id || job.id === jobId
               ? mergeJobDetailWithCurrentStatus(job, normalizedDetail)
-              : job
+              : normalizedDetail
           ));
         })
-        .catch(() => {
-          // Keep the list summary visible; an explicit edit or refresh can retry detail hydration.
+        .catch((error: unknown) => {
+          if (cancelled || !(error instanceof Error) || !error.message.includes("404")) return;
+          setSelectedJob(buildMissingJobFromRoute(jobId));
         });
+    } else if (jobId && matchedJob) {
+      setSelectedJob(matchedJob);
     }
 
     return () => {
       cancelled = true;
     };
-  }, [flow, matchedJobId, setSelectedJob]);
+  }, [flow, jobId, matchedJob, setJobs, setSelectedJob]);
 }
 
 

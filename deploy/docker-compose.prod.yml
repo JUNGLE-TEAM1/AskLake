@@ -154,6 +154,11 @@ services:
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?AIRFLOW_PASSWORD is required}
       AIRFLOW_REQUEST_TIMEOUT_SECONDS: ${AIRFLOW_REQUEST_TIMEOUT_SECONDS:-10}
       AIRFLOW_RUN_SYNC_INTERVAL_SECONDS: ${AIRFLOW_RUN_SYNC_INTERVAL_SECONDS:-5}
+      # Web/API replicas persist intent but never own Continuous Spark side
+      # effects. The dedicated service below holds the PostgreSQL lease.
+      CONTINUOUS_CONTROL_PLANE: disabled
+      STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
+      ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS:-30}
       AIRFLOW_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:?AIRFLOW_EXECUTION_API_TOKEN is required}
       AIRFLOW_INTERNAL_TOKEN: ${AIRFLOW_INTERNAL_TOKEN:?AIRFLOW_INTERNAL_TOKEN is required}
       TRINO_ENABLED: ${TRINO_ENABLED:-false}
@@ -329,6 +334,16 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  continuous-worker:
+    extends:
+      service: backend
+    command: ["python", "-m", "app.continuous_worker"]
+    environment:
+      CONTINUOUS_CONTROL_PLANE: worker
+      STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
+    healthcheck:
+      disable: true
 
   ai-server:
     build:

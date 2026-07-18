@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -105,6 +107,17 @@ class KafkaSnapshotModel(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ContinuousControlLeaseModel(Base):
+    """Fenced control-plane ownership, independent from a stream attempt."""
+
+    __tablename__ = "continuous_control_leases"
+
+    control_plane: Mapped[str] = mapped_column(String(120), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class KafkaContinuousRuntimeModel(TimestampMixin, Base):

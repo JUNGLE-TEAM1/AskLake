@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy.orm import Session
@@ -78,6 +79,7 @@ def execute_continuous_command(
     *,
     worker: KafkaRuntimeGateway,
     hooks: ContinuousCommandHooks,
+    dispatch_worker: bool = True,
 ) -> JobCommandResponse:
     command = request.command
     if command not in CONTINUOUS_ACTION_BY_COMMAND:
@@ -111,7 +113,15 @@ def execute_continuous_command(
             **(runtime.metrics or {}),
             "streamPartitionCursors": hooks.persisted_partition_cursors(db, job, runtime),
         }
-        runtime.metrics = record_runtime_command(runtime.metrics, transition)
+        # Reserve a new fence before a separately-owned control plane observes
+        # this intent.  It prevents a terminal observation from the previous
+        # worker attempt from being treated as the result of this start.
+        requested_attempt_id = f"start-{uuid4()}"
+        runtime.metrics = record_runtime_command(
+            runtime.metrics,
+            transition,
+            worker_attempt_id=requested_attempt_id,
+        )
         runtime.status = transition.next_status.value
         job.status = "running"
         job.last_state = "Continuous Spark worker 시작 요청"
@@ -120,17 +130,20 @@ def execute_continuous_command(
         # The durable desired state fences another start or maintenance request
         # before the external worker submission begins.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
-        try:
-            worker_result = worker.command(job, runtime, "start")
-        except ApiError as exc:
-            worker_result = _recover_lost_start_response(worker, job, runtime)
-            if worker_result is None:
-                _record_start_failure(db, job, runtime, session, command, exc, hooks)
-                raise
+        if dispatch_worker:
+            try:
+                worker_result = worker.command(job, runtime, "start")
+            except ApiError as exc:
+                worker_result = _recover_lost_start_response(worker, job, runtime)
+                if worker_result is None:
+                    _record_start_failure(db, job, runtime, session, command, exc, hooks)
+                    raise
+        else:
+            worker_result = {"deferred": True, "owner": "continuous-worker"}
 
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
-        )
+        ) or requested_attempt_id
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
         runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)
@@ -160,20 +173,23 @@ def execute_continuous_command(
         # Commit the command intent before signaling the worker.  A lost
         # response is reconciled from the deterministic worker identity.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
-        try:
-            worker_result = worker.command(job, runtime, verb)
-        except ApiError as exc:
-            runtime.metrics = record_runtime_error(
-                runtime.metrics,
-                stage=ContinuousErrorStage.SUBMISSION,
-                code=f"continuous_worker_{verb}_unknown",
-                message=exc.message,
-                retryable=True,
-                context={"jobId": job.id, "command": command},
-            )
-            runtime.last_error = exc.message
-            etl_repository.save_kafka_continuous_command(db, job, runtime)
-            raise
+        if dispatch_worker:
+            try:
+                worker_result = worker.command(job, runtime, verb)
+            except ApiError as exc:
+                runtime.metrics = record_runtime_error(
+                    runtime.metrics,
+                    stage=ContinuousErrorStage.SUBMISSION,
+                    code=f"continuous_worker_{verb}_unknown",
+                    message=exc.message,
+                    retryable=True,
+                    context={"jobId": job.id, "command": command},
+                )
+                runtime.last_error = exc.message
+                etl_repository.save_kafka_continuous_command(db, job, runtime)
+                raise
+        else:
+            worker_result = {"deferred": True, "owner": "continuous-worker"}
         runtime.metrics = record_runtime_observation(
             runtime.metrics,
             "stopping",
@@ -186,7 +202,7 @@ def execute_continuous_command(
         api_path=f"/api/etl/jobs/{job.id}/commands",
         job=hooks.with_permissions(db, saved_job, actor),
         processing_result={
-            "controlPlaneOnly": False,
+            "controlPlaneOnly": not dispatch_worker,
             "runtimeStatus": runtime.status,
             "worker": "spark_structured_streaming",
             "workerResult": worker_result,
