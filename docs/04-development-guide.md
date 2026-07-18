@@ -36,10 +36,11 @@ Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하�
 ```bash
 cd backend
 npm run migrate:dashboard-schema
+npm run migrate:metadata-schema
 npm run verify:dashboard-storage
 ```
 
-`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime과 batch widget 결과 cache 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다. `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
+`migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다. `migrate:metadata-schema`는 backend traffic 전 Dashboard, ETL, Catalog, SQL metadata와 Continuous/Realtime supporting table을 함께 준비하는 배포 bootstrap이다. backend startup도 같은 bootstrap을 수행하므로 request 또는 control-plane hot path가 최초 DDL을 소유하지 않는다. 현재는 저장소 전체 DB를 관리하는 Alembic 도입 전의 명시적 bootstrap이며, `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
 Dashboard widget 데이터가 느리거나 실패하면 `dashboard_widget_data` 구조화 로그에서 correlation ID와 `dashboardId`, `pageId`, `widgetId`, `datasetId`, `stage`, `durationMs`, `result`, `errorCode`를 확인한다. `/api/health/metrics`의 `dashboard_widget_data_total{result,stage}`는 request cache hit, PostgreSQL cache hit, 물리 계산 miss와 오류 횟수를 구분한다. 로그와 metric에는 원본 row나 credential을 넣지 않는다.
 

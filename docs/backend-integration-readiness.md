@@ -546,6 +546,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] Python/Node use case authority matrix와 compatibility 종료 조건 문서화
 - [x] review analysis의 allow-list versioned JSON bridge 적용
 - [x] timeout/start/process/protocol 오류 분류, bounded diagnostic, secret redaction
+- [x] deployment/startup metadata schema bootstrap으로 ETL, Catalog, SQL request/control-plane hot path 이전에 DDL 준비
 - [ ] live Spark/Kafka integration과 long-running soak는 opt-in 운영 환경에서 확인
 - [ ] connector·Spark/Kafka launcher compatibility의 Python 전환은 authority matrix 종료 조건 충족 후 별도 진행
 ## ETL Permission create-flow readiness
