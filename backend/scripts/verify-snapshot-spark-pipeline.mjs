@@ -16,6 +16,7 @@ try {
   assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected canonical counters to avoid a write-only output cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
   assert(actionBudget.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected canonical row counters to replace the duplicate output count: ${JSON.stringify(actionBudget.report.quality)}`);
@@ -28,6 +29,7 @@ try {
   assert(preMaterialized.report.outputRows === 3, `Expected 3 pre-materialized output rows: ${JSON.stringify(preMaterialized.report)}`);
   assert(preMaterialized.report.transform?.preMaterializedTransformCount === 3, `Expected all proven transform-prefix rules in the source materialization: ${JSON.stringify(preMaterialized.report.transform)}`);
   assert(preMaterialized.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two pre-materialized row-preserving SQL transforms: ${JSON.stringify(preMaterialized.report.transform)}`);
+  assert(preMaterialized.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected the pre-materialized source cache to publish without a second output cache: ${JSON.stringify(preMaterialized.report.sparkResources)}`);
   const preMaterializedReadCount = preMaterialized.process.stderr.split(sourceReadMarker).length - 1;
   assert(preMaterializedReadCount === 1, `Expected exactly 1 raw JSONL read for the pre-materialized prefix, got ${preMaterializedReadCount}:\n${preMaterialized.process.stderr}`);
 

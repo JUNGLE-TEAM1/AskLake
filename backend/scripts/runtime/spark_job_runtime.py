@@ -335,14 +335,28 @@ def main():
         if source_collection.get("selectionKind") == "prefix" and input_file_count > 1:
             max_partitions = max(2, int(os.environ.get("ASKLAKE_SPARK_PREFIX_OUTPUT_PARTITIONS_MAX", "32") or "32"))
             write_df = output_df.repartition(min(input_file_count, max_partitions))
-        written_df = persist_reusable_frame(write_df)
-        cached_frames.append(written_df)
+        canonical_output_rows = (
+            canonical_output_row_count(quality)
+            if canonical_snapshot
+            else None
+        )
+        output_cache_required = (
+            not canonical_snapshot
+            or canonical_output_rows is None
+        )
+        if output_cache_required:
+            written_df = persist_reusable_frame(write_df)
+            cached_frames.append(written_df)
+            spark_resources["outputFrameCacheMode"] = "materialized_output_cache"
+        else:
+            written_df = write_df
+            spark_resources["outputFrameCacheMode"] = "source_cache_direct_publish"
         written_df_fully_materialized = False
         quality_phase = begin_phase()
         try:
             if canonical_snapshot:
-                output_rows = canonical_output_row_count(quality)
-                if output_rows is None:
+                output_rows = canonical_output_rows
+                if output_cache_required:
                     output_rows = written_df.count()
                     written_df_fully_materialized = True
                     quality["outputRowCountSource"] = "spark_count_fallback"
