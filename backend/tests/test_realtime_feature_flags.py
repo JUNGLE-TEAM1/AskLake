@@ -14,6 +14,7 @@ from app.services.realtime_feature_flags import (
     resolve_realtime_feature_state,
     validate_clickhouse_consumer_ownership,
 )
+from app.realtime.infrastructure.kafka_connect_gateway import ConnectorProbe
 
 
 REALTIME_ENV_KEYS = {
@@ -170,7 +171,13 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         )
         response = Response()
 
-        with patch("app.api.health.settings", configured):
+        with (
+            patch("app.api.health.settings", configured),
+            patch(
+                "app.api.health.RealtimeIngestService.probe",
+                return_value=ConnectorProbe(True, False, "UNREGISTERED", ()),
+            ),
+        ):
             payload = realtime_health_check(response)
 
         self.assertEqual(response.status_code, 503)
@@ -181,9 +188,14 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             {
                 "enabled": True,
                 "ready": False,
-                "status": "configuration_validated",
+                "status": "degraded",
                 "consumerOwner": "kafka_connect_v2",
-                "connector": {"enabled": True, "configured": True},
+                "connector": {
+                    "enabled": True,
+                    "configured": True,
+                    "state": "UNREGISTERED",
+                    "taskStates": [],
+                },
             },
         )
         encoded = json.dumps(payload)

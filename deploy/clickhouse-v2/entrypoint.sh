@@ -54,12 +54,20 @@ main() {
 # The official entrypoint needs tcp_port during its localhost-only bootstrap.
 # Remove only AskLake's generated final-server override before every start.
   rm -f -- /etc/clickhouse-server/config.d/zz-asklake-disable-plaintext.xml
-  install -m 0644 \
-    /opt/asklake-clickhouse-v2-initdb/01-access-control.sh \
-    /docker-entrypoint-initdb.d/01-access-control.sh
-  install -m 0644 \
-    /opt/asklake-clickhouse-v2-initdb/99-disable-plaintext.sh \
-    /docker-entrypoint-initdb.d/99-disable-plaintext.sh
+  local init_file init_name
+  for init_file in /opt/asklake-clickhouse-v2-initdb/*; do
+    [[ -f "${init_file}" && ! -L "${init_file}" ]] || continue
+    init_name="$(basename "${init_file}")"
+    case "${init_name}" in
+      [0-9][0-9]-*.sh|[0-9][0-9]-*.sql)
+        install -m 0644 "${init_file}" "/docker-entrypoint-initdb.d/${init_name}"
+        ;;
+      *)
+        echo "Unsupported ClickHouse V2 init filename" >&2
+        return 1
+        ;;
+    esac
+  done
 
   # The pinned official entrypoint starts its bootstrap server and final server
   # through `clickhouse su 101:101`; do not replace that privilege drop here.

@@ -106,6 +106,12 @@ jobs:
           python -m alembic downgrade 0011_rag_control_plane_fencing
           python -m alembic upgrade head
 
+      - name: Verify ClickHouse V2 raw ingest contracts
+        working-directory: backend
+        env:
+          ASKLAKE_FASTAPI_PYTHON: python
+        run: npm run verify:clickhouse-realtime-v2-ingest
+
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
         run: npm run verify:realtime-postgres

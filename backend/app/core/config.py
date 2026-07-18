@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     ] = "disabled"
     kafka_connect_url: str | None = None
     kafka_connect_connector_name: str = "asklake-clickhouse-realtime-v2"
+    kafka_connect_request_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
     clickhouse_url: str = "http://localhost:8123"
     clickhouse_user: str = "asklake"
     clickhouse_password: str | None = None

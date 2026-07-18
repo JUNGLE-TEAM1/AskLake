@@ -47,3 +47,14 @@ class RealtimeStatusResponse(CamelModel):
     event_cursor: int = Field(ge=0)
     min_available_cursor: int = Field(ge=0)
     metrics: dict[str, int | float | bool | str | None] = Field(default_factory=dict)
+
+
+class RealtimeIngestConnectorRequest(CamelModel):
+    topic: str = Field(min_length=1, max_length=249, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    table: str = Field(default="raw_events_v2", min_length=1, max_length=128, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    dlq_topic: str = Field(min_length=1, max_length=249, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    generation: int = Field(ge=1)
+
+
+class RealtimeAuditedSkipRequest(CamelModel):
+    reason: str = Field(min_length=10, max_length=2_000)
