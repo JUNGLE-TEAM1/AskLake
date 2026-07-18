@@ -208,11 +208,11 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - Warning-only rules should not become hard gates until the team accepts the override policy.
 # 리팩토링 CI guardrail (2026-07-16)
 
-- `Refactor Quality Gates`는 `dev`/`main` PR에서 구조 ratchet과 API/persisted/bridge/legacy 계약을 검사한다.
+- `Refactor Quality Gates`는 `dev`/`main`/`pair1` PR에서 구조 ratchet과 API/persisted/bridge/legacy 계약을 검사한다.
 - 기존 1,000줄 file과 100줄 Python·JavaScript/TypeScript function은 `docs/refactor-2026/quality-gate-baseline.json`을 넘겨 키울 수 없다.
 - 2026-07-17 기준표는 이미 `dev`에 병합된 구조와 일치하도록 `9c757808`에서 다시 수집했다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
 - 새 import cycle과 문서 없는 API/schema·CI/deploy 변경을 금지한다.
-- baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
+- baseline 예외는 id, owner, reason, expiresAt과 정확한 path/function별 줄 수 상한 없이 추가할 수 없다. 상한 증가 또는 만료 시 CI가 실패하며 wildcard 면제와 전체 baseline 재수집은 허용하지 않는다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
 - release 전에는 수동 slow suite로 production Spark와 Continuous runtime contract를 실행한다.
 

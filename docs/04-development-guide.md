@@ -1890,9 +1890,9 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:legacy-paths
 PYTHONPATH=. .venv/bin/python -m unittest tests.test_observability_contract tests.test_runtime_io_ports tests.test_backward_compatibility_contracts
 ```
 
-API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
+API/schema 변경은 `docs/03-api-reference.md` 또는 아키텍처 문서를, CI/deploy 변경은 이 문서 또는 `docs/system-guardrails.md`를 같은 PR에서 갱신해야 한다. baseline을 다시 생성해 실패를 덮지 말고 개선된 값은 별도 PR에서 낮춘다. `dev`, `main`, `pair1` 대상 PR은 같은 구조 ratchet을 실행한다. 느린 production Spark·Continuous 검증은 `Refactor Quality Gates` workflow dispatch의 `release_suite=true`로 실행한다.
 
-브랜치 통합으로 기존 구조 부채가 dev baseline에 새로 유입되는 경우에도 baseline 재생성으로 통과시키지 않는다. 기능·계약 검증과 구조 gate를 분리해 기록하고, oversized runner/function은 별도 분할 작업으로 해결한다. 2026-07-18 pair1·dev 통합의 입력과 판정은 [통합 기록](pair1-dev-integration-2026-07-18.md)을 따른다.
+브랜치 통합으로 기존 구조 부채가 dev baseline에 새로 유입되는 경우에도 baseline 재생성으로 통과시키지 않는다. 즉시 분할하기에 실행 위험이 큰 항목은 `quality-gate-baseline.json`의 예외에 정확한 path/function, 현재 줄 수 상한, owner, reason, expiresAt을 기록한다. 상한 증가와 만료는 다시 실패하며 wildcard나 파일군 단위 면제는 허용하지 않는다. 2026-07-18 pair1·dev 통합의 입력과 판정은 [통합 기록](pair1-dev-integration-2026-07-18.md)을 따른다.
 
 ## 23) ETL E2E·복구 프로필 실행
 

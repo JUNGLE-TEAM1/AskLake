@@ -2,7 +2,7 @@ name: Refactor Quality Gates
 
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [dev, main, pair1]
   workflow_dispatch:
     inputs:
       release_suite:
@@ -26,6 +26,7 @@ jobs:
           python-version: "3.12"
       - name: Check structural debt and documentation ratchets
         run: |
+          python3 -m unittest scripts.refactor_audit.test_quality_gate
           python3 -m unittest scripts.refactor_audit.test_control_plane_ownership
           python3 scripts/refactor_audit/control_plane_ownership.py
           python3 -m unittest scripts.refactor_audit.test_legacy_removal_evidence
