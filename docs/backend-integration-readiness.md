@@ -347,14 +347,14 @@ Live Airflow verification through 2026-07-11:
 | SQL 점검 | frontend parser는 빠른 오타/식별자 안내를 담당하고, Trino Dataset은 debounced `POST /api/query/validate` 성공 전 실행을 비활성화한다. Trino 확장 문법은 backend parser/compiler가 최종 판정한다. | `POST /api/query/validate` |
 | SQL 실행 | `TRINO_ENABLED=true`이면 최대 100행 preview Query Run을 접수하고 durable 상태를 polling한다. `false`/mock만 DuckDB compatibility result를 사용한다. | `POST /api/query/runs`, `GET /api/query/runs/{runId}` |
 | 실행 정보 | SQL editor는 기존 높이와 단일 scroll을 유지한다. 평가와 preview의 `쿼리 실행`, `첫 결과 준비` timeline을 결과 panel의 세 번째 view에서 표시한다. 실제 분자/분모가 없으면 progress를 만들지 않는다. | `POST /api/query/estimates`, Query Run response |
-| Query AI 생성 | frontend는 선택 Dataset ID와 prompt만 전달한다. FastAPI가 권한/governance를 확인하고 단일 사용 signed MCP context와 Semantic RAG를 private Gateway에 전달한다. SQL·근거는 검증된 Gateway 응답만 사용하고 로컬 fallback은 없다. | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | frontend는 선택 Dataset ID와 prompt만 전달하고 context 변경 시 이전 요청을 취소해 stale 응답을 적용하지 않는다. FastAPI가 권한/governance를 확인하고 단일 사용 signed MCP context와 Semantic RAG를 private Gateway에 전달한다. SQL·근거는 검증된 Gateway 응답만 사용하며 명시적 분석 의도 위반은 한 번만 교정 재요청하고 로컬 fallback은 없다. | `POST /api/query/ai-suggestions` |
 | ETL transform AI | field/SQL transform을 private Gateway에서 생성한 뒤 input relation·metadata column·read-only·위험 함수 guard를 통과한 SQL만 반환 | `POST /api/ai/generate-sql` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
 | 전체 보기 | 성공한 preview에서 full run을 시작하거나 재사용하고, 준비된 page부터 cursor로 100행씩 조회한다. | `POST /api/query/runs/{previewRunId}/full-results`, `GET /api/query/runs/{runId}/results` |
-| 결과 Lake 저장 | DuckDB compatibility는 기존 ETL Job handoff를 유지한다. Trino 결과 화면은 preview에서 SQL recipe만 저장하는 반복 full-refresh SQL Job을 노출하며 full result 저장을 요구하지 않는다. 1회성 Iceberg CTAS API는 별도 운영 경로로 유지한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs`, `POST /api/catalog/trino-runs/{runId}/materializations` |
+| 결과 Lake 저장 | DuckDB compatibility는 기존 ETL Job handoff를 유지한다. Trino 결과 화면은 preview에서 SQL recipe만 저장하는 반복 full-refresh SQL Job을 노출하며 full result 저장을 요구하지 않는다. 두 경로 모두 현재 session owner와 선택한 실제 project group ID를 전달하고 고정 demo 그룹을 만들지 않는다. 1회성 Iceberg CTAS API는 별도 운영 경로로 유지한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs`, `POST /api/catalog/trino-runs/{runId}/materializations` |
 | CSV 다운로드 | 필요하면 full run을 먼저 시작하고, 완료된 private object page를 backend가 SQL 재실행 없이 stream한다. | `POST /api/query/runs/{previewRunId}/full-results`, `GET /api/query/runs/{runId}/exports/csv` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | compatibility 결과만 Preview row 기반 기존 경로를 유지한다. Trino 결과는 page row를 복사하지 않고 반복 `trino_sql_materialization` Job으로 분리한다. | `POST /api/etl/jobs`, `POST /api/etl/sql-jobs` |
@@ -385,7 +385,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - Trino 실행은 `POST /api/query/validate` 성공 뒤 최대 100행 preview Query Run을 `202`로 접수하고 durable 상태를 polling한다.
 - Preview 결과는 PostgreSQL inline page로 반환한다. 전체 보기/CSV는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 full run을 시작하고 signed cursor 또는 server CSV로 읽는다.
 - 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 preview의 두 단계 timeline을 포함한다.
-- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고 선택 Dataset ID만 request에 포함한다. Backend가 Catalog context를 재구성하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
+- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고 선택 Dataset ID만 request에 포함한다. Backend가 Catalog context를 재구성하고 명시적 분석 의도를 검증하며 위반 시 한 번만 교정 재요청한다. Frontend는 context가 바뀐 stale 응답을 적용하지 않고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino preview는 full result를 기다리지 않고 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
@@ -408,7 +408,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
-| Dashboard Assistant | DB runtime/catalog 권한 context와 Semantic RAG를 private Gateway에 전달한다. 검증된 action과 모델이 실제 사용한 evidence만 반환하며 Gateway/RAG 실패 시 빈 action의 unavailable/error를 반환한다. | `POST /api/dashboards/assistant` |
+| Dashboard Assistant | DB runtime/catalog 권한 context와 Semantic RAG를 private Gateway에 전달한다. 현재 Dataset을 고정하고 명시적인 시각화 의도만 create/update로 분류하며, 검증된 action도 draft persistence가 실제 성공해야 적용 성공으로 표시한다. 실패 시 편집 상태를 보존한다. 모델이 실제 사용한 evidence만 반환하며 Gateway/RAG 실패 시 빈 action의 unavailable/error를 반환한다. | `POST /api/dashboards/assistant` |
 | Review analysis | Gateway schema/row preview, persisted bounded run, provenance·holdout quality gate를 통과한 portable model publication을 제공한다. | `POST /api/review-analysis/schema-suggestion`, `POST /api/review-analysis/preview`, `POST /api/review-analysis/runs`, `GET /api/catalog/models` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |

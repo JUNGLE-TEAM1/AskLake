@@ -187,6 +187,7 @@ from app.application.etl_pipeline_policy import (
     target_identity_changed,
     trino_query_run_belongs_to_actor,
     trino_sql_job_permission_roles,
+    trino_sql_job_permission_summary,
     validate_create_request,
     validate_requested_permission_grants,
     validate_target_contract,
@@ -539,6 +540,12 @@ def create_trino_sql_job(
     permission_roles = trino_sql_job_permission_roles(
         request.governance.access_scope,
         request.governance.owner,
+        request.governance.principal_id,
+    )
+    permission_summary = trino_sql_job_permission_summary(
+        request.governance.access_scope,
+        request.governance.owner,
+        request.governance.principal_id,
     )
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
@@ -601,7 +608,7 @@ def create_trino_sql_job(
         schema_sample_rows=[],
         schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
         rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
-        permission_summary=request.governance.permission_summary,
+        permission_summary=permission_summary,
         permission_roles=permission_roles,
         storage_type="Iceberg",
         partition=request.target.partition_column,
