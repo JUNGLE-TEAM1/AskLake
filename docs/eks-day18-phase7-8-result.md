@@ -6,11 +6,10 @@
 binding은 준비됐지만 live Phase 7·8은 실행하지 않았다. 따라서 Day 18 전체 상태는
 `PENDING`, 이번 변경의 상태는 `STATIC PASS / IMAGE PASS / LIVE BLOCKED`다.
 
-live mutation을 보류한 이유는 두 가지다.
+live mutation을 보류한 이유는 다음 하나의 입력 묶음이다.
 
-- 보존 EC2와 exact EKS context를 검증할 private input이 현재 격리 작업 트리에 없다.
-- Run D/E 전용 persisted Job/Run private input이 없다.
-- SparkApplication list가 기존 RBAC에서 `forbidden`이다.
+- 사용자가 명시한 exact EKS cluster 이름과 보존 EC2 private env 경로가 현재
+  격리 작업 트리/환경에 없다.
 
 AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM, RBAC, NodePool도 확장하지 않는다.
 
@@ -25,7 +24,10 @@ AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM
 | current/rollback Backend receipt | PASS | FastAPI/Collector exact-match, byte-exact, mode `0600` |
 | candidate capability proof | PASS | candidate Git blob SHA-256과 구현 ancestry 자동 검증 |
 | bound execution contract | PASS | private mode `0600`, approval `pending` |
-| approved execution contract | BLOCKED | exact EKS/EC2, Run D/E input, SparkApplication visibility 없음 |
+| candidate Job/source boundary | PASS | slot 3개, 후보 3개, active fixture Run 0 |
+| SparkApplication visibility | PASS | FastAPI service account로 in-cluster list |
+| live-input approval gate | PASS (static) | exact schema, baseline/target 검증, byte/target hash binding |
+| approved execution contract | BLOCKED | exact EKS cluster와 preserved EC2 env 미입력 |
 | live mutation | NOT STARTED | cluster resource 변경 `0` |
 
 ## 완료한 제품 계약
@@ -69,7 +71,7 @@ AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM
 | Python 전체 backend test | `873 passed, 4 skipped` |
 | EKS fault/retry focused Python test | `55 passed, 1 skipped` |
 | Spark Kubernetes Node test | `18 passed` |
-| execution contract/binding test | `13 passed` |
+| execution contract/binding/live-input test | `18 passed` |
 | Node syntax check | PASS |
 | `npm run verify` | LOCAL BLOCKED — MinIO `127.0.0.1:9000` 미기동 |
 
@@ -79,12 +81,11 @@ MinIO 미기동은 code failure로 계산하지 않는다. 최종 PR CI 또는 p
 
 아래가 모두 있어야 Phase 7을 시작한다.
 
-1. 사용자 제공 exact private EC2/EKS input
-2. Run D/E 전용 private Job/Run input
-3. 기존 RBAC로 SparkApplication visibility 확보
-4. active Job/SparkApplication/Pending/Terminating 0
-5. FastAPI 2/2, Collector 1/1, HPA 2/2와 외부 health steady
-6. 기존 권한으로 필요한 fault action 가능
-7. 새 `pair1` 기준 재-binding과 approved contract 생성
+1. 사용자 제공 exact EKS cluster 이름과 preserved EC2 private env 경로
+2. 준비기가 active Job/SparkApplication/Pending/Terminating 0 확인
+3. 준비기가 FastAPI 2/2, Collector 1/1, HPA 2/2와 외부 health steady 확인
+4. 준비기가 기존 권한으로 SparkApplication list, deny SA, driver delete 확인
+5. 후보 Run A/B/C Job/source boundary 3/3 격리 확인
+6. 새 `pair1` 기준 재-binding, live-input hash binding과 approved contract 생성
 
 하나라도 없으면 live run을 만들지 않고 blocker로 보고한다.

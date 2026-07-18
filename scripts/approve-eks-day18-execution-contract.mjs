@@ -10,6 +10,7 @@ import {
   validatePrivateExecutionContractOutputPath,
 } from "./verify-eks-day18-execution-contract.mjs";
 import { verifyBoundExecutionContract } from "./bind-eks-day18-execution-contract.mjs";
+import { loadAndVerifyDay18LiveInput } from "./verify-eks-day18-live-input.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const CONFIRMATION = "approve-eks-day18-resilience-scope";
@@ -21,11 +22,14 @@ export async function approveExecutionContract({
   currentReceipt,
   candidateReceipt,
   rollbackReceipt,
+  liveInput,
   baseRef = "origin/pair1",
   requiredMergedRefs = [],
   approvedAt = new Date().toISOString(),
 } = {}) {
-  if (!input || !output) throw new Error("input and output are required");
+  if (!input || !output || !liveInput) {
+    throw new Error("input, output, and liveInput are required");
+  }
   const outputErrors = validatePrivateExecutionContractOutputPath(output);
   if (outputErrors.length > 0) {
     throw new Error(`approved execution contract output: ${outputErrors.join("; ")}`);
@@ -41,8 +45,14 @@ export async function approveExecutionContract({
     baseRef,
     requiredMergedRefs,
   });
+  const verifiedLiveInput = loadAndVerifyDay18LiveInput(liveInput);
   const contract = {
     ...pending,
+    liveInputEvidence: {
+      state: "verified",
+      inputSha256: verifiedLiveInput.inputSha256,
+      targetSelectionSha256: verifiedLiveInput.targetSelectionSha256,
+    },
     approval: {
       state: "approved",
       approvedAt,
@@ -73,6 +83,7 @@ export function parseArguments(argv) {
     "--current-receipt": "currentReceipt",
     "--candidate-receipt": "candidateReceipt",
     "--rollback-receipt": "rollbackReceipt",
+    "--live-input": "liveInput",
     "--base-ref": "baseRef",
   };
   for (let index = 0; index < argv.length; index += 2) {

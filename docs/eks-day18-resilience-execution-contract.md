@@ -23,6 +23,8 @@ proof, private input, read-only preflight와 명시적 approval은 서로 다른
 - raw Run/Job/Application/snapshot/dataset/group/table/output/checkpoint 식별자와
   credential은 tracked 문서와 public 출력에 넣지 않는다.
 - private receipt와 계약은 `/private/tmp`, mode `0600`, overwrite 금지를 사용한다.
+- 승인에 쓰는 live input도 `/private/tmp`, mode `0600`, overwrite 금지를 사용하며,
+  exact EKS/보존 EC2/baseline/후보 3개를 SHA-256으로 승인 scope에 묶는다.
 - scope, image, health, Ready floor 또는 소유 경계가 어긋나면 추가 mutation을
   중단한다.
 
@@ -74,20 +76,32 @@ contract를 수정하지 않고 새 이름으로 다시 bind한다.
 
 approval은 다음 private input과 read-only preflight가 모두 준비된 뒤에만 만든다.
 
-- exact EKS context와 보존 EC2 검증용 `deploy/ec2.env` 또는 명시적 private 경로
+- 사용자가 명시한 exact EKS cluster 이름과 보존 EC2 검증용 private env 경로
 - live FastAPI/Collector Deployment/Pod imageID와 current Backend receipt exact match
-- Run D/E 전용 persisted Job/Run input
+- 기존 격리 후보 Job 3개와 Run A/B/C source boundary
+- Run D/E는 승인된 후보 Run A/B의 Job/source boundary를 사용하되, logical Run은
+  승인 뒤 fault runner가 새로 예약한다. 기존 성공 Run을 재사용하지 않는다.
 - active Job/SparkApplication/Pending/Terminating 0
 - FastAPI `2/2`, Collector `1/1`, HPA `2/2`, 외부 health steady
 - 기존 권한으로 필요한 visibility와 fault action 가능
 
 ```bash
+ASKLAKE_EKS_CLUSTER_NAME='<exact-cluster-name>' \
+ASKLAKE_DAY18_EC2_ENV='<private-preserved-ec2-env-path>' \
+ASKLAKE_DAY18_CURRENT_RECEIPT='/private/tmp/asklake-day18-current-backend.image-receipt.json' \
+ASKLAKE_DAY18_LIVE_INPUT='/private/tmp/asklake-day18-live-input-<revision>.json' \
+  bash scripts/prepare-eks-day18-live-input.sh --prepare
+
+node scripts/verify-eks-day18-live-input.mjs \
+  /private/tmp/asklake-day18-live-input-<revision>.json
+
 node scripts/approve-eks-day18-execution-contract.mjs \
   --input /private/tmp/asklake-day18-execution-contract-<revision>-bound.json \
   --output /private/tmp/asklake-day18-execution-contract-<revision>-approved.json \
   --current-receipt /private/tmp/asklake-day18-current.image-receipt.json \
   --candidate-receipt /private/tmp/asklake-day18-candidate.image-receipt.json \
   --rollback-receipt /private/tmp/asklake-day18-rollback.image-receipt.json \
+  --live-input /private/tmp/asklake-day18-live-input-<revision>.json \
   --base-ref origin/pair1 \
   --require-merged-ref '<fault-retry-merged-revision>' \
   --confirm approve-eks-day18-resilience-scope
@@ -96,9 +110,12 @@ node scripts/verify-eks-day18-execution-contract.mjs \
   --execution /private/tmp/asklake-day18-execution-contract-<revision>-approved.json
 ```
 
-`scopeHash`는 approval metadata와 생성 시각을 제외한 canonical 전체 scope에서
-자동 계산한다. 임의 hash, unresolved receipt, proof mismatch, scope 확장, raw
-identifier 또는 mode 오류는 실행 계약으로 인정하지 않는다.
+live input verifier는 원본 식별자를 출력하지 않고 target 수, visibility mode와
+target-selection short hash만 출력한다. approver는 private 파일 전체 byte SHA-256과
+canonical target-selection SHA-256을 `liveInputEvidence`에 넣는다. `scopeHash`는
+approval metadata와 생성 시각을 제외한 canonical 전체 scope에서 자동 계산한다.
+임의 hash, unresolved receipt/live input, proof mismatch, scope 확장, raw identifier
+또는 mode 오류는 실행 계약으로 인정하지 않는다.
 
 ## 2026-07-19 준비 결과
 
@@ -113,8 +130,10 @@ identifier 또는 mode 오류는 실행 계약으로 인정하지 않는다.
 | capability 자동 binding | PASS |
 | bound private contract | PASS — mode `0600`, approval `pending` |
 | live Backend current image exact match | PASS |
-| Run D/E private input | BLOCKED — 전용 persisted Job/Run 입력 없음 |
-| SparkApplication visibility | BLOCKED — 기존 RBAC에서 `forbidden` |
+| candidate Job/source boundary | PASS — 격리 후보 3개, slot 3개, active Run 0 |
+| Run D/E target selection | READY — Run A/B 후보에 각각 바인딩, 새 logical Run은 승인 후 생성 |
+| SparkApplication visibility | PASS — FastAPI service account in-cluster list 가능 |
+| live-input approval binding | PASS (static) — exact schema, private mode, sanitizer, byte/target hash |
 | exact preserved EC2 input | BLOCKED — private input 없음 |
 | approved contract | NOT CREATED |
 | cluster mutation | `0` |
@@ -124,21 +143,24 @@ delivery receipt에 연결된다. receipt를 합성하지 않고 Phase 7 변경 
 공식 receipt를 current/rollback 원본으로 사용하며 Frontend는 runner의 무변경 gate로
 보호한다.
 
-AWS 조회 결과로 private EC2/Run input을 추론하거나 새 권한을 만들지 않는다. 세
-blocker가 해소되기 전에는 rollout, fault Job, SparkApplication 또는 E2E Run을
-시작하지 않는다.
+AWS 조회 결과로 cluster/EC2 input을 추론하거나 새 권한을 만들지 않는다. 현재
+남은 blocker는 사용자가 명시할 exact EKS cluster 이름과 보존 EC2 env 경로다.
+두 입력이 없으면 live-input 파일과 approved contract를 만들 수 없고 rollout,
+fault Job, SparkApplication 또는 E2E Run을 시작하지 않는다.
 
 ## 로컬 검증
 
 ```bash
 node --test \
   scripts/test-eks-day18-execution-contract.mjs \
-  scripts/test-eks-day18-execution-binding.mjs
+  scripts/test-eks-day18-execution-binding.mjs \
+  scripts/test-eks-day18-live-input.mjs
 
 bash scripts/test-eks-day18-backend-rollout-round-trip.sh
 bash scripts/verify-tracked-evidence-redaction.sh
 ```
 
-contract/binding 테스트는 pending/unresolved 입력, canonical scope hash, private
-mode, overwrite, receipt ancestry/freshness, capability proof derivation과 수동 tamper
-거부를 확인한다. 이 검증은 AWS/Kubernetes/RDS 리소스를 만들거나 변경하지 않는다.
+contract/binding/live-input 테스트는 pending/unresolved 입력, canonical scope hash,
+private mode, overwrite, receipt ancestry/freshness, capability proof derivation,
+unsafe baseline, 3/3 격리, fault-source mismatch, sanitizer와 수동 tamper 거부를
+확인한다. 이 검증은 AWS/Kubernetes/RDS 리소스를 만들거나 변경하지 않는다.
