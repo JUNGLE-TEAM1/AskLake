@@ -6,6 +6,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from app.schemas.common import CamelModel, DiagnosticFields, to_camel
 from app.schemas.iceberg import IcebergWriterTarget
 from app.schemas.permissions import PermissionAction, PermissionGrant, ResourcePermissions
+from app.schemas.trino_governance import TrinoSqlJobGovernance as TrinoSqlJobGovernanceBase
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -556,21 +557,8 @@ class TrinoSqlJobSchedule(CamelModel):
     weekday: Literal["월", "화", "수", "목", "금", "토", "일"] = "월"
 
 
-class TrinoSqlJobGovernance(CamelModel):
-    access_scope: Literal["organization", "private", "project"] = "private"
-    owner: str = Field(min_length=1, max_length=320)
-    permission_summary: str = Field(default="", max_length=2000)
-    principal_id: str | None = Field(default=None, max_length=255)
-
-    @model_validator(mode="after")
-    def validate_scope_principal(self) -> "TrinoSqlJobGovernance":
-        self.owner = self.owner.strip()
-        self.principal_id = self.principal_id.strip() if self.principal_id else None
-        if not self.owner:
-            raise ValueError("Governance owner is required")
-        if self.access_scope == "project" and not self.principal_id:
-            raise ValueError("Project access requires a real group principalId")
-        return self
+class TrinoSqlJobGovernance(TrinoSqlJobGovernanceBase):
+    """Compatibility export for the established app.schemas.etl path."""
 
 
 class TrinoSqlJobTarget(CamelModel):

@@ -155,6 +155,20 @@ function PublishedDashboardWidgetGrid({
   );
 }
 
+function RuntimeActionButton({
+  onClick,
+  primary = false,
+}: {
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <Button type="button" variant={primary ? undefined : "outline"} onClick={onClick}>
+      {primary ? "위젯 편집" : "다시 시도"}
+    </Button>
+  );
+}
+
 export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
@@ -235,32 +249,18 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
-  const openDraftAction = (
-    <Button type="button" onClick={onOpenDraft}>
-      위젯 편집
-    </Button>
-  );
-  const retryAction = (
-    <Button type="button" variant="outline" onClick={onRetryPublished}>
-      다시 시도
-    </Button>
-  );
-  const draftRetryAction = (
-    <Button type="button" variant="outline" onClick={onRetryDraft}>
-      다시 시도
-    </Button>
-  );
-  const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => {
-    return onUpdateWidget(widget.id, {
-      config: {
-        ...widget.config,
-        ...patch,
-      } as UpdateDraftWidgetFormInput["config"],
-      datasetId: widget.datasetId ?? null,
-      title: widget.title ?? "제목 없는 위젯",
-      type: widget.type,
-    });
-  };
+  const openDraftAction = <RuntimeActionButton onClick={onOpenDraft} primary />;
+  const retryAction = <RuntimeActionButton onClick={onRetryPublished} />;
+  const draftRetryAction = <RuntimeActionButton onClick={onRetryDraft} />;
+  const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
+    config: {
+      ...widget.config,
+      ...patch,
+    } as UpdateDraftWidgetFormInput["config"],
+    datasetId: widget.datasetId ?? null,
+    title: widget.title ?? "제목 없는 위젯",
+    type: widget.type,
+  });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {

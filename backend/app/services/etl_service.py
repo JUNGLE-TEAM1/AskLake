@@ -445,6 +445,16 @@ AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
 
+def _trino_sql_job_permission_metadata(
+    request: CreateTrinoSqlJobRequest,
+) -> tuple[list[dict[str, Any]], str]:
+    governance = request.governance
+    return (
+        trino_sql_job_permission_roles(governance.access_scope, governance.owner, governance.principal_id),
+        trino_sql_job_permission_summary(governance.access_scope, governance.owner, governance.principal_id),
+    )
+
+
 def create_trino_sql_job(
     db: Session,
     request: CreateTrinoSqlJobRequest,
@@ -539,16 +549,7 @@ def create_trino_sql_job(
         }
         for index, column in enumerate(columns)
     ]
-    permission_roles = trino_sql_job_permission_roles(
-        request.governance.access_scope,
-        request.governance.owner,
-        request.governance.principal_id,
-    )
-    permission_summary = trino_sql_job_permission_summary(
-        request.governance.access_scope,
-        request.governance.owner,
-        request.governance.principal_id,
-    )
+    permission_roles, permission_summary = _trino_sql_job_permission_metadata(request)
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
         "query": request.query,
