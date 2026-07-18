@@ -123,12 +123,12 @@ approval metadata와 생성 시각을 제외한 canonical 전체 scope에서 자
 | --- | --- |
 | same-Run fault/retry 제품 계약 | PASS — PR #978 `pair1` 병합 |
 | Backend 전체/집중/Spark K8s 회귀 | PASS |
-| 공식 candidate image delivery | PASS — workflow run `29651079168` |
-| candidate receipt | PASS — merge revision `4e708679`, 5/5 digest-pinned, mode `0600` |
+| 공식 candidate image delivery | PASS — workflow run `29653403558` |
+| candidate receipt | PASS — `pair1` revision `c3c81dc9`, `linux/amd64`, 5/5 digest-pinned, mode `0600` |
 | live release shape | OBSERVED — component별 공식 release가 섞여 있음 |
 | current/rollback Backend receipt | PASS — FastAPI/Collector exact-match, byte-exact, mode `0600` |
 | capability 자동 binding | PASS |
-| bound private contract | PASS — mode `0600`, approval `pending` |
+| bound private contract | PASS — `c3c81dc9`, capability verified, live-input/approval pending, mode `0600` |
 | live Backend current image exact match | PASS |
 | candidate Job/source boundary | PASS — 격리 후보 3개, slot 3개, active Run 0 |
 | Run D/E target selection | READY — Run A/B 후보에 각각 바인딩, 새 logical Run은 승인 후 생성 |
@@ -142,6 +142,10 @@ approval metadata와 생성 시각을 제외한 canonical 전체 scope에서 자
 delivery receipt에 연결된다. receipt를 합성하지 않고 Phase 7 변경 대상인 Backend의
 공식 receipt를 current/rollback 원본으로 사용하며 Frontend는 runner의 무변경 gate로
 보호한다.
+
+이전 로컬 candidate 파일은 workflow run `29651079168`의 artifact가 아니라 더 오래된
+Git revision을 가리켜 build-input freshness gate에서 거부됐다. 해당 파일을 재사용하지
+않고 최신 `pair1` workflow artifact를 새 mode-`0600` 파일로 검증해 바인딩했다.
 
 AWS 조회 결과로 cluster/EC2 input을 추론하거나 새 권한을 만들지 않는다. 현재
 남은 blocker는 사용자가 명시할 exact EKS cluster 이름과 보존 EC2 env 경로다.
