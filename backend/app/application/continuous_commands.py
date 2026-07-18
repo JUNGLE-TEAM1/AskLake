@@ -130,16 +130,9 @@ def execute_continuous_command(
         # The durable desired state fences another start or maintenance request
         # before the external worker submission begins.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
-        if dispatch_worker:
-            try:
-                worker_result = worker.command(job, runtime, "start")
-            except ApiError as exc:
-                worker_result = _recover_lost_start_response(worker, job, runtime)
-                if worker_result is None:
-                    _record_start_failure(db, job, runtime, session, command, exc, hooks)
-                    raise
-        else:
-            worker_result = {"deferred": True, "owner": "continuous-worker"}
+        worker_result = _dispatch_start(
+            db, job, runtime, session, command, worker, hooks, dispatch_worker
+        )
 
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
@@ -173,23 +166,9 @@ def execute_continuous_command(
         # Commit the command intent before signaling the worker.  A lost
         # response is reconciled from the deterministic worker identity.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
-        if dispatch_worker:
-            try:
-                worker_result = worker.command(job, runtime, verb)
-            except ApiError as exc:
-                runtime.metrics = record_runtime_error(
-                    runtime.metrics,
-                    stage=ContinuousErrorStage.SUBMISSION,
-                    code=f"continuous_worker_{verb}_unknown",
-                    message=exc.message,
-                    retryable=True,
-                    context={"jobId": job.id, "command": command},
-                )
-                runtime.last_error = exc.message
-                etl_repository.save_kafka_continuous_command(db, job, runtime)
-                raise
-        else:
-            worker_result = {"deferred": True, "owner": "continuous-worker"}
+        worker_result = _dispatch_terminal(
+            db, job, runtime, command, verb, worker, dispatch_worker
+        )
         runtime.metrics = record_runtime_observation(
             runtime.metrics,
             "stopping",
@@ -208,6 +187,55 @@ def execute_continuous_command(
             "workerResult": worker_result,
         },
     )
+
+
+def _dispatch_start(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    session: KafkaContinuousSessionModel | None,
+    command: str,
+    worker: KafkaRuntimeGateway,
+    hooks: ContinuousCommandHooks,
+    dispatch_worker: bool,
+) -> dict[str, Any]:
+    if not dispatch_worker:
+        return {"deferred": True, "owner": "continuous-worker"}
+    try:
+        return worker.command(job, runtime, "start")
+    except ApiError as exc:
+        recovered = _recover_lost_start_response(worker, job, runtime)
+        if recovered is not None:
+            return recovered
+        _record_start_failure(db, job, runtime, session, command, exc, hooks)
+        raise
+
+
+def _dispatch_terminal(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    command: str,
+    verb: str,
+    worker: KafkaRuntimeGateway,
+    dispatch_worker: bool,
+) -> dict[str, Any]:
+    if not dispatch_worker:
+        return {"deferred": True, "owner": "continuous-worker"}
+    try:
+        return worker.command(job, runtime, verb)
+    except ApiError as exc:
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.SUBMISSION,
+            code=f"continuous_worker_{verb}_unknown",
+            message=exc.message,
+            retryable=True,
+            context={"jobId": job.id, "command": command},
+        )
+        runtime.last_error = exc.message
+        etl_repository.save_kafka_continuous_command(db, job, runtime)
+        raise
 
 
 def _lock_start_resources(

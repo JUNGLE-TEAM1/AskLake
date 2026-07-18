@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   generateQueryAiSuggestion,
+  getQueryAiErrorMessage,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
+import { LatestRequestGate, type RequestLease } from "../../state/requestOwnership";
 import type { AuditResult, CatalogDataset } from "../../types";
 import type { SqlPreflightResult } from "./sqlLogic";
 
@@ -15,6 +17,42 @@ type SqlQueryAiOptions = {
   query: string;
   selectedDatasets: CatalogDataset[];
 };
+
+function sqlQueryContextFingerprint(
+  baseDataset: CatalogDataset | null,
+  query: string,
+  selectedDatasets: CatalogDataset[],
+) {
+  return JSON.stringify({
+    baseDatasetId: baseDataset?.id ?? null,
+    query,
+    selectedDatasetIds: selectedDatasets.map((dataset) => dataset.id).sort(),
+  });
+}
+
+function sqlQueryAiValidationError(baseDataset: CatalogDataset | null, prompt: string) {
+  if (!baseDataset) return "왼쪽에서 분석 테이블을 먼저 추가해 주세요.";
+  if (!prompt) return "만들고 싶은 분석을 자연어로 입력해 주세요.";
+  return null;
+}
+
+function requestSqlQueryAiSuggestion(
+  baseDataset: CatalogDataset,
+  preflightResult: SqlPreflightResult | null,
+  prompt: string,
+  query: string,
+  selectedDatasets: CatalogDataset[],
+  lease: RequestLease,
+) {
+  return generateQueryAiSuggestion({
+    baseDataset,
+    mode: "draft_sql",
+    preflightMessages: preflightResult?.messages ?? [],
+    prompt,
+    query,
+    selectedDatasets,
+  }, { signal: lease.signal });
+}
 
 export function useSqlQueryAi({
   baseDataset,
@@ -30,15 +68,25 @@ export function useSqlQueryAi({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const requests = useRef(new LatestRequestGate());
+  const contextFingerprint = sqlQueryContextFingerprint(baseDataset, query, selectedDatasets);
+  const contextFingerprintRef = useRef(contextFingerprint);
+  contextFingerprintRef.current = contextFingerprint;
 
   useEffect(() => {
+    requests.current.invalidate();
+    setPending(false);
     setPrompt("");
     setSuggestion(null);
     setError(null);
     setOpen(false);
-  }, [baseDataset?.id]);
+  }, [contextFingerprint]);
+
+  useEffect(() => () => requests.current.invalidate(), []);
 
   const changePrompt = (nextPrompt: string) => {
+    requests.current.invalidate();
+    setPending(false);
     setPrompt(nextPrompt);
     setSuggestion(null);
     setError(null);
@@ -46,7 +94,11 @@ export function useSqlQueryAi({
 
   const changeOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen) return;
+    if (!nextOpen) {
+      requests.current.invalidate();
+      setPending(false);
+      return;
+    }
     setError(null);
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
   };
@@ -54,16 +106,10 @@ export function useSqlQueryAi({
   const generate = async () => {
     if (pending) return;
     const normalizedPrompt = prompt.trim();
-
-    if (!baseDataset) {
+    const validationError = sqlQueryAiValidationError(baseDataset, normalizedPrompt);
+    if (!baseDataset || validationError) {
       setSuggestion(null);
-      setError("왼쪽에서 분석 테이블을 먼저 추가해 주세요.");
-      promptRef.current?.focus();
-      return;
-    }
-    if (!normalizedPrompt) {
-      setSuggestion(null);
-      setError("만들고 싶은 분석을 자연어로 입력해 주세요.");
+      setError(validationError);
       promptRef.current?.focus();
       return;
     }
@@ -71,23 +117,23 @@ export function useSqlQueryAi({
     setSuggestion(null);
     setError(null);
     setPending(true);
+    const lease = requests.current.begin(contextFingerprint);
     try {
-      const nextSuggestion = await generateQueryAiSuggestion({
-        baseDataset,
-        mode: "draft_sql",
-        preflightMessages: preflightResult?.messages ?? [],
-        prompt: normalizedPrompt,
-        query,
-        selectedDatasets,
-      });
+      const nextSuggestion = await requestSqlQueryAiSuggestion(
+        baseDataset, preflightResult, normalizedPrompt, query, selectedDatasets, lease,
+      );
+      if (!requests.current.isCurrent(lease) || contextFingerprintRef.current !== lease.key) return;
       setSuggestion(nextSuggestion);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
-    } catch {
+    } catch (requestError) {
+      if (!requests.current.isCurrent(lease) || contextFingerprintRef.current !== lease.key) return;
       setSuggestion(null);
-      setError("SQL 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setError(getQueryAiErrorMessage(requestError));
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
-      setPending(false);
+      if (requests.current.complete(lease) && contextFingerprintRef.current === lease.key) {
+        setPending(false);
+      }
     }
   };
 

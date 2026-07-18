@@ -70,7 +70,6 @@ write_valid_env() {
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
-      'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'BACKEND_CORS_ORIGINS=https://deploy.asklake.test' \
       'AIRFLOW_API_AUTH_JWT_SECRET=AirflowJwtSecret_123' \
       'AIRFLOW_EXECUTION_API_TOKEN=AirflowExecutionToken_123' \
@@ -90,9 +89,12 @@ write_valid_env() {
       "MINIO_SECRET_KEY=$SECRET_SENTINEL" \
       'MONGO_INITDB_ROOT_PASSWORD=MongoPassword_123' \
       'MONGO_INITDB_ROOT_USERNAME=MongoRootUser_123' \
+      'OPENSEARCH_INITIAL_ADMIN_PASSWORD=OpenSearchPassword_123!' \
+      'OPENSEARCH_PASSWORD=OpenSearchPassword_123!' \
       'POSTGRES_DB=asklake_metadata' \
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
+      'RAG_WORKER_TOKEN=RagWorkerToken_123456789012345678901234' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -623,8 +625,8 @@ expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
 expect_preflight_failure \
-  'frontend and backend legacy demo flags must match' \
-  'AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match'
+  'production rejects legacy demo identities' \
+  'legacy demo identities are test-only'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA*='
@@ -743,6 +745,33 @@ else
   record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
+mock_stack_metadata_bootstrap() (
+  local stack_name="$1"
+
+  ensure_started() { printf 'ensure_started\n'; }
+  ssh_run() { printf 'git_pull\n'; }
+  remote_deploy_preflight() { printf 'preflight\n'; }
+  bootstrap_metadata_schema() { printf 'metadata_bootstrap\n'; }
+  bootstrap_trino_dependencies() { printf 'trino_bootstrap\n'; }
+  prepare_clickhouse_runtime() { printf 'clickhouse_prepare\n'; }
+  remote_compose() { printf 'compose:%s\n' "$1"; }
+  health_check() { printf 'health_check\n'; }
+  verify_trino_runtime() { printf 'trino_verify\n'; }
+  verify_clickhouse_runtime() { printf 'clickhouse_verify\n'; }
+
+  "${stack_name}_stack"
+)
+
+for stack_name in start deploy restart; do
+  if output="$(mock_stack_metadata_bootstrap "$stack_name" 2>&1)" \
+    && [[ "$output" == *$'preflight\nmetadata_bootstrap\ntrino_bootstrap'* ]] \
+    && [[ "$output" == *$'metadata_bootstrap\ntrino_bootstrap\nclickhouse_prepare\ncompose:'* ]]; then
+    record_pass "$stack_name bootstraps metadata schema before application services"
+  else
+    record_fail "$stack_name bootstraps metadata schema before application services"
+  fi
+done
+
 mock_health_check() (
   local payload="$1"
 
@@ -825,6 +854,45 @@ expect_health_failure \
 expect_health_failure \
   'health rejects malformed JSON without echoing it' \
   "$SECRET_SENTINEL"
+
+mock_redirect_health_check() (
+  local payload='{"ok":true,"database":{"ok":true}}'
+  local curl_log="$TMP_DIR/redirect-health-curl.log"
+
+  HEALTH_RETRIES=1
+  HEALTH_RETRY_DELAY=0
+  HEALTH_PATH=/api/health
+
+  resolve_app_url() {
+    printf 'http://deploy.asklake.test\n'
+  }
+
+  curl() {
+    printf '%s\n' "$*" >> "$curl_log"
+    if [[ " $* " == *' --location '* ]]; then
+      if [[ " $* " == *' -fsSI '* ]]; then
+        return 0
+      fi
+      printf '%s' "$payload"
+      return 0
+    fi
+    return 22
+  }
+
+  sleep() {
+    :
+  }
+
+  health_check
+  [[ "$(wc -l < "$curl_log")" -eq 3 ]]
+  ! grep -Fv -- '--location' "$curl_log" >/dev/null
+)
+
+if mock_redirect_health_check >/dev/null 2>&1; then
+  record_pass 'health follows redirect for frontend, backend, and AI readiness requests'
+else
+  record_fail 'health follows redirect for frontend, backend, and AI readiness requests'
+fi
 
 printf 'deploy regression summary: %s passed, %s failed, %s skipped\n' \
   "$pass_count" "$fail_count" "$skip_count"
