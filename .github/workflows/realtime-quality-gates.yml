@@ -112,6 +112,12 @@ jobs:
           ASKLAKE_FASTAPI_PYTHON: python
         run: npm run verify:clickhouse-realtime-v2-ingest
 
+      - name: Verify ClickHouse V2 dimension contracts
+        working-directory: backend
+        env:
+          ASKLAKE_FASTAPI_PYTHON: python
+        run: npm run verify:clickhouse-realtime-v2-dimensions
+
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
         run: npm run verify:realtime-postgres
