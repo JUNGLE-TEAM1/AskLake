@@ -118,6 +118,14 @@ PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-suite.py \
 
 Golden 갱신은 Dataset evidence의 snapshot ID와 suite version을 함께 검토해야 한다. 기존 hash를 조용히 덮어쓰지 않고 fixture version을 올리며, approximate case만 명시된 tolerance를 허용한다.
 
+## Benchmark Run 저장 계약
+
+Run metadata는 application PostgreSQL/RDS의 `benchmark_runs`에 저장한다. Application DB를 선택한 이유는 campaign/case 조회, idempotency key의 unique 제약, 실행 상태 전이, backup/migration을 기존 운영 경계에서 처리할 수 있기 때문이다. 별도 artifact-only 방식은 파일 단위 보존은 저렴하지만 active campaign 충돌·부분 실행·case 비교를 transaction으로 보장하기 어렵다. 따라서 원문 SQL이 반드시 필요한 운영 환경만 private evidence store에 저장하고 DB에는 reference와 SHA-256 hash만 둔다.
+
+`BenchmarkRunRecord`는 suite/campaign/case, fixture snapshot/schema/partition, generator/prompt/model/provider/Semantic context, request와 SQL hash, validation/estimate, runtime/cache/repetition, 실제 통계, correctness/failure/regeneration, 시작·종료·만료 시각을 하나로 묶는다. 현재 Trino가 제공하지 않는 spill/file/partition metric은 `null`이며 0으로 위조하지 않는다. `idempotency_key`가 같고 입력 fingerprint가 같으면 기존 run을 반환하고, 입력이 다르면 충돌로 거절한다. Terminal receipt에 finish를 재호출해도 첫 결과를 유지한다.
+
+Migration은 `0016_benchmark_runs`가 소유한다. 기본 retention은 30일이며 만료 레코드 정리 worker는 후속 운영 작업이다. Baseline/candidate 요약 artifact에는 raw result row를 포함하지 않으며 private SQL reference의 실제 object lifecycle은 해당 evidence store의 정책을 따른다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.
