@@ -61,7 +61,7 @@ function runtime(): DashboardRuntimeResponse {
 }
 
 test("Dashboard shell 요청은 widget data를 포함하지 않는다", () => {
-  assert.equal(runtimeLoaders.match(/includeData:\s*false/g)?.length, 2);
+  assert.equal(runtimeLoaders.match(/includeData:\s*false/g)?.length, 4);
 });
 
 test("선택한 page의 세 widget은 Dataset 두 개 기준으로 두 요청만 만든다", () => {

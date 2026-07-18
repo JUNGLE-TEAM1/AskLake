@@ -201,7 +201,7 @@ curl --fail http://127.0.0.1:18123/ping
 - production-profile ClickHouse clean start와 restart, strict CA client의 secure native 9440 health: pass
 - final ClickHouse listener가 8443/9440뿐이고 bootstrap 9000이 남지 않는지 확인: pass
 - admin/ingest/materializer/reader/migration/observer user와 role grant 확인: pass
-- escalated host 환경의 `bash tests/deploy/deploy-scripts-regression.sh`: 44 pass, 0 fail, 0 skip
+- 현재 누적 branch의 escalated host `bash tests/deploy/deploy-scripts-regression.sh`: 54 pass, 0 fail, 0 skip
 
 위 결과는 격리 container와 생성한 test certificate 기준이다. 실제 EC2 certificate/hostname, host reboot와 backup/restore 증거를 대신하지 않는다.
 
@@ -224,3 +224,7 @@ PR02 repository 변경만으로 다음 증거를 충족했다고 주장하지 �
 - multi-node Keeper/ClickHouse/Kafka Connect failover
 
 이 증거는 PR03 이후 integration 및 PR09 operator gate가 소유한다.
+
+## 누적 PR03~09 구현 상태
+
+PR02 단독 경계는 위 설명대로 유지된다. 누적 branch에는 이후 raw receipt/live probe, dimension, materializer, Catalog/event publication, Dashboard/SSE/frontend cache와 `0014_realtime_archive_recovery`가 추가됐다. Local integration에서 PostgreSQL concurrent switch와 ClickHouse 100-position parity smoke는 통과했지만, 이는 actual production certificate/host reboot, 10만 건/72시간, multi-node failover와 backup/restore를 대신하지 않는다. 최신 검증 명령과 No-Go 조건은 [개발 가이드](04-development-guide.md#pr09-archiverecovery와-최종-release-gate), [readiness](backend-integration-readiness.md#clickhouse-realtime-serving-v2-readiness), [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

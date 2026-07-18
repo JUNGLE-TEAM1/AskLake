@@ -15,10 +15,12 @@ on:
       - "tests/deploy/**"
       - "ops/ec2/**"
       - "docs/02-architecture.md"
+      - "docs/01-product-planning.md"
       - "docs/03-api-reference.md"
       - "docs/04-development-guide.md"
       - "docs/ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md"
       - "docs/backend-integration-readiness.md"
+      - "docs/api-contract.md"
       - "docs/clickhouse-realtime-v2-foundation.md"
       - "docs/system-guardrails.md"
       - "docs/realtime-2026/**"
@@ -96,45 +98,15 @@ jobs:
         working-directory: backend
         run: npm run verify:realtime-stack
 
-      - name: Verify ClickHouse V2 foundation and migration lifecycle
+      - name: Verify complete ClickHouse V2 release contracts and migration lifecycle
         working-directory: backend
         env:
           ASKLAKE_FASTAPI_PYTHON: python
         run: |
-          npm run verify:clickhouse-realtime-v2-foundation
+          npm run verify:clickhouse-realtime-v2-release
           python -m alembic upgrade head
           python -m alembic downgrade 0011_rag_control_plane_fencing
           python -m alembic upgrade head
-
-      - name: Verify ClickHouse V2 raw ingest contracts
-        working-directory: backend
-        env:
-          ASKLAKE_FASTAPI_PYTHON: python
-        run: npm run verify:clickhouse-realtime-v2-ingest
-
-      - name: Verify ClickHouse V2 dimension contracts
-        working-directory: backend
-        env:
-          ASKLAKE_FASTAPI_PYTHON: python
-        run: npm run verify:clickhouse-realtime-v2-dimensions
-
-      - name: Verify ClickHouse V2 materializer contracts
-        working-directory: backend
-        env:
-          ASKLAKE_FASTAPI_PYTHON: python
-        run: npm run verify:clickhouse-realtime-v2-materializer
-
-      - name: Verify ClickHouse V2 Catalog publication
-        working-directory: backend
-        env:
-          ASKLAKE_FASTAPI_PYTHON: python
-        run: npm run verify:clickhouse-realtime-v2-publication
-
-      - name: Verify ClickHouse V2 Dashboard and SSE contracts
-        working-directory: backend
-        env:
-          ASKLAKE_FASTAPI_PYTHON: python
-        run: npm run verify:clickhouse-realtime-v2-dashboard
 
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
@@ -144,6 +116,10 @@ jobs:
         working-directory: backend
         run: npm run verify:dashboard-live-postgres
 
+      - name: Verify PostgreSQL cutover fencing and idempotency
+        working-directory: backend
+        run: npm run verify:realtime-recovery-postgres
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -151,6 +127,7 @@ jobs:
       - name: Verify frontend realtime cache, route ownership, and production boundary
         working-directory: frontend
         run: |
+          npm run verify:ui-regressions
           npm run test:dashboard-realtime-v2
           npm run build
 
@@ -175,6 +152,15 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.run_live_iceberg)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # Disposable CI-only credentials. Production values still come from the
+      # deployment secret store and the entrypoint rejects placeholder values.
+      CLICKHOUSE_V2_ADMIN_PASSWORD: ci-${{ github.run_id }}-recovery-admin
+      CLICKHOUSE_V2_INGEST_PASSWORD: ci-${{ github.run_id }}-recovery-ingest
+      CLICKHOUSE_V2_MATERIALIZER_PASSWORD: ci-${{ github.run_id }}-recovery-materializer
+      CLICKHOUSE_V2_READER_PASSWORD: ci-${{ github.run_id }}-recovery-reader
+      CLICKHOUSE_V2_MIGRATION_PASSWORD: ci-${{ github.run_id }}-recovery-migration
+      CLICKHOUSE_V2_OBSERVER_PASSWORD: ci-${{ github.run_id }}-recovery-observer
 
     steps:
       - name: Checkout repository
@@ -205,6 +191,17 @@ jobs:
           docker compose up -d --wait postgres minio
           docker compose run --rm trino-storage-bootstrap
           docker compose run --rm trino-postgres-bootstrap
+
+      - name: Start ClickHouse V2 and verify live hot/archive boundary parity
+        run: |
+          docker compose --profile clickhouse-realtime-v2 up -d --wait clickhouse-v2
+          cd backend
+          ASKLAKE_VERIFY_CLICKHOUSE_RECOVERY=true \
+          CLICKHOUSE_URL=http://127.0.0.1:18123 \
+          CLICKHOUSE_USER=asklake_v2_admin \
+          CLICKHOUSE_PASSWORD="$CLICKHOUSE_V2_ADMIN_PASSWORD" \
+          CLICKHOUSE_DATABASE=asklake_realtime_v2 \
+          npm run verify:clickhouse-realtime-v2-recovery-live
 
       - name: Build pinned Spark runtime
         run: docker build --target spark-runtime -t asklake-spark:4.0.1 backend

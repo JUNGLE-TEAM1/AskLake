@@ -613,20 +613,22 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] PR02 repository: Alembic 0012의 신규 metadata 10-table expand, fresh/current/repeat/development-downgrade topology test와 backend image migration 포함
 - [x] PR02 isolated live: clean start/restart, strict CA 9440 health, final 8443/9440-only listener와 six-account RBAC grant
 - [ ] PR02 operator evidence: 실제 production certificate handshake, clean host/EC2 reboot, connector 등록·restart/rebalance, backup/restore와 HA failover
-- [ ] PR03: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
-- [ ] PR04: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
-- [ ] PR05: SQL classifier/compiler, version-scoped shadow materializer, deterministic serving current와 split-failure reconcile
-- [ ] PR06: Catalog `physicalBindings`, binding epoch, 기존 revision/event-log schema v2 원자 publication과 pointer rollback
-- [ ] PR07: bounded ClickHouse Dashboard query, mutation-aware current requery, event-log replica replay와 permission recheck
-- [ ] PR08: frontend Dataset cursor cache, epoch-aware rollback/cutover, stale/degraded UX와 production mock fail-closed
-- [ ] PR09: Bronze/Gold archive parity, rebuild/canary/rollback, browser E2E, chaos와 CI/operator evidence
+- [x] PR03 repository: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
+- [x] PR04 repository: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
+- [x] PR05 repository: SQL classifier/compiler, version-scoped shadow materializer, deterministic serving current와 split-failure reconcile
+- [x] PR06 repository: Catalog `physicalBindings`, binding epoch, 기존 revision/event-log schema v2 원자 publication
+- [x] PR07 repository: bounded ClickHouse Dashboard query, mutation-aware current requery, event-log replica replay와 event별 permission recheck
+- [x] PR08 repository/browser: Dataset cursor cache, epoch-aware snapshot replacement, stale/degraded last-good UX와 live route mock 제거
+- [x] PR09 repository: same-boundary hot/archive parity, idempotent rebuild ledger, gate-checked cutover/rollback, 0014 migration과 release CI
+- [x] PR09 local integration: PostgreSQL concurrent cutover 단일 event, ClickHouse 100-position parity smoke, 722 backend + 138 frontend 전체 회귀와 deploy 54 checks
+- [ ] PR09 operator evidence: 실제 browser cutover→rollback DOM, multi-partition poison/rebalance, service restart/chaos와 backup/restore
 - [ ] 100k deterministic fixture 유실·논리 중복 0, restart/rebalance/gap/poison 검증
 - [ ] 최소 72시간 shadow count/checksum과 SLO evidence
 - [ ] production HA topology, backup/restore와 rollback drill에 대한 별도 운영 승인
 
 PR09 merge는 production activation이 아니다. 모든 V2 routing과 consumer flag는 operator evidence와 traffic-promotion 승인 전까지 기본 `false`이며 단일 EC2 Compose는 demo/staging으로만 판정한다.
 
-PR02의 checkbox는 repository foundation 구현 상태다. Compose는 connector definition을 자동 등록하지 않고 raw ingest를 시작하지 않으며 `/api/health/realtime`의 `v2.ready`도 항상 false다. V2 flag가 true이면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다. 기존 publication table은 PR06 전까지 변경하지 않았다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+체크된 PR03~09 항목은 이 누적 branch의 repository/local evidence이며 merge 또는 production 승인이 아니다. Compose는 connector definition을 자동 등록하지 않는다. PR03 live connector probe가 준비되지 않으면 `/api/health/realtime`은 V2 enabled 상태에서 HTTP 503으로 fail closed한다. PR06/09의 additive migration은 각각 0013/0014이고 production rollback에서 downgrade하지 않는다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)과 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
 
 ## Legacy removal evidence readiness
 

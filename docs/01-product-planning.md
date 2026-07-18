@@ -217,3 +217,5 @@ V2는 이 기준선을 다음 방향으로 단계 확장한다.
 - `streaming_required` 분류는 자동 배포 대상이 아니며 stream-stream/window/retraction은 별도 후속 제품 범위다.
 
 전환 중에는 한 Job generation이 Kafka Engine V1과 Kafka Connect V2를 동시에 소비하지 않는다. 모든 V2 flag가 꺼지면 현재 ClickHouse V1, Iceberg Continuous, Dashboard polling/SSE 동작이 그대로 유지돼야 한다. 상세 구현과 merge 순서는 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md)와 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.
+
+2026-07-18 누적 PR01~09 branch stack에는 raw receipt, versioned dimension, deterministic materialization, Catalog 원자 publication, bounded Dashboard reader/SSE, epoch-aware frontend cache, hot/archive parity 원장, rebuild plan과 boundary-safe cutover/rollback coordinator까지 구현돼 있다. 이 상태는 merge 또는 production 활성화를 뜻하지 않는다. 실제 10만 건 fixture, 72시간 shadow, P95, restart/chaos, security, rollback drill과 운영 승인 evidence가 모두 채워지기 전에는 `CutoverGateEvidence`가 전환을 거부하며 기본 V2 flag와 consumer owner를 변경하지 않는다. 운영 절차는 [ClickHouse V2 복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

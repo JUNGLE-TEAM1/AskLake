@@ -144,7 +144,7 @@ class FakeLiveRepository:
     def get_freshness(self, _dataset_id: str, *, for_update: bool = False):
         self.calls.append("freshness_locked" if for_update else "freshness")
         self.db.events.append("freshness_locked" if for_update else "freshness")
-        return SimpleNamespace(latest_revision=self.latest_revision)
+        return SimpleNamespace(binding_epoch=0, latest_revision=self.latest_revision)
 
     def get_widget_result(self, _widget_id: str, _calculation_version: str, *, for_update: bool = False):
         return self.saved_result

@@ -1146,7 +1146,7 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 
 ## 11) ClickHouse Realtime Serving V2 additive API
 
-이 절은 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md` 순서로 도입한다. PR02에서 활성화된 설정/health field는 아래에 명시하고, 나머지는 관련 구현 PR이 merge되기 전에는 request에 보내거나 응답에 존재한다고 가정하지 않는다.
+이 절은 `docs/codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md` 순서로 도입한다. 누적 PR01~09 branch에는 아래 Catalog/freshness/event 계약이 구현돼 있지만, 각 PR이 `dev`에 순서대로 merge되기 전에는 production request/response에 존재한다고 가정하지 않는다.
 
 ### 기존 Continuous SQL API 확장
 
@@ -1166,7 +1166,7 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
     {
       "role": "serving",
       "engine": "clickhouse",
-      "status": "available",
+      "status": "active",
       "database": "asklake_serving",
       "table": "joined_click_events_v2_current",
       "pipelineVersionId": "rtpv_1",
@@ -1176,10 +1176,10 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
     },
     {
       "role": "archive",
-      "engine": "iceberg",
-      "status": "available",
+      "engine": "trino",
+      "status": "active",
       "catalog": "iceberg",
-      "namespace": "gold",
+      "schema": "gold",
       "table": "joined_click_events",
       "pipelineVersionId": "rtpv_1",
       "dimensionVersionIds": {},
@@ -1189,11 +1189,11 @@ ETL Job에 직접 대응하는 action은 아래와 같다.
 }
 ```
 
-ClickHouse identifier를 `queryEngineTable`에 저장하지 않는다. archive binding이 같은 pipeline/dimension version의 Gold projection을 가리킬 때만 Trino fallback으로 사용할 수 있다. PR09 이전 ClickHouse-only V1 Dataset은 archive binding이 없거나 `status="pending"`일 수 있으며, 이 상태를 검증된 Trino fallback으로 표시하지 않는다.
+ClickHouse identifier를 `queryEngineTable`에 저장하지 않는다. archive binding이 같은 pipeline/dimension version의 Gold projection을 가리킬 때만 Trino fallback으로 사용할 수 있다. ClickHouse-only V1 또는 아직 Gold projection을 검증하지 않은 Dataset은 archive binding이 없거나 `status="pending"`일 수 있으며, 이 상태를 검증된 Trino fallback으로 표시하지 않는다. 현재 status enum은 `pending|active|stale|failed`, engine enum은 `clickhouse|trino`다.
 
 ### Dashboard cursor와 mutation
 
-`POST /api/dashboards/{dashboardId}/widgets/query`는 V2에서 optional Dataset cursor map을 받는다.
+아래 optional Dataset cursor map은 목표 request extension이며 현재 누적 branch의 public request schema에는 아직 노출하지 않는다.
 
 ```json
 {
@@ -1203,8 +1203,20 @@ ClickHouse identifier를 `queryEngineTable`에 저장하지 않는다. archive b
 }
 ```
 
-widget 응답은 `engine`, `bindingEpoch`, `appliedRevision`, `latestKnownRevision`, `sourceBoundary`, `freshnessState`, optional structured `error`를 제공한다. `mutationType=append`만 기존 delta merge 후보이며 `upsert|replace|retract`는 canonical current serving 결과를 다시 조회한다.
+현재 public widget 응답은 기존 `appliedRevision`, `calculatedAt`, `dataStatus`, `dataError`를 유지한다. engine/binding/boundary/mutation evidence는 `POST /api/datasets/freshness/query`, Catalog `physicalBindings`와 SSE schema v2에서 읽는다. `mutationType=append`만 targeted delta 후보이며 `upsert|replace|retract`, binding/pipeline 변경과 revision gap은 frontend가 published runtime snapshot을 다시 조회한다.
 
 기존 `GET /api/realtime/events`와 `realtime_event_log`를 재사용한다. 기존 event 이름 `dataset.revision.committed`, `dashboard.published`와 `system.*` control event를 rename하지 않는다. V2는 schema version 2 allowlist payload에 `bindingEpoch`, revision, `pipelineVersionId`, `materializationId`와 mutation type을 추가하되 event 본문에 row/widget 결과를 넣지 않는다. Browser는 `(bindingEpoch, revision)`을 비교하고 epoch가 증가한 cutover/rollback 결과를 수용한다.
 
-PR02에서 V2 설정 이름은 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`으로 확정됐다. 모두 기본 비활성이며 모순된 V1/V2 owner 조합은 startup에서 실패한다. connector 등록, raw ingest와 live readiness는 아직 활성 API 계약이 아니므로 production owner를 `kafka_connect_v2`로 전환하지 않는다. 상세 경계는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+V2 설정 이름은 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`이다. 모두 기본 비활성이며 모순된 V1/V2 owner 조합은 startup에서 실패한다. raw ingest adapter가 누적 branch에 존재하더라도 실제 connector/restart/rebalance와 production cutover gate가 승인되기 전에는 production owner를 `kafka_connect_v2`로 전환하지 않는다. 상세 경계는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+
+### 내부 archive/recovery 계약
+
+외부 `/api/realtime/pipelines` 또는 cutover HTTP API는 추가하지 않았다. Backend-owned worker/운영 command가 `ArchiveRecoveryService`를 호출하고 caller가 transaction commit/rollback을 소유한다.
+
+- parity: 같은 boundary/version의 hot/archive evidence를 `realtime_parity_checks`에 immutable하게 기록한다.
+- rebuild: matched parity만 `planned → running → ready`로 이동하며 gap/overlap이 하나라도 있으면 ready가 될 수 없다.
+- cutover/rollback: production cutover는 10만 건, 72시간, P95, chaos, security, rollback drill, dashboard/runbook evidence를 모두 요구한다. rollback은 matched parity와 expected pointer를 요구하지만 장애 복구를 72시간 기다리게 하지는 않는다.
+- 성공 event는 기존 `dataset.revision.committed` schema v2이며 `mutationType="replace"`, 새 `bindingEpoch`, 새 global revision과 target version을 담는다.
+- 같은 idempotency key retry는 기존 operation/revision/event cursor를 반환한다. 다른 evidence로 key를 재사용하면 `ValueError`로 fail closed한다.
+
+외부 operator route가 별도 승인으로 추가되기 전까지 raw DB update로 이 내부 경계를 우회하지 않는다.
