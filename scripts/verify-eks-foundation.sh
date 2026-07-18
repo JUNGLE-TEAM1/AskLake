@@ -132,6 +132,8 @@ required_files=(
   "$ROOT_DIR/docs/eks-day18-operations-runbook.md"
   "$ROOT_DIR/scripts/verify-eks-day18-operations-runbook.sh"
   "$ROOT_DIR/scripts/test-eks-day18-operations-runbook.sh"
+  "$ROOT_DIR/scripts/run-eks-day18-backend-rollout-round-trip.sh"
+  "$ROOT_DIR/scripts/test-eks-day18-backend-rollout-round-trip.sh"
 )
 
 for required_file in "${required_files[@]}"; do
@@ -150,6 +152,7 @@ bash "$ROOT_DIR/scripts/verify-eks-day18-recovery-smoke.sh"
 bash "$ROOT_DIR/scripts/verify-eks-day18-ec2-rollback-contract.sh"
 bash "$ROOT_DIR/scripts/verify-eks-day18-operations-runbook.sh"
 bash "$ROOT_DIR/scripts/test-eks-day18-operations-runbook.sh"
+bash "$ROOT_DIR/scripts/test-eks-day18-backend-rollout-round-trip.sh"
 bash "$ROOT_DIR/scripts/test-tracked-evidence-redaction.sh"
 bash "$ROOT_DIR/scripts/verify-tracked-evidence-redaction.sh"
 node --check "$ROOT_DIR/scripts/resolve-eks-backend-runtime-profile.mjs"

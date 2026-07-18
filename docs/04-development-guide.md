@@ -1230,12 +1230,18 @@ preflight/rollout, 보존 EC2 fallback과 비용·cleanup을 한 순서로 사�
 구분한다. Phase 6에서는 runbook과 preflight만 고정하고 실제 새 digest rolling update는
 Pair B 변경이 합쳐진 뒤 Phase 7 confirmation으로 실행한다. static 계약은
 `bash scripts/verify-eks-day18-operations-runbook.sh`, 안전·위험 fixture는
-`bash scripts/test-eks-day18-operations-runbook.sh`로 검사한다. formal image receipt는
+`bash scripts/test-eks-day18-operations-runbook.sh`로 검사한다. Phase 7의 성공 candidate
+→ 의도적 이전 revision rollback → 동일 candidate 재승격 순서는
+`scripts/run-eks-day18-backend-rollout-round-trip.sh`가 소유하며,
+`bash scripts/test-eks-day18-backend-rollout-round-trip.sh`가 preflight 무변경,
+confirmation fail-closed, 정상 순서와 rollback/재승격 실패 시 추가 mutation 중단을
+검증한다. formal image receipt는
 Git ignore 대상 `infra/eks/delivery/*.image-receipt.json`, 일반 evidence는 저장소 밖의 고유
 경로와 mode `0600`을 사용한다. preflight/rollout은 private `deploy/ec2.env`에서 exact 보존
 instance를 `ASKLAKE_EXPECTED_EC2_INSTANCE_ID`로 전달하며 파일 누락·권한 drift를 추측으로
-복구하지 않는다. 현재 rollout runner의 postcheck 실패 자동 rollback은 성공 release의 의도적
-rollback·재승격 증거가 아니며 후자는 Phase 7 공동 gate다. CloudWatch는 add-on Ready뿐 아니라
+복구하지 않는다. 낮은 수준 rollout runner의 postcheck 실패 자동 rollback은 성공 release의
+의도적 rollback·재승격 증거가 아니며 round-trip runner의 별도 confirmation과 세 번의
+steady gate가 Phase 7 공동 판정이다. CloudWatch는 add-on Ready뿐 아니라
 같은 UTC window의 Event, 비식별 log marker count와 alarm 상태 시각을 대조한다. EC2 `start`
 성공을 트래픽 cutover 성공으로 확대하지 않고, Phase 4 ALB/RDS/HPA 복구를 S3·Catalog·Iceberg
 연속성으로 확대하지 않는다.

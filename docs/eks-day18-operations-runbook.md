@@ -186,33 +186,41 @@ export ASKLAKE_EXPECTED_EC2_INSTANCE_ID="${ASKLAKE_EC2_INSTANCE_ID:?}"
 bash scripts/preflight-eks-backend-image-rollout.sh "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
-다음 명령은 Phase 7의 공동 **변경** 중 첫 번째인 candidate rolling update다. Pair B의 최종
-digest와 fault/retry 변경이 `pair1`에 병합되고 실행 창을 확보한 뒤에만 사용한다.
+Phase 7 runner 자체의 조회 전용 gate는 다음과 같다. 이 명령은 receipt, 보존 EC2,
+현재 Helm revision, 이전/candidate immutable image, FastAPI `2/2`, Collector `1/1`,
+Frontend와 runtime Secret baseline을 private mode-`0600` evidence에 고정하지만 Helm
+revision이나 workload를 바꾸지 않는다.
 
 ```bash
-export ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend
-bash scripts/rollout-eks-backend-image.sh "$ASKLAKE_IMAGE_RECEIPT"
+bash scripts/run-eks-day18-backend-rollout-round-trip.sh \
+  --preflight "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
-runner는 Helm revision을 기록하고 rollout 후 ALB, Secret, RDS, Pod imageID, collector와
-Continuous 경계를 확인한다. upgrade 이후 postcheck가 실패하면 직전 Helm revision으로
+다음 명령은 Phase 7의 공동 **변경**이다. Pair B의 최종 digest와 fault/retry 변경이
+`pair1`에 병합되고, 위 preflight가 통과하고, 실행 창을 확보한 뒤에만 사용한다.
+
+```bash
+export ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend
+bash scripts/run-eks-day18-backend-rollout-round-trip.sh \
+  --run "$ASKLAKE_IMAGE_RECEIPT"
+```
+
+runner는 기존 `scripts/rollout-eks-backend-image.sh`를 candidate 배포와 재승격에
+`ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend` 계약으로 재사용하고
+그 사이에 시작 시 고정한 이전 revision으로 의도적 Helm rollback을 수행한다. 각 단계에서
+ALB/RDS steady, FastAPI `2/2`, Collector `1/1`, Deployment와 Pod imageID, Continuous 0,
+보존 EC2, Frontend와 runtime Secret 무변경을 확인한다. 이전/candidate image와 실제 Helm
+revision은 기본적으로 저장소 밖 `/private/tmp` private evidence에만 mode `0600`으로 남고
+화면에는 단계·건수·성공 여부만 출력된다.
+
+낮은 수준의 rollout script는 upgrade 이후 postcheck가 실패하면 직전 Helm revision으로
 자동 rollback을 시도한다. 출력이 `backend_rollout_rollback=completed_and_steady`가 아니면
-자동 복구 성공으로 선언하지 말고, Helm revision과 live digest를 조회한 뒤 변경을 멈춘다.
-mutable tag 재배포, `kubectl set image`와 source commit만으로 완료 처리하는 방식은 금지한다.
-
-이 자동 실패 rollback은 Phase 7이 요구하는 의도적 왕복 검증을 대신하지 않는다. Phase 7은
-별도 approval-gated runner 또는 검토된 명령으로 다음 순서를 구현해야 한다.
-
-1. 이전 Helm revision과 이전 FastAPI/Collector digest를 private evidence에 고정한다.
-2. 새 candidate digest로 rolling update하고 FastAPI `2/2`, Collector `1/1`, ALB/RDS/Secret,
-   Continuous와 외부 HTTP 무중단을 확인한다.
-3. 성공한 release를 의도적으로 이전 revision으로 rollback하고 같은 gate를 다시 확인한다.
-4. 새 digest로 재승격하고 formal receipt, Deployment와 Pod imageID가 다시 일치하는지 확인한다.
-5. 전 과정에서 Frontend image와 runtime Secret이 변하지 않았음을 확인한다.
-
-의도적 rollback 또는 재승격이 실패하면 추가 mutation을 중단한다. 현재
-`scripts/rollout-eks-backend-image.sh`에는 성공 뒤 의도적 rollback·재승격 기능이 없으므로
-Phase 6 완료를 해당 live 증거로 확대하지 않는다.
+자동 복구 성공으로 선언하지 않는다. 이 자동 실패 rollback은 성공 release의 의도적 왕복
+검증을 대신하지 않는다. 의도적 rollback 또는 재승격이 실패하면 round-trip runner는
+`backend_round_trip_additional_mutation=stopped`를 출력하고 추가 mutation을 중단한다.
+이때 Helm revision과 live digest를 private 조회한 뒤 수동 steady-state 복구 전까지 다음
+단계를 실행하지 않는다. mutable tag 재배포, `kubectl set image`와 source commit만으로 완료
+처리하는 방식은 금지한다.
 
 ## 6. 보존 EC2 fallback
 
