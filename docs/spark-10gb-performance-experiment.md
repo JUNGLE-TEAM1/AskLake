@@ -132,7 +132,7 @@ Rule과 Quality는 더 이상 병목이 아니다. executor 증가로 Source와 
 | submit→첫 executor | 76.19초 | 71.01초 | 70.26초 |
 | submit→첫 running node | 28.57초 | 25.05초 | 27.88초 |
 | Spark 종료→idle | 6.43초 | 6.32초 | 8.82초 |
-| Spark 종료→node 0 | 694.43초 | 692.75초 | 장기 대기 생략 |
+| Spark 종료→node 0 | 694.43초 | 692.75초 | 688.24초 |
 | executor CPU time | 216.83초 | 253.76초 | 380.84초 |
 | JVM GC time | 6.73초 | 5.96초 | 9.25초 |
 | executor memory peak/capacity | 0.883/2.388GB | 0.883/4.776GB | 0.883/9.553GB |
