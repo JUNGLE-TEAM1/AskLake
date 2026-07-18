@@ -41,8 +41,8 @@ const burstIntervalSeconds = positiveInteger(options.burstIntervalSeconds ?? pro
 const burstMode = burstMinMessages !== null || burstMaxMessages !== null || burstIntervalSeconds !== null;
 let stopRequested = false;
 
-if (!["json-envelope", "raw-text"].includes(payloadMode)) {
-  throw new Error("--payload-mode must be json-envelope or raw-text");
+if (!["json-envelope", "json-raw", "raw-text"].includes(payloadMode)) {
+  throw new Error("--payload-mode must be json-envelope, json-raw, or raw-text");
 }
 
 if (maxCycles && !loop) {
@@ -187,7 +187,7 @@ async function* readStandardReviewRecords() {
 }
 
 async function* readReplayMessages() {
-  if (payloadMode === "json-envelope") {
+  if (payloadMode === "json-envelope" || payloadMode === "json-raw") {
     yield* readStandardReviewRecords();
     return;
   }
@@ -209,6 +209,12 @@ function toKafkaMessage(baseMessage, cycle, logicalOffset) {
     };
   }
   const record = decorateReplayRecord(baseMessage, cycle, logicalOffset, { loop, replayRunId });
+  if (payloadMode === "json-raw") {
+    return {
+      key: record.event_id,
+      value: JSON.stringify({ ...record.raw, event_id: record.event_id }),
+    };
+  }
   return { key: record.event_id, value: JSON.stringify(record) };
 }
 
@@ -228,7 +234,9 @@ async function* readInputLines(targetPath) {
   }
 }
 
-const readJsonLines = readInputLines;
+function readJsonLines(targetPath) {
+  return readInputLines(targetPath);
+}
 
 function parseJsonLine(line, lineNumber) {
   try {
@@ -377,7 +385,7 @@ function printUsage() {
   console.log(`Usage: node scripts/seed-kafka-review-fixture.mjs [options]
 
   --input <path>             JSONL input, or TXT/LOG input in raw-text mode
-  --payload-mode <mode>      json-envelope (default) or raw-text
+  --payload-mode <mode>      json-envelope (default), json-raw, or raw-text
   --topic <topic>            Kafka topic (default: reviews.raw)
   --broker <host:port>       Kafka broker (default: 127.0.0.1:19092)
   --limit <count>            Maximum records per replay cycle
