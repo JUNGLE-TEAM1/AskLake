@@ -21,6 +21,14 @@ test("semantic data selection always renders the selected dataset schema as a ta
   assert.doesNotMatch(page, /apiClient[\s\S]*\/api\/catalog\/datasets/);
 });
 
+test("legacy AI workspace routes converge on the governed semantic catalog", () => {
+  const app = source("src/App.tsx");
+
+  assert.match(app, /semanticCatalogCompatibilityPaths = new Set\(\["\/ai", "\/semantic-layer"\]\)/);
+  assert.match(app, /semanticCatalogCompatibilityPaths\.has\(location\.pathname\)[\s\S]*navigate\("\/catalog\?view=semantic", \{ replace: true \}\)/);
+  assert.doesNotMatch(app, /<AiChatPage/);
+});
+
 test("semantic mutations stay single-flight and failed saves keep their editor open", () => {
   const page = source("src/pages/semantic/SemanticLayerPage.tsx");
 

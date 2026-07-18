@@ -68,6 +68,7 @@ type FlowPathContext = {
 };
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
+const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
 
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
@@ -139,7 +140,7 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
     return { catalogView: parseCatalogView(search), dashboardRoute: null, flow: "catalog" };
   }
   if (area === "sql") return { dashboardRoute: null, flow: "sql" };
-  if (area === "semantic-layer") return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
+  if (semanticCatalogCompatibilityPaths.has(pathname)) return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
   if (area === "login") return { dashboardRoute: null, flow: "login" };
@@ -198,6 +199,24 @@ function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[])
 
 function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
   return jobId !== emptyJobId && jobs.some((job) => job.id === jobId);
+}
+
+function useCatalogViewNavigation(
+  writeAuditLog: ReturnType<typeof useAuditLogs>["writeAuditLog"],
+  setActiveFlow: (flow: FlowId) => void,
+) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const changeCatalogView = (view: CatalogView) => {
+    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
+    writeAuditLog("catalog.view_changed", nextPath, view);
+    setActiveFlow("catalog");
+    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
+  };
+  useEffect(() => {
+    if (semanticCatalogCompatibilityPaths.has(location.pathname)) navigate("/catalog?view=semantic", { replace: true });
+  }, [location.pathname, navigate]);
+  return changeCatalogView;
 }
 
 export function App() {
@@ -319,18 +338,7 @@ export function App() {
     setJobs,
     setSelectedJob,
   });
-
-  const changeCatalogView = (view: CatalogView) => {
-    const nextPath = view === "semantic" ? "/catalog?view=semantic" : "/catalog";
-    writeAuditLog("catalog.view_changed", nextPath, view);
-    setActiveFlow("catalog");
-    if (`${location.pathname}${location.search}` !== nextPath) navigate(nextPath);
-  };
-
-  useEffect(() => {
-    if (location.pathname !== "/semantic-layer") return;
-    navigate("/catalog?view=semantic", { replace: true });
-  }, [location.pathname, navigate]);
+  const changeCatalogView = useCatalogViewNavigation(writeAuditLog, setActiveFlow);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });

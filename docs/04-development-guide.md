@@ -411,7 +411,7 @@ cd backend
 Provider API key는 프론트나 FastAPI가 아니라 `ai-server` env에만 둔다. FastAPI는 `backend/.env`에서 Gateway service token과 MCP signing/service secret만 사용한다.
 AI provider key가 없거나 private AI Gateway가 unavailable이면 backend는 실패를 명시하고 action을 비운다. Assistant guard는 provider가 반환한 action의 Dataset·컬럼·값축을 catalog schema 기준으로 검증하지만, 응답이 비었다고 기본 막대 차트나 성공 결과를 만들어 내지 않는다.
 
-Semantic/RAG 관리 UI는 `/catalog?view=semantic`에서 확인한다. `/semantic-layer`는 같은 URL로 replace 이동해야 하며, standalone AI 메뉴를 다시 추가하지 않는다. Dataset schema, metric·dimension, RAG 분류·승인·색인·작업 이력은 `semanticApi.ts`의 live endpoint를 사용한다. 최소 frontend 검증은 다음과 같다.
+Semantic/RAG 관리 UI는 `/catalog?view=semantic`에서 확인한다. `/semantic-layer`와 기존 `/ai`는 같은 URL로 replace 이동해야 하며, standalone AI 메뉴나 채팅 화면을 다시 추가하지 않는다. Dataset schema, metric·dimension, RAG 분류·승인·색인·작업 이력은 `semanticApi.ts`의 live endpoint를 사용한다. 최소 frontend 검증은 다음과 같다.
 
 ```bash
 cd frontend
@@ -447,7 +447,7 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 
 수동 확인은 다음 순서로 한다.
 
-1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면을 렌더링하지 않는지 확인한다.
+1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면 대신 `/catalog?view=semantic`으로 replace 이동하는지 확인한다.
 2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과해야 한다.
 3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다.
 4. 수집/처리에서 field transform과 SQL transform을 생성하고 입력 schema 밖의 컬럼·관계·위험 함수를 거부하는지 확인한다.
