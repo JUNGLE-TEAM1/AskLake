@@ -394,7 +394,7 @@ async function startWorkerRest(request, containerName) {
   const previous = readWorkerState(jobId);
   if (previous) {
     const existing = await refreshWorkerState(jobId, previous);
-    if (!isTerminalSparkDriverState(existing.driverState)) {
+    if (!isRestartableRestWorkerState(existing)) {
       requireMatchingContinuousSqlWorker(existing, continuousSqlContract);
       return restWorkerResult(jobId, containerName, existing, { started: false });
     }
@@ -445,6 +445,12 @@ async function startWorkerRest(request, containerName) {
     throw error;
   }
   return restWorkerResult(jobId, containerName, state, { started: true });
+}
+
+function isRestartableRestWorkerState(state) {
+  const driverState = normalizeSparkDriverState(state.driverState);
+  if (isTerminalSparkDriverState(driverState)) return true;
+  return driverState === "UNKNOWN" && isTerminalSparkDriverState(state.lastKnownDriverState);
 }
 
 async function stopWorkerRest(jobId, action, containerName) {
