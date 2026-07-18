@@ -66,7 +66,7 @@
       "id": "dashboard.legacy-color-map",
       "marker": "CompatibilityPath.DASHBOARD_LEGACY_COLOR",
       "owner": "analytics-experience",
-      "paths": ["backend/app/services/dashboard_runtime_service.py"],
+      "paths": ["backend/app/services/dashboard_widget_config.py"],
       "reachability": "production",
       "removalCondition": "All published revisions store DashboardWidgetColorConfig and old revisions are migrated",
       "targetRelease": "2026-Q4",
