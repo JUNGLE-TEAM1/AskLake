@@ -46,6 +46,11 @@ function isContinuousKafkaDraft(draft: DraftPipeline) {
 }
 const emptyDatasetId = "dataset_not_selected";
 const emptyJobId = "JOB-NONE";
+const topbarNavIdByFlow: Partial<Record<FlowId, NavId>> = {
+  catalog: "catalog",
+  jobs: "ingest",
+  sql: "sql",
+};
 
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
@@ -66,6 +71,13 @@ type FlowPathContext = {
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
 };
+
+function resolveTopbarSection(flow: FlowId, dashboardEntry: DashboardEntry) {
+  const navId = flow === "dashboard" && dashboardEntry.view === "list"
+    ? "dashboard"
+    : topbarNavIdByFlow[flow];
+  return navItems.find((item) => item.id === navId) ?? null;
+}
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
 const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
@@ -289,18 +301,6 @@ export function App() {
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
   }, [activeFlow, canAccessAdmin]);
-  const topbarNavId: NavId | null = activeFlow === "jobs"
-    ? "ingest"
-    : activeFlow === "catalog"
-      ? "catalog"
-      : activeFlow === "sql"
-        ? "sql"
-        : activeFlow === "dashboard" && dashboardEntry.view === "list"
-          ? "dashboard"
-          : null;
-  const topbarSection = topbarNavId
-    ? navItems.find((item) => item.id === topbarNavId) ?? null
-    : null;
   const activeDataLoading = dataRequirements.jobs ? jobsLoading : dataRequirements.catalog ? catalogLoading : false;
   const activeDataError = dataRequirements.jobs ? jobsError : dataRequirements.catalog ? catalogError : null;
   const activeDataHasRows = dataRequirements.jobs ? jobs.length > 0 : dataRequirements.catalog ? datasets.length > 0 : true;
@@ -580,7 +580,7 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar section={topbarSection} />
+        <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}

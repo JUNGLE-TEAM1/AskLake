@@ -2017,8 +2017,8 @@ const checks = [
     file: "src/App.tsx",
     patterns: [
       /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
-      /const topbarNavId: NavId \| null = activeFlow === "jobs"/,
-      /<Topbar section=\{topbarSection\} \/>/,
+      /function resolveTopbarSection\(flow: FlowId, dashboardEntry: DashboardEntry\)/,
+      /<Topbar section=\{resolveTopbarSection\(activeFlow, dashboardEntry\)\} \/>/,
       /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
@@ -2080,7 +2080,7 @@ const checks = [
       "src/pages/dashboard/DashboardLandingPage.tsx",
     ],
     patterns: [
-      /className="jobs-landing-actions"/,
+      /data-page-actions="jobs"/,
       /className="catalog-page"/,
       /className=\{cn\(styles\.page,/,
       /className="dashboard-list-actions"/,

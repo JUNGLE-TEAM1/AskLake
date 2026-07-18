@@ -113,7 +113,7 @@ export function JobsLandingPage({
 
   return (
     <div className="jobs-landing">
-      <div className="jobs-landing-actions">
+      <div className="flex min-h-10 items-center justify-end" data-page-actions="jobs">
         <Button type="button" onClick={onCreate}>
           <Plus size={16} />
           새 수집/처리 생성
