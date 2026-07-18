@@ -107,6 +107,7 @@
     "verify:clickhouse-realtime-v2-ingest": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_clickhouse_realtime_ingest -v",
     "verify:clickhouse-realtime-v2-dimensions": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_clickhouse_realtime_dimensions -v",
     "verify:clickhouse-realtime-v2-materializer": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_clickhouse_realtime_materializer -v",
+    "verify:clickhouse-realtime-v2-publication": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_catalog_realtime_publication -v",
     "verify:realtime-quality-gates": "node scripts/run-python-verification.mjs scripts/verify-realtime-quality-gates.py",
     "verify:realtime-stack": "node scripts/run-python-verification.mjs scripts/verify-realtime-stack.py",
     "verify:realtime-postgres": "node scripts/run-python-verification.mjs scripts/verify-realtime-postgres.py",

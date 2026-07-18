@@ -124,6 +124,12 @@ jobs:
           ASKLAKE_FASTAPI_PYTHON: python
         run: npm run verify:clickhouse-realtime-v2-materializer
 
+      - name: Verify ClickHouse V2 Catalog publication
+        working-directory: backend
+        env:
+          ASKLAKE_FASTAPI_PYTHON: python
+        run: npm run verify:clickhouse-realtime-v2-publication
+
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
         run: npm run verify:realtime-postgres
