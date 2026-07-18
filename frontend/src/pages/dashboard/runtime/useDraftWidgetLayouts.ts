@@ -26,7 +26,6 @@ type UseDraftWidgetLayoutsParams = {
   draftRuntime: DashboardRuntimeResponse | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   selectedPageId: string | null;
-  setDraftError: (message: string | null) => void;
   setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
   setRuntimeNotice: (notice: RuntimeNotice) => void;
 };
@@ -45,7 +44,6 @@ export function useDraftWidgetLayouts({
   draftRuntime,
   onAction,
   selectedPageId,
-  setDraftError,
   setDraftRuntime,
   setRuntimeNotice,
 }: UseDraftWidgetLayoutsParams) {
@@ -94,8 +92,6 @@ export function useDraftWidgetLayouts({
       draftRuntimeRef.current = nextRuntime;
       return nextRuntime;
     });
-    setDraftError(null);
-
     const input = createDraftLayoutSaveInput(selectedPageId, layout);
     const { previousSavedLayout, result } = await enqueueLayoutSave(pageKey, async () => {
       const latestSavedLayout = lastSavedLayoutByPageRef.current.get(pageKey) ?? initialSavedLayout;
@@ -114,7 +110,6 @@ export function useDraftWidgetLayouts({
     });
 
     if (result.status === "saved") {
-      if (layoutMutationRevisions.current.isCurrent(mutationLease)) setDraftError(null);
       return { previousSavedLayout, status: "saved" };
     }
 
@@ -127,9 +122,8 @@ export function useDraftWidgetLayouts({
         draftRuntimeRef.current = restoredRuntime;
         return restoredRuntime;
       });
-      setDraftError(result.error);
       setRuntimeNotice({
-        message: "위젯 위치를 저장하지 못해 마지막으로 저장된 위치로 되돌렸습니다.",
+        message: `위젯 위치를 저장하지 못해 마지막으로 저장된 위치로 되돌렸습니다. ${result.error}`,
         tone: "error",
       });
     }

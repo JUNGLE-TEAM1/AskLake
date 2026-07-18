@@ -12,6 +12,7 @@ import type {
 } from "../../../types";
 import { findNextAvailableLayout, toCollisionLayout } from "./dashboardLayoutUtils";
 import { upsertRuntimeWidget } from "./dashboardRuntimeMutations";
+import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
 import type { CreateDraftWidgetFormInput, ToolbarDraftWidgetKind } from "./dashboardRuntimeTypes";
 import { defaultWidgetColorConfig } from "./widgetDefinitions";
 
@@ -27,7 +28,6 @@ type UseDraftWidgetCreatorParams = {
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   selectedPageId: string | null;
   selectedWidgets: DashboardRuntimeWidget[];
-  setDraftError: (message: string | null) => void;
   setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
   setSelectedWidgetId: (widgetId: string) => void;
   setWidgetScrollTargetId?: (widgetId: string | null) => void;
@@ -92,7 +92,6 @@ export function useDraftWidgetCreator({
   onAction,
   selectedPageId,
   selectedWidgets,
-  setDraftError,
   setDraftRuntime,
   setRuntimeNotice,
   setSelectedWidgetId,
@@ -109,7 +108,6 @@ export function useDraftWidgetCreator({
     );
 
     setIsCreatingDatasetWidget(true);
-    setDraftError(null);
     try {
       const response = await createDraftWidget(dashboardId, selectedPageId, {
         config: input.config,
@@ -125,8 +123,11 @@ export function useDraftWidgetCreator({
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
       onAction("dashboard.widget.dataset_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId);
     } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
+      setRuntimeNotice({
+        message: dashboardRuntimeErrorMessage(error, "데이터셋 기반 위젯을 추가하지 못했습니다."),
+        tone: "error",
+      });
+      onAction("dashboard.widget.dataset_add_failed", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId, "failed");
     } finally {
       setIsCreatingDatasetWidget(false);
     }
@@ -151,7 +152,6 @@ export function useDraftWidgetCreator({
       };
 
       setIsCreatingToolbarWidget(true);
-      setDraftError(null);
       try {
         const response = await createDraftWidget(dashboardId, selectedPageId, {
           config: input.config,
@@ -170,8 +170,11 @@ export function useDraftWidgetCreator({
         });
         onAction("dashboard.widget.toolbar_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, kind);
       } catch (error) {
-        setDraftError(error instanceof Error ? error.message : "Failed to create a toolbar widget.");
-        setRuntimeNotice({ message: "위젯을 추가하지 못했습니다.", tone: "error" });
+        setRuntimeNotice({
+          message: dashboardRuntimeErrorMessage(error, "위젯을 추가하지 못했습니다."),
+          tone: "error",
+        });
+        onAction("dashboard.widget.toolbar_add_failed", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, kind, "failed");
       } finally {
         setIsCreatingToolbarWidget(false);
       }

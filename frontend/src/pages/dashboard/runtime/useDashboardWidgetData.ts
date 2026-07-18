@@ -8,6 +8,7 @@ import {
   mergeDashboardWidgetData,
   setDashboardWidgetDataStatus,
 } from "./dashboardWidgetDataState";
+import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
 
 const DASHBOARD_WIDGET_DATA_TIMEOUT_MS = 30_000;
 
@@ -58,7 +59,7 @@ export function useDashboardWidgetData({
         ));
       }).catch((error) => {
         if (controller.signal.aborted) return;
-        const message = error instanceof Error ? error.message : "위젯 데이터를 불러오지 못했습니다.";
+        const message = dashboardRuntimeErrorMessage(error, "위젯 데이터를 불러오지 못했습니다.");
         setRuntime((current) => setDashboardWidgetDataStatus(
           current,
           request.widgetIds,

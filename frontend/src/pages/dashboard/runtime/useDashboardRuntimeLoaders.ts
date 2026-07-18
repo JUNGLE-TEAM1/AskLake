@@ -5,6 +5,7 @@ import {
   getPublishedDashboard,
 } from "../../../services/dashboardRuntimeApi";
 import type { DashboardRuntimeResponse } from "../../../types";
+import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
 
 
 type RuntimeLoadOptions = { silent?: boolean };
@@ -48,7 +49,7 @@ export function useDashboardRuntimeLoaders(
     } catch (error) {
       if (!options.silent) {
         setPublishedRuntime(null);
-        setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
+        setRuntimeError(dashboardRuntimeErrorMessage(error, "게시된 대시보드를 불러오지 못했습니다."));
       }
       return null;
     } finally {
@@ -69,7 +70,7 @@ export function useDashboardRuntimeLoaders(
       return runtime;
     } catch (error) {
       if (!options.silent) setDraftRuntime(null);
-      setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
+      setDraftError(dashboardRuntimeErrorMessage(error, "편집 중인 대시보드를 불러오지 못했습니다."));
       return null;
     } finally {
       if (!options.silent) setDraftLoading(false);

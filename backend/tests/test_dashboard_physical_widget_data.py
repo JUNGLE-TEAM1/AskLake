@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.core.observability import metrics_snapshot, reset_metrics_for_test
 from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
@@ -109,6 +110,7 @@ def render_runtime_widget(
         actor=ActorContext(name="dashboard-viewer", role="viewer"),
         remote_budget=DashboardRemoteScanBudget(max_bytes=1024 * 1024, max_objects=32),
         api_path="/api/dashboards/dashboard-a/published",
+        dashboard_id="dashboard-a",
         http_method="GET",
         include_data=include_data,
     )
@@ -546,11 +548,11 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             try:
                 with (
                     patch(
-                        "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                        "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                         side_effect=lambda _db, dataset: dataset,
                     ),
                     patch(
-                        "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access"
+                        "app.services.dashboard_batch_widget_loader.require_dashboard_dataset_query_access"
                     ),
                 ):
                     response = render_runtime_widget(service, widget, sessions=sessions)
@@ -578,7 +580,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+            "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession"
         ) as query_session:
             response = render_runtime_widget(
                 service,
@@ -592,6 +594,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(response.dataset_id, "catalog-dataset")
 
     def test_batch_widget_result_is_reused_after_permission_is_rechecked(self) -> None:
+        reset_metrics_for_test()
         engine = create_engine("sqlite+pysqlite:///:memory:")
         with Session(engine) as db:
             migrate_dashboard_schema(db)
@@ -603,6 +606,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         payload["sourceRunId"] = "run-1"
         physical_reads: list[str] = []
         permission_checks: list[str] = []
+        widget_data_events: list[dict[str, object]] = []
 
         class FakeQuerySession:
             def __init__(self, _payload, *, remote_budget):
@@ -624,13 +628,16 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         responses = []
         with patch(
-            "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+            "app.services.dashboard_batch_widget_loader.log_event",
+            side_effect=lambda _logger, event, **fields: widget_data_events.append({"event": event, **fields}),
+        ), patch(
+            "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
             side_effect=lambda _db, dataset: dataset,
         ), patch(
-            "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access",
+            "app.services.dashboard_batch_widget_loader.require_dashboard_dataset_query_access",
             side_effect=lambda *_args, **_kwargs: permission_checks.append("checked"),
         ), patch(
-            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+            "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession",
             FakeQuerySession,
         ):
             for _ in range(2):
@@ -653,13 +660,13 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             catalog_repository.db = db
             service = DashboardRuntimeService(SimpleNamespace(db=db), catalog_repository)
             with patch(
-                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                 side_effect=lambda _db, dataset: dataset,
             ), patch(
-                "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access",
+                "app.services.dashboard_batch_widget_loader.require_dashboard_dataset_query_access",
                 side_effect=ApiError(ErrorCode.FORBIDDEN, "denied", 403),
             ), patch(
-                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+                "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession"
             ) as query_session:
                 denied_response = render_runtime_widget(service, runtime_widget())
             query_session.assert_not_called()
@@ -671,6 +678,13 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(responses[0].calculation_version, responses[1].calculation_version)
         self.assertEqual(denied_response.data, [])
         self.assertEqual(denied_response.config.error, DASHBOARD_DATA_FORBIDDEN)
+        metrics = metrics_snapshot()
+        self.assertEqual(metrics["dashboard_widget_data_total{result=miss,stage=physical_query}"], 1)
+        self.assertEqual(metrics["dashboard_widget_data_total{result=hit,stage=postgres_cache}"], 1)
+        self.assertEqual(widget_data_events[0]["dashboardId"], "dashboard-a")
+        self.assertEqual(widget_data_events[0]["stage"], "physical_query")
+        self.assertNotIn("config", widget_data_events[0])
+        self.assertNotIn("data", widget_data_events[0])
 
     def test_batch_cache_key_changes_with_dataset_config_and_actor_scope(self) -> None:
         from app.services.dashboard_batch_cache import dashboard_batch_cache_identity
@@ -724,11 +738,11 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                 side_effect=lambda _db, dataset: dataset,
             ),
             patch(
-                "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access"
+                "app.services.dashboard_batch_widget_loader.require_dashboard_dataset_query_access"
             ),
         ):
             response = render_runtime_widget(service, widget)
@@ -768,7 +782,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                 side_effect=lambda _db, dataset: dataset,
             ),
             patch(
@@ -780,7 +794,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
                 side_effect=lambda *_args, **_kwargs: events.append("permission"),
             ),
             patch(
-                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+                "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession",
                 side_effect=create_session,
             ),
         ):
@@ -806,7 +820,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                 side_effect=lambda _db, dataset: dataset,
             ),
             patch(
@@ -819,7 +833,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             ),
             patch("app.services.dashboard_dataset_access.safe_record_audit_event"),
             patch(
-                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+                "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession"
             ) as query_session,
         ):
             response = render_runtime_widget(service, runtime_widget())
@@ -841,7 +855,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                "app.services.dashboard_batch_widget_loader.dataset_with_persisted_permission_grants",
                 side_effect=lambda _db, dataset: dataset,
             ),
             patch(
@@ -852,7 +866,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
                 "app.services.dashboard_dataset_access.require_permission"
             ) as require_permission,
             patch(
-                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+                "app.services.dashboard_batch_widget_loader.DashboardDatasetQuerySession"
             ) as query_session,
         ):
             response = render_runtime_widget(service, runtime_widget())
