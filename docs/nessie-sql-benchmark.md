@@ -98,6 +98,26 @@ PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
 
 `--replace`는 benchmark 전용 schema의 기존 v1 table을 삭제하고 새 snapshot을 만들므로 active campaign이 없을 때만 사용한다. 새 receipt의 snapshot ID가 tracked evidence와 다르면 기존 baseline과 직접 비교하지 않고 새 fixture version/evidence를 승인해야 한다. 정리는 전용 schema의 세 table을 drop하는 방식으로 수행하며 application Dataset이나 다른 schema를 삭제하지 않는다. 규모 확장은 generator version을 유지한 채 orders row count를 1,000 단위로 늘릴 수 있지만, manifest fixture version과 snapshot evidence를 새로 발급하고 기존 baseline cohort와 분리한다.
 
+## 질문과 Golden 결과 v1
+
+`backend/benchmarks/nessie-sql/question-suite.v1.json`은 projection/filter, time pruning, 일반·고카디널리티 집계, fact-dimension/multi join, ambiguous/out-of-scope 거절, `SELECT *`/CROSS JOIN 유도, 정확/근사 distinct를 포함한 12개 case를 정의한다. 각 성공 case는 사람이 검토 가능한 reference SQL과 실제 고정 snapshot에서 계산한 result hash/row count를 가지며, 실패 case는 SQL 실행 대신 거절이 정답이다. Reference SQL은 모델 답을 강제하는 prompt가 아니라 결과 의미를 검증하는 oracle이다.
+
+```bash
+cd backend
+
+# schema, 중복 case, version만 검증
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-suite.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json
+
+# 고정 snapshot에서 golden receipt 재계산(결과 row는 저장하지 않음)
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-suite.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --live-golden --confirm GENERATE_GOLDEN_RESULTS \
+  --receipt /tmp/asklake-nessie-golden.json
+```
+
+Golden 갱신은 Dataset evidence의 snapshot ID와 suite version을 함께 검토해야 한다. 기존 hash를 조용히 덮어쓰지 않고 fixture version을 올리며, approximate case만 명시된 tolerance를 허용한다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.
