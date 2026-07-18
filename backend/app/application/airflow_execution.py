@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from fastapi import status
@@ -221,6 +222,8 @@ def reconcile_airflow_catalog(
                 run_id=run_id,
             )
 
+    catalog_started_at = hooks.iso_now()
+    catalog_started_monotonic = perf_counter()
     spark_result = task_states.get("sparkResult")
     if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
         raise ApiError(
@@ -256,14 +259,32 @@ def reconcile_airflow_catalog(
             result=enriched_result,
             retry_on_create_conflict=True,
             hooks=hooks,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
     except ApiError as exc:
         if str(exc.code) == "CATALOG_RECONCILIATION_FAILED":
-            persist_catalog_reconciliation_failure(db, run_id, dataset_id, exc.message, hooks=hooks)
+            persist_catalog_reconciliation_failure(
+                db,
+                run_id,
+                dataset_id,
+                exc.message,
+                hooks=hooks,
+                timing_started_at=catalog_started_at,
+                timing_started_monotonic=catalog_started_monotonic,
+            )
         raise
     except Exception as exc:
         message = hooks.compact_storage_text(exc, limit=1800)
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, message, hooks=hooks)
+        persist_catalog_reconciliation_failure(
+            db,
+            run_id,
+            dataset_id,
+            message,
+            hooks=hooks,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
+        )
         raise hooks.catalog_reconciliation_error(
             "Catalog reconciliation failed.",
             {"jobId": job_id, "runId": run_id, "reason": message},
@@ -299,6 +320,8 @@ def commit_airflow_catalog_reconciliation(
     hooks: AirflowCatalogReconciliationHooks,
     owner: str | None = None,
     generation: int | None = None,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> AirflowCatalogReconciliationResponse:
     if owner is not None or generation is not None:
         if owner is None or generation is None:
@@ -336,15 +359,23 @@ def commit_airflow_catalog_reconciliation(
         )
 
     reconciled_at = hooks.iso_now()
+    duration_ms = (
+        max(0, round((perf_counter() - timing_started_monotonic) * 1000))
+        if timing_started_monotonic is not None
+        else 0
+    )
     dataset_model = hooks.dataset_from_spark_result(job, result, existing_dataset)
     iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     catalog_result = {
         "dataFileCount": hooks.parse_count_value(result.get("dataFileCount")),
         "datasetId": dataset_id,
+        "durationMs": duration_ms,
+        "endedAt": reconciled_at,
         "icebergSnapshotId": hooks.optional_string(iceberg_commit.get("snapshotId")),
         "parquetObjectCount": hooks.parse_count_value(result.get("parquetObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
+        "startedAt": timing_started_at or reconciled_at,
         "status": "success",
         "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
         "storageSizeBytes": hooks.parse_count_value(result.get("storageSizeBytes")),
@@ -372,6 +403,8 @@ def commit_airflow_catalog_reconciliation(
                 hooks=hooks,
                 owner=owner,
                 generation=generation,
+                timing_started_at=timing_started_at,
+                timing_started_monotonic=timing_started_monotonic,
             )
         raise
 
@@ -393,6 +426,8 @@ def persist_catalog_reconciliation_failure(
     hooks: AirflowCatalogReconciliationHooks,
     owner: str | None = None,
     generation: int | None = None,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> None:
     try:
         db.rollback()
@@ -415,9 +450,19 @@ def persist_catalog_reconciliation_failure(
             **(run.task_states or {}),
             "catalogResult": {
                 "datasetId": dataset_id,
+                "durationMs": (
+                    max(
+                        0,
+                        round((perf_counter() - timing_started_monotonic) * 1000),
+                    )
+                    if timing_started_monotonic is not None
+                    else 0
+                ),
+                "endedAt": failed_at,
                 "error": compact_message,
                 "failedAt": failed_at,
                 "runId": run_id,
+                "startedAt": timing_started_at or failed_at,
                 "status": "failed",
             },
         }

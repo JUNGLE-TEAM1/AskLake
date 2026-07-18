@@ -1197,12 +1197,34 @@ def verify_spark_iceberg_result(
                 "storageSizeBytes": storage_size_bytes,
             },
         )
+    spark_snapshot_file_count = parse_count_value(result.get("outputFileCount"))
+    commit_snapshot_file_count = (
+        parse_count_value(commit.get("dataFileCount"))
+        if commit.get("dataFileCount") is not None
+        else None
+    )
+    if commit_snapshot_file_count is not None and (
+        commit_snapshot_file_count != data_file_count
+        or spark_snapshot_file_count != data_file_count
+    ):
+        raise catalog_reconciliation_error(
+            "Spark and Trino Iceberg snapshot file counts do not match.",
+            {
+                "icebergCommitDataFileCount": commit_snapshot_file_count,
+                "jobId": job.id,
+                "outputFileCount": spark_snapshot_file_count,
+                "runId": run_id,
+                "snapshotDataFileCount": data_file_count,
+                "snapshotId": snapshot_id,
+            },
+        )
     verified = evidence.model_dump(mode="json", by_alias=True)
     return {
         **result,
         "dataFileCount": data_file_count,
         "icebergCommit": verified,
         "materializationOutputPath": evidence.warehouse_location,
+        "outputFileCount": data_file_count,
         "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
         "queryEngineVerified": True,
         "ruleFingerprint": evidence.rule_fingerprint,

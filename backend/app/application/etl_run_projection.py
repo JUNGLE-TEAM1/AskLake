@@ -2,6 +2,10 @@
 
 from typing import Any, Callable
 from fastapi import status
+from app.application.etl_airflow_projection import (
+    airflow_task_observation,
+    airflow_task_timing,
+)
 from app.application.etl_job_projection import (
     apply_job_command,
     continuous_config_from_request,
@@ -492,6 +496,9 @@ def dag_steps_from_airflow_sync(
     task_instances: list[AirflowTaskInstance],
 ) -> list[dict[str, Any]]:
     task_by_id = {task.task_id: task for task in task_instances if task.task_id}
+    task_states = run.get("taskStates") if isinstance(run.get("taskStates"), dict) else {}
+    spark_result = task_states.get("sparkResult") if isinstance(task_states.get("sparkResult"), dict) else {}
+    catalog_result = task_states.get("catalogResult") if isinstance(task_states.get("catalogResult"), dict) else {}
     run_status = str(run.get("status") or "running")
     run_state = str(run.get("airflowState") or run_status)
     submit_status = "success" if run_status in TERMINAL_RUN_STATUSES else "running"
@@ -514,22 +521,45 @@ def dag_steps_from_airflow_sync(
         logs = [f"Airflow Task Instance state: {airflow_state}"]
         if task and task.raw.get("try_number") is not None:
             logs.append(f"try_number={task.raw.get('try_number')}")
-        steps.append(dag_step(task_id, title, airflow_state, status_value, [
-            ["Airflow task", task_id],
-            ["Airflow state", airflow_state],
-        ], logs))
+        details, duration, completed_at = airflow_task_observation(
+            task_id,
+            task,
+            spark_result,
+            catalog_result,
+        )
+        steps.append(dag_step(
+            task_id,
+            title,
+            airflow_state,
+            status_value,
+            details,
+            logs,
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     extra_tasks = [
         task for task in task_instances
         if task.task_id and task.task_id not in AIRFLOW_TASK_TITLES
     ]
     for task in extra_tasks:
-        steps.append(dag_step(task.task_id, task_title(task.task_id), task.state or "-", task.asklake_status, [
-            ["Airflow task", task.task_id],
-            ["Airflow state", task.state or "-"],
-        ], [f"Airflow Task Instance state: {task.state or '-'}"]))
+        duration, completed_at = airflow_task_timing(task)
+        steps.append(dag_step(
+            task.task_id,
+            task_title(task.task_id),
+            task.state or "-",
+            task.asklake_status,
+            [
+                ["Airflow task", task.task_id],
+                ["Airflow state", task.state or "-"],
+            ],
+            [f"Airflow Task Instance state: {task.state or '-'}"],
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     return steps
+
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
     success = result.get("status") == "success"

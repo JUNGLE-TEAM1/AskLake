@@ -8,6 +8,7 @@ while the SparkApplication continues to run.
 from __future__ import annotations
 
 from collections.abc import Callable
+from time import perf_counter
 from typing import Any
 
 from fastapi import status
@@ -404,6 +405,8 @@ def reconcile_eks_airflow_catalog(
                 run_id=run_id,
             )
 
+    catalog_started_at = hooks.iso_now()
+    catalog_started_monotonic = perf_counter()
     lease_seconds = spark_execution_lease_seconds()
     lease = etl_repository.claim_run_execution_lease(
         db,
@@ -490,6 +493,8 @@ def reconcile_eks_airflow_catalog(
             hooks=hooks,
             owner=FASTAPI_EXECUTION_OWNER,
             generation=lease.generation,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
         completed = True
         return response
@@ -503,6 +508,8 @@ def reconcile_eks_airflow_catalog(
                 hooks=hooks,
                 owner=FASTAPI_EXECUTION_OWNER,
                 generation=lease.generation,
+                timing_started_at=catalog_started_at,
+                timing_started_monotonic=catalog_started_monotonic,
             )
         raise
     except Exception as exc:
@@ -515,6 +522,8 @@ def reconcile_eks_airflow_catalog(
             hooks=hooks,
             owner=FASTAPI_EXECUTION_OWNER,
             generation=lease.generation,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
         raise hooks.catalog_reconciliation_error(
             "Catalog reconciliation failed.",

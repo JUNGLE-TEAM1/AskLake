@@ -15,9 +15,23 @@ try {
   assert(actionBudget.process.status === 0, `Action-budget pipeline exited ${actionBudget.process.status}:\n${actionBudget.process.stdout}\n${actionBudget.process.stderr}`);
   assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
+  assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected canonical counters to avoid a write-only output cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
+  assert(actionBudget.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected canonical row counters to replace the duplicate output count: ${JSON.stringify(actionBudget.report.quality)}`);
   const sourceReadMarker = "FileScanRDD: Reading File path: file:///work/fixtures/rules/snapshot-pipeline-input.jsonl";
   const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
-  assert(sourceReadCount === 3, `Expected exactly 3 raw JSONL reads, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
+  assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
+
+  const preMaterialized = runPipeline("pre-materialized-prefix", preMaterializedPrefixManifest());
+  assert(preMaterialized.process.status === 0, `Pre-materialized pipeline exited ${preMaterialized.process.status}:\n${preMaterialized.process.stdout}\n${preMaterialized.process.stderr}`);
+  assert(preMaterialized.report.outputRows === 3, `Expected 3 pre-materialized output rows: ${JSON.stringify(preMaterialized.report)}`);
+  assert(preMaterialized.report.transform?.preMaterializedTransformCount === 3, `Expected all proven transform-prefix rules in the source materialization: ${JSON.stringify(preMaterialized.report.transform)}`);
+  assert(preMaterialized.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two pre-materialized row-preserving SQL transforms: ${JSON.stringify(preMaterialized.report.transform)}`);
+  assert(preMaterialized.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected the pre-materialized source cache to publish without a second output cache: ${JSON.stringify(preMaterialized.report.sparkResources)}`);
+  const preMaterializedReadCount = preMaterialized.process.stderr.split(sourceReadMarker).length - 1;
+  assert(preMaterializedReadCount === 1, `Expected exactly 1 raw JSONL read for the pre-materialized prefix, got ${preMaterializedReadCount}:\n${preMaterialized.process.stderr}`);
 
   const success = runPipeline("success", successManifest());
   assert(success.process.status === 0, `Success pipeline exited ${success.process.status}:\n${success.process.stdout}\n${success.process.stderr}`);
@@ -29,6 +43,7 @@ try {
   assert(success.report.quality?.invalidRowCount === 2, `Expected two invalid quality rows: ${JSON.stringify(success.report.quality)}`);
   assert(success.report.quality?.quarantinedCount === 1, `Expected one quarantined row: ${JSON.stringify(success.report.quality)}`);
   assert(success.report.quality?.droppedCount === 1, `Expected one dropped row: ${JSON.stringify(success.report.quality)}`);
+  assert(success.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected dropped/quarantined counters to derive the exact final row count: ${JSON.stringify(success.report.quality)}`);
   assert(parquetFiles(path.join(tempDir, "success-output")).length > 0, "Success target Parquet was not created.");
   assert(parquetFiles(path.join(tempDir, "success-output_quarantine")).length > 0, "Quarantine Parquet was not created.");
 
@@ -58,19 +73,115 @@ function actionBudgetManifest() {
     partitionColumns: "",
     qualityRules: [],
     ruleContractVersion: "1.0",
-    ruleOutputSchema: [...baseOutputSchema(), ["rating_value", "Double"]],
-    rules: [canonicalRule({
-      failureDisposition: "set_null",
-      id: "rating-cast-action-budget",
-      inputColumns: ["rating"],
-      kind: "transform",
-      operation: "cast",
-      outputColumns: ["rating_value"],
-      outputType: "Double",
-      parameters: { targetType: "Double" },
-    })],
+    ruleOutputSchema: [
+      ...baseOutputSchema(),
+      ["rating_value", "Double"],
+      ["event_id_trimmed", "String"],
+      ["status_trimmed", "String"],
+    ],
+    rules: [
+      canonicalRule({
+        failureDisposition: "set_null",
+        id: "rating-cast-action-budget",
+        inputColumns: ["rating"],
+        kind: "transform",
+        operation: "cast",
+        outputColumns: ["rating_value"],
+        outputType: "Double",
+        parameters: { targetType: "Double" },
+      }),
+      canonicalRule({
+        id: "event-id-trim-action-budget",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["event_id_trimmed"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(event_id AS STRING))" },
+      }),
+      canonicalRule({
+        id: "status-trim-action-budget",
+        inputColumns: ["status"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["status_trimmed"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(status AS STRING))" },
+      }),
+    ],
     schemaColumns: baseSchema(),
-    transformSteps: [{ enabled: true, input: "rating", output: "rating_value" }],
+    transformSteps: [
+      { enabled: true, input: "rating", output: "rating_value" },
+      {
+        enabled: true,
+        input: "event_id",
+        operation: "SQL Expression",
+        output: "event_id_trimmed",
+        params: "TRIM(CAST(event_id AS STRING))",
+      },
+      {
+        enabled: true,
+        input: "status",
+        operation: "SQL Expression",
+        output: "status_trimmed",
+        params: "TRIM(CAST(status AS STRING))",
+      },
+    ],
+  };
+}
+
+function preMaterializedPrefixManifest() {
+  return {
+    partitionColumns: "",
+    qualityRules: [],
+    ruleContractVersion: "1.0",
+    ruleOutputSchema: baseOutputSchema(),
+    rules: [
+      canonicalRule({
+        id: "event-id-identity-rename",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "rename",
+        outputColumns: ["event_id"],
+        outputType: "String",
+      }),
+      canonicalRule({
+        id: "event-id-trim-pre-materialized",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["event_id"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(event_id AS STRING))" },
+      }),
+      canonicalRule({
+        id: "status-trim-pre-materialized",
+        inputColumns: ["status"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["status"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(status AS STRING))" },
+      }),
+    ],
+    schemaColumns: baseSchema(),
+    transformSteps: [
+      { enabled: true, input: "event_id", output: "event_id" },
+      {
+        enabled: true,
+        input: "event_id",
+        operation: "SQL Expression",
+        output: "event_id",
+        params: "TRIM(CAST(event_id AS STRING))",
+      },
+      {
+        enabled: true,
+        input: "status",
+        operation: "SQL Expression",
+        output: "status",
+        params: "TRIM(CAST(status AS STRING))",
+      },
+    ],
   };
 }
 

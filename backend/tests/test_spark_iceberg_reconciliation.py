@@ -137,8 +137,25 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
         self.assertEqual(result["queryEngineTable"]["table"], self.target.table)
         self.assertEqual(result["icebergCommit"]["snapshotId"], "123456789")
         self.assertEqual(result["dataFileCount"], 2)
+        self.assertEqual(result["outputFileCount"], 2)
         self.assertEqual(result["storageSizeBytes"], 4096)
         self.assertEqual(writer_service.run_row_count_verifications, [])
+
+    def test_runtime_and_trino_snapshot_file_count_mismatch_fails_closed(self) -> None:
+        result = self.spark_result()
+        result["outputFileCount"] = 3
+        result["icebergCommit"]["dataFileCount"] = 3
+
+        with self.assertRaises(ApiError) as context:
+            verify_spark_iceberg_result(
+                self.job,
+                "RUN-ICEBERG-BATCH",
+                result,
+                writer_service=FakeIcebergWriterService(file_count=2),
+            )
+
+        self.assertEqual(str(context.exception.code), "CATALOG_RECONCILIATION_FAILED")
+        self.assertIn("file counts do not match", context.exception.message)
 
     def test_verified_catalog_publication_issues_snapshot_scoped_rag_manifest(self) -> None:
         result = verify_spark_iceberg_result(

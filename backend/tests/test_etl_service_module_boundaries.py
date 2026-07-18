@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from app.application import (
+    etl_airflow_projection,
     etl_catalog_projection,
     etl_job_projection,
     etl_pipeline_policy,
@@ -199,12 +200,13 @@ EXTRACTED_EXPORTS = {
 }
 
 REVIEWED_FUNCTION_DIGESTS = {
+    etl_airflow_projection: "4f93125a9f35f22d65eedabd19d0a84cf42ab3d85bd4ed24b39d6d9d5422652a",
     etl_schedule: "a60c3f1d406e711f459652bae1e1a36bb0747086ab75a0371ea991d96d4f28d1",
     etl_job_projection: "1a899dc6356446a3a434309111d3ce9e60faae872b8f1e525a3724cbd60c1c05",
     etl_record_parsing: "f83831544eeb6ea5f6c2dd70fb432affd87a36af647a834d5b6d809a3e3b993b",
-    etl_runtime_support: "807791fb9c47f2383f8dc53c5242a3305678360feae98d6a9f00ee427712c154",
+    etl_runtime_support: "2930775e49a12cf20a82a8c1fa58e4fd0891dc178fdb9e1a055181a42fbc4ad8",
     etl_source_window: "4002bc295053f657e696c40158e6773b567b83913e63b6585f85e42b9ea308c9",
-    etl_run_projection: "ff493b426e96da4accd3b07a6d86d2454d9e16aa37064746d164dbe90e727b78",
+    etl_run_projection: "b420423753b9537bc87c7b82b5a9831ce12ef87e78df915f198a396133ea5776",
     etl_catalog_projection: "ebb140d6fbc27163ee37e70e441fb4b38714748f48d2f58db58453328fb7fb87",
     etl_pipeline_policy: "dc2e6e17bd8a2eca553c2079fd2b910f53ed761f45ec401a0a0e76693f5f90c3",
 }
@@ -225,7 +227,7 @@ RUNTIME_FACADE_DIGESTS = {
     api_job_operations: "75e6bd3df869cca9e2bda400cde9a7a064c46011b5af93a61550aba108ff01c0",
     api_review_operations: "2be232ab29999cf95de561949640ac487ce10c8a3837132c0d3a74779c66ebab",
     snapshot_operations: "a810d372db02d45cb3b2b55cdf8fcdcef22ae7301dded7cc663bb3d33d49f1bc",
-    airflow_operations: "ff02895cabbf2decc920a8d2162a9f54fa6fdd56ab2a4c1ef641e950e533d32e",
+    airflow_operations: "57a215e49ae3edd1a7d329cf787280c756d12efb6391098bb9e4c98cae1a1180",
     source_runtime: "22a2c6dbc4bc1381fab573d847985c674c02775023b5d0adf3ddfa06a14b5417",
     continuous_maintenance: "8adaf231c1e8f7c4e3c839be8d9f5ecdc34b1b567e0bda7f03cf8e7025fcf75a",
     continuous_session: "38179b3174532a806441c973e20f3ebd16806194750e513ce44657f32c4fd9ee",
@@ -260,6 +262,7 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
 
     def test_extracted_modules_stay_small_and_do_not_import_the_facade(self) -> None:
         budgets = {
+            etl_airflow_projection: 100,
             etl_schedule: 320,
             etl_job_projection: 480,
             etl_record_parsing: 170,
