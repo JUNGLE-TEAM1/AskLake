@@ -8,7 +8,7 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 
 현재 Pair A 브랜치의 기준 경계는 다음과 같다.
 
-- Source, Schema, Create, Run은 `VITE_API_BASE_URL`을 통해 live backend를 호출한다.
+- Source, Schema, Create, Run은 기본적으로 같은 출처의 `/api`를 통해 live backend를 호출한다. `VITE_API_BASE_URL`은 다른 API origin이 필요한 경우에만 사용한다.
 - 생성 wizard는 Source 결과의 `requiresRecordParsing`에 따라 `Source -> Record Parsing -> Schema` 또는 `Source -> Schema`로 분기한다. `requiresRecordParsing`은 선택한 MinIO/S3 `.txt`/`.log` 또는 Kafka raw text 메시지가 이름 없는 `line_number + value` 샘플로 반환될 때 활성화한다.
 - Record Parsing Preview와 File/S3 batch, Kafka Snapshot, Kafka Continuous runtime은 Job에 저장된 동일 `recordParsing` 계약을 사용한다. Preview는 제한 샘플을, runtime은 전체 입력을 검증하며 어느 쪽도 부족한 필드를 null로 채우거나 초과 필드를 버리지 않는다. Kafka replay producer의 `raw_text` 모드는 입력 파일의 비어 있지 않은 각 줄을 JSON envelope 없이 메시지 value 그대로 전송한다.
 - File / S3 source는 단일 object와 prefix 데이터셋을 구분한다. Prefix 선택은 `Path / Prefix`와 `__Selection Kind=prefix`를 Job의 `sourceConfig`에 저장하고 개별 object 배열은 저장하지 않는다. Backend는 prefix를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체와 선택 형식이 아닌 객체를 제외한다. Preview는 사전식 첫 데이터 파일을 대표 파일로 사용하고 모든 데이터 파일의 bounded schema fingerprint가 호환될 때만 Schema 단계로 진행한다.
@@ -330,6 +330,8 @@ RAG 검색은 published Semantic Model과 approved serving index를 공통 resol
 
 브라우저가 provider를 직접 호출하지 않는다. SQL Query AI, Dashboard Assistant, ETL transform, Semantic RAG 분류·검색, 리뷰 분석은 FastAPI 공개 API를 거쳐 private `ai-server`의 `/v1/generate` 또는 `/v1/embeddings`로 전달된다. Provider API key는 `ai-server`에만 있고 FastAPI는 service token만 가진다.
 
+Frontend AI adapter는 `apiClient`의 세션 포함 요청과 상대 `/api` 경로를 사용한다. Vite 개발 서버는 `/api`를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 같은 경로를 Compose `backend:8080`으로 전달한다. Realtime event client도 같은 base URL 규칙을 사용하며 Nginx의 정확한 `/api/realtime/events` location은 SSE buffering을 끈다. AI adapter는 개발용 `VITE_USE_MOCK_API`를 참조하지 않으며 Gateway/backend 오류를 SQL·차트·분석 성공으로 바꾸지 않는다. Nginx는 운영 쿠키의 `Secure` 속성을 제거하지 않고, 명시적인 로컬 HTTP Compose만 backend에 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다.
+
 Dataset metadata가 필요한 요청은 FastAPI가 먼저 actor의 권한과 governance를 검사한 뒤 request ID, actor, 허용 Dataset ID와 permission을 담은 짧은 수명의 signed context token을 발급한다. AI Gateway가 내부 MCP Catalog를 조회할 때 이 token을 한 번만 소비한다. 소비 기록은 PostgreSQL `ai_context_consumptions`에 저장해 여러 FastAPI replica에서도 재사용을 거부한다. MCP 응답은 schema·sample row 수를 제한하고 PII/credential 계열 컬럼과 값을 redaction한다.
 
 SQL과 Dashboard 생성은 published Semantic Model에 연결되고 승인된 serving RAG index만 검색한다. Gateway가 반환한 `usedEvidenceIds`는 검색 후보 ID의 부분집합이어야 하며 FastAPI는 실제 사용 ID와 일치하는 source만 공개 응답에 남긴다. 후보·사용 ID, actor, provider/model, 입력·출력 fingerprint는 `ai_generation_usage`에 감사 증적으로 저장한다. Provider/RAG가 unavailable이거나 응답 provenance가 mock/fallback이면 가짜 SQL·차트·근거를 만들지 않고 fail closed 한다.
@@ -374,7 +376,8 @@ Runtime chart widget은 backend가 Catalog 물리 데이터에서 만든 bounded
 
 Live mode 진입:
 
-- `VITE_API_BASE_URL=http://localhost:8080`
+- 같은 출처 `/api`가 기본값이며, 다른 origin이 필요할 때만 `VITE_API_BASE_URL=http://localhost:8080`
+- Vite proxy backend를 바꿀 때만 `VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080`
 - `frontend/src/services/apiClient.ts`
 
 FastAPI 현재 구현 범위:

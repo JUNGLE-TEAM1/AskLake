@@ -255,10 +255,12 @@ TRINO_BASE_URL=http://localhost:8088 \
 npm run verify:iceberg-writer-foundation
 ```
 
-`frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+Vite 개발 서버는 기본적으로 같은 출처 `/api`를 `http://127.0.0.1:8080`으로 전달하므로 로컬 frontend env가 없어도 된다. Backend 주소를 바꿀 때는 API base를 브라우저에 굽는 대신 proxy target만 지정할 수 있다.
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8080
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080
+# 다른 origin을 브라우저가 직접 호출해야 할 때만:
+# VITE_API_BASE_URL=http://localhost:8080
 ```
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
@@ -842,16 +844,15 @@ scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
 
 Production backend에는 `/var/run/docker.sock`과 Docker CLI를 넣지 않는다. Batch/Parquet inspect는 내부 전용 `spark-master:6066` REST endpoint에 제출하고 terminal 상태와 timeout을 확인한다. REST/UI/master port는 host에 publish하지 않는다.
 
-로컬에서 전체 stack을 띄울 때는 예시 env를 기준으로 실행할 수 있다.
+로컬에서 전체 stack을 띄울 때는 예시 env와 local E2E override를 함께 사용한다. Override는 frontend build의 API base를 빈 문자열로 만들어 Nginx `/api` proxy를 사용하고, HTTP 전용 backend에만 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다. Nginx는 realtime event SSE buffering을 끄되 운영 쿠키의 `Secure` 속성은 제거하지 않는다. Override가 요구하는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`에는 local object storage 전용 값을 shell 또는 별도의 gitignored env 파일로 제공해야 한다.
 
 ```bash
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml up -d --build
-curl http://localhost:8080/api/health
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local-e2e.yml up -d --build
+curl http://localhost:5173/api/health
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local-e2e.yml down
 ```
 
-`VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
-예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
+`VITE_API_BASE_URL`을 설정할 때는 `/api`를 붙이지 않은 origin까지만 넣는다. 로컬 override는 같은 출처 기본값을 사용하고, EC2 HTTPS production preflight는 `https://asklake.example.com`처럼 `APP_DOMAIN`과 일치하는 값을 요구한다.
 대시보드 Assistant를 prod build에서 켜려면 `VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant`를 `deploy/.env`에 유지한다.
 EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain을 넣고, Caddy가 인증서를 받을 수 있도록 `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
 배포 PR 전에는 최신 `origin/dev`를 fetch한 뒤 compose config와 관련 문서 예시를 다시 확인한다.

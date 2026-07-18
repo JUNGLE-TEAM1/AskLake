@@ -1519,7 +1519,7 @@ const checks = [
     name: "Frontend defaults to the live dashboard Assistant API",
     file: "src/services/dashboardAssistantService.ts",
     patterns: [
-      /VITE_DASHBOARD_ASSISTANT_API_PATH \?\? "\/api\/dashboards\/assistant"/,
+      /VITE_DASHBOARD_ASSISTANT_API_PATH \|\| "\/api\/dashboards\/assistant"/,
     ],
   },
   {
