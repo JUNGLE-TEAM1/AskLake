@@ -162,3 +162,16 @@ test("catalog query and selection state are owned outside the presentation modul
   assert.match(state, /setSelectedSqlDatasetId\(dataset\.id\)/);
   assert.match(state, /catalog\.page_changed/);
 });
+
+test("catalog workspace wrappers preserve the full-width page layout", () => {
+  const catalogCss = read("src/styles/catalog.css");
+
+  assert.match(
+    catalogCss,
+    /\.page-body > \.catalog-explorer-with-view,\s*\.page-body > \.catalog-semantic-page\s*\{[\s\S]*?max-width:\s*none;/,
+  );
+  assert.match(
+    catalogCss,
+    /\.catalog-explorer-with-view,\s*\.catalog-semantic-page\s*\{[\s\S]*?gap:\s*20px;/,
+  );
+});

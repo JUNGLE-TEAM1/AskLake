@@ -1268,8 +1268,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["입력", "SQL 결과"],
     ["출력", "Published Dashboard"],
   ],
-  once: [],
-  semantic: [],
   admin: [
     ["담당 영역", "관리"],
     ["핵심 기능", "권한 / 감사 로그"],

@@ -7,7 +7,7 @@ export type WorkspaceDataRequirements = {
 
 const jobDataFlows = new Set<FlowId>(["jobs", "jobDetail", "jobRuns"]);
 
-const catalogDataFlows = new Set<FlowId>(["catalog", "catalogDetail", "sql", "semantic"]);
+const catalogDataFlows = new Set<FlowId>(["catalog", "catalogDetail", "sql"]);
 
 export function getWorkspaceDataRequirements(flow: FlowId): WorkspaceDataRequirements {
   return {

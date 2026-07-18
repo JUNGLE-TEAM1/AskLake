@@ -62,7 +62,6 @@ type AppRouteState = {
 
 type FlowPathContext = {
   dashboardEntry?: DashboardEntry;
-  catalogView?: CatalogView;
   lastScheduleFlow?: ScheduleFlowId;
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
@@ -162,7 +161,6 @@ function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
     if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
     return "/dashboards";
   }
-  if (flow === "semantic") return "/semantic-layer";
   if (flow === "admin") return "/admin";
   if (flow === "profile") return "/profile";
   if (flow === "login") return "/login";
@@ -216,7 +214,7 @@ export function App() {
     initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
-  const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs(currentUser?.email);
+  const { auditSignal, showToast, toast, writeAuditLog } = useAuditLogs();
   const changeFlowFromData = (flow: FlowId) => {
     const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
     const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
@@ -267,7 +265,6 @@ export function App() {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
     if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "semantic") return "semantic";
     if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";

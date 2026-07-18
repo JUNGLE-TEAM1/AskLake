@@ -1,3 +1,22 @@
+.page-body > .catalog-explorer-with-view,
+.page-body > .catalog-semantic-page {
+  width: 100%;
+  max-width: none;
+}
+
+.catalog-explorer-with-view,
+.catalog-semantic-page {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-width: 0;
+  font-family: var(--jobs-font-family);
+}
+
+.catalog-view-switcher {
+  justify-self: start;
+}
+
 .catalog-page {
   display: grid;
   width: 100%;

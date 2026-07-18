@@ -10,7 +10,7 @@ import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { getDatasetLineageGraph } from "../../services/askLakeApi";
+import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { cn } from "@/lib/utils";
 import { LineageColumn, LineageTableNodeData, escapeRegExp, lineageColumnRowHeight, lineageFitViewOptions, lineageGroupGap, lineageNodeHeaderHeight } from "./catalogModel";
