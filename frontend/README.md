@@ -1,6 +1,6 @@
 # AskLake Frontend
 
-AskLake frontend is a React/Vite app for the data lake workflow. By default it uses the live backend API. Set `VITE_USE_MOCK_API=true` only for frontend-only mock QA.
+AskLake frontend is a React/Vite app for the data lake workflow. By default it uses the same-origin live backend API. Set `VITE_USE_MOCK_API=true` only for frontend-only, non-AI compatibility QA; AI clients always call the live backend.
 
 In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080`; set `VITE_API_BASE_URL` only when you need to point at a different backend.
 
@@ -9,13 +9,12 @@ In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080
 ```powershell
 cd frontend
 npm install
-$env:VITE_API_BASE_URL = "http://localhost:8080"
 npm run dev
 ```
 
 Vite prints the local URL after startup.
 
-For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`.
+If FastAPI is not running at `http://127.0.0.1:8080`, set `VITE_DEV_PROXY_TARGET` to its origin. For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`; this does not mock AI results.
 
 The Semantic/RAG workspace is available at `/catalog?view=semantic`. It uses the live Semantic Model and RAG endpoints while reusing the Catalog dataset list for selection and schema context.
 
@@ -30,12 +29,13 @@ npm run build
 
 ```powershell
 VITE_API_BASE_URL=http://localhost:8080
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080
 VITE_USE_MOCK_API=true # frontend-only mock QA only
 ```
 
-`VITE_API_BASE_URL`을 지정하지 않은 production build는 동일 browser origin을 사용한다. EKS에서는 ALB가 `/`와 `/api`를 각각 Frontend와 FastAPI로 routing하므로 public hostname을 Frontend image에 고정하지 않는다.
+`VITE_API_BASE_URL` is optional in every build and defaults to same-origin. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, including when its Docker build arg is empty. Restart the dev server after changing environment variables.
 
-`VITE_API_BASE_URL` is optional in local dev. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, so no frontend env is required when using the local backend. Restart the dev server after changing environment variables.
+EKS에서는 ALB가 `/`와 `/api`를 각각 Frontend와 FastAPI로 routing하므로 public hostname을 Frontend image에 고정하지 않는다.
 
 ## Main Files
 

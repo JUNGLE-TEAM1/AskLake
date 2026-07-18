@@ -78,7 +78,8 @@ ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS=15
 TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
-- `VITE_API_BASE_URL`: 백엔드 base URL입니다.
+- `VITE_API_BASE_URL`: 선택적인 백엔드 base URL입니다. 생략하거나 빈 문자열이면 같은 출처의 `/api` 경로를 사용합니다.
+- `VITE_DEV_PROXY_TARGET`: Vite 개발 서버가 상대 `/api` 요청을 전달할 backend origin입니다. 기본값은 `http://127.0.0.1:8080`입니다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 호출합니다. 다른 Assistant API 경로 또는 origin이 필요할 때만 지정합니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - 로컬 object storage는 `ASKLAKE_OBJECT_STORAGE_PROVIDER=minio`, MinIO endpoint/static local credential, path-style URL을 사용합니다.
@@ -101,6 +102,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 날짜/시간은 ISO 8601 문자열을 사용합니다.
 - ID는 문자열입니다.
 - 프론트는 세션 쿠키 기반 endpoint를 위해 `credentials: "include"`로 `fetch`를 호출합니다.
+- SQL Query AI, Dashboard Assistant, ETL transform, 리뷰 분석 client도 공통 `apiClient` 또는 동일한 credential 규칙을 사용하며 개발 mock으로 성공 응답을 합성하지 않습니다.
 
 권장 header:
 
@@ -3425,7 +3427,7 @@ Provider key는 `ai-server`에만 주입하고 FastAPI는 Gateway service token�
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
 Gateway 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
 Private AI Gateway 설정이 없거나 provider 호출이 실패하면 명시적인 unavailable/error 응답과 빈 action을 반환한다.
-프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 미설정이거나 빈 Docker build arg이면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
 값을 지정하면 해당 경로로 요청하며, `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
 
 Request:
@@ -3558,7 +3560,7 @@ type ReviewAnalysisRunResponse = {
 };
 ```
 
-Run state는 `review_analysis_runs`에 저장한다. Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick은 같은 atomic claim으로 allow-list versioned Node bridge를 호출하므로 재시작 뒤 남은 `queued` run도 재개되고, stale `running` lease는 실패로 종결된다. 일반 actor는 설정된 review source만 사용할 수 있고 다른 `source.bucket`/`source.key`는 `403`이며, admin만 운영 목적으로 명시 source를 선택할 수 있다. `full=true`, `limit=0`, `ASKLAKE_REVIEW_AI_MAX_ROWS` 초과 요청은 `422`로 거부한다. Preview와 Run의 `one_of_values` 결과는 요청 `allowedValues` 밖의 값을 허용하지 않고 provider/model이 없는 row도 실패한다. `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다.
+Run state는 `review_analysis_runs`에 저장한다. Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick은 같은 atomic claim으로 allow-list versioned Node bridge를 호출하므로 재시작 뒤 남은 `queued` run도 재개되고, stale `running` lease는 실패로 종결된다. 일반 actor는 설정된 review source만 사용할 수 있고 다른 `source.bucket`/`source.key`는 `403`이며, admin만 운영 목적으로 명시 source를 선택할 수 있다. `full=true`, `limit=0`, `ASKLAKE_REVIEW_AI_MAX_ROWS` 초과 요청은 `422`로 거부한다. Preview와 Run의 `one_of_values` 결과는 요청 `allowedValues` 밖의 값을 허용하지 않고 provider/model이 없는 row도 실패한다. `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다. 신규 frontend 호출에는 이 alias를 사용하지 않는다.
 
 `trainModels=true`인 run은 AI Gateway label provenance를 포함한 분류형 row만 학습에 사용한다. 최소 8개 row, class별 최소 row, holdout accuracy·macro-F1 기준, 모든 allowed class validation coverage를 통과해야 한다. 성공 artifact는 SHA-256 digest와 source/provider model provenance를 포함한 manifest와 함께 latest registry에 atomic replace하며, 일부 target이라도 gate를 실패하면 새 manifest를 게시하지 않는다.
 
