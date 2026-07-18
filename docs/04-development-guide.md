@@ -806,7 +806,7 @@ scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
 
 Production backend에는 `/var/run/docker.sock`과 Docker CLI를 넣지 않는다. Batch/Parquet inspect는 내부 전용 `spark-master:6066` REST endpoint에 제출하고 terminal 상태와 timeout을 확인한다. REST/UI/master port는 host에 publish하지 않는다.
 
-로컬에서 전체 stack을 띄울 때는 예시 env와 local E2E override를 함께 사용한다. Override는 frontend build의 API base를 빈 문자열로 만들어 Nginx `/api` proxy를 사용하고, HTTP 전용 backend에만 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다. 공용 `frontend/nginx.conf`에서 운영 쿠키의 `Secure` 속성을 제거하지 않는다.
+로컬에서 전체 stack을 띄울 때는 예시 env와 local E2E override를 함께 사용한다. Override는 frontend build의 API base를 빈 문자열로 만들어 Nginx `/api` proxy를 사용하고, HTTP 전용 backend에만 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다. Nginx는 realtime event SSE buffering을 끄되 운영 쿠키의 `Secure` 속성은 제거하지 않는다. Override가 요구하는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`에는 local object storage 전용 값을 shell 또는 별도의 gitignored env 파일로 제공해야 한다.
 
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local-e2e.yml up -d --build

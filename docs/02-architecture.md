@@ -319,7 +319,7 @@ RAG 검색은 published Semantic Model과 approved serving index를 공통 resol
 
 브라우저가 provider를 직접 호출하지 않는다. SQL Query AI, Dashboard Assistant, ETL transform, Semantic RAG 분류·검색, 리뷰 분석은 FastAPI 공개 API를 거쳐 private `ai-server`의 `/v1/generate` 또는 `/v1/embeddings`로 전달된다. Provider API key는 `ai-server`에만 있고 FastAPI는 service token만 가진다.
 
-Frontend AI adapter는 `apiClient`의 세션 포함 요청과 상대 `/api` 경로를 사용한다. Vite 개발 서버는 `/api`를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 같은 경로를 Compose `backend:8080`으로 전달한다. AI adapter는 개발용 `VITE_USE_MOCK_API`를 참조하지 않으며 Gateway/backend 오류를 SQL·차트·분석 성공으로 바꾸지 않는다. Nginx는 운영 쿠키의 `Secure` 속성을 제거하지 않고, 명시적인 로컬 HTTP Compose만 backend에 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다.
+Frontend AI adapter는 `apiClient`의 세션 포함 요청과 상대 `/api` 경로를 사용한다. Vite 개발 서버는 `/api`를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 같은 경로를 Compose `backend:8080`으로 전달한다. Realtime event client도 같은 base URL 규칙을 사용하며 Nginx의 정확한 `/api/realtime/events` location은 SSE buffering을 끈다. AI adapter는 개발용 `VITE_USE_MOCK_API`를 참조하지 않으며 Gateway/backend 오류를 SQL·차트·분석 성공으로 바꾸지 않는다. Nginx는 운영 쿠키의 `Secure` 속성을 제거하지 않고, 명시적인 로컬 HTTP Compose만 backend에 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다.
 
 Dataset metadata가 필요한 요청은 FastAPI가 먼저 actor의 권한과 governance를 검사한 뒤 request ID, actor, 허용 Dataset ID와 permission을 담은 짧은 수명의 signed context token을 발급한다. AI Gateway가 내부 MCP Catalog를 조회할 때 이 token을 한 번만 소비한다. 소비 기록은 PostgreSQL `ai_context_consumptions`에 저장해 여러 FastAPI replica에서도 재사용을 거부한다. MCP 응답은 schema·sample row 수를 제한하고 PII/credential 계열 컬럼과 값을 redaction한다.
 

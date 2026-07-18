@@ -88,7 +88,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 
 로컬 root Compose는 Query Result/Warehouse bucket을 MinIO에 만들고 로컬 전용 credential을 사용한다. Production은 endpoint와 장기 access key/secret을 두지 않고 사전 생성한 AWS S3 Warehouse/Query Result bucket과 EC2 instance profile default credential chain을 사용한다. 최대 100행 Trino preview는 PostgreSQL inline page로 저장하고, 사용자 요청형 full result만 private gzip page object와 PostgreSQL manifest/page metadata로 저장한다. `trino-result-cleanup` worker는 terminal run을 keyset batch로 순회한다.
 
-- `VITE_API_BASE_URL`을 생략하거나 빈 문자열로 두면 개발·production build 모두 같은 출처의 `/api`를 호출한다. Vite는 이를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 Compose `backend:8080`으로 전달한다.
+- `VITE_API_BASE_URL`을 생략하거나 빈 문자열로 두면 개발·production build 모두 같은 출처의 `/api`를 호출한다. Realtime event URL도 같은 규칙을 사용한다. Vite는 이를 `VITE_DEV_PROXY_TARGET` 또는 기본 `http://127.0.0.1:8080`으로 전달하고, frontend container의 Nginx는 Compose `backend:8080`으로 전달하되 `/api/realtime/events`는 SSE buffering을 끈다.
 - SQL Query AI, Dashboard Assistant, ETL transform, 리뷰 분석 frontend client는 세션을 포함한 live API만 호출한다. 개발 전용 `VITE_USE_MOCK_API` 호환 모드는 이 AI client들에 적용되지 않으며, production에서는 계속 비활성화된다.
 - Legacy demo 계정 활성화 플래그는 test 전용이다. Production은 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 거부하고 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 env에 존재해도 preflight를 실패시킨다. 운영 로그인은 bootstrap admin 또는 승인된 IdP/session 경로만 사용한다.
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.

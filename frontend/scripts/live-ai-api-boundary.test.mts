@@ -13,12 +13,15 @@ function readRepo(path: string) {
 test("live API clients default to same-origin authenticated requests", () => {
   const apiClient = readFrontend("src/services/apiClient.ts");
   const assistant = readFrontend("src/services/dashboardAssistantService.ts");
+  const realtimeEvents = readFrontend("src/services/realtimeEvents.ts");
 
   assert.match(apiClient, /const defaultApiBaseUrl = "";/);
   assert.doesNotMatch(apiClient, /defaultApiBaseUrl[^\n]*localhost:8080/);
   assert.match(apiClient, /credentials: "include"/);
   assert.match(assistant, /VITE_DASHBOARD_ASSISTANT_API_PATH \|\| "\/api\/dashboards\/assistant"/);
   assert.match(assistant, /credentials: "include"/);
+  assert.match(realtimeEvents, /const defaultBaseUrl = "";/);
+  assert.doesNotMatch(realtimeEvents, /defaultBaseUrl[^\n]*localhost:8080/);
 });
 
 test("ETL AI and SQL preview use the shared live client without synthesized success", () => {
@@ -55,6 +58,8 @@ test("Vite and container nginx forward same-origin API calls without weakening s
   assert.match(viteConfig, /"\/api"[\s\S]*target: devProxyTarget/);
   assert.match(nginx, /location \/api\/ \{/);
   assert.match(nginx, /proxy_pass \$asklake_backend;/);
+  assert.match(nginx, /location = \/api\/realtime\/events[\s\S]*proxy_buffering off;/);
+  assert.match(nginx, /location = \/api\/realtime\/events[\s\S]*X-Accel-Buffering no;/);
   assert.doesNotMatch(nginx, /proxy_cookie_flags[\s\S]*nosecure/i);
   assert.match(localCompose, /VITE_API_BASE_URL: ""/);
   assert.match(localCompose, /AUTH_SESSION_COOKIE_SECURE: "false"/);

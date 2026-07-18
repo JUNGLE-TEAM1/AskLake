@@ -324,7 +324,7 @@ function realtimeApiBaseUrl() {
       env?: Record<string, boolean | string | undefined>;
     }
   ).env ?? {};
-  const defaultBaseUrl = environment.DEV ? "" : "http://localhost:8080";
+  const defaultBaseUrl = "";
   return String(environment.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, "");
 }
 
