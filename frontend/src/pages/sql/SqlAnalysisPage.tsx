@@ -1,8 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  SqlPageIcon as PanelLeftOpen,
-  SqlPageIcon as Table2,
-} from "./SqlPageIcon";
+import { ChevronRight, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -769,6 +766,7 @@ export function SqlAnalysisPage({
         className={styles.pageHeader}
         icon={<Table2 size={18} />}
         leadingAlign="center"
+        size="sm"
         title="SQL 분석"
       />
       {!contextPanel.collapsed && (
@@ -801,8 +799,8 @@ export function SqlAnalysisPage({
 
       <main className={cn(styles.workspace, "grid min-w-0 content-start gap-3")}>
         {contextPanel.collapsed && (
-          <Button className={styles.contextRailButton} type="button" onClick={contextPanel.toggleCollapsed} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
-            <PanelLeftOpen data-icon="inline-start" />
+          <Button aria-controls="sql-dataset-tools" aria-expanded="false" className={styles.contextRailButton} type="button" onClick={contextPanel.toggleCollapsed} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
+            <ChevronRight aria-hidden="true" />
           </Button>
         )}
         <SqlQueryEditorPanel

@@ -183,6 +183,8 @@ export function CatalogPage({
       <PageHeader
         className="catalog-page-header"
         icon={<Search size={18} />}
+        leadingAlign="center"
+        size="sm"
         title="검색/카탈로그"
       />
       {error ? (

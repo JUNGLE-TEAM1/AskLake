@@ -259,6 +259,24 @@ const checks = [
     ],
   },
   {
+    name: "Primary workspace pages share the compact page header density",
+    files: [
+      "src/components/ui/page-header.tsx",
+      "src/pages/ingest/jobs/JobsLandingPage.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+      "src/pages/sql/SqlAnalysisPage.tsx",
+      "src/pages/dashboard/DashboardLandingPage.tsx",
+    ],
+    patterns: [
+      /const compact = size === "sm";/,
+      /compact \? "text-2xl sm:text-\[28px\]"/,
+      /size="sm"\s*title="수집\/처리"/,
+      /size="sm"\s*title="검색\/카탈로그"/,
+      /size="sm"\s*title="SQL 분석"/,
+      /size="sm"\s*title="대시보드"/,
+    ],
+  },
+  {
     name: "SQL analysis page orchestrates focused SQL modules",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
@@ -269,6 +287,7 @@ const checks = [
       /const queryAi = useSqlQueryAi\(\{/,
       /limit: previewRowLimit,/,
       /leadingAlign="center"/,
+      /size="sm"/,
       /<SqlDatasetContextPanel/,
       /<SqlQueryEditorPanel/,
       /<SqlResultsPanel/,
@@ -309,11 +328,18 @@ const checks = [
     name: "SQL context panel keeps dataset and Dashboard chart tools together",
     file: "src/pages/sql/SqlDatasetContextPanel.tsx",
     patterns: [
-      /<TabsTrigger value="tables"><Table2 \/> 분석 테이블<\/TabsTrigger>/,
-      /<TabsTrigger value="chart"><BarChart3 \/> 차트 생성하기<\/TabsTrigger>/,
+      /import \{ ChevronLeft \} from "lucide-react";/,
+      /aria-controls="sql-dataset-tools" aria-expanded="true"/,
+      /<ChevronLeft aria-hidden="true" \/>/,
+      /<TabsTrigger value="tables">분석 테이블<\/TabsTrigger>/,
+      /<TabsTrigger value="chart">차트 생성하기<\/TabsTrigger>/,
       /<SqlDatasetTree/,
       /<SqlChartConfigurator/,
       /className=\{styles\.datasetPanel\}/,
+    ],
+    forbiddenPatterns: [
+      /SqlPageIcon as BarChart3/,
+      /SqlPageIcon as PanelLeftClose/,
     ],
   },
   {
@@ -326,6 +352,25 @@ const checks = [
       /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
       /autocompleteCandidates\.map/,
       /title="선택 데이터셋 기준 SQL"/,
+    ],
+    forbiddenPatterns: [
+      /SqlPageIcon as PlayCircle/,
+      /SqlPageIcon as RotateCcw/,
+    ],
+  },
+  {
+    name: "SQL primary action buttons keep their text labels without decorative glyphs",
+    files: [
+      "src/pages/sql/SqlAiWriterDialog.tsx",
+      "src/pages/sql/SqlQueryEditorPanel.tsx",
+    ],
+    patterns: [
+      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*Nessie로 SQL 작성\s*<\/Button>/,
+      /<Button type="button" onClick=\{onReset\}[\s\S]*?>\s*SQL 초기화\s*<\/Button>/,
+      /<Button type="button" onClick=\{onExecute\}[\s\S]*?>\s*\{pending \? "실행 중" : "실행"\}\s*<\/Button>/,
+    ],
+    forbiddenPatterns: [
+      /<PopoverTrigger asChild>[\s\S]{0,260}<NessieMark/,
     ],
   },
   {
@@ -432,34 +477,39 @@ const checks = [
     ],
   },
   {
-    name: "SQL page feature icons share the requested table glyph",
+    name: "SQL feature glyph compatibility and section marker stay visually distinct",
     file: "src/pages/sql/SqlPageIcon.tsx",
     patterns: [
       /import \{ Table2, type LucideProps \} from "lucide-react";/,
-      /SQL_PAGE_PANEL_ICON_CLASS_NAME = "rounded-xl border border-slate-200 bg-white text-blue-700 shadow-sm"/,
       /export function SqlPageIcon\(props: LucideProps\)/,
       /<Table2 \{\.\.\.props\} \/>/,
+      /SQL_PAGE_SECTION_MARKER_CLASS_NAME = "size-5 rounded-none bg-transparent shadow-none"/,
+      /export function SqlSectionMarker\(\)/,
+      /size-2\.5 rounded-full bg-sky-400 ring-4 ring-sky-50/,
     ],
   },
   {
-    name: "SQL panel headers use the reference white framed icon treatment",
+    name: "SQL tools header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlDatasetContextPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
-    name: "SQL editor header uses the reference white framed icon treatment",
+    name: "SQL editor header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
-    name: "SQL result header uses the reference white framed icon treatment",
+    name: "SQL result header uses the compact sky marker treatment",
     file: "src/pages/sql/SqlResultsPanel.tsx",
     patterns: [
-      /iconClassName=\{SQL_PAGE_PANEL_ICON_CLASS_NAME\}/,
+      /icon=\{<SqlSectionMarker \/>\}/,
+      /iconClassName=\{SQL_PAGE_SECTION_MARKER_CLASS_NAME\}/,
     ],
   },
   {
@@ -1042,6 +1092,8 @@ const checks = [
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /<main className=\{cn\(styles\.workspace[\s\S]*contextPanel\.collapsed && \([\s\S]*className=\{styles\.contextRailButton\}/,
+      /aria-controls="sql-dataset-tools" aria-expanded="false"/,
+      /<ChevronRight aria-hidden="true" \/>/,
     ],
   },
   {
