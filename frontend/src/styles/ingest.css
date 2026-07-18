@@ -5,6 +5,13 @@
   font-family: var(--jobs-font-family);
 }
 
+.jobs-landing-actions {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .jobs-panel-stack {
   gap: 20px;
 }

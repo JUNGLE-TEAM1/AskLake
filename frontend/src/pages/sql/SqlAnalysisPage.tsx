@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Table2 } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview, getQueryPreviewPage } from "../../services/mockApi";
@@ -762,13 +761,6 @@ export function SqlAnalysisPage({
   const executionWorkspaceEnabled = Boolean(baseDataset || trinoRun || trinoSubmissionPending || trinoSubmissionError);
   return (
     <div className={cn(styles.page, contextPanel.collapsed && styles.collapsed)}>
-      <PageHeader
-        className={styles.pageHeader}
-        icon={<Table2 size={18} />}
-        leadingAlign="center"
-        size="sm"
-        title="SQL 분석"
-      />
       {!contextPanel.collapsed && (
         <SqlDatasetContextPanel
           chartConfig={chartConfig}

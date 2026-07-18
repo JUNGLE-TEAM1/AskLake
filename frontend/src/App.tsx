@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import { wizardFlows } from "./data/appShellData";
+import { navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
@@ -289,6 +289,18 @@ export function App() {
     if (activeFlow === "profile" || activeFlow === "login") return null;
     return "ingest";
   }, [activeFlow, canAccessAdmin]);
+  const topbarNavId: NavId | null = activeFlow === "jobs"
+    ? "ingest"
+    : activeFlow === "catalog"
+      ? "catalog"
+      : activeFlow === "sql"
+        ? "sql"
+        : activeFlow === "dashboard" && dashboardEntry.view === "list"
+          ? "dashboard"
+          : null;
+  const topbarSection = topbarNavId
+    ? navItems.find((item) => item.id === topbarNavId) ?? null
+    : null;
   const activeDataLoading = dataRequirements.jobs ? jobsLoading : dataRequirements.catalog ? catalogLoading : false;
   const activeDataError = dataRequirements.jobs ? jobsError : dataRequirements.catalog ? catalogError : null;
   const activeDataHasRows = dataRequirements.jobs ? jobs.length > 0 : dataRequirements.catalog ? datasets.length > 0 : true;
@@ -568,7 +580,7 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar />
+        <Topbar section={topbarSection} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
