@@ -872,6 +872,7 @@ type CreateTrinoSqlJobRequest = {
     accessScope: "organization" | "private" | "project";
     owner: string;
     permissionSummary: string;
+    principalId?: string;
   };
   jobName?: string;
   query: string;
@@ -890,6 +891,8 @@ type CreateTrinoSqlJobRequest = {
   };
 };
 ```
+
+`governance.owner`는 현재 session actor를 기본으로 하며 공백 제거 후 비어 있으면 거부합니다. `accessScope="private"`는 owner의 자동 권한만 사용하고 별도 role을 중복 생성하지 않습니다. `organization`은 `principalType="public"`, `principalId="authenticated-users"`를 사용합니다. `project`는 현재 actor가 선택한 실제 group ID를 `principalId`로 반드시 전달해야 하며 누락하면 `422 VALIDATION_ERROR`입니다. Backend는 이 canonical principal metadata로 `permissionRoles`와 `permissionSummary`를 다시 계산하므로 client가 임의 demo 그룹명을 저장할 수 없습니다.
 
 Response는 기존 `CreatePipelineResponse`를 재사용하며 `job.jobKind="trino_sql_materialization"`, `job.sqlRecipe`, `catalogTarget.status="pending_run"`을 포함합니다. Job 생성 자체는 Dataset을 만들지 않습니다.
 
@@ -2159,6 +2162,7 @@ Validation:
 - backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 평균, 합계, 개수, 그룹화처럼 prompt에 명시된 분석 의도가 SQL select/group/aggregation에 반영됐는지 검증합니다. 위반하면 위반 목록을 포함해 Gateway에 한 번만 교정 재요청하고 두 번째 응답도 위반하면 `422 VALIDATION_ERROR`를 반환합니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
 - frontend는 Gateway가 검증된 SQL 초안을 반환하지 않으면 오류를 표시하며 로컬 SQL 초안을 대신 만들지 않습니다.
@@ -2173,6 +2177,7 @@ Validation:
 프론트 기대 동작:
 
 - Query AI 제안은 자동 실행하지 않고 SQL editor 적용 버튼을 통해서만 반영합니다.
+- 한 번에 하나의 cancellable 요청만 소유하며 prompt, 선택 Dataset, editor query 또는 dialog context가 바뀌면 이전 요청을 무효화하고 늦게 도착한 응답을 적용하지 않습니다.
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
 - provider 실패나 RAG 선행 조건 부족을 가짜 SQL·근거로 대체하지 않습니다.
 
@@ -2226,6 +2231,7 @@ type CreateDerivedDatasetRequest = {
     accessScope: "organization" | "private" | "project";
     compression: "Gzip" | "None" | "Snappy";
     owner: string;
+    principalId?: string;
     overlapPolicy: "skip_if_running" | "queue_after_current" | "allow_parallel";
     partitionColumn?: string;
     permissionSummary: string;
@@ -2243,6 +2249,8 @@ type CreateDerivedDatasetRequest = {
   validationKey?: string;
 };
 ```
+
+Compatibility Job의 `job.principalId`도 같은 정책을 따릅니다. private은 owner fallback만, organization은 인증 사용자 public principal, project는 선택한 실제 group principal을 `permission.roles`에 보존하며 `Data Engineer Group` 같은 고정 demo 역할을 만들지 않습니다.
 
 Request 예시:
 
@@ -3463,6 +3471,8 @@ type DashboardAssistantResponse = {
 - `message`는 사용자에게 요청 결과 안내로 표시한다.
 - `actions.type: "report"`는 AskLake 보조 패널의 분석/리포트 응답에 사용한다.
 - `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 시각화 요청 위젯에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
+- `currentDatasetId`는 현재 선택 Dataset context를 고정하며 명시적인 생성/수정 의도만 mutation action으로 보낸다.
+- create/update persistence callback이 `true`를 반환한 경우에만 적용 성공으로 표시한다. 실패 또는 `false`이면 기존 draft와 편집 입력을 유지하고 오류를 표시한다.
 - `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
 - `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 시각화 요청 위젯을 실제 차트로 변환할 때 자동 적용한다.
 - provider/model과 실제 사용 근거 ID가 없는 응답은 AI 생성 성공으로 취급하지 않는다.

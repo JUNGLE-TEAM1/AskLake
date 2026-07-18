@@ -187,6 +187,7 @@ from app.application.etl_pipeline_policy import (
     target_identity_changed,
     trino_query_run_belongs_to_actor,
     trino_sql_job_permission_roles,
+    trino_sql_job_permission_summary,
     validate_create_request,
     validate_requested_permission_grants,
     validate_target_contract,
@@ -444,6 +445,16 @@ AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
 
+def _trino_sql_job_permission_metadata(
+    request: CreateTrinoSqlJobRequest,
+) -> tuple[list[dict[str, Any]], str]:
+    governance = request.governance
+    return (
+        trino_sql_job_permission_roles(governance.access_scope, governance.owner, governance.principal_id),
+        trino_sql_job_permission_summary(governance.access_scope, governance.owner, governance.principal_id),
+    )
+
+
 def create_trino_sql_job(
     db: Session,
     request: CreateTrinoSqlJobRequest,
@@ -538,10 +549,7 @@ def create_trino_sql_job(
         }
         for index, column in enumerate(columns)
     ]
-    permission_roles = trino_sql_job_permission_roles(
-        request.governance.access_scope,
-        request.governance.owner,
-    )
+    permission_roles, permission_summary = _trino_sql_job_permission_metadata(request)
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
         "query": request.query,
@@ -603,7 +611,7 @@ def create_trino_sql_job(
         schema_sample_rows=[],
         schema_summary=f"{len(columns)}개 컬럼 · Trino Query Run 검증 완료",
         rule_summary="저장된 SQL recipe를 생성 시점 데이터에 다시 실행",
-        permission_summary=request.governance.permission_summary,
+        permission_summary=permission_summary,
         permission_roles=permission_roles,
         storage_type="Iceberg",
         partition=request.target.partition_column,

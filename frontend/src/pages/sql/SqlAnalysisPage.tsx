@@ -22,7 +22,7 @@ import {
   submitSqlQueryRun,
 } from "../../services/sqlQueryApi";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
 import { ContinuousSqlJoinDialog } from "./ContinuousSqlJoinDialog";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
@@ -67,6 +67,7 @@ function createClientRequestId() {
 export function SqlAnalysisPage({
   cachedResult,
   createPending,
+  currentUser,
   dataset,
   datasets,
   onAction,
@@ -76,6 +77,7 @@ export function SqlAnalysisPage({
 }: {
   cachedResult?: SqlResultDraft | null;
   createPending: boolean;
+  currentUser: CurrentUserResponse;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -952,6 +954,8 @@ export function SqlAnalysisPage({
           defaultMetadata={{
             description: buildDefaultDerivedDatasetDescription(baseDataset),
             name: buildDefaultDerivedDatasetName(baseDataset),
+            owner: currentUser.displayName,
+            projectGroups: currentUser.groups.map((group) => ({ id: group.id, name: group.name })),
           }}
           onClose={() => setMaterializeDialogOpen(false)}
           onCreate={createDerivedDatasetJob}

@@ -125,7 +125,6 @@ class DashboardAssistantService:
         actor: ActorContext,
         rag_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        request_id = str(uuid4())
         selected_dataset_ids = [dataset.id for dataset in context.datasets]
         dashboard_context = context.to_prompt_payload()
         dashboard_context["availableDatasets"] = [
@@ -138,29 +137,50 @@ class DashboardAssistantService:
             }
             for dataset in context.datasets
         ]
-        context_token = None
-        if selected_dataset_ids:
-            context_token = issue_ai_context_token(
-                request_id=request_id,
-                actor=actor,
-                allowed_dataset_ids=selected_dataset_ids,
-                dataset_permissions={dataset_id: ["query"] for dataset_id in selected_dataset_ids},
-            )
-        response = AiGatewayClient(self.settings).generate_dashboard_response(
-            request_id=request_id,
-            prompt=assistant_request.prompt,
-            dashboard_context={
-                "mode": assistant_request.mode,
-                "selectedWidgetId": assistant_request.selected_widget_id,
-                "widgetId": assistant_request.widget_id,
-                **dashboard_context,
-            },
-            selected_dataset_ids=selected_dataset_ids,
-            context_token=context_token,
-            rag_context=rag_context,
+        generation_prompt = assistant_request.prompt
+        for attempt in range(2):
+            request_id = str(uuid4())
+            context_token = None
+            if selected_dataset_ids:
+                context_token = issue_ai_context_token(
+                    request_id=request_id,
+                    actor=actor,
+                    allowed_dataset_ids=selected_dataset_ids,
+                    dataset_permissions={dataset_id: ["query"] for dataset_id in selected_dataset_ids},
+                )
+            try:
+                response = AiGatewayClient(self.settings).generate_dashboard_response(
+                    request_id=request_id,
+                    prompt=generation_prompt,
+                    dashboard_context={
+                        "mode": assistant_request.mode,
+                        "selectedWidgetId": assistant_request.selected_widget_id,
+                        "widgetId": assistant_request.widget_id,
+                        **dashboard_context,
+                    },
+                    selected_dataset_ids=selected_dataset_ids,
+                    context_token=context_token,
+                    rag_context=rag_context,
+                )
+            except ApiError as exc:
+                should_retry = (
+                    attempt == 0
+                    and assistant_request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
+                    and exc.status_code == 502
+                )
+                if not should_retry:
+                    raise
+                generation_prompt = _build_visualization_retry_prompt(assistant_request.prompt)
+                continue
+
+            response["_requestId"] = request_id
+            return response
+
+        raise ApiError(
+            "INTERNAL_ERROR",
+            "AI gateway visualization retry did not return a response",
+            502,
         )
-        response["_requestId"] = request_id
-        return response
 
     def _unavailable_response(
         self,
@@ -225,6 +245,18 @@ def _is_low_signal_prompt(prompt: str) -> bool:
     return False
 
 
+def _build_visualization_retry_prompt(prompt: str) -> str:
+    return "\n".join((
+        prompt,
+        "",
+        "재시도 지침:",
+        "- visualization_request에는 create_widget 또는 update_widget action을 정확히 하나 반환하세요.",
+        "- availableDatasets에 있는 datasetId와 columns만 사용하세요.",
+        "- 막대그래프 요청에는 유효한 xKey, yKey, aggregation을 포함한 전체 config를 반환하세요.",
+        "- 실제로 사용한 RAG 문서가 없으면 usedEvidenceIds를 빈 배열로 반환하세요.",
+    ))
+
+
 def _build_low_signal_prompt_response() -> DashboardAssistantResponse:
     return DashboardAssistantResponse(
         message="Nessie가 분석하거나 수정할 요청을 찾지 못했습니다. 어떤 위젯을 어떻게 바꿀지 조금 더 구체적으로 입력해 주세요.",
@@ -249,6 +281,35 @@ def _require_visualization_action(
     request: DashboardAssistantRequest,
     response: DashboardAssistantResponse,
 ) -> DashboardAssistantResponse:
+    if request.mode == DashboardAssistantMode.DASHBOARD_QUESTION:
+        mutation_actions = [
+            action
+            for action in response.actions
+            if action.type in {"create_widget", "update_widget"}
+        ]
+        if not mutation_actions:
+            return response
+
+        report_actions = [
+            action
+            for action in response.actions
+            if isinstance(action, DashboardAssistantReportAction)
+        ]
+        response.actions = report_actions
+        response.config_patch = None
+        response.widget_patch = None
+        response.used_evidence_ids = list(dict.fromkeys(
+            evidence_id
+            for action in report_actions
+            for evidence_id in action.used_evidence_ids
+        ))
+        warning = "질문 모드 응답에 포함된 위젯 변경 action을 제외했습니다. 대시보드는 변경되지 않았습니다."
+        if warning not in response.warnings:
+            response.warnings.append(warning)
+        if not report_actions:
+            response.message = "질문 응답에 안전하게 표시할 보고서가 없어 대시보드를 수정하지 않았습니다."
+        return response
+
     if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
         return response
     mutation_actions = [

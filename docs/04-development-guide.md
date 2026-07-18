@@ -449,8 +449,8 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 수동 확인은 다음 순서로 한다.
 
 1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면 대신 `/catalog?view=semantic`으로 replace 이동하는지 확인한다.
-2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과해야 한다.
-3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다.
+2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 요청 중 prompt·Dataset·editor context를 바꿨을 때 이전 응답이 적용되지 않는지, 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과하는지 확인한다.
+3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다. 저장 API를 실패시킨 경우 성공 문구를 표시하지 않고 기존 draft와 입력을 유지해야 한다.
 4. 수집/처리에서 field transform과 SQL transform을 생성하고 입력 schema 밖의 컬럼·관계·위험 함수를 거부하는지 확인한다.
 5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
 6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
@@ -464,7 +464,11 @@ python -m pytest -q \
   tests/test_ai_gateway_mcp.py \
   tests/test_ai_generation_evidence_audit.py \
   tests/test_query_ai_contract.py \
+  tests/test_query_ai_api_contract.py \
+  tests/test_sql_job_permission_contract.py \
+  tests/test_dashboard_assistant_action_contract.py \
   tests/test_dashboard_assistant_evidence.py \
+  tests/test_dashboard_runtime_api_persistence.py \
   tests/test_review_model_publication.py \
   tests/test_unified_ai_services.py
 
@@ -476,6 +480,10 @@ python -m pytest -q
 
 ```bash
 cd frontend
+npm run test:sql-ai-editor-contract
+npm run test:sql-job-permission-contract
+npm run test:dashboard-assistant-intent
+npm run test:dashboard-assistant-actions
 npm run verify:ui-regressions
 npm run build
 ```
