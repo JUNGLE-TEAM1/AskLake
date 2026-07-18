@@ -66,6 +66,7 @@ TRINO_CLEANUP_POLL_SECONDS=3600
 DASHBOARD_SYNC_MODE=polling
 REALTIME_EVENTS_ENABLED=false
 CONTINUOUS_SQL_JOIN_ENABLED=false
+CONTINUOUS_SQL_STARTUP_GRACE_SECONDS=300
 CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false
 CLICKHOUSE_URL=http://clickhouse:8123
 CLICKHOUSE_USER=asklake
@@ -105,6 +106,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
+- `CONTINUOUS_SQL_STARTUP_GRACE_SECONDS`: start/resume/recover가 정적 snapshot을 준비하는 동안 1초 reconciler가 아직 생성 중인 worker를 missing으로 오판하지 않는 유예 시간이다. 기본 300초이며 유예가 끝난 뒤에도 worker가 없을 때만 `CONTINUOUS_SQL_WORKER_MISSING`으로 전환한다.
 - `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Continuous SQL 중 `servingMode=clickhouse` 요청만 허용하는 추가 opt-in이다. 상위 Continuous SQL flag가 꺼지면 effective false이며, 운영에서는 Trino와 Compose `clickhouse` profile이 함께 켜져야 한다.
 - `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`: backend가 private ClickHouse HTTP endpoint를 호출할 때 쓰는 서버 전용 연결값이다. password는 frontend와 API 응답에 노출하지 않는다.
 - `CLICKHOUSE_QUERY_TIMEOUT_SECONDS`, `CLICKHOUSE_STATIC_LOAD_MAX_ROWS`, `CLICKHOUSE_INSERT_BATCH_ROWS`: Dashboard 질의 timeout, 시작 시 S3/Iceberg 정적 snapshot 적재 상한, 적재 batch 크기다.

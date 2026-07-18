@@ -1,5 +1,6 @@
 import hashlib
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import unittest
 
@@ -23,7 +24,11 @@ from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationService,
     validate_publication_identity,
 )
-from app.services.continuous_sql_service import ContinuousSqlService, worker_identity_error
+from app.services.continuous_sql_service import (
+    ContinuousSqlService,
+    continuous_sql_startup_grace_active,
+    worker_identity_error,
+)
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -238,6 +243,35 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
         self.assertEqual([call[0] for call in self.gateway.calls], ["start"])
         run = self.repository.get_run(first.job.active_run_id)
         self.assertEqual(run.static_bindings[0]["snapshotId"], "101")
+
+    def test_starting_job_does_not_fail_while_worker_is_being_provisioned(self) -> None:
+        started = self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="start", commandId="start-slow-worker"),
+            self.actor,
+        )
+        job = self.repository.get_job(self.job.id)
+        run = self.repository.get_run(started.job.active_run_id)
+        job.observed_state = "starting"
+        run.status = "starting"
+        job.last_error_code = None
+        job.last_error_message = None
+        self.db.add(job)
+        self.db.add(run)
+        self.db.commit()
+        self.gateway.status_result = {"containerState": "missing", "report": None}
+
+        reconciled = self.service.reconcile(job)
+
+        self.assertEqual(reconciled.observed_state, "starting")
+        self.assertIsNone(reconciled.last_error_code)
+        self.assertFalse(
+            continuous_sql_startup_grace_active(
+                reconciled,
+                grace_seconds=300,
+                now=reconciled.updated_at.replace(tzinfo=UTC) + timedelta(seconds=301),
+            )
+        )
 
     def test_invalid_duplicate_start_and_lifecycle_transitions(self) -> None:
         self.service.command(

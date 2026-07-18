@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
+    continuous_sql_startup_grace_seconds: float = Field(default=300.0, ge=1.0, le=1800.0)
     dashboard_sync_mode: str = "polling"
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False

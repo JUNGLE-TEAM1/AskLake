@@ -37,6 +37,8 @@ Job은 desired state와 observed state를 분리하고 `start`, `pause`, `resume
 
 worker report와 publication은 plan hash, generation, fencing token hash가 모두 현재 Run과 일치할 때만 수용한다. backend 재시작 후 DB desired state와 worker status/report를 reconcile한다. browser 연결은 worker lifecycle에 영향을 주지 않는다.
 
+start/resume/recover가 외부 worker를 provision하는 동안에는 persisted `starting|recovering` 전환 시점부터 기본 300초까지 missing status를 terminal failure로 바꾸지 않는다. 준비가 끝난 running worker의 소실 또는 유예 만료 뒤 missing만 `CONTINUOUS_SQL_WORKER_MISSING`으로 전환한다.
+
 create validation뿐 아니라 start/resume/recover command에서도 모든 입력 Dataset의 현재 query permission과 governance policy를 다시 검사한다. 권한이 회수되면 새 worker action을 보내지 않는다.
 
 ## batch와 publication

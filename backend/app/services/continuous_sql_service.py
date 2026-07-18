@@ -434,13 +434,20 @@ class ContinuousSqlService:
                     run.status = "stopped"
                     run.ended_at = run.ended_at or utc_now()
             elif job.desired_state == "running":
-                job.observed_state = "failed"
-                job.last_error_code = "CONTINUOUS_SQL_WORKER_MISSING"
-                job.last_error_message = "Continuous SQL worker is not running."
-                if run is not None:
-                    run.status = "failed"
-                    run.last_error_code = job.last_error_code
-                    run.last_error_message = job.last_error_message
+                if continuous_sql_startup_grace_active(
+                    job,
+                    grace_seconds=self.settings.continuous_sql_startup_grace_seconds,
+                ):
+                    if run is not None:
+                        run.status = job.observed_state
+                else:
+                    job.observed_state = "failed"
+                    job.last_error_code = "CONTINUOUS_SQL_WORKER_MISSING"
+                    job.last_error_message = "Continuous SQL worker is not running."
+                    if run is not None:
+                        run.status = "failed"
+                        run.last_error_code = job.last_error_code
+                        run.last_error_message = job.last_error_message
 
         self.db.add(job)
         if run is not None:
@@ -829,6 +836,22 @@ def canonical_hash(value: Any) -> str:
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def continuous_sql_startup_grace_active(
+    job: ContinuousSqlJobModel,
+    *,
+    grace_seconds: float,
+    now: datetime | None = None,
+) -> bool:
+    if job.observed_state not in {"starting", "recovering"}:
+        return False
+    changed_at = job.updated_at
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    elapsed_seconds = (current - changed_at.astimezone(UTC)).total_seconds()
+    return elapsed_seconds <= max(1.0, float(grace_seconds))
 
 
 def sync_active_continuous_sql_jobs() -> None:
