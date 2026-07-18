@@ -6,18 +6,13 @@ import json
 import time
 from collections.abc import Iterable
 from contextvars import ContextVar
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
-from app.models.identity import AiContextConsumptionModel
 from app.schemas.ai import AiContextActor, AiContextClaims, PermissionName
 from app.schemas.common import ErrorCode
 
@@ -57,10 +52,10 @@ def issue_ai_context_token(
 
     issued_at = int(time.time()) if now is None else int(now)
     ttl = settings.ai_context_ttl_seconds if ttl_seconds is None else int(ttl_seconds)
-    if ttl < 1 or ttl > settings.ai_context_ttl_seconds:
+    if ttl < 1:
         raise ApiError(
             ErrorCode.VALIDATION_ERROR,
-            f"AI context token TTL must be between 1 and {settings.ai_context_ttl_seconds} seconds",
+            "AI context token TTL must be positive",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
@@ -131,7 +126,6 @@ def verify_ai_context_token(
         claims.expires_at <= claims.issued_at
         or claims.expires_at <= current_time
         or claims.issued_at > current_time + 30
-        or claims.expires_at - claims.issued_at > settings.ai_context_ttl_seconds
     ):
         raise ApiError(
             ErrorCode.UNAUTHORIZED,
@@ -139,40 +133,6 @@ def verify_ai_context_token(
             status.HTTP_401_UNAUTHORIZED,
         )
     return claims
-
-
-def consume_ai_context_token(
-    db: Session,
-    token: str,
-    claims: AiContextClaims,
-    *,
-    now: datetime | None = None,
-) -> None:
-    """Atomically consume a signed context across every backend/Gateway replica."""
-
-    consumed_at = now or datetime.now(timezone.utc)
-    token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
-    try:
-        db.execute(
-            delete(AiContextConsumptionModel).where(
-                AiContextConsumptionModel.expires_at <= consumed_at,
-            ),
-        )
-        db.add(
-            AiContextConsumptionModel(
-                token_hash=token_hash,
-                request_id=claims.request_id,
-                expires_at=datetime.fromtimestamp(claims.expires_at, tz=timezone.utc),
-            ),
-        )
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            "AI context token has already been consumed",
-            status.HTTP_409_CONFLICT,
-        ) from None
 
 
 def _normalized_dataset_ids(dataset_ids: Iterable[str]) -> list[str]:
@@ -213,10 +173,7 @@ def _encode_json(value: dict[str, Any]) -> str:
 
 def _decode_json(value: str) -> dict[str, Any]:
     decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-    result = json.loads(
-        decoded.decode("utf-8"),
-        parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(f"Invalid JSON constant: {constant}")),
-    )
+    result = json.loads(decoded.decode("utf-8"))
     if not isinstance(result, dict):
         raise ValueError("Token JSON must be an object")
     return result

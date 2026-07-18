@@ -6,8 +6,8 @@ from alembic import context, op
 import sqlalchemy as sa
 
 
-revision = "0015_rag_control_plane_fencing"
-down_revision = "0014_rag_embedding_provider"
+revision = "0011_rag_control_plane_fencing"
+down_revision = "0010_rag_embedding_provider"
 branch_labels = None
 depends_on = None
 

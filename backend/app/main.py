@@ -26,6 +26,7 @@ from app.services.etl_service import (
 )
 from app.services.realtime_event_service import realtime_event_dispatcher
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
+from app.services.rag_service import RagService
 
 logger = logging.getLogger(__name__)
 
@@ -64,17 +65,6 @@ async def scheduled_job_tick_loop() -> None:
         except Exception:  # Keep the control plane alive for the next interval.
             logger.exception("Scheduled job tick failed")
         await asyncio.sleep(settings.scheduled_job_tick_interval_seconds)
-
-
-async def review_analysis_worker_loop() -> None:
-    while True:
-        try:
-            await asyncio.to_thread(ReviewAnalysisService.fail_stale_runs)
-            processed = await asyncio.to_thread(ReviewAnalysisService.process_next_queued_run)
-        except Exception:  # A failed queue tick must not stop later persisted runs.
-            logger.exception("Review analysis worker tick failed")
-            processed = False
-        await asyncio.sleep(0 if processed else 2)
 
 
 def initialize_auth_on_startup() -> None:

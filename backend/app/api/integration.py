@@ -1,17 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query
 
 from app.core.auth_context import ActorContext, get_actor_context
-from app.core.database import get_db
 from app.schemas.integration import (
     CatalogModelArtifactResponse,
-    ReviewAnalysisRunResponse,
-    ReviewAnalysisStatusResponse,
     ReviewAnalysisRunRequest,
-    ReviewAnalysisPreviewRequest,
-    ReviewAnalysisPreviewResponse,
     ReviewAnalysisSchemaSuggestionRequest,
     S3BucketsResponse,
     S3PrefixesResponse,
@@ -53,43 +47,11 @@ def get_s3_prefixes(
     )
 
 
-@router.get("/review-analysis/runs/latest", response_model=ReviewAnalysisStatusResponse)
-def get_latest_review_analysis(
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    return ReviewAnalysisService(db).get_status(actor)
-
-
-@router.get("/review-analysis/runs/{run_id}", response_model=ReviewAnalysisRunResponse)
-def get_review_analysis_run(
-    run_id: str,
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    return ReviewAnalysisService(db).get_status(actor, run_id)
-
-
-@router.post("/review-analysis/runs", response_model=ReviewAnalysisRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def enqueue_review_analysis(
-    request: ReviewAnalysisRunRequest,
-    background_tasks: BackgroundTasks,
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    return ReviewAnalysisService(db).enqueue(
-        request.model_dump(by_alias=True, mode="json", exclude_none=True),
-        actor,
-        background_tasks,
-    )
-
-
-@router.get("/review-analysis/cellphones", deprecated=True)
+@router.get("/review-analysis/cellphones")
 def get_cellphones_review_analysis(
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-    db: Session = Depends(get_db),
+    _: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> dict[str, object]:
-    return ReviewAnalysisService(db).get_status(actor)
+    return ReviewAnalysisService().get_status()
 
 
 @router.post("/review-analysis/schema-suggestion")
@@ -100,27 +62,12 @@ def suggest_review_analysis_schema(
     return ReviewAnalysisService().suggest_schema(request.model_dump(by_alias=True, mode="json"))
 
 
-@router.post("/review-analysis/preview", response_model=ReviewAnalysisPreviewResponse)
-def preview_review_analysis(
-    request: ReviewAnalysisPreviewRequest,
-    _: Annotated[ActorContext, Depends(get_actor_context)],
-) -> ReviewAnalysisPreviewResponse:
-    payload = ReviewAnalysisService().preview(request.model_dump(by_alias=True, mode="json"))
-    return ReviewAnalysisPreviewResponse.model_validate(payload)
-
-
-@router.post("/review-analysis/cellphones/run", deprecated=True, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/review-analysis/cellphones/run")
 def run_cellphones_review_analysis(
     request: ReviewAnalysisRunRequest,
-    background_tasks: BackgroundTasks,
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-    db: Session = Depends(get_db),
+    _: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> dict[str, object]:
-    return ReviewAnalysisService(db).enqueue(
-        request.model_dump(by_alias=True, mode="json", exclude_none=True),
-        actor,
-        background_tasks,
-    )
+    return ReviewAnalysisService().run(request.model_dump(by_alias=True, mode="json"))
 
 
 @router.get("/catalog/models", response_model=list[CatalogModelArtifactResponse])

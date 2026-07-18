@@ -279,7 +279,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
-    def test_session_cookie_is_secure_by_default_outside_local_development(self) -> None:
+    def test_session_cookie_is_secure_by_default_when_header_auth_is_disabled(self) -> None:
         production = Settings(
             app_env="production",
             bootstrap_admin_email="owner@example.com",
@@ -289,7 +289,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
         local = Settings(app_env="local")
 
         self.assertTrue(production.uses_secure_session_cookie)
-        self.assertFalse(local.uses_secure_session_cookie)
+        self.assertTrue(local.uses_secure_session_cookie)
 
     def test_session_cookie_secure_flag_supports_an_explicit_http_dev_override(self) -> None:
         http_dev = Settings(
@@ -308,23 +308,36 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
         self.assertTrue(cookie_options["httponly"])
         self.assertEqual(cookie_options["samesite"], "lax")
 
-    def test_production_legacy_demo_users_require_an_explicit_opt_in(self) -> None:
+    def test_legacy_demo_users_are_restricted_to_test_runtime(self) -> None:
         default_settings = Settings(
             app_env="production",
             bootstrap_admin_email="owner@example.com",
             bootstrap_admin_password="strong-bootstrap-password",
             backend_cors_origins=[],
         )
-        opted_in_settings = Settings(
-            app_env="production",
-            auth_legacy_demo_users_enabled=True,
-            bootstrap_admin_email="owner@example.com",
-            bootstrap_admin_password="strong-bootstrap-password",
-            backend_cors_origins=[],
-        )
-
         self.assertFalse(default_settings.auth_legacy_demo_users_enabled)
-        self.assertTrue(opted_in_settings.auth_legacy_demo_users_enabled)
+        with self.assertRaises(ValueError):
+            Settings(
+                app_env="production",
+                auth_legacy_demo_users_enabled=True,
+                bootstrap_admin_email="owner@example.com",
+                bootstrap_admin_password="strong-bootstrap-password",
+                backend_cors_origins=[],
+            )
+        test_settings = Settings(
+            app_env="test",
+            auth_legacy_demo_users_enabled=True,
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+        self.assertTrue(test_settings.auth_legacy_demo_users_enabled)
+
+    def test_header_auth_fallback_is_test_only(self) -> None:
+        local = Settings(app_env="local", backend_cors_origins=[], _env_file=None)
+        testing = Settings(app_env="test", backend_cors_origins=[], _env_file=None)
+
+        self.assertFalse(local.allows_header_auth_fallback)
+        self.assertTrue(testing.allows_header_auth_fallback)
 
     def test_production_rejects_wildcard_or_insecure_cors_origins(self) -> None:
         for origins in (["*"], ["http://app.example.com"]):

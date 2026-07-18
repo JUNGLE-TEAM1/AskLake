@@ -4,8 +4,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "0014_rag_embedding_provider"
-down_revision = "0013_remove_legacy_demo_permissions"
+revision = "0010_rag_embedding_provider"
+down_revision = "0009_rag_activation_reconciliation"
 branch_labels = None
 depends_on = None
 
