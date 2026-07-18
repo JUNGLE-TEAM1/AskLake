@@ -3,6 +3,7 @@ import { apiClient } from "./apiClient";
 export type DashboardSyncMode = "polling" | "hybrid" | "sse";
 
 export type RealtimeFeatureConfig = {
+  clickhouseContinuousJoinEnabled: boolean;
   continuousSqlJoinEnabled: boolean;
   dashboardSyncMode: DashboardSyncMode;
   fallbackReason: string | null;

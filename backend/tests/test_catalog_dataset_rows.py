@@ -308,19 +308,33 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 502)
+        error = response.json()["error"]
         self.assertEqual(
-            response.json(),
             {
-                "error": {
-                    "code": "SQL_STORAGE_ERROR",
-                    "message": "Catalog Iceberg dataset rows could not be read",
-                    "details": {
-                        "datasetId": "catalog_rows_fixture",
-                        "reason": "TRINO_UNAVAILABLE",
-                    },
-                }
+                "code": error["code"],
+                "details": error["details"],
+                "message": error["message"],
+            },
+            {
+                "code": "SQL_STORAGE_ERROR",
+                "details": {
+                    "datasetId": "catalog_rows_fixture",
+                    "reason": "TRINO_UNAVAILABLE",
+                },
+                "message": "Catalog Iceberg dataset rows could not be read",
             },
         )
+        self.assertEqual(error["stage"], "api")
+        self.assertTrue(error["retryable"])
+        self.assertEqual(
+            error["operatorMessage"],
+            "Catalog Iceberg dataset rows could not be read",
+        )
+        self.assertEqual(
+            error["userMessage"],
+            "Catalog Iceberg dataset rows could not be read",
+        )
+        self.assertTrue(error["diagnosticId"])
         self.assertNotIn(sensitive_message, response.text)
         self.assertNotIn("private-query.example.internal", response.text)
         self.assertNotIn("do-not-expose", response.text)

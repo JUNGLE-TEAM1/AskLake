@@ -43,8 +43,6 @@ export function usePipelineMutations({
     setCommandPendingByJobId,
     setCreateMutationState,
     setDagStepsByRunId,
-    setDataError,
-    setDataLoading,
     setDatasets,
     setDraftPipeline,
     setEditingJobId,

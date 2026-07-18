@@ -18,7 +18,11 @@ from app.repositories.continuous_sql_repository import ensure_continuous_sql_sch
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.etl import ScheduledJobRunRequest
 from app.services.auth_service import initialize_auth
-from app.services.etl_service import run_due_scheduled_jobs, sync_active_kafka_continuous_runtimes
+from app.services.etl_service import (
+    run_due_scheduled_jobs,
+    sync_active_airflow_snapshot_runs,
+    sync_active_kafka_continuous_runtimes,
+)
 from app.services.realtime_event_service import realtime_event_dispatcher
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
 
@@ -33,6 +37,15 @@ async def continuous_runtime_sync_loop() -> None:
         except Exception:  # Keep the control plane alive for the next interval.
             logger.exception("Continuous runtime synchronization failed")
         await asyncio.sleep(settings.continuous_runtime_sync_interval_seconds)
+
+
+async def snapshot_airflow_sync_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(sync_active_airflow_snapshot_runs)
+        except Exception:  # Keep the next reconciliation cycle recoverable.
+            logger.exception("Snapshot Airflow synchronization failed")
+        await asyncio.sleep(settings.airflow_run_sync_interval_seconds)
 
 
 def run_scheduled_job_tick() -> None:
@@ -64,7 +77,10 @@ def initialize_auth_on_startup() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
-    background_tasks = [asyncio.create_task(scheduled_job_tick_loop())]
+    background_tasks = [
+        asyncio.create_task(snapshot_airflow_sync_loop()),
+        asyncio.create_task(scheduled_job_tick_loop()),
+    ]
     if settings.asklake_continuous_control_plane != "external_ec2":
         background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     if settings.realtime_events_enabled:

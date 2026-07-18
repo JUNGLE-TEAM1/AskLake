@@ -2,7 +2,9 @@
 
 ## Ratchet 원칙
 
-기존 부채를 한 PR에서 모두 실패시키지 않는다. `docs/refactor-2026/quality-gate-baseline.json`은 PR 12 완료 HEAD의 대형 파일·Python 함수·import cycle을 허용 기준으로 고정하고 다음 악화만 실패시킨다.
+기존 부채를 한 PR에서 모두 실패시키지 않는다. `docs/refactor-2026/quality-gate-baseline.json`은 승인된 `dev` 시점의 대형 파일·함수·import cycle을 허용 기준으로 기록하고 다음 악화만 실패시킨다.
+
+2026-07-17에는 이미 `dev`에 병합된 구조 변경 때문에 관련 없는 후속 PR까지 전역 구조 검사에서 차단되는 기준 불일치를 복구하기 위해 `dev` HEAD `9c757808`에서 기준을 다시 수집했다. 이 재수집은 당시 크기를 새 상한으로 기록할 뿐이며 이후 파일·함수 증가나 새 import cycle은 계속 실패시킨다. 작아지거나 제거된 기존 부채는 더 낮아진 현재 값으로 함께 갱신한다.
 
 - 새 1,000줄 초과 source file
 - baseline보다 커진 기존 1,000줄 초과 file

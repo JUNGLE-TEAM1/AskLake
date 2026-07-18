@@ -1,5 +1,30 @@
 # AskLake 15개 리팩토링 PR 진행 원장
 
+## 잔여 위험 후속 스택 (2026-07-17)
+
+- 기준: `dev@16110c064094c7c66149ec1564470c16f4968cda`
+- 사용자 제약: 현재 배포 UI·API·DB·runtime 동작을 유지하고 이전 façade/mock/legacy 구현을 다시 활성화하지 않는다.
+- PR 01: `#861` / `#863` / `refactor-#861` — deployed UI no-reactivation contract와 deterministic frontend guard, 리뷰 대기
+- PR 02: `#864` / `#865` / `refactor-#864` — ETL Job list/detail refresh·hydrate·permission·facet application 경계, `#863` 머지 대기 Draft
+- PR 02 검증: backend unit 485건(1 opt-in skip), 조회 경계 unit 3건, hydrate 계약, OpenAPI breaking 0건, legacy register와 structural quality gate 통과
+- PR 03: `#866` / `#867` / `refactor-#866` — ETL Job delete permission·active workload·종속 삭제·commit/rollback application 경계, `#865` 머지 대기 Draft
+- PR 03 검증: backend unit 490건(1 opt-in skip), 신규 command와 기존 delete/동시성 unit 24건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
+- PR 04: `#868` / `#869` / `refactor-#868` — 일반 Pipeline create/update validation·identity·mapping·permission·repository write application 경계, `#867` 머지 대기 Draft
+- PR 04 검증: backend unit 496건(1 opt-in skip), 신규 write unit 6건, update·permission create·Rule persistence·dataset identity·Continuous verifier, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과
+- PR 05: `#871` / `#872` / `refactor-#871` — persisted Airflow Run identity, Spark execution lease/finalize와 Catalog reconciliation transaction application 경계, `#869` 머지 대기 Draft
+- PR 05 검증: backend unit 506건(1 opt-in skip), 신규 execution/publication unit 10건, Airflow lease concurrency·DAG Catalog wiring·Iceberg reconciliation, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. live PostgreSQL reconciliation script는 local Docker/PostgreSQL 미기동으로 Draft 후 수동 gate에 유지
+- PR 06: `#873` / `#874` / `refactor-#873` — Source connector Python request/response use case와 기존 Node script transport의 typed gateway 권위 경계, `#872` 머지 대기 Draft
+- PR 06 검증: backend unit 512건(1 opt-in skip), 신규 connector gateway unit 6건, 기존 bridge·endpoint auth·raw preview schema·object-storage unit 20건, Node connector entry syntax, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. live 외부 connector fixture는 runtime 미기동으로 Draft 후 수동 gate에 유지
+- PR 07: `#875` / `#876` / `refactor-#875` — EKS·EC2 workload topology와 Kafka Continuous·Continuous SQL reconciliation의 단일-owner manifest/validator, `#874` 머지 대기 Draft
+- PR 07 검증: backend unit 512건(1 opt-in skip), ownership validator unit 6건과 현재 production manifest, Continuous runtime contract 39건, frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. 실제 EKS/EC2 process 대조는 Draft 후 rollout 수동 gate에 유지
+- PR 08: `#877` / `#878` / `refactor-#877` — 인접 `.s3-tree-panel` rule 1쌍을 declaration 순서 그대로 통합하고 exact CSS inventory·렌더 parity gate 강화, `#876` 머지 대기 Draft
+- PR 08 검증: CSS boundary 4건, selector 1,250→1,249/unique 1,183 유지/중복 67→66, desktop·mobile computed style와 screenshot SHA-256 동일. frontend UI 136 checks와 production build, backend unit 512건(1 opt-in skip), OpenAPI breaking 0건, legacy register·structural quality 통과. live workspace 화면은 local PostgreSQL/Docker 미기동으로 Draft 후 수동 gate에 유지
+- PR 09: `#879` / `#880` / `refactor-#879` — production legacy 10경로의 30일 0-call·근거·승인 removal evidence fail-closed gate, `#878` 머지 대기 Draft
+- PR 09 검증: removal evidence unit 6건, production 10경로 blocked·eligible 0개, backend unit 512건(1 opt-in skip), frontend UI 136 checks와 production build, OpenAPI breaking 0건, 기존 legacy register·structural quality 통과. runtime/UI source 변경 0건이며 실제 production 30일 log 관찰은 수행하지 않음
+- PR 10: `#881` / `#882` / `refactor-#881` — 10개 stacked PR의 strict order·base·dependency·green/review/no-deploy release audit gate, `#880` 머지 대기 Draft
+- PR 10 검증: merge plan unit 6건·final audit unit 2건, pending PR 0개와 exact 10-order, release plan pass·production execution expected exit 2(수동 blocker 5개), backend unit 512건(1 opt-in skip), frontend UI 136 checks와 production build, OpenAPI breaking 0건, legacy register·structural quality 통과. runtime/UI source 변경 0건
+- 다음 단계: manifest 순서대로 사람 review·green CI 후 하나씩 merge. production execution은 별도 수동 gate 완료 전 차단
+
 이 문서는 완료된 작업, 현재 작업, 남은 작업과 순차 머지 의존성의 source of truth다.
 
 ## 현재 상태

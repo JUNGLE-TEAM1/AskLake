@@ -4,7 +4,10 @@ import hashlib
 import json
 from typing import Any, Protocol
 
+from app.core.config import Settings, settings
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
+from app.schemas.continuous_sql import continuous_sql_serving_mode
+from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
 from app.services.node_bridge import run_node_bridge
 
 
@@ -76,6 +79,35 @@ class NodeContinuousSqlWorkerGateway:
             error_marker="ASKLAKE_KAFKA_CONTINUOUS_ERROR",
             timeout_seconds=90 if action == "start" else 20,
         )
+
+
+class RoutedContinuousSqlWorkerGateway:
+    def __init__(
+        self,
+        runtime_settings: Settings | None = None,
+        *,
+        iceberg_gateway: ContinuousSqlWorkerGateway | None = None,
+        clickhouse_gateway: ContinuousSqlWorkerGateway | None = None,
+    ) -> None:
+        resolved_settings = runtime_settings or settings
+        self.iceberg_gateway = iceberg_gateway or NodeContinuousSqlWorkerGateway()
+        self.clickhouse_gateway = clickhouse_gateway or ClickHouseContinuousSqlWorkerGateway(
+            resolved_settings
+        )
+
+    def manage(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel | None,
+        action: str,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        gateway = (
+            self.clickhouse_gateway
+            if continuous_sql_serving_mode(job) == "clickhouse"
+            else self.iceberg_gateway
+        )
+        return gateway.manage(job, run, action, options)
 
 
 def canonical_hash(value: Any) -> str:

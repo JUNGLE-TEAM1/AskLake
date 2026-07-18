@@ -5,8 +5,8 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { kafkaSecurityOptions, loadKafkaJs } from "./kafka-codecs.mjs";
-import { recoverKafkaLogLines } from "./kafkaPreview.mjs";
+import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -764,7 +764,6 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
   const kafka = new Kafka({
-    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-source-test",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
@@ -782,17 +781,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
-    const rawValueIndex = parsedSample.columns.findIndex((column) => column === "value");
-    const recoveredLogLines = recoverKafkaLogLines(messages);
-    const rawTextLines = parsedSample.format === "txt" && rawValueIndex >= 0
-      ? messages.filter((line) => line.trim())
-      : recoveredLogLines;
-    const requiresRecordParsing = rawTextLines.length > 0;
-    const detectedFormat = requiresRecordParsing
-      ? "TXT"
-      : parsedSample.format === "kafka"
-      ? undefined
-      : parsedSample.format.toUpperCase();
+    const previewMetadata = buildKafkaPreviewMetadata(messages, parsedSample.format);
 
     const id = sourceId("source", `kafka://${broker}/${topic}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
@@ -828,11 +817,9 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
         source: {
           connectionMessage: `Kafka 토픽 연결 성공: ${topic}`,
           connectionStatus: "success",
-          detectedFormat,
-          rawPreviewLines: requiresRecordParsing
-            ? rawTextLines
-            : messages.filter((line) => line.trim()),
-          requiresRecordParsing,
+          detectedFormat: previewMetadata.detectedFormat,
+          rawPreviewLines: previewMetadata.rawPreviewLines,
+          requiresRecordParsing: previewMetadata.requiresRecordParsing,
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
           sourceType,
@@ -2023,7 +2010,6 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
-    ...await kafkaSecurityOptions(),
     brokers: [broker],
     clientId: "asklake-source-sampler",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
