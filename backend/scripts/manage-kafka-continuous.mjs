@@ -45,6 +45,7 @@ import {
   sparkApplicationName,
   sparkApplicationState,
 } from "./spark-kubernetes-client.mjs";
+import { buildContinuousSparkApplication } from "./kafka-continuous-kubernetes.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -213,121 +214,18 @@ export function continuousSparkApplication(request, runtime, workerAttemptId, en
     false,
     environment,
   );
-  const env = kubernetesEnvironment(runtimeEnvironment, environment);
   const packages = continuousSparkPackages(
     request.outputPath,
     requiredObject(request.icebergTarget, "icebergTarget"),
   );
-  const labels = {
-    "app.kubernetes.io/managed-by": "asklake-continuous-worker",
-    "asklake.job-id": safeSegment(jobId),
-    "asklake.worker-attempt-id": workerAttemptId,
-  };
-  return {
-    apiVersion: "sparkoperator.k8s.io/v1beta2",
-    kind: "SparkApplication",
-    metadata: { name: sparkApplicationName(jobId), namespace: runtime.namespace, labels },
-    spec: {
-      type: "Python",
-      pythonVersion: "3",
-      mode: "cluster",
-      image: runtime.image,
-      imagePullPolicy: environment.ASKLAKE_SPARK_KUBERNETES_IMAGE_PULL_POLICY || "IfNotPresent",
-      mainApplicationFile: environment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT || "/opt/asklake/scripts/kafka_continuous_stream.py",
-      sparkVersion: environment.ASKLAKE_SPARK_KUBERNETES_VERSION || "4.0.1",
-      restartPolicy: { type: "Never" },
-      deps: packages.length ? { packages } : undefined,
-      hadoopConf: kubernetesHadoopConf(environment),
-      sparkConf: {
-        "spark.sql.shuffle.partitions": String(continuousSparkShufflePartitions()),
-        "spark.sql.streaming.stopGracefullyOnShutdown": "true",
-        "spark.jars.ivy": environment.ASKLAKE_SPARK_KUBERNETES_IVY_DIR || "/tmp/.ivy2",
-        "spark.kubernetes.executor.deleteOnTermination": "true",
-      },
-      driver: {
-        cores: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES, 1),
-        memory: environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY || "2g",
-        serviceAccount: runtime.serviceAccount,
-        labels,
-        env,
-        nodeSelector: kubernetesNodeSelector(environment),
-        tolerations: kubernetesTolerations(environment),
-      },
-      executor: {
-        instances: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES, 2),
-        cores: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES, 1),
-        memory: environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY || "2g",
-        labels,
-        env,
-        nodeSelector: kubernetesNodeSelector(environment),
-        tolerations: kubernetesTolerations(environment),
-      },
-    },
-  };
-}
-
-function kubernetesEnvironment(runtimeEnvironment, environment) {
-  const secretName = String(
-    environment.ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME || "asklake-spark-runtime",
-  ).trim();
-  const secretKeys = {
-    ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_PASSWORD_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD",
-    ASKLAKE_SPARK_ICEBERG_JDBC_URL: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_URL_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
-    ASKLAKE_SPARK_ICEBERG_JDBC_USER: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_USER_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_USER",
-  };
-  return Object.entries(runtimeEnvironment).map(([name, value]) => {
-    const secretKey = secretKeys[name];
-    if (!secretKey) return { name, value: String(value) };
-    return {
-      name,
-      valueFrom: { secretKeyRef: { name: secretName, key: secretKey } },
-    };
+  return buildContinuousSparkApplication({
+    jobId,
+    runtime,
+    workerAttemptId,
+    runtimeEnvironment,
+    packages,
+    environment,
   });
-}
-
-function kubernetesHadoopConf(environment) {
-  return {
-    "fs.s3a.aws.credentials.provider": String(
-      environment.ASKLAKE_SPARK_KUBERNETES_S3A_CREDENTIALS_PROVIDER
-        || "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider",
-    ),
-    ...jsonObjectEnvironment(environment.ASKLAKE_SPARK_KUBERNETES_HADOOP_CONF, "ASKLAKE_SPARK_KUBERNETES_HADOOP_CONF"),
-  };
-}
-
-function kubernetesNodeSelector(environment) {
-  return jsonObjectEnvironment(
-    environment.ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR,
-    "ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR",
-  );
-}
-
-function kubernetesTolerations(environment) {
-  const raw = String(environment.ASKLAKE_SPARK_KUBERNETES_TOLERATIONS || "").trim();
-  if (!raw) return [];
-  try {
-    const value = JSON.parse(raw);
-    if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
-      throw new Error("must be a JSON array of Kubernetes toleration objects");
-    }
-    return value;
-  } catch (error) {
-    throw new Error(`ASKLAKE_SPARK_KUBERNETES_TOLERATIONS ${error.message}`);
-  }
-}
-
-function jsonObjectEnvironment(value, name) {
-  const raw = String(value || "").trim();
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("must be a JSON object");
-    }
-    return Object.fromEntries(Object.entries(parsed).map(([key, item]) => [key, String(item)]));
-  } catch (error) {
-    throw new Error(`${name} ${error.message}`);
-  }
 }
 
 function requiredRuntimeDocumentPrefix(environment = process.env) {

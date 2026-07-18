@@ -258,6 +258,7 @@ from app.core.materialization import (
 )
 from app.core.permission_metadata import normalize_actions, permission_grants_from_roles, resource_permissions
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
+from app.services.continuous_runtime_sync import ContinuousRuntimeSyncHooks, sync_active_kafka_continuous_jobs
 from app.domain.continuous_runtime import (
     ContinuousErrorStage,
     clear_runtime_error,
@@ -667,61 +668,12 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    """Persist continuous worker progress without depending on UI polling."""
-    import logging
-
-    from app.core.database import SessionLocal
-
-    active_statuses = {"starting", "running", "pausing", "stopping"}
-    terminal_statuses = {"paused", "stopped", "failed"}
-    with SessionLocal() as db:
-        try:
-            reconcile_stale_continuous_maintenance_runs(db)
-        except Exception:
-            db.rollback()
-            logging.getLogger(__name__).exception(
-                "Kafka continuous maintenance reconciliation failed before runtime synchronization"
-            )
-        job_ids = [
-            job.id
-            for job in etl_repository.list_job_models(db)
-            if job.execution_mode == "continuous"
-        ]
-    for job_id in job_ids:
-        with SessionLocal() as db:
-            try:
-                job = etl_repository.get_job(db, job_id)
-                if job is None or job.execution_mode != "continuous":
-                    continue
-                runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
-                recovery_state = (runtime.metrics or {}).get("publicationRecoveryPending") if runtime is not None else None
-                desired_running = runtime is not None and (
-                    runtime_contract_projection(
-                        runtime.metrics,
-                        public_status=runtime.status,
-                        legacy_error=getattr(runtime, "last_error", None),
-                    ).get("desiredState") == "running"
-                )
-                terminal_recovery_due = (
-                    runtime is not None
-                    and runtime.status in terminal_statuses
-                    and recovery_state is not False
-                )
-                if runtime is not None and (
-                    runtime.status in active_statuses
-                    or desired_running
-                    or terminal_recovery_due
-                    or recovery_state is True
-                    or continuous_report_has_unacknowledged_publication(job.id, runtime)
-                    or has_pending_continuous_replay_catalog(db, job.id)
-                ):
-                    refresh_kafka_continuous_runtime(db, job)
-            except Exception:
-                db.rollback()
-                logging.getLogger(__name__).exception(
-                    "Kafka continuous runtime synchronization failed for job_id=%s",
-                    job_id,
-                )
+    sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
+        reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,
+        refresh_runtime=refresh_kafka_continuous_runtime,
+        report_has_unacknowledged_publication=continuous_report_has_unacknowledged_publication,
+        has_pending_replay_catalog=has_pending_continuous_replay_catalog,
+    ))
 
 
 def command_job(

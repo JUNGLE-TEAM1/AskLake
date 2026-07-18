@@ -200,67 +200,13 @@ def reconcile_continuous_runtime(
     report_document = hooks.read_report(hooks.report_path(job.id))
     worker_status = hooks.worker_status(job, runtime)
     container_state = str(worker_status.get("containerState") or "unknown")
-    # In external-control-plane mode the HTTP command only persists intent.
-    # The lease-owning worker performs the actual graceful signal exactly once
-    # after observing that durable intent.
-    if runtime.status in {"pausing", "stopping"} and container_state in {
-        "running", "starting", "created", "healthy",
-    }:
-        action = "pause" if runtime.status == "pausing" else "stop"
-        try:
-            worker.command(job, runtime, action)
-            worker_status = hooks.worker_status(job, runtime)
-            container_state = str(worker_status.get("containerState") or container_state)
-        except Exception as exc:
-            runtime.metrics = record_runtime_error(
-                runtime.metrics,
-                stage=ContinuousErrorStage.SUBMISSION,
-                code=f"deferred_worker_{action}_failed",
-                message=f"Continuous worker could not apply the deferred {action} command: {exc}",
-                retryable=True,
-                context={"jobId": job.id, "command": action},
-            )
-            runtime.last_error = str(exc)
-            etl_repository.save_kafka_continuous_command(db, job, runtime)
-            return
-    payload = report_document.value or {}
-    contract_initialized = runtime_contract_initialized(runtime.metrics)
-    record_legacy_runtime_error_projection(
-        runtime.metrics,
-        runtime.last_error,
-        public_status=runtime.status,
+    worker_status, container_state, signal_applied = _apply_deferred_terminal_signal(
+        db, job, runtime, worker, hooks, worker_status, container_state
     )
-    contract = runtime_contract_projection(
-        runtime.metrics,
-        public_status=runtime.status,
-        legacy_error=runtime.last_error,
-    )
-    evidence = RuntimeEvidence(
-        desired_state=str(contract.get("desiredState") or "stopped"),
-        public_status=runtime.status,
-        container_state=container_state,
-        report_state=report_document.state,
-        report_status=_optional_string(payload.get("status")),
-        expected_worker_attempt_id=_optional_string(contract.get("fencingToken")),
-        observed_worker_attempt_id=_optional_string(payload.get("workerAttemptId")),
-        requested_action=_optional_string(worker_status.get("requestedAction")),
-        publication_pending=(runtime.metrics or {}).get("publicationRecoveryPending") is True,
-        contract_initialized=contract_initialized,
-        output_present=(
-            bool(payload.get("lastBatchWritten"))
-            if "lastBatchWritten" in payload
-            else None
-        ),
-        manifest_present=(
-            bool(payload.get("publishedBatches"))
-            if "publishedBatches" in payload
-            else None
-        ),
-        catalog_applied=(
-            not bool((runtime.metrics or {}).get("publicationRecoveryPending"))
-            if "publicationRecoveryPending" in (runtime.metrics or {})
-            else None
-        ),
+    if not signal_applied:
+        return
+    payload, contract_initialized, evidence = _runtime_evidence(
+        runtime, report_document, worker_status, container_state
     )
     decision = decide_reconciliation(evidence)
     runtime.metrics = {
@@ -327,6 +273,84 @@ def reconcile_continuous_runtime(
         forced_terminal_status=decision.terminal_status,
         contract_was_initialized=contract_initialized,
     )
+
+
+def _apply_deferred_terminal_signal(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    worker: KafkaRuntimeGateway,
+    hooks: ContinuousReconciliationHooks,
+    worker_status: dict[str, Any],
+    container_state: str,
+) -> tuple[dict[str, Any], str, bool]:
+    """Let the lease owner apply a terminal intent persisted by the web API."""
+    should_signal = runtime.status in {"pausing", "stopping"} and container_state in {
+        "running", "starting", "created", "healthy",
+    }
+    if not should_signal:
+        return worker_status, container_state, True
+    action = "pause" if runtime.status == "pausing" else "stop"
+    try:
+        worker.command(job, runtime, action)
+        worker_status = hooks.worker_status(job, runtime)
+        return (
+            worker_status,
+            str(worker_status.get("containerState") or container_state),
+            True,
+        )
+    except Exception as exc:
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.SUBMISSION,
+            code=f"deferred_worker_{action}_failed",
+            message=f"Continuous worker could not apply the deferred {action} command: {exc}",
+            retryable=True,
+            context={"jobId": job.id, "command": action},
+        )
+        runtime.last_error = str(exc)
+        etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return worker_status, container_state, False
+
+
+def _runtime_evidence(
+    runtime: KafkaContinuousRuntimeModel,
+    report_document: JsonDocument,
+    worker_status: dict[str, Any],
+    container_state: str,
+) -> tuple[dict[str, Any], bool, RuntimeEvidence]:
+    payload = report_document.value or {}
+    contract_initialized = runtime_contract_initialized(runtime.metrics)
+    record_legacy_runtime_error_projection(
+        runtime.metrics,
+        runtime.last_error,
+        public_status=runtime.status,
+    )
+    contract = runtime_contract_projection(
+        runtime.metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
+    evidence = RuntimeEvidence(
+        desired_state=str(contract.get("desiredState") or "stopped"),
+        public_status=runtime.status,
+        container_state=container_state,
+        report_state=report_document.state,
+        report_status=_optional_string(payload.get("status")),
+        expected_worker_attempt_id=_optional_string(contract.get("fencingToken")),
+        observed_worker_attempt_id=_optional_string(payload.get("workerAttemptId")),
+        requested_action=_optional_string(worker_status.get("requestedAction")),
+        publication_pending=(runtime.metrics or {}).get("publicationRecoveryPending") is True,
+        contract_initialized=contract_initialized,
+        output_present=(bool(payload["lastBatchWritten"]) if "lastBatchWritten" in payload else None),
+        manifest_present=(bool(payload["publishedBatches"]) if "publishedBatches" in payload else None),
+        catalog_applied=(
+            not bool((runtime.metrics or {}).get("publicationRecoveryPending"))
+            if "publicationRecoveryPending" in (runtime.metrics or {})
+            else None
+        ),
+    )
+    return payload, contract_initialized, evidence
 
 
 def _apply_terminal_intent(
