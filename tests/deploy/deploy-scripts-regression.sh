@@ -446,6 +446,22 @@ else
   record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
+mock_metadata_schema_bootstrap() (
+  remote_compose() {
+    printf 'compose:%s\n' "$1"
+  }
+
+  bootstrap_metadata_schema
+)
+
+if output="$(mock_metadata_schema_bootstrap 2>&1)" \
+  && [[ "$output" == *'compose:up -d --wait postgres'* ]] \
+  && [[ "$output" == *'compose:run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'* ]]; then
+  record_pass 'deploy bootstraps metadata schema before application services'
+else
+  record_fail 'deploy bootstraps metadata schema before application services'
+fi
+
 mock_health_check() (
   local payload="$1"
 

@@ -315,6 +315,11 @@ prepare_clickhouse_runtime() {
   remote_compose 'up -d redpanda clickhouse'
 }
 
+bootstrap_metadata_schema() {
+  remote_compose 'up -d --wait postgres'
+  remote_compose 'run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'
+}
+
 verify_clickhouse_runtime() {
   local attempt
   if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
@@ -336,6 +341,7 @@ verify_clickhouse_runtime() {
 start_stack() {
   ensure_started
   remote_deploy_preflight
+  bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
   remote_compose 'up -d'
