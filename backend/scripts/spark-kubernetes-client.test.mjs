@@ -25,7 +25,7 @@ const RUN_ID = "run/with a long unsafe identity that should remain deterministic
 const JOB_ID = "job-001";
 const IMAGE = `example.invalid/spark@sha256:${"a".repeat(64)}`;
 
-function applicationFixture() {
+function applicationFixture(attemptGeneration = 1) {
   return createSparkKubernetesApplication({
     appName: "asklake-test",
     environmentVariables: {
@@ -37,6 +37,7 @@ function applicationFixture() {
     jobId: JOB_ID,
     packages: ["org.postgresql:postgresql:42.7.7"],
     runId: RUN_ID,
+    attemptGeneration,
   }, {
     APP_ENV: "production",
     ASKLAKE_SPARK_KUBERNETES_IMAGE: IMAGE,
@@ -60,6 +61,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.match(first.metadata.name, /^asklake-run-[a-z0-9-]+$/);
   assert.ok(first.metadata.name.length <= 63);
   assert.equal(first.metadata.annotations["asklake.io/run-id"], RUN_ID);
+  assert.equal(first.metadata.annotations["asklake.io/execution-generation"], "1");
   assert.equal(first.metadata.annotations["asklake.io/executor-instances"], "4");
   assert.equal(first.spec.image, IMAGE);
   assert.equal(first.spec.driver.serviceAccount, "asklake-spark");
@@ -93,6 +95,18 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   });
   assert.equal("value" in jdbcPassword, false);
   assert.equal(JSON.stringify(first).includes("replace-with-secret"), false);
+});
+
+test("Kubernetes Spark terminal replacement uses a bounded generation suffix", () => {
+  const first = applicationFixture(1);
+  const second = applicationFixture(2);
+  assert.equal(first.metadata.name, sparkKubernetesApplicationName(RUN_ID, 1));
+  assert.equal(second.metadata.name, sparkKubernetesApplicationName(RUN_ID, 2));
+  assert.notEqual(first.metadata.name, second.metadata.name);
+  assert.match(second.metadata.name, /-g2$/);
+  assert.ok(second.metadata.name.length <= 63);
+  assert.equal(second.metadata.annotations["asklake.io/execution-generation"], "2");
+  assert.throws(() => applicationFixture(4), /must be between 1 and 3/);
 });
 
 test("Kubernetes Spark executor count is bounded for the 1, 2, 4 experiment matrix", () => {
@@ -420,6 +434,68 @@ test("persisted UID recovery refuses replacement when the SparkApplication is go
   );
 
   assert.deepEqual(calls.map(([method]) => method), ["GET"]);
+});
+
+test("terminal failed UID permits exactly the next SparkApplication generation", async () => {
+  const first = applicationFixture(1);
+  const second = applicationFixture(2);
+  const failed = {
+    ...first,
+    metadata: { ...first.metadata, uid: "spark-uid-attempt-001" },
+    status: { applicationState: { state: "FAILED" } },
+  };
+  const created = {
+    ...second,
+    metadata: { ...second.metadata, uid: "spark-uid-attempt-002" },
+    status: { applicationState: { state: "SUBMITTED" } },
+  };
+  const calls = [];
+  const result = await createOrRecoverApplication({
+    application: second,
+    expectedKubernetesExecution: {
+      applicationName: first.metadata.name,
+      applicationUid: "spark-uid-attempt-001",
+      attemptGeneration: 1,
+      namespace: first.metadata.namespace,
+      state: "FAILED",
+    },
+    requestJson: async (method, path) => {
+      calls.push([method, path]);
+      if (method === "GET" && path.endsWith(`/${first.metadata.name}`)) {
+        return { body: failed, status: 200 };
+      }
+      if (method === "GET") {
+        return { body: { message: "not found" }, status: 404 };
+      }
+      return { body: created, status: 201 };
+    },
+  });
+
+  assert.equal(result.recovered, false);
+  assert.equal(result.replacement, true);
+  assert.equal(result.application.metadata.uid, "spark-uid-attempt-002");
+  assert.deepEqual(calls.map(([method]) => method), ["GET", "GET", "POST"]);
+});
+
+test("non-terminal or transitional persisted UID cannot create another application generation", async () => {
+  const first = applicationFixture(1);
+  const second = applicationFixture(2);
+  for (const state of ["RUNNING", "FAILING", "INVALIDATING"]) {
+    await assert.rejects(
+      createOrRecoverApplication({
+        application: second,
+        expectedKubernetesExecution: {
+          applicationName: first.metadata.name,
+          applicationUid: "spark-uid-attempt-001",
+          attemptGeneration: 1,
+          namespace: first.metadata.namespace,
+          state,
+        },
+        requestJson: async () => ({ body: {}, status: 500 }),
+      }),
+      /does not match the deterministic application identity/,
+    );
+  }
 });
 
 test("persisted UID recovery rejects a same-name replacement before execution", async () => {
