@@ -175,6 +175,16 @@ Query AI prompt는 Catalog가 이미 보유한 schema/type, storage bytes, parti
 
 현재 runner의 `fixture_file_upper_bound` estimate는 partition pruning을 반영하지 않아 candidate 평균 estimate error ratio가 크게 왜곡된다. 이는 SQL 품질 회귀가 아니라 estimate adapter의 알려진 한계이며 promotion metric에서 제외하고 후속으로 실제 `/api/query/estimates` lineage를 연결해야 한다.
 
+## 회귀 판정과 baseline 승격
+
+`regression-policy.v1.json`은 정확성을 성능보다 먼저 판정한다. 전체 correctness는 한 건도 낮아질 수 없고, baseline에서 모든 반복이 정답이었던 case가 candidate에서 틀리면 다른 지표가 빨라져도 실패다. 성능은 새로 정답이 된 case 때문에 성공 모집단이 달라지는 왜곡을 피하려고 **두 campaign에서 모두 모든 반복이 정답인 case**만 gate에 사용한다. 전체 P95는 참고 정보다.
+
+첫 campaign은 case당 5회라 `exploratory-small-sample`이다. 이 표본에서는 scan P95 5%, wall/CPU P95 25%, peak-memory P95 10%를 상대 허용치로 사용한다. 짧은 로컬 query의 scheduler jitter를 과잉 판정하지 않도록 wall 20ms, CPU 10ms, memory 4MiB의 절대 허용치를 함께 두고 둘 중 큰 경계를 적용한다. 새 spill은 허용하지 않는다. 이 값은 영구 SLA가 아니라 최초 실제 baseline에서 만든 보수적인 탐색 gate이며, 반복 수와 전용 runtime 증거가 쌓이면 별도 policy version으로 강화한다.
+
+동일 suite, fixture, snapshot hash, runtime profile, cache mode와 case 집합이 아니면 비교 자체를 `blocked`로 판정한다. 현재 warm 비교는 correctness 33.33%에서 100%로 상승했고 gate를 통과했다. 전체 참고 P95는 wall 255→115ms, CPU 440→83ms, processed bytes 10,494,868→10,494,868, peak memory 6,073,472→6,073,472, spill 0→0이다. 상세 기계 판정은 `backend/benchmarks/nessie-sql/comparison-report.v1.json`, 사람이 읽는 결과는 [Nessie SQL Benchmark Comparison](nessie-sql-benchmark-comparison-v1.md)에 둔다.
+
+Gate 통과가 baseline 자동 교체를 뜻하지 않는다. 새 baseline 승격은 bounded live evidence, 호환성 확인, Issue/PR에서의 명시적 사람 승인 후 새 version artifact로만 수행한다. 기존 baseline 파일은 덮어쓰지 않는다. Provider/model 변경도 같은 절차를 따르며 live provider 호출은 CI에서 자동 실행하지 않는다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.

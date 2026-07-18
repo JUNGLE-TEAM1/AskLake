@@ -36,18 +36,30 @@ def summarize_receipts(receipt_dir: Path, campaign_id: str) -> dict[str, Any]:
     per_case: dict[str, dict[str, Any]] = {}
     for case_id in sorted({str(item["case_id"]) for item in receipts}):
         case_receipts = [item for item in receipts if item["case_id"] == case_id]
-        case_elapsed = [
-            int(item["execution_stats"]["wall_ms"])
-            for item in case_receipts
-            if item.get("correctness") == "passed" and item.get("execution_stats", {}).get("wall_ms") is not None
-        ]
+        correct_receipts = [item for item in case_receipts if item.get("correctness") == "passed"]
+        def metric(name: str) -> list[int]:
+            return [int(item["execution_stats"][name]) for item in correct_receipts if item.get("execution_stats", {}).get(name) is not None]
+        case_elapsed = metric("wall_ms")
+        case_processed = metric("processed_bytes")
+        case_cpu = metric("cpu_ms")
+        case_memory = metric("peak_memory_bytes")
+        case_spill = metric("spilled_bytes")
         per_case[case_id] = {
             "runs": len(case_receipts),
-            "correct": sum(1 for item in case_receipts if item.get("correctness") == "passed"),
+            "correct": len(correct_receipts),
             "p50WallMs": int(median(case_elapsed)) if case_elapsed else None,
             "p95WallMs": percentile(case_elapsed, 0.95),
+            "p50ProcessedBytes": int(median(case_processed)) if case_processed else None,
+            "p95ProcessedBytes": percentile(case_processed, 0.95),
+            "p50CpuMs": int(median(case_cpu)) if case_cpu else None,
+            "p95CpuMs": percentile(case_cpu, 0.95),
+            "p50PeakMemoryBytes": int(median(case_memory)) if case_memory else None,
+            "p95PeakMemoryBytes": percentile(case_memory, 0.95),
+            "p50SpilledBytes": int(median(case_spill)) if case_spill else None,
+            "p95SpilledBytes": percentile(case_spill, 0.95),
         }
     first = next((item for item in receipts if item.get("provider") not in {None, "", "unknown"}), receipts[0])
+    cache_modes = sorted({str(item["cache_mode"]) for item in receipts})
     return {
         "summaryVersion": "1",
         "campaignId": campaign_id,
@@ -56,7 +68,8 @@ def summarize_receipts(receipt_dir: Path, campaign_id: str) -> dict[str, Any]:
         "fixtureVersion": first["fixture_version"],
         "datasetSnapshotHash": first["dataset_snapshot_hash"],
         "runtimeProfile": first["runtime_profile"],
-        "cacheModes": sorted({str(item["cache_mode"]) for item in receipts}),
+        "cacheMode": cache_modes[0] if len(cache_modes) == 1 else "mixed",
+        "cacheModes": cache_modes,
         "provider": first["provider"],
         "model": first["model"],
         "generatorVersion": first["generator_version"],

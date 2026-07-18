@@ -1,0 +1,364 @@
+{
+  "reportVersion": "1",
+  "policyVersion": "1.0.0",
+  "comparable": true,
+  "gate": "pass",
+  "confidence": "exploratory-small-sample",
+  "baselineCampaignId": "nessie-baseline-current-warm",
+  "candidateCampaignId": "nessie-cost-aware-v2-final-warm",
+  "correctness": {
+    "baseline": 0.3333333333333333,
+    "candidate": 1.0,
+    "absoluteDelta": 0.6666666666666667,
+    "relativeImprovement": 2.0000000000000004
+  },
+  "overallMetrics": {
+    "note": "informational only because newly-correct cases change the successful population",
+    "scanP95": {
+      "baseline": 10494868,
+      "candidate": 10494868,
+      "absoluteDelta": 0.0,
+      "improvementRatio": -0.0
+    },
+    "wallP95": {
+      "baseline": 255,
+      "candidate": 115,
+      "absoluteDelta": -140.0,
+      "improvementRatio": 0.5490196078431373
+    },
+    "cpuP95": {
+      "baseline": 440,
+      "candidate": 83,
+      "absoluteDelta": -357.0,
+      "improvementRatio": 0.8113636363636364
+    },
+    "peakMemoryP95": {
+      "baseline": 6073472,
+      "candidate": 6073472,
+      "absoluteDelta": 0.0,
+      "improvementRatio": -0.0
+    },
+    "spillP95": {
+      "baseline": 0,
+      "candidate": 0,
+      "absoluteDelta": 0.0,
+      "improvementRatio": null
+    }
+  },
+  "byType": {
+    "ambiguous": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "approximate_aggregate": {
+      "cases": 2,
+      "baselineCorrect": 1,
+      "candidateCorrect": 2
+    },
+    "cross_join_trap": {
+      "cases": 1,
+      "baselineCorrect": 1,
+      "candidateCorrect": 1
+    },
+    "select_star_trap": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "high_cardinality": {
+      "cases": 1,
+      "baselineCorrect": 1,
+      "candidateCorrect": 1
+    },
+    "invalid_scope": {
+      "cases": 1,
+      "baselineCorrect": 1,
+      "candidateCorrect": 1
+    },
+    "time_partition": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "projection_filter": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "multi_join": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "fact_dimension_join": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    },
+    "aggregate": {
+      "cases": 1,
+      "baselineCorrect": 0,
+      "candidateCorrect": 1
+    }
+  },
+  "caseComparisons": [
+    {
+      "caseId": "ambiguous_top_customers",
+      "caseType": "ambiguous",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "approx_distinct_customers",
+      "caseType": "approximate_aggregate",
+      "baselineCorrect": 5,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": false,
+      "metricsComparable": true,
+      "scanP95": {
+        "baseline": 5716748,
+        "candidate": 5716748,
+        "absoluteDelta": 0.0,
+        "improvementRatio": -0.0
+      },
+      "wallP95": {
+        "baseline": 41,
+        "candidate": 23,
+        "absoluteDelta": -18.0,
+        "improvementRatio": 0.43902439024390244
+      },
+      "cpuP95": {
+        "baseline": 89,
+        "candidate": 27,
+        "absoluteDelta": -62.0,
+        "improvementRatio": 0.6966292134831461
+      },
+      "peakMemoryP95": {
+        "baseline": 259087,
+        "candidate": 1668230,
+        "absoluteDelta": 1409143.0,
+        "improvementRatio": -5.438879604148413
+      },
+      "spillP95": {
+        "baseline": 0,
+        "candidate": 0,
+        "absoluteDelta": 0.0,
+        "improvementRatio": null
+      },
+      "failures": []
+    },
+    {
+      "caseId": "avoid_cross_join",
+      "caseType": "cross_join_trap",
+      "baselineCorrect": 5,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": false,
+      "metricsComparable": true,
+      "scanP95": {
+        "baseline": 5724391,
+        "candidate": 5725507,
+        "absoluteDelta": 1116.0,
+        "improvementRatio": -0.00019495523628627046
+      },
+      "wallP95": {
+        "baseline": 118,
+        "candidate": 78,
+        "absoluteDelta": -40.0,
+        "improvementRatio": 0.3389830508474576
+      },
+      "cpuP95": {
+        "baseline": 440,
+        "candidate": 97,
+        "absoluteDelta": -343.0,
+        "improvementRatio": 0.7795454545454545
+      },
+      "peakMemoryP95": {
+        "baseline": 213664,
+        "candidate": 213664,
+        "absoluteDelta": 0.0,
+        "improvementRatio": -0.0
+      },
+      "spillP95": {
+        "baseline": 0,
+        "candidate": 0,
+        "absoluteDelta": 0.0,
+        "improvementRatio": null
+      },
+      "failures": []
+    },
+    {
+      "caseId": "avoid_select_star",
+      "caseType": "select_star_trap",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "customer_spend_rank",
+      "caseType": "high_cardinality",
+      "baselineCorrect": 5,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": false,
+      "metricsComparable": true,
+      "scanP95": {
+        "baseline": 10494868,
+        "candidate": 10494868,
+        "absoluteDelta": 0.0,
+        "improvementRatio": -0.0
+      },
+      "wallP95": {
+        "baseline": 255,
+        "candidate": 45,
+        "absoluteDelta": -210.0,
+        "improvementRatio": 0.8235294117647058
+      },
+      "cpuP95": {
+        "baseline": 410,
+        "candidate": 83,
+        "absoluteDelta": -327.0,
+        "improvementRatio": 0.7975609756097561
+      },
+      "peakMemoryP95": {
+        "baseline": 6073472,
+        "candidate": 8205988,
+        "absoluteDelta": 2132516.0,
+        "improvementRatio": -0.3511197548947291
+      },
+      "spillP95": {
+        "baseline": 0,
+        "candidate": 0,
+        "absoluteDelta": 0.0,
+        "improvementRatio": null
+      },
+      "failures": []
+    },
+    {
+      "caseId": "exact_distinct_customers",
+      "caseType": "approximate_aggregate",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "invalid_private_dataset",
+      "caseType": "invalid_scope",
+      "baselineCorrect": 5,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": false,
+      "metricsComparable": true,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "monthly_order_count",
+      "caseType": "time_partition",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "recent_large_orders",
+      "caseType": "projection_filter",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "region_category_revenue",
+      "caseType": "multi_join",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "segment_revenue",
+      "caseType": "fact_dimension_join",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    },
+    {
+      "caseId": "status_revenue",
+      "caseType": "aggregate",
+      "baselineCorrect": 0,
+      "candidateCorrect": 5,
+      "runs": 5,
+      "newlyCorrect": true,
+      "metricsComparable": false,
+      "scanP95": null,
+      "wallP95": null,
+      "cpuP95": null,
+      "peakMemoryP95": null,
+      "spillP95": null,
+      "failures": []
+    }
+  ],
+  "failures": [],
+  "promotion": "manual_approval_required"
+}

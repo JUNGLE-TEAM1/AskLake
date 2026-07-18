@@ -157,6 +157,22 @@ cd backend
 .venv/bin/python -m pytest -q tests/test_nessie_benchmark_runner.py
 ```
 
+동일 조건의 baseline/candidate 요약 회귀 gate는 raw SQL이나 provider credential 없이 로컬과 CI에서 결정론적으로 재실행할 수 있다.
+
+```bash
+cd backend
+.venv/bin/python -m pytest -q \
+  tests/test_nessie_benchmark_summary.py \
+  tests/test_nessie_benchmark_comparison.py
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-compare.py \
+  --baseline benchmarks/nessie-sql/comparable-baseline-summary.v1.json \
+  --candidate benchmarks/nessie-sql/comparable-candidate-summary.v2.json \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --policy benchmarks/nessie-sql/regression-policy.v1.json
+```
+
+비교 artifact는 기존 파일을 덮어쓰지 않는다. 새 baseline 승격은 gate 통과만으로 자동화하지 않고 새 version과 사람 승인을 요구한다.
+
 실제 Query AI candidate는 synthetic Dataset을 임시 Catalog에 등록한 뒤 공개 API를 통해 private receipt로 수집한다. 등록과 정리는 benchmark 전용 `benchmark_*` ID만 다룬다.
 
 ```bash
