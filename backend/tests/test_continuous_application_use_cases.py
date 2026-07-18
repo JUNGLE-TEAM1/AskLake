@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from app.application import continuous_commands
+from app.application import continuous_reconciliation
 from app.application.continuous_commands import (
     ContinuousCommandHooks,
     ContinuousCommandRequest,
     execute_continuous_command,
 )
 from app.application.continuous_reconciliation import (
+    ContinuousReconciliationHooks,
     ReconciliationAction,
     ReconciliationCertainty,
     RuntimeEvidence,
     decide_reconciliation,
+    reconcile_continuous_runtime,
 )
+from app.domain.continuous_runtime import command_transition, record_runtime_command
+from app.ports.runtime_io import JsonDocument
 from app.core.errors import ApiError
 from app.ports.runtime_io import JsonDocumentState
 from app.infrastructure.runtime_io import CallableKafkaRuntimeGateway
@@ -141,6 +147,9 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
         self.assertEqual(current_runtime.status, "starting")
         self.assertTrue(result["processing_result"]["controlPlaneOnly"])
         self.assertTrue(result["processing_result"]["workerResult"]["deferred"])
+        contract = current_runtime.metrics["runtimeContract"]
+        self.assertEqual(contract["desiredState"], "running")
+        self.assertTrue(contract["activeWorkerAttemptId"].startswith("start-"))
 
 
 class ContinuousReconciliationPolicyTests(unittest.TestCase):
@@ -172,6 +181,72 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         ))
         self.assertEqual(decision.action, ReconciliationAction.APPLY_TERMINAL_INTENT)
         self.assertEqual(decision.terminal_status, "stopped")
+
+    def test_new_running_intent_beats_stale_stop_from_previous_worker(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            public_status="starting",
+            requested_action="stop",
+        ))
+
+        self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
+        self.assertEqual(decision.certainty, ReconciliationCertainty.UNCERTAIN)
+
+    def test_stale_stop_starts_a_new_worker_for_the_current_running_intent(self) -> None:
+        events = []
+        current_runtime = runtime(status="starting")
+        current_runtime.metrics = record_runtime_command(
+            {"currentWorkerAttemptId": "old-attempt"},
+            command_transition("stopped", "startContinuous"),
+            worker_attempt_id="start-new-intent",
+        )
+        current_job = job()
+        current_job.status = "running"
+        current_job.last_state = "Continuous Spark worker 시작 요청"
+        current_job.progress = {"label": "Continuous worker 시작 요청", "value": 5}
+
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(state=JsonDocumentState.MISSING),
+            worker_status=lambda _job, _runtime: {
+                "containerState": "exited",
+                "requestedAction": "stop",
+                "workerAttemptId": "old-attempt",
+            },
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: None,
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: None,
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=FakeWorker(events),
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(events, ["worker:start", "save"])
+        self.assertEqual(current_runtime.status, "starting")
+        self.assertEqual(current_job.status, "running")
+        self.assertEqual(
+            current_runtime.metrics["lastReconciliation"]["action"],
+            ReconciliationAction.RESTART_WORKER.value,
+        )
 
     def test_old_report_is_ignored_by_worker_fence(self) -> None:
         decision = decide_reconciliation(self.evidence(

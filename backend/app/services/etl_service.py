@@ -695,6 +695,13 @@ def sync_active_kafka_continuous_runtimes() -> None:
                     continue
                 runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
                 recovery_state = (runtime.metrics or {}).get("publicationRecoveryPending") if runtime is not None else None
+                desired_running = runtime is not None and (
+                    runtime_contract_projection(
+                        runtime.metrics,
+                        public_status=runtime.status,
+                        legacy_error=getattr(runtime, "last_error", None),
+                    ).get("desiredState") == "running"
+                )
                 terminal_recovery_due = (
                     runtime is not None
                     and runtime.status in terminal_statuses
@@ -702,6 +709,7 @@ def sync_active_kafka_continuous_runtimes() -> None:
                 )
                 if runtime is not None and (
                     runtime.status in active_statuses
+                    or desired_running
                     or terminal_recovery_due
                     or recovery_state is True
                     or continuous_report_has_unacknowledged_publication(job.id, runtime)
