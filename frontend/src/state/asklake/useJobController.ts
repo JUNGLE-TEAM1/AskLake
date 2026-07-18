@@ -3,7 +3,6 @@ import { useRef } from "react";
 import { apiConfig } from "../../services/apiClient";
 
 import { hydrateDraftPipelineFromJob } from "../../services/draftPipelineContract";
-import { isContinuousRuntimeTransition, shouldAcceptContinuousRuntimeUpdate } from "../../services/continuousRuntimeContract";
 import { runJobCommand as runMockJobCommand } from "../../services/mockApi";
 import { deletePipelineJob as deleteLivePipelineJob, getJob as getLiveJob, runJobCommand as runLiveJobCommand } from "../../services/pipelineApi";
 
@@ -58,7 +57,6 @@ export function useJobController({
     setSqlResultDraft,
   } = state;
   const commandPendingRef = useRef<Set<string>>(new Set());
-  const continuousPollingRef = useRef<Set<string>>(new Set());
   const mutationRevisions = useRef(new MutationRevisionGate());
 
   useSnapshotJobStatusPolling({ enabled, showToast, state });
@@ -66,28 +64,6 @@ export function useJobController({
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => replaceJobById(items, jobId, updater));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
-  };
-
-  const pollContinuousRuntimeUntilStable = async (initialJob: JobRowData) => {
-    if (apiConfig.useMock || !isContinuousRuntimeTransition(initialJob) || continuousPollingRef.current.has(initialJob.id)) return;
-
-    continuousPollingRef.current.add(initialJob.id);
-    let currentJob = initialJob;
-    try {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        const nextJob = normalizeJobRow(await getLiveJob(initialJob.id));
-        if (!shouldAcceptContinuousRuntimeUpdate(currentJob, nextJob)) continue;
-        updateJobState(initialJob.id, () => nextJob);
-        setJobListFacets((facets) => moveJobFacetCounts(facets, currentJob, nextJob));
-        currentJob = nextJob;
-        if (!isContinuousRuntimeTransition(nextJob)) return;
-      }
-    } catch {
-      // The last accepted command state remains visible; the next list refresh can retry the read.
-    } finally {
-      continuousPollingRef.current.delete(initialJob.id);
-    }
   };
 
   const selectRunForJob = (jobId: string, runId: string) => {
@@ -203,7 +179,6 @@ export function useJobController({
         normalizedUpdatedJob = nextJob;
         updateJobState(job.id, () => nextJob);
         setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, nextJob));
-        void pollContinuousRuntimeUntilStable(nextJob);
       }
       if (run) {
         setRunsByJobId((state) => ({

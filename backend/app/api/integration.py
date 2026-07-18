@@ -116,7 +116,8 @@ def preview_review_analysis(
 @router.post(
     "/review-analysis/cellphones/run",
     deprecated=True,
-    status_code=status.HTTP_202_ACCEPTED,
+    # Preserve the legacy 200 response; the new /runs endpoint is the 202 API.
+    status_code=status.HTTP_200_OK,
 )
 def run_cellphones_review_analysis(
     request: ReviewAnalysisRunRequest,

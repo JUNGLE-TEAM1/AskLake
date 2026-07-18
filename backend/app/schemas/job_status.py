@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from app.schemas.common import CamelModel
-from app.schemas.etl import JobDagStep, JobProgress, JobRunSummary, JobStatus
+from app.schemas.etl import JobDagStep, JobProgress, JobRunSummary, JobStatus, KafkaContinuousRuntime
 
 
 class JobStatusSnapshot(CamelModel):
@@ -18,6 +18,7 @@ class JobStatusSnapshot(CamelModel):
     updated_at: str | None = None
     latest_run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] = Field(default_factory=list)
+    continuous_runtime: KafkaContinuousRuntime | None = None
 
 
 class JobStatusListResponse(CamelModel):
