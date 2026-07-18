@@ -139,6 +139,22 @@ const emptyDashboardCopy = {
   title: "게시된 위젯이 없습니다",
 };
 
+function PublishedDashboardWidgetGrid({
+  onRetryData,
+  widgets,
+}: {
+  onRetryData: (widgetId: string) => void;
+  widgets: DashboardRuntimeWidget[];
+}) {
+  return (
+    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
+      {widgets.map((widget) => (
+        <WidgetFrame key={widget.id} widget={widget} onRetryData={onRetryData} />
+      ))}
+    </div>
+  );
+}
+
 export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
@@ -445,15 +461,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       <EmptyDashboardCanvas action={openDraftAction} editable={false} {...emptyDashboardCopy} />
     </div>
   ) : (
-    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-      {selectedPublishedWidgets.map((widget) => (
-        <WidgetFrame
-          key={widget.id}
-          widget={widget}
-          onRetryData={onRetryWidgetData}
-        />
-      ))}
-    </div>
+    <PublishedDashboardWidgetGrid widgets={selectedPublishedWidgets} onRetryData={onRetryWidgetData} />
   );
 
   const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
