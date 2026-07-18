@@ -191,6 +191,10 @@ Phase 7 runner 자체의 조회 전용 gate는 다음과 같다. 이 명령은 r
 Frontend와 runtime Secret baseline을 private mode-`0600` evidence에 고정하지만 Helm
 revision이나 workload를 바꾸지 않는다.
 
+실행 전에 [Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)의
+candidate capability proof와 image binding을 통과해야 한다. bound contract의
+capability boolean을 수동으로 변경한 파일은 approval 입력으로 사용할 수 없다.
+
 ```bash
 bash scripts/run-eks-day18-backend-rollout-round-trip.sh \
   --preflight "$ASKLAKE_IMAGE_RECEIPT"

@@ -1,0 +1,54 @@
+{
+  "contractVersion": "1.0",
+  "campaign": "eks-day18-resilience",
+  "implementationRevision": "4e7086796cec60ba1ecc25b6a9f51907c5178e3d",
+  "capabilities": {
+    "mskFaultUsesPersistedRun": true,
+    "sparkTerminalRetrySupported": true
+  },
+  "sourceProofs": [
+    {
+      "path": "backend/app/application/eks_msk_fault_execution.py",
+      "sha256": "55badd598262946040859a95f56e73515a68368b6156b2b9ce53528bbfd674a5"
+    },
+    {
+      "path": "backend/app/application/eks_spark_retry.py",
+      "sha256": "3b0d5de53cf3ed9d8bab61cc3feec998d2deb6f398c1274e9494d20919ba5c14"
+    },
+    {
+      "path": "backend/app/application/eks_airflow_execution.py",
+      "sha256": "d5540640f42f45ac9b91e09eff29f3f89d16e2b660913910e96fbd97ccfe3c4b"
+    },
+    {
+      "path": "backend/app/api/airflow_execution.py",
+      "sha256": "1135808733d553385f71df10dadfd2e45bc56283ae1fcab366e6ca49fdb92941"
+    },
+    {
+      "path": "backend/app/services/eks_execution_contract.py",
+      "sha256": "5f44668fa840262888a0dcec9a02c2f0ca09f0a623d3d874e4f9860c62449f1d"
+    },
+    {
+      "path": "backend/src/sparkKubernetesIdentity.mjs",
+      "sha256": "bab4ada16f6c9b08dbba266afdcb6cc5e7a5816fa7fd50235eefff8940fc78c8"
+    }
+  ],
+  "regressionProofs": [
+    {
+      "path": "backend/tests/test_etl_job_delete.py",
+      "sha256": "75801ec2bf54f188f20ace1a10b2cf3cefef27bf00c1df01cf523e7ae470af7a"
+    },
+    {
+      "path": "backend/tests/test_eks_execution_contract.py",
+      "sha256": "80ca3a0c0291c1f5c43a99b3290b56c9cd94317d220e11ae727efae960f5f6a2"
+    },
+    {
+      "path": "backend/scripts/spark-kubernetes-client.test.mjs",
+      "sha256": "353db88a84bdb7843b45f6b07e53896df8de9bff7a4bc67e8c9674d336cefb85"
+    }
+  ],
+  "validation": {
+    "pullRequest": 978,
+    "requiredChecksPassed": true,
+    "imageDeliveryRun": 29651079168
+  }
+}
