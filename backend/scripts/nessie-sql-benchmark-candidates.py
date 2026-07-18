@@ -9,6 +9,7 @@ import time
 import httpx
 
 from app.benchmarks.suite import load_suite
+from app.services.query_ai_service import QUERY_AI_GENERATOR_VERSION, QUERY_AI_PROMPT_VERSION
 
 
 def main() -> None:
@@ -56,9 +57,9 @@ def main() -> None:
                 "sql": payload["sql"],
                 "requestId": payload["requestId"],
                 "generationLatencyMs": latency_ms,
-                "regenerationCount": 0,
-                "generatorVersion": "query-ai-service-b4329c8f",
-                "promptVersion": "query-ai-prompt-v1",
+                "regenerationCount": int(payload.get("regenerationCount") or 0),
+                "generatorVersion": str(payload.get("generatorVersion") or QUERY_AI_GENERATOR_VERSION),
+                "promptVersion": str(payload.get("promptVersion") or QUERY_AI_PROMPT_VERSION),
                 "model": payload["model"],
                 "provider": payload["provider"],
                 "semanticContextVersion": "semantic-rag-current",

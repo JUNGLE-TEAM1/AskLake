@@ -165,6 +165,16 @@ Correct 성공 실행만 대상으로 한 warm P50/P95 wall time은 75/255ms, pr
 
 Cold label도 별도 실행했지만 shared local Trino를 중단하거나 OS/object-store cache가 비었다는 증거를 만들 수 없었다. 따라서 이 cohort의 40/105ms 수치는 진짜 cold baseline 또는 promotion 기준으로 사용하지 않는다. 향후 전용 runtime에서 coordinator restart와 storage cache 조건을 고정해 재측정해야 한다. 최초 threshold는 33.33%라는 낮은 정확성을 허용 기준으로 고정하지 않고 candidate 비교의 하한 증거로만 사용한다.
 
+## Cost-aware v2
+
+Query AI prompt는 Catalog가 이미 보유한 schema/type, storage bytes, partition columns, estimated rows, unique/index key와 fact/dimension role hint를 사용한다. Backend는 SQLGlot으로 wildcard projection, CROSS/key-less JOIN, partition column 함수, untyped temporal literal, 승인되지 않은 approximate aggregation과 duplicate scan을 검사한다. 모델이 말한 비용 효율성을 그대로 믿지 않으며 intent와 cost 위반은 전체 최대 1회의 공통 correction budget만 사용한다. Ambiguous 질문과 명시적인 선택 밖 Dataset 요청은 provider 호출 전에 fail closed한다.
+
+공개 Query AI response에는 additive `generationAttempts`, `regenerationCount`, `generatorVersion`, `promptVersion`을 제공해 benchmark가 교정 횟수를 추정하지 않게 한다. SQL은 여전히 자동 실행되지 않고 editor 적용 후 validate/estimate/confirmation을 거친다.
+
+동일 fixture/suite/provider/model/runtime의 최종 warm candidate는 12개 case를 모두 통과했다. 각 case 5회, 총 60 run에서 correctness 100%, failure/timeout/regeneration 0%였다. Correct 실행의 wall P50/P95는 29/115ms, processed bytes는 2,937,296/10,494,868, CPU는 23/83ms, peak memory는 213,664/6,073,472 bytes, spill은 0/0이다. Immutable 요약은 `backend/benchmarks/nessie-sql/candidate-summary.v2.json`에 둔다.
+
+현재 runner의 `fixture_file_upper_bound` estimate는 partition pruning을 반영하지 않아 candidate 평균 estimate error ratio가 크게 왜곡된다. 이는 SQL 품질 회귀가 아니라 estimate adapter의 알려진 한계이며 promotion metric에서 제외하고 후속으로 실제 `/api/query/estimates` lineage를 연결해야 한다.
+
 ## 기준선 검증
 
 Issue #961 시작 SHA에서 다음 집중 회귀 테스트를 실행한다.

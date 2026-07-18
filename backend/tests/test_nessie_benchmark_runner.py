@@ -29,6 +29,10 @@ def test_static_validation_blocks_scope_star_and_cross_join() -> None:
     assert validate_candidate(cross_join, "SELECT count(*) FROM orders_v1 CROSS JOIN products_v1")["accepted"] is False
     assert validate_candidate(cross_join, cross_join.reference_sql or "")["accepted"] is True
     assert validate_candidate(select_star, "SELECT order_id FROM payroll")["accepted"] is False
+    assert validate_candidate(
+        cross_join,
+        "WITH counts AS (SELECT product_id, count(*) n FROM orders_v1 GROUP BY product_id) SELECT p.category, c.n FROM counts c JOIN products_v1 p ON c.product_id = p.product_id",
+    )["accepted"] is True
 
 
 def test_provider_dataset_aliases_are_normalized_then_physically_compiled() -> None:

@@ -271,7 +271,8 @@ def validate_candidate(case: BenchmarkCase, sql: str) -> dict[str, Any]:
         statement = parse_one(statement_sql, read="trino")
     except Exception as exc:
         return {"accepted": False, "violations": [f"invalid_read_only_sql:{type(exc).__name__}"]}
-    tables = {table.name for table in statement.find_all(exp.Table)}
+    cte_names = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
+    tables = {table.name for table in statement.find_all(exp.Table) if table.name not in cte_names}
     unknown = sorted(tables - set(case.allowed_datasets))
     if unknown:
         violations.append("out_of_scope_tables:" + ",".join(unknown))
@@ -297,7 +298,10 @@ def compile_physical_sql(sql: str, case: BenchmarkCase, evidence: dict[str, Any]
     allowed = set(case.allowed_datasets)
     catalog = str(evidence["catalog"])
     schema = str(evidence["schema"])
+    cte_names = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
     for table in statement.find_all(exp.Table):
+        if table.name in cte_names and not table.db and not table.catalog:
+            continue
         if table.name not in allowed or table.db or table.catalog:
             continue
         table.set("this", exp.to_identifier(table.name, quoted=True))

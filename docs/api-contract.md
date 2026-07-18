@@ -2120,6 +2120,10 @@ Response `200 OK`:
 ```ts
 type QueryAiSuggestionResponse = {
   body: string;
+  generationAttempts: number;
+  regenerationCount: number;
+  generatorVersion: string;
+  promptVersion: string;
   mode: "draft_sql";
   requestId: string;
   model?: string | null;
@@ -2138,6 +2142,10 @@ Response 예시:
 ```json
 {
   "body": "orders_clean에서 customer_id별 total_amount 합계를 조회하는 읽기 전용 SQL 초안입니다.",
+  "generationAttempts": 1,
+  "regenerationCount": 0,
+  "generatorVersion": "query-ai-service-v2",
+  "promptVersion": "cost-aware-v2",
   "mode": "draft_sql",
   "requestId": "85afbfc4-e3ac-4b3d-9281-c8beaa0fe020",
   "model": "gpt-4.1-mini",
@@ -2165,6 +2173,8 @@ Validation:
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 평균, 합계, 개수, 그룹화처럼 prompt에 명시된 분석 의도가 SQL select/group/aggregation에 반영됐는지 검증합니다. 위반하면 위반 목록을 포함해 Gateway에 한 번만 교정 재요청하고 두 번째 응답도 위반하면 `422 VALIDATION_ERROR`를 반환합니다.
+- backend가 Catalog의 schema/type, storage bytes, partition column, estimated rows, key/role hint와 Trino scan 경계를 cost-aware context로 제공한다. 응답 SQL은 `SELECT *`, CROSS JOIN/key 없는 JOIN, partition column 함수, untyped temporal literal, 허가되지 않은 approximate aggregation을 정적으로 검사합니다.
+- intent 위반과 cost 위반은 하나의 공통 retry budget을 사용하며 전체 교정은 최대 1회입니다. `generationAttempts`, `regenerationCount`, `generatorVersion`, `promptVersion`은 benchmark lineage와 운영 분석을 위한 additive metadata입니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
 - frontend는 Gateway가 검증된 SQL 초안을 반환하지 않으면 오류를 표시하며 로컬 SQL 초안을 대신 만들지 않습니다.

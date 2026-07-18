@@ -47,7 +47,7 @@ def summarize_receipts(receipt_dir: Path, campaign_id: str) -> dict[str, Any]:
             "p50WallMs": int(median(case_elapsed)) if case_elapsed else None,
             "p95WallMs": percentile(case_elapsed, 0.95),
         }
-    first = receipts[0]
+    first = next((item for item in receipts if item.get("provider") not in {None, "", "unknown"}), receipts[0])
     return {
         "summaryVersion": "1",
         "campaignId": campaign_id,
