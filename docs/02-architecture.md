@@ -436,6 +436,16 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 
 ## 11) 운영/배포 메모
 
+- EKS Day 18 관찰 경로는 AWS 관리형 `amazon-cloudwatch-observability` add-on의
+  OTel Container Insights를 사용한다. 별도 Fluent Bit/ADOT add-on과 Classic
+  Container Insights를 중복 설치하지 않고 Application Signals도 비활성화한다.
+  agent는 전용 `cloudwatch-agent` EKS Pod Identity를 사용하며 Node role이나 기존
+  application role에 CloudWatch 권한을 합치지 않는다. container stdout/stderr와
+  Node·Pod·workload metrics는 CloudWatch에 보내고, Kubernetes Event는 bounded
+  read-only observer의 private receipt로 수집해 UTC와 `runId`로 연결한다. 보존기간과
+  비용 경고선, exact version/schema와 rollback 계약은
+  [Day 18 관찰 방식 결정](eks-day18-observability-decision.md)을 따른다.
+
 - 현재 실행은 backend FastAPI dev server와 frontend Vite dev server 기준이다.
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.

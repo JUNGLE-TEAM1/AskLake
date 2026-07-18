@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "namespace", "runFingerprint", "image", "resources"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "runFingerprint": { "type": "string", "pattern": "^$|^[a-f0-9]{16}$" },
+    "image": { "type": "string" },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "$ref": "#/$defs/resourcePair" },
+        "limits": { "$ref": "#/$defs/resourcePair" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "runFingerprint": { "pattern": "^[a-f0-9]{16}$" },
+          "image": { "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$" },
+          "resources": {
+            "required": ["requests", "limits"],
+            "properties": {
+              "requests": { "properties": { "cpu": { "const": "1500m" }, "memory": { "const": "512Mi" } } },
+              "limits": { "properties": { "cpu": { "const": "1500m" }, "memory": { "const": "512Mi" } } }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "runFingerprint": { "maxLength": 0 },
+          "image": { "maxLength": 0 },
+          "resources": { "maxProperties": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

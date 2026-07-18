@@ -16,6 +16,7 @@
 - `delivery/dev.handoff.example.json`: Terraform 출력과 B workload manifest 사이의 배포 전 handoff 형식
 - `delivery/image-receipt.example.json`: 한 Git revision에서 만든 다섯 immutable ECR image의 전달 형식
 - `secrets/runtime-secret-contract.example.json`: 값 없이 workload별 Secret 이름·key·공유 binding과 Backend bounded/full-service profile을 고정하는 planning 계약
+- `observability/`: Day 18 관리형 CloudWatch Observability add-on 선택, retention, 비용과 runtime 제한 계약
 
 ## 안전 경계
 
@@ -42,6 +43,7 @@ bash scripts/verify-eks-image-delivery.sh
 bash scripts/verify-eks-network-ingress.sh
 bash scripts/verify-eks-runtime-secrets.sh
 bash scripts/verify-eks-auto-mode-node-pools.sh
+bash scripts/verify-eks-day18-observability-decision.sh
 ```
 
 AWS 환경 inventory는 실제 식별자를 출력하지 않는 별도 read-only 스크립트로 확인한다.
@@ -147,6 +149,42 @@ Phase 13은 별도 AWS Load Balancer Controller를 설치하지 않고 EKS Auto 
 Phase 14는 ALB가 참조하는 `frontend:80`과 `fastapi:8080` Service, Frontend/FastAPI Deployment, HTTP endpoint가 없는 Trino result collector Deployment와 opt-in FastAPI HPA를 추가한다. Collector는 FastAPI와 같은 immutable Backend image·runtime identity를 사용하고 steady-state 1 replica로 RDS Query Run continuation을 회수한다. HPA는 기본 disabled이고 CPU request 기반 `2..6`만 허용하며 활성화 시 FastAPI `spec.replicas`의 소유권을 autoscaling controller에 넘긴다. immutable receipt, runtime ConfigMap/Secret, General NodePool과 B의 FastAPI runtime 경계가 모두 준비되기 전에는 chart가 아무것도 렌더하지 않는다. 상세 기준은 [Phase 14 Frontend·FastAPI·Collector Workload](../../docs/eks-phase-14-web-workloads.md)을 따른다.
 
 Day 17 동시 bounded fixture는 전용 `asklake-runtime-config` release의 non-secret `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`을 사용한다. tracked test values는 Day 16 기본 group/table 한 쌍만 보존한다. Pair A가 MSK IAM group 범위를 승인한 뒤에만 private values에 최대 4개의 exact scale group/table 쌍을 추가한다. live ConfigMap raw patch와 기본 slot을 공유하는 동시 Job은 금지한다.
+
+Day 18 관찰 기반은 exact-version CloudWatch Observability EKS add-on, OTel metrics,
+namespace-scoped managed Fluent Bit application log와 전용 Pod Identity를 사용한다.
+Application Signals, Classic, OTel native log, standalone Fluent Bit/ADOT과 Node role
+권한은 비활성이다. add-on apply/update 뒤에는
+`scripts/reconcile-eks-day18-observability-runtime.sh`를 실행해 cluster scraper를 Pod
+network로 전환해야 한다. 실제 application log는 유입되지만 OTel metric exporter의
+일부 HTTP 400 metric drop은 후속 gate이며, 상세 결과는
+[Day 18 Phase 2 적용 기록](../../docs/eks-day18-observability-live-evidence.md)을 따른다.
+
+Day 18 Phase 3에서 짧은 실측을 24시간으로 보정한 결과 기존 control-plane/RDS와
+OTel cluster-wide application log의 합산이 비용 경계를 넘을 가능성이 확인됐다.
+OTel metric은 유지하고 application log는
+add-on-managed Fluent Bit으로 전환해 `asklake-dev` container path만 수집한다. Terraform은
+관리 log group 합산 `3 GiB/day`와 `20 GiB stored` alarm을 만들지만 승인된 notification
+target 전까지 action은 비활성이다. 비용·scale-in·임시 resource 판정은
+`scripts/capture-eks-day18-cost-cleanup-evidence.sh --capture`와
+[Phase 3 기록](../../docs/eks-day18-cost-cleanup-evidence.md)을 따른다.
+
+Day 18 Phase 4의 Pair A 장애 검증은 B workload를 삭제하지 않고 임시 General Pod와
+그 Pod만 소유한 NodeClaim으로 격리한다. 정적 계약은
+`scripts/verify-eks-day18-recovery-smoke.sh`, approval-gated live 실행은
+`scripts/run-eks-day18-isolated-recovery-smoke.sh`를 사용한다. 실행 중 임시 확장한
+NodePool CPU·memory limit은 실패 trap에서도 원래 값으로 복구하며, 성공은 Node
+`2→3→2`, Pod/Node 교체, ALB·RDS·HPA 연속성, CloudWatch marker와 release cleanup을
+모두 요구한다. [실제 검증 기록](../../docs/eks-day18-isolated-recovery-evidence.md)을 따른다.
+
+Day 18 Phase 6 운영 절차는 [운영 runbook](../../docs/eks-day18-operations-runbook.md)에
+고정한다. `kubectl`·ALB/RDS·CloudWatch 조회, 격리 복구, immutable digest rollout/rollback,
+보존 EC2 fallback과 cleanup을 조회/조정/변경 등급으로 나누며
+`scripts/verify-eks-day18-operations-runbook.sh`와 negative fixture가 실행 가능한 필수 명령,
+Git-ignored receipt, exact EC2 identity, confirmation과 금지된 광역 삭제·mutable image 경로를
+검사한다. add-on Ready는 같은 UTC window의 Event/log marker/alarm 상관관계를 대신하지 않고,
+rollout 실패 자동 rollback은 성공 release의 의도적 rollback·재승격을 대신하지 않는다. 실제
+새 digest 왕복 검증은 Phase 7 공동 실행 전에는 수행하지 않으며 S3·Catalog·Iceberg 연속성은
+Phase 7/8 bounded E2E에서 닫는다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 

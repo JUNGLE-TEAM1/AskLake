@@ -13,6 +13,7 @@ DEPLOY_BRANCH="${ASKLAKE_DEPLOY_BRANCH:-dev}"
 APP_URL="${ASKLAKE_APP_URL:-}"
 COMPOSE_FILE="${ASKLAKE_COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
 COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env}"
+COMPOSE_PROJECT_NAME="${ASKLAKE_COMPOSE_PROJECT_NAME:-}"
 HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
 AI_HEALTH_PATH="${ASKLAKE_AI_HEALTH_PATH:-/api/health/ai}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
@@ -35,6 +36,7 @@ Commands:
 
 Required:
   ASKLAKE_EC2_INSTANCE_ID  EC2 instance id, for example i-xxxxxxxxxxxxxxxxx.
+  ASKLAKE_COMPOSE_PROJECT_NAME Exact existing Compose project name.
 
 Optional:
   AWS_REGION               Default: ap-northeast-2
@@ -109,7 +111,10 @@ ssh_run() {
 }
 
 compose_cmd() {
-  printf 'docker compose --env-file %q -f %q' "$COMPOSE_ENV_FILE" "$COMPOSE_FILE"
+  [[ "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || \
+    die "ASKLAKE_COMPOSE_PROJECT_NAME must be a lowercase Compose project name"
+  printf 'docker compose --project-name %q --env-file %q -f %q' \
+    "$COMPOSE_PROJECT_NAME" "$COMPOSE_ENV_FILE" "$COMPOSE_FILE"
 }
 
 remote_compose() {

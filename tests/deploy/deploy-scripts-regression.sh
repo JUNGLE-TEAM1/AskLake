@@ -334,6 +334,7 @@ expect_preflight_failure \
 
 # Source without executing main so the real health_check function can be exercised
 # with deterministic curl fixtures.
+export ASKLAKE_COMPOSE_PROJECT_NAME=asklake-test
 source "$DEPLOY_SCRIPT"
 
 mock_trino_deploy_control() (
