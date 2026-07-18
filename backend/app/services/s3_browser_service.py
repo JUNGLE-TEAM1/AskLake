@@ -62,13 +62,15 @@ def list_s3_prefixes(
 ) -> S3PrefixesResponse:
     allowed_bucket = _require_allowed_bucket(bucket)
     safe_prefix = _validate_prefix(prefix)
+    request: dict[str, Any] = {
+        "Bucket": allowed_bucket,
+        "Delimiter": "/",
+        "Prefix": safe_prefix,
+    }
+    if continuation_token:
+        request["ContinuationToken"] = continuation_token
     try:
-        response = _build_s3_client().list_objects_v2(
-            Bucket=allowed_bucket,
-            ContinuationToken=continuation_token or None,
-            Delimiter="/",
-            Prefix=safe_prefix,
-        )
+        response = _build_s3_client().list_objects_v2(**request)
     except ApiError:
         raise
     except Exception as error:
