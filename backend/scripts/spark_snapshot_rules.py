@@ -127,6 +127,16 @@ def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
             finally:
                 spark.catalog.dropTempView(view_name)
         else:
+            safe_expression = _safe_row_preserving_sql_expression(
+                frame,
+                rule,
+                expression,
+                input_name,
+            )
+            if safe_expression is not None:
+                transform["appliedStepCount"] += row_count
+                transform["rowPreservingSqlExpressionCount"] += 1
+                return frame.withColumn(output, safe_expression), None, row_count
             result = frame.withColumn(output, F.expr(expression))
         result_count = result.count()
         transform["appliedStepCount"] += row_count
@@ -157,6 +167,26 @@ def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
         return frame.withColumn(output, fallback), None, row_count
 
 
+def _safe_row_preserving_sql_expression(frame, rule, expression, input_name):
+    """Compile the approved total SQL subset without a data-wide validation action."""
+    if not input_name:
+        return None
+    raw_input = str(_first(rule.get("inputColumns")) or "").strip()
+    identifier = re.escape(raw_input)
+    quoted_identifier = re.escape(f"`{raw_input.replace('`', '``')}`")
+    source_pattern = rf"(?:{identifier}|{quoted_identifier})"
+    normalized = str(expression or "").strip()
+    if re.fullmatch(source_pattern, normalized, flags=re.IGNORECASE):
+        return F.col(_quote(input_name))
+    if re.fullmatch(
+        rf"TRIM\s*\(\s*CAST\s*\(\s*{source_pattern}\s+AS\s+STRING\s*\)\s*\)",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        return F.trim(F.col(_quote(input_name)).cast("string"))
+    return None
+
+
 def _quarantine_all(frame, rule, reason):
     visible_columns = [column for column in frame.columns if not column.startswith("__asklake_")]
     record_columns = [F.col(_quote(column)).alias(column) for column in visible_columns]
@@ -182,6 +212,7 @@ def _empty_transform(configured_count):
         "droppedCount": 0,
         "errorCount": 0,
         "quarantinedCount": 0,
+        "rowPreservingSqlExpressionCount": 0,
         "setNullCount": 0,
         "warnCount": 0,
     }

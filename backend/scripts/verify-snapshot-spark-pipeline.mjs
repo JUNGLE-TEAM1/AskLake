@@ -17,6 +17,7 @@ try {
   assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
   const sourceReadMarker = "FileScanRDD: Reading File path: file:///work/fixtures/rules/snapshot-pipeline-input.jsonl";
   const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
   assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
@@ -60,19 +61,60 @@ function actionBudgetManifest() {
     partitionColumns: "",
     qualityRules: [],
     ruleContractVersion: "1.0",
-    ruleOutputSchema: [...baseOutputSchema(), ["rating_value", "Double"]],
-    rules: [canonicalRule({
-      failureDisposition: "set_null",
-      id: "rating-cast-action-budget",
-      inputColumns: ["rating"],
-      kind: "transform",
-      operation: "cast",
-      outputColumns: ["rating_value"],
-      outputType: "Double",
-      parameters: { targetType: "Double" },
-    })],
+    ruleOutputSchema: [
+      ...baseOutputSchema(),
+      ["rating_value", "Double"],
+      ["event_id_trimmed", "String"],
+      ["status_trimmed", "String"],
+    ],
+    rules: [
+      canonicalRule({
+        failureDisposition: "set_null",
+        id: "rating-cast-action-budget",
+        inputColumns: ["rating"],
+        kind: "transform",
+        operation: "cast",
+        outputColumns: ["rating_value"],
+        outputType: "Double",
+        parameters: { targetType: "Double" },
+      }),
+      canonicalRule({
+        id: "event-id-trim-action-budget",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["event_id_trimmed"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(event_id AS STRING))" },
+      }),
+      canonicalRule({
+        id: "status-trim-action-budget",
+        inputColumns: ["status"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["status_trimmed"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(status AS STRING))" },
+      }),
+    ],
     schemaColumns: baseSchema(),
-    transformSteps: [{ enabled: true, input: "rating", output: "rating_value" }],
+    transformSteps: [
+      { enabled: true, input: "rating", output: "rating_value" },
+      {
+        enabled: true,
+        input: "event_id",
+        operation: "SQL Expression",
+        output: "event_id_trimmed",
+        params: "TRIM(CAST(event_id AS STRING))",
+      },
+      {
+        enabled: true,
+        input: "status",
+        operation: "SQL Expression",
+        output: "status_trimmed",
+        params: "TRIM(CAST(status AS STRING))",
+      },
+    ],
   };
 }
 

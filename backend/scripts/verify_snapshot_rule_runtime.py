@@ -24,6 +24,7 @@ def main():
     spark.sparkContext.setLogLevel("ERROR")
     try:
         verify_transform_only_action_budget(spark)
+        verify_row_preserving_sql_action_budget(spark)
         verify_quality_action_budget_does_not_scale(spark)
         for case in fixture["cases"]:
             verify_case(spark, case)
@@ -66,6 +67,86 @@ def verify_transform_only_action_budget(spark):
     assert result["quality"]["configuredRuleCount"] == 0, result["quality"]
     assert result["quality"]["evaluatedRowCount"] == 2, result["quality"]
     assert result["transform"]["errorCount"] == 1, result["transform"]
+
+
+def verify_row_preserving_sql_action_budget(spark):
+    frame = spark.createDataFrame(
+        [(" event-1 ",), ("event-2",), (None,)],
+        schema="event_id string",
+    )
+    rules = [
+        {
+            "contractVersion": "1.0",
+            "enabled": True,
+            "failureDisposition": "keep",
+            "id": f"row-preserving-sql-{index}",
+            "inputColumns": ["event_id"],
+            "kind": "transform",
+            "onError": "warn",
+            "operation": "sql_expression",
+            "outputColumns": [f"event_id_copy_{index}"],
+            "outputType": "String",
+            "parameters": {"expression": "TRIM(CAST(event_id AS STRING))"},
+        }
+        for index in range(9)
+    ]
+    dataframe_type = type(frame)
+    original_count = dataframe_type.count
+    count_calls = 0
+
+    def tracked_count(current):
+        nonlocal count_calls
+        count_calls += 1
+        return original_count(current)
+
+    dataframe_type.count = tracked_count
+    try:
+        result = apply_spark_snapshot_rules(
+            spark,
+            frame,
+            rules,
+            input_row_count=3,
+        )
+    finally:
+        dataframe_type.count = original_count
+
+    assert count_calls == 0, (
+        "approved row-preserving SQL expressions must not add full count actions: "
+        f"got {count_calls}"
+    )
+    assert result["quality"]["evaluatedRowCount"] == 3, result["quality"]
+    assert result["transform"]["rowPreservingSqlExpressionCount"] == 9, result["transform"]
+    assert result["transform"]["appliedStepCount"] == 27, result["transform"]
+    projected = [
+        row["event_id_copy_8"]
+        for row in result["frame"].select("event_id_copy_8").collect()
+    ]
+    assert projected == ["event-1", "event-2", None], projected
+
+    unsafe_rule = {
+        **rules[0],
+        "id": "validated-general-sql",
+        "outputColumns": ["event_id_upper"],
+        "parameters": {"expression": "upper(event_id)"},
+    }
+    count_calls = 0
+    dataframe_type.count = tracked_count
+    try:
+        general_result = apply_spark_snapshot_rules(
+            spark,
+            frame,
+            [unsafe_rule],
+            input_row_count=3,
+        )
+    finally:
+        dataframe_type.count = original_count
+    assert count_calls == 1, (
+        "general SQL expressions must retain their validation action: "
+        f"got {count_calls}"
+    )
+    assert general_result["transform"]["rowPreservingSqlExpressionCount"] == 0, (
+        general_result["transform"]
+    )
 
 
 def verify_quality_action_budget_does_not_scale(spark):

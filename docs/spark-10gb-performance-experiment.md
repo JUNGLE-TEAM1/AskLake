@@ -4,7 +4,7 @@
 
 ## 1. 질문과 판정 기준
 
-실험 1은 확정 schema projection cache와 단일 Quality aggregate가 반복 source scan을 제거했을 때 1 executor의 Spark 시간이 얼마나 줄어드는지 측정한다. 기존 Spark `durationMs=370043` 대비 최소 30% 감소를 목표로 한다.
+실험 1은 확정 schema projection cache, row-preserving SQL transform의 action 제거와 단일 Quality aggregate가 반복 source/cache scan을 제거했을 때 1 executor의 Spark 시간이 얼마나 줄어드는지 측정한다. 기존 Spark `durationMs=370043` 대비 최소 30% 감소를 목표로 한다.
 
 실험 2는 최적화된 같은 revision에서 executor를 `1`, `2`, `4`로 바꿨을 때 Spark 전체/단계별 시간, Pod·Node 증가, CPU·memory·network와 비용 대용값이 어떻게 변하는지 비교한다. executor 수가 많다는 이유만으로 성공으로 판정하지 않으며, 1 executor 대비 실제 시간이 줄지 않거나 자원 증가 대비 이득이 작으면 그 결과를 그대로 기록한다.
 
@@ -44,6 +44,7 @@ CloudWatch 자원 값은 30초 간격 17개 표본의 합계다. Spark UI에서�
 ## 3. 후보 구현
 
 - 확정 schema projection을 `MEMORY_AND_DISK`로 한 번 materialize하고 Rule, Quality, sample, write가 재사용한다.
+- 이 fixture의 `TRIM(CAST(event_id AS STRING))`, `TRIM(CAST(user_id AS STRING))`처럼 total·row-preserving으로 증명되는 SQL transform은 이전 row count를 재사용하고 rule별 `count()`를 실행하지 않는다. 임의 SQL/`SELECT`는 이 fast path에 포함하지 않는다.
 - legacy Quality rule의 전체 행, rule별 failure, union invalid를 하나의 aggregate action으로 계산한다.
 - output frame과 quarantine frame cache를 성공·규칙 실패·예외 경로에서 모두 `unpersist`한다.
 - Iceberg exact snapshot summary의 `total-data-files`를 Spark와 Catalog가 교차 검증한다.
