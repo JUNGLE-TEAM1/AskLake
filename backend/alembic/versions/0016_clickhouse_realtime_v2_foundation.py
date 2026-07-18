@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0012_clickhouse_realtime_v2_foundation"
-down_revision = "0011_rag_control_plane_fencing"
+revision = "0016_clickhouse_realtime_v2_foundation"
+down_revision = "0015_ai_generation_evidence_audit"
 branch_labels = None
 depends_on = None
 

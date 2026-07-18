@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from typing import Any
@@ -31,7 +31,47 @@ class RagJobValidationMixin:
             raise ApiError("not_found", f"RAG job {job_id} was not found", status.HTTP_404_NOT_FOUND)
         self._dataset(job.dataset_id, actor, "view")
         completion = self._job_completion_state(job)
-        return RagJobResponse(job_id=job.id, dataset_id=job.dataset_id, status=job.status, requested_mode=job.requested_mode, target_index=job.target_index, document_count=job.document_count, indexed_count=job.indexed_count, parent_count=job.parent_count, chunk_count=job.chunk_count, failed_count=job.failed_count, row_count=job.row_count, failed_row_rate=job.failed_row_rate, failed_row_rate_threshold=job.failed_row_rate_threshold, failed_row_report=job.failed_row_report or {}, fallback_count=job.fallback_count, fallback_reasons=job.fallback_reasons or {}, stage=completion.stage, is_complete=completion.is_complete, progress_percent=completion.progress_percent, progress_determinate=completion.progress_determinate, source_fingerprint=job.source_fingerprint, policy_fingerprint=job.policy_fingerprint, embedding_provider=job.embedding_provider, embedding_model=job.embedding_model, embedding_dimensions=job.embedding_dimensions, parent_table=job.parent_table, chunk_table=job.chunk_table, checkpoint_path=job.checkpoint_path, error=job.error, airflow_run_id=job.airflow_run_id, generation=job.generation, validation_status=job.validation_status, validated_at=job.validated_at, physical_column_mapping=job.physical_column_mapping or {}, activation_status=job.activation_status, activation_alias=job.activation_alias, activation_target_index=job.activation_target_index, completed_at=job.completed_at)
+        observed_at = datetime.now(timezone.utc)
+        return RagJobResponse(
+            job_id=job.id,
+            dataset_id=job.dataset_id,
+            status=self._effective_job_status(job, observed_at),
+            requested_mode=job.requested_mode,
+            target_index=job.target_index,
+            document_count=job.document_count,
+            indexed_count=job.indexed_count,
+            parent_count=job.parent_count,
+            chunk_count=job.chunk_count,
+            failed_count=job.failed_count,
+            row_count=job.row_count,
+            failed_row_rate=job.failed_row_rate,
+            failed_row_rate_threshold=job.failed_row_rate_threshold,
+            failed_row_report=job.failed_row_report or {},
+            fallback_count=job.fallback_count,
+            fallback_reasons=job.fallback_reasons or {},
+            stage=completion.stage,
+            is_complete=completion.is_complete,
+            progress_percent=completion.progress_percent,
+            progress_determinate=completion.progress_determinate,
+            source_fingerprint=job.source_fingerprint,
+            policy_fingerprint=job.policy_fingerprint,
+            embedding_provider=job.embedding_provider,
+            embedding_model=job.embedding_model,
+            embedding_dimensions=job.embedding_dimensions,
+            parent_table=job.parent_table,
+            chunk_table=job.chunk_table,
+            checkpoint_path=job.checkpoint_path,
+            error=self._effective_job_error(job, observed_at),
+            airflow_run_id=job.airflow_run_id,
+            generation=job.generation,
+            validation_status=job.validation_status,
+            validated_at=job.validated_at,
+            physical_column_mapping=job.physical_column_mapping or {},
+            activation_status=job.activation_status,
+            activation_alias=job.activation_alias,
+            activation_target_index=job.activation_target_index,
+            completed_at=job.completed_at,
+        )
 
     def list_jobs(self, dataset_id: str, actor: ActorContext, *, limit: int = RAG_JOB_LIST_DEFAULT_LIMIT) -> list[RagJobListItem]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= RAG_JOB_LIST_MAX_LIMIT:
@@ -43,16 +83,25 @@ class RagJobValidationMixin:
             .order_by(RagIndexJobModel.created_at.desc(), RagIndexJobModel.id.desc())
             .limit(limit)
         ).all()
-        return [self._job_list_item(job) for job in jobs]
+        observed_at = datetime.now(timezone.utc)
+        return [
+            self._job_list_item(job, observed_at=observed_at)
+            for job in jobs
+        ]
 
     @classmethod
-    def _job_list_item(cls, job: RagIndexJobModel) -> RagJobListItem:
+    def _job_list_item(
+        cls,
+        job: RagIndexJobModel,
+        *,
+        observed_at: datetime | None = None,
+    ) -> RagJobListItem:
         completion = cls._job_completion_state(job)
         return RagJobListItem(
             job_id=job.id,
             dataset_id=job.dataset_id,
             requested_mode=job.requested_mode,
-            status=job.status,
+            status=cls._effective_job_status(job, observed_at),
             stage=completion.stage,
             is_complete=completion.is_complete,
             progress_percent=completion.progress_percent,
@@ -80,10 +129,52 @@ class RagJobValidationMixin:
             activation_target_index=job.activation_target_index,
             activation_started_at=job.activation_started_at,
             activation_committed_at=job.activation_committed_at,
-            error=job.error,
+            error=cls._effective_job_error(job, observed_at),
             created_at=job.created_at,
             updated_at=job.updated_at,
             completed_at=job.completed_at,
+        )
+
+    @classmethod
+    def _job_has_stalled(
+        cls,
+        job: RagIndexJobModel,
+        observed_at: datetime | None,
+    ) -> bool:
+        if (
+            observed_at is None
+            or job.status in {"failed", "canceled"}
+            or cls._job_completion_state(job).is_complete
+        ):
+            return False
+        last_update = job.updated_at or job.created_at
+        if last_update.tzinfo is None:
+            last_update = last_update.replace(tzinfo=timezone.utc)
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        return observed_at - last_update > timedelta(
+            seconds=settings.rag_job_stale_seconds
+        )
+
+    @classmethod
+    def _effective_job_status(
+        cls,
+        job: RagIndexJobModel,
+        observed_at: datetime | None,
+    ) -> str:
+        return "failed" if cls._job_has_stalled(job, observed_at) else job.status
+
+    @classmethod
+    def _effective_job_error(
+        cls,
+        job: RagIndexJobModel,
+        observed_at: datetime | None,
+    ) -> str | None:
+        if not cls._job_has_stalled(job, observed_at):
+            return job.error
+        return job.error or (
+            f"RAG 작업이 {settings.rag_job_stale_seconds}초 동안 진행 상태를 "
+            "갱신하지 않아 중단된 작업으로 표시됩니다. 다시 색인해 주세요."
         )
 
     @classmethod
@@ -722,5 +813,4 @@ class RagJobValidationMixin:
         mappings = root.get("mappings") if isinstance(root, dict) else {}
         properties = mappings.get("properties") if isinstance(mappings, dict) else {}
         return properties if isinstance(properties, dict) else {}
-
 

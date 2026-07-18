@@ -36,10 +36,11 @@ Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하�
 ```bash
 cd backend
 npm run migrate:dashboard-schema
+npm run migrate:metadata-schema
 npm run verify:dashboard-storage
 ```
 
-`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime과 batch widget 결과 cache 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다. `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
+`migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다. `migrate:metadata-schema`는 backend traffic 전 Dashboard, ETL, Catalog, SQL metadata와 Continuous/Realtime supporting table을 함께 준비하는 배포 bootstrap이다. backend startup도 같은 bootstrap을 수행하므로 request 또는 control-plane hot path가 최초 DDL을 소유하지 않는다. 현재는 저장소 전체 DB를 관리하는 Alembic 도입 전의 명시적 bootstrap이며, `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
 Dashboard widget 데이터가 느리거나 실패하면 `dashboard_widget_data` 구조화 로그에서 correlation ID와 `dashboardId`, `pageId`, `widgetId`, `datasetId`, `stage`, `durationMs`, `result`, `errorCode`를 확인한다. `/api/health/metrics`의 `dashboard_widget_data_total{result,stage}`는 request cache hit, PostgreSQL cache hit, 물리 계산 miss와 오류 횟수를 구분한다. 로그와 metric에는 원본 row나 credential을 넣지 않는다.
 
@@ -50,12 +51,14 @@ Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성
 ```bash
 cd frontend
 npm run test:trino-timeline
+npm run test:catalog-lineage-projection
 npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
+`npm run test:catalog-lineage-projection`은 저장된 API graph를 변경하지 않으면서 Catalog 화면에서 `PROCESS` node를 제거하고 동일 컬럼의 source→target edge만 만드는지 검증한다. UI 수동 확인에서는 `/etl/source`의 connector 카드, 전역 152px sidebar, `/catalog` 목록·lineage, `/dashboards/:dashboardId/edit`의 기본 닫힌 데이터 패널과 오른쪽 설정 패널 toggle을 desktop과 좁은 viewport에서 함께 확인한다.
 
 ### 단계적 리팩토링 기준선
 
@@ -167,7 +170,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 
 프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
 
-Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
+Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. Compose render, backend/frontend deploy image build, backend production Node/Python dependency 준비, CI runner의 Spark runtime contract만 빠르게 확인하고 JSON release record를 남길 때는 `bash scripts/verify-deploy-readiness.sh`를 사용한다. 결과 파일 위치는 `ASKLAKE_RELEASE_RECORD_PATH`로 지정하며, record 작성 실패도 readiness 실패로 처리한다. GitHub Actions는 Node 22와 Python 3.13을 준비한다. 이 명령과 workflow는 EC2, production secret, Kafka/Spark long-running runtime을 변경하지 않는다. Phase 0-5 통합 후보의 merge 순서와 회귀 명령은 [배포 파이프라인 Phase 6 통합 후보 검증](./deployment-phase-6-integration.md)에 기록한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
 ETL Schedule 화면은 shadcn `Card`, `ToggleGroup`, `Field`, `Select`, `Switch`, `Separator`를 조합한다. 예전 `schedule-config-*` 전용 CSS와 중복 안내·상태 카드는 제거했으며, regression check는 실행 방식에 따른 조건부 필드와 저장 계약 문구가 다시 갈라지지 않는지 확인한다.
 Dashboard CSS는 `dashboard.css`와 `dashboard-runtime.css` manifest가 책임별 하위 파일을 import한다. regression script는 로컬 CSS import를 같은 순서로 확장해 검사하므로 selector를 다른 모듈로 옮길 때 manifest 순서와 해당 check를 함께 유지한다.
@@ -254,10 +257,12 @@ TRINO_BASE_URL=http://localhost:8088 \
 npm run verify:iceberg-writer-foundation
 ```
 
-`frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+Vite 개발 서버는 기본적으로 같은 출처 `/api`를 `http://127.0.0.1:8080`으로 전달하므로 로컬 frontend env가 없어도 된다. Backend 주소를 바꿀 때는 API base를 브라우저에 굽는 대신 proxy target만 지정할 수 있다.
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8080
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8080
+# 다른 origin을 브라우저가 직접 호출해야 할 때만:
+# VITE_API_BASE_URL=http://localhost:8080
 ```
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
@@ -393,7 +398,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
 
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
-현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
+현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 검증하고 private AI Gateway를 호출한다.
 
 ```bash
 # VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
@@ -408,16 +413,28 @@ cd backend
 .venv/bin/python -m app.seed.seed_dashboard_demo
 ```
 
-OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
+Provider API key는 프론트나 FastAPI가 아니라 `ai-server` env에만 둔다. FastAPI는 `backend/.env`에서 Gateway service token과 MCP signing/service secret만 사용한다.
 AI provider key가 없거나 private AI Gateway가 unavailable이면 backend는 실패를 명시하고 action을 비운다. Assistant guard는 provider가 반환한 action의 Dataset·컬럼·값축을 catalog schema 기준으로 검증하지만, 응답이 비었다고 기본 막대 차트나 성공 결과를 만들어 내지 않는다.
 
+Semantic/RAG 관리 UI는 `/catalog?view=semantic`에서 확인한다. `/semantic-layer`와 기존 `/ai`는 같은 URL로 replace 이동해야 하며, standalone AI 메뉴나 채팅 화면을 다시 추가하지 않는다. Dataset schema, metric·dimension, RAG 분류·승인·색인·작업 이력은 `semanticApi.ts`의 live endpoint를 사용한다. 최소 frontend 검증은 다음과 같다.
+
 ```bash
-OPENAI_API_KEY=sk-...
-OPENAI_ASSISTANT_ENABLED=true
-OPENAI_ASSISTANT_MODEL=gpt-4o-mini
-OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
-OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
-OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
+cd frontend
+npm run test:semantic-layer-ui
+npm run test:css-catalog-boundary
+npm run build
+```
+
+```bash
+# ai-server/.env (secret 값은 commit하지 않는다)
+AI_PROVIDER_API_KEY=...
+AI_GATEWAY_SERVICE_TOKEN=...
+
+# backend/.env
+AI_GATEWAY_BASE_URL=http://ai-server:8090
+AI_GATEWAY_SERVICE_TOKEN=...
+AI_MCP_SERVICE_TOKEN=...
+AI_CONTEXT_SIGNING_SECRET=...
 ```
 
 ```bash
@@ -435,19 +452,65 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 
 수동 확인은 다음 순서로 한다.
 
-1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면을 렌더링하지 않는지 확인한다.
-2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과해야 한다.
-3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다.
+1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면 대신 `/catalog?view=semantic`으로 replace 이동하는지 확인한다.
+2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 요청 중 prompt·Dataset·editor context를 바꿨을 때 이전 응답이 적용되지 않는지, 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과하는지 확인한다.
+3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다. 저장 API를 실패시킨 경우 성공 문구를 표시하지 않고 기존 draft와 입력을 유지해야 한다.
 4. 수집/처리에서 field transform과 SQL transform을 생성하고 입력 schema 밖의 컬럼·관계·위험 함수를 거부하는지 확인한다.
 5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
 6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
 7. Gateway나 serving index가 없을 때 가짜 SQL·차트·근거 대신 명시적인 unavailable/empty 상태가 보이는지 확인한다.
+8. 리뷰 분석 Preview와 persisted Run이 실제 row를 처리하고, backend 재시작 뒤 남은 `queued` Run도 worker tick이 다시 claim하는지 확인한다. 일반 사용자의 임의 object source는 `403`이어야 하며, `trainModels=true`에서는 provenance·class coverage·quality gate를 통과한 artifact만 `/api/catalog/models`에 나타나야 한다.
+
+```bash
+cd backend
+alembic upgrade head
+python -m pytest -q \
+  tests/test_ai_gateway_mcp.py \
+  tests/test_ai_generation_evidence_audit.py \
+  tests/test_query_ai_contract.py \
+  tests/test_query_ai_api_contract.py \
+  tests/test_sql_job_permission_contract.py \
+  tests/test_dashboard_assistant_action_contract.py \
+  tests/test_dashboard_assistant_evidence.py \
+  tests/test_dashboard_runtime_api_persistence.py \
+  tests/test_review_model_publication.py \
+  tests/test_unified_ai_services.py
+
+cd ../ai-server
+python -m pytest -q
+```
+
+현재 RAG control-plane head `0011_rag_control_plane_fencing` 다음 AI migration 순서는 `0012_ai_generation_usage -> 0013_ai_context_consumptions -> 0014_review_analysis_runs -> 0015_ai_generation_evidence_audit`이다. Fresh DB와 기존 `0011` DB 모두 `alembic upgrade head`로 검증한다.
 
 ```bash
 cd frontend
+npm run test:sql-ai-editor-contract
+npm run test:sql-job-permission-contract
+npm run test:dashboard-assistant-intent
+npm run test:dashboard-assistant-actions
 npm run verify:ui-regressions
 npm run build
 ```
+
+### RAG Data Plane 검증
+
+Semantic RAG 색인은 검증된 Spark Catalog publication이 만든 `sourceManifest`를 backend control plane이 `asklake_rag_index` Airflow DAG에 전달한 뒤, Spark parent staging → chunk staging → embedding worker/OpenSearch publication 순서로 실행한다. Spark 단계는 Catalog가 승인한 Iceberg table과 exact snapshot ID, role column만 읽고, checkpoint가 있는 deterministic parent/chunk ID를 생성한다. Spark REST의 `UNKNOWN`은 제출 직후 나타날 수 있는 비종료 상태로 계속 polling하며 `FAILED`, `ERROR`, `KILLED`만 실패로 종료한다. embedding worker는 provider key를 직접 받지 않고 private AI Gateway의 `/v1/embeddings`만 호출하며, 완성된 generation index를 alias로 원자 전환한다.
+
+빠른 회귀는 실제 provider 호출 없이 다음 명령으로 확인한다. OpenSearch 통합 테스트는 고유 index/alias를 만들고 자신이 만든 리소스만 정리하며 `OPENSEARCH_INTEGRATION_URL`이 있을 때만 실행된다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q \
+  tests/test_rag_airflow_data_plane.py \
+  tests/test_rag_parent_contract.py \
+  tests/test_rag_preview_production_parity.py \
+  tests/test_rag_chunk_staging_transport.py
+
+cd ../embedding-worker
+PYTHONPATH=. ../backend/.venv/bin/python -m pytest -q
+```
+
+`.github/workflows/rag-opensearch-integration.yml`은 RAG backend/Spark/worker 경로가 바뀐 PR과 `dev`/`main` push에서 OpenSearch 2.19.1 service, production과 같은 PySpark 4.0.1 import smoke, backend RAG 회귀, quality gate, embedding worker test를 실행한다. feature branch push와 PR 이벤트가 같은 검증을 중복 실행하지 않는다. 로컬 live 확인은 `docker compose up -d opensearch` 뒤 `OPENSEARCH_INTEGRATION_URL=http://127.0.0.1:9200`으로 integration marker를 명시한다.
 
 생성된 Job의 수정 hydrate 계약은 아래 명령으로 별도 확인한다. 이 검증은 Kafka source와 schema/rule/permission/target metadata가 `GET /api/etl/jobs/{jobId}` 형태의 `JobRowData`로 다시 나오는지 확인한다.
 
@@ -584,7 +647,7 @@ Snapshot Rule 실행 변경 후에는 위 smoke와 함께 `npm run verify:snapsh
 
 Kafka Continuous Ingestion은 Issue #500 Phase 3에서 long-running Spark Structured Streaming worker까지 연결됐다. Snapshot Job은 wizard의 스케줄 단계에서 수동/반복 실행을 고르고, Continuous Job은 해당 단계를 건너뛰어 생성 후 스트림 시작/중지로 제어한다. Continuous Source 고급 설정은 시작 위치, trigger 간격, micro-batch 최대 메시지를 제공한다. production-like smoke에서는 continuous Job 시작, retained backlog 처리, 새 이벤트 자동 append, pause/resume API 호환, checkpoint restart, lag/heartbeat, conflicting consumer identity `409`을 검증한다. Snapshot smoke는 계속 유지하며 Continuous 검증으로 대체하지 않는다.
 
-`verify:continuous-runtime-contract`는 command 전이표, desired/observed/public projection, command revision, worker fencing, legacy hydrate, 단계별 오류와 frontend stale polling 차단을 검증한다. 보호 범위와 아직 opt-in인 live 장애 시험은 [Characterization Test Matrix](refactor-2026/testing/characterization-matrix.md)에 기록한다. `verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, PostgreSQL partition cursor의 worker 전달, start request 상태와 충돌 정책, stream publication manifest/batch identity gate, 종료 report의 stale window/S3 manifest 복구, replay Catalog 재조정, 로컬 result 유실 시 S3 replay manifest 복구와 pending replay start/resume `409` 차단을 확인한다. backend unit test는 전체·부분 offset 중복 필터, durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback과 `count`/`sum`/`avg`의 full baseline, Iceberg `_asklake_run_id` revision catch-up, backfill/legacy full fallback을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
+`verify:continuous-runtime-contract`는 command 전이표, desired/observed/public projection, command revision, worker fencing, legacy hydrate, 단계별 오류와 frontend stale polling 차단을 검증한다. 보호 범위와 아직 opt-in인 live 장애 시험은 [Characterization Test Matrix](refactor-2026/testing/characterization-matrix.md)에 기록한다. `verify:kafka-continuous-contract`는 long-running worker를 시작하지 않고 Continuous Job의 기본 config/runtime identity, Rule payload/fingerprint, PostgreSQL partition cursor의 worker 전달, start request 상태와 충돌 정책, stream publication manifest/batch identity gate, 종료 report의 stale window/S3 manifest 복구, replay Catalog 재조정, 로컬 result 유실 시 S3 replay manifest 복구와 pending replay start/resume `409` 차단을 확인한다. Spark REST lifecycle에서는 제출 직후 또는 실행 중의 `UNKNOWN`을 중복 실행으로 막고, 종료 상태가 마지막으로 확인된 뒤 REST가 `UNKNOWN`을 반환한 경우에만 checkpoint와 Kafka consumer identity를 유지한 새 attempt를 허용한다. backend unit test는 전체·부분 offset 중복 필터, durable publication 순번, exact snapshot Run 행 수, replay manifest 실패 rollback과 `count`/`sum`/`avg`의 full baseline, Iceberg `_asklake_run_id` revision catch-up, backfill/legacy full fallback을 확인한다. `verify:kafka-continuous-rules`는 독립 Docker Spark에서 bounded micro-batch Rule 의미와 checkpoint contract를 실행한다. Kafka/MinIO/Catalog를 포함한 실동작은 production-like smoke에서 별도로 확인한다.
 
 ```bash
 cd backend
@@ -726,7 +789,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다. Query AI gateway mode는 `AI_PROVIDER_API_KEY`를 `ai-server` 환경에만 두고, backend는 service token과 signed context secret만 사용한다. `AI_QUERY_PROVIDER=direct` 롤백 모드의 `OPENAI_API_KEY`와 Dashboard Assistant 설정은 별도 호환 경로다.
+로컬 환경 변수는 `backend/.env.example`과 `ai-server/.env.example`을 기준으로 둔다. `AI_PROVIDER_API_KEY`는 `ai-server`에만 두고, FastAPI는 service token과 signed context secret만 사용한다. Query AI, Dashboard Assistant, ETL transform, RAG, 리뷰 분석은 같은 Gateway를 사용하며 direct/mock provider fallback은 지원하지 않는다.
 
 SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
 
@@ -757,6 +820,8 @@ PYTHONPATH=. .venv/bin/python -m unittest tests.test_object_storage_mode tests.t
 
 로컬 root Compose는 MinIO를 사용한다. Production Compose는 실제 AWS S3만 사용하며, `ASKLAKE_OBJECT_STORAGE_PROVIDER=aws`, `AWS_REGION`, Raw/Output/Warehouse/Query Result bucket을 설정하고 EC2 IAM Role/default credential chain으로 인증한다. Warehouse와 Query Result bucket은 `TRINO_ENABLED=true`일 때만 runtime에 사용하며 배포 전에 생성하고 readiness 대상에 포함한다. Production frontend image에는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 `VITE_SPARK_OUTPUT_BUCKET`으로 주입하므로 Target UI와 Spark writer가 같은 bucket을 사용한다. Production `.env`에는 장기 AWS access key/secret 또는 MinIO credential을 넣지 않는다.
 
+RAG Data Plane 배포는 private `opensearch`, `embedding-worker`, `rag-artifact-cleanup` service를 함께 올린다. `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, `OPENSEARCH_PASSWORD`, `RAG_WORKER_TOKEN`은 server `deploy/.env`에만 저장하고 host port로 노출하지 않는다. Airflow는 read-only로 mount한 backend RAG script와 Spark REST endpoint를 사용하며, worker는 `AI_GATEWAY_SERVICE_TOKEN`으로 private Gateway에만 접근한다. 모델과 index의 vector dimension은 `RAG_EMBEDDING_DIMENSIONS`에서 동일해야 하고, staging artifact는 `RAG_STAGING_BASE_PATH` 아래 Job별 경로로 격리한다.
+
 Production에서 Trino를 켜기 전에는 TLS/auth/JDBC role, read-only query identity, materializer CTAS/`DESCRIBE`/drop, Warehouse와 Query Result bucket round trip을 아래 readiness로 확인한다.
 
 ```bash
@@ -768,14 +833,7 @@ ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
-Production은 알려진 legacy demo 계정을 기본 비활성화한다. 재시작 가능한 데모 서버에서 해당 계정을 유지하려면 server `deploy/.env`의 backend/frontend 플래그를 반드시 함께 켠다. 한쪽만 켜면 preflight가 실패한다. 이 설정은 기존 DB status를 보존하므로 이전 startup이 이미 `disabled`로 만든 계정은 opt-in 배포 전후에 한 번만 `active`로 복구하고, 이후 재시작에서는 추가 DB 수정이 없어야 한다.
-
-```bash
-AUTH_LEGACY_DEMO_USERS_ENABLED=true
-VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true
-```
-
-Production bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 그대로 유지된다. 알려진 demo 비밀번호가 노출되는 구성이므로 공개 서비스나 장기 운영 환경에서는 두 값을 `false`로 둔다.
+Production은 알려진 legacy demo 계정을 허용하지 않는다. `scripts/verify-deploy-env.sh`는 `AUTH_LEGACY_DEMO_USERS_ENABLED`가 `false`가 아니거나 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 존재하면 preflight를 실패시킨다. legacy identity 호환은 backend test 환경에만 남기며, 실제 배포는 bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단을 유지한다.
 
 dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
@@ -788,16 +846,15 @@ scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
 
 Production backend에는 `/var/run/docker.sock`과 Docker CLI를 넣지 않는다. Batch/Parquet inspect는 내부 전용 `spark-master:6066` REST endpoint에 제출하고 terminal 상태와 timeout을 확인한다. REST/UI/master port는 host에 publish하지 않는다.
 
-로컬에서 전체 stack을 띄울 때는 예시 env를 기준으로 실행할 수 있다.
+로컬에서 전체 stack을 띄울 때는 예시 env와 local E2E override를 함께 사용한다. Override는 frontend build의 API base를 빈 문자열로 만들어 Nginx `/api` proxy를 사용하고, HTTP 전용 backend에만 `AUTH_SESSION_COOKIE_SECURE=false`를 적용한다. Nginx는 realtime event SSE buffering을 끄되 운영 쿠키의 `Secure` 속성은 제거하지 않는다. Override가 요구하는 `AWS_ACCESS_KEY_ID`와 `AWS_SECRET_ACCESS_KEY`에는 local object storage 전용 값을 shell 또는 별도의 gitignored env 파일로 제공해야 한다.
 
 ```bash
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml up -d --build
-curl http://localhost:8080/api/health
-docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local-e2e.yml up -d --build
+curl http://localhost:5173/api/health
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml -f deploy/docker-compose.local-e2e.yml down
 ```
 
-`VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
-예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
+`VITE_API_BASE_URL`을 설정할 때는 `/api`를 붙이지 않은 origin까지만 넣는다. 로컬 override는 같은 출처 기본값을 사용하고, EC2 HTTPS production preflight는 `https://asklake.example.com`처럼 `APP_DOMAIN`과 일치하는 값을 요구한다.
 대시보드 Assistant를 prod build에서 켜려면 `VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant`를 `deploy/.env`에 유지한다.
 EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain을 넣고, Caddy가 인증서를 받을 수 있도록 `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
 배포 PR 전에는 최신 `origin/dev`를 fetch한 뒤 compose config와 관련 문서 예시를 다시 확인한다.
@@ -807,6 +864,8 @@ EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain�
 AWS EC2 demo 서버는 `scripts/deploy.sh`로 켜고, 재배포하고, 끈다.
 실제 EC2 id, host, SSH key path는 `deploy/ec2.env`처럼 git에 올리지 않는 개인 환경 파일에서 관리한다.
 
+배포 성공은 Compose 기동만으로 판단하지 않는다. public health, Spark REST, Continuous session heartbeat를 분리해 확인하는 현재 기준선과 후속 자동화 범위는 [배포 파이프라인 Phase 0 기준선](./deployment-phase-0-baseline.md)을 따른다. 이 기준선은 관찰 문서이며 배포 스크립트의 현재 동작을 바꾸지 않는다.
+
 ```bash
 cp deploy/ec2.env.example deploy/ec2.env
 source deploy/ec2.env
@@ -815,11 +874,14 @@ scripts/deploy.sh status
 scripts/deploy.sh start
 scripts/deploy.sh deploy
 scripts/deploy.sh health
+scripts/deploy.sh diagnose
 scripts/deploy.sh stop
 ```
 
-세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
+`scripts/deploy.sh diagnose`는 remote state를 바꾸지 않고 local JSON diagnostic을 남긴다. 실패한 health/readiness 단계가 있어도 가능한 관찰을 모두 기록한 뒤 non-zero로 종료하며, 기본 파일은 `${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json`, 변경 경로는 `ASKLAKE_DEPLOY_DIAGNOSTIC_PATH`다. 세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
 서버 `deploy/.env`와 로컬 `deploy/ec2.env`에는 실제 secret이나 AWS resource 값이 들어갈 수 있으므로 커밋하지 않는다.
+
+`scripts/deploy.sh health`는 public URL의 HTTP-to-HTTPS redirect를 따라 최종 frontend/backend/AI health를 확인한다. backend는 `.ok=true`, `.database.ok=true`, `statusCode=200` JSON을 요구한다. 실패 진단은 frontend reachability/redirect, backend request, backend JSON readiness, AI readiness로 나뉜다. 회귀 검증은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 실행한다.
 
 ## 5) 브랜치 전략
 
@@ -1211,7 +1273,7 @@ Job command의 optimistic rollback은 `MutationRevisionGate` ownership 검사를
 
 `test:jobs-data-boundary`는 `runHistory`가 비어 있어도 현재 `status=failed`인 Kafka Continuous Job을 실패 경고와 `status=failed` 필터가 포함하도록 보호한다. 실패 현황 UI를 최근 Run 결과인 `latestRunOutcomeCounts` 또는 `lastRunOutcome` 기준으로 되돌리지 않는다.
 
-`route-data-loading`은 `/jobs*`가 Catalog 목록을 요청하지 않고, `/catalog*`·`/sql`·`/ai`가 Job 목록을 요청하지 않으며, Dashboard 목록이 workspace Catalog hydrate를 시작하지 않는지 검사한다. `refreshData` 호환 함수도 Job과 Catalog를 동시에 요청하지 않고 현재 route domain만 갱신해야 한다. route를 벗어나면 해당 `LatestRequestGate`를 무효화하고 Job/Catalog 오류 상태를 서로 공유하지 않는다.
+`route-data-loading`은 `/jobs*`가 Catalog 목록을 요청하지 않고, `/catalog*`·`/sql`이 Job 목록을 요청하지 않으며, Dashboard 목록이 workspace Catalog hydrate를 시작하지 않는지 검사한다. `?view=semantic`은 별도 domain hydrate를 만들지 않고 Catalog route의 목록을 재사용한다. `refreshData` 호환 함수도 Job과 Catalog를 동시에 요청하지 않고 현재 route domain만 갱신해야 한다. route를 벗어나면 해당 `LatestRequestGate`를 무효화하고 Job/Catalog 오류 상태를 서로 공유하지 않는다.
 
 ## 18) Frontend CSS·Catalog 경계 변경 검증
 
@@ -1220,11 +1282,12 @@ ETL/Layout 스타일은 `styles/etl/`, `styles/layout/`의 소유 feature 파일
 ```bash
 cd frontend
 npm run test:css-catalog-boundary
+npm run test:semantic-layer-ui
 npm run verify:ui-regressions
 npm run build
 ```
 
-Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다. 렌더 검증은 mock/legacy를 production처럼 켜지 않고 live workspace 또는 실제 Vite CSS를 읽는 최소 fixture에서 desktop/mobile computed style, console, screenshot과 target interaction을 비교한다.
+Catalog module을 더 분리하면 `verify-ui-regressions.mjs`의 `catalogPageFiles`에도 경로를 추가한다. `CatalogPage.tsx` façade, `CatalogWorkspacePage.tsx` view switch, 기존 route/DOM class/접근성 속성, CSS entrypoint hash를 바꾸려면 별도 호환 또는 deprecation 단계가 필요하다. Catalog와 Semantic wrapper의 full-width·font token은 `css-catalog-boundary`로 고정한다. 렌더 검증은 mock/legacy를 production처럼 켜지 않고 live workspace 또는 실제 Vite CSS를 읽는 최소 fixture에서 desktop/mobile computed style, console, screenshot과 target interaction을 비교한다.
 
 ### ETL Permission create-flow 검증
 
@@ -1439,7 +1502,7 @@ docker compose --env-file deploy/.env.example \
 tests/deploy/deploy-scripts-regression.sh
 ```
 
-`0012_clickhouse_realtime_v2_foundation`은 `0011_rag_control_plane_fencing` 다음 단일 head이며 V2 metadata table 10개만 추가한다. production은 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`를 유지하고 web/worker rollout 전에 명시적으로 upgrade한다.
+`0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음 단일 head이며 V2 metadata table 10개만 추가한다. production은 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`를 유지하고 web/worker rollout 전에 명시적으로 upgrade한다.
 
 ```bash
 cd backend

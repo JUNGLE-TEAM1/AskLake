@@ -13,8 +13,8 @@ from sqlalchemy.exc import IntegrityError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = BACKEND_ROOT / "alembic.ini"
-V2_REVISION = "0012_clickhouse_realtime_v2_foundation"
-PREVIOUS_REVISION = "0011_rag_control_plane_fencing"
+V2_REVISION = "0016_clickhouse_realtime_v2_foundation"
+PREVIOUS_REVISION = "0015_ai_generation_evidence_audit"
 EXPECTED_V2_TABLES = {
     "realtime_dimension_versions",
     "realtime_ingest_exceptions",
