@@ -557,7 +557,6 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         LAST_BATCH_ID = batch_id
         LAST_FLUSH_AT = now()
     apply_catalog_ack()
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "runtimeReportSchemaVersion": RUNTIME_REPORT_SCHEMA_VERSION,
         "status": status,
