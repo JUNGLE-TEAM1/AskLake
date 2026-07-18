@@ -12,7 +12,11 @@ from pyspark.sql import types as T
 
 from object_storage_runtime import configure_spark_builder
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
-from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snapshot_rules
+from spark_snapshot_rules import (
+    apply_spark_snapshot_rules,
+    pre_materialize_row_preserving_transform_prefix,
+    supports_spark_snapshot_rules,
+)
 from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
@@ -197,12 +201,35 @@ def main():
         )
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
-        contracted_df, input_rows = apply_schema_contract_with_count(
+        contracted_df, required_targets = project_schema_contract(
             normalized_df,
             schema_columns,
             transform_steps,
-            persist=True,
         )
+        pre_materialized_transform_count = 0
+        if canonical_runtime_supported:
+            (
+                contracted_df,
+                pre_materialized_transform_count,
+            ) = pre_materialize_row_preserving_transform_prefix(
+                contracted_df,
+                canonical_rules,
+            )
+        contracted_df = persist_reusable_frame(contracted_df)
+        try:
+            input_rows, null_required = schema_contract_summary(
+                contracted_df,
+                required_targets,
+            )
+        except Exception:
+            contracted_df.unpersist(blocking=False)
+            raise
+        if null_required:
+            contracted_df.unpersist(blocking=False)
+            raise ValueError(
+                "Approved schema required columns produced null values after casting: "
+                f"{', '.join(null_required)}"
+            )
         cached_frames.append(contracted_df)
         validate_kafka_fixture_row_count(kafka_fixture_boundary, input_rows)
         finish_phase(phase_timings, "sourceValidation", source_phase)
@@ -264,6 +291,7 @@ def main():
                     contracted_df,
                     canonical_rules,
                     input_row_count=input_rows,
+                    pre_materialized_transform_count=pre_materialized_transform_count,
                 )
                 transformed_df = execution["frame"]
                 transform = execution["transform"]

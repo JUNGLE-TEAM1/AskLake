@@ -23,6 +23,14 @@ try {
   const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
   assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
 
+  const preMaterialized = runPipeline("pre-materialized-prefix", preMaterializedPrefixManifest());
+  assert(preMaterialized.process.status === 0, `Pre-materialized pipeline exited ${preMaterialized.process.status}:\n${preMaterialized.process.stdout}\n${preMaterialized.process.stderr}`);
+  assert(preMaterialized.report.outputRows === 3, `Expected 3 pre-materialized output rows: ${JSON.stringify(preMaterialized.report)}`);
+  assert(preMaterialized.report.transform?.preMaterializedTransformCount === 3, `Expected all proven transform-prefix rules in the source materialization: ${JSON.stringify(preMaterialized.report.transform)}`);
+  assert(preMaterialized.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two pre-materialized row-preserving SQL transforms: ${JSON.stringify(preMaterialized.report.transform)}`);
+  const preMaterializedReadCount = preMaterialized.process.stderr.split(sourceReadMarker).length - 1;
+  assert(preMaterializedReadCount === 1, `Expected exactly 1 raw JSONL read for the pre-materialized prefix, got ${preMaterializedReadCount}:\n${preMaterialized.process.stderr}`);
+
   const success = runPipeline("success", successManifest());
   assert(success.process.status === 0, `Success pipeline exited ${success.process.status}:\n${success.process.stdout}\n${success.process.stderr}`);
   assert(success.report.status === "success", `Success report failed: ${JSON.stringify(success.report)}`);
@@ -114,6 +122,61 @@ function actionBudgetManifest() {
         input: "status",
         operation: "SQL Expression",
         output: "status_trimmed",
+        params: "TRIM(CAST(status AS STRING))",
+      },
+    ],
+  };
+}
+
+function preMaterializedPrefixManifest() {
+  return {
+    partitionColumns: "",
+    qualityRules: [],
+    ruleContractVersion: "1.0",
+    ruleOutputSchema: baseOutputSchema(),
+    rules: [
+      canonicalRule({
+        id: "event-id-identity-rename",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "rename",
+        outputColumns: ["event_id"],
+        outputType: "String",
+      }),
+      canonicalRule({
+        id: "event-id-trim-pre-materialized",
+        inputColumns: ["event_id"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["event_id"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(event_id AS STRING))" },
+      }),
+      canonicalRule({
+        id: "status-trim-pre-materialized",
+        inputColumns: ["status"],
+        kind: "transform",
+        operation: "sql_expression",
+        outputColumns: ["status"],
+        outputType: "String",
+        parameters: { expression: "TRIM(CAST(status AS STRING))" },
+      }),
+    ],
+    schemaColumns: baseSchema(),
+    transformSteps: [
+      { enabled: true, input: "event_id", output: "event_id" },
+      {
+        enabled: true,
+        input: "event_id",
+        operation: "SQL Expression",
+        output: "event_id",
+        params: "TRIM(CAST(event_id AS STRING))",
+      },
+      {
+        enabled: true,
+        input: "status",
+        operation: "SQL Expression",
+        output: "status",
         params: "TRIM(CAST(status AS STRING))",
       },
     ],

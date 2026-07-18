@@ -6,7 +6,10 @@ from decimal import Decimal
 from pyspark.sql import SparkSession
 
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
-from spark_snapshot_rules import apply_spark_snapshot_rules
+from spark_snapshot_rules import (
+    apply_spark_snapshot_rules,
+    pre_materialize_row_preserving_transform_prefix,
+)
 
 
 def main():
@@ -24,6 +27,7 @@ def main():
     spark.sparkContext.setLogLevel("ERROR")
     try:
         verify_transform_only_action_budget(spark)
+        verify_row_preserving_transform_prefix_materialization(spark)
         verify_row_preserving_sql_action_budget(spark)
         verify_quality_action_budget_does_not_scale(spark)
         for case in fixture["cases"]:
@@ -67,6 +71,95 @@ def verify_transform_only_action_budget(spark):
     assert result["quality"]["configuredRuleCount"] == 0, result["quality"]
     assert result["quality"]["evaluatedRowCount"] == 2, result["quality"]
     assert result["transform"]["errorCount"] == 1, result["transform"]
+
+
+def verify_row_preserving_transform_prefix_materialization(spark):
+    frame = spark.createDataFrame(
+        [(1, " event-1 ", " user-1 "), (None, None, "user-2")],
+        schema="properties_position long, event_id string, user_id string",
+    )
+    rules = [
+        {
+            "contractVersion": "1.0",
+            "enabled": True,
+            "failureDisposition": "keep",
+            "id": "position-rename",
+            "inputColumns": ["properties.position"],
+            "kind": "transform",
+            "onError": "warn",
+            "operation": "rename",
+            "outputColumns": ["properties_position"],
+            "outputType": "Long",
+            "parameters": {},
+        },
+        *[
+            {
+                "contractVersion": "1.0",
+                "enabled": True,
+                "failureDisposition": "keep",
+                "id": f"{column}-trim",
+                "inputColumns": [column],
+                "kind": "transform",
+                "onError": "warn",
+                "operation": "sql_expression",
+                "outputColumns": [column],
+                "outputType": "String",
+                "parameters": {
+                    "expression": f"TRIM(CAST({column} AS STRING))",
+                },
+            }
+            for column in ("event_id", "user_id")
+        ],
+    ]
+    materialized, transform_count = pre_materialize_row_preserving_transform_prefix(
+        frame,
+        rules,
+    )
+    assert transform_count == 3, transform_count
+    result = apply_spark_snapshot_rules(
+        spark,
+        materialized,
+        rules,
+        input_row_count=2,
+        pre_materialized_transform_count=transform_count,
+    )
+    assert result["transform"]["configuredStepCount"] == 3, result["transform"]
+    assert result["transform"]["preMaterializedTransformCount"] == 3, result["transform"]
+    assert result["transform"]["rowPreservingSqlExpressionCount"] == 2, result["transform"]
+    assert result["transform"]["appliedStepCount"] == 6, result["transform"]
+    rows = result["frame"].orderBy("user_id").collect()
+    assert rows[0]["event_id"] == "event-1", rows
+    assert rows[0]["user_id"] == "user-1", rows
+    assert rows[1]["event_id"] is None, rows
+
+    unsafe_rule = {
+        **rules[1],
+        "id": "unsafe-uppercase",
+        "parameters": {"expression": "upper(event_id)"},
+    }
+    _unsafe_frame, unsafe_count = pre_materialize_row_preserving_transform_prefix(
+        frame,
+        [unsafe_rule, rules[2]],
+    )
+    assert unsafe_count == 0, unsafe_count
+
+    floating = spark.createDataFrame(
+        [(float("nan"),)],
+        schema="value double",
+    )
+    floating_rule = {
+        **rules[0],
+        "id": "floating-identity-cast",
+        "inputColumns": ["value"],
+        "operation": "cast",
+        "outputColumns": ["value"],
+        "outputType": "Double",
+    }
+    _floating_frame, floating_count = pre_materialize_row_preserving_transform_prefix(
+        floating,
+        [floating_rule],
+    )
+    assert floating_count == 0, floating_count
 
 
 def verify_row_preserving_sql_action_budget(spark):
