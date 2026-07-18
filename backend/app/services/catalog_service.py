@@ -699,15 +699,17 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
+    is_clickhouse_dataset = str(dataset.storage_format or "").strip().casefold() == "clickhouse"
     if (
         permissions is not None
         and settings.trino_enabled
+        and not is_clickhouse_dataset
         and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
     ):
         permissions = permissions.model_copy(update={"can_query": False})
     return dataset.model_copy(update={
         "permissions": permissions,
-        "query_engine_required": settings.trino_enabled,
+        "query_engine_required": settings.trino_enabled and not is_clickhouse_dataset,
     })
 
 

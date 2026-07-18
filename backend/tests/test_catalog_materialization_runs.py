@@ -15,13 +15,16 @@ from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import materialization_mode
+from app.core.permission_metadata import resource_permissions
 from app.models.catalog import CatalogDatasetModel
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse
+from app.schemas.permissions import ResourcePermissions
 from app.services.catalog_service import (
     CatalogService,
     recalculate_dataset_payload_from_runs,
     validate_materialization_run_delete,
+    with_dataset_permissions,
 )
 
 
@@ -77,6 +80,40 @@ def catalog_payload(
 
 
 class CatalogMaterializationDeleteGuardTests(unittest.TestCase):
+    def test_clickhouse_dataset_remains_queryable_without_trino_registration(self) -> None:
+        payload = catalog_payload(
+            "continuous-clickhouse",
+            [materialization_run(
+                "clickhouse-run",
+                created_at="2026-07-18T08:00:00Z",
+                mode="delta",
+                row_count=1,
+            )],
+        )
+        payload.update({
+            "schema": [["event_time", "timestamp"], ["event_id", "string"]],
+            "storageFormat": "clickhouse",
+            "queryEngineStatus": "unavailable",
+            "clickhouseTable": {"database": "asklake", "table": "live_join"},
+        })
+        dataset = CatalogDatasetResponse.model_validate(payload)
+
+        with (
+            patch.object(settings, "trino_enabled", True),
+            patch(
+                "app.services.catalog_service.permissions_for_actor_with_governance",
+                return_value=ResourcePermissions.model_validate(resource_permissions(can_query=True)),
+            ),
+        ):
+            visible = with_dataset_permissions(
+                dataset,
+                ActorContext(name="catalog-owner", role="viewer"),
+                object(),
+            )
+
+        self.assertTrue(visible.permissions.can_query)
+        self.assertFalse(visible.query_engine_required)
+
     def test_materialization_mode_uses_explicit_mode_then_kafka_fallback(self) -> None:
         cases = [
             (
