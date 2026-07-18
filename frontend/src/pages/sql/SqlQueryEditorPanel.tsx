@@ -1,4 +1,5 @@
 import type { KeyboardEventHandler, RefObject } from "react";
+import { Zap } from "lucide-react";
 import {
   SQL_PAGE_PANEL_ICON_CLASS_NAME,
   SqlPageIcon as PlayCircle,
@@ -40,6 +41,10 @@ type SqlQueryEditorPanelProps = {
   autocompleteCandidates: AutocompleteCandidate[];
   autocompleteIndex: number;
   canExecute: boolean;
+  continuousJoinAction?: {
+    onClick: () => void;
+    pending: boolean;
+  };
   disabled: boolean;
   lineNumberRef: RefObject<HTMLPreElement | null>;
   lineNumbers: string;
@@ -62,6 +67,7 @@ export function SqlQueryEditorPanel({
   autocompleteCandidates,
   autocompleteIndex,
   canExecute,
+  continuousJoinAction,
   disabled,
   lineNumberRef,
   lineNumbers,
@@ -83,6 +89,18 @@ export function SqlQueryEditorPanel({
       <PanelHeader
         actions={(
           <ActionGroup density="compact" wrap="wrap">
+            {continuousJoinAction && (
+              <Button
+                data-testid="continuous-sql-join-button"
+                disabled={continuousJoinAction.pending}
+                onClick={continuousJoinAction.onClick}
+                type="button"
+                size="sm"
+                variant="primary"
+              >
+                <Zap data-icon="inline-start" /> {continuousJoinAction.pending ? "실시간 JOIN 생성 중" : "실시간 JOIN 만들기"}
+              </Button>
+            )}
             <SqlAiWriterDialog disabled={disabled} {...ai} />
             <Button type="button" onClick={onReset} size="sm" variant="outline">
               <RotateCcw data-icon="inline-start" /> SQL 초기화
