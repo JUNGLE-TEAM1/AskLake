@@ -84,6 +84,7 @@ const catalogPageFiles = [
   "src/pages/catalog/CatalogExplorerPage.tsx",
   "src/pages/catalog/CatalogDetailPage.tsx",
   "src/pages/catalog/CatalogLineage.tsx",
+  "src/pages/catalog/catalogLineageProjection.ts",
   "src/pages/catalog/catalogModel.ts",
   "src/pages/catalog/useCatalogExplorerState.ts",
 ];
@@ -735,10 +736,52 @@ const checks = [
     patterns: [
       /getCatalogDataset\(datasetId\)/,
       /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
-      /className="catalog-result-description"/,
+      /className="catalog-result-tags"/,
       /const firstSampleRow = dataset\.sampleRows\[0\] \?\? \[\];/,
       /accessorKey: "sample"/,
       /header: "샘플"/,
+    ],
+  },
+  {
+    name: "Source and Catalog cards keep only primary scan information",
+    files: [
+      "src/pages/etl/SourceConnectionStages.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+    ],
+    patterns: [
+      /min-h-28[\s\S]*?\{meta\.label\}/,
+      /className="catalog-result-heading"/,
+      /className="catalog-result-tags"/,
+    ],
+    forbiddenPatterns: [
+      /\{meta\.description\}/,
+      /className="catalog-result-description"/,
+    ],
+  },
+  {
+    name: "The global workspace sidebar stays compact without dropping navigation labels",
+    files: [
+      "src/components/layout/Sidebar.tsx",
+      "src/styles/base.css",
+    ],
+    patterns: [
+      /--sidebar-width:\s*152px/,
+      /\.brand img[\s\S]*?width:\s*112px/,
+      /\.nav-item span[\s\S]*?text-overflow:\s*ellipsis/,
+      /nameClassName="text-sm"[\s\S]*?size="sm"/,
+    ],
+  },
+  {
+    name: "Catalog lineage keeps PROCESS data but collapses it in the UI projection",
+    files: [
+      "src/pages/catalog/CatalogLineage.tsx",
+      "src/pages/catalog/catalogLineageProjection.ts",
+    ],
+    patterns: [
+      /collapseProcessLineageGraph\(lineageGraph\)/,
+      /dataset\.layer === "PROCESS"/,
+      /datasets: graph\.datasets\.filter\(\(dataset\) => dataset\.layer !== "PROCESS"\)/,
+      /canBridgeProcessColumn/,
     ],
   },
   {
@@ -1349,6 +1392,23 @@ const checks = [
       /components\/kibo-ui\/tree/,
       /components\/ui\/tree-view/,
       /<TreePanel/,
+    ],
+  },
+  {
+    name: "Dashboard editor starts with data closed and keeps an accessible inspector toggle",
+    files: [
+      "src/pages/dashboard/DashboardPage.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+      "src/styles/dashboard-runtime-shell.css",
+    ],
+    patterns: [
+      /const \[isDatasetSidebarOpen, setIsDatasetSidebarOpen\] = useState\(false\)/,
+      /const \[isInspectorOpen, setIsInspectorOpen\] = useState\(true\)/,
+      /inspectorOpen=\{isInspectorAvailable && isInspectorOpen\}/,
+      /aria-label=\{inspectorOpen \? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"\}/,
+      /aria-controls="asklake-dashboard-inspector"/,
+      /\.asklake-dashboard-inspector-toggle[\s\S]*?margin-left:\s*auto/,
     ],
   },
   {

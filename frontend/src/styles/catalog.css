@@ -185,10 +185,6 @@
 }
 
 .catalog-result-mainline {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  gap: 20px;
   min-width: 0;
 }
 
@@ -209,18 +205,6 @@
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: nowrap;
-}
-
-.catalog-result-description {
-  margin: 0;
-  min-width: 0;
-  max-width: 100%;
-  color: #94a3b8;
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .catalog-result-tags {
@@ -676,11 +660,6 @@
 }
 
 @media (max-width: 720px) {
-  .catalog-result-mainline {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-  }
-
   .catalog-sample-header,
   .catalog-sample-actions,
   .catalog-sample-pagination {

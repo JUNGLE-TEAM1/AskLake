@@ -147,6 +147,7 @@ test("CSS and catalog entrypoints stay within their ownership budgets", () => {
   assert.ok(lineCount(read("src/pages/catalog/CatalogExplorerPage.tsx")) <= 500);
   assert.ok(lineCount(read("src/pages/catalog/CatalogDetailPage.tsx")) <= 700);
   assert.ok(lineCount(read("src/pages/catalog/CatalogLineage.tsx")) <= 600);
+  assert.ok(lineCount(read("src/pages/catalog/catalogLineageProjection.ts")) <= 200);
   assert.ok(lineCount(read("src/pages/catalog/catalogModel.ts")) <= 400);
   assert.ok(lineCount(read("src/pages/catalog/useCatalogExplorerState.ts")) <= 300);
 });
