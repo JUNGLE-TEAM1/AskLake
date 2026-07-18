@@ -388,6 +388,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - Preview 결과는 PostgreSQL inline page로 반환한다. 전체 보기/CSV는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 full run을 시작하고 signed cursor 또는 server CSV로 읽는다.
 - 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 preview의 두 단계 timeline을 포함한다.
 - Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고 선택 Dataset ID만 request에 포함한다. Backend가 Catalog context를 재구성하고 명시적 분석 의도를 검증하며 위반 시 한 번만 교정 재요청한다. Frontend는 context가 바뀐 stale 응답을 적용하지 않고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
+- Query AI cost-aware v2는 Catalog의 schema/type, partition, storage/row/key/role metadata를 prompt에 추가하고 SQLGlot cost guard와 intent guard가 공통 최대 1회 교정 budget을 사용한다. 고정 합성 Iceberg snapshot과 12개 질문 suite의 candidate는 60/60 정답이며, provider 없는 CI는 `npm run verify:nessie-benchmark`로 fixture·durable run·bounded runner·33.33%→100% 비교 gate를 재현한다. Live campaign과 baseline 승격은 자동 실행하지 않는다.
 - DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino preview는 full result를 기다리지 않고 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.

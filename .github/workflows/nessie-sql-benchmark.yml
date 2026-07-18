@@ -1,0 +1,68 @@
+name: Nessie SQL Benchmark
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "backend/app/benchmarks/**"
+      - "backend/app/models/benchmark.py"
+      - "backend/app/repositories/benchmark_repository.py"
+      - "backend/app/services/query_ai_service.py"
+      - "backend/alembic/versions/0019_benchmark_runs.py"
+      - "backend/benchmarks/nessie-sql/**"
+      - "backend/scripts/nessie-sql-benchmark-*.py"
+      - "backend/tests/test_nessie_benchmark_*.py"
+      - ".github/workflows/nessie-sql-benchmark.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "backend/app/benchmarks/**"
+      - "backend/app/models/benchmark.py"
+      - "backend/app/repositories/benchmark_repository.py"
+      - "backend/app/services/query_ai_service.py"
+      - "backend/alembic/versions/0019_benchmark_runs.py"
+      - "backend/benchmarks/nessie-sql/**"
+      - "backend/scripts/nessie-sql-benchmark-*.py"
+      - "backend/tests/test_nessie_benchmark_*.py"
+      - ".github/workflows/nessie-sql-benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-test.txt
+      - name: Install backend test dependencies
+        run: python -m pip install -r backend/requirements-test.txt
+      - name: Verify benchmark fixture, storage, runner, and comparison
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: >-
+          python -m pytest -q
+          tests/test_nessie_benchmark_dataset.py
+          tests/test_nessie_benchmark_suite.py
+          tests/test_nessie_benchmark_run.py
+          tests/test_nessie_benchmark_runner.py
+          tests/test_nessie_benchmark_summary.py
+          tests/test_nessie_benchmark_comparison.py
+      - name: Verify deterministic promotion gate
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: >-
+          python scripts/nessie-sql-benchmark-compare.py
+          --baseline benchmarks/nessie-sql/comparable-baseline-summary.v1.json
+          --candidate benchmarks/nessie-sql/comparable-candidate-summary.v2.json
+          --suite benchmarks/nessie-sql/question-suite.v1.json
+          --policy benchmarks/nessie-sql/regression-policy.v1.json
+      - name: Verify migration head
+        working-directory: backend
+        run: python -m alembic heads

@@ -1,6 +1,7 @@
 """SQLAlchemy model modules."""
 
 from app.models.catalog import CatalogDatasetModel
+from app.models.benchmark import BenchmarkRunModel
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
@@ -62,6 +63,7 @@ from app.models.semantic_rag import (
 
 __all__ = [
     "CatalogDatasetModel",
+    "BenchmarkRunModel",
     "ContinuousSqlJobModel",
     "ContinuousSqlRunModel",
     "ContinuousSqlBatchModel",

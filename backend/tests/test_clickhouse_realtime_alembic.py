@@ -88,12 +88,12 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
 
     def test_fresh_upgrade_is_single_head_and_repeatable(self) -> None:
         heads = _run_alembic(self.database_path, "heads").stdout
-        self.assertIn(f"{V2_REVISION} (head)", heads)
         self.assertEqual(heads.count("(head)"), 1)
+        current_head = heads.split()[0]
 
         _run_alembic(self.database_path, "upgrade", "head")
         inspector = inspect(self.engine)
-        self.assertEqual(_revision(self.engine), V2_REVISION)
+        self.assertEqual(_revision(self.engine), current_head)
         self.assertTrue(EXPECTED_V2_TABLES.issubset(inspector.get_table_names()))
         self.assertNotIn("dataset_serving_revisions", inspector.get_table_names())
 
@@ -289,7 +289,7 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
             )
 
         _run_alembic(self.database_path, "upgrade", "head")
-        self.assertEqual(_revision(self.engine), V2_REVISION)
+        self.assertEqual(_revision(self.engine), current_head)
         with self.engine.connect() as connection:
             self.assertEqual(
                 connection.execute(
@@ -302,6 +302,7 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
             )
 
     def test_current_upgrade_and_development_downgrade_preserve_prior_schema(self) -> None:
+        current_head = _run_alembic(self.database_path, "heads").stdout.split()[0]
         _run_alembic(self.database_path, "upgrade", PREVIOUS_REVISION)
         self.assertEqual(_revision(self.engine), PREVIOUS_REVISION)
         with self.engine.begin() as connection:
@@ -319,7 +320,7 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
             )
 
         _run_alembic(self.database_path, "upgrade", "head")
-        self.assertEqual(_revision(self.engine), V2_REVISION)
+        self.assertEqual(_revision(self.engine), current_head)
         self.assertTrue(EXPECTED_V2_TABLES.issubset(inspect(self.engine).get_table_names()))
 
         _run_alembic(self.database_path, "downgrade", PREVIOUS_REVISION)
@@ -337,7 +338,7 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
             )
 
         _run_alembic(self.database_path, "upgrade", "head")
-        self.assertEqual(_revision(self.engine), V2_REVISION)
+        self.assertEqual(_revision(self.engine), current_head)
         upgraded_again_tables = set(inspect(self.engine).get_table_names())
         self.assertTrue(EXPECTED_V2_TABLES.issubset(upgraded_again_tables))
         self.assertIn("existing_runtime_marker", upgraded_again_tables)

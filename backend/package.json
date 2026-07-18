@@ -11,6 +11,7 @@
     "verify:backward-compatibility": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-backward-compatibility.py",
     "verify:legacy-paths": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-legacy-path-register.py",
     "verify:quality-gates": "python3 ../scripts/refactor_audit/quality_gate.py --base ${ASKLAKE_QUALITY_GATE_BASE:-origin/dev}",
+    "verify:nessie-benchmark": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m pytest -q tests/test_nessie_benchmark_dataset.py tests/test_nessie_benchmark_suite.py tests/test_nessie_benchmark_run.py tests/test_nessie_benchmark_runner.py tests/test_nessie_benchmark_summary.py tests/test_nessie_benchmark_comparison.py && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/nessie-sql-benchmark-compare.py --baseline benchmarks/nessie-sql/comparable-baseline-summary.v1.json --candidate benchmarks/nessie-sql/comparable-candidate-summary.v2.json --suite benchmarks/nessie-sql/question-suite.v1.json --policy benchmarks/nessie-sql/regression-policy.v1.json",
     "verify:refactor-final-audit": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/final_audit.py",
     "verify:refactor-release-plan": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py",
     "verify:refactor-release-execution": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py --execution",
