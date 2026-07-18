@@ -5,6 +5,7 @@ import {
   dashboardWidgetDataRequests,
   dashboardWidgetDataSignature,
   mergeDashboardWidgetData,
+  runDashboardWidgetDataQueue,
   setDashboardWidgetDataStatus,
 } from "../src/pages/dashboard/runtime/dashboardWidgetDataState.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
@@ -119,4 +120,26 @@ test("a request error is attached only to the failed widget group", () => {
   assert.equal(next?.widgetsByPageId["page-1"][2].dataStatus, "error");
   assert.equal(next?.widgetsByPageId["page-1"][2].dataError, "query failed");
   assert.equal(next?.widgetsByPageId["page-1"][0], current.widgetsByPageId["page-1"][0]);
+});
+
+test("many Dataset groups never exceed the bounded request concurrency", async () => {
+  const requests = Array.from({ length: 9 }, (_, index) => ({
+    key: `dataset-${index}`,
+    signatures: {},
+    widgetIds: [`widget-${index}`],
+  }));
+  let active = 0;
+  let maxActive = 0;
+  const completed: string[] = [];
+
+  await runDashboardWidgetDataQueue(requests, async (request) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    completed.push(request.key);
+    active -= 1;
+  });
+
+  assert.equal(maxActive, 4);
+  assert.deepEqual(completed.sort(), requests.map((request) => request.key).sort());
 });

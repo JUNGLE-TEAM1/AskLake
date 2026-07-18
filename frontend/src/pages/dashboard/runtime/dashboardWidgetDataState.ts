@@ -6,6 +6,27 @@ export type DashboardWidgetDataRequest = {
   widgetIds: string[];
 };
 
+export const DASHBOARD_WIDGET_DATA_MAX_CONCURRENCY = 4;
+
+export async function runDashboardWidgetDataQueue(
+  requests: readonly DashboardWidgetDataRequest[],
+  load: (request: DashboardWidgetDataRequest) => Promise<void>,
+  maxConcurrency = DASHBOARD_WIDGET_DATA_MAX_CONCURRENCY,
+) {
+  const workerCount = Math.min(
+    requests.length,
+    Math.max(1, Math.floor(maxConcurrency)),
+  );
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < requests.length) {
+      const request = requests[nextIndex];
+      nextIndex += 1;
+      await load(request);
+    }
+  }));
+}
+
 export function dashboardWidgetDataSignature(widget: DashboardRuntimeWidget) {
   const runtimeConfig = widget.config as Record<string, unknown>;
   const sourceConfig = runtimeConfig.sourceConfig;

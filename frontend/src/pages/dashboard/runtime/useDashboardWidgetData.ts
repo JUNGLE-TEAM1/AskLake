@@ -6,6 +6,7 @@ import {
   dashboardWidgetDataRequests,
   dashboardWidgetDataSelectionKey,
   mergeDashboardWidgetData,
+  runDashboardWidgetDataQueue,
   setDashboardWidgetDataStatus,
 } from "./dashboardWidgetDataState";
 import { dashboardRuntimeErrorMessage } from "./dashboardRuntimeErrors";
@@ -46,7 +47,11 @@ export function useDashboardWidgetData({
         null,
         request.signatures,
       ));
-      void queryDashboardWidgets(dashboardId, mode, request.widgetIds, {
+    }
+
+    void runDashboardWidgetDataQueue(requests, async (request) => {
+      if (controller.signal.aborted) return;
+      await queryDashboardWidgets(dashboardId, mode, request.widgetIds, {
         signal: controller.signal,
         timeoutMs: DASHBOARD_WIDGET_DATA_TIMEOUT_MS,
       }).then((response) => {
@@ -68,7 +73,7 @@ export function useDashboardWidgetData({
           request.signatures,
         ));
       });
-    }
+    });
 
     return () => controller.abort();
   }, [active, dashboardId, loadStateKey, mode, setRuntime]);

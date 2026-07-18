@@ -43,6 +43,8 @@ npm run verify:dashboard-storage
 
 Dashboard widget 데이터가 느리거나 실패하면 `dashboard_widget_data` 구조화 로그에서 correlation ID와 `dashboardId`, `pageId`, `widgetId`, `datasetId`, `stage`, `durationMs`, `result`, `errorCode`를 확인한다. `/api/health/metrics`의 `dashboard_widget_data_total{result,stage}`는 request cache hit, PostgreSQL cache hit, 물리 계산 miss와 오류 횟수를 구분한다. 로그와 metric에는 원본 row나 credential을 넣지 않는다.
 
+Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성 조건의 10회 중간값은 `npm run measure:dashboard-performance`로 확인한다. 측정값의 의미와 운영 환경에서 추가로 볼 항목은 [Dashboard 성능·회귀 검증 기록](./dashboard-performance-verification.md)에 유지한다.
+
 ## 2) 빌드
 
 ```bash

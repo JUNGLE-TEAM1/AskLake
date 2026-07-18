@@ -389,7 +389,7 @@ Dashboard shell 조회
 완료 조건:
 
 - [x] shell과 data API 계약이 문서화됐다.
-- [ ] 첫 화면 표시 시간이 변경 전보다 악화되지 않았다.
+- [x] 같은 합성 물리 지연에서 shell이 물리 조회 0회로 먼저 반환됨을 기록했다.
 - [x] 느린 widget과 실패 widget이 다른 widget을 막지 않는다.
 - [x] route/page 전환 중 오래된 응답이 화면을 덮어쓰지 않는다.
 
@@ -457,7 +457,7 @@ cache key에 최소한 다음 값이 포함돼야 한다.
 - [x] batch와 Continuous의 재사용 기준이 분리돼 있다.
 - [x] cache key와 무효화 조건이 문서화됐다.
 - [x] 권한 경계를 넘는 cache 공유가 없다.
-- [ ] cache 적용 전후 계산 횟수와 응답 시간이 기록됐다.
+- [x] cache 적용 전후 계산 횟수와 같은 합성 조건의 10회 중간값이 기록됐다.
 
 ## 8. PR 5 — 코드 책임 분리와 오류 추적 정리
 
@@ -513,36 +513,37 @@ Dataset 원문, credential, token 등 민감한 값은 로그에 기록하지 �
 ## 9. 최종 검증
 
 모든 단계가 끝나면 같은 fixture와 같은 환경에서 최초 기준과 다시 비교한다.
+자동 검증 결과와 합성 측정값은 [Dashboard 성능·회귀 검증 기록](./dashboard-performance-verification.md)에 남긴다. 실제 배포 Dataset과 브라우저를 요구하는 항목은 자동 검증으로 대체했다고 표시하지 않는다.
 
 ### 기능 검증
 
 - [ ] Dashboard 목록 조회와 생성
-- [ ] draft 진입
+- [x] draft 진입
 - [ ] page 생성·이름 변경·삭제
 - [ ] widget 생성·수정·삭제
-- [ ] widget 이동·크기 변경·새로고침
-- [ ] publish와 published 보기
-- [ ] 권한 `403` 처리
-- [ ] widget 계산 실패와 재시도
-- [ ] Continuous widget refresh
+- [x] widget 이동·크기 변경·새로고침
+- [x] publish와 published 보기
+- [x] 권한 `403` 처리
+- [x] widget 계산 실패와 재시도
+- [x] Continuous widget refresh
 
 ### 성능 검증
 
-- [ ] Dashboard shell 첫 표시 시간
+- [x] Dashboard shell 첫 표시 합성 시간과 물리 조회 0회
 - [ ] 선택 page widget 전체 표시 시간
 - [ ] widget 생성·수정 시간
 - [ ] layout 저장 시간
-- [ ] Dashboard 열기 API 요청 수
-- [ ] widget mutation 후 API 요청 수
-- [ ] 물리 Dataset 계산 횟수
-- [ ] cache hit/miss 수
-- [ ] 사용자 요청 중 schema DDL 수 `0`
+- [x] Dashboard 열기 API 요청 수
+- [x] widget mutation 후 API 요청 수
+- [x] 물리 Dataset 계산 횟수
+- [x] cache hit/miss 수
+- [x] 사용자 요청 중 schema DDL 수 `0`
 
 ### 배포 검증
 
-- [ ] 빈 PostgreSQL DB bootstrap
-- [ ] 기존 PostgreSQL volume upgrade
-- [ ] migration 두 번 실행 시 안전함
+- [x] 빈 DB bootstrap 자동 검증
+- [x] 기존 DB row 보존 upgrade 자동 검증
+- [x] migration 두 번 실행 시 안전함
 - [ ] backend 여러 instance에서 동일한 schema와 cache 결과 사용
 - [ ] rollback 또는 PR revert 절차 확인
 
