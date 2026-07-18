@@ -94,7 +94,7 @@ def hooks():
 
 
 class ContinuousCommandUseCaseTests(unittest.TestCase):
-    def execute(self, *, lose_start_response=False):
+    def execute(self, *, lose_start_response=False, dispatch_worker=True):
         events = []
         current_runtime = runtime()
 
@@ -116,6 +116,7 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
                 SimpleNamespace(),
                 worker=FakeWorker(events, lose_start_response=lose_start_response),
                 hooks=hooks(),
+                dispatch_worker=dispatch_worker,
             )
         return events, current_runtime, result
 
@@ -132,6 +133,14 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
         self.assertEqual(events, ["save", "worker:start", "worker:status", "save"])
         self.assertEqual(current_runtime.failed_count, 0)
         self.assertTrue(result["processing_result"]["workerResult"]["submissionRecovered"])
+
+    def test_external_control_plane_persists_intent_without_web_side_effect(self) -> None:
+        events, current_runtime, result = self.execute(dispatch_worker=False)
+
+        self.assertEqual(events, ["save", "save"])
+        self.assertEqual(current_runtime.status, "starting")
+        self.assertTrue(result["processing_result"]["controlPlaneOnly"])
+        self.assertTrue(result["processing_result"]["workerResult"]["deferred"])
 
 
 class ContinuousReconciliationPolicyTests(unittest.TestCase):

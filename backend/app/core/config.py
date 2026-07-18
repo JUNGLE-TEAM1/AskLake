@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
+    # Local development keeps the embedded loop. Deployed web APIs must leave
+    # runtime side effects to the separately scheduled control-plane worker.
+    # ``external_ec2`` is accepted while existing dev manifests are migrated;
+    # it has the same web/API behaviour as ``disabled``.
+    continuous_control_plane: Literal["embedded", "disabled", "worker", "external_ec2"] = "embedded"
+    startup_schema_management_enabled: bool = True
+    continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False

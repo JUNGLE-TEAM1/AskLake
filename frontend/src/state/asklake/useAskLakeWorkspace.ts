@@ -66,6 +66,7 @@ export function useAskLakeWorkspace({
     selectedRunIdByJobId: state.selectedRunIdByJobId,
     selectRunForJob: jobs.selectRunForJob,
     setSelectedDataset: state.setSelectedDataset,
+    setJobs: state.setJobs,
     setSelectedJob: state.setSelectedJob,
     setSqlResultDraft: state.setSqlResultDraft,
     sqlResultDraft: state.sqlResultDraft,

@@ -28,9 +28,12 @@ RUNTIME_NAMES = {
 }
 
 
-def continuous_runtime_report_path(job_id: str) -> Path:
+def continuous_runtime_report_path(job_id: str) -> Path | str:
     safe_job_id = re.sub(r"[^a-z0-9_.-]+", "-", job_id.lower()).strip("-") or "job"
-    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    configured = str(os.environ.get("ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX") or "").strip()
+    if re.match(r"^s3a?://", configured, re.IGNORECASE):
+        return f"{configured.rstrip('/')}/kafka-continuous-{safe_job_id}.json"
+    report_dir = Path(configured or os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
     return report_dir / f"kafka-continuous-{safe_job_id}.json"
 
 

@@ -1,13 +1,13 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 import { resolveMockApiMode } from "./apiRuntimeMode.ts";
+import { apiBaseUrl } from "./apiOrigin.ts";
 
-const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
 const mockApiRequested = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
 const useMockApi = resolveMockApiMode(mockApiRequested, import.meta.env.DEV);
 
 export const apiConfig = {
-  baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
+  baseUrl: apiBaseUrl,
   useMock: useMockApi,
 };
 

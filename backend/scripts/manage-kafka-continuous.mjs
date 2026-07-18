@@ -10,7 +10,14 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  CreateBucketCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -32,6 +39,12 @@ import {
   normalizeSparkDriverState,
   safeSparkRestMessage,
 } from "./spark-rest-client.mjs";
+import {
+  createKubernetesClient,
+  kubernetesRuntimeConfig,
+  sparkApplicationName,
+  sparkApplicationState,
+} from "./spark-kubernetes-client.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -41,18 +54,18 @@ const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backe
 const network = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
 const image = process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1";
 const masterUrl = process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077";
-const payload = readPayload();
-
-try {
-  const result = await manage(payload);
-  console.log(`ASKLAKE_KAFKA_CONTINUOUS_RESULT=${JSON.stringify(result)}`);
-} catch (error) {
-  console.log(`ASKLAKE_KAFKA_CONTINUOUS_ERROR=${JSON.stringify({
-    code: "KAFKA_CONTINUOUS_WORKER_FAILED",
-    message: error?.message || String(error),
-    status: 502,
-  })}`);
-  process.exitCode = 1;
+if (isEntrypoint()) {
+  try {
+    const result = await manage(readPayload());
+    console.log(`ASKLAKE_KAFKA_CONTINUOUS_RESULT=${JSON.stringify(result)}`);
+  } catch (error) {
+    console.log(`ASKLAKE_KAFKA_CONTINUOUS_ERROR=${JSON.stringify({
+      code: "KAFKA_CONTINUOUS_WORKER_FAILED",
+      message: error?.message || String(error),
+      status: 502,
+    })}`);
+    process.exitCode = 1;
+  }
 }
 
 async function manage(request) {
@@ -63,9 +76,19 @@ async function manage(request) {
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(ivyDir, { recursive: true });
 
-  if (action === "ack") return acknowledgeCatalog(jobId, request.batchId, containerName, mode);
+  if (action === "ack") {
+    return mode === "kubernetes"
+      ? acknowledgeCatalogKubernetes(jobId, request.batchId, containerName)
+      : acknowledgeCatalog(jobId, request.batchId, containerName, mode);
+  }
 
-  if (mode === "rest") {
+  if (mode === "kubernetes") {
+    if (action === "start") return startWorkerKubernetes(request, containerName);
+    if (action === "pause" || action === "stop") return stopWorkerKubernetes(jobId, action, containerName);
+    if (action === "terminate") return terminateWorkerKubernetes(jobId, containerName);
+    if (action === "status") return workerStatusKubernetes(jobId, containerName);
+    if (action === "logs") return workerLogsKubernetes(jobId, containerName, positiveInt(request.tail, 200));
+  } else if (mode === "rest") {
     if (action === "start") return startWorkerRest(request, containerName);
     if (action === "pause" || action === "stop") return stopWorkerRest(jobId, action, containerName);
     if (action === "terminate") return terminateWorkerRest(jobId, containerName);
@@ -82,11 +105,287 @@ async function manage(request) {
 }
 
 function continuousExecutionMode() {
+  const explicit = String(process.env.ASKLAKE_CONTINUOUS_SPARK_RUNNER || "").trim().toLowerCase();
+  if (explicit === "kubernetes") return "kubernetes";
   const mode = sparkExecutionMode(process.env);
   if (mode === "docker" && !String(process.env.ASKLAKE_SPARK_RUNNER || "").trim()) {
     throw new Error("Development Docker continuous execution requires ASKLAKE_SPARK_RUNNER=docker.");
   }
   return mode;
+}
+
+async function startWorkerKubernetes(request, containerName) {
+  const jobId = required(request.jobId, "jobId");
+  const runtime = kubernetesRuntimeConfig();
+  const client = createKubernetesClient(runtime);
+  const applicationName = sparkApplicationName(jobId);
+  const existing = await client.get(applicationName);
+  if (existing && !["exited", "failed"].includes(sparkApplicationState(existing))) {
+    return kubernetesWorkerResult(jobId, containerName, existing, { started: false });
+  }
+  if (existing) {
+    await client.delete(applicationName);
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      await sleep(200);
+      if (!await client.get(applicationName)) break;
+      if (attempt === 24) {
+        throw new Error(`SparkApplication ${applicationName} is still terminating; retry start shortly.`);
+      }
+    }
+  }
+
+  await ensureOutputBucket(required(request.outputPath, "outputPath"));
+  await clearKubernetesCommand(jobId);
+  const workerAttemptId = randomUUID();
+  const application = continuousSparkApplication(request, runtime, workerAttemptId);
+  const created = await client.create(application);
+  return kubernetesWorkerResult(jobId, containerName, created, { started: true, workerAttemptId });
+}
+
+async function stopWorkerKubernetes(jobId, action, containerName) {
+  const runtime = kubernetesRuntimeConfig();
+  const client = createKubernetesClient(runtime);
+  const application = await client.get(sparkApplicationName(jobId));
+  await writeKubernetesCommand(
+    jobId,
+    action,
+    application?.metadata?.labels?.["asklake.worker-attempt-id"] || null,
+  );
+  return kubernetesWorkerResult(jobId, containerName, application, {
+    containerState: `${action}Requested`,
+    requestedAction: action,
+  });
+}
+
+async function terminateWorkerKubernetes(jobId, containerName) {
+  const runtime = kubernetesRuntimeConfig();
+  const client = createKubernetesClient(runtime);
+  const applicationName = sparkApplicationName(jobId);
+  const application = await client.get(applicationName);
+  if (!application) return kubernetesWorkerResult(jobId, containerName, null, { containerState: "not_running" });
+  await client.delete(applicationName);
+  return kubernetesWorkerResult(jobId, containerName, application, { containerState: "terminateRequested" });
+}
+
+async function workerStatusKubernetes(jobId, containerName) {
+  const client = createKubernetesClient(kubernetesRuntimeConfig());
+  return kubernetesWorkerResult(jobId, containerName, await client.get(sparkApplicationName(jobId)));
+}
+
+async function workerLogsKubernetes(jobId, containerName, tail) {
+  const status = await workerStatusKubernetes(jobId, containerName);
+  const application = status.application || {};
+  const state = application?.status?.applicationState || {};
+  const lines = [
+    `SparkApplication ${application?.metadata?.name || sparkApplicationName(jobId)} state=${state.state || "unknown"}`,
+    state.errorMessage ? String(state.errorMessage) : "",
+  ].filter(Boolean);
+  return {
+    ...status,
+    lines: lines.slice(-Math.min(Math.max(tail, 1), 1000)),
+    truncated: false,
+  };
+}
+
+function kubernetesWorkerResult(jobId, containerName, application, overrides = {}) {
+  const status = sparkApplicationState(application);
+  const labels = application?.metadata?.labels || {};
+  return {
+    application,
+    containerId: application?.metadata?.uid || null,
+    containerName,
+    containerState: application ? status : "missing",
+    driverState: status.toUpperCase(),
+    exitCode: status === "failed" ? 1 : status === "exited" ? 0 : null,
+    jobId,
+    report: null,
+    workerAttemptId: labels["asklake.worker-attempt-id"] || null,
+    ...overrides,
+  };
+}
+
+export function continuousSparkApplication(request, runtime, workerAttemptId, environment = process.env) {
+  const jobId = required(request.jobId, "jobId");
+  const runtimeEnvironment = continuousEnvironment(
+    request,
+    workerAttemptId,
+    requiredRuntimeDocumentPrefix(environment),
+    false,
+    environment,
+  );
+  const env = kubernetesEnvironment(runtimeEnvironment, environment);
+  const packages = continuousSparkPackages(
+    request.outputPath,
+    requiredObject(request.icebergTarget, "icebergTarget"),
+  );
+  const labels = {
+    "app.kubernetes.io/managed-by": "asklake-continuous-worker",
+    "asklake.job-id": safeSegment(jobId),
+    "asklake.worker-attempt-id": workerAttemptId,
+  };
+  return {
+    apiVersion: "sparkoperator.k8s.io/v1beta2",
+    kind: "SparkApplication",
+    metadata: { name: sparkApplicationName(jobId), namespace: runtime.namespace, labels },
+    spec: {
+      type: "Python",
+      pythonVersion: "3",
+      mode: "cluster",
+      image: runtime.image,
+      imagePullPolicy: environment.ASKLAKE_SPARK_KUBERNETES_IMAGE_PULL_POLICY || "IfNotPresent",
+      mainApplicationFile: environment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT || "/opt/asklake/scripts/kafka_continuous_stream.py",
+      sparkVersion: environment.ASKLAKE_SPARK_KUBERNETES_VERSION || "4.0.1",
+      restartPolicy: { type: "Never" },
+      deps: packages.length ? { packages } : undefined,
+      hadoopConf: kubernetesHadoopConf(environment),
+      sparkConf: {
+        "spark.sql.shuffle.partitions": String(continuousSparkShufflePartitions()),
+        "spark.sql.streaming.stopGracefullyOnShutdown": "true",
+        "spark.jars.ivy": environment.ASKLAKE_SPARK_KUBERNETES_IVY_DIR || "/tmp/.ivy2",
+        "spark.kubernetes.executor.deleteOnTermination": "true",
+      },
+      driver: {
+        cores: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES, 1),
+        memory: environment.ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY || "2g",
+        serviceAccount: runtime.serviceAccount,
+        labels,
+        env,
+        nodeSelector: kubernetesNodeSelector(environment),
+        tolerations: kubernetesTolerations(environment),
+      },
+      executor: {
+        instances: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES, 2),
+        cores: positiveInt(environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES, 1),
+        memory: environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY || "2g",
+        labels,
+        env,
+        nodeSelector: kubernetesNodeSelector(environment),
+        tolerations: kubernetesTolerations(environment),
+      },
+    },
+  };
+}
+
+function kubernetesEnvironment(runtimeEnvironment, environment) {
+  const secretName = String(
+    environment.ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME || "asklake-spark-runtime",
+  ).trim();
+  const secretKeys = {
+    ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_PASSWORD_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD",
+    ASKLAKE_SPARK_ICEBERG_JDBC_URL: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_URL_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
+    ASKLAKE_SPARK_ICEBERG_JDBC_USER: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_USER_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_USER",
+  };
+  return Object.entries(runtimeEnvironment).map(([name, value]) => {
+    const secretKey = secretKeys[name];
+    if (!secretKey) return { name, value: String(value) };
+    return {
+      name,
+      valueFrom: { secretKeyRef: { name: secretName, key: secretKey } },
+    };
+  });
+}
+
+function kubernetesHadoopConf(environment) {
+  return {
+    "fs.s3a.aws.credentials.provider": String(
+      environment.ASKLAKE_SPARK_KUBERNETES_S3A_CREDENTIALS_PROVIDER
+        || "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider",
+    ),
+    ...jsonObjectEnvironment(environment.ASKLAKE_SPARK_KUBERNETES_HADOOP_CONF, "ASKLAKE_SPARK_KUBERNETES_HADOOP_CONF"),
+  };
+}
+
+function kubernetesNodeSelector(environment) {
+  return jsonObjectEnvironment(
+    environment.ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR,
+    "ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR",
+  );
+}
+
+function kubernetesTolerations(environment) {
+  const raw = String(environment.ASKLAKE_SPARK_KUBERNETES_TOLERATIONS || "").trim();
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw);
+    if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+      throw new Error("must be a JSON array of Kubernetes toleration objects");
+    }
+    return value;
+  } catch (error) {
+    throw new Error(`ASKLAKE_SPARK_KUBERNETES_TOLERATIONS ${error.message}`);
+  }
+}
+
+function jsonObjectEnvironment(value, name) {
+  const raw = String(value || "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("must be a JSON object");
+    }
+    return Object.fromEntries(Object.entries(parsed).map(([key, item]) => [key, String(item)]));
+  } catch (error) {
+    throw new Error(`${name} ${error.message}`);
+  }
+}
+
+function requiredRuntimeDocumentPrefix(environment = process.env) {
+  const prefix = String(environment.ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX || "").trim().replace(/\/$/, "");
+  if (!/^s3a?:\/\/[^/]+\/.+/i.test(prefix)) {
+    throw new Error("Kubernetes Continuous execution requires ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>.");
+  }
+  return prefix;
+}
+
+function runtimeDocumentLocation(jobId, kind) {
+  const prefix = requiredRuntimeDocumentPrefix();
+  const name = `kafka-continuous-${safeSegment(jobId)}${kind === "command" ? ".command" : ""}.json`;
+  const matched = /^s3a?:\/\/([^/]+)\/(.+)$/i.exec(`${prefix}/${name}`);
+  return { bucket: matched[1], key: matched[2] };
+}
+
+async function writeKubernetesCommand(jobId, action, workerAttemptId) {
+  const location = runtimeDocumentLocation(jobId, "command");
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
+  await client.send(new PutObjectCommand({
+    Bucket: location.bucket,
+    Key: location.key,
+    Body: JSON.stringify({ action, requestedAt: new Date().toISOString(), workerAttemptId }),
+    ContentType: "application/json",
+  }));
+}
+
+async function clearKubernetesCommand(jobId) {
+  const location = runtimeDocumentLocation(jobId, "command");
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
+  await client.send(new DeleteObjectCommand({ Bucket: location.bucket, Key: location.key }));
+}
+
+async function acknowledgeCatalogKubernetes(jobId, batchId, containerName) {
+  const parsed = Number.parseInt(batchId, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error("batchId must be a non-negative integer");
+  const prefix = requiredRuntimeDocumentPrefix();
+  const matched = /^s3a?:\/\/([^/]+)\/(.+)$/i.exec(`${prefix}/kafka-continuous-${safeSegment(jobId)}.catalog-ack.json`);
+  const location = { bucket: matched[1], key: matched[2] };
+  const s3 = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
+  let current = -1;
+  try {
+    const response = await s3.send(new GetObjectCommand({ Bucket: location.bucket, Key: location.key }));
+    const text = await response.Body?.transformToString();
+    current = Number.parseInt(JSON.parse(text || "{}").batchId, 10);
+  } catch (error) {
+    if (!isMissingS3Object(error)) throw error;
+  }
+  const acknowledged = Math.max(Number.isFinite(current) ? current : -1, parsed);
+  await s3.send(new PutObjectCommand({
+    Bucket: location.bucket,
+    Key: location.key,
+    Body: JSON.stringify({ batchId: acknowledged, updatedAt: new Date().toISOString() }),
+    ContentType: "application/json",
+  }));
+  const status = await workerStatusKubernetes(jobId, containerName);
+  return { acknowledgedBatchId: acknowledged, ...status };
 }
 
 async function startWorkerRest(request, containerName) {
@@ -307,7 +606,7 @@ function continuousRestRuntime() {
   return { ...runtime, reportRuntimeDir, scriptPath };
 }
 
-function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true) {
+function continuousEnvironment(request, workerAttemptId, runtimeReportDir, includeCredentials = true, environment = process.env) {
   const jobId = required(request.jobId, "jobId");
   const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
   const storageEnvironment = Object.fromEntries(
@@ -342,14 +641,20 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
     ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS: JSON.stringify(request.schemaColumns || []),
     ASKLAKE_CONTINUOUS_SCHEMA_POLICY: JSON.stringify(request.schemaEvolutionPolicy || {}),
     ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS: String(continuousSparkShufflePartitions()),
-    ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: process.env.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL || "WARN",
-    ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: process.env.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
-    ASKLAKE_CONTINUOUS_REPORT_FILE: path.posix.join(runtimeReportDir, reportFileName(jobId)),
-    ASKLAKE_CONTINUOUS_COMMAND_FILE: path.posix.join(runtimeReportDir, commandFileName(jobId)),
+    ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: environment.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL || "WARN",
+    ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: environment.ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE || "false",
+    ASKLAKE_CONTINUOUS_REPORT_FILE: runtimeDocumentPath(runtimeReportDir, reportFileName(jobId)),
+    ASKLAKE_CONTINUOUS_COMMAND_FILE: runtimeDocumentPath(runtimeReportDir, commandFileName(jobId)),
     ...sparkIcebergEnvironment({ icebergTarget }),
     ...storageEnvironment,
     HOME: "/tmp",
   };
+}
+
+function runtimeDocumentPath(base, filename) {
+  const normalized = String(base || "").replace(/\/$/, "");
+  if (/^s3a?:\/\//i.test(normalized)) return `${normalized}/${filename}`;
+  return path.posix.join(normalized, filename);
 }
 
 function readWorkerState(jobId) {
@@ -739,6 +1044,16 @@ function continuousSparkShufflePartitions() {
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+function isMissingS3Object(error) {
+  return Number(error?.$metadata?.httpStatusCode || error?.statusCode) === 404
+    || ["NoSuchKey", "NotFound", "NoSuchObject"].includes(String(error?.name || error?.Code || ""));
+}
+function isEntrypoint() {
+  return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
 function readPayload() {
   const raw = readFileSync(0, "utf8").trim();

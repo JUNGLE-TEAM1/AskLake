@@ -252,6 +252,7 @@ export function App() {
     selectedRunIdByJobId,
     selectRunForJob,
     setSelectedDataset,
+    setJobs,
     setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
@@ -313,6 +314,7 @@ export function App() {
     flow: routeState.flow,
     jobId: routeState.jobId,
     jobs,
+    setJobs,
     setSelectedJob,
   });
 

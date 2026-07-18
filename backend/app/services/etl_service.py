@@ -291,6 +291,7 @@ from app.models.base import Base
 from app.models.identity import AuthUserModel
 from app.infrastructure.runtime_io import (
     Boto3ObjectManifestAdapter,
+    Boto3RuntimeDocumentStore,
     CallableKafkaRuntimeGateway,
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
@@ -2130,6 +2131,7 @@ recover_continuous_replay_result = bind_runtime(_etl_source_runtime.IMPLEMENTATI
 bounded_environment_integer = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['bounded_environment_integer'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 read_runtime_json = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['read_runtime_json'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 write_runtime_json_atomic = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['write_runtime_json_atomic'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
+runtime_document_store_for_path = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['runtime_document_store_for_path'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 object_manifest_port = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['object_manifest_port'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 marker_payload = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['marker_payload'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 persisted_stream_partition_cursors = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['persisted_stream_partition_cursors'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)

@@ -1,4 +1,5 @@
 import type { JobRowData, JobRunStatus, JobRunSummary, JobStatusSnapshot, RunsByJobId } from "../../types";
+import { shouldAcceptContinuousRuntimeUpdate } from "../../services/continuousRuntimeContract.ts";
 
 
 export const snapshotStatusPollIntervalMs = 5000;
@@ -20,8 +21,10 @@ export function activeSnapshotJobIds(
   runsByJobId: RunsByJobId,
 ): string[] {
   return jobs
-    .filter((job) => job.executionMode !== "continuous")
     .filter((job) => {
+      if (job.executionMode === "continuous") {
+        return ["starting", "running", "pausing", "stopping"].includes(job.continuousRuntime?.status ?? "");
+      }
       const latestServerRun = (runsByJobId[job.id] ?? job.runHistory ?? [])
         .find((run) => !run.runId.startsWith("client:"));
       return latestServerRun?.status === "queued" || latestServerRun?.status === "running";
@@ -45,6 +48,11 @@ export function shouldApplyJobStatusSnapshot(
   snapshot: JobStatusSnapshot,
 ): boolean {
   if (current.id !== snapshot.id) return false;
+  if (snapshot.continuousRuntime && !shouldAcceptContinuousRuntimeUpdate(current, {
+    ...current,
+    continuousRuntime: snapshot.continuousRuntime,
+    updatedAt: snapshot.updatedAt ?? current.updatedAt,
+  })) return false;
   if (current.updatedAt && snapshot.updatedAt && snapshot.updatedAt < current.updatedAt) return false;
 
   const currentRun = current.runHistory?.[0];
@@ -79,6 +87,7 @@ export function mergeJobStatusSnapshot(
       ? upsertLatestRun(current.runHistory ?? [], snapshot.latestRun)
       : current.runHistory,
     dagSteps: snapshot.dagSteps.length > 0 ? snapshot.dagSteps : current.dagSteps,
+    continuousRuntime: snapshot.continuousRuntime ?? current.continuousRuntime,
   };
 }
 
