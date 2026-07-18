@@ -1,13 +1,13 @@
 {
   "contractVersion": "asklake.eks.day18.observability-decision.v1",
-  "status": "selected-not-applied",
+  "status": "applied-with-runtime-limitations",
   "selected": {
     "delivery": "amazon-cloudwatch-observability-eks-addon",
     "addonVersion": "v6.3.0-eksbuild.1",
     "containerInsights": "otel",
     "applicationSignals": false,
     "classicContainerInsights": false,
-    "containerLogs": true,
+    "containerLogs": false,
     "otelNativeLogs": true,
     "standaloneFluentBit": false,
     "standaloneAdot": false
@@ -25,13 +25,21 @@
     "attachToNodeRole": false,
     "xrayPermissions": false,
     "crossAccount": false,
-    "requiredActionsMustBeVerifiedInPhase2": true
+    "requiredActionsMustBeVerifiedInPhase2": true,
+    "requiredActionsVerifiedInPhase2": true
   },
   "collection": {
-    "applicationLogGroup": "derived-from-cluster-at-apply-time",
+    "applicationLogGroup": "/aws/otel/containerinsights/{clusterName}/application",
     "applicationLogSource": "container-stdout-stderr",
     "namespaceScope": "cluster-until-compatible-schema-proves-include-filter",
-    "dropDebugLogs": true,
+    "dropDebugLogs": false,
+    "debugFilterStatus": "deferred-runtime-schema-unsupported",
+    "nodeExporterCpuRequest": "25m",
+    "agentRoles": {
+      "node": "CWAGENT_ROLE=NODE",
+      "clusterScraper": "CWAGENT_ROLE=LEADER",
+      "clusterScraperNetwork": "pod-network-post-apply-reconcile"
+    },
     "kubernetesEvents": {
       "source": "kubernetes-api-read-only",
       "cloudWatchDelivery": false,
@@ -41,8 +49,8 @@
   },
   "retentionDays": {
     "application": 7,
-    "otelPerformance": 3,
-    "controlPlane": 7
+    "controlPlane": 7,
+    "rdsPostgresql": 7
   },
   "costGuardrails": {
     "monthlyCloudWatchBudgetUsd": 75,
@@ -52,8 +60,19 @@
     "applicationSignalsMayNotBeEnabledImplicitly": true,
     "dualPublishClassicAndOtel": false
   },
+  "runtime": {
+    "addonStatus": "ACTIVE",
+    "allAddonWorkloadsReady": true,
+    "applicationLogDelivered": true,
+    "legacyFluentBitPods": 0,
+    "accessDenied": 0,
+    "clusterScraperNetwork": "pod-network-post-apply-reconcile",
+    "metricsDelivery": "partial-success-with-http-400-drops",
+    "metricsLiveGate": "open-follow-up-required",
+    "criParserWarnings": "known-bundled-runtime-limitation"
+  },
   "rollback": {
-    "removeAddonOnlyAfterAgentPodsStop": true,
+    "removeAddonSoftwareOnRollback": true,
     "retainLogGroups": true,
     "retainExistingControlPlaneLogging": true,
     "doNotModifyApplicationWorkloads": true

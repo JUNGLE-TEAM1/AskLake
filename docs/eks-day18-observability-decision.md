@@ -16,7 +16,8 @@ Phase 2 입력으로 고정하되 apply 직전에 `describe-addon-versions`와
 Application Signals는 끈다. 현재 목표는 workload stdout/stderr, Pod·Node 상태와
 장애 시점의 상관관계이지 자동 instrumentation, trace와 SLO가 아니다. Classic
 Container Insights도 끄고 OTel과 dual publish하지 않는다. OTel native container log
-pipeline을 사용하며 별도 Fluent Bit DaemonSet은 만들지 않는다.
+pipeline을 사용하며 `containerLogs` 레거시 파이프라인과 별도 Fluent Bit DaemonSet은
+사용하지 않는다.
 
 ## 이 선택이 현재 구조에 맞는 이유
 
@@ -47,14 +48,52 @@ preflight로 재확인해 전용 customer-managed policy로 제한한다. 검증
 정책으로 live apply하지 않으며, AWS managed policy가 불가피하면 broad-IAM 예외를
 명시적으로 기록하기 전까지 apply gate를 닫는다.
 
+Live preflight에서 bundled OTel agent는 metric을 기존 `ContainerInsights` namespace
+조건과 일치하지 않는 경로로 전송해 `PutMetricData`가 거부됐다. CloudWatch metric
+API는 resource ARN으로 범위를 좁힐 수도 없으므로 이 action만 resource `*`로
+허용하고 검증되지 않은 namespace condition은 두지 않는다. Logs 권한은 실제 runtime
+경로인 `/aws/otel/containerinsights/{cluster}/application`으로만 제한한다. X-Ray,
+SSM, EC2 action과 Node role 권한은 계속 허용하지 않는다.
+
 ## 로그와 Event 범위
 
 OTel container log는 node의 `/var/log/pods`에서 stdout/stderr를 읽어 cluster별
-application log group으로 보낸다. DEBUG level은 전송 전에 제외한다. 현재
+`/aws/otel/containerinsights/{cluster}/application` log group으로 보낸다. 현재
 `v6.3.0-eksbuild.1`의 live configuration schema에는 AWS 문서가 설명하는 namespace
 include 필드가 노출되지 않으므로, 지원이 확인되지 않은 key를 억지로 넣지 않는다.
 Phase 2에서 exact schema validation을 다시 수행하고 include filter가 실제 지원될
 때만 `asklake-dev`로 좁힌다. 그 전에는 짧은 retention과 ingest guardrail로 제어한다.
+
+Phase 2 최초 적용에서는 AWS advanced configuration 문서의 `exclude_filters`가 EKS
+add-on schema를 통과했지만 실제 bundled CloudWatch Agent `1.0`이 해당 field를
+거절했다. CrashLoop evidence를 확인한 즉시 Terraform 대기를 중단하고 custom agent
+config를 제거했다. 따라서 DEBUG filter는 현재 적용됐다고 표현하지 않고
+`deferred-runtime-schema-unsupported`로 남긴다. add-on 기본 OTel pipeline이 정상화된
+뒤 지원되는 collector processor나 namespace filter가 exact runtime schema에
+나타날 때 별도 변경으로 적용한다.
+
+초기 live 배치에서는 기존 workload가 CPU request의 98~99%를 사용 중인 general
+node에서 기본 `50m` node-exporter가 Pending이 됐다. exporter limit과 memory request는
+기본값을 유지하고 CPU request만 `25m`로 낮춘다. 이는 새 NodePool이나 application
+workload를 변경하지 않고 DaemonSet의 최소 관찰 기능을 현재 dev 용량에 맞추기 위한
+MVP 조정이며, 운영 전에는 실제 사용량과 NodePool headroom을 다시 측정한다.
+
+같은 preflight에서 node agent와 cluster scraper가 모두 host network의 기본 telemetry
+port `8888`을 열어 scraper가 CrashLoop했다. AWS의 agent 분리 지침대로 node agent에는
+`CWAGENT_ROLE=NODE`, deployment scraper에는 `CWAGENT_ROLE=LEADER`를 명시한다. exact
+add-on schema는 agent별 `otelConfig`를 받지만 operator가 생성한 scraper CR에서는
+`service.telemetry` override가 사라졌고, `hostNetwork`도 add-on schema에 노출되지
+않았다. 따라서 apply/update 직후
+`scripts/reconcile-eks-day18-observability-runtime.sh`가 scraper만 Pod network와
+`ClusterFirst` DNS로 멱등 전환하고 Ready를 확인한다. 외부 Service, port 또는 security
+group은 열지 않는다. add-on version이 이 제한을 해결하면 이 후처리를 제거하고
+Terraform add-on configuration만 사용한다.
+
+또한 `otelContainerInsights.logs`와 `containerLogs`를 함께 켜면 OTel과 bundled Fluent
+Bit이 동시에 설치되고, 후자는 legacy host/dataplane/application log group 권한을
+요구했다. OTel agent의 metric·log 전송은 전용 policy로 성공한 반면 Fluent Bit에서만
+AccessDenied가 발생한 것을 분리 확인했다. dual publish와 불필요한 권한 확장을 피하기
+위해 `containerLogs=false`로 고정하고 OTel native log pipeline만 유지한다.
 
 Kubernetes Event는 application log와 다른 데이터다. Phase 2의 read-only observer가
 Kubernetes API에서 bounded 시간창의 Event를 수집하고 reason, type, UTC 시각과
@@ -64,8 +103,8 @@ UTC 시간과 `runId`로 상관관계를 만든다. EKS service event를 제공�
 
 ## 보존기간과 비용 경계
 
-dev MVP의 최초 보존기간은 application log 7일, OTel performance log 3일,
-control-plane log 7일이다. Phase 0에서 확인한 기존 관련 log group 2개는 retention이
+dev MVP의 최초 보존기간은 application log 7일, control-plane log 7일, RDS PostgreSQL
+log 7일이다. Phase 0에서 확인한 기존 관련 log group 2개는 retention이
 없어 무기한 보존 상태였으므로 Phase 2에서 Terraform ownership/import 범위를 먼저
 확인한 뒤 명시적으로 바꾼다. 기존 log group이나 evidence를 add-on 삭제와 함께
 삭제하지 않는다.
@@ -94,8 +133,9 @@ application/OTel 유입량을 확인해 Phase 3에서 경고선을 다시 확정
   retention, 삭제 보호를 구분한다.
 - add-on ACTIVE, agent Ready, 실제 AskLake log 한 건 조회와 Event private receipt를
   검증할 rollback 가능한 실행 계획이 준비된다.
-- uninstall은 agent가 중지된 뒤 수행하되 log group과 기존 control-plane logging,
-  application workload는 보존한다.
+- rollback은 add-on software를 제거하되 log group과 기존 control-plane logging,
+  application workload는 보존한다. 실패한 생성은 EKS add-on 삭제 완료를 확인한 뒤
+  Terraform state에서 해당 add-on address만 제거하고 수정된 plan으로 재생성한다.
 
 ## 공식 근거
 

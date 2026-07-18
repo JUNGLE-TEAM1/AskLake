@@ -196,3 +196,15 @@ metrics_server_mode               = "disabled"
 metrics_server_addon_version      = null
 metrics_server_owner              = null
 external_metrics_server_confirmed = false
+
+# Day 18 uses the managed CloudWatch Observability EKS add-on with OTel-only
+# Container Insights and a dedicated Pod Identity. Keep disabled until the
+# exact cluster-compatible version/schema, log-group imports and owner are
+# reviewed. Application Signals, Classic dual publish and standalone agents
+# remain disabled by contract.
+observability_mode                        = "disabled"
+observability_addon_version               = null
+observability_owner                       = null
+observability_application_retention_days  = 7
+observability_control_plane_retention_days = 7
+observability_rds_retention_days          = 7
