@@ -19,6 +19,8 @@ export type ContinuousSqlJob = {
   desiredState: "stopped" | "running" | "paused";
   generation: number;
   id: string;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
   name: string;
   observedState: "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed" | "recovering";
   outputDatasetId: string;
@@ -53,6 +55,22 @@ export function validateContinuousSqlPlan(request: ContinuousSqlPlanRequest) {
   return apiClient.post<ContinuousSqlPlan>("/api/query/continuous-jobs/validate", request);
 }
 
+export type VerifyCatalogUniqueKeyResponse = {
+  columns: string[];
+  distinctKeys: number;
+  invalidKeyRows: number;
+  totalRows: number;
+  verified: true;
+};
+
+export function verifyAndRegisterCatalogUniqueKey(datasetId: string, columns: string[]) {
+  return apiClient.post<VerifyCatalogUniqueKeyResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/unique-keys/verify-and-register`,
+    { columns },
+    { timeoutMs: 620_000 },
+  );
+}
+
 export function createClickHouseContinuousSqlJob(request: CreateClickHouseContinuousSqlRequest) {
   return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
 }
@@ -61,5 +79,13 @@ export function commandContinuousSqlJob(jobId: string, command: ContinuousSqlCom
   return apiClient.post<ContinuousSqlCommandResponse>(
     `/api/query/continuous-jobs/${encodeURIComponent(jobId)}/commands`,
     { command, commandId },
+    { timeoutMs: 900_000 },
+  );
+}
+
+export function getContinuousSqlJob(jobId: string) {
+  return apiClient.get<ContinuousSqlJob>(
+    `/api/query/continuous-jobs/${encodeURIComponent(jobId)}`,
+    { timeoutMs: 30_000 },
   );
 }

@@ -44,6 +44,7 @@ from app.services.clickhouse_client import ClickHouseClient, qualified_clickhous
 from app.services.clickhouse_continuous_sql import (
     ClickHouseContinuousSqlWorkerGateway,
     clickhouse_runtime_names,
+    clickhouse_static_runtime_table,
 )
 from app.services.iceberg_dataset_reader import execute_trino_rows, quote_trino_identifier
 from app.services.trino_client import TrinoClient
@@ -56,7 +57,13 @@ from app.services.dashboard_runtime_service import DashboardRuntimeService
 class FixtureTrinoClient:
     """Return one pinned static Iceberg snapshot without requiring a local Trino lake."""
 
-    def submit(self, _query: str, **_kwargs) -> TrinoClientPage:
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        if "count(*)" in query.casefold():
+            return TrinoClientPage(
+                queryId="fixture-static-count",
+                columns=["_col0"],
+                rows=[[2]],
+            )
         return TrinoClientPage(
             queryId="fixture-static-snapshot",
             columns=["id", "name"],
@@ -373,6 +380,21 @@ def run() -> dict[str, object]:
                     "topic": topic,
                     "consumerGroupId": f"legacy-{suffix}",
                     "initialOffsetPolicy": "earliest",
+                    "recordParsing": {
+                        "enabled": True,
+                        "delimiterKind": "whitespace",
+                        "delimiterPattern": "\\s+",
+                        "header": False,
+                        "expectedFieldCount": 2,
+                        "columns": [
+                            {"position": 0, "name": "event_id", "inferredType": "Integer"},
+                            {"position": 1, "name": "user_id", "inferredType": "Integer"},
+                        ],
+                    },
+                    "schemaColumns": [
+                        {"included": True, "nullable": False, "sourceName": "event_id", "targetName": "event_id", "type": "bigint"},
+                        {"included": True, "nullable": False, "sourceName": "user_id", "targetName": "user_id", "type": "bigint"},
+                    ],
                 },
             )
         )
@@ -429,17 +451,17 @@ def run() -> dict[str, object]:
         )
         client.execute(
             f"CREATE TABLE {qualified_clickhouse_table(settings.clickhouse_database, producer_table)} "
-            "(`event_id` Int64, `user_id` Int64) ENGINE = Kafka SETTINGS "
+            "(`message` String) ENGINE = Kafka SETTINGS "
             f"kafka_broker_list = '{broker}', kafka_topic_list = '{topic}', "
-            f"kafka_group_name = 'producer_{suffix}', kafka_format = 'JSONEachRow'"
+            f"kafka_group_name = 'producer_{suffix}', kafka_format = 'RawBLOB'"
         )
 
         events_published_at = time.perf_counter()
         client.insert_json_rows(
             settings.clickhouse_database,
             producer_table,
-            ["event_id", "user_id"],
-            [[1001, 1], [1002, 2], [1003, 999]],
+            ["message"],
+            [["1001 1"], ["1002 2"], ["1003 999"]],
         )
         status_payload, joined_at = wait_for_worker_rows(
             gateway,
@@ -508,6 +530,37 @@ def run() -> dict[str, object]:
             ),
             actor,
         )
+        paused_status = gateway.manage(
+            service.repository.get_job(job_id),
+            service.repository.get_run(service.repository.get_job(job_id).active_run_id),
+            "status",
+        )
+        if paused_status.get("containerState") != "not_running":
+            raise RuntimeError("ClickHouse Kafka consumer did not stop on pause")
+        paused_input_count = sum(
+            int(item["rowCount"])
+            for item in paused_status.get("clickhouseOffsets") or []
+        )
+        paused_revision = int(
+            live_repository.get_freshness(output_dataset_id).latest_revision or 0
+        )
+        client.insert_json_rows(
+            settings.clickhouse_database,
+            producer_table,
+            ["message"],
+            [["1500 1"]],
+        )
+        time.sleep(0.5)
+        still_paused = gateway.manage(
+            service.repository.get_job(job_id),
+            service.repository.get_run(service.repository.get_job(job_id).active_run_id),
+            "status",
+        )
+        if sum(int(item["rowCount"]) for item in still_paused.get("clickhouseOffsets") or []) != paused_input_count:
+            raise RuntimeError("ClickHouse consumed Kafka rows while the Job was paused")
+        unchanged_freshness = live_repository.get_freshness(output_dataset_id)
+        if int(unchanged_freshness.latest_revision or 0) != paused_revision:
+            raise RuntimeError("Catalog revision advanced while the Job was paused")
         service.command(
             job_id,
             ContinuousSqlCommandRequest(
@@ -517,16 +570,32 @@ def run() -> dict[str, object]:
         )
 
         warm_latencies_ms: list[float] = []
-        expected_input_count = 3
-        expected_joined_count = 2
-        latest_revision = first_revision
+        expected_input_count = 4
+        expected_joined_count = 3
+        status_payload, _ = wait_for_worker_rows(
+            gateway,
+            service.repository,
+            job_id,
+            expected_input_count,
+            timeout_seconds=10,
+        )
+        latest_revision = reconcile_until_revision(
+            service,
+            live_repository,
+            job_id,
+            actor,
+            paused_revision,
+        )
+        resumed_runtime = dashboard_service.get_published_runtime(dashboard_id, actor)
+        if widget_count(first_widget(resumed_runtime)) != expected_joined_count:
+            raise RuntimeError("Dashboard did not refresh the Kafka row queued during pause")
         for index in range(10):
             event_started = time.perf_counter()
             client.insert_json_rows(
                 settings.clickhouse_database,
                 producer_table,
-                ["event_id", "user_id"],
-                [[2000 + index, 1 + (index % 2)]],
+                ["message"],
+                [[f"{2000 + index} {1 + (index % 2)}"]],
             )
             expected_input_count += 1
             expected_joined_count += 1
@@ -703,7 +772,9 @@ def run() -> dict[str, object]:
             producer_table,
             output_table,
             runtime_names["raw"] if runtime_names else "",
-            f"{runtime_names['prefix']}_static_1" if runtime_names else "",
+            clickhouse_static_runtime_table(
+                runtime_names["prefix"], 1, {"snapshotId": static_snapshot_id}
+            ) if runtime_names else "",
         ):
             if not table:
                 continue
