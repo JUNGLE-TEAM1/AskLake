@@ -527,6 +527,45 @@ expect_health_failure \
   'health rejects malformed JSON without echoing it' \
   "$SECRET_SENTINEL"
 
+mock_redirect_health_check() (
+  local payload='{"ok":true,"database":{"ok":true}}'
+  local curl_log="$TMP_DIR/redirect-health-curl.log"
+
+  HEALTH_RETRIES=1
+  HEALTH_RETRY_DELAY=0
+  HEALTH_PATH=/api/health
+
+  resolve_app_url() {
+    printf 'http://deploy.asklake.test\n'
+  }
+
+  curl() {
+    printf '%s\n' "$*" >> "$curl_log"
+    if [[ " $* " == *' --location '* ]]; then
+      if [[ " $* " == *' -fsSI '* ]]; then
+        return 0
+      fi
+      printf '%s' "$payload"
+      return 0
+    fi
+    return 22
+  }
+
+  sleep() {
+    :
+  }
+
+  health_check
+  [[ "$(wc -l < "$curl_log")" -eq 3 ]]
+  ! grep -Fv -- '--location' "$curl_log" >/dev/null
+)
+
+if mock_redirect_health_check >/dev/null 2>&1; then
+  record_pass 'health follows redirect for frontend, backend, and AI readiness requests'
+else
+  record_fail 'health follows redirect for frontend, backend, and AI readiness requests'
+fi
+
 printf 'deploy regression summary: %s passed, %s failed, %s skipped\n' \
   "$pass_count" "$fail_count" "$skip_count"
 
