@@ -177,6 +177,7 @@ sparkApplication:
       requests: {cpu: "1", memory: 2560Mi}
       limits: {cpu: "2", memory: 2560Mi}
   executor:
+    # Run the controlled 10 GB matrix with 1, 2, then 4 executors only.
     instances: 1
     cores: 2
     memory: 4g

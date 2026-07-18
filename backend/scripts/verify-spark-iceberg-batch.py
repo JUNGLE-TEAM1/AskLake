@@ -48,6 +48,7 @@ def main() -> None:
             first_snapshot = str(first["icebergCommit"]["snapshotId"])
             assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "2"
             assert trino_current_snapshot(table) == first_snapshot
+            assert_spark_file_evidence(first, table, first_snapshot)
 
             second = run_spark(runtime, network, target, "run-phase2-second", [{"id": 3}])
             assert second["status"] == "success"
@@ -55,6 +56,7 @@ def main() -> None:
             assert second_snapshot != first_snapshot
             assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "1"
             assert trino_current_snapshot(table) == second_snapshot
+            assert_spark_file_evidence(second, table, second_snapshot)
 
             failed = run_spark(
                 runtime,
@@ -83,6 +85,7 @@ def main() -> None:
             assert third_snapshot not in {first_snapshot, second_snapshot}
             assert trino_current_snapshot(table) == third_snapshot
             assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "2"
+            assert_spark_file_evidence(third, table, third_snapshot)
             assert int(trino_snapshot_file_count(table, second_snapshot)) > 0
             assert int(trino_snapshot_file_count(table, third_snapshot)) > 0
             assert int(trino_snapshot_file_size(table, second_snapshot)) > 0
@@ -104,6 +107,22 @@ def main() -> None:
             trino_execute(f'DROP TABLE IF EXISTS iceberg.asklake."{table}"', check=False)
             stop_test_trino(TRINO_CONTAINER)
     print("verify-spark-iceberg-batch: ok")
+
+
+def assert_spark_file_evidence(result: dict, table: str, snapshot_id: str) -> None:
+    exact_file_count = int(trino_snapshot_file_count(table, snapshot_id))
+    assert exact_file_count > 0
+    assert int(result["outputFileCount"]) == exact_file_count, result
+    assert int(result["icebergCommit"]["dataFileCount"]) == exact_file_count, result
+    phase_timings = result.get("phaseTimings")
+    assert isinstance(phase_timings, dict), result
+    for phase in (
+        "sourceValidation",
+        "qualityAggregation",
+        "sourcePostValidation",
+        "targetPublish",
+    ):
+        assert int((phase_timings.get(phase) or {}).get("durationMs") or 0) >= 0, phase_timings
 
 
 def run_spark(

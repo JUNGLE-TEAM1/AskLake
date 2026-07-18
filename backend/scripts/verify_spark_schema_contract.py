@@ -3,7 +3,13 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql import types as T
 
-from spark_job_run import apply_schema_contract, apply_schema_contract_with_count, normalize_columns, read_source
+from spark_job_run import (
+    apply_schema_contract,
+    apply_schema_contract_with_count,
+    evaluate_quality_rules,
+    normalize_columns,
+    read_source,
+)
 
 
 def main():
@@ -19,6 +25,7 @@ def main():
     try:
         verify_required_column_job_count_does_not_scale(spark)
         verify_input_count_and_required_validation_share_action(spark)
+        verify_legacy_quality_action_budget_does_not_scale(spark)
         verify_json_contract_avoids_inference_and_flattens_nested_fields(spark, fixture_path)
         verify_all_null_required_columns_are_reported(spark)
         verify_cast_failures_are_reported_as_required_nulls(spark)
@@ -114,6 +121,73 @@ def verify_input_count_and_required_validation_share_action(spark):
     assert input_rows == 3, input_rows
     assert count_calls == 0, f"schema contract must not run a separate count action: {count_calls}"
     assert first_calls == 1, f"schema count/null summary must use one aggregate action: {first_calls}"
+
+
+def verify_legacy_quality_action_budget_does_not_scale(spark):
+    frame = spark.createDataFrame(
+        [
+            ("event-1", "ok", "US"),
+            ("event-2", "", "KR"),
+            ("event-3", "ok", "INVALID"),
+        ],
+        schema="event_id string, required_value string, country string",
+    )
+    rules = [
+        {
+            "enabled": True,
+            "failureAction": "Warn",
+            "id": "required-value",
+            "severity": "Warning",
+            "targetColumn": "required_value",
+            "validationType": "Not Null",
+        },
+        *[
+            {
+                "enabled": True,
+                "failureAction": "Warn",
+                "id": f"accepted-country-{index}",
+                "severity": "Warning",
+                "targetColumn": "country",
+                "validationType": "Accepted Values",
+            }
+            for index in range(9)
+        ],
+    ]
+    one_rule_actions = legacy_quality_action_calls(frame, rules[:1])
+    ten_rule_actions = legacy_quality_action_calls(frame, rules)
+
+    assert one_rule_actions == (0, 1), one_rule_actions
+    assert ten_rule_actions == one_rule_actions, (
+        "legacy quality evaluation actions must not grow with rule count: "
+        f"one rule={one_rule_actions}, ten rules={ten_rule_actions}"
+    )
+
+
+def legacy_quality_action_calls(frame, rules):
+    dataframe_type = type(frame)
+    original_count = dataframe_type.count
+    original_first = dataframe_type.first
+    count_calls = 0
+    first_calls = 0
+
+    def tracked_count(current):
+        nonlocal count_calls
+        count_calls += 1
+        return original_count(current)
+
+    def tracked_first(current):
+        nonlocal first_calls
+        first_calls += 1
+        return original_first(current)
+
+    dataframe_type.count = tracked_count
+    dataframe_type.first = tracked_first
+    try:
+        evaluate_quality_rules(frame, rules)
+    finally:
+        dataframe_type.count = original_count
+        dataframe_type.first = original_first
+    return count_calls, first_calls
 
 
 def required_validation_job_count(spark, column_count):

@@ -24,6 +24,7 @@ def main():
     spark.sparkContext.setLogLevel("ERROR")
     try:
         verify_transform_only_action_budget(spark)
+        verify_quality_action_budget_does_not_scale(spark)
         for case in fixture["cases"]:
             verify_case(spark, case)
     finally:
@@ -65,6 +66,81 @@ def verify_transform_only_action_budget(spark):
     assert result["quality"]["configuredRuleCount"] == 0, result["quality"]
     assert result["quality"]["evaluatedRowCount"] == 2, result["quality"]
     assert result["transform"]["errorCount"] == 1, result["transform"]
+
+
+def verify_quality_action_budget_does_not_scale(spark):
+    frame = spark.createDataFrame(
+        [
+            ("event-1", "ok", "US"),
+            ("event-2", "", "KR"),
+            ("event-3", "ok", "INVALID"),
+        ],
+        schema="event_id string, required_value string, country string",
+    )
+    rules = [
+        {
+            "contractVersion": "1.0",
+            "enabled": True,
+            "failureDisposition": "keep",
+            "id": "required-value",
+            "inputColumns": ["required_value"],
+            "kind": "quality",
+            "onError": "warn",
+            "operation": "not_null",
+            "outputColumns": [],
+            "parameters": {},
+        },
+        *[
+            {
+                "contractVersion": "1.0",
+                "enabled": True,
+                "failureDisposition": "keep",
+                "id": f"accepted-country-{index}",
+                "inputColumns": ["country"],
+                "kind": "quality",
+                "onError": "warn",
+                "operation": "accepted_values",
+                "outputColumns": [],
+                "parameters": {"values": ["US", "KR"]},
+            }
+            for index in range(9)
+        ],
+    ]
+    one_rule_actions = quality_action_calls(frame, rules[:1])
+    ten_rule_actions = quality_action_calls(frame, rules)
+
+    assert one_rule_actions == (0, 1), one_rule_actions
+    assert ten_rule_actions == one_rule_actions, (
+        "quality evaluation actions must not grow with rule count: "
+        f"one rule={one_rule_actions}, ten rules={ten_rule_actions}"
+    )
+
+
+def quality_action_calls(frame, rules):
+    dataframe_type = type(frame)
+    original_count = dataframe_type.count
+    original_first = dataframe_type.first
+    count_calls = 0
+    first_calls = 0
+
+    def tracked_count(current):
+        nonlocal count_calls
+        count_calls += 1
+        return original_count(current)
+
+    def tracked_first(current):
+        nonlocal first_calls
+        first_calls += 1
+        return original_first(current)
+
+    dataframe_type.count = tracked_count
+    dataframe_type.first = tracked_first
+    try:
+        apply_snapshot_rules(frame, rules, input_row_count=3)
+    finally:
+        dataframe_type.count = original_count
+        dataframe_type.first = original_first
+    return count_calls, first_calls
 
 
 def verify_case(spark, case):

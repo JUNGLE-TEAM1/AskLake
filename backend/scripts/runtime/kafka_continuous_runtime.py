@@ -1615,7 +1615,11 @@ def main() -> None:
                 rule_fingerprint=RULE_FINGERPRINT,
                 source_boundary=source_boundary,
             )
-            iceberg_commit.pop("_previousSnapshot", None)
+            for private_key in [
+                key for key in iceberg_commit
+                if str(key).startswith("_")
+            ]:
+                iceberg_commit.pop(private_key, None)
         if quarantined_count:
             quarantine_frame = None
             if schema_invalid_count:

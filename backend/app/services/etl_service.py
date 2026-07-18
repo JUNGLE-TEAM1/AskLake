@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Callable
 import unicodedata
@@ -3123,6 +3124,8 @@ def reconcile_airflow_catalog(
                 run_id=run_id,
             )
 
+    catalog_started_at = iso_now()
+    catalog_started_monotonic = perf_counter()
     lease_seconds = spark_execution_lease_seconds()
     lease = etl_repository.claim_run_execution_lease(
         db,
@@ -3179,6 +3182,8 @@ def reconcile_airflow_catalog(
             retry_on_create_conflict=True,
             owner=FASTAPI_EXECUTION_OWNER,
             generation=lease.generation,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
         completed = True
         return response
@@ -3191,6 +3196,8 @@ def reconcile_airflow_catalog(
                 exc.message,
                 owner=FASTAPI_EXECUTION_OWNER,
                 generation=lease.generation,
+                timing_started_at=catalog_started_at,
+                timing_started_monotonic=catalog_started_monotonic,
             )
         raise
     except Exception as exc:
@@ -3202,6 +3209,8 @@ def reconcile_airflow_catalog(
             message,
             owner=FASTAPI_EXECUTION_OWNER,
             generation=lease.generation,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
         raise catalog_reconciliation_error(
             "Catalog reconciliation failed.",
@@ -3243,6 +3252,8 @@ def commit_airflow_catalog_reconciliation(
     retry_on_create_conflict: bool,
     owner: str,
     generation: int,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> AirflowCatalogReconciliationResponse:
     run = etl_repository.get_run_for_execution_fence(
         db,
@@ -3271,15 +3282,23 @@ def commit_airflow_catalog_reconciliation(
         )
 
     reconciled_at = iso_now()
+    duration_ms = (
+        max(0, round((perf_counter() - timing_started_monotonic) * 1000))
+        if timing_started_monotonic is not None
+        else 0
+    )
     dataset_model = dataset_from_spark_result(job, result, existing_dataset)
     iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     catalog_result = {
         "dataFileCount": parse_count_value(result.get("dataFileCount")),
         "datasetId": dataset_id,
+        "durationMs": duration_ms,
+        "endedAt": reconciled_at,
         "icebergSnapshotId": optional_string(iceberg_commit.get("snapshotId")),
         "parquetObjectCount": parse_count_value(result.get("parquetObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
+        "startedAt": timing_started_at or reconciled_at,
         "status": "success",
         "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
         "storageSizeBytes": parse_count_value(result.get("storageSizeBytes")),
@@ -3305,6 +3324,8 @@ def commit_airflow_catalog_reconciliation(
                 retry_on_create_conflict=False,
                 owner=owner,
                 generation=generation,
+                timing_started_at=timing_started_at,
+                timing_started_monotonic=timing_started_monotonic,
             )
         raise
 
@@ -3325,6 +3346,8 @@ def persist_catalog_reconciliation_failure(
     *,
     owner: str,
     generation: int,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> None:
     try:
         db.rollback()
@@ -3342,9 +3365,19 @@ def persist_catalog_reconciliation_failure(
             **(run.task_states or {}),
             "catalogResult": {
                 "datasetId": dataset_id,
+                "durationMs": (
+                    max(
+                        0,
+                        round((perf_counter() - timing_started_monotonic) * 1000),
+                    )
+                    if timing_started_monotonic is not None
+                    else 0
+                ),
+                "endedAt": failed_at,
                 "error": compact_message,
                 "failedAt": failed_at,
                 "runId": run_id,
+                "startedAt": timing_started_at or failed_at,
                 "status": "failed",
             },
         }
@@ -3543,12 +3576,34 @@ def verify_spark_iceberg_result(
                 "storageSizeBytes": storage_size_bytes,
             },
         )
+    spark_snapshot_file_count = parse_count_value(result.get("outputFileCount"))
+    commit_snapshot_file_count = (
+        parse_count_value(commit.get("dataFileCount"))
+        if commit.get("dataFileCount") is not None
+        else None
+    )
+    if commit_snapshot_file_count is not None and (
+        commit_snapshot_file_count != data_file_count
+        or spark_snapshot_file_count != data_file_count
+    ):
+        raise catalog_reconciliation_error(
+            "Spark and Trino Iceberg snapshot file counts do not match.",
+            {
+                "icebergCommitDataFileCount": commit_snapshot_file_count,
+                "jobId": job.id,
+                "outputFileCount": spark_snapshot_file_count,
+                "runId": run_id,
+                "snapshotDataFileCount": data_file_count,
+                "snapshotId": snapshot_id,
+            },
+        )
     verified = evidence.model_dump(mode="json", by_alias=True)
     return {
         **result,
         "dataFileCount": data_file_count,
         "icebergCommit": verified,
         "materializationOutputPath": evidence.warehouse_location,
+        "outputFileCount": data_file_count,
         "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
         "queryEngineVerified": True,
         "ruleFingerprint": evidence.rule_fingerprint,
@@ -3693,11 +3748,13 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "icebergCommit",
             "outputPath",
             "outputRows",
+            "phaseTimings",
             "quality",
             "schema",
             "sourceBoundary",
             "sourceCollection",
             "sourcePath",
+            "sparkResources",
             "sparkExitCode",
             "startedAt",
             "status",
@@ -5175,6 +5232,9 @@ def dag_steps_from_airflow_sync(
     task_instances: list[AirflowTaskInstance],
 ) -> list[dict[str, Any]]:
     task_by_id = {task.task_id: task for task in task_instances if task.task_id}
+    task_states = run.get("taskStates") if isinstance(run.get("taskStates"), dict) else {}
+    spark_result = task_states.get("sparkResult") if isinstance(task_states.get("sparkResult"), dict) else {}
+    catalog_result = task_states.get("catalogResult") if isinstance(task_states.get("catalogResult"), dict) else {}
     run_status = str(run.get("status") or "running")
     run_state = str(run.get("airflowState") or run_status)
     submit_status = "success" if run_status in TERMINAL_RUN_STATUSES else "running"
@@ -5195,24 +5255,103 @@ def dag_steps_from_airflow_sync(
         status_value = task.asklake_status if task else "pending"
         airflow_state = task.state if task and task.state else "not_started"
         logs = [f"Airflow Task Instance state: {airflow_state}"]
-        if task and task.raw.get("try_number") is not None:
-            logs.append(f"try_number={task.raw.get('try_number')}")
-        steps.append(dag_step(task_id, title, airflow_state, status_value, [
+        details = [
             ["Airflow task", task_id],
             ["Airflow state", airflow_state],
-        ], logs))
+        ]
+        if task and task.raw.get("try_number") is not None:
+            logs.append(f"try_number={task.raw.get('try_number')}")
+        duration, completed_at = airflow_task_timing(task)
+        if task_id == "spark_process_write" and spark_result:
+            duration = format_duration_ms(spark_result.get("durationMs"))
+            completed_at = optional_string(spark_result.get("endedAt")) or completed_at
+            details.extend(spark_phase_timing_rows(spark_result))
+            details.extend([
+                ["Executors", str((spark_result.get("sparkResources") or {}).get("executorInstances") or 1)],
+                ["Input rows", format_rows(spark_result.get("inputRows"))],
+                ["Output rows", format_rows(spark_result.get("outputRows"))],
+                ["Snapshot data files", str(spark_result.get("outputFileCount") or 0)],
+            ])
+        elif task_id == "publish_run_result" and catalog_result:
+            duration = format_duration_ms(catalog_result.get("durationMs"))
+            completed_at = (
+                optional_string(catalog_result.get("endedAt"))
+                or optional_string(catalog_result.get("reconciledAt"))
+                or completed_at
+            )
+            details.extend([
+                ["Catalog reconciliation", duration],
+                ["Snapshot data files", str(catalog_result.get("dataFileCount") or 0)],
+                ["Storage bytes", str(catalog_result.get("storageSizeBytes") or 0)],
+            ])
+        steps.append(dag_step(
+            task_id,
+            title,
+            airflow_state,
+            status_value,
+            details,
+            logs,
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     extra_tasks = [
         task for task in task_instances
         if task.task_id and task.task_id not in AIRFLOW_TASK_TITLES
     ]
     for task in extra_tasks:
-        steps.append(dag_step(task.task_id, task_title(task.task_id), task.state or "-", task.asklake_status, [
-            ["Airflow task", task.task_id],
-            ["Airflow state", task.state or "-"],
-        ], [f"Airflow Task Instance state: {task.state or '-'}"]))
+        duration, completed_at = airflow_task_timing(task)
+        steps.append(dag_step(
+            task.task_id,
+            task_title(task.task_id),
+            task.state or "-",
+            task.asklake_status,
+            [
+                ["Airflow task", task.task_id],
+                ["Airflow state", task.state or "-"],
+            ],
+            [f"Airflow Task Instance state: {task.state or '-'}"],
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     return steps
+
+
+def airflow_task_timing(task: AirflowTaskInstance | None) -> tuple[str | None, str | None]:
+    if task is None:
+        return None, None
+    completed_at = optional_string(task.raw.get("end_date"))
+    raw_duration = task.raw.get("duration")
+    if raw_duration is not None:
+        try:
+            return format_duration_ms(round(float(raw_duration) * 1000)), completed_at
+        except (TypeError, ValueError):
+            pass
+    started_at = optional_string(task.raw.get("start_date"))
+    if started_at and completed_at:
+        return format_iso_duration(started_at, completed_at), completed_at
+    return None, completed_at
+
+
+def spark_phase_timing_rows(result: dict[str, Any]) -> list[list[str]]:
+    timings = result.get("phaseTimings")
+    if not isinstance(timings, dict):
+        return []
+    labels = {
+        "sourceValidation": "Source validation/read",
+        "ruleEvaluation": "Transform/rule evaluation",
+        "qualityAggregation": "Quality/output aggregation",
+        "sourcePostValidation": "Source post-validation",
+        "targetPublish": "Iceberg/target publish",
+    }
+    rows = []
+    for key, label in labels.items():
+        timing = timings.get(key)
+        if not isinstance(timing, dict):
+            continue
+        rows.append([label, format_duration_ms(timing.get("durationMs"))])
+    return rows
 
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
@@ -5938,12 +6077,22 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     ]
 
 
-def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[Any]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+def dag_step(
+    id_: str,
+    title: str,
+    meta: str,
+    status_value: str,
+    details: list[list[Any]] | None = None,
+    logs: list[str] | None = None,
+    *,
+    duration: str | None = None,
+    completed_at: str | None = None,
+) -> dict[str, Any]:
     normalized_details = [
         [str(label or "-"), str(value if value is not None else "-")]
         for label, value in (details or [])
     ]
-    return {
+    result = {
         "details": normalized_details,
         "id": id_,
         "logs": [str(line) for line in (logs or []) if line],
@@ -5951,6 +6100,11 @@ def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[l
         "status": status_value,
         "title": title,
     }
+    if duration and duration != "-":
+        result["duration"] = duration
+    if completed_at:
+        result["completedAt"] = completed_at
+    return result
 
 
 def compact_spark_logs(result: dict[str, Any]) -> list[str]:

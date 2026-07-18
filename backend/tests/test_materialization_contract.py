@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
+from app.services.airflow_client import AirflowTaskInstance
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,
     active_materialization_runs,
@@ -9,10 +10,97 @@ from app.core.materialization import (
     materialization_mode,
     source_window_contract_version,
 )
-from app.services.etl_service import spark_materialization_mode, spark_result_manifest, spark_source_window_metadata
+from app.services.etl_service import (
+    dag_steps_from_airflow_sync,
+    spark_materialization_mode,
+    spark_result_manifest,
+    spark_source_window_metadata,
+)
 
 
 class MaterializationContractTests(unittest.TestCase):
+    def test_spark_manifest_and_airflow_steps_preserve_phase_timings(self) -> None:
+        phase_timings = {
+            "sourceValidation": {"durationMs": 1250},
+            "qualityAggregation": {"durationMs": 2400},
+            "targetPublish": {"durationMs": 3100},
+        }
+        spark_result = {
+            "durationMs": 9000,
+            "endedAt": "2026-07-18T05:00:09Z",
+            "inputRows": 100,
+            "outputFileCount": 7,
+            "outputRows": 100,
+            "phaseTimings": phase_timings,
+            "sparkResources": {"executorInstances": 4},
+            "runId": "run-timing",
+            "status": "success",
+        }
+        manifest = spark_result_manifest(spark_result, "run-timing")
+
+        self.assertEqual(manifest["phaseTimings"], phase_timings)
+        self.assertEqual(manifest["sparkResources"]["executorInstances"], 4)
+
+        def task(task_id: str, *, duration: float, end_date: str) -> AirflowTaskInstance:
+            return AirflowTaskInstance.from_payload({
+                "dag_id": "asklake_etl_job",
+                "dag_run_id": "run-timing",
+                "duration": duration,
+                "end_date": end_date,
+                "start_date": "2026-07-18T05:00:00Z",
+                "state": "success",
+                "task_id": task_id,
+            })
+
+        steps = dag_steps_from_airflow_sync(
+            SimpleNamespace(name="timed job"),
+            {
+                "airflowDagRunId": "run-timing",
+                "airflowState": "success",
+                "runId": "run-timing",
+                "status": "success",
+                "taskStates": {
+                    "sparkResult": manifest,
+                    "catalogResult": {
+                        "dataFileCount": 7,
+                        "durationMs": 450,
+                        "endedAt": "2026-07-18T05:00:10Z",
+                        "status": "success",
+                        "storageSizeBytes": 2048,
+                    },
+                },
+            },
+            [
+                task(
+                    "spark_process_write",
+                    duration=99,
+                    end_date="2026-07-18T05:00:09Z",
+                ),
+                task(
+                    "publish_run_result",
+                    duration=1,
+                    end_date="2026-07-18T05:00:10Z",
+                ),
+            ],
+        )
+        by_id = {step["id"]: step for step in steps}
+
+        self.assertEqual(by_id["spark_process_write"]["duration"], "9초")
+        self.assertEqual(
+            by_id["spark_process_write"]["completedAt"],
+            "2026-07-18T05:00:09Z",
+        )
+        self.assertIn(
+            ["Source validation/read", "1초"],
+            by_id["spark_process_write"]["details"],
+        )
+        self.assertIn(["Executors", "4"], by_id["spark_process_write"]["details"])
+        self.assertEqual(by_id["publish_run_result"]["duration"], "450ms")
+        self.assertEqual(
+            by_id["publish_run_result"]["completedAt"],
+            "2026-07-18T05:00:10Z",
+        )
+
     def test_new_snapshot_replaces_older_snapshot_and_deltas(self) -> None:
         runs = [
             {"runId": "delta-2", "status": "success", "materializationMode": "delta"},

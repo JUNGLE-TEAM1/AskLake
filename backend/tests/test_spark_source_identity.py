@@ -21,6 +21,7 @@ try:
         sql_module = ModuleType("pyspark.sql")
         functions_module = ModuleType("pyspark.sql.functions")
         types_module = ModuleType("pyspark.sql.types")
+        pyspark_module.StorageLevel = SimpleNamespace(MEMORY_AND_DISK="MEMORY_AND_DISK")
         functions_module.lit = Mock(name="lit")
         functions_module.current_timestamp = Mock(name="current_timestamp")
         sql_module.SparkSession = object
@@ -86,6 +87,10 @@ class FakeFrame:
     schema = SimpleNamespace(fields=[])
     write = FakeWriter()
 
+    def __init__(self) -> None:
+        self.persist = Mock(return_value=self)
+        self.unpersist = Mock(return_value=self)
+
     def count(self) -> int:
         return 1
 
@@ -121,7 +126,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
                 return SimpleNamespace(collect=lambda: [{"snapshot_id": "123"}])
             self.assertIn("WHERE CAST(snapshot_id AS STRING) = '123'", query)
             return SimpleNamespace(collect=lambda: [{
+                "added_data_file_count": "2",
                 "committed_at": "2026-07-14T00:00:00Z",
+                "data_file_count": "7",
                 "manifest_list": "s3://warehouse/reviews/metadata/snap-123.avro",
                 "snapshot_id": "123",
             }])
@@ -131,6 +138,8 @@ class SparkSourceIdentityTests(unittest.TestCase):
         snapshot = spark_job_run.current_iceberg_snapshot(spark, target)
 
         self.assertEqual(snapshot["snapshotId"], "123")
+        self.assertEqual(snapshot["dataFileCount"], 7)
+        self.assertEqual(snapshot["addedDataFileCount"], 2)
         self.assertEqual(spark.sql.call_count, 2)
 
     def test_kafka_snapshot_retry_reuses_existing_iceberg_commit(self) -> None:
@@ -149,7 +158,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
             "snapshotId": "kafka_snapshot_1234",
         }
         committed = {
+            "addedDataFileCount": 1,
             "committedAt": "2026-07-14T00:00:00Z",
+            "dataFileCount": 4,
             "snapshotId": "999",
             "warehouseLocation": "s3://asklake-warehouse/warehouse/reviews_snapshot",
         }
@@ -174,6 +185,7 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["operation"], "reuse")
         self.assertEqual(result["snapshotId"], "999")
         self.assertEqual(result["sourceBoundary"], boundary)
+        self.assertFalse(result["_rollbackRequired"])
         frame.writeTo.assert_not_called()
 
     def test_kafka_snapshot_retry_reuses_existing_iceberg_commit_for_replace_target(self) -> None:
@@ -192,7 +204,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
             "snapshotId": "run_cp4_retry_001",
         }
         committed = {
+            "addedDataFileCount": 1,
             "committedAt": "2026-07-16T09:00:00Z",
+            "dataFileCount": 4,
             "snapshotId": "676467971672461132",
             "warehouseLocation": "s3://asklake-warehouse/warehouse/eks_mvp_fixture",
         }
@@ -217,7 +231,44 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["operation"], "reuse")
         self.assertEqual(result["snapshotId"], "676467971672461132")
         self.assertEqual(result["sourceBoundary"], boundary)
+        self.assertFalse(result["_rollbackRequired"])
         frame.writeTo.assert_not_called()
+
+    def test_iceberg_output_file_count_uses_exact_current_snapshot_summary(self) -> None:
+        spark = SimpleNamespace()
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "table": "reviews_batch",
+        }
+        snapshot = {
+            "addedDataFileCount": 4,
+            "committedAt": "2026-07-14T00:00:00Z",
+            "dataFileCount": 69,
+            "snapshotId": "123",
+            "warehouseLocation": "s3://warehouse/reviews",
+        }
+
+        with (
+            patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="123"),
+            patch.object(spark_job_run, "iceberg_snapshot", return_value=snapshot) as exact,
+        ):
+            count = spark_job_run.iceberg_output_file_count(spark, target, "123")
+
+        self.assertEqual(count, 69)
+        exact.assert_called_once_with(spark, target, "123")
+
+    def test_iceberg_output_file_count_rejects_main_ref_drift(self) -> None:
+        spark = SimpleNamespace()
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "table": "reviews_batch",
+        }
+
+        with patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="124"):
+            with self.assertRaisesRegex(RuntimeError, "ICEBERG_CURRENT_SNAPSHOT_MISMATCH"):
+                spark_job_run.iceberg_output_file_count(spark, target, "123")
 
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())
@@ -233,13 +284,40 @@ class SparkSourceIdentityTests(unittest.TestCase):
 
         with (
             patch.object(spark_job_run, "spark_iceberg_catalog_name", return_value="asklake"),
-            patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="123"),
+            patch.object(spark_job_run, "current_iceberg_snapshot_id", side_effect=["456", "123"]),
         ):
-            spark_job_run.rollback_iceberg_commit(spark, target, previous_snapshot)
+            spark_job_run.rollback_iceberg_commit(
+                spark,
+                target,
+                previous_snapshot,
+                committed_snapshot_id="456",
+            )
 
         sql = spark.sql.call_args.args[0]
         self.assertIn("table => 'asklake.asklake.reviews_batch'", sql)
         self.assertIn("snapshot_id => 123", sql)
+
+    def test_iceberg_rollback_refuses_to_mutate_after_snapshot_drift(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "reviews_batch",
+            "tableUri": "iceberg://iceberg/asklake/reviews_batch",
+            "writeMode": "replace",
+        }
+
+        with patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="789"):
+            with self.assertRaisesRegex(RuntimeError, "ICEBERG_ROLLBACK_SNAPSHOT_DRIFT"):
+                spark_job_run.rollback_iceberg_commit(
+                    spark,
+                    target,
+                    {"snapshotId": "123"},
+                    committed_snapshot_id="456",
+                )
+
+        spark.sql.assert_not_called()
 
     def test_matching_versioned_identity_is_verified_before_read(self) -> None:
         expected = identity("incoming/a.jsonl", version_id="version-1")
@@ -421,8 +499,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["failedStage"], "Source Inventory")
         self.assertIn("phase=after_read", report["error"])
-        self.assertEqual(report["outputCleanup"], {"errors": [], "status": "success"})
-        cleanup.assert_called_once_with(spark, "s3a://m3-output/run-1.__staging__run-1")
+        self.assertNotIn("outputCleanup", report)
+        cleanup.assert_not_called()
+        self.assertEqual(frame.unpersist.call_count, 2)
         spark.stop.assert_called_once_with()
 
     def test_identity_status_checks_use_bounded_concurrency_and_keep_path_order(self) -> None:

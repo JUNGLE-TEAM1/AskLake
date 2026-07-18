@@ -131,6 +131,18 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if ! "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set sparkApplication.executor.instances=4 >/dev/null 2>&1; then
+  echo "EKS workload schema rejected the bounded four-executor experiment" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set sparkApplication.executor.instances=5 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted more than four Spark executors" >&2
+  exit 1
+fi
+
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set frontend.service.name=asklake-frontend >/dev/null 2>&1; then
   echo "EKS workload schema accepted a frontend Service name that drifts from the foundation handoff" >&2

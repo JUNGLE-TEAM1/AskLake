@@ -15,9 +15,11 @@ try {
   assert(actionBudget.process.status === 0, `Action-budget pipeline exited ${actionBudget.process.status}:\n${actionBudget.process.stdout}\n${actionBudget.process.stderr}`);
   assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
+  assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   const sourceReadMarker = "FileScanRDD: Reading File path: file:///work/fixtures/rules/snapshot-pipeline-input.jsonl";
   const sourceReadCount = actionBudget.process.stderr.split(sourceReadMarker).length - 1;
-  assert(sourceReadCount === 3, `Expected exactly 3 raw JSONL reads, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
+  assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
 
   const success = runPipeline("success", successManifest());
   assert(success.process.status === 0, `Success pipeline exited ${success.process.status}:\n${success.process.stdout}\n${success.process.stderr}`);

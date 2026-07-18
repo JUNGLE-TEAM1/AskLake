@@ -12,6 +12,7 @@ import {
   sparkKafkaFixtureEnvironment,
   sparkJobManifest,
   sparkKubernetesApplicationName,
+  sparkExecutorInstances,
   sparkPackages,
   sparkSourceFromJob,
 } from "../src/sparkRunner.mjs";
@@ -43,6 +44,7 @@ function applicationFixture() {
     ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_REQUEST: "500m",
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: "3",
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "1500m",
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "4",
     ASKLAKE_SPARK_KUBERNETES_NAMESPACE: "asklake-dev",
     ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET: "asklake-spark-runtime",
     ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT: "asklake-spark",
@@ -58,6 +60,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.match(first.metadata.name, /^asklake-run-[a-z0-9-]+$/);
   assert.ok(first.metadata.name.length <= 63);
   assert.equal(first.metadata.annotations["asklake.io/run-id"], RUN_ID);
+  assert.equal(first.metadata.annotations["asklake.io/executor-instances"], "4");
   assert.equal(first.spec.image, IMAGE);
   assert.equal(first.spec.driver.serviceAccount, "asklake-spark");
   assert.equal(first.spec.executor.serviceAccount, "asklake-spark");
@@ -65,6 +68,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.equal(first.spec.driver.coreLimit, "2");
   assert.equal(first.spec.executor.coreRequest, "1500m");
   assert.equal(first.spec.executor.coreLimit, "3");
+  assert.equal(first.spec.executor.instances, 4);
   assert.equal(first.spec.sparkConf["spark.jars.ivy"], "/tmp/.ivy2");
   const expectedPlacement = {
     nodeSelector: {
@@ -89,6 +93,27 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   });
   assert.equal("value" in jdbcPassword, false);
   assert.equal(JSON.stringify(first).includes("replace-with-secret"), false);
+});
+
+test("Kubernetes Spark executor count is bounded for the 1, 2, 4 experiment matrix", () => {
+  assert.equal(sparkExecutorInstances({}), 1);
+  assert.equal(sparkExecutorInstances({
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "1",
+  }), 1);
+  assert.equal(sparkExecutorInstances({
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "2",
+  }), 2);
+  assert.equal(sparkExecutorInstances({
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "4",
+  }), 4);
+  for (const value of ["0", "5", "1.5", "not-a-number"]) {
+    assert.throws(
+      () => sparkExecutorInstances({
+        ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: value,
+      }),
+      /must be an integer between 1 and 4/,
+    );
+  }
 });
 
 test("MSK IAM dependency is image-local, Kafka-only, and absent from Maven packages", () => {
