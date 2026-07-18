@@ -18,17 +18,21 @@ AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM
 | 기준 | 결과 | 근거 |
 | --- | --- | --- |
 | fault/retry 변경 `pair1` 병합 | PASS | PR #978, merge revision `4e708679` |
-| 공식 candidate delivery | PASS | workflow run `29651079168` |
+| 공식 candidate delivery | PASS | workflow run `29653403558`, `pair1` `c3c81dc9` |
 | candidate receipt | PASS | `linux/amd64`, 5/5 digest-pinned, mode `0600` |
 | live release shape | OBSERVED | component별 두 공식 delivery receipt가 섞여 있음 |
 | current/rollback Backend receipt | PASS | FastAPI/Collector exact-match, byte-exact, mode `0600` |
 | candidate capability proof | PASS | candidate Git blob SHA-256과 구현 ancestry 자동 검증 |
-| bound execution contract | PASS | private mode `0600`, approval `pending` |
+| bound execution contract | PASS | `c3c81dc9`, capability verified, live-input/approval pending, mode `0600` |
 | candidate Job/source boundary | PASS | slot 3개, 후보 3개, active fixture Run 0 |
 | SparkApplication visibility | PASS | FastAPI service account로 in-cluster list |
 | live-input approval gate | PASS (static) | exact schema, baseline/target 검증, byte/target hash binding |
 | approved execution contract | BLOCKED | exact EKS cluster와 preserved EC2 env 미입력 |
 | live mutation | NOT STARTED | cluster resource 변경 `0` |
+
+workflow run `29651079168`로 오인한 기존 로컬 candidate 파일은 실제 Git revision이
+현재 Backend build input보다 오래돼 freshness gate에서 거부됐다. live에는 사용하지
+않았으며, 최신 `pair1` artifact로 교체한 뒤 계약을 다시 바인딩했다.
 
 ## 완료한 제품 계약
 
