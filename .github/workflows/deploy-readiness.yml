@@ -1,0 +1,56 @@
+name: Deploy Readiness
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "deploy/**"
+      - "scripts/verify-deploy-readiness.sh"
+      - "scripts/write-release-record.py"
+      - "tests/deploy/**"
+      - ".github/workflows/deploy-readiness.yml"
+      - "docs/04-development-guide.md"
+      - "docs/system-guardrails.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-readiness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run deploy readiness checks
+        env:
+          ASKLAKE_RELEASE_RECORD_PATH: ${{ runner.temp }}/asklake-deploy-readiness.json
+          ASKLAKE_RELEASE_RECORD_SOURCE: github-actions
+          ASKLAKE_PYTHON_BIN: python
+        run: bash scripts/verify-deploy-readiness.sh
+
+      - name: Upload deploy readiness record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-readiness-${{ github.sha }}
+          path: ${{ runner.temp }}/asklake-deploy-readiness.json
+          if-no-files-found: warn
