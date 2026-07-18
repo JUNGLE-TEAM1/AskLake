@@ -1270,6 +1270,58 @@ steady gate가 Phase 7 공동 판정이다. CloudWatch는 add-on Ready뿐 아니
 성공을 트래픽 cutover 성공으로 확대하지 않고, Phase 4 ALB/RDS/HPA 복구를 S3·Catalog·Iceberg
 연속성으로 확대하지 않는다.
 
+Phase 7 private round-trip evidence가 `candidate_repromotion_passed`인 뒤 Phase 8
+fault/E2E는 `scripts/run-eks-day18-phase8.mjs`가 소유한다. 먼저 exact EKS cluster,
+approved execution contract, live input, candidate receipt, round-trip evidence와
+preserved EC2 env를 `/private/tmp` mode `0600` 경로로 전달하고 `--preflight`를 실행한다.
+cluster 이름이나 EC2 env 경로는 AWS/kubecontext에서 추론하지 않는다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<user-provided-exact-cluster-name>'
+export ASKLAKE_DAY18_EC2_ENV='<user-provided-absolute-private-env-path>'
+export ASKLAKE_DAY18_EXECUTION_CONTRACT='/private/tmp/asklake-day18-execution-contract-<revision>-approved.json'
+export ASKLAKE_DAY18_LIVE_INPUT='/private/tmp/asklake-day18-live-input-<revision>.json'
+export ASKLAKE_DAY18_IMAGE_RECEIPT='/private/tmp/asklake-day18-candidate.image-receipt.json'
+export ASKLAKE_DAY18_ROUND_TRIP_PRIVATE_EVIDENCE='/private/tmp/asklake-day18-round-trip-<revision>.json'
+export ASKLAKE_DAY18_PHASE8_STATE='/private/tmp/asklake-day18-phase8-state-<revision>.json'
+
+node scripts/run-eks-day18-phase8.mjs --preflight
+```
+
+preflight가 새 state를 만든 뒤 mutating mode에는 exact confirmation을 별도로
+설정한다. 단계별 실행은 Run D deny/retry, Run E driver failure/attempt 2, fresh
+Run A/B/C, cleanup 순서다.
+
+```bash
+export ASKLAKE_DAY18_PHASE8_CONFIRM='run-approved-day18-phase8-fault-and-e2e'
+
+node scripts/run-eks-day18-phase8.mjs --run-d
+node scripts/run-eks-day18-phase8.mjs --run-e
+node scripts/run-eks-day18-phase8.mjs --run-abc
+node scripts/run-eks-day18-phase8.mjs --cleanup
+```
+
+중단 후에는 같은 private state와 input hash를 사용해 실패한 mode를 다시 호출한다.
+runner는 완료된 MSK probe, driver delete와 Airflow submit을 반복하지 않는다. binding이
+달라지거나 live state가 모호하면 새 state로 덮어쓰지 말고 blocker를 해소해 다시
+preflight한다. cleanup은 Run A/B/C 전에도 호출할 수 있지만 runner 소유 temporary
+Job만 UID precondition으로 삭제하며 durable RDS/S3/Iceberg/Catalog/SparkApplication
+evidence는 남긴다.
+
+```bash
+node --test scripts/test-eks-day18-phase8.mjs
+python3 -m unittest scripts.test_eks_day18_phase8_incluster
+python3 -m py_compile \
+  scripts/run_eks_day18_phase8_incluster.py \
+  scripts/test_eks_day18_phase8_incluster.py
+```
+
+위 검증은 sanitizer/Event 집계, private state binding, exact Describe-only deny,
+driver owner UID, restart/no-redelete, ambiguous checkpoint 차단과 실패 후 cleanup을
+검사하며 live 리소스를 만들지 않는다. 세부 성공 기준과 현재 blocker는
+[EKS Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)과
+[Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
+
 A 소유 NodePool만 먼저 검증할 때는 confirmation-gated `scripts/run-eks-day17-isolated-nodepool-smoke.sh`를 사용한다. 실행기는 General 1 CPU Pod, Spark 2 CPU Pod와 toleration 없는 Spark 음성 Pod만 만든다. baseline node 목록은 임시 파일에만 보관하며 두 positive Pod가 unscheduled 상태를 거쳐 baseline에 없던 올바른 pool node에서 Ready가 됐는지 확인한다. Spark 음성 판정은 NodePool·node exact taint, Pod toleration 부재와 untolerated event를 결합한다. `isolated` final은 이 신규-node 귀속, scale-out/in과 전체 cleanup이 모두 맞아야 통과한다. 이는 FastAPI HPA와 Spark 비즈니스 Job 통합 증거를 대신하지 않는다. 실제 결과는 [Day 17 Pair A 격리 NodePool 검증 기록](eks-day17-a-isolated-nodepool-evidence.md)을 따른다.
 
 2026-07-15 `dev` 환경의 실제 foundation, Metrics Server, image delivery, node scale과 MSK Serverless 적용 결과 및 후속 경계는 [EKS MVP 14일차 실제 환경 검증 기록](eks-day14-runtime-evidence.md)에 요약한다. 해당 문서는 비밀이 아닌 판정만 기록하며 실제 endpoint·ARN·digest·evidence JSON은 저장소 밖에서 관리한다.

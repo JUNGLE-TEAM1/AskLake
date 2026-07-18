@@ -27,6 +27,8 @@ AWS 조회 결과로 private input 파일을 추론·생성하지 않는다. IAM
 | candidate Job/source boundary | PASS | slot 3개, 후보 3개, active fixture Run 0 |
 | SparkApplication visibility | PASS | FastAPI service account로 in-cluster list |
 | live-input approval gate | PASS (static) | exact schema, baseline/target 검증, byte/target hash binding |
+| Phase 8 runner | PASS (static) | preflight, Run D/E, fresh A/B/C, resumable checkpoint와 bounded cleanup |
+| Phase 8 sanitizer/fail-closed test | PASS | Node 19/19, in-cluster Python 6/6 |
 | approved execution contract | BLOCKED | exact EKS cluster와 preserved EC2 env 미입력 |
 | live mutation | NOT STARTED | cluster resource 변경 `0` |
 
@@ -55,6 +57,7 @@ workflow run `29651079168`로 오인한 기존 로컬 candidate 파일은 실제
 | --- | --- | --- |
 | image delivery | PASS | merge revision short hash, 5/5 immutable image |
 | contract binding | PASS | current/rollback exact, capability proof verified |
+| Phase 8 runner | PASS (static) | private input binding, Run D/E resume, A/B/C와 cleanup 순서 |
 | baseline | BLOCKED | workload 0, FastAPI/Collector/HPA, Continuous/EC2 경계 |
 | candidate promotion | PENDING | Helm revision alias와 image short hash |
 | intentional rollback | PENDING | 이전 revision alias, health와 durable result 보존 |
@@ -76,6 +79,8 @@ workflow run `29651079168`로 오인한 기존 로컬 candidate 파일은 실제
 | EKS fault/retry focused Python test | `55 passed, 1 skipped` |
 | Spark Kubernetes Node test | `18 passed` |
 | execution contract/binding/live-input test | `18 passed` |
+| Phase 8 Node runner test | `19 passed` |
+| Phase 8 in-cluster helper test | `6 passed` |
 | Node syntax check | PASS |
 | `npm run verify` | LOCAL BLOCKED — MinIO `127.0.0.1:9000` 미기동 |
 
@@ -93,3 +98,8 @@ MinIO 미기동은 code failure로 계산하지 않는다. 최종 PR CI 또는 p
 6. 새 `pair1` 기준 재-binding, live-input hash binding과 approved contract 생성
 
 하나라도 없으면 live run을 만들지 않고 blocker로 보고한다.
+
+현재 구현·테스트·문서와 PR 준비는 위 두 private 입력 없이 완료할 수 있다. 반면
+Phase 7/8 live 성공 판정, 실제 Event/CloudWatch 타임라인과 exact-one 결과는 두 입력을
+사용한 approved contract 이후에만 채운다. 따라서 이 문서의 `PASS (static)`을 live
+fault/E2E 성공으로 읽지 않는다.

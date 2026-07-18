@@ -152,6 +152,100 @@ AWS 조회 결과로 cluster/EC2 input을 추론하거나 새 권한을 만들�
 두 입력이 없으면 live-input 파일과 approved contract를 만들 수 없고 rollout,
 fault Job, SparkApplication 또는 E2E Run을 시작하지 않는다.
 
+## Phase 8 fault/E2E runner
+
+Phase 7의 candidate 승격 → intentional rollback → candidate 재승격이 private
+round-trip evidence에서 순서대로 통과한 뒤에만
+`scripts/run-eks-day18-phase8.mjs`를 사용한다. runner는 제품 경로를 대신하지 않고
+Run D/E fault와 fresh Run A/B/C를 승인된 범위에서 조정한다.
+
+필수 입력은 모두 `/private/tmp`, mode `0600`, symlink 금지이며 byte hash로 승인
+contract에 묶인다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME='<user-provided-exact-cluster-name>'
+export ASKLAKE_DAY18_EC2_ENV='<user-provided-absolute-private-env-path>'
+export ASKLAKE_DAY18_EXECUTION_CONTRACT='/private/tmp/asklake-day18-execution-contract-<revision>-approved.json'
+export ASKLAKE_DAY18_LIVE_INPUT='/private/tmp/asklake-day18-live-input-<revision>.json'
+export ASKLAKE_DAY18_IMAGE_RECEIPT='/private/tmp/asklake-day18-candidate.image-receipt.json'
+export ASKLAKE_DAY18_ROUND_TRIP_PRIVATE_EVIDENCE='/private/tmp/asklake-day18-round-trip-<revision>.json'
+export ASKLAKE_DAY18_PHASE8_STATE='/private/tmp/asklake-day18-phase8-state-<revision>.json'
+
+node scripts/run-eks-day18-phase8.mjs --preflight
+```
+
+preflight는 mutation confirmation 없이 다음을 읽기 전용 또는 server dry-run으로
+검사하고 새 private state를 exclusive create한다.
+
+- approved contract, live-input/target hash, candidate receipt와 Phase 7 ordered revision
+- exact EKS context와 보존 EC2/Continuous/외부 health 경계
+- FastAPI `2/2`, Collector `1/1`, HPA `2/2`, candidate Deployment/Pod imageID
+- Describe-only MSK policy의 exact `Connect`/`DescribeTopic` action과 wildcard 0
+- deny Job server dry-run과 FastAPI in-cluster DB/Spark/Catalog read boundary
+- namespace active Job/Run/Pending 0, SparkApplication visibility와 Node baseline
+
+mutation mode는 별도 exact confirmation을 요구한다.
+
+```bash
+export ASKLAKE_DAY18_PHASE8_CONFIRM='run-approved-day18-phase8-fault-and-e2e'
+
+node scripts/run-eks-day18-phase8.mjs --run-d
+node scripts/run-eks-day18-phase8.mjs --run-e
+node scripts/run-eks-day18-phase8.mjs --run-abc
+node scripts/run-eks-day18-phase8.mjs --cleanup
+```
+
+`--all`은 이미 통과한 preflight state에서 Run D → Run E → Run A/B/C → cleanup을
+같은 순서로 실행한다. 단계별 mode가 장애 위치와 재개 경계를 더 명확히 남기므로
+운영 관찰에서는 단계별 실행을 기본으로 한다. `--all`도 중간 blocker에서 즉시
+중단하므로 그때는 원인을 확인한 뒤 별도 `--cleanup`을 호출한다.
+
+### Run D
+
+1. 승인된 Run A source boundary로 새 logical Run D를 Airflow 호출 없이 예약한다.
+2. exact Describe-only service account로 one-message tokenless MSK Job을 만들고
+   write 1회가 `AUTHORIZATION`과 Kafka protocol
+   `TOPIC_AUTHORIZATION_FAILED`(code 29), acknowledgement 0으로 끝났는지 확인한다.
+3. Job UID와 private log SHA-256을 RDS의 같은 Run fault generation에 기록하고,
+   exact UID precondition으로 temporary Job을 삭제한다.
+4. 같은 Run D를 Airflow에 제출하고 terminal success, Iceberg snapshot 1개,
+   Catalog materialization 1개를 교차 검증한다.
+
+### Run E
+
+1. 승인된 Run B source boundary로 새 logical Run E를 Airflow 호출 없이 예약한다.
+2. internal 경계로 first Spark attempt를 시작하고 persisted application
+   namespace/name/UID를 checkpoint한다.
+3. driver label과 SparkApplication owner UID가 모두 일치하는 active driver Pod
+   하나만 UID precondition으로 삭제한다.
+4. first attempt가 제품 terminal failure `FAILED` 또는 `SUBMISSION_FAILED`가 된
+   뒤 같은 Run E를 Airflow에 제출한다.
+5. attempt generation 2의 새 application UID, terminal success, Iceberg snapshot
+   1개와 Catalog materialization 1개를 검증한다.
+
+이 경로는 Airflow retry 설정이나 image를 바꾸지 않는다. `first_attempt_armed`,
+`driver_deleted`, `first_attempt_failed`, `airflow_submitted`, `passed` checkpoint를
+사용해 재시작 시 delete/submit을 반복하지 않는다. checkpoint와 live application
+상태가 모호하면 추가 mutation을 중단한다.
+
+### Run A/B/C, 증거와 cleanup
+
+Run D/E가 모두 통과한 뒤 Day 17의 격리 runner/verifier를 fresh private
+receipt/results로 재사용한다. 세 Run 모두 expected `100`, source/output/checkpoint와
+consumer group/table `3/3 unique`, application UID `3/3 unique`, exact-one
+snapshot/materialization이어야 한다.
+
+runner는 같은 campaign window의 Kubernetes Event와 CloudWatch marker를
+type/reason/kind별 count로만 기록한다. console에는 Run alias, state와 short hash만
+출력한다. raw identity와 log message는 private evidence에도 복제하지 않는다.
+CloudWatch 조회는 pagination과 page/event 상한을 가진다.
+
+cleanup은 앞 단계가 실패해도 실행할 수 있다. current campaign의 recorded deny Job만
+name/UID/receipt를 모두 대조해 삭제하고, active Job/Run/Pending/temp resource `0`,
+FastAPI `2/2`, Collector `1/1`, HPA `2/2`, node baseline 복귀와 외부 경계를 확인한다.
+RDS Run, S3 object, Iceberg snapshot, Catalog materialization 또는 SparkApplication
+evidence는 삭제하지 않는다.
+
 ## 로컬 검증
 
 ```bash
@@ -161,10 +255,17 @@ node --test \
   scripts/test-eks-day18-live-input.mjs
 
 bash scripts/test-eks-day18-backend-rollout-round-trip.sh
+node --test scripts/test-eks-day18-phase8.mjs
+python3 -m unittest scripts.test_eks_day18_phase8_incluster
 bash scripts/verify-tracked-evidence-redaction.sh
 ```
 
 contract/binding/live-input 테스트는 pending/unresolved 입력, canonical scope hash,
 private mode, overwrite, receipt ancestry/freshness, capability proof derivation,
 unsafe baseline, 3/3 격리, fault-source mismatch, sanitizer와 수동 tamper 거부를
-확인한다. 이 검증은 AWS/Kubernetes/RDS 리소스를 만들거나 변경하지 않는다.
+확인한다. Phase 8 runner 테스트는 sanitizer/Event 집계, exact Describe-only policy,
+bounded deny Job, driver owner UID, Run E restart/no-redelete, 모호한 checkpoint
+fail-closed, 실패 후 cleanup, private state binding과 confirmation 부재를 검증한다.
+in-cluster 테스트는 campaign/alias, marker 보존, private identity, target binding과
+read-only preflight를 stdlib fixture로 확인한다. 이 검증은 AWS/Kubernetes/RDS
+리소스를 만들거나 변경하지 않는다.
