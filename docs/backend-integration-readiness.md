@@ -448,6 +448,7 @@ Catalog dataset materialization 보완 기준:
 - 같은 Job 또는 같은 `targetDataset`의 성공 결과는 새 Catalog row를 만들지 않고 기존 dataset payload의 `materializationRuns` history에 추가한다. 일반 full-refresh는 snapshot으로 이전 snapshot을 rebaseline하고 Kafka delta만 누적한다.
 - `materializationRuns`가 없는 기존 payload는 빈 history로 읽기 호환한다.
 - `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}`는 metadata history만 삭제하고 active snapshot/delta 기준으로 부모 rows/size/latest/storageLocation을 재계산한다. 물리 lake 파일 삭제는 후속 범위다.
+- `GET /api/catalog/datasets/{datasetId}/deletion-impact`와 `DELETE /api/catalog/datasets/{datasetId}`는 materialization 한 건 삭제와 별개인 Dataset 전체 삭제 경로다. Catalog 목록에서 직접 시작하며 dependency blocker가 없을 때 durable worker가 AskLake-managed Iceberg/ClickHouse/local/S3/RAG artifact를 먼저 지우고 metadata를 정리한다. 물리 purge 실패 시 Dataset row를 유지하고 상태를 `failed`로 기록한다.
 - Catalog UI는 dataset row 펼침에서 version history를 5개씩 표시하며, 5개 이하일 때는 실제 개수만큼만 높이가 늘어난다.
 구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
