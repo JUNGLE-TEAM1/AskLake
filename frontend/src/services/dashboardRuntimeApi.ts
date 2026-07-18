@@ -22,6 +22,11 @@ export type DashboardWidgetRefreshResponse = {
   widgets: DashboardRuntimeWidget[];
 };
 
+export type DashboardWidgetMutationResponse = {
+  id: string;
+  widget: DashboardRuntimeWidget;
+};
+
 export type CreateDraftWidgetInput = {
   config?: Record<string, unknown>;
   data?: Array<Record<string, unknown>>;
@@ -39,9 +44,12 @@ export type UpdateDraftWidgetInput = {
   type?: DashboardRuntimeWidgetType;
 };
 
-export function getPublishedDashboard(dashboardId: string) {
+export function getPublishedDashboard(
+  dashboardId: string,
+  { includeData = true }: { includeData?: boolean } = {},
+) {
   return apiClient.get<DashboardRuntimeResponse>(
-    `/api/dashboards/${encodeURIComponent(dashboardId)}/published`,
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/published?includeData=${includeData}`,
   );
 }
 
@@ -56,21 +64,33 @@ export function queryDashboardDatasetFreshness(
   );
 }
 
-export function queryPublishedDashboardWidgets(
+export function queryDashboardWidgets(
   dashboardId: string,
+  mode: "draft" | "published",
   widgetIds: string[],
   options: ApiRequestOptions = {},
 ) {
   return apiClient.post<DashboardWidgetRefreshResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/widgets/query`,
-    { widgetIds },
+    { mode, widgetIds },
     options,
   );
 }
 
-export function ensureDraftDashboard(dashboardId: string) {
+export function queryPublishedDashboardWidgets(
+  dashboardId: string,
+  widgetIds: string[],
+  options: ApiRequestOptions = {},
+) {
+  return queryDashboardWidgets(dashboardId, "published", widgetIds, options);
+}
+
+export function ensureDraftDashboard(
+  dashboardId: string,
+  { includeData = true }: { includeData?: boolean } = {},
+) {
   return apiClient.post<DashboardRuntimeResponse>(
-    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`,
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure?includeData=${includeData}`,
     {},
   );
 }
@@ -83,14 +103,17 @@ export function createDraftPage(dashboardId: string, input: { title: string }) {
 }
 
 export function createDraftWidget(dashboardId: string, pageId: string, input: CreateDraftWidgetInput) {
-  return apiClient.post<{ id: string }>(
+  return apiClient.post<DashboardWidgetMutationResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}/widgets`,
     input,
   );
 }
 
 export function deleteDraftPage(dashboardId: string, pageId: string) {
-  return apiClient.delete<{ ok: true }>(
+  return apiClient.delete<{
+    ok: true;
+    replacementPage: { id: string; orderIndex: number; title: string } | null;
+  }>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}`,
   );
 }
@@ -102,7 +125,7 @@ export function deleteDraftWidget(dashboardId: string, widgetId: string) {
 }
 
 export function updateDraftWidget(dashboardId: string, widgetId: string, input: UpdateDraftWidgetInput) {
-  return apiClient.patch<{ id: string }>(
+  return apiClient.patch<DashboardWidgetMutationResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/widgets/${encodeURIComponent(widgetId)}`,
     input,
   );

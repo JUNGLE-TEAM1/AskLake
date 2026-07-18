@@ -3,7 +3,7 @@
 ## 입력 기준
 
 - `origin/pair1`: `a45b2ced42b5683c55d9b96cdabe46a9175f6b68`
-- `origin/dev`: `b63de463d0e62691c6240de9c6e6d22f04071be6`
+- `origin/dev`: `800de67cf151a6961f95b5a2ea80fb841a95e945`
 - 통합 방식: 최신 `pair1`을 기준으로 `dev`를 merge하고, 충돌 파일은 dev의 최신 모듈 경계를 우선한 뒤 pair1 EKS 계약을 해당 경계에 이식했다.
 
 ## 보존한 범위
@@ -22,10 +22,11 @@ EKS fixture 판별·slot·source boundary는 `backend/app/services/etl/eks_fixtu
 - EKS fixture 판별기가 경량 Spark 계약 객체에도 안전하게 동작하도록 optional model field를 fail-safe로 읽는다.
 - pair1 HTTP 502 회귀 테스트를 dev의 확장 error envelope에 맞추되 code/message/details와 민감정보 비노출 계약은 그대로 검증한다.
 - dev PR #923의 ClickHouse 실시간 JOIN·Catalog unique-key 복구를 추가 통합하고 Backend·Frontend 계약을 다시 검증했다.
+- dev PR #919의 Dashboard schema migration, 저장 복구, batch cache와 widget 로딩 분리를 추가 통합하고, pair1의 외부 Continuous 제어면 차단을 새 Dashboard 경계 안에 유지했다.
 
 ## 검증 결과
 
-- Backend Python 전체: `632 passed`, `2 skipped`
+- Backend Python 전체: `642 passed`, `2 skipped`
   - skip은 명시적 PostgreSQL concurrency opt-in 등 외부 fixture가 필요한 항목이다.
 - Frontend UI regression: `138 checks passed`
 - Frontend production build: 성공

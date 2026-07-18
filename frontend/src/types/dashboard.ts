@@ -234,6 +234,8 @@ type DashboardRuntimeWidgetBase = {
   calculatedAt?: string | null;
   calculationVersion?: string | null;
   data: Array<Record<string, unknown>>;
+  dataError?: string | null;
+  dataStatus?: "pending" | "loading" | "ready" | "error";
   datasetId?: string | null;
   id: string;
   layout: DashboardWidgetLayout;

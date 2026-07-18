@@ -38,6 +38,7 @@ export function WidgetFrame({
   onDelete,
   onApplyWidgetPatch,
   onPatchConfig,
+  onRetryData,
   onSelect,
   onSelectColorSlot,
   selected = false,
@@ -49,6 +50,7 @@ export function WidgetFrame({
   onDelete?: (widgetId: string) => void;
   onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onRetryData?: (widgetId: string) => void;
   onSelect?: (widgetId: string) => void;
   onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
   selected?: boolean;
@@ -57,13 +59,15 @@ export function WidgetFrame({
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
   const isAiWorking = assistantContext?.workingWidgetId === widget.id;
+  const isDataLoading = widget.dataStatus === "pending" || widget.dataStatus === "loading";
+  const hasDataError = widget.dataStatus === "error";
   const liveRevision = widget.liveRefresh === true && typeof widget.appliedRevision === "number"
     ? widget.appliedRevision
     : null;
 
   return (
     <article
-      aria-busy={isAiWorking || undefined}
+      aria-busy={isAiWorking || isDataLoading || undefined}
       className={cx(
         "asklake-widget-frame",
         editable && "editable",
@@ -118,13 +122,29 @@ export function WidgetFrame({
         </div>
       </header>
       <div className="asklake-widget-frame-body">
-        <WidgetRenderer
-          assistantContext={assistantContext}
-          widget={widget}
-          onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
-          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
-          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
-        />
+        {isDataLoading ? (
+          <div className="asklake-widget-data-state" role="status" aria-live="polite">
+            위젯 데이터를 불러오는 중입니다.
+          </div>
+        ) : hasDataError ? (
+          <div className="asklake-widget-data-state error" role="alert">
+            <span>{widget.dataError || "위젯 데이터를 불러오지 못했습니다."}</span>
+            <Button type="button" size="sm" variant="outline" onClick={(event) => {
+              event.stopPropagation();
+              onRetryData?.(widget.id);
+            }}>
+              다시 시도
+            </Button>
+          </div>
+        ) : (
+          <WidgetRenderer
+            assistantContext={assistantContext}
+            widget={widget}
+            onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
+            onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+            onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
+          />
+        )}
       </div>
       {isAiWorking && (
         <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
