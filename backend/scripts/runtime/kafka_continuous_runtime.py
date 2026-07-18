@@ -6,7 +6,6 @@ import re
 import signal
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -29,7 +28,6 @@ from runtime.contracts import (
     CHECKPOINT_CONTRACT_SCHEMA_VERSION,
     RUNTIME_REPORT_SCHEMA_VERSION,
     ShutdownCoordinator,
-    atomic_write_json,
     bounded_int_env,
     canonical_hash,
     json_array_env,
@@ -40,12 +38,20 @@ from runtime.kafka_state import (
     normalize_stream_partition_cursors,
     stream_partition_cursor_payload,
 )
+from runtime.runtime_documents import (
+    catalog_ack_batch_id,
+    requested_runtime_action,
+    runtime_document_exists,
+    runtime_document_with_suffix,
+    write_runtime_document_json,
+    write_runtime_marker,
+)
 
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
-REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
-COMMAND_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"])
+REPORT_FILE = os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"]
+COMMAND_FILE = os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"]
 STOP_REQUESTED = False
 QUERY = None
 SHUTDOWN_COORDINATOR = ShutdownCoordinator()
@@ -377,18 +383,9 @@ def fail_current_batch(error: Exception) -> None:
     LAST_BATCH_EVIDENCE = build_batch_evidence(**context)
 
 
-def catalog_ack_batch_id() -> int:
-    ack_path = REPORT_FILE.with_suffix(".catalog-ack.json")
-    try:
-        payload = json.loads(ack_path.read_text(encoding="utf-8"))
-        return int(payload.get("batchId"))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        return -1
-
-
 def apply_catalog_ack() -> None:
     global CATALOG_ACK_BATCH_ID, PUBLISHED_BACKLOG_COUNT, PUBLISHED_BATCHES
-    acknowledged_batch = catalog_ack_batch_id()
+    acknowledged_batch = catalog_ack_batch_id(REPORT_FILE, RECOVERY_SPARK)
     if acknowledged_batch <= CATALOG_ACK_BATCH_ID:
         return
     previous_acknowledged_batch = CATALOG_ACK_BATCH_ID
@@ -468,7 +465,6 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         LAST_BATCH_ID = batch_id
         LAST_FLUSH_AT = now()
     apply_catalog_ack()
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "runtimeReportSchemaVersion": RUNTIME_REPORT_SCHEMA_VERSION,
         "status": status,
@@ -495,20 +491,12 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         **continuous_sql.report_metadata(CONTINUOUS_SQL_PLAN),
         "lastError": error,
     }
-    atomic_write_json(
+    write_runtime_document_json(
         REPORT_FILE,
         payload,
-        schema_field="runtimeReportSchemaVersion",
+        RECOVERY_SPARK,
         schema_version=RUNTIME_REPORT_SCHEMA_VERSION,
     )
-
-
-def requested_action() -> str:
-    try:
-        raw = COMMAND_FILE.read_text(encoding="utf-8").strip()
-        return str(json.loads(raw).get("action") or "") if raw else ""
-    except (OSError, json.JSONDecodeError):
-        return ""
 
 
 def on_signal(_signum: int, _frame: Any) -> None:
@@ -1323,7 +1311,7 @@ def main() -> None:
     RECOVERY_ROOT = output_path
     configure_s3a(spark)
     ensure_checkpoint_contract(spark, checkpoint_path, output_path, iceberg_target)
-    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id()
+    CATALOG_ACK_BATCH_ID = catalog_ack_batch_id(REPORT_FILE, RECOVERY_SPARK)
     recovered = recover_published_state(
         spark,
         output_path,
@@ -1673,9 +1661,9 @@ def main() -> None:
             "stored_count": stored_count,
         })
         if os.environ.get("ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE", "").lower() == "true":
-            fault_marker = REPORT_FILE.with_suffix(".publish-fault-applied")
-            if not fault_marker.exists():
-                fault_marker.write_text(now(), encoding="utf-8")
+            fault_marker = runtime_document_with_suffix(REPORT_FILE, ".publish-fault-applied")
+            if not runtime_document_exists(fault_marker, RECOVERY_SPARK):
+                write_runtime_marker(fault_marker, now(), RECOVERY_SPARK)
                 raise RuntimeError("Injected failure after data write and before manifest publication.")
         published_at = now()
         stage_durations["manifestDurationMs"] = 0
@@ -1756,12 +1744,20 @@ def main() -> None:
     if STOP_REQUESTED:
         QUERY.stop()
     report("running")
+    await_query_termination()
+    action = requested_runtime_action(COMMAND_FILE, RECOVERY_SPARK, WORKER_ATTEMPT_ID)
+    report("paused" if action == "pause" else "stopped")
+
+
+def await_query_termination() -> None:
     while QUERY.isActive:
         QUERY.awaitTermination(5)
         if QUERY.isActive:
+            if requested_runtime_action(COMMAND_FILE, RECOVERY_SPARK, WORKER_ATTEMPT_ID) in {"pause", "stop"}:
+                QUERY.stop()
+                continue
             refresh_query_metrics(QUERY)
             report("running")
-    report("paused" if requested_action() == "pause" else "stopped")
 
 
 def run_cli() -> None:

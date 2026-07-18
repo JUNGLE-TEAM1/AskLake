@@ -81,9 +81,9 @@ test("Job detail routes hydrate full history separately from the list summary", 
   assert.match(app, /useJobRouteHydration\(\{/);
   assert.match(routeHydration, /getJob as getPipelineJob/);
   assert.match(routeHydration, /flow === "jobDetail" \|\| flow === "jobRuns"/);
-  assert.match(routeHydration, /getPipelineJob\(matchedJobId\)/);
+  assert.match(routeHydration, /getPipelineJob\(jobId\)/);
   assert.match(routeHydration, /mergeJobDetailWithCurrentStatus\(job, normalizedDetail\)/);
-  assert.match(routeHydration, /\[flow, matchedJobId, setSelectedJob\]/);
+  assert.match(routeHydration, /\[flow, jobId, matchedJob, setJobs, setSelectedJob\]/);
 });
 
 test("Snapshot status refresh is one page-level request and pauses for hidden tabs", () => {

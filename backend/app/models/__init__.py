@@ -20,6 +20,7 @@ from app.models.dashboard_runtime import (
     DashboardWidget,
 )
 from app.models.etl import (
+    ContinuousControlLeaseModel,
     ETLJobModel,
     ETLRunModel,
     KafkaContinuousBatchModel,
@@ -71,6 +72,7 @@ __all__ = [
     "ETLJobModel",
     "ETLRunModel",
     "ReviewAnalysisRunModel",
+    "ContinuousControlLeaseModel",
     "KafkaContinuousRuntimeModel",
     "KafkaContinuousSessionModel",
     "KafkaContinuousBatchModel",
