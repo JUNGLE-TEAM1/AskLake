@@ -259,6 +259,7 @@ from app.core.materialization import (
 )
 from app.core.permission_metadata import normalize_actions, permission_grants_from_roles, resource_permissions
 from app.core.s3_policy import resolve_s3_source_location, s3_source_config_fields, validate_s3_source_config
+from app.services.continuous_runtime_sync import ContinuousRuntimeSyncHooks, sync_active_kafka_continuous_jobs
 from app.domain.continuous_runtime import (
     ContinuousErrorStage,
     clear_runtime_error,
@@ -292,6 +293,7 @@ from app.models.base import Base
 from app.models.identity import AuthUserModel
 from app.infrastructure.runtime_io import (
     Boto3ObjectManifestAdapter,
+    Boto3RuntimeDocumentStore,
     CallableKafkaRuntimeGateway,
     JsonFileRuntimeDocumentStore,
     SubprocessNodeBridge,
@@ -443,6 +445,16 @@ AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
 
+def _trino_sql_job_permission_metadata(
+    request: CreateTrinoSqlJobRequest,
+) -> tuple[list[dict[str, Any]], str]:
+    governance = request.governance
+    return (
+        trino_sql_job_permission_roles(governance.access_scope, governance.owner, governance.principal_id),
+        trino_sql_job_permission_summary(governance.access_scope, governance.owner, governance.principal_id),
+    )
+
+
 def create_trino_sql_job(
     db: Session,
     request: CreateTrinoSqlJobRequest,
@@ -537,16 +549,7 @@ def create_trino_sql_job(
         }
         for index, column in enumerate(columns)
     ]
-    permission_roles = trino_sql_job_permission_roles(
-        request.governance.access_scope,
-        request.governance.owner,
-        request.governance.principal_id,
-    )
-    permission_summary = trino_sql_job_permission_summary(
-        request.governance.access_scope,
-        request.governance.owner,
-        request.governance.principal_id,
-    )
+    permission_roles, permission_summary = _trino_sql_job_permission_metadata(request)
     sql_recipe = {
         "baseDatasetId": request.base_dataset_id,
         "query": request.query,
@@ -673,53 +676,12 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    """Persist continuous worker progress without depending on UI polling."""
-    import logging
-
-    from app.core.database import SessionLocal
-
-    active_statuses = {"starting", "running", "pausing", "stopping"}
-    terminal_statuses = {"paused", "stopped", "failed"}
-    with SessionLocal() as db:
-        try:
-            reconcile_stale_continuous_maintenance_runs(db)
-        except Exception:
-            db.rollback()
-            logging.getLogger(__name__).exception(
-                "Kafka continuous maintenance reconciliation failed before runtime synchronization"
-            )
-        job_ids = [
-            job.id
-            for job in etl_repository.list_job_models(db)
-            if job.execution_mode == "continuous"
-        ]
-    for job_id in job_ids:
-        with SessionLocal() as db:
-            try:
-                job = etl_repository.get_job(db, job_id)
-                if job is None or job.execution_mode != "continuous":
-                    continue
-                runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
-                recovery_state = (runtime.metrics or {}).get("publicationRecoveryPending") if runtime is not None else None
-                terminal_recovery_due = (
-                    runtime is not None
-                    and runtime.status in terminal_statuses
-                    and recovery_state is not False
-                )
-                if runtime is not None and (
-                    runtime.status in active_statuses
-                    or terminal_recovery_due
-                    or recovery_state is True
-                    or continuous_report_has_unacknowledged_publication(job.id, runtime)
-                    or has_pending_continuous_replay_catalog(db, job.id)
-                ):
-                    refresh_kafka_continuous_runtime(db, job)
-            except Exception:
-                db.rollback()
-                logging.getLogger(__name__).exception(
-                    "Kafka continuous runtime synchronization failed for job_id=%s",
-                    job_id,
-                )
+    sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
+        reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,
+        refresh_runtime=refresh_kafka_continuous_runtime,
+        report_has_unacknowledged_publication=continuous_report_has_unacknowledged_publication,
+        has_pending_replay_catalog=has_pending_continuous_replay_catalog,
+    ))
 
 
 def command_job(
@@ -2137,6 +2099,7 @@ recover_continuous_replay_result = bind_runtime(_etl_source_runtime.IMPLEMENTATI
 bounded_environment_integer = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['bounded_environment_integer'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 read_runtime_json = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['read_runtime_json'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 write_runtime_json_atomic = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['write_runtime_json_atomic'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
+runtime_document_store_for_path = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['runtime_document_store_for_path'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 object_manifest_port = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['object_manifest_port'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 marker_payload = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['marker_payload'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 persisted_stream_partition_cursors = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['persisted_stream_partition_cursors'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)

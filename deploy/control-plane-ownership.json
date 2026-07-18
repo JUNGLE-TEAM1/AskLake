@@ -12,14 +12,14 @@
       "id": "kafka-continuous-runtime-sync",
       "ownerPolicy": "exactly-one",
       "entrypoints": [
-        "backend/app/main.py::sync_active_kafka_continuous_runtimes"
+        "backend/app/continuous_worker.py::sync_active_kafka_continuous_runtimes"
       ]
     },
     {
       "id": "continuous-sql-runtime-sync",
       "ownerPolicy": "exactly-one",
       "entrypoints": [
-        "backend/app/main.py::sync_active_continuous_sql_jobs"
+        "backend/app/continuous_worker.py::sync_active_continuous_sql_jobs"
       ]
     }
   ],
@@ -42,7 +42,7 @@
       ]
     },
     {
-      "id": "ec2-continuous-control-plane",
+      "id": "ec2-continuous-worker",
       "platform": "ec2-compose",
       "deploymentCell": "production-ec2-compose",
       "active": true,
@@ -56,11 +56,11 @@
       "evidence": [
         {
           "kind": "repository",
-          "reference": "deploy/docker-compose.prod.yml::backend:"
+          "reference": "deploy/docker-compose.prod.yml::continuous-worker:"
         },
         {
           "kind": "repository",
-          "reference": "backend/app/main.py::continuous_runtime_sync_loop"
+          "reference": "backend/app/continuous_worker.py::run_forever"
         }
       ]
     }

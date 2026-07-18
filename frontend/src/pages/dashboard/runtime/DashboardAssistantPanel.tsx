@@ -65,6 +65,23 @@ function semanticRetrievalSummary(response: DashboardAssistantResponse) {
   return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${evidence}`;
 }
 
+function assistantResponseText(response: DashboardAssistantResponse, actionMessages: string[]) {
+  const reportAction = response.actions.find(
+    (action): action is DashboardAssistantReportAction => action.type === "report",
+  );
+  const provenance = response.provider && !["local-input-guard", "unavailable"].includes(response.provider)
+    ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
+    : "";
+  const warning = response.warnings.length > 0 ? `경고: ${response.warnings.join(" / ")}` : "";
+  return [
+    reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
+    ...actionMessages,
+    provenance,
+    semanticRetrievalSummary(response),
+    warning,
+  ].filter(Boolean).join("\n\n");
+}
+
 function AskLakeAssistantMark() {
   return <img alt="" aria-hidden="true" className="asklake-assistant-mark" src={askLakeNessiIconUrl} />;
 }
@@ -140,9 +157,6 @@ export function DashboardAssistantPanel({
       if (mode === "visualization_request" && !hasWidgetMutationAction(response)) {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
-      const reportAction = response.actions.find(
-        (action): action is DashboardAssistantReportAction => action.type === "report",
-      );
       const actionMessages = await applyAssistantWidgetActions({
         datasets,
         onCreateWidget,
@@ -150,25 +164,12 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      const retrievalMessage = semanticRetrievalSummary(response);
-      const provenanceMessage = response.provider && !["local-input-guard", "unavailable"].includes(response.provider)
-        ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
-        : "";
-      const warningMessage = response.warnings.length > 0
-        ? `경고: ${response.warnings.join(" / ")}`
-        : "";
       setMessages((current) => [
         ...current,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          text: [
-            reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
-            ...actionMessages,
-            provenanceMessage,
-            retrievalMessage,
-            warningMessage,
-          ].filter(Boolean).join("\n\n"),
+          text: assistantResponseText(response, actionMessages),
         },
       ]);
     } catch (requestError) {

@@ -52,6 +52,8 @@ type EventSourceLike = {
   onopen: ((event: Event) => void) | null;
 };
 
+import { apiBaseUrl } from "./apiOrigin.ts";
+
 type EventSourceFactory = (
   url: string,
   eventSourceInitDict?: EventSourceInit,
@@ -319,13 +321,7 @@ function systemEventReason(raw: string, fallback: string) {
 
 
 function realtimeApiBaseUrl() {
-  const environment = (
-    import.meta as ImportMeta & {
-      env?: Record<string, boolean | string | undefined>;
-    }
-  ).env ?? {};
-  const defaultBaseUrl = "";
-  return String(environment.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, "");
+  return apiBaseUrl;
 }
 
 

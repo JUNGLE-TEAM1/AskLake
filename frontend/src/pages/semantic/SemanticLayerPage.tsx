@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, ArrowRight, Check, ChevronDown, Database, FileText, Loader2, Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, Table2, Trash2, X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 import type { AuditResult } from "../../types/audit";
@@ -100,21 +100,17 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-export function SemanticLayerPage({ datasets: providedDatasets, onAction }: SemanticPageProps) {
+type StateSetter<T> = Dispatch<SetStateAction<T>>;
+type SemanticActionRunner = (key: string, action: () => Promise<void>) => Promise<boolean>;
+
+function useSemanticWorkspaceData() {
   const [models, setModels] = useState<SemanticModel[]>([]);
-  const catalogDatasets = providedDatasets;
   const [selectedModelId, setSelectedModelId] = useState("");
-  const [activeTab, setActiveTab] = useState<Tab>("datasets");
   const [selectedRagDatasetId, setSelectedRagDatasetId] = useState("");
   const [profiles, setProfiles] = useState<Record<string, RagProfile>>({});
   const [previews, setPreviews] = useState<Record<string, RagDocument[]>>({});
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [ragJobsRefreshToken, setRagJobsRefreshToken] = useState(0);
-  const busyRef = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -131,21 +127,156 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
       setLoading(false);
     }
   };
-
   useEffect(() => { void load(); }, []);
 
   const selected = models.find((model) => model.id === selectedModelId) ?? models[0];
-  const linkedCatalog = useMemo(
-    () => selected?.datasets.map((item) => catalogDatasets.find((dataset) => dataset.id === item.datasetId)).filter(Boolean) as CatalogDataset[] ?? [],
-    [catalogDatasets, selected],
-  );
   const ragDatasetId = selectedRagDatasetId || selected?.datasets[0]?.datasetId || "";
   const ragProfile = profiles[ragDatasetId];
-
   useEffect(() => {
     if (!selected) return;
     setSelectedRagDatasetId((current) => selected.datasets.some((item) => item.datasetId === current) ? current : selected.datasets[0]?.datasetId ?? "");
   }, [selected]);
+
+  const refreshProfile = async (datasetId: string) => {
+    const profile = await getRagProfile(datasetId);
+    setProfiles((current) => ({ ...current, [datasetId]: profile }));
+    if (profile.reviewState === "approved") {
+      const preview = await previewRagDocuments(datasetId);
+      setPreviews((current) => ({ ...current, [datasetId]: preview.documents }));
+    }
+  };
+  return { error, load, loading, models, previews, profiles, ragDatasetId, ragProfile, refreshProfile, selected, setModels, setPreviews, setProfiles, setSelectedModelId, setSelectedRagDatasetId };
+}
+
+function buildSemanticModelActions({ selected, run, setModels, setNotice, onAction }: {
+  selected: SemanticModel | undefined;
+  run: SemanticActionRunner;
+  setModels: StateSetter<SemanticModel[]>;
+  setNotice: StateSetter<Notice | null>;
+  onAction: SemanticPageProps["onAction"];
+}) {
+  const saveModelInfo = async (name: string, description: string) => {
+    if (!selected) return false;
+    return run("model", async () => {
+      const updated = await updateSemanticModel(selected.id, { name, description });
+      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
+      setNotice({ tone: "success", message: "업무 모델 정보가 저장되었습니다." });
+      onAction?.("semantic.model.updated", `/api/semantic-models/${selected.id}`, selected.id, "success");
+    });
+  };
+  const saveDatasets = async (nextDatasets: SemanticDataset[]) => {
+    if (!selected) return false;
+    return run("datasets", async () => {
+      const updated = await replaceSemanticDatasets(selected.id, nextDatasets.map((item) => ({ datasetId: item.datasetId, role: item.role })));
+      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
+      setNotice({ tone: "success", message: "연결 Dataset과 전체 schema가 갱신되었습니다." });
+    });
+  };
+  const saveMetrics = async (metrics: SemanticMetric[]) => {
+    if (!selected) return;
+    await run("metrics", async () => {
+      const updated = await replaceSemanticMetrics(selected.id, metrics.map(({ id: _id, ...metric }) => metric));
+      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
+      setNotice({ tone: "success", message: "계산할 값과 실제 원본 컬럼이 저장되었습니다." });
+    });
+  };
+  const saveDimensions = async (dimensions: SemanticDimension[]) => {
+    if (!selected) return;
+    await run("dimensions", async () => {
+      const updated = await replaceSemanticDimensions(selected.id, dimensions.map(({ id: _id, ...dimension }) => dimension));
+      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
+      setNotice({ tone: "success", message: "나눠볼 기준과 실제 원본 컬럼이 저장되었습니다." });
+    });
+  };
+  const publishSelected = async () => {
+    if (!selected) return;
+    await run("publish", async () => {
+      const validation = await validateSemanticModel(selected.id);
+      if (!validation.valid) throw new Error(validation.errors.join(" / "));
+      const result = await publishSemanticModel(selected.id);
+      setModels((current) => current.map((model) => model.id === result.model.id ? result.model : model));
+      setNotice({ tone: "success", message: `업무 모델 v${result.publishedVersion}를 게시했습니다.` });
+      onAction?.("semantic.model.published", `/api/semantic-models/${selected.id}/publish`, selected.id, "success");
+    });
+  };
+  return { publishSelected, saveDatasets, saveDimensions, saveMetrics, saveModelInfo };
+}
+
+function buildSemanticRagActions({ selected, ragDatasetId, ragProfile, refreshProfile, run, setPreviews, setProfiles, setRagJobsRefreshToken, setNotice, onAction }: {
+  selected: SemanticModel | undefined;
+  ragDatasetId: string;
+  ragProfile: RagProfile | undefined;
+  refreshProfile: (datasetId: string) => Promise<void>;
+  run: SemanticActionRunner;
+  setPreviews: StateSetter<Record<string, RagDocument[]>>;
+  setProfiles: StateSetter<Record<string, RagProfile>>;
+  setRagJobsRefreshToken: StateSetter<number>;
+  setNotice: StateSetter<Notice | null>;
+  onAction: SemanticPageProps["onAction"];
+}) {
+  const classify = async () => {
+    if (!selected || !ragDatasetId) return;
+    await run("classify", async () => {
+      await classifyRagDataset(ragDatasetId, selected.id);
+      await refreshProfile(ragDatasetId);
+      setNotice({ tone: "success", message: "선택한 업무 모델의 분석 기준을 포함해 RAG 컬럼 분석을 완료했습니다." });
+      onAction?.("semantic.rag.classified", `/api/catalog/datasets/${ragDatasetId}/rag/classify`, ragDatasetId, "success");
+    });
+  };
+  const approve = async (roles: RagRolePayload) => {
+    if (!ragDatasetId) return;
+    await run("approve", async () => {
+      const profile = await approveRagDataset(ragDatasetId, roles);
+      setProfiles((current) => ({ ...current, [ragDatasetId]: profile }));
+      const preview = await previewRagDocuments(ragDatasetId);
+      setPreviews((current) => ({ ...current, [ragDatasetId]: preview.documents }));
+      setNotice({ tone: "success", message: "RAG 역할을 승인했고 실제 적재 문서 미리보기를 생성했습니다." });
+    });
+  };
+  const index = async () => {
+    if (!ragDatasetId) return;
+    await run("index", async () => {
+      const hasServingIndex = ragProfile?.servingStatus === "serving" || ragProfile?.servingStatus === "stale";
+      const accepted = await indexRagDataset(ragDatasetId, hasServingIndex ? "reindex" : "index");
+      setRagJobsRefreshToken((current) => current + 1);
+      if (accepted.status === "ready") {
+        await refreshProfile(ragDatasetId);
+        setNotice({ tone: "success", message: "현재 Dataset과 RAG 정의에 맞는 활성 색인을 확인했습니다. 실제 근거 검색을 바로 사용할 수 있습니다." });
+        return;
+      }
+      let latest: RagProfile | null = null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await delay(1000);
+        latest = await getRagProfile(ragDatasetId);
+        setProfiles((current) => ({ ...current, [ragDatasetId]: latest as RagProfile }));
+        if (latest.indexStatus === "failed" || latest.buildStatus === "failed") throw new Error(latest.lastError || `RAG 색인 작업 ${accepted.jobId}가 실패했습니다.`);
+        const requestedIndexIsServing = latest.servingStatus === "serving"
+          && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
+        if (requestedIndexIsServing) break;
+      }
+      const requestedIndexIsServing = latest?.servingStatus === "serving"
+        && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
+      if (!latest || !requestedIndexIsServing) {
+        setNotice({ tone: "info", message: `RAG 색인 작업 ${accepted.jobId}를 접수했습니다. 백그라운드 작업이 끝나면 근거 검색이 활성화됩니다.` });
+        return;
+      }
+      const preview = await previewRagDocuments(ragDatasetId);
+      setPreviews((current) => ({ ...current, [ragDatasetId]: preview.documents }));
+      setNotice({ tone: "success", message: "RAG 색인과 Semantic Model 연결이 완료되어 근거 검색을 사용할 수 있습니다." });
+    });
+  };
+  return { approve, classify, index };
+}
+
+export function SemanticLayerPage({ datasets: providedDatasets, onAction }: SemanticPageProps) {
+  const catalogDatasets = providedDatasets;
+  const { error, load, loading, models, previews, profiles, ragDatasetId, ragProfile, refreshProfile, selected, setModels, setPreviews, setProfiles, setSelectedModelId, setSelectedRagDatasetId } = useSemanticWorkspaceData();
+  const [activeTab, setActiveTab] = useState<Tab>("datasets");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [ragJobsRefreshToken, setRagJobsRefreshToken] = useState(0);
+  const busyRef = useRef(false);
 
   const run = async (key: string, action: () => Promise<void>): Promise<boolean> => {
     if (busyRef.current) return false;
@@ -164,124 +295,18 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
     }
   };
 
-  const refreshProfile = async (datasetId: string) => {
-    const profile = await getRagProfile(datasetId);
-    setProfiles((current) => ({ ...current, [datasetId]: profile }));
-    if (profile.reviewState === "approved") {
-      const preview = await previewRagDocuments(datasetId);
-      setPreviews((current) => ({ ...current, [datasetId]: preview.documents }));
-    }
-  };
-
   useEffect(() => {
     if (!ragDatasetId || activeTab !== "rag" || profiles[ragDatasetId]) return;
     void run(`profile:${ragDatasetId}`, async () => refreshProfile(ragDatasetId));
   }, [activeTab, ragDatasetId, profiles]);
 
-  const saveModelInfo = async (name: string, description: string) => {
-    if (!selected) return false;
-    return run("model", async () => {
-      const updated = await updateSemanticModel(selected.id, { name, description });
-      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
-      setNotice({ tone: "success", message: "업무 모델 정보가 저장되었습니다." });
-      onAction?.("semantic.model.updated", `/api/semantic-models/${selected.id}`, selected.id, "success");
-    });
-  };
+  const { publishSelected, saveDatasets, saveDimensions, saveMetrics, saveModelInfo } = buildSemanticModelActions({
+    onAction, run, selected, setModels, setNotice,
+  });
 
-  const saveDatasets = async (nextDatasets: SemanticDataset[]) => {
-    if (!selected) return false;
-    return run("datasets", async () => {
-      const updated = await replaceSemanticDatasets(selected.id, nextDatasets.map((item) => ({ datasetId: item.datasetId, role: item.role })));
-      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
-      setNotice({ tone: "success", message: "연결 Dataset과 전체 schema가 갱신되었습니다." });
-    });
-  };
-
-  const saveMetrics = async (metrics: SemanticMetric[]) => {
-    if (!selected) return;
-    await run("metrics", async () => {
-      const updated = await replaceSemanticMetrics(selected.id, metrics.map(({ id: _id, ...metric }) => metric));
-      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
-      setNotice({ tone: "success", message: "계산할 값과 실제 원본 컬럼이 저장되었습니다." });
-    });
-  };
-
-  const saveDimensions = async (dimensions: SemanticDimension[]) => {
-    if (!selected) return;
-    await run("dimensions", async () => {
-      const updated = await replaceSemanticDimensions(selected.id, dimensions.map(({ id: _id, ...dimension }) => dimension));
-      setModels((current) => current.map((model) => model.id === updated.id ? updated : model));
-      setNotice({ tone: "success", message: "나눠볼 기준과 실제 원본 컬럼이 저장되었습니다." });
-    });
-  };
-
-  const classify = async () => {
-    if (!selected || !ragDatasetId) return;
-    await run("classify", async () => {
-      await classifyRagDataset(ragDatasetId, selected.id);
-      await refreshProfile(ragDatasetId);
-      setNotice({ tone: "success", message: "선택한 업무 모델의 분석 기준을 포함해 RAG 컬럼 분석을 완료했습니다." });
-      onAction?.("semantic.rag.classified", `/api/catalog/datasets/${ragDatasetId}/rag/classify`, ragDatasetId, "success");
-    });
-  };
-
-  const approve = async (roles: RagRolePayload) => {
-    if (!ragDatasetId) return;
-    await run("approve", async () => {
-      const profile = await approveRagDataset(ragDatasetId, roles);
-      setProfiles((current) => ({ ...current, [ragDatasetId]: profile }));
-      const preview = await previewRagDocuments(ragDatasetId);
-      setPreviews((current) => ({ ...current, [ragDatasetId]: preview.documents }));
-      setNotice({ tone: "success", message: "RAG 역할을 승인했고 실제 적재 문서 미리보기를 생성했습니다." });
-    });
-  };
-
-  const index = async () => {
-    if (!ragDatasetId) return;
-    await run("index", async () => {
-      const hasServingIndex = ragProfile?.servingStatus === "serving" || ragProfile?.servingStatus === "stale";
-      const accepted = await indexRagDataset(ragDatasetId, hasServingIndex ? "reindex" : "index");
-      setRagJobsRefreshToken((current) => current + 1);
-      if (accepted.status === "ready") {
-        await refreshProfile(ragDatasetId);
-        setNotice({ tone: "success", message: "현재 Dataset과 RAG 정의에 맞는 활성 색인을 확인했습니다. 실제 근거 검색을 바로 사용할 수 있습니다." });
-        return;
-      }
-      let latest: RagProfile | null = null;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await delay(1000);
-        latest = await getRagProfile(ragDatasetId);
-        setProfiles((current) => ({ ...current, [ragDatasetId]: latest as RagProfile }));
-        if (latest.indexStatus === "failed" || latest.buildStatus === "failed") {
-          throw new Error(latest.lastError || `RAG 색인 작업 ${accepted.jobId}가 실패했습니다.`);
-        }
-        const requestedIndexIsServing = latest.servingStatus === "serving"
-          && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
-        if (requestedIndexIsServing) break;
-      }
-      const requestedIndexIsServing = latest?.servingStatus === "serving"
-        && (accepted.targetIndex ? latest.activeIndex === accepted.targetIndex : latest.buildStatus === "ready");
-      if (!latest || !requestedIndexIsServing) {
-        setNotice({ tone: "info", message: `RAG 색인 작업 ${accepted.jobId}를 접수했습니다. 백그라운드 작업이 끝나면 근거 검색이 활성화됩니다.` });
-        return;
-      }
-      const preview = await previewRagDocuments(ragDatasetId);
-      setPreviews((current) => ({ ...current, [ragDatasetId]: preview.documents }));
-      setNotice({ tone: "success", message: "RAG 색인과 Semantic Model 연결이 완료되어 근거 검색을 사용할 수 있습니다." });
-    });
-  };
-
-  const publishSelected = async () => {
-    if (!selected) return;
-    await run("publish", async () => {
-      const validation = await validateSemanticModel(selected.id);
-      if (!validation.valid) throw new Error(validation.errors.join(" / "));
-      const result = await publishSemanticModel(selected.id);
-      setModels((current) => current.map((model) => model.id === result.model.id ? result.model : model));
-      setNotice({ tone: "success", message: `업무 모델 v${result.publishedVersion}를 게시했습니다.` });
-      onAction?.("semantic.model.published", `/api/semantic-models/${selected.id}/publish`, selected.id, "success");
-    });
-  };
+  const { approve, classify, index } = buildSemanticRagActions({
+    onAction, ragDatasetId, ragProfile, refreshProfile, run, selected, setNotice, setPreviews, setProfiles, setRagJobsRefreshToken,
+  });
 
   if (loading) return <div className="semantic-real-loading" role="status"><Loader2 className="semantic-spin" /> 실제 Semantic Model과 Catalog schema를 불러오는 중입니다.</div>;
   if (error) return <div className="semantic-real-error" role="alert"><AlertTriangle /><div><strong>실제 백엔드 연결이 필요합니다.</strong><p>{error}</p><Button type="button" onClick={() => void load()}><RefreshCw /> 다시 시도</Button></div></div>;

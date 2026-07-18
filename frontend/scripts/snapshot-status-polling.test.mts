@@ -65,7 +65,7 @@ function snapshot(id: string, status: "running" | "success", updatedAt: string):
 }
 
 
-test("one active-id collection excludes terminal, optimistic, and Continuous runs", () => {
+test("one active-id collection excludes terminal, optimistic, and inactive Continuous runs", () => {
   const activeOne = job("one");
   const activeTwo = job("two", "queued");
   const terminal = job("done", "success");
@@ -80,6 +80,36 @@ test("one active-id collection excludes terminal, optimistic, and Continuous run
     activeSnapshotJobIds([activeTwo, terminal, continuous, activeOne, optimistic], runs),
     ["one", "two"],
   );
+});
+
+
+test("the shared status poll includes an active Continuous runtime", () => {
+  const continuous = {
+    ...job("continuous"),
+    executionMode: "continuous" as const,
+    continuousRuntime: {
+      checkpointPath: "s3a://lake/checkpoints/continuous",
+      consumedCount: 10,
+      failedCount: 0,
+      lagAvailable: true,
+      laggingPartitionCount: 0,
+      lastBatchInputRows: 10,
+      lastRuleResult: {},
+      partitionProgress: {},
+      quarantinedCount: 0,
+      replayedCount: 0,
+      ruleContractVersion: "1.0",
+      ruleMetrics: {},
+      schemaChanges: [],
+      schemaStatus: "stable",
+      schemaVersion: 1,
+      stateRevision: 4,
+      status: "running" as const,
+      storedCount: 10,
+    },
+  };
+
+  assert.deepEqual(activeSnapshotJobIds([continuous], { continuous: [] }), ["continuous"]);
 });
 
 

@@ -304,6 +304,74 @@ function JobTimeline({ job }: { job: RagJob }) {
   );
 }
 
+function JobProgress({ job, progress, terminal }: { job: RagJob; progress: number | null; terminal: boolean }) {
+  return (
+    <>
+      <div className="rag-job-history-progress-head">
+        <div>
+          <span>현재 단계</span>
+          <strong>{currentStageLabel(job)}</strong>
+        </div>
+        <strong>{progress === null ? "측정값 없음" : formatProgress(progress)}</strong>
+      </div>
+      {progress === null ? (
+        <div
+          className={`rag-job-history-indeterminate${terminal ? " is-settled" : " is-active"}`}
+          role="status"
+          aria-label={`${modeLabel(job.requestedMode)} 수치 진행률 미제공`}
+        >
+          <span className="rag-job-history-indeterminate-track" aria-hidden="true"><span /></span>
+          <span>{terminal ? "수치 진행률 없이 종료됨" : "처리량 측정값을 기다리는 중"}</span>
+        </div>
+      ) : (
+        <div
+          className="rag-job-history-progress-track"
+          role="progressbar"
+          aria-label={`${modeLabel(job.requestedMode)} 실측 처리 진행률`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+          aria-valuetext={formatProgress(progress)}
+        >
+          <span style={{ width: `${progress}%` }} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function JobFacts({ job }: { job: RagJob }) {
+  return (
+    <>
+      <dl className="rag-job-history-counts" aria-label="작업 처리 수량">
+        <div><dt>문서 수</dt><dd>{formatCount(job.documentCount)}</dd></div>
+        <div><dt>원문 수</dt><dd>{formatCount(job.parentCount)}</dd></div>
+        <div><dt>청크 수</dt><dd>{formatCount(job.chunkCount)}</dd></div>
+        <div><dt>색인 수</dt><dd>{formatCount(job.indexedCount)}</dd></div>
+        <div className={job.failedCount > 0 ? "has-warning" : undefined}><dt>실패 수</dt><dd>{formatCount(job.failedCount)}</dd></div>
+        <div className={job.fallbackCount > 0 ? "has-fallback" : undefined}><dt>대체 처리 수</dt><dd>{formatCount(job.fallbackCount)}</dd></div>
+      </dl>
+      <dl className="rag-job-history-metadata">
+        <div><dt>임베딩 모델</dt><dd>{embeddingLabel(job)}</dd></div>
+        <div><dt>검증</dt><dd>{translatedValue(job.validationStatus, VALIDATION_LABELS, "검증 상태 미확인")}</dd></div>
+        <div><dt>색인 활성화</dt><dd>{translatedValue(job.activationStatus, ACTIVATION_LABELS, "활성화 상태 미확인")}</dd></div>
+      </dl>
+      {(job.error || isFailedJob(job)) && (
+        <div className="rag-job-history-job-error" role="alert">
+          <AlertTriangle aria-hidden="true" />
+          <div><strong>오류 내용</strong><p>{job.error || "오류 상세가 기록되지 않았습니다."}</p></div>
+        </div>
+      )}
+      <footer className="rag-job-history-footer">
+        <code title={job.jobId}>작업 ID · {job.jobId}</code>
+        <span>요청 · {formatDate(job.createdAt)}</span>
+        <span>최근 갱신 · {formatDate(job.updatedAt)}</span>
+        {job.completedAt && <span>종료 · {formatDate(job.completedAt)}</span>}
+      </footer>
+    </>
+  );
+}
+
 function JobDetails({ job, index }: { job: RagJob; index: number }) {
   const progress = determinateProgress(job);
   const terminal = isTerminalJob(job);
@@ -331,100 +399,18 @@ function JobDetails({ job, index }: { job: RagJob; index: number }) {
         </summary>
 
         <div className="rag-job-history-detail">
-          <div className="rag-job-history-progress-head">
-            <div>
-              <span>현재 단계</span>
-              <strong>{currentStageLabel(job)}</strong>
-            </div>
-            <strong>{progress === null ? "측정값 없음" : formatProgress(progress)}</strong>
-          </div>
-          {progress === null ? (
-            <div
-              className={`rag-job-history-indeterminate${terminal ? " is-settled" : " is-active"}`}
-              role="status"
-              aria-label={`${modeLabel(job.requestedMode)} 수치 진행률 미제공`}
-            >
-              <span className="rag-job-history-indeterminate-track" aria-hidden="true"><span /></span>
-              <span>{terminal ? "수치 진행률 없이 종료됨" : "처리량 측정값을 기다리는 중"}</span>
-            </div>
-          ) : (
-            <div
-              className="rag-job-history-progress-track"
-              role="progressbar"
-              aria-label={`${modeLabel(job.requestedMode)} 실측 처리 진행률`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={progress}
-              aria-valuetext={formatProgress(progress)}
-            >
-              <span style={{ width: `${progress}%` }} />
-            </div>
-          )}
-
+          <JobProgress job={job} progress={progress} terminal={terminal} />
           <JobTimeline job={job} />
-
-          <dl className="rag-job-history-counts" aria-label="작업 처리 수량">
-            <div><dt>문서 수</dt><dd>{formatCount(job.documentCount)}</dd></div>
-            <div><dt>원문 수</dt><dd>{formatCount(job.parentCount)}</dd></div>
-            <div><dt>청크 수</dt><dd>{formatCount(job.chunkCount)}</dd></div>
-            <div><dt>색인 수</dt><dd>{formatCount(job.indexedCount)}</dd></div>
-            <div className={job.failedCount > 0 ? "has-warning" : undefined}><dt>실패 수</dt><dd>{formatCount(job.failedCount)}</dd></div>
-            <div className={job.fallbackCount > 0 ? "has-fallback" : undefined}><dt>대체 처리 수</dt><dd>{formatCount(job.fallbackCount)}</dd></div>
-          </dl>
-
-          <dl className="rag-job-history-metadata">
-            <div>
-              <dt>임베딩 모델</dt>
-              <dd>{embeddingLabel(job)}</dd>
-            </div>
-            <div>
-              <dt>검증</dt>
-              <dd>{translatedValue(job.validationStatus, VALIDATION_LABELS, "검증 상태 미확인")}</dd>
-            </div>
-            <div>
-              <dt>색인 활성화</dt>
-              <dd>{translatedValue(job.activationStatus, ACTIVATION_LABELS, "활성화 상태 미확인")}</dd>
-            </div>
-          </dl>
-
-          {(job.error || isFailedJob(job)) && (
-            <div className="rag-job-history-job-error" role="alert">
-              <AlertTriangle aria-hidden="true" />
-              <div>
-                <strong>오류 내용</strong>
-                <p>{job.error || "오류 상세가 기록되지 않았습니다."}</p>
-              </div>
-            </div>
-          )}
-
-          <footer className="rag-job-history-footer">
-            <code title={job.jobId}>작업 ID · {job.jobId}</code>
-            <span>요청 · {formatDate(job.createdAt)}</span>
-            <span>최근 갱신 · {formatDate(job.updatedAt)}</span>
-            {job.completedAt && <span>종료 · {formatDate(job.completedAt)}</span>}
-          </footer>
+          <JobFacts job={job} />
         </div>
       </details>
     </li>
   );
 }
 
-export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: RagJobHistoryProps) {
-  const titleId = useId();
-  const requestDatasetId = datasetId.trim();
-  const [retryToken, setRetryToken] = useState(0);
-  const [history, setHistory] = useState<HistoryState>({
-    datasetId: "",
-    jobs: [],
-    loading: false,
-    error: null,
-  });
+function useRagHistory(requestDatasetId: string, refreshToken: string | number | undefined, retryToken: number) {
+  const [history, setHistory] = useState<HistoryState>({ datasetId: "", jobs: [], loading: false, error: null });
   const latestSuccessfulJobsRef = useRef<{ datasetId: string; jobs: RagJob[] }>({ datasetId: "", jobs: [] });
-  const settledDedupeRef = useRef<SettledDedupeScope>({
-    datasetId: "",
-    notifiedJobIds: new Set(),
-    snapshotKeys: new Set(),
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -435,11 +421,9 @@ export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: R
       latestSuccessfulJobsRef.current = { datasetId: requestDatasetId, jobs: [] };
     }
     let lastSuccessfulJobs = latestSuccessfulJobsRef.current.jobs;
-
     setHistory((current) => current.datasetId === requestDatasetId
       ? { ...current, loading: Boolean(requestDatasetId), error: null }
       : { datasetId: requestDatasetId, jobs: [], loading: Boolean(requestDatasetId), error: null });
-
     if (!requestDatasetId) return undefined;
 
     const clearTimer = () => {
@@ -447,20 +431,14 @@ export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: R
       window.clearTimeout(timer);
       timer = undefined;
     };
-
     const loadJobs = async () => {
       clearTimer();
       const controller = new AbortController();
       requestController = controller;
-
       try {
-        const response = await listRagJobs(requestDatasetId, {
-          signal: controller.signal,
-          timeoutMs: REQUEST_TIMEOUT_MS,
-        });
+        const response = await listRagJobs(requestDatasetId, { signal: controller.signal, timeoutMs: REQUEST_TIMEOUT_MS });
         if (cancelled || controller.signal.aborted) return;
         if (!Array.isArray(response)) throw new Error("RAG 작업 이력 응답 형식이 올바르지 않습니다.");
-
         lastSuccessfulJobs = response;
         latestSuccessfulJobsRef.current = { datasetId: requestDatasetId, jobs: response };
         setHistory({ datasetId: requestDatasetId, jobs: response, loading: false, error: null });
@@ -481,43 +459,54 @@ export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: R
     };
 
     void loadJobs();
-
     return () => {
       cancelled = true;
       clearTimer();
       requestController?.abort();
     };
-  }, [datasetId, refreshToken, retryToken, requestDatasetId]);
+  }, [refreshToken, requestDatasetId, retryToken]);
 
-  const visibleHistory = history.datasetId === requestDatasetId
+  return history.datasetId === requestDatasetId
     ? history
     : { datasetId: requestDatasetId, jobs: [], loading: Boolean(requestDatasetId), error: null };
+}
+
+function useLatestSettledNotification(
+  requestDatasetId: string,
+  latestJob: RagJob | undefined,
+  onLatestJobSettled: RagJobHistoryProps["onLatestJobSettled"],
+) {
+  const settledDedupeRef = useRef<SettledDedupeScope>({
+    datasetId: "",
+    notifiedJobIds: new Set(),
+    snapshotKeys: new Set(),
+  });
+  useEffect(() => {
+    if (settledDedupeRef.current.datasetId !== requestDatasetId) {
+      settledDedupeRef.current = { datasetId: requestDatasetId, notifiedJobIds: new Set(), snapshotKeys: new Set() };
+    }
+    if (!latestJob || !onLatestJobSettled || !isSettledCallbackJob(latestJob)) return;
+    const scope = settledDedupeRef.current;
+    const snapshotKey = `${latestJob.jobId}\u0000${normalize(latestJob.status)}\u0000${latestJob.updatedAt}`;
+    if (scope.snapshotKeys.has(snapshotKey) || scope.notifiedJobIds.has(latestJob.jobId)) return;
+    scope.snapshotKeys.add(snapshotKey);
+    scope.notifiedJobIds.add(latestJob.jobId);
+    onLatestJobSettled(latestJob);
+  }, [latestJob, onLatestJobSettled, requestDatasetId]);
+}
+
+export function RagJobHistory({ datasetId, refreshToken, onLatestJobSettled }: RagJobHistoryProps) {
+  const titleId = useId();
+  const requestDatasetId = datasetId.trim();
+  const [retryToken, setRetryToken] = useState(0);
+  const visibleHistory = useRagHistory(requestDatasetId, refreshToken, retryToken);
   const sortedJobs = useMemo(
     () => [...visibleHistory.jobs].sort(compareRecentJobs),
     [visibleHistory.jobs],
   );
   const hasActiveJobs = sortedJobs.some((job) => !isTerminalJob(job));
   const latestJob = sortedJobs[0];
-
-  useEffect(() => {
-    if (settledDedupeRef.current.datasetId !== requestDatasetId) {
-      settledDedupeRef.current = {
-        datasetId: requestDatasetId,
-        notifiedJobIds: new Set(),
-        snapshotKeys: new Set(),
-      };
-    }
-
-    if (!latestJob || !onLatestJobSettled || !isSettledCallbackJob(latestJob)) return;
-
-    const scope = settledDedupeRef.current;
-    const snapshotKey = `${latestJob.jobId}\u0000${normalize(latestJob.status)}\u0000${latestJob.updatedAt}`;
-    if (scope.snapshotKeys.has(snapshotKey) || scope.notifiedJobIds.has(latestJob.jobId)) return;
-
-    scope.snapshotKeys.add(snapshotKey);
-    scope.notifiedJobIds.add(latestJob.jobId);
-    onLatestJobSettled(latestJob);
-  }, [latestJob, onLatestJobSettled, requestDatasetId]);
+  useLatestSettledNotification(requestDatasetId, latestJob, onLatestJobSettled);
 
   return (
     <section className="rag-job-history" aria-busy={visibleHistory.loading} aria-labelledby={titleId}>

@@ -12,16 +12,17 @@ function readRepo(path: string) {
 
 test("live API clients default to same-origin authenticated requests", () => {
   const apiClient = readFrontend("src/services/apiClient.ts");
+  const apiOrigin = readFrontend("src/services/apiOrigin.ts");
   const assistant = readFrontend("src/services/dashboardAssistantService.ts");
   const realtimeEvents = readFrontend("src/services/realtimeEvents.ts");
 
-  assert.match(apiClient, /const defaultApiBaseUrl = "";/);
-  assert.doesNotMatch(apiClient, /defaultApiBaseUrl[^\n]*localhost:8080/);
+  assert.match(apiOrigin, /const defaultApiBaseUrl = "";/);
+  assert.doesNotMatch(apiOrigin, /defaultApiBaseUrl[^\n]*localhost:8080/);
+  assert.match(apiClient, /import \{ apiBaseUrl \} from "\.\/apiOrigin\.ts";/);
   assert.match(apiClient, /credentials: "include"/);
   assert.match(assistant, /VITE_DASHBOARD_ASSISTANT_API_PATH \|\| "\/api\/dashboards\/assistant"/);
   assert.match(assistant, /credentials: "include"/);
-  assert.match(realtimeEvents, /const defaultBaseUrl = "";/);
-  assert.doesNotMatch(realtimeEvents, /defaultBaseUrl[^\n]*localhost:8080/);
+  assert.match(realtimeEvents, /return apiBaseUrl;/);
 });
 
 test("ETL AI and SQL preview use the shared live client without synthesized success", () => {
