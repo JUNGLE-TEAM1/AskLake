@@ -22,28 +22,14 @@ class RealtimePublicationRepository:
 
     def publish(self, publication: RealtimePublication) -> PublicationResult:
         idempotency_key = f"realtime-publication:{publication.materialization_id}"
-        existing = self._existing_commit(publication.materialization_id)
-        if existing is not None:
-            self._validate_existing(existing, publication)
-            event = RealtimeEventRepository(self.session).by_idempotency_key(idempotency_key)
-            if event is None:
-                raise RuntimeError("published materialization is missing its durable event")
-            return PublicationResult(publication.dataset_id, int(existing.revision), int(event.id), False)
+        existing_result = self._existing_result(publication, idempotency_key)
+        if existing_result is not None:
+            return existing_result
 
-        freshness = self.session.scalars(
-            select(DatasetFreshnessModel)
-            .where(DatasetFreshnessModel.dataset_id == publication.dataset_id)
-            .with_for_update()
-        ).first()
-        if freshness is None:
-            raise ValueError("Dataset serving binding is not initialized")
-        existing = self._existing_commit(publication.materialization_id)
-        if existing is not None:
-            self._validate_existing(existing, publication)
-            event = RealtimeEventRepository(self.session).by_idempotency_key(idempotency_key)
-            if event is None:
-                raise RuntimeError("published materialization is missing its durable event")
-            return PublicationResult(publication.dataset_id, int(existing.revision), int(event.id), False)
+        freshness = self._lock_freshness(publication.dataset_id)
+        existing_result = self._existing_result(publication, idempotency_key)
+        if existing_result is not None:
+            return existing_result
         if any((
             int(freshness.binding_epoch or 0) != publication.binding_epoch,
             freshness.active_serving_engine != "clickhouse",
@@ -51,31 +37,7 @@ class RealtimePublicationRepository:
         )):
             raise ValueError("Dataset serving binding epoch or version is stale")
 
-        lock_clause = "" if self.session.get_bind().dialect.name == "sqlite" else "FOR UPDATE"
-        materialization = self.session.execute(text(f"""
-            SELECT pipeline_version_id, source_fingerprint, dimension_version_ids,
-                   lease_generation, target_row_count, target_checksum, status
-            FROM realtime_materializations
-            WHERE id = :id
-            {lock_clause}
-        """), {"id": publication.materialization_id}).mappings().first()
-        if materialization is None:
-            raise ValueError("materialization evidence or lease is stale")
-        materialization_dimensions = materialization["dimension_version_ids"]
-        if isinstance(materialization_dimensions, str):
-            materialization_dimensions = json.loads(materialization_dimensions)
-        if any((
-            materialization["pipeline_version_id"] != publication.pipeline_version_id,
-            materialization["source_fingerprint"] != publication.source_fingerprint,
-            int(materialization["lease_generation"]) != publication.lease_generation,
-            materialization["target_row_count"] is None,
-            materialization["target_row_count"] is not None
-            and int(materialization["target_row_count"]) != publication.row_count,
-            str(materialization["target_checksum"] or "") != publication.checksum,
-            dict(materialization_dimensions or {}) != publication.dimension_version_ids,
-            materialization["status"] != "materialized",
-        )):
-            raise ValueError("materialization evidence or lease is stale")
+        self._validate_materialization_evidence(publication)
 
         revision = int(freshness.latest_revision or 0) + 1
         MaterializationRepository(self.session).advance_checkpoints(
@@ -177,6 +139,57 @@ class RealtimePublicationRepository:
                 DatasetRevisionCommitModel.materialization_id == materialization_id
             )
         ).first()
+
+    def _lock_freshness(self, dataset_id: str) -> DatasetFreshnessModel:
+        freshness = self.session.scalars(
+            select(DatasetFreshnessModel)
+            .where(DatasetFreshnessModel.dataset_id == dataset_id)
+            .with_for_update()
+        ).first()
+        if freshness is None:
+            raise ValueError("Dataset serving binding is not initialized")
+        return freshness
+
+    def _existing_result(
+        self,
+        publication: RealtimePublication,
+        idempotency_key: str,
+    ) -> PublicationResult | None:
+        existing = self._existing_commit(publication.materialization_id)
+        if existing is None:
+            return None
+        self._validate_existing(existing, publication)
+        event = RealtimeEventRepository(self.session).by_idempotency_key(idempotency_key)
+        if event is None:
+            raise RuntimeError("published materialization is missing its durable event")
+        return PublicationResult(publication.dataset_id, int(existing.revision), int(event.id), False)
+
+    def _validate_materialization_evidence(self, publication: RealtimePublication) -> None:
+        lock_clause = "" if self.session.get_bind().dialect.name == "sqlite" else "FOR UPDATE"
+        materialization = self.session.execute(text(f"""
+            SELECT pipeline_version_id, source_fingerprint, dimension_version_ids,
+                   lease_generation, target_row_count, target_checksum, status
+            FROM realtime_materializations
+            WHERE id = :id
+            {lock_clause}
+        """), {"id": publication.materialization_id}).mappings().first()
+        if materialization is None:
+            raise ValueError("materialization evidence or lease is stale")
+        materialization_dimensions = materialization["dimension_version_ids"]
+        if isinstance(materialization_dimensions, str):
+            materialization_dimensions = json.loads(materialization_dimensions)
+        if any((
+            materialization["pipeline_version_id"] != publication.pipeline_version_id,
+            materialization["source_fingerprint"] != publication.source_fingerprint,
+            int(materialization["lease_generation"]) != publication.lease_generation,
+            materialization["target_row_count"] is None,
+            materialization["target_row_count"] is not None
+            and int(materialization["target_row_count"]) != publication.row_count,
+            str(materialization["target_checksum"] or "") != publication.checksum,
+            dict(materialization_dimensions or {}) != publication.dimension_version_ids,
+            materialization["status"] != "materialized",
+        )):
+            raise ValueError("materialization evidence or lease is stale")
 
     def _update_catalog_binding(self, publication: RealtimePublication) -> None:
         model = self.session.scalars(
