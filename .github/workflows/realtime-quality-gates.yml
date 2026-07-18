@@ -130,6 +130,12 @@ jobs:
           ASKLAKE_FASTAPI_PYTHON: python
         run: npm run verify:clickhouse-realtime-v2-publication
 
+      - name: Verify ClickHouse V2 Dashboard and SSE contracts
+        working-directory: backend
+        env:
+          ASKLAKE_FASTAPI_PYTHON: python
+        run: npm run verify:clickhouse-realtime-v2-dashboard
+
       - name: Verify PostgreSQL event log and NOTIFY
         working-directory: backend
         run: npm run verify:realtime-postgres

@@ -205,6 +205,7 @@ class RealtimePublicationRepository:
             "status": "active",
             "bindingEpoch": publication.binding_epoch,
             "versionId": publication.serving_version_id,
+            "pipelineVersionId": publication.pipeline_version_id,
             "database": publication.physical_database,
             "table": publication.physical_table,
             "sourceBoundary": publication.boundary.document(),

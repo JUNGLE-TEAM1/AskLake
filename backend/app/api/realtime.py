@@ -343,6 +343,18 @@ async def _event_stream(
         for event in replay_events:
             if event.event_id <= last_cursor:
                 continue
+            if not await asyncio.to_thread(
+                _stream_identity_is_authorized,
+                identity,
+                dashboard_id,
+                dataset_ids,
+            ):
+                realtime_metrics.increment("authRejections")
+                yield _system_event(
+                    "system.authorization_changed",
+                    {"reason": "session_or_permission_changed"},
+                )
+                return
             yield _domain_event(event)
             last_cursor = event.event_id
             realtime_metrics.increment("eventsReplayed")
@@ -385,6 +397,19 @@ async def _event_stream(
                 return
             if item.event_id <= last_cursor:
                 continue
+            is_authorized = await asyncio.to_thread(
+                _stream_identity_is_authorized,
+                identity,
+                dashboard_id,
+                dataset_ids,
+            )
+            if not is_authorized:
+                realtime_metrics.increment("authRejections")
+                yield _system_event(
+                    "system.authorization_changed",
+                    {"reason": "session_or_permission_changed"},
+                )
+                return
             yield _domain_event(item)
             last_cursor = item.event_id
     finally:

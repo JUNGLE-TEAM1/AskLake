@@ -883,6 +883,9 @@ class DashboardRuntimeService:
                     dataset_id=dataset_id,
                     after_revision=int(saved.applied_revision or 0) if saved is not None else 0,
                     remote_budget=remote_budget,
+                    expected_binding_epoch=(
+                        int(freshness.binding_epoch or 0) if freshness is not None else None
+                    ),
                 )
                 if incremental is not None:
                     computed_result, computed_state, applied_revision, calculation_mode = incremental
@@ -892,6 +895,9 @@ class DashboardRuntimeService:
                     widget_type,
                     config,
                     remote_budget=remote_budget,
+                    expected_binding_epoch=(
+                        int(freshness.binding_epoch or 0) if freshness is not None else None
+                    ),
                 )
                 calculation_mode = "full"
 
@@ -987,8 +993,13 @@ class DashboardRuntimeService:
         config: dict[str, Any],
         *,
         remote_budget: DashboardRemoteScanBudget,
+        expected_binding_epoch: int | None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        session = DashboardDatasetQuerySession(payload, remote_budget=remote_budget)
+        session = DashboardDatasetQuerySession(
+            payload,
+            remote_budget=remote_budget,
+            expected_binding_epoch=expected_binding_epoch,
+        )
         try:
             state = session.read_aggregate_state(widget_type.value, config)
             if state is not None:
@@ -1007,6 +1018,7 @@ class DashboardRuntimeService:
         dataset_id: str,
         after_revision: int,
         remote_budget: DashboardRemoteScanBudget,
+        expected_binding_epoch: int | None,
     ) -> tuple[dict[str, Any], dict[str, Any], int, str] | None:
         if not dashboard_widget_supports_incremental_merge(
             widget_type.value,
@@ -1057,6 +1069,7 @@ class DashboardRuntimeService:
             delta_payload,
             remote_budget=remote_budget,
             iceberg_run_id=iceberg_run_id,
+            expected_binding_epoch=expected_binding_epoch,
         )
         try:
             if iceberg_run_id is not None and not session.revision_delta_available:
