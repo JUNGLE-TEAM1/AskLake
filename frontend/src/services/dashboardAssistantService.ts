@@ -1,7 +1,9 @@
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
 
-const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "/api/dashboards/assistant").trim();
+// Docker build args are exposed to Vite as empty strings when omitted. Treat an
+// empty value like an unset value so every build keeps the live same-origin API.
+const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH || "/api/dashboards/assistant").trim();
 
 export type DashboardAssistantMode = "dashboard_question" | "visualization_request";
 
@@ -151,6 +153,7 @@ function normalizeEndpoint(path: string) {
 async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest) {
   const response = await fetch(endpoint, {
     body: JSON.stringify(body),
+    credentials: "include",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",

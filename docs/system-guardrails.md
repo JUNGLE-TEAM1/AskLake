@@ -95,7 +95,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | --- | --- |
 | `npm run verify:ui-regressions` failed | SQL 분석의 editor 불변 높이·Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터/실행 정보 전환·Trino timeline/cursor pagination/server CSV·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
-| Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
+| Live API mode failed | Browser Network에서 상대 `/api` 요청인지 확인한 뒤 Vite의 `VITE_DEV_PROXY_TARGET` 또는 container Nginx의 `backend:8080` 해석, backend 상태, `docs/api-contract.md` response shape를 확인한다. 로컬 HTTP 로그인은 proxy에서 Secure cookie를 제거하지 말고 local backend의 `AUTH_SESSION_COOKIE_SECURE=false`만 사용한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
