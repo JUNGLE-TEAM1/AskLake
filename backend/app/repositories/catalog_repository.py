@@ -37,7 +37,10 @@ class CatalogRepository:
 
     def get_dataset_payload(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.get_dataset_model(dataset_id)
-        return dataset_model_to_payload(model) if model else None
+        if model is None:
+            return None
+        self._raise_if_deletion_in_progress(dataset_id)
+        return dataset_model_to_payload(model)
 
     def get_dataset_payload_for_update(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.get_dataset_model_for_update(dataset_id)
@@ -58,6 +61,16 @@ class CatalogRepository:
     def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         ensure_catalog_schema(self.db)
         dataset_id = str(payload["id"])
+        from app.repositories.catalog_deletion_repository import CatalogDeletionRepository
+        from app.core.errors import ApiError
+
+        if CatalogDeletionRepository(self.db).has_fence(dataset_id):
+            raise ApiError(
+                "DATASET_DELETION_FENCED",
+                "Dataset publication is blocked because deletion has already been requested.",
+                409,
+                {"datasetId": dataset_id},
+            )
         model = self.get_dataset_model(dataset_id)
 
         if model is None:
@@ -69,6 +82,19 @@ class CatalogRepository:
         self.db.flush()
         self.db.commit()
         return payload
+
+    def _raise_if_deletion_in_progress(self, dataset_id: str) -> None:
+        from app.core.errors import ApiError
+        from app.repositories.catalog_deletion_repository import ACTIVE_DELETION_STATUSES, CatalogDeletionRepository
+
+        deletion = CatalogDeletionRepository(self.db).latest_for_dataset(dataset_id)
+        if deletion is not None and deletion.status in ACTIVE_DELETION_STATUSES:
+            raise ApiError(
+                "DATASET_DELETION_IN_PROGRESS",
+                "Dataset deletion is in progress.",
+                409,
+                {"datasetId": dataset_id, "deletionId": deletion.id, "status": deletion.status},
+            )
 
 
 def ensure_catalog_schema(db: Session) -> None:

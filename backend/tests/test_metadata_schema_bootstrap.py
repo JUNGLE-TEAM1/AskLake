@@ -13,6 +13,7 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
             patch("app.migrations.metadata_schema.ensure_dashboard_live_schema") as dashboard_live,
             patch("app.migrations.metadata_schema.ensure_realtime_event_schema") as realtime,
             patch("app.migrations.metadata_schema.ensure_continuous_sql_schema") as continuous_sql,
+            patch("app.migrations.metadata_schema.ensure_catalog_deletion_schema") as catalog_deletion,
             patch("app.migrations.metadata_schema.etl_repository.ensure_schema") as etl,
             patch("app.migrations.metadata_schema.ensure_sql_schema") as sql,
         ):
@@ -23,6 +24,7 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
         dashboard_live.assert_called_once_with(database)
         realtime.assert_called_once_with(database)
         continuous_sql.assert_called_once_with(database)
+        catalog_deletion.assert_called_once_with(database)
         etl.assert_called_once_with(database)
         sql.assert_called_once_with(database)
 

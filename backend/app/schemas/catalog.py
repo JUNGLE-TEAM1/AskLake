@@ -16,6 +16,7 @@ MaterializationSourceKind = Literal["etl", "sql", "kafka", "continuous_sql"]
 MaterializationMode = Literal["snapshot", "delta"]
 QueryEngineTableFormat = Literal["iceberg", "parquet"]
 QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
+CatalogDatasetDeletionStatus = Literal["queued", "validating", "purging", "metadata_cleanup", "succeeded", "failed"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -184,6 +185,45 @@ class VerifyCatalogUniqueKeyResponse(CamelModel):
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str
+
+
+class CatalogDatasetDeletionBlocker(CamelModel):
+    resource_type: str
+    resource_id: str
+    resource_name: str
+    reason: str
+
+
+class CatalogDatasetDeletionArtifact(CamelModel):
+    kind: str
+    location: str
+
+
+class CatalogDatasetDeletionImpact(CamelModel):
+    artifacts: list[CatalogDatasetDeletionArtifact] = Field(default_factory=list)
+    blockers: list[CatalogDatasetDeletionBlocker] = Field(default_factory=list)
+    can_delete: bool
+    dataset_id: str
+    dataset_name: str
+    estimated_size_bytes: int = 0
+    retained_resources: list[str] = Field(default_factory=list)
+
+
+class CatalogDatasetDeletionAcceptedResponse(CamelModel):
+    dataset_id: str
+    deletion_id: str
+    status: CatalogDatasetDeletionStatus
+
+
+class CatalogDatasetDeletionStatusResponse(CamelModel):
+    created_at: str
+    dataset_id: str
+    dataset_name: str
+    deletion_id: str
+    error_code: str | None = None
+    error_message: str | None = None
+    status: CatalogDatasetDeletionStatus
+    updated_at: str
 
 
 class CreateDerivedDatasetMetadata(CamelModel):
