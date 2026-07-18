@@ -28,7 +28,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 
 | Guardrail | Enforced By | Current Status | Failure Behavior | Owner | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
+| Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract, Catalog PROCESS projection, Dashboard panel toggle과 Vite build를 함께 확인 |
 | Deploy readiness record | `.github/workflows/deploy-readiness.yml` running `scripts/verify-deploy-readiness.sh` | `enabled` | matching PR/manual workflow fails when production Compose render, deploy image build, backend production dependencies, or repository Spark runtime contract fails | maintainer | uses Node 22/Python 3.13 and uploads a JSON release-readiness artifact; never connects to EC2 or injects production secrets |
 | Deploy readiness required check | GitHub repository ruleset | `requires-admin` | block merge only after repository admin marks `Deploy Readiness / deploy-readiness` as required | repo admin | workflow implementation does not change GitHub repository settings |
 | Dashboard schema preparation | backend startup plus `backend npm run migrate:dashboard-schema` and `npm run verify:dashboard-storage` | `enabled` | versioned Dashboard schema preparation fails before Dashboard API requests are served; request paths must not issue Dashboard DDL | data-platform | `dashboard_schema_migrations` records Dashboard card/runtime and batch-result-cache versions; a PostgreSQL advisory lock serializes multi-instance startup. This is not a repository-wide Alembic policy. |
@@ -103,7 +103,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 
 | Failure | How to fix |
 | --- | --- |
-| `npm run verify:ui-regressions` failed | SQL 분석의 editor 불변 높이·Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터/실행 정보 전환·Trino timeline/cursor pagination/server CSV·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 계약을 확인하고 관련 파일을 수정한다. |
+| `npm run verify:ui-regressions` failed | SQL 분석의 editor 불변 높이·Nessie Popover/Bubble/Collapsible·Dashboard WidgetConfigPanel 재사용·차트/데이터/실행 정보 전환·Trino timeline/cursor pagination/server CSV·Job wizard, Source/Catalog 밀도, Catalog PROCESS projection, Dashboard panel toggle, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | Browser Network에서 상대 `/api` 요청인지 확인한 뒤 Vite의 `VITE_DEV_PROXY_TARGET` 또는 container Nginx의 `backend:8080` 해석, `/api/realtime/events`의 SSE buffering 비활성화, backend 상태, `docs/api-contract.md` response shape를 확인한다. 로컬 HTTP 로그인은 proxy에서 Secure cookie를 제거하지 말고 local backend의 `AUTH_SESSION_COOKIE_SECURE=false`만 사용한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
