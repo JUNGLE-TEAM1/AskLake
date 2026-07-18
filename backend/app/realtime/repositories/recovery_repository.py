@@ -199,6 +199,50 @@ class RealtimeRecoveryRepository:
 
         parity = self._matched_parity(request.parity_report_id)
         self._validate_switch_parity(parity, request)
+        operation, epoch, revision, now = self._stage_switch_mutation(
+            freshness, catalog, payload, request
+        )
+
+        envelope, created = RealtimeEventRepository(self.session).append(
+            event_type="dataset.revision.committed",
+            resource_type="dataset",
+            resource_id=request.dataset_id,
+            aggregate_revision=revision,
+            correlation_id=request.correlation_id,
+            idempotency_key=f"binding-switch:{request.operation_id}",
+            invalidations=[f"dataset:{request.dataset_id}"],
+            payload={
+                "bindingEpoch": epoch,
+                "materializationId": request.target.materialization_id,
+                "mutationType": "replace",
+                "sourceBoundary": request.target.boundary.document(),
+                "servingVersionId": request.target.version_id,
+                "pipelineVersionId": request.target.pipeline_version_id,
+            },
+            occurred_at=now,
+            schema_version=2,
+        )
+        if not created:
+            raise RuntimeError("new binding switch collided with an existing event identity")
+        operation.result_event_cursor = envelope.event_id
+        self.session.add(operation)
+        self.session.flush()
+        return BindingSwitchResult(
+            operation_id=operation.id,
+            dataset_id=request.dataset_id,
+            binding_epoch=epoch,
+            revision=revision,
+            event_cursor=envelope.event_id,
+            created=True,
+        )
+
+    def _stage_switch_mutation(
+        self,
+        freshness: DatasetFreshnessModel,
+        catalog: CatalogDatasetModel,
+        payload: dict[str, object],
+        request: BindingSwitchRequest,
+    ) -> tuple[RealtimeRecoveryOperationModel, int, int, datetime]:
         now = datetime.now(UTC)
         epoch = request.expected_binding_epoch + 1
         revision = int(freshness.latest_revision or 0) + 1
@@ -269,39 +313,7 @@ class RealtimeRecoveryRepository:
         self.session.add(freshness)
         self._upsert_assignment(request, epoch, now)
         self.session.flush()
-
-        envelope, created = RealtimeEventRepository(self.session).append(
-            event_type="dataset.revision.committed",
-            resource_type="dataset",
-            resource_id=request.dataset_id,
-            aggregate_revision=revision,
-            correlation_id=request.correlation_id,
-            idempotency_key=f"binding-switch:{request.operation_id}",
-            invalidations=[f"dataset:{request.dataset_id}"],
-            payload={
-                "bindingEpoch": epoch,
-                "materializationId": request.target.materialization_id,
-                "mutationType": "replace",
-                "sourceBoundary": request.target.boundary.document(),
-                "servingVersionId": request.target.version_id,
-                "pipelineVersionId": request.target.pipeline_version_id,
-            },
-            occurred_at=now,
-            schema_version=2,
-        )
-        if not created:
-            raise RuntimeError("new binding switch collided with an existing event identity")
-        operation.result_event_cursor = envelope.event_id
-        self.session.add(operation)
-        self.session.flush()
-        return BindingSwitchResult(
-            operation_id=operation.id,
-            dataset_id=request.dataset_id,
-            binding_epoch=epoch,
-            revision=revision,
-            event_cursor=envelope.event_id,
-            created=True,
-        )
+        return operation, epoch, revision, now
 
     @staticmethod
     def _validate_audit(epoch: int, requested_by: str, reason: str, correlation_id: str) -> None:
