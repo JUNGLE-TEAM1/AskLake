@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   generateQueryAiSuggestion,
+  getQueryAiErrorMessage,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
+import { LatestRequestGate } from "../../state/requestOwnership";
 import type { AuditResult, CatalogDataset } from "../../types";
 import type { SqlPreflightResult } from "./sqlLogic";
 
@@ -30,20 +32,25 @@ export function useSqlQueryAi({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const requests = useRef(new LatestRequestGate());
   const contextFingerprint = useMemo(() => JSON.stringify({
     baseDatasetId: baseDataset?.id ?? null,
     query,
     selectedDatasetIds: selectedDatasets.map((dataset) => dataset.id).sort(),
   }), [baseDataset?.id, query, selectedDatasets]);
   const contextFingerprintRef = useRef(contextFingerprint);
+  contextFingerprintRef.current = contextFingerprint;
 
   useEffect(() => {
-    contextFingerprintRef.current = contextFingerprint;
+    requests.current.invalidate();
+    setPending(false);
     setPrompt("");
     setSuggestion(null);
     setError(null);
     setOpen(false);
   }, [contextFingerprint]);
+
+  useEffect(() => () => requests.current.invalidate(), []);
 
   const changePrompt = (nextPrompt: string) => {
     setPrompt(nextPrompt);
@@ -53,7 +60,11 @@ export function useSqlQueryAi({
 
   const changeOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen) return;
+    if (!nextOpen) {
+      requests.current.invalidate();
+      setPending(false);
+      return;
+    }
     setError(null);
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
   };
@@ -78,7 +89,7 @@ export function useSqlQueryAi({
     setSuggestion(null);
     setError(null);
     setPending(true);
-    const requestedContextFingerprint = contextFingerprint;
+    const lease = requests.current.begin(contextFingerprint);
     try {
       const nextSuggestion = await generateQueryAiSuggestion({
         baseDataset,
@@ -87,16 +98,21 @@ export function useSqlQueryAi({
         prompt: normalizedPrompt,
         query,
         selectedDatasets,
+      }, {
+        signal: lease.signal,
       });
-      if (contextFingerprintRef.current !== requestedContextFingerprint) return;
+      if (!requests.current.isCurrent(lease) || contextFingerprintRef.current !== lease.key) return;
       setSuggestion(nextSuggestion);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
-    } catch {
+    } catch (requestError) {
+      if (!requests.current.isCurrent(lease) || contextFingerprintRef.current !== lease.key) return;
       setSuggestion(null);
-      setError("SQL 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setError(getQueryAiErrorMessage(requestError));
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
-      setPending(false);
+      if (requests.current.complete(lease) && contextFingerprintRef.current === lease.key) {
+        setPending(false);
+      }
     }
   };
 

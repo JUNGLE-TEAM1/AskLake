@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -146,23 +147,53 @@ class QueryAiService:
             dataset_ids=context_dataset_ids,
             semantic_model_id=request.semantic_model_id,
         )
-        request_id = str(uuid4())
-        context_token = issue_ai_context_token(
-            request_id=request_id,
-            actor=actor,
-            allowed_dataset_ids=context_dataset_ids,
-            dataset_permissions={dataset.id: ["query"] for dataset in datasets},
+        generation_prompt = _build_query_generation_prompt(prompt, datasets)
+        for attempt in range(2):
+            request_id = str(uuid4())
+            context_token = issue_ai_context_token(
+                request_id=request_id,
+                actor=actor,
+                allowed_dataset_ids=context_dataset_ids,
+                dataset_permissions={dataset.id: ["query"] for dataset in datasets},
+            )
+            raw_suggestion = AiGatewayClient().generate_query_sql(
+                request_id=request_id,
+                prompt=generation_prompt,
+                current_query=request.current_query or "",
+                base_dataset_id=base_dataset.id,
+                selected_dataset_ids=context_dataset_ids,
+                context_token=context_token,
+                rag_context=rag_context,
+            )
+            if not isinstance(raw_suggestion, dict):
+                raise ApiError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "AI gateway returned an invalid SQL suggestion",
+                    status.HTTP_502_BAD_GATEWAY,
+                )
+
+            sql = ensure_preview_limit(raw_suggestion.get("sql", ""))
+            statement = validate_read_only_query(sql)
+            validate_selected_dataset_scope(statement, datasets)
+            try:
+                validate_query_intent_contract(prompt, statement, datasets)
+            except ApiError as exc:
+                violations = list((exc.details or {}).get("violations") or [])
+                if attempt > 0 or not violations:
+                    raise
+                generation_prompt = _build_query_generation_prompt(
+                    prompt,
+                    datasets,
+                    failed_violations=violations,
+                )
+                continue
+            return request_id, rag_context, raw_suggestion
+
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "AI gateway did not return a verified SQL suggestion",
+            status.HTTP_502_BAD_GATEWAY,
         )
-        raw_suggestion = AiGatewayClient().generate_query_sql(
-            request_id=request_id,
-            prompt=prompt,
-            current_query=request.current_query or "",
-            base_dataset_id=base_dataset.id,
-            selected_dataset_ids=context_dataset_ids,
-            context_token=context_token,
-            rag_context=rag_context,
-        )
-        return request_id, rag_context, raw_suggestion
 
     def _verified_response(
         self,
@@ -177,10 +208,17 @@ class QueryAiService:
         rag_context: dict[str, Any],
         raw_suggestion: dict[str, object],
     ) -> QueryAiSuggestionResponse:
-        suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else parse_ai_suggestion(raw_suggestion)
+        if not isinstance(raw_suggestion, dict):
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "AI gateway returned an invalid SQL suggestion",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+        suggestion = raw_suggestion
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
         validate_selected_dataset_scope(statement, datasets)
+        validate_query_intent_contract(prompt, statement, datasets)
         used_evidence_ids = [str(item) for item in suggestion.get("usedEvidenceIds") or []]
         used_rag_context = retain_used_rag_evidence(rag_context, used_evidence_ids) or {
             "sources": [],
@@ -276,6 +314,144 @@ def ensure_preview_limit(sql: str) -> str:
 
     bounded = expression.limit(PREVIEW_LIMIT, copy=True)
     return f"{bounded.sql(dialect='trino')};"
+
+
+def validate_query_intent_contract(
+    prompt: str,
+    statement: str,
+    datasets: list[CatalogDatasetResponse],
+) -> None:
+    """Reject SQL drafts that visibly contradict explicit analytical intent."""
+
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError as exc:
+        raise ApiError(
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "AI returned SQL that could not be parsed",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from exc
+
+    normalized_prompt = prompt.casefold()
+    violations: list[str] = []
+    if re.search(r"평균|\baverage\b|\bavg\b", normalized_prompt) and not any(
+        expression.find_all(exp.Avg)
+    ):
+        violations.append("missing_average")
+    if re.search(
+        r"상품\s*(?:수|개수)|제품\s*(?:수|개수)|건수|개수|\bnumber\s+of\b|\bcount\s+of\b",
+        normalized_prompt,
+    ) and not any(expression.find_all(exp.Count)):
+        violations.append("missing_count")
+    if re.search(r"[0-9a-z가-힣_]+\s*별(?:로)?|\bby\s+[a-z_]", normalized_prompt) and not isinstance(
+        expression.args.get("group"),
+        exp.Group,
+    ):
+        violations.append("missing_grouping")
+    if _uses_dataset_qualifier_as_row_filter(normalized_prompt, expression, datasets):
+        violations.append("dataset_qualifier_filter")
+
+    if violations:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "AI SQL did not satisfy the requested analysis intent",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"violations": violations},
+        )
+
+
+def _uses_dataset_qualifier_as_row_filter(
+    normalized_prompt: str,
+    expression: exp.Expression,
+    datasets: list[CatalogDatasetResponse],
+) -> bool:
+    explicit_filter_markers = (
+        "where",
+        "like",
+        "필터",
+        "조건",
+        "제목",
+        "타이틀",
+        "title",
+        "이름",
+        "name",
+        "포함",
+        "일치",
+        "검색",
+        "찾아",
+    )
+    if any(marker in normalized_prompt for marker in explicit_filter_markers):
+        return False
+
+    filter_literals = " ".join(
+        str(literal.this).casefold()
+        for clause in expression.find_all(exp.Where, exp.Having)
+        for literal in clause.find_all(exp.Literal)
+        if literal.is_string
+    )
+    if not filter_literals:
+        return False
+
+    return any(
+        token in normalized_prompt and token in filter_literals
+        for token in _dataset_qualifier_tokens(datasets)
+    )
+
+
+def _dataset_qualifier_tokens(datasets: list[CatalogDatasetResponse]) -> set[str]:
+    generic_tokens = {
+        "catalog",
+        "data",
+        "dataset",
+        "gold",
+        "product",
+        "products",
+        "table",
+    }
+    tokens: set[str] = set()
+    for dataset in datasets:
+        metadata_values = (
+            dataset.id,
+            dataset.name,
+            dataset.source,
+            dataset.description,
+            *dataset.tags,
+        )
+        for value in metadata_values:
+            tokens.update(
+                token
+                for token in re.findall(r"[0-9a-z가-힣]+", str(value).casefold())
+                if len(token) >= 3 and token not in generic_tokens
+            )
+    return tokens
+
+
+def _build_query_generation_prompt(
+    prompt: str,
+    datasets: list[CatalogDatasetResponse],
+    *,
+    failed_violations: list[str] | None = None,
+) -> str:
+    dataset_labels = ", ".join(
+        f"{dataset.id} ({dataset.name}; source={dataset.source})"
+        for dataset in datasets
+    )
+    lines = [
+        prompt,
+        "",
+        "SQL 생성 계약:",
+        f"- 선택 데이터셋: {dataset_labels}",
+        "- 데이터셋명·출처명은 사용자가 열 조건을 명시하지 않은 한 행 필터 값이 아닙니다.",
+        "- 요청한 집계(평균·개수)와 그룹 기준을 SQL에 빠짐없이 반영하세요.",
+        "- 선택 데이터셋만 참조하는 읽기 전용 SQL 한 개를 반환하세요.",
+    ]
+    if failed_violations:
+        lines.extend((
+            "",
+            f"이전 SQL 검증 실패: {', '.join(failed_violations)}",
+            "검증 실패 항목을 모두 고쳐 SQL을 다시 생성하세요.",
+        ))
+    return "\n".join(lines)
 
 
 def validate_selected_dataset_scope(
