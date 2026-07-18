@@ -47,6 +47,7 @@ const server = createServer(async (request, response) => {
         : `continuous-${++continuousCreateCount}`;
       submissions.set(submissionId, {
         body,
+        forceUnknown: false,
         isMaintenance,
         killed: false,
         polls: 0,
@@ -61,7 +62,9 @@ const server = createServer(async (request, response) => {
       if (!submission) return json(response, 200, { message: "unknown submission", success: false });
       submission.polls += 1;
       let driverState;
-      if (submission.killed) {
+      if (submission.forceUnknown) {
+        driverState = "UNKNOWN";
+      } else if (submission.killed) {
         driverState = "KILLED";
       } else if (submission.forceRunning) {
         driverState = "RUNNING";
@@ -221,10 +224,16 @@ try {
   assert.equal(pausedStatus.containerState, "exited");
   assert.equal(pausedStatus.requestedAction, "pause");
 
+  submissions.get("continuous-1").forceUnknown = true;
   const resumed = await runManager(continuousScript, workerRequest, environment, "ASKLAKE_KAFKA_CONTINUOUS_RESULT");
   assert.equal(resumed.containerId, "continuous-2");
   assert.notEqual(resumed.workerAttemptId, started.workerAttemptId);
   assert.equal(resumed.started, true);
+  assert.equal(
+    continuousCreateCount,
+    2,
+    "UNKNOWN with a terminal last-known state must allow a recovered worker attempt.",
+  );
   assert.equal(existsSync(reportFile), false, "A new worker attempt must clear the previous report.");
 
   const stop = await continuousAction("stop", workerRequest, environment);

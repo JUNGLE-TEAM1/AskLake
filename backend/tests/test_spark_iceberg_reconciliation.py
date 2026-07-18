@@ -6,6 +6,7 @@ from app.core.errors import ApiError
 from app.schemas.iceberg import IcebergCommitEvidence
 from app.services.etl_service import (
     canonical_rule_fingerprint,
+    dataset_from_spark_result,
     dataset_payload_from_spark_result,
     enrich_airflow_catalog_spark_result,
     verify_spark_iceberg_result,
@@ -138,6 +139,50 @@ class SparkIcebergReconciliationTests(unittest.TestCase):
         self.assertEqual(result["dataFileCount"], 2)
         self.assertEqual(result["storageSizeBytes"], 4096)
         self.assertEqual(writer_service.run_row_count_verifications, [])
+
+    def test_verified_catalog_publication_issues_snapshot_scoped_rag_manifest(self) -> None:
+        result = verify_spark_iceberg_result(
+            self.job,
+            "RUN-ICEBERG-BATCH",
+            self.spark_result(),
+            writer_service=FakeIcebergWriterService(),
+        )
+        job = SimpleNamespace(
+            **vars(self.job),
+            created_by="qa",
+            created_by_profile=None,
+            dataset_id="ds_orders",
+            index_columns=[],
+            name="orders_pipeline",
+            owner="qa",
+            partition=None,
+            partition_columns=[],
+            permission_roles=[],
+            quality_score=100,
+            quality_status="passed",
+            rag=True,
+            schedule="manual",
+            source="File / S3 / orders",
+            source_label="orders.parquet",
+            target="orders",
+            target_description="orders dataset",
+            target_layer="GOLD",
+            target_tags=["orders"],
+        )
+
+        dataset = dataset_from_spark_result(job, result)
+        manifest = dataset.payload["sourceManifest"]
+
+        self.assertEqual(manifest["datasetId"], "ds_orders")
+        self.assertEqual(manifest["format"], "iceberg")
+        self.assertEqual(manifest["icebergSnapshotId"], "123456789")
+        self.assertEqual(
+            manifest["sparkPath"],
+            f"iceberg:asklake.asklake.{self.target.table}",
+        )
+        self.assertEqual(manifest["runId"], "RUN-ICEBERG-BATCH")
+        self.assertEqual(len(manifest["fingerprint"]), 64)
+        self.assertEqual(dataset.source_manifest, manifest)
 
     def test_continuous_path_verifies_run_rows_at_verified_snapshot(self) -> None:
         writer_service = FakeIcebergWriterService()

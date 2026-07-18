@@ -18,6 +18,30 @@ class McpContextClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    async def healthcheck(self) -> bool:
+        if not self.settings.mcp_enabled:
+            return True
+        if not self.settings.mcp_server_url or not self.settings.mcp_service_token:
+            return False
+        headers = {
+            "Authorization": f"Bearer {self.settings.mcp_service_token.get_secret_value()}",
+            # The backend requires a context header before the MCP transport is
+            # entered. Health checks only initialize the transport and list tool
+            # names; this sentinel is never accepted by a governed catalog tool.
+            "X-AskLake-AI-Context": "asklake-mcp-healthcheck",
+        }
+        try:
+            timeout = httpx.Timeout(self.settings.mcp_timeout_seconds)
+            async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=False) as http_client:
+                async with streamable_http_client(self.settings.mcp_server_url, http_client=http_client) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.list_tools()
+            names = {str(getattr(tool, "name", "")) for tool in getattr(result, "tools", [])}
+            return "asklake.catalog.get_datasets_context" in names
+        except Exception:
+            return False
+
     async def get_catalog_context(
         self,
         *,

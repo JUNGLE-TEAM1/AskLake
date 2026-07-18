@@ -27,6 +27,11 @@ JS_FUNCTION_RE = re.compile(
     r"(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{",
     re.DOTALL,
 )
+EXCEPTION_ALLOWANCE_FIELDS = (
+    "oversizedFiles",
+    "oversizedPythonFunctions",
+    "oversizedJavascriptFunctions",
+)
 
 
 def source_files(root: Path) -> list[Path]:
@@ -278,42 +283,175 @@ def validate_migrations(root: Path) -> list[str]:
     return failures
 
 
+def exception_allowances(
+    baseline: Mapping[str, Any],
+) -> tuple[dict[str, dict[str, int]], list[str]]:
+    allowances = {field: {} for field in EXCEPTION_ALLOWANCE_FIELDS}
+    failures: list[str] = []
+    seen_ids: set[str] = set()
+    for index, exception in enumerate(baseline.get("exceptions", [])):
+        if not isinstance(exception, Mapping):
+            failures.append(f"quality gate exception {index} must be an object")
+            continue
+        exception_id = str(exception.get("id") or "").strip()
+        missing = [
+            key
+            for key in ("id", "owner", "reason", "expiresAt")
+            if not str(exception.get(key) or "").strip()
+        ]
+        exception_failures: list[str] = []
+        if missing:
+            exception_failures.append(
+                "quality gate exception requires id, owner, reason, and expiresAt"
+            )
+        if exception_id in seen_ids:
+            exception_failures.append(f"duplicate quality gate exception id: {exception_id}")
+        elif exception_id:
+            seen_ids.add(exception_id)
+
+        expires_at: date | None = None
+        try:
+            expires_at = date.fromisoformat(str(exception.get("expiresAt") or ""))
+        except ValueError:
+            exception_failures.append(
+                f"invalid quality gate exception expiry: {exception_id or index}"
+            )
+        if expires_at is not None and expires_at < date.today():
+            exception_failures.append(
+                f"expired quality gate exception: {exception_id or index}"
+            )
+
+        local_allowances = {field: {} for field in EXCEPTION_ALLOWANCE_FIELDS}
+        allowance_count = 0
+        for field in EXCEPTION_ALLOWANCE_FIELDS:
+            values = exception.get(field, {})
+            if not isinstance(values, Mapping):
+                exception_failures.append(
+                    f"quality gate exception {exception_id or index} {field} must be an object"
+                )
+                continue
+            for target, maximum in values.items():
+                target_name = str(target or "").strip()
+                if not target_name:
+                    exception_failures.append(
+                        f"quality gate exception {exception_id or index} has an empty {field} target"
+                    )
+                    continue
+                if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0:
+                    exception_failures.append(
+                        f"quality gate exception {exception_id or index} {target_name} needs a positive integer ceiling"
+                    )
+                    continue
+                if target_name in allowances[field] or target_name in local_allowances[field]:
+                    exception_failures.append(
+                        f"duplicate quality gate exception target: {field}::{target_name}"
+                    )
+                    continue
+                local_allowances[field][target_name] = maximum
+                allowance_count += 1
+        if allowance_count == 0:
+            exception_failures.append(
+                f"quality gate exception {exception_id or index} needs at least one exact allowance"
+            )
+        failures.extend(exception_failures)
+        if exception_failures:
+            continue
+        for field, values in local_allowances.items():
+            allowances[field].update(values)
+    return allowances, failures
+
+
+def is_exception_allowed(
+    allowances: Mapping[str, Mapping[str, int]],
+    field: str,
+    target: str,
+    current_size: int,
+) -> bool:
+    maximum = allowances.get(field, {}).get(target)
+    return maximum is not None and current_size == maximum
+
+
 def compare(root: Path, baseline: Mapping[str, Any], base: str) -> list[str]:
     file_limit = int(baseline.get("fileLimit", 1_000))
     function_limit = int(baseline.get("functionLimit", 100))
     current = collect(root, file_limit, function_limit)
-    failures: list[str] = []
+    allowances, failures = exception_allowances(baseline)
+    for field, targets in allowances.items():
+        current_sizes = current[field]
+        for target, maximum in targets.items():
+            current_size = current_sizes.get(target)
+            if current_size is None:
+                failures.append(
+                    f"unused quality gate exception target: {field}::{target}"
+                )
+            elif current_size != maximum:
+                failures.append(
+                    "quality gate exception ceiling must equal current size: "
+                    f"{field}::{target} ({maximum} != {current_size})"
+                )
     old_files = baseline.get("oversizedFiles", {})
     for name, size in current["oversizedFiles"].items():
         allowed = old_files.get(name)
-        if allowed is None:
+        if allowed is None and not is_exception_allowed(
+            allowances,
+            "oversizedFiles",
+            name,
+            size,
+        ):
             failures.append(f"new file exceeds {file_limit} lines: {name} ({size})")
-        elif size > int(allowed):
+        elif (
+            allowed is not None
+            and size > int(allowed)
+            and not is_exception_allowed(allowances, "oversizedFiles", name, size)
+        ):
             failures.append(f"oversized file grew: {name} ({allowed} -> {size})")
     old_functions = baseline.get("oversizedPythonFunctions", {})
     for name, size in current["oversizedPythonFunctions"].items():
         allowed = old_functions.get(name)
-        if allowed is None:
+        if allowed is None and not is_exception_allowed(
+            allowances,
+            "oversizedPythonFunctions",
+            name,
+            size,
+        ):
             failures.append(f"new Python function exceeds {function_limit} lines: {name} ({size})")
-        elif size > int(allowed):
+        elif (
+            allowed is not None
+            and size > int(allowed)
+            and not is_exception_allowed(
+                allowances,
+                "oversizedPythonFunctions",
+                name,
+                size,
+            )
+        ):
             failures.append(f"oversized Python function grew: {name} ({allowed} -> {size})")
     old_javascript = baseline.get("oversizedJavascriptFunctions", {})
     for name, size in current["oversizedJavascriptFunctions"].items():
         allowed = old_javascript.get(name)
-        if allowed is None:
+        if allowed is None and not is_exception_allowed(
+            allowances,
+            "oversizedJavascriptFunctions",
+            name,
+            size,
+        ):
             failures.append(f"new JavaScript/TypeScript function exceeds {function_limit} lines: {name} ({size})")
-        elif size > int(allowed):
+        elif (
+            allowed is not None
+            and size > int(allowed)
+            and not is_exception_allowed(
+                allowances,
+                "oversizedJavascriptFunctions",
+                name,
+                size,
+            )
+        ):
             failures.append(f"oversized JavaScript/TypeScript function grew: {name} ({allowed} -> {size})")
     for language, cycles in current["importCycles"].items():
         previous = {tuple(item) for item in baseline.get("importCycles", {}).get(language, [])}
         for cycle in cycles:
             if tuple(cycle) not in previous:
                 failures.append(f"new {language} import cycle: {' -> '.join(cycle)}")
-    for exception in baseline.get("exceptions", []):
-        if not all(exception.get(key) for key in ("owner", "reason", "expiresAt")):
-            failures.append("quality gate exception requires owner, reason, and expiresAt")
-        elif date.fromisoformat(str(exception["expiresAt"])) < date.today():
-            failures.append(f"expired quality gate exception: {exception.get('id', 'unknown')}")
     changed = changed_files(root, base)
     if any(name.startswith(("backend/app/api/", "backend/app/schemas/")) for name in changed) and not changed.intersection({"docs/03-api-reference.md", "docs/02-architecture.md"}):
         failures.append("API/schema changed without docs/03-api-reference.md or docs/02-architecture.md")

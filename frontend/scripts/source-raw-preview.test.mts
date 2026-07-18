@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   extractRawTextPreviewLines,
   resolveRawTextPreviewLines,
+  shouldShowJsonPreview,
   shouldShowRawTextPreview,
 } from "../src/utils/sourcePreview.ts";
 
@@ -57,11 +58,36 @@ test("Kafka raw text uses backend-preserved lines even when table preview is emp
   }), true);
 });
 
-test("structured Kafka JSON still shows the broker value as an original log line", () => {
+test("structured Kafka JSON uses the JSON source preview instead of raw text parsing", () => {
   assert.equal(shouldShowRawTextPreview({
     detectedFormat: "JSON",
     requiresRecordParsing: false,
     rawLines: ["{\"event_id\":\"EVT-1\"}"],
     sourceType: "Stream / Kafka",
+  }), false);
+  assert.equal(shouldShowJsonPreview({
+    detectedFormat: "JSON",
+    requiresRecordParsing: false,
+    rawLines: ["{\"event_id\":\"EVT-1\"}"],
+    sourceType: "Stream / Kafka",
   }), true);
+});
+
+test("Kafka JSONL preview preserves the original broker values without record parsing", () => {
+  const messages = [
+    "{\"schema_version\":\"1.0\",\"raw\":{\"event_id\":\"EVT-1\"}}",
+    "{\"schema_version\":\"1.0\",\"raw\":{\"event_id\":\"EVT-2\"}}",
+  ];
+
+  assert.equal(shouldShowJsonPreview({
+    detectedFormat: "JSONL",
+    requiresRecordParsing: false,
+    rawLines: messages,
+    sourceType: "Stream / Kafka",
+  }), true);
+  assert.deepEqual(resolveRawTextPreviewLines({
+    backendRawLines: messages,
+    columnLabels: ["raw.event_id"],
+    rows: [["EVT-1"], ["EVT-2"]],
+  }), messages);
 });

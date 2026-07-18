@@ -77,6 +77,24 @@ class EtlEndpointAuthTests(unittest.TestCase):
         require_permission.assert_called_once_with(actor, "manage", resource_label="job collection")
         request.model_copy.assert_called_once_with(update={"created_by": actor.name})
 
+    def test_job_statuses_static_route_collects_repeated_job_ids(self) -> None:
+        app = create_app()
+        app.dependency_overrides[get_actor_context] = lambda: ActorContext(
+            name="Admin User",
+            role="admin",
+        )
+        client = TestClient(app)
+        with patch.object(
+            etl_api.etl_service,
+            "list_job_statuses",
+            return_value={"jobs": []},
+        ) as list_job_statuses:
+            response = client.get("/api/etl/jobs/statuses?jobId=JOB-2&jobId=JOB-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"jobs": []})
+        self.assertEqual(list_job_statuses.call_args.args[1], ["JOB-2", "JOB-1"])
+
 
 if __name__ == "__main__":
     unittest.main()

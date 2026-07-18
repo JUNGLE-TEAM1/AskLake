@@ -50,7 +50,12 @@ export function dashboardLiveDatasetIds(
   return Array.from(new Set(
     Object.values(runtime.widgetsByPageId)
       .flat()
-      .filter((widget) => widget.liveRefresh === true && Boolean(widget.datasetId))
+      .filter((widget) => (
+        widget.liveRefresh === true
+        && widget.dataStatus !== "pending"
+        && widget.dataStatus !== "loading"
+        && Boolean(widget.datasetId)
+      ))
       .map((widget) => widget.datasetId as string),
   )).sort();
 }
@@ -70,7 +75,12 @@ export function staleDashboardWidgetIds(
   return Object.values(runtime.widgetsByPageId)
     .flat()
     .filter((widget) => {
-      if (widget.liveRefresh !== true || !widget.datasetId) return false;
+      if (
+        widget.liveRefresh !== true
+        || widget.dataStatus === "pending"
+        || widget.dataStatus === "loading"
+        || !widget.datasetId
+      ) return false;
       const latestRevision = latestRevisionByDatasetId.get(widget.datasetId);
       if (latestRevision === undefined || !Number.isFinite(latestRevision)) return false;
       const appliedRevision = typeof widget.appliedRevision === "number" && Number.isFinite(widget.appliedRevision)

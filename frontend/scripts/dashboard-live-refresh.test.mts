@@ -78,6 +78,21 @@ test("published runtime groups each live dataset once", () => {
   assert.deepEqual(dashboardLiveDatasetIds({ ...runtime, mode: "draft" }, "dashboard-1"), []);
 });
 
+test("live polling waits until the selected widget has loaded its first result", () => {
+  const runtime = publishedRuntime([
+    metricWidget({ dataStatus: "pending" }),
+  ]);
+
+  assert.deepEqual(dashboardLiveDatasetIds(runtime, "dashboard-1"), []);
+  assert.deepEqual(staleDashboardWidgetIds(runtime, [{
+    datasetId: "clickstream_events",
+    isContinuous: true,
+    latestRevision: 5,
+    nextCheckAfterMs: 1_000,
+    updatedAt: "2026-07-14T00:00:05Z",
+  }]), []);
+});
+
 test("only widgets behind a newer continuous dataset revision are refreshed", () => {
   const runtime = publishedRuntime([
     metricWidget({ appliedRevision: 4, id: "stale" }),

@@ -73,8 +73,9 @@ def assert_client_identity(client: TrinoClient, expected_user: str, expected_pas
         body: bytes | None = None,
         headers: dict[str, str] | None = None,
         allow_empty_response: bool = False,
+        timeout_seconds: float | None = None,
     ) -> TrinoClientPage:
-        requests.append({"allowEmpty": allow_empty_response, "body": body, "headers": headers or {}, "method": method, "url": url})
+        requests.append({"allowEmpty": allow_empty_response, "body": body, "headers": headers or {}, "method": method, "timeout": timeout_seconds, "url": url})
         return TrinoClientPage(queryId="query_identity_test", rawStats={"state": "RUNNING"})
 
     client._request = record_request  # type: ignore[method-assign]

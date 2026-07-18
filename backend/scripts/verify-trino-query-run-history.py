@@ -71,7 +71,7 @@ def verify() -> None:
             fallback_runs = repository.list_trino_run_payloads(actor_name="History User", limit=10)
             assert {item["runId"] for item in fallback_runs} == {own_run_id, other_run_id, legacy_run_id, expired_run_id}
 
-            service._require_access_for_response = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            service.access_service.require_access_for_response = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
             expired = service.get(expired_run_id, ActorContext(id=own_user_id, name="History User"))
             assert expired.result and expired.result.storage_status == "expired"
             try:

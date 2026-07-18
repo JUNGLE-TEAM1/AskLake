@@ -23,9 +23,10 @@ export function useAskLakeWorkspaceState() {
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const [createMutationState, setCreateMutationState] = useState(createMutationLifecycle);
-  const [dataLoading, setDataLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
-  const [dataError, setDataError] = useState<string | null>(null);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   useEffect(() => {
     saveStoredEtlDraft(draftPipeline);
@@ -38,17 +39,18 @@ export function useAskLakeWorkspaceState() {
 
   return {
     apiPending,
+    catalogError,
+    catalogLoading,
     commandPendingByJobId,
     createMutationState,
     dagStepsByRunId,
-    dataError,
-    dataLoading,
     datasets,
     draftPipeline,
     editingJobId,
     jobExecutionEvidence,
     jobListFacets,
     jobs,
+    jobsError,
     jobsLoading,
     runsByJobId,
     selectedDataset,
@@ -56,16 +58,17 @@ export function useAskLakeWorkspaceState() {
     selectedRunIdByJobId,
     sqlResultDraft,
     setApiPending,
+    setCatalogError,
+    setCatalogLoading,
     setCommandPendingByJobId,
     setCreateMutationState,
     setDagStepsByRunId,
-    setDataError,
-    setDataLoading,
     setDatasets,
     setDraftPipeline,
     setEditingJobId,
     setJobListFacets,
     setJobs,
+    setJobsError,
     setJobsLoading,
     setRunsByJobId,
     setSelectedDataset,

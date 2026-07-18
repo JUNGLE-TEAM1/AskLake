@@ -28,7 +28,7 @@ Browser -> Caddy -> backend /api/query/ai-suggestions
 | 영역 | 파일 | 책임 |
 | --- | --- | --- |
 | Gateway | `ai-server/app/main.py`, `config.py`, `schemas.py` | 내부 API, limits, readiness |
-| Provider | `ai-server/app/llm_client.py` | mock/OpenAI-compatible provider, strict JSON schema |
+| Provider | `ai-server/app/llm_client.py` | OpenAI-compatible live provider, strict JSON schema; mock is test-suite only |
 | MCP client | `ai-server/app/mcp_client.py` | bounded Catalog MCP batch 호출 |
 | MCP server | `backend/app/mcp/server.py`, `mcp/catalog.py`, `mcp/context.py` | service token, scope, permission, governance, batch |
 | Backend adapter | `backend/app/services/ai_gateway_client.py` | Gateway timeout/status/contract mapping |
@@ -48,10 +48,10 @@ Browser -> Caddy -> backend /api/query/ai-suggestions
 
 ## 운영/롤백
 
-- Production은 `AI_QUERY_PROVIDER=gateway`를 사용한다. Local은 기존 `direct` 호환 모드 또는 `ai-server`의 `PROVIDER=mock`을 사용할 수 있다.
+- Production과 일반 local 실행은 모두 `AI_QUERY_PROVIDER=gateway`와 실제 OpenAI-compatible provider를 사용한다. `PROVIDER=mock`은 `APP_ENV=test|testing`인 격리 테스트에서만 허용되며 local 앱 실행에는 사용할 수 없다.
 - Gateway가 비정상이면 backend는 시작할 수 있지만 `/api/health/ai`와 Query AI는 명시적인 unavailable 오류를 반환한다.
 - 현재 context replay 방지는 Gateway 프로세스 메모리 범위다. Gateway를 수평 확장할 때는 Redis 같은 shared replay store를 먼저 도입하고, 그 전에는 단일 replica 정책을 유지한다.
-- 롤백은 `AI_QUERY_PROVIDER=direct`로 요청 라우팅을 전환한다. 이 전환은 ai-server를 제거하는 작업이 아니므로 preflight가 요구하는 Gateway/MCP secret은 그대로 유지해야 한다. 기존 Dashboard Assistant 호환 때문에 `OPENAI_API_KEY`는 별도 cleanup issue 전까지 유지한다.
+- SQL·Dashboard·ETL·RAG·Review 요청은 `AI_QUERY_PROVIDER=gateway` 한 경로로만 들어가며 provider key는 ai-server에만 둔다. Backend의 과거 direct OpenAI 설정과 frontend mock 전환 환경변수는 제거했다.
 
 ## 연구 기반 성능 기준
 

@@ -13,8 +13,15 @@ from urllib.parse import urlparse
 
 import duckdb
 from fastapi import status
+import sqlglot
 
 from app.core.errors import ApiError
+from app.services.clickhouse_client import (
+    ClickHouseClient,
+    ClickHouseError,
+    qualified_clickhouse_table,
+    validate_clickhouse_identifier,
+)
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
     iceberg_dataset_table,
@@ -104,6 +111,7 @@ class DashboardDatasetQuerySession:
         remote_budget: DashboardRemoteScanBudget | None = None,
         query_timeout_seconds: float | None = None,
         trino_client: TrinoClient | None = None,
+        clickhouse_client: ClickHouseClient | None = None,
         iceberg_run_id: str | None = None,
     ) -> None:
         self.dataset = dataset
@@ -114,9 +122,32 @@ class DashboardDatasetQuerySession:
         )
         self.connection: duckdb.DuckDBPyConnection | None = None
         self.trino_client: TrinoClient | None = None
+        self.clickhouse_client: ClickHouseClient | None = None
         self._aggregate_where_sql = ""
         self.revision_delta_available = iceberg_run_id is None
         try:
+            clickhouse_table = clickhouse_dataset_table(dataset)
+            if clickhouse_table is not None:
+                self.table = clickhouse_table
+                self.query_table = f"{self.table} FINAL"
+                self.clickhouse_client = clickhouse_client or ClickHouseClient()
+                description = self.clickhouse_client.query(
+                    f"DESCRIBE TABLE {self.table}",
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                physical_columns = {
+                    str(row[0])
+                    for row in description.rows
+                    if row and str(row[0]).strip()
+                }
+                self.columns = set(clickhouse_dataset_user_columns(dataset)).intersection(
+                    physical_columns
+                )
+                if not self.columns:
+                    raise ValueError("ClickHouse dataset does not expose Catalog user columns")
+                self.revision_delta_available = False
+                return
+
             iceberg_table = iceberg_dataset_table(dataset)
             if iceberg_table is not None:
                 self.table = iceberg_table
@@ -177,14 +208,18 @@ class DashboardDatasetQuerySession:
             if self.connection is not None:
                 self.connection.close()
             raise
-        except (OSError, RuntimeError, ValueError, duckdb.Error) as error:
+        except (OSError, RuntimeError, ValueError, ClickHouseError, duckdb.Error) as error:
             if self.connection is not None:
                 self.connection.close()
+            if self.clickhouse_client is not None:
+                self.clickhouse_client.close()
             raise dashboard_storage_error(dataset, iceberg_read_reason(error)) from error
 
     def close(self) -> None:
         if self.connection is not None:
             self.connection.close()
+        if self.clickhouse_client is not None:
+            self.clickhouse_client.close()
 
     def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
         source_config = dashboard_source_config(config)
@@ -204,7 +239,21 @@ class DashboardDatasetQuerySession:
         runtime_config["dataMode"] = data_mode
         runtime_config["sourceConfig"] = source_config
         try:
-            if self.trino_client is not None:
+            if self.clickhouse_client is not None:
+                clickhouse_queries = sqlglot.transpile(
+                    query,
+                    read="clickhouse",
+                    write="clickhouse",
+                )
+                if len(clickhouse_queries) != 1:
+                    raise ValueError("Dashboard ClickHouse query must contain one statement")
+                result = self.clickhouse_client.query(
+                    clickhouse_queries[0],
+                    timeout_seconds=self.query_timeout_seconds,
+                )
+                column_names = result.columns
+                raw_rows = result.rows
+            elif self.trino_client is not None:
                 result = execute_trino_rows(
                     self.trino_client,
                     query,
@@ -229,7 +278,7 @@ class DashboardDatasetQuerySession:
                 }
                 for row in raw_rows
             ]
-        except (ApiError, RuntimeError, ValueError, duckdb.Error) as error:
+        except (ApiError, RuntimeError, ValueError, ClickHouseError, duckdb.Error) as error:
             raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         return {"config": runtime_config, "data": rows}
 
@@ -287,6 +336,33 @@ def dashboard_source_config(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in config.items()
         if key not in {"dataMode", "data_mode", "sourceConfig", "source_config"}
     }
+
+
+def clickhouse_dataset_table(dataset: Any) -> str | None:
+    storage_format = str(
+        dataset_value(dataset, "storage_format", "storageFormat", default="") or ""
+    ).strip().casefold()
+    if storage_format != "clickhouse":
+        return None
+    mapping = dataset_value(dataset, "clickhouse_table", "clickhouseTable")
+    if hasattr(mapping, "model_dump"):
+        mapping = mapping.model_dump(mode="json", by_alias=True)
+    if not isinstance(mapping, Mapping):
+        raise ValueError("ClickHouse dataset does not have a physical table mapping")
+    database = validate_clickhouse_identifier(mapping.get("database"))
+    table = validate_clickhouse_identifier(mapping.get("table"))
+    return qualified_clickhouse_table(database, table)
+
+
+def clickhouse_dataset_user_columns(dataset: Any) -> list[str]:
+    schema = dataset_value(dataset, "schema_", "schema", default=[]) or []
+    columns: list[str] = []
+    for item in schema:
+        name = item[0] if isinstance(item, (list, tuple)) and item else None
+        normalized = str(name or "").strip()
+        if normalized and not normalized.casefold().startswith("_asklake_") and normalized not in columns:
+            columns.append(normalized)
+    return columns
 
 
 def dashboard_iceberg_snapshot_version(dataset: Any) -> str | None:

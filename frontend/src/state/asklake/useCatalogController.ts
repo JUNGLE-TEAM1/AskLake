@@ -34,8 +34,6 @@ export function useCatalogController({
     setCommandPendingByJobId,
     setCreateMutationState,
     setDagStepsByRunId,
-    setDataError,
-    setDataLoading,
     setDatasets,
     setDraftPipeline,
     setEditingJobId,

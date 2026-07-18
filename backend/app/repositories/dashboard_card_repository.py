@@ -11,64 +11,6 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.schemas.dashboard import DashboardCard
 
 
-def _execute_schema_statement(db: Session, statement: str) -> None:
-    db.execute(text(statement))
-
-
-def ensure_dashboard_card_schema(db: Session) -> None:
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS dashboards (
-            id text PRIMARY KEY,
-            payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-            created_at timestamptz NOT NULL DEFAULT now(),
-            updated_at timestamptz NOT NULL DEFAULT now()
-        )
-        """,
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS payload jsonb NOT NULL DEFAULT '{}'::jsonb",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS name text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS owner text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS status text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS dataset_id text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS source_run_id text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS published_revision_id text",
-        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS has_published_revision boolean NOT NULL DEFAULT false",
-        """
-        UPDATE dashboards
-        SET
-            name = COALESCE(name, payload->>'name'),
-            owner = COALESCE(owner, payload->>'owner'),
-            status = COALESCE(status, payload->>'status'),
-            dataset_id = COALESCE(dataset_id, payload->>'datasetId'),
-            source_run_id = COALESCE(source_run_id, payload->>'sourceRunId'),
-            published_revision_id = COALESCE(published_revision_id, payload->>'publishedRevisionId'),
-            has_published_revision = has_published_revision OR COALESCE(
-                CASE
-                    WHEN payload ? 'hasPublishedRevision' THEN (payload->>'hasPublishedRevision')::boolean
-                    ELSE false
-                END,
-                false
-            )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS dashboard_tags (
-            dashboard_id text NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-            tag text NOT NULL,
-            PRIMARY KEY (dashboard_id, tag)
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS dashboards_updated_at_idx ON dashboards (updated_at DESC)",
-        "CREATE INDEX IF NOT EXISTS dashboards_owner_idx ON dashboards (owner)",
-        "CREATE INDEX IF NOT EXISTS dashboard_tags_tag_idx ON dashboard_tags (tag)",
-    ]
-
-    for statement in statements:
-        _execute_schema_statement(db, statement)
-    db.commit()
-
-
 def _format_timestamp(value: datetime | None) -> str:
     if value is None:
         value = datetime.now(timezone.utc)
@@ -129,7 +71,6 @@ def _row_to_dashboard_card(row: Any) -> DashboardCard:
 
 
 def list_dashboard_cards(db: Session) -> list[DashboardCard]:
-    ensure_dashboard_card_schema(db)
     result = db.execute(
         text(
             """
@@ -153,7 +94,6 @@ def list_dashboard_cards(db: Session) -> list[DashboardCard]:
 
 
 def get_dashboard_card(db: Session, dashboard_id: str) -> DashboardCard | None:
-    ensure_dashboard_card_schema(db)
     result = db.execute(
         text(
             """
@@ -181,7 +121,6 @@ def get_dashboard_card(db: Session, dashboard_id: str) -> DashboardCard | None:
 
 
 def save_dashboard_card(db: Session, dashboard: DashboardCard) -> DashboardCard:
-    ensure_dashboard_card_schema(db)
     existing = db.execute(
         text(
             """
@@ -260,7 +199,6 @@ def save_dashboard_card(db: Session, dashboard: DashboardCard) -> DashboardCard:
 
 
 def delete_dashboard_card(db: Session, dashboard_id: str) -> bool:
-    ensure_dashboard_card_schema(db)
     result = db.execute(
         text("DELETE FROM dashboards WHERE id = :dashboard_id RETURNING id"),
         {"dashboard_id": dashboard_id},

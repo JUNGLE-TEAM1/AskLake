@@ -154,5 +154,10 @@ def query_published_dashboard_widgets(
         live_repository,
     )
     return DashboardWidgetQueryResponse(
-        widgets=service.query_published_widgets(dashboard_id, request.widget_ids, actor)
+        widgets=service.query_widgets(
+            dashboard_id,
+            request.widget_ids,
+            request.mode,
+            actor,
+        )
     )

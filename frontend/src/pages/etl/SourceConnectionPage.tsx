@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Braces,
   Cable,
   FileText
 } from "lucide-react";
@@ -14,6 +15,7 @@ import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, Sc
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
 import {
   resolveRawTextPreviewLines,
+  shouldShowJsonPreview,
   shouldShowRawTextPreview,
 } from "../../utils/sourcePreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -211,6 +213,13 @@ export function SourceConnectionPage({
     rawLines: rawTextPreviewLines,
     sourceType: activeSourceType,
   });
+  const previewShowsJson = shouldShowJsonPreview({
+    detectedFormat: sourceRuntime?.draftPatch.source?.detectedFormat,
+    requiresRecordParsing: sourceRuntime?.draftPatch.source?.requiresRecordParsing,
+    rawLines: rawTextPreviewLines,
+    sourceType: activeSourceType,
+  });
+  const previewShowsRawValue = previewShowsRawText || previewShowsJson;
   const runtimeSchemaColumnCount = sourceRuntime?.draftPatch.schema?.columns?.length ?? 0;
   const hasSchemaPatch = Boolean(runtimeSchemaColumnCount && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const hasValidatedSchema = isPrefixSelection
@@ -221,7 +230,7 @@ export function SourceConnectionPage({
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
-  const displayPreviewFormat = previewShowsRawText
+  const displayPreviewFormat = previewShowsRawValue
     ? sourceRuntime?.draftPatch.source?.detectedFormat ?? "TXT"
     : selectedDatasetSummary?.format
     || (activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields) : sourceTypeLabel(activeSourceType));
@@ -944,8 +953,11 @@ export function SourceConnectionPage({
                       pathPlaceholder={explorerConfig.pathPlaceholder}
                       pathValue={assetPathQuery}
                       preview={(
-                        previewShowsRawText
-                          ? <SourceRawSamplePreview lines={rawTextPreviewLines} />
+                        previewShowsRawValue
+                          ? <SourceRawSamplePreview
+                              ariaLabel={previewShowsJson ? "Kafka JSON 원본 샘플" : "원본 로그 샘플"}
+                              lines={rawTextPreviewLines}
+                            />
                           : (
                             <SourcePreviewDataTable
                               columnLabels={displayPreviewColumns.map(sourceColumnLabel)}
@@ -953,12 +965,12 @@ export function SourceConnectionPage({
                             />
                           )
                       )}
-                      previewIcon={previewShowsRawText ? <FileText /> : undefined}
+                      previewIcon={previewShowsJson ? <Braces /> : previewShowsRawText ? <FileText /> : undefined}
                       previewMeta={previewShowsRawText && activeSourceType === "Stream / Kafka" ? undefined : (
                         <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">{displayPreviewFormat}</Badge>
                       )}
-                      previewTitle={previewShowsRawText
-                        ? (activeSourceType === "Stream / Kafka" ? "원본 로그 샘플" : "원본 샘플")
+                      previewTitle={previewShowsRawValue
+                        ? (previewShowsJson ? "Kafka JSON 원본 샘플" : activeSourceType === "Stream / Kafka" ? "Kafka raw text 원본 샘플" : "원본 샘플")
                         : selectedDatasetSummary
                           ? `대표 파일 · ${selectedDatasetSummary.representativeObject}`
                           : selectedAsset?.[0] || sourcePreviewTitle}

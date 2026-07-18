@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
+import { BarChart3, BookOpen, Database, Settings, TerminalSquare } from "lucide-react";
 import type { CatalogDataset, FlowId, JobDagStep, JobRowData, JobRunSummary, JobStats, NavItem, PermissionDraft, RetryPolicyDraft, TransformStepDraft } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
@@ -22,7 +22,6 @@ export const navItems = [
   { id: "catalog", label: "검색/카탈로그", icon: BookOpen, flow: "catalog" },
   { id: "sql", label: "SQL 분석", icon: TerminalSquare, flow: "sql" },
   { id: "dashboard", label: "대시보드", icon: BarChart3, flow: "dashboard" },
-  { id: "ai", label: "AI 활용", icon: Bot, flow: "ai" },
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
@@ -1268,13 +1267,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["상태", "통합 예정"],
     ["입력", "SQL 결과"],
     ["출력", "Published Dashboard"],
-  ],
-  ai: [
-    ["담당 영역", "AI 활용"],
-    ["핵심 기능", "RAG / AI 질의"],
-    ["상태", "아직 연결 없음"],
-    ["입력", "Lake 데이터셋"],
-    ["권한", "사용자별 접근 제어"],
   ],
   admin: [
     ["담당 영역", "관리"],

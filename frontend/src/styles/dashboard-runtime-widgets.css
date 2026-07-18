@@ -223,6 +223,26 @@
   overflow: hidden;
 }
 
+.asklake-widget-data-state {
+  display: grid;
+  min-height: 140px;
+  place-content: center;
+  gap: 12px;
+  padding: 20px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.asklake-widget-data-state.error {
+  color: #b91c1c;
+}
+
+.asklake-widget-data-state.error button {
+  justify-self: center;
+}
+
 .asklake-visualization-request-widget,
 .asklake-text-placeholder-widget {
   display: grid;

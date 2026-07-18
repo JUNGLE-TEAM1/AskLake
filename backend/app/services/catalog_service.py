@@ -23,6 +23,8 @@ from app.schemas.catalog import (
     LineageGraphEdge,
     LineageGraphResponse,
     LineageLayer,
+    VerifyCatalogUniqueKeyRequest,
+    VerifyCatalogUniqueKeyResponse,
 )
 from app.schemas.common import CursorPageMeta, ErrorCode
 from app.schemas.sql import QueryRunResponse
@@ -37,11 +39,19 @@ from app.services.materialization_projection import (
     aggregate_materialization_runs,
     upsert_materialization_run,
 )
+from app.services.iceberg_dataset_reader import (
+    TrinoRows,
+    execute_trino_rows,
+    iceberg_dataset_target,
+    qualified_iceberg_table,
+    quote_trino_identifier,
+)
 from app.services.resource_permission_service import (
     dataset_with_persisted_permission_grants,
     datasets_with_persisted_permission_grants,
     permissions_for_actor_with_governance,
 )
+from app.services.trino_client import TrinoClient
 
 
 def dataset_for_latest_successful_materialization(
@@ -165,6 +175,128 @@ class CatalogService:
             context={"datasetId": dataset_id},
         )
         return build_fallback_lineage_graph(dataset)
+
+    def verify_and_register_unique_key(
+        self,
+        dataset_id: str,
+        request: VerifyCatalogUniqueKeyRequest,
+        actor: ActorContext | None = None,
+    ) -> VerifyCatalogUniqueKeyResponse:
+        actor_context = actor or ActorContext()
+        payload = self.repository.get_dataset_payload(dataset_id)
+        if payload is None:
+            raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        api_path = f"/api/catalog/datasets/{dataset_id}/unique-keys/verify-and-register"
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="manage",
+            api_path=api_path,
+            http_method="POST",
+            metadata={"columns": request.columns, "owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        require_permission(
+            actor_context,
+            "manage",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
+        columns = normalized_unique_key_columns(request.columns, dataset)
+        result = execute_trino_rows(
+            TrinoClient(),
+            unique_key_verification_query(verified_iceberg_table(dataset), columns),
+            max_pages=2_000,
+            timeout_seconds=600,
+        )
+        total_rows, invalid_key_rows, distinct_keys = unique_key_counts(result)
+        if invalid_key_rows or total_rows != distinct_keys:
+            safe_record_audit_event(
+                self.repository.db,
+                action="catalog.unique_key.verification_failed",
+                actor=actor_context,
+                api_path=api_path,
+                http_method="POST",
+                metadata={
+                    "columns": columns,
+                    "distinctKeys": distinct_keys,
+                    "invalidKeyRows": invalid_key_rows,
+                    "totalRows": total_rows,
+                },
+                result="failed",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                target_id=dataset.id,
+                target_name=dataset.name,
+                target_type="dataset",
+            )
+            raise ApiError(
+                "CATALOG_UNIQUE_KEY_VERIFICATION_FAILED",
+                "선택한 열에 중복 또는 비어 있는 키가 있어 유일키로 등록할 수 없습니다.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "columns": columns,
+                    "datasetId": dataset.id,
+                    "distinctKeys": distinct_keys,
+                    "invalidKeyRows": invalid_key_rows,
+                    "totalRows": total_rows,
+                },
+            )
+
+        locked_payload = self.repository.get_dataset_payload_for_update(dataset_id)
+        if locked_payload is None:
+            raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        current_sets = locked_payload.get("uniqueKeySets")
+        unique_sets = (
+            [list(item) for item in current_sets if isinstance(item, list)]
+            if isinstance(current_sets, list)
+            else []
+        )
+        if columns not in unique_sets:
+            unique_sets.append(columns)
+        locked_payload["uniqueKeySets"] = unique_sets
+        if len(columns) == 1:
+            current_columns = locked_payload.get("uniqueKeyColumns")
+            unique_columns = (
+                [str(item) for item in current_columns]
+                if isinstance(current_columns, list)
+                else []
+            )
+            if columns[0] not in unique_columns:
+                unique_columns.append(columns[0])
+            locked_payload["uniqueKeyColumns"] = unique_columns
+        saved = self.repository.save_dataset_payload(locked_payload)
+        saved_dataset = with_dataset_permissions(
+            CatalogDatasetResponse.model_validate(saved),
+            actor_context,
+            self.repository.db,
+        )
+        safe_record_audit_event(
+            self.repository.db,
+            action="catalog.unique_key.registered",
+            actor=actor_context,
+            api_path=api_path,
+            http_method="POST",
+            metadata={"columns": columns, "totalRows": total_rows},
+            result="success",
+            status_code=status.HTTP_200_OK,
+            target_id=dataset.id,
+            target_name=dataset.name,
+            target_type="dataset",
+        )
+        return VerifyCatalogUniqueKeyResponse(
+            columns=columns,
+            dataset=saved_dataset,
+            distinct_keys=distinct_keys,
+            invalid_key_rows=invalid_key_rows,
+            total_rows=total_rows,
+        )
 
     def get_dataset_rows(
         self,
@@ -619,7 +751,7 @@ def normalize_derived_dataset_tags(tags: list[str]) -> list[str]:
 
 def created_by_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> str:
     previous_created_by = previous_payload.get("createdBy") if previous_payload else None
-    return str(previous_created_by or actor_name or "demo-user").strip() or "demo-user"
+    return str(previous_created_by or actor_name or "system").strip() or "system"
 
 
 def created_by_profile_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> dict[str, str]:
@@ -839,6 +971,85 @@ def parse_count_value(value: object) -> int:
         return max(int(value), 0)
     digits = re.sub(r"[^0-9]", "", str(value))
     return int(digits) if digits else 0
+
+
+def normalized_unique_key_columns(
+    requested_columns: list[str],
+    dataset: CatalogDatasetResponse,
+) -> list[str]:
+    schema_columns = {
+        str(item[0]).strip().casefold(): str(item[0]).strip()
+        for item in dataset.schema_
+        if item and str(item[0]).strip()
+    }
+    columns: list[str] = []
+    for requested in requested_columns:
+        normalized = str(requested).strip()
+        canonical = schema_columns.get(normalized.casefold())
+        if not normalized or canonical is None or canonical in columns:
+            raise ApiError(
+                "CATALOG_UNIQUE_KEY_COLUMNS_INVALID",
+                f"Invalid unique-key column: {normalized or '(empty)'}",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        columns.append(canonical)
+    return columns
+
+
+def verified_iceberg_table(dataset: CatalogDatasetResponse) -> str:
+    if dataset.relation_mode == "streaming":
+        raise ApiError(
+            "CATALOG_UNIQUE_KEY_DATASET_UNSUPPORTED",
+            "Streaming datasets cannot be static unique-key snapshots",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    try:
+        target = iceberg_dataset_target(dataset)
+    except ValueError as error:
+        raise ApiError(
+            "CATALOG_UNIQUE_KEY_DATASET_UNSUPPORTED",
+            str(error),
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from error
+    if target is None:
+        raise ApiError(
+            "CATALOG_UNIQUE_KEY_DATASET_UNSUPPORTED",
+            "Only queryable Iceberg datasets support exact unique-key verification",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    return qualified_iceberg_table(target)
+
+
+def unique_key_verification_query(table: str, columns: list[str]) -> str:
+    quoted = [quote_trino_identifier(column) for column in columns]
+    invalid = " OR ".join(
+        f"{column} IS NULL OR trim(CAST({column} AS VARCHAR)) = ''"
+        for column in quoted
+    )
+    distinct_key = quoted[0] if len(quoted) == 1 else f"ROW({', '.join(quoted)})"
+    return (
+        "SELECT count(*) AS total_rows, "
+        f"count_if({invalid}) AS invalid_key_rows, "
+        f"count(DISTINCT {distinct_key}) AS distinct_keys FROM {table}"
+    )
+
+
+def unique_key_counts(result: TrinoRows) -> tuple[int, int, int]:
+    if not result.rows or len(result.rows[0]) < 3:
+        raise ApiError(
+            "CATALOG_UNIQUE_KEY_VERIFICATION_INVALID_RESULT",
+            "Trino returned an invalid unique-key verification result",
+            status.HTTP_502_BAD_GATEWAY,
+        )
+    try:
+        values = result.rows[0]
+        return int(values[0]), int(values[1]), int(values[2])
+    except (TypeError, ValueError) as error:
+        raise ApiError(
+            "CATALOG_UNIQUE_KEY_VERIFICATION_INVALID_RESULT",
+            "Trino returned non-numeric unique-key verification counts",
+            status.HTTP_502_BAD_GATEWAY,
+        ) from error
 
 
 def format_storage_size(size_bytes: int) -> str:

@@ -41,6 +41,11 @@ export function etlFlowPath(flow: FlowId) {
   return null;
 }
 
+export function etlStyleRoute(flow: FlowId) {
+  const path = etlFlowPath(flow);
+  return path?.startsWith("/etl/") ? path.slice("/etl/".length) : null;
+}
+
 export function etlFlowFromRoute(
   id: string | undefined,
   action: string | undefined,

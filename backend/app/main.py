@@ -12,15 +12,19 @@ from app.api.internal_mcp import create_internal_mcp_app, internal_mcp_mount_pat
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError, api_error_handler, http_error_handler, unhandled_error_handler, validation_error_handler
+from app.migrations.metadata_schema import bootstrap_metadata_schema
 from app.core.observability import CorrelationIdMiddleware
-from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
-from app.repositories.continuous_sql_repository import ensure_continuous_sql_schema
-from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.etl import ScheduledJobRunRequest
 from app.services.auth_service import initialize_auth
-from app.services.etl_service import run_due_scheduled_jobs, sync_active_kafka_continuous_runtimes
+from app.services.etl_service import (
+    run_due_scheduled_jobs,
+    sync_active_airflow_snapshot_runs,
+    sync_active_kafka_continuous_runtimes,
+)
 from app.services.realtime_event_service import realtime_event_dispatcher
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
+from app.services.rag_service import RagService
+from app.services.review_analysis_service import ReviewAnalysisService
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +39,20 @@ async def continuous_runtime_sync_loop() -> None:
         await asyncio.sleep(settings.continuous_runtime_sync_interval_seconds)
 
 
+async def snapshot_airflow_sync_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(sync_active_airflow_snapshot_runs)
+        except Exception:  # Keep the next reconciliation cycle recoverable.
+            logger.exception("Snapshot Airflow synchronization failed")
+        await asyncio.sleep(settings.airflow_run_sync_interval_seconds)
+
+
 def run_scheduled_job_tick() -> None:
     with SessionLocal() as db:
         run_due_scheduled_jobs(db, ScheduledJobRunRequest(kafka_only=False))
+        RagService(db).reconcile_alias_activations()
+        RagService(db).reconcile_source_changes()
 
 
 async def scheduled_job_tick_loop() -> None:
@@ -50,22 +65,41 @@ async def scheduled_job_tick_loop() -> None:
         await asyncio.sleep(settings.scheduled_job_tick_interval_seconds)
 
 
+def run_review_analysis_tick() -> None:
+    ReviewAnalysisService.fail_stale_runs()
+    ReviewAnalysisService.process_next_queued_run()
+
+
+async def review_analysis_worker_loop() -> None:
+    await asyncio.sleep(settings.review_analysis_worker_interval_seconds)
+    while True:
+        try:
+            await asyncio.to_thread(run_review_analysis_tick)
+        except Exception:  # Keep persisted queued work recoverable on the next tick.
+            logger.exception("Review analysis worker tick failed")
+        await asyncio.sleep(settings.review_analysis_worker_interval_seconds)
+
+
 def initialize_auth_on_startup() -> None:
     with SessionLocal() as db:
         # Some operational tests inject an auth-only session sentinel. Real
         # SQLAlchemy sessions always expose get_bind().
-        if hasattr(db, "get_bind"):
-            ensure_dashboard_live_schema(db)
-            ensure_realtime_event_schema(db)
-            ensure_continuous_sql_schema(db)
+        if settings.startup_schema_management_enabled and hasattr(db, "get_bind"):
+            bootstrap_metadata_schema(db)
         initialize_auth(db)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_auth_on_startup()
-    background_tasks = [asyncio.create_task(scheduled_job_tick_loop())]
-    if settings.asklake_continuous_control_plane != "external_ec2":
+    snapshot_airflow_task = asyncio.create_task(snapshot_airflow_sync_loop())
+    scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
+    review_analysis_task = asyncio.create_task(review_analysis_worker_loop())
+    background_tasks = [snapshot_airflow_task, scheduled_task, review_analysis_task]
+    if (
+        settings.continuous_control_plane == "embedded"
+        and settings.asklake_continuous_control_plane != "external_ec2"
+    ):
         background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     if settings.realtime_events_enabled:
         background_tasks.append(asyncio.create_task(

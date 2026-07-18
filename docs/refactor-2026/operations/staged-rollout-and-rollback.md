@@ -6,9 +6,9 @@
 
 - 감사 판정: guarded GO.
 - plan 검증: `cd backend && npm run verify:refactor-release-plan`은 통과해야 한다.
-- production 실행 검증: `npm run verify:refactor-release-execution`은 수동 증거 3건이 `passed`가 되기 전 exit 2로 차단된다.
-- 수동 gate: 격리 nightly fault, production canary clean reboot, backup/restore drill.
-- source of truth: [release-gates.json](../final/release-gates.json), [최종 감사](../final-audit.md).
+- production 실행 검증: `npm run verify:refactor-release-execution`은 모든 production 수동 증거가 `passed`가 되기 전 exit 2로 차단된다.
+- 수동 gate: 10개 PR 순차 merge, 실제 EKS/EC2 owner 대조, 격리 nightly fault, production canary clean reboot, backup/restore drill.
+- source of truth: [release-gates.json](../final/release-gates.json), [10단계 merge plan](../final/stacked-pr-merge-plan.json), [최종 감사](../final-audit.md).
 
 ## 2. Release 범위 고정
 
@@ -27,7 +27,7 @@ git log --format='%H %s' "$PREVIOUS_RELEASE_COMMIT..$RELEASE_COMMIT" > "$RELEASE
 
 반드시 포함할 항목:
 
-- PR 01~15와 merge 순서.
+- 현재 manifest의 PR 01~10과 각 merge SHA·green check·다음 PR diff 재검증 결과.
 - migration 목록과 현재 head. migration이 없으면 `none`을 명시.
 - backend/frontend/Spark/Airflow image tag와 immutable digest.
 - feature flag와 compatibility adapter 상태.
@@ -37,11 +37,13 @@ git log --format='%H %s' "$PREVIOUS_RELEASE_COMMIT..$RELEASE_COMMIT" > "$RELEASE
 
 - [ ] 모든 선행 PR이 순서대로 `dev`에 merge됐다.
 - [ ] current release commit에서 CI가 다시 통과했다.
+- [ ] `npm run verify:stacked-pr-merge-plan` 통과.
 - [ ] `npm run verify:backward-compatibility` breaking 0.
 - [ ] `npm run verify:legacy-paths` 통과.
 - [ ] `npm run verify:quality-gates` 통과.
 - [ ] `npm run verify:etl-e2e-recovery:release` 통과.
 - [ ] 격리 runner의 nightly artifact가 release record에 있다.
+- [ ] 실제 EKS workload와 EC2 process의 Continuous owner가 각각 정확히 하나다.
 - [ ] canary host와 canary Job/consumer group/topic/table/dashboard가 명시됐다.
 - [ ] DB/object/config/image backup과 restore drill이 통과했다.
 - [ ] rollback owner, incident channel, 최대 판단 시간이 지정됐다.

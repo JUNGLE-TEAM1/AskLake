@@ -8,7 +8,7 @@ const readCssWithLocalImports = (filePath, visited = new Set()) => {
   visited.add(filePath);
 
   return readFileSync(filePath, "utf8").replace(
-    /@import\s+["'](\.\/[^"']+)["'];/g,
+    /@import\s+["']((?:\.{1,2}\/)[^"']+)["'];/g,
     (_, importPath) => readCssWithLocalImports(resolve(dirname(filePath), importPath), visited),
   );
 };
@@ -67,20 +67,24 @@ const askLakeDataFiles = [
   "src/state/asklake/etlDraftState.ts",
   "src/state/asklake/initialRead.ts",
   "src/state/asklake/jobState.ts",
+  "src/state/asklake/routeDataRequirements.ts",
   "src/state/asklake/sqlJobDraft.ts",
   "src/state/asklake/useAskLakeWorkspace.ts",
   "src/state/asklake/useAskLakeWorkspaceState.ts",
+  "src/state/asklake/useCatalogHydration.ts",
   "src/state/asklake/useCatalogController.ts",
   "src/state/asklake/useJobController.ts",
+  "src/state/asklake/useJobsHydration.ts",
   "src/state/asklake/usePipelineMutations.ts",
-  "src/state/asklake/useWorkspaceHydration.ts",
 ];
 
 const catalogPageFiles = [
   "src/pages/catalog/CatalogPage.tsx",
+  "src/pages/catalog/CatalogWorkspacePage.tsx",
   "src/pages/catalog/CatalogExplorerPage.tsx",
   "src/pages/catalog/CatalogDetailPage.tsx",
   "src/pages/catalog/CatalogLineage.tsx",
+  "src/pages/catalog/catalogLineageProjection.ts",
   "src/pages/catalog/catalogModel.ts",
   "src/pages/catalog/useCatalogExplorerState.ts",
 ];
@@ -346,6 +350,24 @@ const checks = [
     ],
   },
   {
+    name: "SQL Trino execution separates preview, full view, CSV, and SQL Job boundaries",
+    files: [
+      "src/pages/sql/SqlAnalysisPage.tsx",
+      "src/pages/sql/useTrinoFullResult.ts",
+    ],
+    patterns: [
+      /requestTrinoFullResults/,
+      /const start = async \(intent: Exclude<FullResultIntent, null>\)/,
+      /previewRun\.mode !== "preview"/,
+      /triggerCsvDownload\(state\.run\)/,
+      /fullTrinoDisplayResult/,
+      /jobCreationDisabled=\{!trinoPreviewReady \|\| !materializationResult\}/,
+    ],
+    forbiddenPatterns: [
+      /exports\/csv`[\s\S]{0,200}activeTrinoRun\.runId/,
+    ],
+  },
+  {
     name: "SQL preview table uses readable centered widths for narrow result sets",
     file: "src/pages/sql/SqlPreviewTable.module.css",
     patterns: [
@@ -482,6 +504,15 @@ const checks = [
     ],
   },
   {
+    name: "SQL editor exposes the governed ClickHouse continuous JOIN action before existing actions",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
+    patterns: [
+      /data-testid="continuous-sql-join-button"/,
+      /실시간 JOIN 만들기/,
+      /<SqlAiWriterDialog/,
+    ],
+  },
+  {
     name: "SQL result chart keeps its heading compact and fits inside the result panel",
     file: "src/pages/sql/SqlResultChart.tsx",
     patterns: [
@@ -495,22 +526,21 @@ const checks = [
     ],
   },
   {
-    name: "AI workspace submits through the governed SQL suggestion contract",
-    file: "src/pages/ai/AiChatPage.tsx",
-    patterns: [
-      /import \{ generateQueryAiSuggestion, getQueryAiErrorMessage, QUERY_AI_REQUEST_TIMEOUT_MS \} from "\.\.\/\.\.\/services\/queryAiService";/,
-      /queryAiRequestRef\.current\?\.controller\.abort\(\);/,
-      /previousRequest\?\.controller\.abort\(\);/,
-      /const suggestion = await generateQueryAiSuggestion\(/,
-      /signal: controller\.signal,/,
-      /timeoutMs: QUERY_AI_REQUEST_TIMEOUT_MS,/,
-      /finally \{[\s\S]*conversation\.id === conversationId \? \{ \.\.\.conversation, pending: false \}/,
-      /content: getQueryAiErrorMessage\(error\)/,
-      /onAction\("ai\.chat\.suggestion_created", "\/api\/query\/ai-suggestions"/,
-      /onAction\("ai\.chat\.suggestion_failed", "\/api\/query\/ai-suggestions"/,
-      /message\.sql \? <pre className="ai-chat-sql">/,
+    name: "Catalog semantic workspace uses live Semantic Model and RAG contracts",
+    files: [
+      "src/pages/catalog/CatalogWorkspacePage.tsx",
+      "src/pages/semantic/SemanticLayerPage.tsx",
+      "src/services/semanticApi.ts",
     ],
-    forbiddenPatterns: [/runtimeUnavailable/, /prompt_drafted/],
+    patterns: [
+      /view === "semantic"/,
+      /<SemanticLayerPage datasets=\{catalogProps\.datasets\}/,
+      /listSemanticModels\(\)/,
+      /apiClient\.get<SemanticModel\[\]>\("\/api\/semantic-models"\)/,
+      /apiClient\.post<RagProfile>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/approve`/,
+      /<RagJobHistory datasetId=\{selectedDatasetId\}/,
+    ],
+    forbiddenPatterns: [/semanticLayerMock/, /services\/mockApi/],
   },
   {
     name: "AI suggestions preserve only the backend-validated response",
@@ -542,7 +572,7 @@ const checks = [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
       /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
-      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, permissionOwner\)/,
+      /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
       /rag: false/,
@@ -570,8 +600,8 @@ const checks = [
     name: "SQL Job governance keeps access scope and permission summary aligned",
     file: "src/pages/sql/sqlJobWizardModel.ts",
     patterns: [
-      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope\)/,
-      /accessScope,\s*owner:[\s\S]*permissionSummary: buildPermissionSummary\(accessScope\)/s,
+      /export function buildPermissionSummary\(accessScope: SqlJobWizardAccessScope, principalLabel = ""\)/,
+      /accessScope,\s*owner,\s*permissionSummary: buildPermissionSummary\(accessScope, owner\),\s*principalId: owner,/s,
     ],
     forbiddenPatterns: [
       /eyebrow="처리 작업"/,
@@ -706,10 +736,52 @@ const checks = [
     patterns: [
       /getCatalogDataset\(datasetId\)/,
       /formatCatalogDateTime\(previewDataset\.lastUpdated\)/,
-      /className="catalog-result-description"/,
+      /className="catalog-result-tags"/,
       /const firstSampleRow = dataset\.sampleRows\[0\] \?\? \[\];/,
       /accessorKey: "sample"/,
       /header: "샘플"/,
+    ],
+  },
+  {
+    name: "Source and Catalog cards keep only primary scan information",
+    files: [
+      "src/pages/etl/SourceConnectionStages.tsx",
+      "src/pages/catalog/CatalogExplorerPage.tsx",
+    ],
+    patterns: [
+      /min-h-28[\s\S]*?\{meta\.label\}/,
+      /className="catalog-result-heading"/,
+      /className="catalog-result-tags"/,
+    ],
+    forbiddenPatterns: [
+      /\{meta\.description\}/,
+      /className="catalog-result-description"/,
+    ],
+  },
+  {
+    name: "The global workspace sidebar stays compact without dropping navigation labels",
+    files: [
+      "src/components/layout/Sidebar.tsx",
+      "src/styles/base.css",
+    ],
+    patterns: [
+      /--sidebar-width:\s*152px/,
+      /\.brand img[\s\S]*?width:\s*112px/,
+      /\.nav-item span[\s\S]*?text-overflow:\s*ellipsis/,
+      /nameClassName="text-sm"[\s\S]*?size="sm"/,
+    ],
+  },
+  {
+    name: "Catalog lineage keeps PROCESS data but collapses it in the UI projection",
+    files: [
+      "src/pages/catalog/CatalogLineage.tsx",
+      "src/pages/catalog/catalogLineageProjection.ts",
+    ],
+    patterns: [
+      /collapseProcessLineageGraph\(lineageGraph\)/,
+      /dataset\.layer === "PROCESS"/,
+      /datasets: graph\.datasets\.filter\(\(dataset\) => dataset\.layer !== "PROCESS"\)/,
+      /canBridgeProcessColumn/,
     ],
   },
   {
@@ -1323,6 +1395,23 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard editor starts with data closed and keeps an accessible inspector toggle",
+    files: [
+      "src/pages/dashboard/DashboardPage.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+      "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+      "src/styles/dashboard-runtime-shell.css",
+    ],
+    patterns: [
+      /const \[isDatasetSidebarOpen, setIsDatasetSidebarOpen\] = useState\(false\)/,
+      /const \[isInspectorOpen, setIsInspectorOpen\] = useState\(true\)/,
+      /inspectorOpen=\{isInspectorAvailable && isInspectorOpen\}/,
+      /aria-label=\{inspectorOpen \? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"\}/,
+      /aria-controls="asklake-dashboard-inspector"/,
+      /\.asklake-dashboard-inspector-toggle[\s\S]*?margin-left:\s*auto/,
+    ],
+  },
+  {
     name: "ETL source asset browser uses the shared explorer tree",
     file: "src/pages/etl/SourceAssetTree.tsx",
     patterns: [
@@ -1490,7 +1579,7 @@ const checks = [
     name: "Frontend defaults to the live dashboard Assistant API",
     file: "src/services/dashboardAssistantService.ts",
     patterns: [
-      /VITE_DASHBOARD_ASSISTANT_API_PATH \?\? "\/api\/dashboards\/assistant"/,
+      /VITE_DASHBOARD_ASSISTANT_API_PATH \|\| "\/api\/dashboards\/assistant"/,
     ],
   },
   {
@@ -1852,17 +1941,24 @@ const checks = [
     ],
   },
   {
-    name: "Manual workspace refresh replaces Jobs and Catalog data from live APIs",
+    name: "Workspace list reads are owned by the active route and domain hook",
     files: askLakeDataFiles,
     patterns: [
-      /const dataHydrationRequests = useRef\(new LatestRequestGate\(\)\);/,
-      /const refreshData = async \(\) =>/,
-      /const \[jobsResult, datasetsResult\] = await Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\),?\s*\]\);/,
+      /const jobDataFlows = new Set<FlowId>\(\["jobs", "jobDetail", "jobRuns"\]\);/,
+      /const catalogDataFlows = new Set<FlowId>\(\["catalog", "catalogDetail", "sql"\]\);/,
+      /const jobsHydration = useJobsHydration\(\{ enabled: enabled && dataRequirements\.jobs, showToast, state \}\);/,
+      /useCatalogHydration\(\{ enabled: enabled && dataRequirements\.catalog, showToast, state \}\);/,
       /const applyHydratedJobs[\s\S]*setJobs\(normalizedJobs\);[\s\S]*setJobListFacets\(result\.facets\);/,
       /const applyHydratedDatasets[\s\S]*setDatasets\(normalizedDatasets\);[\s\S]*normalizedDatasets\.find\(\(dataset\) => dataset\.id === current\.id\)/,
-      /filterJobs: hydration\.filterJobs,/,
-      /refreshData: hydration\.refreshData,/,
+      /filterJobs: jobsHydration\.filterJobs,/,
+      /if \(dataRequirements\.jobs\) return jobsHydration\.refreshJobs\(\);/,
+      /if \(dataRequirements\.catalog\) return catalogHydration\.refreshCatalog\(\);/,
+      /refreshData,/,
       /createSqlDatasetJob: pipeline\.createSqlDatasetJob,/,
+    ],
+    forbiddenPatterns: [
+      /Promise\.all\(\[\s*getJobs\(\),\s*getDatasets\(\)/,
+      /refreshData: hydration\.refreshData/,
     ],
   },
   {

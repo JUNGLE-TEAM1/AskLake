@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -28,6 +28,7 @@ router = APIRouter(prefix="/dashboards", tags=["dashboard-runtime"])
 @router.get("/{dashboard_id}/published", response_model=DashboardRuntimeResponse)
 def get_published_dashboard_runtime(
     dashboard_id: str,
+    include_data: bool = Query(default=True, alias="includeData"),
     actor: ActorContext = Depends(get_actor_context),
     db: Session = Depends(get_db),
 ) -> DashboardRuntimeResponse:
@@ -37,18 +38,19 @@ def get_published_dashboard_runtime(
         CatalogRepository(db),
         DashboardLiveRepository(db, ensure_schema=False),
     )
-    return service.get_published_runtime(dashboard_id, actor)
+    return service.get_published_runtime(dashboard_id, actor, include_data=include_data)
 
 
 @router.post("/{dashboard_id}/draft/ensure", response_model=DashboardRuntimeResponse)
 def ensure_draft_dashboard_runtime(
     dashboard_id: str,
+    include_data: bool = Query(default=True, alias="includeData"),
     actor: ActorContext = Depends(get_actor_context),
     db: Session = Depends(get_db),
 ) -> DashboardRuntimeResponse:
     repository = DashboardRuntimeRepository(db)
     service = DashboardRuntimeService(repository, CatalogRepository(db))
-    return service.ensure_draft_runtime(dashboard_id, actor)
+    return service.ensure_draft_runtime(dashboard_id, actor, include_data=include_data)
 
 
 @router.post("/{dashboard_id}/draft/pages", response_model=DashboardPageResponse)

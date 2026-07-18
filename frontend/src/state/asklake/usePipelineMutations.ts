@@ -43,8 +43,6 @@ export function usePipelineMutations({
     setCommandPendingByJobId,
     setCreateMutationState,
     setDagStepsByRunId,
-    setDataError,
-    setDataLoading,
     setDatasets,
     setDraftPipeline,
     setEditingJobId,
@@ -61,6 +59,10 @@ export function usePipelineMutations({
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
+  };
+
+  const resetDraftPipeline = () => {
+    setDraftPipeline(initialDraftPipeline);
   };
 
   const createPipelineFromDraft = async (
@@ -181,5 +183,5 @@ export function usePipelineMutations({
     }
   };
 
-  return { createPipeline, createSqlDatasetJob, createTrinoSqlJob, updateDraftPipeline };
+  return { createPipeline, createSqlDatasetJob, createTrinoSqlJob, resetDraftPipeline, updateDraftPipeline };
 }

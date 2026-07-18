@@ -1,0 +1,110 @@
+name: RAG OpenSearch integration
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - "backend/app/**"
+      - "backend/alembic/**"
+      - "backend/scripts/rag_*.py"
+      - "backend/scripts/spark_job_run.py"
+      - "backend/scripts/runtime/spark_*.py"
+      - "backend/requirements*.txt"
+      - "backend/tests/test_rag_*.py"
+      - "backend/tests/test_semantic_rag_contract.py"
+      - "backend/tests/test_opensearch_integration.py"
+      - "backend/tests/fixtures/rag_*.json"
+      - "backend/scripts/verify_rag_opensearch.py"
+      - "embedding-worker/app/**"
+      - "embedding-worker/tests/**"
+      - "embedding-worker/requirements*.txt"
+      - "airflow/dags/asklake_rag_index.py"
+      - ".github/workflows/rag-opensearch-integration.yml"
+  pull_request:
+    paths:
+      - "backend/app/**"
+      - "backend/alembic/**"
+      - "backend/scripts/rag_*.py"
+      - "backend/scripts/spark_job_run.py"
+      - "backend/scripts/runtime/spark_*.py"
+      - "backend/requirements*.txt"
+      - "backend/tests/test_rag_*.py"
+      - "backend/tests/test_semantic_rag_contract.py"
+      - "backend/tests/test_opensearch_integration.py"
+      - "backend/tests/fixtures/rag_*.json"
+      - "backend/scripts/verify_rag_opensearch.py"
+      - "embedding-worker/app/**"
+      - "embedding-worker/tests/**"
+      - "embedding-worker/requirements*.txt"
+      - "airflow/dags/asklake_rag_index.py"
+      - ".github/workflows/rag-opensearch-integration.yml"
+
+jobs:
+  opensearch:
+    runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.19.1
+        ports:
+          - 9200:9200
+        env:
+          discovery.type: single-node
+          plugins.security.disabled: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+        options: >-
+          --health-cmd "curl --fail http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements-test.txt
+      - name: Install Spark import smoke dependency
+        run: python -m pip install "pyspark==4.0.1"
+      - name: Verify RAG Spark script imports
+        env:
+          PYTHONPATH: backend/scripts
+        run: python -c "import rag_parent_staging, rag_chunk_staging, rag_index_dispatch"
+      - name: Run RAG OpenSearch integration test
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          OPENSEARCH_INTEGRATION_URL: http://127.0.0.1:9200
+          OPENSEARCH_VERIFY_TLS: "false"
+        run: python -m pytest -q -m integration tests/test_opensearch_integration.py
+      - name: Run backend RAG regression suite
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_rag_*.py tests/test_semantic_rag_contract.py
+      - name: Run RAG quality gate contract
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: >-
+          python scripts/run_rag_quality_gate.py
+          --fixture tests/fixtures/rag_golden.sample.json
+          --response-fixture tests/fixtures/rag_responses.sample.json
+          --baseline tests/fixtures/rag_baseline.sample.json
+
+  embedding-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install embedding worker test dependencies
+        run: python -m pip install -r embedding-worker/requirements-test.txt
+      - name: Run embedding worker tests
+        working-directory: embedding-worker
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q

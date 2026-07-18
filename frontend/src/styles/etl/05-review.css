@@ -18,23 +18,6 @@
   white-space: nowrap;
 }
 
-.etl-review-page-header > div > div:first-child,
-.etl-source-page-header > div > div:first-child {
-  align-items: center;
-}
-
-.etl-review-page-header > div > div:first-child > span,
-.etl-source-page-header > div > div:first-child > span {
-  margin-top: 0;
-}
-
-.etl-review-page-header h1,
-.etl-source-page-header h1 {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-}
-
 .etl-review-kv {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -81,36 +64,6 @@
   overflow: hidden;
 }
 
-.etl-review-schema-head {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid #eef0f4;
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 900;
-  padding: 0 16px;
-  text-transform: uppercase;
-}
-
-.etl-review-schema-head em {
-  border-radius: 6px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 12px;
-  font-style: normal;
-  padding: 4px 8px;
-  text-transform: none;
-}
-
-.etl-review-schema-list {
-  display: grid;
-  max-height: 390px;
-  overflow-y: auto;
-}
-
 .etl-review-schema-row {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto auto;
@@ -123,37 +76,6 @@
 
 .etl-review-schema-row:last-child {
   border-bottom: 0;
-}
-
-.etl-review-schema-index {
-  color: #94a3b8;
-  font-size: 12px;
-  font-weight: 800;
-  text-align: center;
-}
-
-.etl-review-schema-column {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.etl-review-schema-column strong {
-  color: #111827;
-  font-size: 15px;
-  font-weight: 850;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.etl-review-schema-column small {
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .etl-review-schema-null,
@@ -171,13 +93,6 @@
 
 .etl-review-schema-null {
   color: #64748b;
-}
-
-.etl-review-empty {
-  color: #64748b;
-  font-size: 14px;
-  font-weight: 750;
-  padding: 18px;
 }
 
 .etl-review-validation {
@@ -256,4 +171,3 @@
   text-overflow: clip;
   white-space: normal;
 }
-
