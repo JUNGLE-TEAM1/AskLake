@@ -221,7 +221,20 @@ export ASKLAKE_HEALTH_RETRIES=18
 export ASKLAKE_HEALTH_RETRY_DELAY=5
 ```
 
-## 7. 로그 확인
+## 7. Deployment Diagnostic
+
+`health`가 실패하거나 배포 직후 상태를 전달해야 할 때는 원격 상태를 바꾸지 않는 진단 명령을 실행한다.
+
+```bash
+scripts/deploy.sh diagnose
+```
+
+기본 출력 경로는 `${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json`이며,
+필요하면 `ASKLAKE_DEPLOY_DIAGNOSTIC_PATH`로 로컬 경로를 지정한다. record는 EC2 running 상태, canonical URL, deploy env preflight, frontend/backend/AI health, Compose 상태, Trino 및 ClickHouse readiness를 `passed`, `failed`, `skipped`로 남긴다. 실패한 단계가 있어도 가능한 나머지 관찰을 끝까지 수집한 뒤 non-zero로 종료한다.
+
+record에는 server `deploy/.env`, SSH key path, credential, raw remote log를 저장하지 않는다. 이 명령은 EC2 시작/중지, Compose 재기동, Git pull, rollback, checkpoint 또는 데이터 변경을 수행하지 않는다.
+
+## 8. 로그 확인
 
 전체 로그 tail:
 
@@ -236,7 +249,7 @@ ASKLAKE_LOG_SERVICE=backend scripts/deploy.sh logs
 ASKLAKE_LOG_SERVICE=caddy ASKLAKE_LOG_LINES=200 scripts/deploy.sh logs
 ```
 
-## 8. 데모 데이터 Seed / Reset
+## 9. 데모 데이터 Seed / Reset
 
 배포 직후 또는 리허설 전에 base fixture를 같은 상태로 맞춘다.
 
@@ -279,7 +292,7 @@ MongoDB fixture 문서까지 지워야 하는 특수 상황에서만 아래처�
 ASKLAKE_RESET_MONGO_FIXTURES=true scripts/reset-demo-data.sh
 ```
 
-## 9. 끄기
+## 10. 끄기
 
 ```bash
 scripts/deploy.sh stop
@@ -288,7 +301,7 @@ scripts/deploy.sh stop
 이 명령은 가능한 경우 Compose service를 먼저 stop한 뒤 EC2를 stop한다.
 EC2를 stop하면 instance compute 비용은 줄지만, EBS volume과 Elastic IP 같은 리소스 비용은 남을 수 있다.
 
-## 10. 권장 개발 루프
+## 11. 권장 개발 루프
 
 ```text
 작업 시작
@@ -301,7 +314,7 @@ EC2를 stop하면 instance compute 비용은 줄지만, EBS volume과 Elastic IP
   -> 작업 종료 후 scripts/deploy.sh stop
 ```
 
-## 11. 운영 원칙
+## 12. 운영 원칙
 
 - 서버 `deploy/.env`는 repo에서 관리하지 않는다.
 - 배포 script는 서버 `.env`를 생성하거나 secret을 출력하지 않는다.

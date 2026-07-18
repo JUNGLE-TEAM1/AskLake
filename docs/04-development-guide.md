@@ -830,10 +830,11 @@ scripts/deploy.sh status
 scripts/deploy.sh start
 scripts/deploy.sh deploy
 scripts/deploy.sh health
+scripts/deploy.sh diagnose
 scripts/deploy.sh stop
 ```
 
-세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
+`scripts/deploy.sh diagnose`는 remote state를 바꾸지 않고 local JSON diagnostic을 남긴다. 실패한 health/readiness 단계가 있어도 가능한 관찰을 모두 기록한 뒤 non-zero로 종료하며, 기본 파일은 `${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json`, 변경 경로는 `ASKLAKE_DEPLOY_DIAGNOSTIC_PATH`다. 세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
 서버 `deploy/.env`와 로컬 `deploy/ec2.env`에는 실제 secret이나 AWS resource 값이 들어갈 수 있으므로 커밋하지 않는다.
 
 ## 5) 브랜치 전략

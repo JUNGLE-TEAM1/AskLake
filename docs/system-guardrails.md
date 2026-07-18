@@ -49,6 +49,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Production legacy removal evidence | `Refactor Quality Gates / structural-ratchet` + `legacy-removal-evidence.json` | `enabled` | production register와 evidence가 어긋나거나 30일 미만/non-zero 관찰, evidence·승인 없는 제거 가능 상태면 실패 | maintainer | 현재 10경로 모두 관찰 미시작·승인 미요청, eligible 0개. runtime path 삭제·활성화는 하지 않음 |
 | Continuous runtime contract | `backend npm run verify:continuous-runtime-contract` | `manual` | block Continuous control-plane changes when transition, revision/fencing, legacy hydration, structured error, or frontend stale-response guards fail | maintainer | CI required check 전환 전까지 Continuous 관련 PR에서 수동 실행 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
+| EC2 deploy diagnostic record | `scripts/deploy.sh diagnose` and `scripts/write-deploy-diagnostic.py` | `enabled` | record bounded `passed`/`failed`/`skipped` observations and exit non-zero when the deployment is not ready | maintainer | read-only observation only; records no server env, SSH key path, credential, or raw remote log |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain or linked issue target | repo admin | `main <- dev`; `dev <- pair1/2/3` 또는 지원 work/`<type>-#<issue>` 브랜치 + linked issue `Target Branch: dev` |
@@ -104,6 +105,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |
 | EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
+| EC2 deployment diagnostic failed | `ASKLAKE_DEPLOY_DIAGNOSTIC_PATH`의 JSON에서 failed check를 확인한 뒤 `scripts/deploy.sh logs` 또는 운영 runbook의 해당 readiness 절차를 따른다. diagnostic은 관찰만 수행하므로 자동 restart나 rollback을 기대하지 않는다. |
 
 ## 4) Lifecycle Guardrails
 
