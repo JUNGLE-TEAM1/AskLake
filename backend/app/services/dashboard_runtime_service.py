@@ -16,6 +16,7 @@ from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.audit_repository import safe_record_audit_event
+from app.repositories.dashboard_batch_result_repository import DashboardBatchResultRepository
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.dashboard_live_repository import (
@@ -66,6 +67,9 @@ from app.schemas.dashboard import (
     UpdateDraftWidgetRequest,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.dashboard_batch_cache import (
+    dashboard_batch_cache_identity,
+)
 from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
 from app.services.resource_permission_service import (
     dashboard_with_persisted_permission_grants,
@@ -102,11 +106,19 @@ class DashboardRuntimeService:
         repository: DashboardRuntimeRepository,
         catalog_repository: CatalogRepository,
         live_repository: DashboardLiveRepository | None = None,
+        batch_result_repository: DashboardBatchResultRepository | None = None,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.live_repository = live_repository
+        repository_db = getattr(repository, "db", None)
+        self.batch_result_repository = batch_result_repository or (
+            DashboardBatchResultRepository(repository_db)
+            if hasattr(repository_db, "get_bind") and hasattr(repository_db, "execute")
+            else None
+        )
         self._continuous_job_cache: dict[str, object | None] = {}
+        self._authorized_dataset_scopes: set[tuple[str, str]] = set()
 
     def get_published_runtime(
         self,
@@ -669,6 +681,8 @@ class DashboardRuntimeService:
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
         data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
+        calculation_version: str | None = None
+        calculated_at: datetime | None = None
         is_live_widget = bool(
             widget.dataset_id
             and self.live_repository is not None
@@ -714,60 +728,125 @@ class DashboardRuntimeService:
                     }
                     data = []
             else:
-                cache_key = "|".join((
+                request_cache_key = "|".join((
                     widget.dataset_id,
                     widget_type.value,
                     json.dumps(config, ensure_ascii=True, sort_keys=True, default=str),
                 ))
-                result = result_cache.get(cache_key)
-                if result is None and widget.dataset_id not in session_errors:
-                    session = sessions.get(widget.dataset_id)
-                    if session is None:
-                        try:
-                            dataset = dataset_with_persisted_permission_grants(
-                                self.catalog_repository.db,
-                                CatalogDatasetResponse.model_validate(payload),
+                request_cache_entry = result_cache.get(request_cache_key)
+                result = (
+                    dict(request_cache_entry.get("result") or {})
+                    if request_cache_entry is not None
+                    else None
+                )
+                if request_cache_entry is not None:
+                    calculation_version = str(request_cache_entry.get("calculationVersion") or "") or None
+                    calculated_at = request_cache_entry.get("calculatedAt")
+
+                cache_identity = dashboard_batch_cache_identity(
+                    payload,
+                    widget_type,
+                    config,
+                    actor,
+                )
+                access_scope = (widget.dataset_id, cache_identity.actor_scope_hash)
+                if access_scope not in self._authorized_dataset_scopes and widget.dataset_id not in session_errors:
+                    try:
+                        dataset = dataset_with_persisted_permission_grants(
+                            self.catalog_repository.db,
+                            CatalogDatasetResponse.model_validate(payload),
+                        )
+                        require_dashboard_dataset_query_access(
+                            self.catalog_repository.db,
+                            actor,
+                            dataset,
+                            api_path=api_path,
+                            http_method=http_method,
+                        )
+                        self._authorized_dataset_scopes.add(access_scope)
+                    except ApiError as exc:
+                        if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
+                            session_errors[widget.dataset_id] = (
+                                DASHBOARD_DATA_FORBIDDEN,
+                                "You do not have permission to query this widget's dataset.",
                             )
-                            require_dashboard_dataset_query_access(
-                                self.catalog_repository.db,
-                                actor,
-                                dataset,
-                                api_path=api_path,
-                                http_method=http_method,
-                            )
-                        except ApiError as exc:
-                            if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_FORBIDDEN,
-                                    "You do not have permission to query this widget's dataset.",
-                                )
-                            else:
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_UNAVAILABLE,
-                                    "Dashboard widget data could not be read from physical storage.",
-                                )
-                        except ValidationError:
+                        else:
                             session_errors[widget.dataset_id] = (
                                 DASHBOARD_DATA_UNAVAILABLE,
                                 "Dashboard widget data could not be read from physical storage.",
                             )
-                        if widget.dataset_id not in session_errors:
-                            try:
-                                session = DashboardDatasetQuerySession(
-                                    payload,
-                                    remote_budget=remote_budget,
-                                )
-                            except (ApiError, ValueError):
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_UNAVAILABLE,
-                                    "Dashboard widget data could not be read from physical storage.",
-                                )
+                    except ValidationError:
+                        session_errors[widget.dataset_id] = (
+                            DASHBOARD_DATA_UNAVAILABLE,
+                            "Dashboard widget data could not be read from physical storage.",
+                        )
+
+                if (
+                    result is None
+                    and widget.dataset_id not in session_errors
+                    and self.batch_result_repository is not None
+                ):
+                    cached = self.batch_result_repository.get(cache_identity.cache_key)
+                    cached_payload = dict(cached.result_payload or {}) if cached is not None else {}
+                    cached_config = cached_payload.get("config")
+                    cached_data = cached_payload.get("data")
+                    if isinstance(cached_config, dict) and isinstance(cached_data, list):
+                        result = {"config": cached_config, "data": cached_data}
+                        calculation_version = cache_identity.cache_key
+                        calculated_at = cached.calculated_at
+                        result_cache[request_cache_key] = {
+                            "calculatedAt": calculated_at,
+                            "calculationVersion": calculation_version,
+                            "result": result,
+                        }
+                        logger.info(
+                            "dashboard_batch_cache_hit dataset_id=%s widget_type=%s cache_key=%s",
+                            widget.dataset_id,
+                            widget_type.value,
+                            cache_identity.cache_key,
+                        )
+
+                if result is None and widget.dataset_id not in session_errors:
+                    session = sessions.get(widget.dataset_id)
+                    if session is None:
+                        try:
+                            session = DashboardDatasetQuerySession(
+                                payload,
+                                remote_budget=remote_budget,
+                            )
+                        except (ApiError, ValueError):
+                            session_errors[widget.dataset_id] = (
+                                DASHBOARD_DATA_UNAVAILABLE,
+                                "Dashboard widget data could not be read from physical storage.",
+                            )
                         if session is not None:
                             sessions[widget.dataset_id] = session
                     if session is not None:
                         try:
                             result = session.read_widget(widget_type.value, config)
-                            result_cache[cache_key] = result
+                            calculation_version = cache_identity.cache_key
+                            if self.batch_result_repository is not None:
+                                calculated_at = self.batch_result_repository.save(
+                                    cache_key=cache_identity.cache_key,
+                                    dataset_id=widget.dataset_id,
+                                    dataset_version=cache_identity.dataset_version,
+                                    widget_type=widget_type.value,
+                                    config_hash=cache_identity.config_hash,
+                                    actor_scope_hash=cache_identity.actor_scope_hash,
+                                    result_payload=result,
+                                )
+                                self.batch_result_repository.db.commit()
+                            result_cache[request_cache_key] = {
+                                "calculatedAt": calculated_at,
+                                "calculationVersion": calculation_version,
+                                "result": result,
+                            }
+                            logger.info(
+                                "dashboard_batch_cache_miss dataset_id=%s widget_type=%s cache_key=%s",
+                                widget.dataset_id,
+                                widget_type.value,
+                                cache_identity.cache_key,
+                            )
                         except (ApiError, ValueError):
                             result = None
                 if result is not None:
@@ -797,6 +876,8 @@ class DashboardRuntimeService:
             data=data,
             dataset_id=widget.dataset_id,
             query_id=widget.query_id,
+            calculation_version=calculation_version,
+            calculated_at=dashboard_datetime_to_iso(calculated_at),
             data_status="error" if config.get("error") else "ready",
             data_error=str(config.get("errorMessage")) if config.get("errorMessage") else None,
         )

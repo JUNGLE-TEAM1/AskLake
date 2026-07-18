@@ -6,10 +6,21 @@ from typing import Callable
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.models.dashboard_runtime import (
+    DashboardBatchWidgetResult,
+    DashboardPage,
+    DashboardRevision,
+    DashboardWidget,
+)
 
 
-DASHBOARD_SCHEMA_VERSION = "20260718_dashboard_card_runtime_v1"
+DASHBOARD_CARD_RUNTIME_SCHEMA_VERSION = "20260718_dashboard_card_runtime_v1"
+DASHBOARD_BATCH_CACHE_SCHEMA_VERSION = "20260718_dashboard_batch_cache_v1"
+DASHBOARD_SCHEMA_VERSION = DASHBOARD_BATCH_CACHE_SCHEMA_VERSION
+DASHBOARD_SCHEMA_VERSIONS = (
+    DASHBOARD_CARD_RUNTIME_SCHEMA_VERSION,
+    DASHBOARD_BATCH_CACHE_SCHEMA_VERSION,
+)
 DASHBOARD_SCHEMA_LOCK_KEY = "asklake:dashboard-schema-migration"
 
 
@@ -250,10 +261,47 @@ def _apply_dashboard_card_runtime_v1(db: Session) -> None:
     raise RuntimeError(f"Unsupported Dashboard schema migration dialect: {dialect}")
 
 
+def _apply_dashboard_batch_cache_v1(db: Session) -> None:
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS dashboard_batch_widget_results (
+                cache_key varchar(64) PRIMARY KEY,
+                dataset_id varchar(120) NOT NULL,
+                dataset_version varchar(64) NOT NULL,
+                widget_type varchar(32) NOT NULL,
+                config_hash varchar(64) NOT NULL,
+                actor_scope_hash varchar(64) NOT NULL,
+                result_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+                calculated_at timestamptz NOT NULL DEFAULT now()
+            )
+        """))
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS dashboard_batch_widget_results_dataset_idx "
+            "ON dashboard_batch_widget_results (dataset_id, dataset_version)"
+        ))
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS dashboard_batch_widget_results_calculated_at_idx "
+            "ON dashboard_batch_widget_results (calculated_at)"
+        ))
+        return
+    if dialect == "sqlite":
+        DashboardBatchWidgetResult.metadata.create_all(
+            bind=db.get_bind(),
+            tables=[DashboardBatchWidgetResult.__table__],
+        )
+        return
+    raise RuntimeError(f"Unsupported Dashboard schema migration dialect: {dialect}")
+
+
 DASHBOARD_SCHEMA_MIGRATIONS = (
     DashboardSchemaMigration(
-        version=DASHBOARD_SCHEMA_VERSION,
+        version=DASHBOARD_CARD_RUNTIME_SCHEMA_VERSION,
         apply=_apply_dashboard_card_runtime_v1,
+    ),
+    DashboardSchemaMigration(
+        version=DASHBOARD_BATCH_CACHE_SCHEMA_VERSION,
+        apply=_apply_dashboard_batch_cache_v1,
     ),
 )
 

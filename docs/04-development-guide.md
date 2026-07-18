@@ -39,7 +39,7 @@ npm run migrate:dashboard-schema
 npm run verify:dashboard-storage
 ```
 
-`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다.
+`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime과 batch widget 결과 cache 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다. `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
 ## 2) 빌드
 

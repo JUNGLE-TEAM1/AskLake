@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.migrations.dashboard_schema import (
     DASHBOARD_SCHEMA_VERSION,
+    DASHBOARD_SCHEMA_VERSIONS,
     applied_dashboard_schema_versions,
     migrate_dashboard_schema,
 )
 
 
 EXPECTED_DASHBOARD_TABLES = {
+    "dashboard_batch_widget_results",
     "dashboard_pages",
     "dashboard_revisions",
     "dashboard_schema_migrations",
@@ -36,9 +38,10 @@ class DashboardSchemaMigrationTests(unittest.TestCase):
             second = migrate_dashboard_schema(db)
             versions = applied_dashboard_schema_versions(db)
 
-        self.assertEqual(first, [DASHBOARD_SCHEMA_VERSION])
+        self.assertEqual(first, list(DASHBOARD_SCHEMA_VERSIONS))
         self.assertEqual(second, [])
-        self.assertEqual(versions, {DASHBOARD_SCHEMA_VERSION})
+        self.assertEqual(versions, set(DASHBOARD_SCHEMA_VERSIONS))
+        self.assertIn(DASHBOARD_SCHEMA_VERSION, versions)
         self.assertTrue(
             EXPECTED_DASHBOARD_TABLES.issubset(set(inspect(self.engine).get_table_names()))
         )
@@ -89,7 +92,7 @@ class DashboardSchemaMigrationTests(unittest.TestCase):
                 WHERE id = 'dashboard-legacy'
             """)).mappings().one()
 
-        self.assertEqual(applied, [DASHBOARD_SCHEMA_VERSION])
+        self.assertEqual(applied, list(DASHBOARD_SCHEMA_VERSIONS))
         self.assertEqual(row["id"], "dashboard-legacy")
         self.assertEqual(row["name"], "Legacy dashboard")
         self.assertEqual(row["owner"], "Legacy Owner")

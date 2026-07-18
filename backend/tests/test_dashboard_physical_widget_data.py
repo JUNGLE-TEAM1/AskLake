@@ -8,9 +8,12 @@ import unittest
 from unittest.mock import patch
 
 import duckdb
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
 from app.schemas.trino import TrinoClientPage
@@ -587,6 +590,125 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(response.data, [])
         self.assertEqual(response.data_status, "pending")
         self.assertEqual(response.dataset_id, "catalog-dataset")
+
+    def test_batch_widget_result_is_reused_after_permission_is_rechecked(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        with Session(engine) as db:
+            migrate_dashboard_schema(db)
+
+        payload = catalog_dataset_payload(
+            storage_format="csv",
+            storage_location="cache-fixture",
+        )
+        payload["sourceRunId"] = "run-1"
+        physical_reads: list[str] = []
+        permission_checks: list[str] = []
+
+        class FakeQuerySession:
+            def __init__(self, _payload, *, remote_budget):
+                self.remote_budget = remote_budget
+
+            def read_widget(self, _widget_type, config):
+                physical_reads.append("read")
+                return {
+                    "config": {
+                        **config,
+                        "dataMode": "server_aggregated",
+                        "sourceConfig": dict(config),
+                    },
+                    "data": [{"category": "cached", "amount": 7}],
+                }
+
+            def close(self):
+                return None
+
+        responses = []
+        with patch(
+            "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+            side_effect=lambda _db, dataset: dataset,
+        ), patch(
+            "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access",
+            side_effect=lambda *_args, **_kwargs: permission_checks.append("checked"),
+        ), patch(
+            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+            FakeQuerySession,
+        ):
+            for _ in range(2):
+                with Session(engine) as db:
+                    catalog_repository = FakeCatalogRepository({"catalog-dataset": payload})
+                    catalog_repository.db = db
+                    service = DashboardRuntimeService(
+                        SimpleNamespace(db=db),
+                        catalog_repository,
+                    )
+                    sessions = {}
+                    try:
+                        responses.append(render_runtime_widget(service, runtime_widget(), sessions=sessions))
+                    finally:
+                        for session in sessions.values():
+                            session.close()
+
+        with Session(engine) as db:
+            catalog_repository = FakeCatalogRepository({"catalog-dataset": payload})
+            catalog_repository.db = db
+            service = DashboardRuntimeService(SimpleNamespace(db=db), catalog_repository)
+            with patch(
+                "app.services.dashboard_runtime_service.dataset_with_persisted_permission_grants",
+                side_effect=lambda _db, dataset: dataset,
+            ), patch(
+                "app.services.dashboard_runtime_service.require_dashboard_dataset_query_access",
+                side_effect=ApiError(ErrorCode.FORBIDDEN, "denied", 403),
+            ), patch(
+                "app.services.dashboard_runtime_service.DashboardDatasetQuerySession"
+            ) as query_session:
+                denied_response = render_runtime_widget(service, runtime_widget())
+            query_session.assert_not_called()
+
+        engine.dispose()
+        self.assertEqual(physical_reads, ["read"])
+        self.assertEqual(permission_checks, ["checked", "checked"])
+        self.assertEqual(responses[0].data, responses[1].data)
+        self.assertEqual(responses[0].calculation_version, responses[1].calculation_version)
+        self.assertEqual(denied_response.data, [])
+        self.assertEqual(denied_response.config.error, DASHBOARD_DATA_FORBIDDEN)
+
+    def test_batch_cache_key_changes_with_dataset_config_and_actor_scope(self) -> None:
+        from app.services.dashboard_batch_cache import dashboard_batch_cache_identity
+
+        base_payload = catalog_dataset_payload()
+        base_payload["sourceRunId"] = "run-1"
+        base_config = {"aggregation": "sum", "xKey": "category", "yKey": "amount"}
+        base_actor = ActorContext(name="analyst-a", role="viewer", groups=("finance",))
+        base = dashboard_batch_cache_identity(
+            base_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            base_config,
+            base_actor,
+        )
+
+        newer_payload = {**base_payload, "sourceRunId": "run-2"}
+        changed_dataset = dashboard_batch_cache_identity(
+            newer_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            base_config,
+            base_actor,
+        )
+        changed_config = dashboard_batch_cache_identity(
+            base_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            {**base_config, "aggregation": "avg"},
+            base_actor,
+        )
+        changed_actor = dashboard_batch_cache_identity(
+            base_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            base_config,
+            ActorContext(name="analyst-b", role="viewer", groups=("finance",)),
+        )
+
+        self.assertNotEqual(base.cache_key, changed_dataset.cache_key)
+        self.assertNotEqual(base.cache_key, changed_config.cache_key)
+        self.assertNotEqual(base.cache_key, changed_actor.cache_key)
 
     def test_runtime_widget_returns_a_stable_error_when_physical_storage_is_unavailable(self) -> None:
         payload = catalog_dataset_payload(

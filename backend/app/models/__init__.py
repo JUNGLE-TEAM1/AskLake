@@ -13,7 +13,12 @@ from app.models.dashboard_live import (
     DatasetKafkaPartitionCursorModel,
     DatasetRevisionCommitModel,
 )
-from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.models.dashboard_runtime import (
+    DashboardBatchWidgetResult,
+    DashboardPage,
+    DashboardRevision,
+    DashboardWidget,
+)
 from app.models.etl import ETLJobModel, ETLRunModel, KafkaContinuousBatchModel, KafkaContinuousMaintenanceRunModel, KafkaContinuousRuntimeModel, KafkaContinuousSessionModel, KafkaSnapshotModel
 from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
 from app.models.realtime import RealtimeEventModel
@@ -29,6 +34,7 @@ __all__ = [
     "DatasetKafkaPartitionCursorModel",
     "DatasetRevisionCommitModel",
     "DashboardWidgetResultModel",
+    "DashboardBatchWidgetResult",
     "DashboardPage",
     "DashboardRevision",
     "DashboardWidget",

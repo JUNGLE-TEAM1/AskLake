@@ -3295,6 +3295,10 @@ Response `200 OK`:
 }
 ```
 
+일반 batch/snapshot widget의 성공 결과는 PostgreSQL `dashboard_batch_widget_results`에서 재사용합니다. Cache key는 `datasetId`, `icebergSnapshotId`/성공 run·물리 위치를 포함한 Dataset version hash, widget type, 편집 `sourceConfig` hash, 계산 계약 version, actor의 user/role/group scope hash로 구성합니다. Cache를 읽기 전에 현재 요청 actor의 Dataset `query` 권한과 governance를 항상 다시 확인합니다. Dataset version, widget config, actor scope 중 하나라도 달라지면 cache miss이며 새로 계산합니다. 계산 실패와 권한 오류는 cache에 저장하지 않습니다. 7일보다 오래된 batch cache row는 새 결과 저장 시 정리합니다.
+
+Continuous widget은 이 batch cache를 거치지 않습니다. 기존 `dashboard_widget_results`, `appliedRevision`, `calculationVersion` 계약이 유일한 결과 재사용 경계입니다.
+
 #### 계산 버전과 재계산
 
 `calculationVersion`은 다음 canonical JSON의 SHA-256입니다.

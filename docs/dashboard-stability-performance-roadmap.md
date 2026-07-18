@@ -330,10 +330,10 @@ API 계약을 먼저 문서화하고 구현한다. 프론트에서 서버 계산
 
 완료 조건:
 
-- [ ] widget/page mutation별 상태 테스트가 있다.
-- [ ] mutation 후 전체 runtime 재조회가 제거됐다.
-- [ ] backend 응답과 frontend state가 같은 widget/page 값을 사용한다.
-- [ ] 기존 publish와 Continuous refresh가 깨지지 않는다.
+- [x] widget/page mutation별 상태 테스트가 있다.
+- [x] mutation 후 전체 runtime 재조회가 제거됐다.
+- [x] backend 응답과 frontend state가 같은 widget/page 값을 사용한다.
+- [x] 기존 publish와 Continuous refresh가 깨지지 않는다.
 
 ## 6. PR 3 — Dashboard 틀과 widget data 분리 로딩
 
@@ -388,10 +388,10 @@ Dashboard shell 조회
 
 완료 조건:
 
-- [ ] shell과 data API 계약이 문서화됐다.
+- [x] shell과 data API 계약이 문서화됐다.
 - [ ] 첫 화면 표시 시간이 변경 전보다 악화되지 않았다.
-- [ ] 느린 widget과 실패 widget이 다른 widget을 막지 않는다.
-- [ ] route/page 전환 중 오래된 응답이 화면을 덮어쓰지 않는다.
+- [x] 느린 widget과 실패 widget이 다른 widget을 막지 않는다.
+- [x] route/page 전환 중 오래된 응답이 화면을 덮어쓰지 않는다.
 
 ## 7. PR 4 — batch와 실시간 데이터 결과 재사용
 
@@ -454,9 +454,9 @@ cache key에 최소한 다음 값이 포함돼야 한다.
 
 완료 조건:
 
-- [ ] batch와 Continuous의 재사용 기준이 분리돼 있다.
-- [ ] cache key와 무효화 조건이 문서화됐다.
-- [ ] 권한 경계를 넘는 cache 공유가 없다.
+- [x] batch와 Continuous의 재사용 기준이 분리돼 있다.
+- [x] cache key와 무효화 조건이 문서화됐다.
+- [x] 권한 경계를 넘는 cache 공유가 없다.
 - [ ] cache 적용 전후 계산 횟수와 응답 시간이 기록됐다.
 
 ## 8. PR 5 — 코드 책임 분리와 오류 추적 정리
