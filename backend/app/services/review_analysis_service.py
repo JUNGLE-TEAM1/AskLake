@@ -301,11 +301,7 @@ class ReviewAnalysisService:
         training_columns: list[Any],
         training_rows: list[Any],
     ) -> dict[str, Any]:
-        classification_columns = [
-            column
-            for column in training_columns
-            if isinstance(column, dict) and str(column.get("method") or "").strip() == "one_of_values"
-        ]
+        classification_columns = self._classification_training_columns(training_columns)
         if not classification_columns:
             return {"status": "not_applicable", "artifacts": [], "message": "분류형 출력 컬럼이 없습니다."}
         if len(training_rows) < 8:
@@ -320,8 +316,44 @@ class ReviewAnalysisService:
         output_dir = self._output_root() / "model-training" / run_id
         model_root.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
+        request_payload = self._training_request_payload(
+            run_id=run_id,
+            result=result,
+            classification_columns=classification_columns,
+            training_rows=training_rows,
+        )
+        manifest, failure_message = self._execute_model_training(
+            request_payload=request_payload,
+            output_dir=output_dir,
+            model_root=model_root,
+        )
+        if manifest is None:
+            return {
+                "status": "failed",
+                "artifacts": [],
+                "message": failure_message,
+                "trainingRows": len(training_rows),
+            }
+        return self._model_training_response(manifest, request_payload, len(training_rows))
+
+    @staticmethod
+    def _classification_training_columns(training_columns: list[Any]) -> list[dict[str, Any]]:
+        return [
+            column
+            for column in training_columns
+            if isinstance(column, dict) and str(column.get("method") or "").strip() == "one_of_values"
+        ]
+
+    @staticmethod
+    def _training_request_payload(
+        *,
+        run_id: str,
+        result: dict[str, Any],
+        classification_columns: list[dict[str, Any]],
+        training_rows: list[Any],
+    ) -> dict[str, Any]:
         analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
-        request_payload = {
+        return {
             "columns": classification_columns,
             "trainRows": training_rows,
             "minimumQuality": float(os.environ.get("ASKLAKE_REVIEW_MODEL_MINIMUM_QUALITY", "0.75")),
@@ -337,6 +369,14 @@ class ReviewAnalysisService:
             "labelModels": analysis.get("models") if isinstance(analysis.get("models"), list) else [],
             "source": result.get("source") if isinstance(result.get("source"), dict) else {},
         }
+
+    @staticmethod
+    def _execute_model_training(
+        *,
+        request_payload: dict[str, Any],
+        output_dir: Path,
+        model_root: Path,
+    ) -> tuple[dict[str, Any] | None, str]:
         script_path = Path(__file__).resolve().parents[2] / "scripts" / "train_text_structuring_models.py"
         try:
             completed = subprocess.run(
@@ -355,28 +395,23 @@ class ReviewAnalysisService:
                 timeout=max(1, int(os.environ.get("ASKLAKE_MODEL_TRAINING_TIMEOUT_SECONDS", "900"))),
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            return {
-                "status": "failed",
-                "artifacts": [],
-                "message": f"모델 학습 프로세스를 실행하지 못했습니다: {error.__class__.__name__}",
-                "trainingRows": len(training_rows),
-            }
+            return None, f"모델 학습 프로세스를 실행하지 못했습니다: {error.__class__.__name__}"
         if completed.returncode != 0:
-            return {
-                "status": "failed",
-                "artifacts": [],
-                "message": "모델 학습 또는 품질 검증에 실패했습니다.",
-                "trainingRows": len(training_rows),
-            }
+            return None, "모델 학습 또는 품질 검증에 실패했습니다."
         try:
             manifest = json.loads(completed.stdout)
         except json.JSONDecodeError:
-            return {
-                "status": "failed",
-                "artifacts": [],
-                "message": "모델 학습 결과 형식이 올바르지 않습니다.",
-                "trainingRows": len(training_rows),
-            }
+            return None, "모델 학습 결과 형식이 올바르지 않습니다."
+        if not isinstance(manifest, dict):
+            return None, "모델 학습 결과 형식이 올바르지 않습니다."
+        return manifest, ""
+
+    @staticmethod
+    def _model_training_response(
+        manifest: dict[str, Any],
+        request_payload: dict[str, Any],
+        training_row_count: int,
+    ) -> dict[str, Any]:
         trained_models = manifest.get("trainedModels") if isinstance(manifest, dict) and isinstance(manifest.get("trainedModels"), dict) else {}
         artifacts = [
             {
@@ -395,7 +430,7 @@ class ReviewAnalysisService:
             "labelModels": request_payload["labelModels"],
             "labelSource": "ai_gateway",
             "message": "검증된 모델을 Spark 런타임에 게시했습니다." if promoted else "일부 분류 모델이 클래스·품질 기준을 통과하지 못해 게시하지 않았습니다.",
-            "trainingRows": len(training_rows),
+            "trainingRows": training_row_count,
         }
 
     def _validated_run_payload(self, request: dict[str, Any]) -> dict[str, Any]:

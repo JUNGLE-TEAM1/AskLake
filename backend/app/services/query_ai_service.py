@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import uuid4
 
 from fastapi import status
@@ -44,6 +45,31 @@ class QueryAiService:
         actor: ActorContext | None = None,
     ) -> QueryAiSuggestionResponse:
         actor_context = actor or ActorContext()
+        prompt, context_dataset_ids = self._validated_context(request)
+        datasets = self._authorized_datasets(context_dataset_ids, actor_context)
+        base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
+        request_id, rag_context, raw_suggestion = self._generate_suggestion(
+            request,
+            actor_context,
+            prompt,
+            context_dataset_ids,
+            datasets,
+            base_dataset,
+        )
+        return self._verified_response(
+            request=request,
+            actor=actor_context,
+            prompt=prompt,
+            context_dataset_ids=context_dataset_ids,
+            datasets=datasets,
+            base_dataset=base_dataset,
+            request_id=request_id,
+            rag_context=rag_context,
+            raw_suggestion=raw_suggestion,
+        )
+
+    @staticmethod
+    def _validated_context(request: QueryAiSuggestionRequest) -> tuple[str, list[str]]:
         if request.mode != "draft_sql":
             raise ApiError(
                 ErrorCode.VALIDATION_ERROR,
@@ -59,7 +85,6 @@ class QueryAiService:
                 "Natural language prompt is required",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-
         context_dataset_ids = unique_dataset_ids(
             [
                 *(request.selected_dataset_ids or []),
@@ -72,7 +97,13 @@ class QueryAiService:
                 "At least one selected dataset is required",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
+        return prompt, context_dataset_ids
 
+    def _authorized_datasets(
+        self,
+        context_dataset_ids: list[str],
+        actor: ActorContext,
+    ) -> list[CatalogDatasetResponse]:
         datasets = [
             self.get_catalog_dataset(dataset_id)
             for dataset_id in context_dataset_ids
@@ -80,7 +111,7 @@ class QueryAiService:
         for dataset in datasets:
             require_governed_access(
                 self.catalog_repository.db,
-                actor_context,
+                actor,
                 action="query",
                 api_path="/api/query/ai-suggestions",
                 http_method="POST",
@@ -90,17 +121,27 @@ class QueryAiService:
                 resource_type="dataset",
             )
             require_permission(
-                actor_context,
+                actor,
                 "query",
                 owner=dataset.owner,
                 grants=dataset.permission_grants,
                 resource_label="dataset",
             )
-        base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
+        return datasets
+
+    def _generate_suggestion(
+        self,
+        request: QueryAiSuggestionRequest,
+        actor: ActorContext,
+        prompt: str,
+        context_dataset_ids: list[str],
+        datasets: list[CatalogDatasetResponse],
+        base_dataset: CatalogDatasetResponse,
+    ) -> tuple[str, dict[str, Any], dict[str, object]]:
         rag_context = build_semantic_rag_context(
             db=self.catalog_repository.db,
             settings=settings,
-            actor=actor_context,
+            actor=actor,
             query=prompt,
             dataset_ids=context_dataset_ids,
             semantic_model_id=request.semantic_model_id,
@@ -108,7 +149,7 @@ class QueryAiService:
         request_id = str(uuid4())
         context_token = issue_ai_context_token(
             request_id=request_id,
-            actor=actor_context,
+            actor=actor,
             allowed_dataset_ids=context_dataset_ids,
             dataset_permissions={dataset.id: ["query"] for dataset in datasets},
         )
@@ -121,7 +162,21 @@ class QueryAiService:
             context_token=context_token,
             rag_context=rag_context,
         )
+        return request_id, rag_context, raw_suggestion
 
+    def _verified_response(
+        self,
+        *,
+        request: QueryAiSuggestionRequest,
+        actor: ActorContext,
+        prompt: str,
+        context_dataset_ids: list[str],
+        datasets: list[CatalogDatasetResponse],
+        base_dataset: CatalogDatasetResponse,
+        request_id: str,
+        rag_context: dict[str, Any],
+        raw_suggestion: dict[str, object],
+    ) -> QueryAiSuggestionResponse:
         suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else parse_ai_suggestion(raw_suggestion)
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
@@ -136,7 +191,7 @@ class QueryAiService:
         model = str(raw_suggestion.get("model") or "").strip()
         persist_verified_generation_evidence(
             self.catalog_repository.db,
-            actor=actor_context,
+            actor=actor,
             candidate_ids=evidence_candidate_ids(rag_context),
             context_payload={
                 "baseDatasetId": base_dataset.id,

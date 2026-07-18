@@ -288,16 +288,38 @@ class AiGatewayClient:
         context_token: str | None = None,
         rag_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._require_configuration()
+        headers = self._generation_headers(request_id, context_token)
+        payload = self._generation_payload(
+            mode=mode,
+            request_id=request_id,
+            prompt=prompt,
+            context=context,
+            current_query=current_query,
+            base_dataset_id=base_dataset_id,
+            selected_dataset_ids=selected_dataset_ids,
+            rag_context=rag_context,
+        )
+        response = self._post_generation(self._generation_endpoint(), headers, payload)
+        body = self._validated_generation_body(response, request_id=request_id, mode=mode)
+        self._persist_generation_usage(body, request_id=request_id, mode=mode)
+        return body
+
+    def _require_configuration(self) -> None:
         if not self.settings.ai_gateway_base_url or not self.settings.ai_gateway_service_token:
             raise ApiError(
                 ErrorCode.SERVICE_UNAVAILABLE,
                 "AI gateway is not configured",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        endpoint = urljoin(
+
+    def _generation_endpoint(self) -> str:
+        return urljoin(
             f"{self.settings.ai_gateway_base_url.rstrip('/')}/",
             self.settings.ai_gateway_generate_path.lstrip("/"),
         )
+
+    def _generation_headers(self, request_id: str, context_token: str | None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self.settings.ai_gateway_service_token}",
             "Content-Type": "application/json",
@@ -305,7 +327,21 @@ class AiGatewayClient:
         }
         if context_token:
             headers["X-AskLake-AI-Context"] = context_token
-        payload = {
+        return headers
+
+    @staticmethod
+    def _generation_payload(
+        *,
+        mode: str,
+        request_id: str,
+        prompt: str,
+        context: dict[str, Any],
+        current_query: str | None,
+        base_dataset_id: str | None,
+        selected_dataset_ids: list[str] | None,
+        rag_context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
             "mode": mode,
             "request_id": request_id,
             "prompt": prompt,
@@ -315,6 +351,13 @@ class AiGatewayClient:
             "selected_dataset_ids": selected_dataset_ids or [],
             "rag_context": rag_context or {},
         }
+
+    def _post_generation(
+        self,
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
         try:
             response = httpx.post(
                 endpoint,
@@ -341,14 +384,11 @@ class AiGatewayClient:
                 status.HTTP_401_UNAUTHORIZED,
             )
         if response.status_code in {502, 503, 504}:
-            mapped_status = (
-                status.HTTP_503_SERVICE_UNAVAILABLE
-                if response.status_code == 503
-                else status.HTTP_504_GATEWAY_TIMEOUT
-                if response.status_code == 504
-                else status.HTTP_502_BAD_GATEWAY
-            )
-            mapped_code = ErrorCode.SERVICE_UNAVAILABLE if response.status_code == 503 else ErrorCode.BACKEND_TIMEOUT if response.status_code == 504 else ErrorCode.INTERNAL_ERROR
+            mapped_status, mapped_code = {
+                502: (status.HTTP_502_BAD_GATEWAY, ErrorCode.INTERNAL_ERROR),
+                503: (status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.SERVICE_UNAVAILABLE),
+                504: (status.HTTP_504_GATEWAY_TIMEOUT, ErrorCode.BACKEND_TIMEOUT),
+            }[response.status_code]
             raise ApiError(mapped_code, "AI gateway generation failed", mapped_status)
         if response.status_code >= 400:
             raise ApiError(
@@ -356,6 +396,15 @@ class AiGatewayClient:
                 "AI gateway rejected the request",
                 status.HTTP_502_BAD_GATEWAY,
             )
+        return response
+
+    def _validated_generation_body(
+        self,
+        response: httpx.Response,
+        *,
+        request_id: str,
+        mode: str,
+    ) -> dict[str, Any]:
         if len(response.content) > self.settings.ai_gateway_max_response_bytes:
             raise ApiError(
                 ErrorCode.INTERNAL_ERROR,
@@ -392,7 +441,6 @@ class AiGatewayClient:
                 "AI gateway returned untrusted generation provenance",
                 status.HTTP_502_BAD_GATEWAY,
             )
-        self._persist_generation_usage(body, request_id=request_id, mode=mode)
         return body
 
     @staticmethod

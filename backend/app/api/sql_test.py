@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import duckdb
@@ -31,6 +32,17 @@ class SqlTestRequest(BaseModel):
     limit: int | None = Field(default=5, ge=1, le=100)
 
 
+@dataclass(frozen=True)
+class PreviewSourceContext:
+    source: SqlTestSource
+    columns: list[str]
+    column_types: dict[str, str]
+    rows: list[dict[str, Any]]
+    dataset_name: str
+    dataset_row_count: int
+    preview_origin: str
+
+
 @router.post("/test")
 def test_sql_transform(
     request: SqlTestRequest,
@@ -38,71 +50,22 @@ def test_sql_transform(
     catalog_service: Annotated[CatalogService, Depends(get_catalog_service)],
 ) -> dict[str, Any]:
     limit = request.limit or 5
-    if len(request.sources) != 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="SQL transform preview requires exactly one source.",
-        )
-
-    source = request.sources[0]
-    is_catalog_source = bool(source.source_dataset_id.strip()) and source.source_dataset_id != "asklake-draft-source"
-    if is_catalog_source:
-        dataset = catalog_service.get_dataset(source.source_dataset_id, actor)
-        page = catalog_service.get_dataset_rows(
-            source.source_dataset_id,
-            actor,
-            limit=min(max(limit * 10, 50), 100),
-            offset=0,
-        )
-        columns = unique_columns(source.columns) or page.columns
-        page_column_indexes = {name.casefold(): index for index, name in enumerate(page.columns)}
-        unknown_columns = [column for column in columns if column.casefold() not in page_column_indexes]
-        if unknown_columns:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown Catalog source columns: {', '.join(unknown_columns[:20])}",
-            )
-        column_types = {name.casefold(): type_name for name, type_name in dataset.schema_}
-        source_rows = [
-            {
-                column: row[page_column_indexes[column.casefold()]]
-                for column in columns
-            }
-            for row in page.rows
-        ]
-        dataset_name = dataset.name
-        dataset_row_count = page.row_count
-        preview_origin = "catalog"
-    else:
-        columns = unique_columns(source.columns)
-        if not source.sample_rows:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The connected source did not provide actual sample rows.",
-            )
-        column_types = {name.casefold(): type_name for name, type_name in source.column_types.items()}
-        source_rows = [
-            {column: row[index] if index < len(row) else None for index, column in enumerate(columns)}
-            for row in source.sample_rows
-        ]
-        dataset_name = source.source_name.strip() or "Connected source sample"
-        dataset_row_count = len(source_rows)
-        preview_origin = "source_sample"
-
-    if not columns:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No source columns available.",
-        )
+    preview = resolve_preview_source(request, actor, catalog_service, limit)
 
     try:
         validated_sql = validate_read_only_query(request.sql)
-        validate_transform_scope(validated_sql, columns)
+        validate_transform_scope(validated_sql, preview.columns)
         duckdb_sql = convert_spark_identifiers_to_duckdb(validated_sql)
 
         con = duckdb.connect(database=":memory:")
         try:
-            create_preview_table(con, "input", columns, source_rows, column_types=column_types)
+            create_preview_table(
+                con,
+                "input",
+                preview.columns,
+                preview.rows,
+                column_types=preview.column_types,
+            )
             preview_sql = with_preview_limit(duckdb_sql, limit)
             result = con.execute(preview_sql)
             result_columns = [description[0] for description in result.description or []]
@@ -118,9 +81,9 @@ def test_sql_transform(
         ) from exc
 
     source_samples = [{
-        "source_dataset_id": source.source_dataset_id,
-        "source_name": dataset_name,
-        "rows": project_source_rows(source_rows, columns),
+        "source_dataset_id": preview.source.source_dataset_id,
+        "source_name": preview.dataset_name,
+        "rows": project_source_rows(preview.rows, preview.columns),
     }]
 
     return {
@@ -130,10 +93,10 @@ def test_sql_transform(
             for column in result_columns
         ],
         "sample_rows": result_rows,
-        "before_rows": source_rows,
+        "before_rows": preview.rows,
         "source_samples": source_samples,
-        "preview_origin": preview_origin,
-        "dataset_row_count": dataset_row_count,
+        "preview_origin": preview.preview_origin,
+        "dataset_row_count": preview.dataset_row_count,
         "spark_warnings": [],
         "sql_conversions": [],
     }
@@ -141,6 +104,90 @@ def test_sql_transform(
 
 # The FastAPI handler lives in a *_test.py module but is not itself a pytest test.
 test_sql_transform.__test__ = False
+
+
+def resolve_preview_source(
+    request: SqlTestRequest,
+    actor: ActorContext,
+    catalog_service: CatalogService,
+    limit: int,
+) -> PreviewSourceContext:
+    if len(request.sources) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SQL transform preview requires exactly one source.",
+        )
+    source = request.sources[0]
+    is_catalog_source = bool(source.source_dataset_id.strip()) and source.source_dataset_id != "asklake-draft-source"
+    preview = (
+        catalog_preview_source(source, actor, catalog_service, limit)
+        if is_catalog_source
+        else sample_preview_source(source)
+    )
+    if not preview.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No source columns available.",
+        )
+    return preview
+
+
+def catalog_preview_source(
+    source: SqlTestSource,
+    actor: ActorContext,
+    catalog_service: CatalogService,
+    limit: int,
+) -> PreviewSourceContext:
+    dataset = catalog_service.get_dataset(source.source_dataset_id, actor)
+    page = catalog_service.get_dataset_rows(
+        source.source_dataset_id,
+        actor,
+        limit=min(max(limit * 10, 50), 100),
+        offset=0,
+    )
+    columns = unique_columns(source.columns) or page.columns
+    page_column_indexes = {name.casefold(): index for index, name in enumerate(page.columns)}
+    unknown_columns = [column for column in columns if column.casefold() not in page_column_indexes]
+    if unknown_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown Catalog source columns: {', '.join(unknown_columns[:20])}",
+        )
+    rows = [
+        {column: row[page_column_indexes[column.casefold()]] for column in columns}
+        for row in page.rows
+    ]
+    return PreviewSourceContext(
+        source=source,
+        columns=columns,
+        column_types={name.casefold(): type_name for name, type_name in dataset.schema_},
+        rows=rows,
+        dataset_name=dataset.name,
+        dataset_row_count=page.row_count,
+        preview_origin="catalog",
+    )
+
+
+def sample_preview_source(source: SqlTestSource) -> PreviewSourceContext:
+    columns = unique_columns(source.columns)
+    if not source.sample_rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The connected source did not provide actual sample rows.",
+        )
+    rows = [
+        {column: row[index] if index < len(row) else None for index, column in enumerate(columns)}
+        for row in source.sample_rows
+    ]
+    return PreviewSourceContext(
+        source=source,
+        columns=columns,
+        column_types={name.casefold(): type_name for name, type_name in source.column_types.items()},
+        rows=rows,
+        dataset_name=source.source_name.strip() or "Connected source sample",
+        dataset_row_count=len(rows),
+        preview_origin="source_sample",
+    )
 
 
 def unique_columns(columns: Any) -> list[str]:

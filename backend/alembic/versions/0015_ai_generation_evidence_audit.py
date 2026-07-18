@@ -4,8 +4,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0016_ai_generation_evidence_audit"
-down_revision = "0015_rag_control_plane_fencing"
+revision = "0015_ai_generation_evidence_audit"
+down_revision = "0014_review_analysis_runs"
 branch_labels = None
 depends_on = None
 

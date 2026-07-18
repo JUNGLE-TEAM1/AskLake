@@ -347,7 +347,8 @@ Live Airflow verification through 2026-07-11:
 | SQL 점검 | frontend parser는 빠른 오타/식별자 안내를 담당하고, Trino Dataset은 debounced `POST /api/query/validate` 성공 전 실행을 비활성화한다. Trino 확장 문법은 backend parser/compiler가 최종 판정한다. | `POST /api/query/validate` |
 | SQL 실행 | `TRINO_ENABLED=true`이면 최대 100행 preview Query Run을 접수하고 durable 상태를 polling한다. `false`/mock만 DuckDB compatibility result를 사용한다. | `POST /api/query/runs`, `GET /api/query/runs/{runId}` |
 | 실행 정보 | SQL editor는 기존 높이와 단일 scroll을 유지한다. 평가와 preview의 `쿼리 실행`, `첫 결과 준비` timeline을 결과 panel의 세 번째 view에서 표시한다. 실제 분자/분모가 없으면 progress를 만들지 않는다. | `POST /api/query/estimates`, Query Run response |
-| Query AI 생성 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. frontend는 체크된 모든 dataset metadata를 전달하며, live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, 선택 reference JOIN 누락 시 프론트 로컬 JOIN SQL fallback 사용 | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | frontend는 선택 Dataset ID와 prompt만 전달한다. FastAPI가 권한/governance를 확인하고 단일 사용 signed MCP context와 Semantic RAG를 private Gateway에 전달한다. SQL·근거는 검증된 Gateway 응답만 사용하고 로컬 fallback은 없다. | `POST /api/query/ai-suggestions` |
+| ETL transform AI | field/SQL transform을 private Gateway에서 생성한 뒤 input relation·metadata column·read-only·위험 함수 guard를 통과한 SQL만 반환 | `POST /api/ai/generate-sql` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
@@ -384,7 +385,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - Trino 실행은 `POST /api/query/validate` 성공 뒤 최대 100행 preview Query Run을 `202`로 접수하고 durable 상태를 polling한다.
 - Preview 결과는 PostgreSQL inline page로 반환한다. 전체 보기/CSV는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 full run을 시작하고 signed cursor 또는 server CSV로 읽는다.
 - 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 preview의 두 단계 timeline을 포함한다.
-- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 선택 dataset metadata 전체를 request에 포함하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
+- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고 선택 Dataset ID만 request에 포함한다. Backend가 Catalog context를 재구성하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino preview는 full result를 기다리지 않고 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
@@ -407,7 +408,8 @@ Pair2 FastAPI 5단계 완료 기준:
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
-| Dashboard Assistant | AskLake 보조 패널/시각화 요청 위젯에서 DB runtime/catalog 컨텍스트 기반 OpenAI 응답 생성. 대시보드에서 사용할 수 있는 available catalog dataset만 위젯 생성/수정 후보로 허용한다. OpenAI 설정이 없거나 실패하면 `mock fallback` 명시 응답 반환 | `POST /api/dashboards/assistant` |
+| Dashboard Assistant | DB runtime/catalog 권한 context와 Semantic RAG를 private Gateway에 전달한다. 검증된 action과 모델이 실제 사용한 evidence만 반환하며 Gateway/RAG 실패 시 빈 action의 unavailable/error를 반환한다. | `POST /api/dashboards/assistant` |
+| Review analysis | Gateway schema/row preview, persisted bounded run, provenance·holdout quality gate를 통과한 portable model publication을 제공한다. | `POST /api/review-analysis/schema-suggestion`, `POST /api/review-analysis/preview`, `POST /api/review-analysis/runs`, `GET /api/catalog/models` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |

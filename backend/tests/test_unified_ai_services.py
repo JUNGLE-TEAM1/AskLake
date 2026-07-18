@@ -9,11 +9,23 @@ from app.core.errors import ApiError
 from app.core.auth_context import ActorContext
 from app.models.etl import ReviewAnalysisRunModel
 from app.models.identity import AiGenerationUsageModel
+from app.main import create_app
 from app.schemas.ai_generation import AiSqlGenerationRequest
+from app.schemas.integration import ReviewAnalysisRunRequest
 from app.services.ai_generation_service import AiGenerationService
 from app.services.review_analysis_service import ReviewAnalysisService
 from app.services.ai_gateway_client import AiGatewayClient
 from app.services.ai_evidence import retain_used_rag_evidence
+
+
+def test_unified_ai_and_review_routes_are_registered() -> None:
+    paths = {route.path for route in create_app().routes}
+
+    assert "/api/ai/generate-sql" in paths
+    assert "/api/review-analysis/preview" in paths
+    assert "/api/review-analysis/runs" in paths
+    assert "/api/review-analysis/runs/{run_id}" in paths
+    assert ReviewAnalysisRunRequest().limit == 25
 
 
 def test_etl_ai_generation_delegates_to_gateway() -> None:

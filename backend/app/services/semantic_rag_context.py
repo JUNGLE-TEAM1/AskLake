@@ -25,49 +25,18 @@ def build_semantic_rag_context(
     unrelated Dataset-only search path.
     """
     requested_dataset_ids = list(dict.fromkeys(str(item) for item in dataset_ids if str(item).strip()))
-    empty = {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "provenance": "semantic_layer_rag", "datasetIds": requested_dataset_ids, "semanticModels": []}}
+    empty = _empty_rag_context(requested_dataset_ids)
     if db is None:
         return empty
-
-    try:
-        semantic_models = SemanticModelService(db)
-    except Exception as exc:
-        empty["retrieval"].update({"status": "semantic_layer_unavailable", "reason": exc.__class__.__name__})
-        return empty
-    if semantic_model_id:
-        model = semantic_models.published_query_model(semantic_model_id, actor)
-        if model is None:
-            empty["retrieval"].update({"status": "semantic_model_not_available", "semanticModelId": semantic_model_id})
-            return empty
-        resolved_models = [model]
-        model_dataset_ids = {
-            str(item)
-            for item in model.get("datasetIds", [])
-            if str(item).strip()
-        }
-        if not requested_dataset_ids:
-            requested_dataset_ids = list(model_dataset_ids)
-            empty["retrieval"]["datasetIds"] = requested_dataset_ids
-        missing_dataset_ids = [
-            dataset_id
-            for dataset_id in requested_dataset_ids
-            if dataset_id not in model_dataset_ids
-        ]
-        if missing_dataset_ids:
-            empty["retrieval"].update({
-                "status": "semantic_model_dataset_mismatch",
-                "semanticModelId": semantic_model_id,
-                "missingDatasetIds": missing_dataset_ids,
-            })
-            return empty
-    else:
-        if not requested_dataset_ids:
-            return empty
-        resolved_models = semantic_models.published_query_models_for_datasets(requested_dataset_ids, actor)
-
-    if not resolved_models:
-        empty["retrieval"]["status"] = "no_published_semantic_model"
-        return empty
+    resolved_models, requested_dataset_ids, failure = _resolve_semantic_models(
+        db=db,
+        actor=actor,
+        semantic_model_id=semantic_model_id,
+        requested_dataset_ids=requested_dataset_ids,
+        empty=empty,
+    )
+    if failure is not None:
+        return failure
 
     bound_dataset_ids = {
         str(dataset_id)
@@ -94,11 +63,109 @@ def build_semantic_rag_context(
     # them must not silently pull evidence from all of its siblings.
     resolved_dataset_ids = requested_dataset_ids
     rag_service = RagService(db)
+    aliases, targets, alias_model_ids, alias_dataset_ids = _rag_search_targets(
+        rag_service=rag_service,
+        actor=actor,
+        dataset_ids=resolved_dataset_ids,
+        resolved_models=resolved_models,
+    )
+    retrieval_base = _retrieval_provenance(resolved_dataset_ids, resolved_models, aliases)
+    if not aliases:
+        return {"sources": [], "retrieval": {"mode": "hybrid", "status": "no_active_rag_index", **retrieval_base, "resultCount": 0}}
+
+    try:
+        result = RagSearchService(settings).search(
+            query=query,
+            aliases=aliases,
+            targets=targets,
+            filters=filters,
+            actor=actor,
+        )
+    except Exception as exc:
+        return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "reason": exc.__class__.__name__, **retrieval_base, "resultCount": 0}}
+    return _verified_search_result(
+        result=result,
+        retrieval_base=retrieval_base,
+        resolved_models=resolved_models,
+        alias_model_ids=alias_model_ids,
+        alias_dataset_ids=alias_dataset_ids,
+    )
+
+
+def _empty_rag_context(dataset_ids: list[str]) -> dict[str, Any]:
+    return {
+        "sources": [],
+        "retrieval": {
+            "mode": "hybrid",
+            "status": "unavailable",
+            "provenance": "semantic_layer_rag",
+            "datasetIds": dataset_ids,
+            "semanticModels": [],
+        },
+    }
+
+
+def _resolve_semantic_models(
+    *,
+    db: Any,
+    actor: ActorContext,
+    semantic_model_id: str | None,
+    requested_dataset_ids: list[str],
+    empty: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any] | None]:
+    try:
+        semantic_models = SemanticModelService(db)
+    except Exception as exc:
+        empty["retrieval"].update({"status": "semantic_layer_unavailable", "reason": exc.__class__.__name__})
+        return [], requested_dataset_ids, empty
+    if not semantic_model_id:
+        if not requested_dataset_ids:
+            return [], requested_dataset_ids, empty
+        resolved = semantic_models.published_query_models_for_datasets(requested_dataset_ids, actor)
+        if not resolved:
+            empty["retrieval"]["status"] = "no_published_semantic_model"
+            return [], requested_dataset_ids, empty
+        return resolved, requested_dataset_ids, None
+
+    model = semantic_models.published_query_model(semantic_model_id, actor)
+    if model is None:
+        empty["retrieval"].update({"status": "semantic_model_not_available", "semanticModelId": semantic_model_id})
+        return [], requested_dataset_ids, empty
+    model_dataset_ids = {
+        str(item)
+        for item in model.get("datasetIds", [])
+        if str(item).strip()
+    }
+    if not requested_dataset_ids:
+        requested_dataset_ids = list(model_dataset_ids)
+        empty["retrieval"]["datasetIds"] = requested_dataset_ids
+    missing_dataset_ids = [
+        dataset_id
+        for dataset_id in requested_dataset_ids
+        if dataset_id not in model_dataset_ids
+    ]
+    if missing_dataset_ids:
+        empty["retrieval"].update({
+            "status": "semantic_model_dataset_mismatch",
+            "semanticModelId": semantic_model_id,
+            "missingDatasetIds": missing_dataset_ids,
+        })
+        return [], requested_dataset_ids, empty
+    return [model], requested_dataset_ids, None
+
+
+def _rag_search_targets(
+    *,
+    rag_service: RagService,
+    actor: ActorContext,
+    dataset_ids: list[str],
+    resolved_models: list[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]], dict[str, list[str]], dict[str, set[str]]]:
     aliases: list[str] = []
     targets: list[dict[str, Any]] = []
     alias_model_ids: dict[str, list[str]] = {}
     alias_dataset_ids: dict[str, set[str]] = {}
-    for dataset_id in resolved_dataset_ids:
+    for dataset_id in dataset_ids:
         try:
             rag_service._dataset(dataset_id, actor, "query")
             profile = rag_service.profile(dataset_id, actor)
@@ -124,37 +191,37 @@ def build_semantic_rag_context(
             **rag_service.search_target_context(dataset_id, actor, profile=profile),
             "alias": alias,
         }
-        # search_target_context is the canonical source.  The profile fallback
-        # keeps older callers/test doubles from crashing while a pre-provider
-        # manifest is being surfaced as unavailable/degraded instead.
         target.setdefault("embeddingProvider", getattr(profile, "active_embedding_provider", None))
         target.setdefault("embeddingModel", getattr(profile, "active_embedding_model", None))
         target.setdefault("embeddingDimensions", getattr(profile, "active_embedding_dimensions", None))
         targets.append(target)
+    return aliases, targets, alias_model_ids, alias_dataset_ids
 
-    retrieval_base = {
+
+def _retrieval_provenance(
+    dataset_ids: list[str],
+    resolved_models: list[dict[str, Any]],
+    aliases: list[str],
+) -> dict[str, Any]:
+    return {
         "provenance": "semantic_layer_rag",
-        "datasetIds": resolved_dataset_ids,
+        "datasetIds": dataset_ids,
         "semanticModels": resolved_models,
         "semanticModelIds": [str(model["id"]) for model in resolved_models],
         "semanticModelNames": [str(model["name"]) for model in resolved_models],
         "semanticModelVersions": [model.get("version") for model in resolved_models],
         "aliases": aliases,
     }
-    if not aliases:
-        return {"sources": [], "retrieval": {"mode": "hybrid", "status": "no_active_rag_index", **retrieval_base, "resultCount": 0}}
 
-    try:
-        result = RagSearchService(settings).search(
-            query=query,
-            aliases=aliases,
-            targets=targets,
-            filters=filters,
-            actor=actor,
-        )
-    except Exception as exc:
-        return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "reason": exc.__class__.__name__, **retrieval_base, "resultCount": 0}}
 
+def _verified_search_result(
+    *,
+    result: dict[str, Any],
+    retrieval_base: dict[str, Any],
+    resolved_models: list[dict[str, Any]],
+    alias_model_ids: dict[str, list[str]],
+    alias_dataset_ids: dict[str, set[str]],
+) -> dict[str, Any]:
     retrieval = dict(result.get("retrieval") or {})
     retrieval.update(retrieval_base)
     sources = []

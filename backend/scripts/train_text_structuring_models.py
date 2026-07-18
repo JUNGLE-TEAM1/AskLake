@@ -52,7 +52,39 @@ def main() -> int:
     latest_dir = Path(args.latest_dir or request.get("latestDir") or DEFAULT_LATEST_ROOT).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     latest_dir.mkdir(parents=True, exist_ok=True)
+    columns, train_rows, eval_rows, label_source, label_models = validated_training_request(request)
+    trained, required_targets = train_requested_columns(
+        request=request,
+        columns=columns,
+        train_rows=train_rows,
+        eval_rows=eval_rows,
+        output_dir=output_dir,
+    )
+    manifest = build_training_manifest(
+        request=request,
+        trained=trained,
+        label_source=label_source,
+        label_models=label_models,
+        output_dir=output_dir,
+        latest_dir=latest_dir,
+        required_targets=required_targets,
+    )
+    write_manifest(output_dir, manifest)
+    if manifest["promotionStatus"] == "promoted":
+        publish_trained_models(
+            manifest=manifest,
+            trained=trained,
+            required_targets=required_targets,
+            output_dir=output_dir,
+            latest_dir=latest_dir,
+        )
+    print(json.dumps(manifest, ensure_ascii=False))
+    return 0
 
+
+def validated_training_request(
+    request: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[Any], list[Any], str, list[str]]:
     columns = [column for column in request.get("columns", []) if text_method(column) == "one_of_values"]
     train_rows = request.get("trainRows") or []
     eval_rows = request.get("evalRows") or []
@@ -64,9 +96,19 @@ def main() -> int:
     label_models = [str(value).strip() for value in request.get("labelModels") or [] if str(value).strip()]
     if label_source == "ai_gateway" and not label_models:
         raise ValueError("AI Gateway labeled training rows require at least one provider model identifier.")
+    return columns, train_rows, eval_rows, label_source, label_models
 
-    trained = {}
-    required_targets = []
+
+def train_requested_columns(
+    *,
+    request: dict[str, Any],
+    columns: list[dict[str, Any]],
+    train_rows: list[Any],
+    eval_rows: list[Any],
+    output_dir: Path,
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    trained: dict[str, dict[str, Any]] = {}
+    required_targets: list[str] = []
     minimum_quality = float(request.get("minimumQuality") or request.get("minimumMacroF1") or 0.75)
     minimum_class_rows = max(2, int(request.get("minimumClassRows") or 2))
     require_all_allowed_values = request.get("requireAllAllowedValues") is not False
@@ -76,71 +118,114 @@ def main() -> int:
         if not target or not allowed_values:
             continue
         required_targets.append(target)
-        try:
-            train_payload = labeled_examples(train_rows, target, allowed_values, request)
-            eval_payload = labeled_examples(eval_rows, target, allowed_values, request) if eval_rows else None
-        except ValueError as exc:
-            trained[target] = {
-                "allowedValues": allowed_values,
-                "reason": str(exc),
-                "status": "failed_label_data",
-                "trainRows": 0,
-            }
-            continue
-        label_counts = Counter(train_payload["labels"])
-        insufficient_classes = [
-            value
-            for value in allowed_values
-            if label_counts.get(value, 0) < minimum_class_rows
-        ]
-        if require_all_allowed_values and insufficient_classes:
-            trained[target] = {
-                "allowedValues": allowed_values,
-                "classCounts": {str(key): int(value) for key, value in label_counts.items()},
-                "missingOrSparseClasses": insufficient_classes,
-                "minimumClassRows": minimum_class_rows,
-                "reason": "all_allowed_value_classes_require_minimum_rows",
-                "status": "failed_class_coverage",
-                "trainRows": len(train_payload["labels"]),
-            }
-            continue
-        if len(set(train_payload["labels"])) < 2:
-            trained[target] = {
-                "status": "skipped",
-                "reason": "at_least_two_label_classes_required",
-                "trainRows": len(train_payload["labels"]),
-            }
-            continue
-        artifact, metrics, candidate_evaluations = train_column_model(target, allowed_values, train_payload, eval_payload, request)
-        artifact_name = f"{target}.portable_linear_svc.json"
-        (output_dir / artifact_name).write_text(json.dumps(artifact, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        validation_counts = metrics.get("validationLabelCounts") or {}
-        validation_covers_all_classes = all(int(validation_counts.get(value) or 0) > 0 for value in allowed_values)
-        quality_passed = (
-            metrics["accuracy"] >= minimum_quality
-            and metrics["macroF1"] >= minimum_quality
-            and validation_covers_all_classes
+        trained[target] = train_requested_column(
+            request=request,
+            target=target,
+            allowed_values=allowed_values,
+            train_rows=train_rows,
+            eval_rows=eval_rows,
+            output_dir=output_dir,
+            minimum_quality=minimum_quality,
+            minimum_class_rows=minimum_class_rows,
+            require_all_allowed_values=require_all_allowed_values,
         )
-        trained[target] = {
-            "allowedValues": allowed_values,
-            "artifact": artifact_name if quality_passed else "",
-            "candidateArtifact": artifact_name,
-            "candidateEvaluations": candidate_evaluations,
-            "minimumQuality": minimum_quality,
-            "metrics": metrics,
-            "modelKind": artifact["modelKind"],
-            "selectedCandidate": metrics.get("candidate"),
-            "status": "trained" if quality_passed else "failed_quality_gate",
-            "trainRows": metrics["trainRows"],
-            "validationCoversAllClasses": validation_covers_all_classes,
-            "validationRows": metrics["validationRows"],
-        }
+    return trained, required_targets
 
+
+def train_requested_column(
+    *,
+    request: dict[str, Any],
+    target: str,
+    allowed_values: list[str],
+    train_rows: list[Any],
+    eval_rows: list[Any],
+    output_dir: Path,
+    minimum_quality: float,
+    minimum_class_rows: int,
+    require_all_allowed_values: bool,
+) -> dict[str, Any]:
+    try:
+        train_payload = labeled_examples(train_rows, target, allowed_values, request)
+        eval_payload = labeled_examples(eval_rows, target, allowed_values, request) if eval_rows else None
+    except ValueError as exc:
+        return {
+            "allowedValues": allowed_values,
+            "reason": str(exc),
+            "status": "failed_label_data",
+            "trainRows": 0,
+        }
+    label_counts = Counter(train_payload["labels"])
+    insufficient_classes = [
+        value
+        for value in allowed_values
+        if label_counts.get(value, 0) < minimum_class_rows
+    ]
+    if require_all_allowed_values and insufficient_classes:
+        return {
+            "allowedValues": allowed_values,
+            "classCounts": {str(key): int(value) for key, value in label_counts.items()},
+            "missingOrSparseClasses": insufficient_classes,
+            "minimumClassRows": minimum_class_rows,
+            "reason": "all_allowed_value_classes_require_minimum_rows",
+            "status": "failed_class_coverage",
+            "trainRows": len(train_payload["labels"]),
+        }
+    if len(set(train_payload["labels"])) < 2:
+        return {
+            "status": "skipped",
+            "reason": "at_least_two_label_classes_required",
+            "trainRows": len(train_payload["labels"]),
+        }
+    artifact, metrics, candidate_evaluations = train_column_model(
+        target,
+        allowed_values,
+        train_payload,
+        eval_payload,
+        request,
+    )
+    artifact_name = f"{target}.portable_linear_svc.json"
+    (output_dir / artifact_name).write_text(
+        json.dumps(artifact, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    validation_counts = metrics.get("validationLabelCounts") or {}
+    validation_covers_all_classes = all(int(validation_counts.get(value) or 0) > 0 for value in allowed_values)
+    quality_passed = (
+        metrics["accuracy"] >= minimum_quality
+        and metrics["macroF1"] >= minimum_quality
+        and validation_covers_all_classes
+    )
+    return {
+        "allowedValues": allowed_values,
+        "artifact": artifact_name if quality_passed else "",
+        "candidateArtifact": artifact_name,
+        "candidateEvaluations": candidate_evaluations,
+        "minimumQuality": minimum_quality,
+        "metrics": metrics,
+        "modelKind": artifact["modelKind"],
+        "selectedCandidate": metrics.get("candidate"),
+        "status": "trained" if quality_passed else "failed_quality_gate",
+        "trainRows": metrics["trainRows"],
+        "validationCoversAllClasses": validation_covers_all_classes,
+        "validationRows": metrics["validationRows"],
+    }
+
+
+def build_training_manifest(
+    *,
+    request: dict[str, Any],
+    trained: dict[str, dict[str, Any]],
+    label_source: str,
+    label_models: list[str],
+    output_dir: Path,
+    latest_dir: Path,
+    required_targets: list[str],
+) -> dict[str, Any]:
     promoted = bool(required_targets) and all(
         isinstance(trained.get(target), dict) and trained[target].get("status") == "trained"
         for target in required_targets
     )
-    manifest = {
+    return {
         "createdAt": utc_now(),
         "labelModels": label_models,
         "labelSource": label_source,
@@ -152,29 +237,42 @@ def main() -> int:
         "templateName": str(request.get("templateName") or request.get("name") or "text_structuring_template"),
         "trainedModels": trained,
     }
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    if promoted:
-        artifact_digests = {}
+
+
+def write_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def publish_trained_models(
+    *,
+    manifest: dict[str, Any],
+    trained: dict[str, dict[str, Any]],
+    required_targets: list[str],
+    output_dir: Path,
+    latest_dir: Path,
+) -> None:
+    artifact_digests = {}
+    for target in required_targets:
+        artifact_name = str(trained[target]["artifact"])
+        artifact_digests[artifact_name] = sha256_file(output_dir / artifact_name)
+        trained[target]["artifactSha256"] = artifact_digests[artifact_name]
+    manifest["artifactSha256s"] = artifact_digests
+    write_manifest(output_dir, manifest)
+    with publication_lock(latest_dir):
+        staged_paths = []
         for target in required_targets:
             artifact_name = str(trained[target]["artifact"])
-            artifact_digests[artifact_name] = sha256_file(output_dir / artifact_name)
-            trained[target]["artifactSha256"] = artifact_digests[artifact_name]
-        manifest["artifactSha256s"] = artifact_digests
-        (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        with publication_lock(latest_dir):
-            staged_paths = []
-            for target in required_targets:
-                artifact_name = str(trained[target]["artifact"])
-                temporary_path = latest_dir / f".{artifact_name}.{uuid4().hex}.tmp"
-                shutil.copyfile(output_dir / artifact_name, temporary_path)
-                staged_paths.append((temporary_path, latest_dir / artifact_name))
-            for temporary_path, destination_path in staged_paths:
-                os.replace(temporary_path, destination_path)
-            manifest_temp = latest_dir / f".manifest.{uuid4().hex}.tmp"
-            manifest_temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(manifest_temp, latest_dir / "manifest.json")
-    print(json.dumps(manifest, ensure_ascii=False))
-    return 0
+            temporary_path = latest_dir / f".{artifact_name}.{uuid4().hex}.tmp"
+            shutil.copyfile(output_dir / artifact_name, temporary_path)
+            staged_paths.append((temporary_path, latest_dir / artifact_name))
+        for temporary_path, destination_path in staged_paths:
+            os.replace(temporary_path, destination_path)
+        manifest_temp = latest_dir / f".manifest.{uuid4().hex}.tmp"
+        manifest_temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(manifest_temp, latest_dir / "manifest.json")
 
 
 def read_request(input_path: str | None) -> dict[str, Any]:

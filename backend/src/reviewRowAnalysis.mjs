@@ -91,33 +91,14 @@ export async function suggestReviewAnalysisSchema(request = {}) {
 }
 
 export async function runReviewAnalysis(request = {}) {
-  const requestedLimit = Number(request.limit);
-  const full = request.full === true || requestedLimit === 0;
-  const limit = full ? 0 : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
-  const requestedSchema = request.schemaColumns ?? request.columns;
-  const usesDefaultSchemaTemplate = !Array.isArray(requestedSchema) || requestedSchema.length === 0;
-  const outputSchema = normalizeOutputSchema(requestedSchema);
-  const requiresAi = outputSchema.some(
-    (column) => normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy") !== "copy",
-  );
-  const runtime = requiresAi ? "gateway" : "direct_copy";
-  if (full || limit > reviewAiMaxRows) {
-    throw Object.assign(
-      new Error(`AI Gateway review analysis is limited to ${reviewAiMaxRows} rows per interactive run. Submit bounded batches.`),
-      { code: "REVIEW_AI_ROW_LIMIT_EXCEEDED", status: 422 },
-    );
-  }
+  const { limit, outputSchema, runtime, usesDefaultSchemaTemplate } = reviewRunConfiguration(request);
   const startedAt = new Date();
   const sourceConfig = normalizeReviewSource(request.source);
   const requestedRunId = safeRunId(request.runId);
   const runId = requestedRunId || `review_${startedAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
-  const runDir = path.join(outputRoot, runId);
-  const outputPath = path.join(runDir, "review_issue_rows.jsonl");
-  const csvOutputPath = path.join(runDir, "review_issue_rows.csv");
-  const summaryPath = path.join(runDir, "summary.json");
+  const { runDir, outputPath, csvOutputPath, summaryPath } = reviewRunPaths(runId);
 
   mkdirSync(runDir, { recursive: true });
-
   const result = initialSummary({
     limit,
     csvOutputPath,
@@ -137,7 +118,6 @@ export async function runReviewAnalysis(request = {}) {
   csvOutput.write(`${outputSchema.map((column) => csvEscape(column.targetName)).join(",")}\n`);
   const source = await openReviewSource(sourceConfig);
   let stderr = "";
-
   source.stderr?.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     if (stderr.length > 12000) stderr = stderr.slice(-12000);
@@ -149,34 +129,16 @@ export async function runReviewAnalysis(request = {}) {
   });
 
   try {
-    const sourceRows = [];
-    for await (const line of lineReader) {
-      if (!line.trim()) continue;
-      const row = parseJsonLine(line, result);
-      if (!row) continue;
-      sourceRows.push(row);
-      if (limit > 0 && sourceRows.length >= limit) {
-        source.stop();
-        break;
-      }
-    }
-    const analyzedRows = await mapWithConcurrency(
+    const sourceRows = await readReviewSourceRows(lineReader, source, result, limit);
+    await analyzeAndWriteReviewRows({
       sourceRows,
-      reviewAiConcurrency,
-      (row, index) => analyzeReviewRowWithGateway(row, outputSchema, index + 1),
-    );
-    for (let index = 0; index < analyzedRows.length; index += 1) {
-      const row = sourceRows[index];
-      const analyzed = analyzedRows[index];
-      const projected = analyzed.projected;
-      if (analyzed.model && !result.analysis.models.includes(analyzed.model)) result.analysis.models.push(analyzed.model);
-      if (analyzed.provider && !result.analysis.providers.includes(analyzed.provider)) result.analysis.providers.push(analyzed.provider);
-      if (analyzed.usageRecord) gatewayUsage.push(analyzed.usageRecord);
-      trainingRows.push(buildTrainingRow(row, projected, outputSchema));
-      recordClassifiedRow(result, analyzed.metricsRow, projected);
-      output.write(`${JSON.stringify(projected)}\n`);
-      csvOutput.write(`${outputSchema.map((column) => csvEscape(projected[column.targetName])).join(",")}\n`);
-    }
+      outputSchema,
+      result,
+      output,
+      csvOutput,
+      trainingRows,
+      gatewayUsage,
+    });
   } finally {
     await Promise.all([closeWritable(output), closeWritable(csvOutput)]);
   }
@@ -200,6 +162,85 @@ export async function runReviewAnalysis(request = {}) {
     __trainingColumns: outputSchema,
     __trainingRows: trainingRows,
   };
+}
+
+function reviewRunConfiguration(request) {
+  const requestedLimit = Number(request.limit);
+  const full = request.full === true || requestedLimit === 0;
+  const limit = full
+    ? 0
+    : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
+  const requestedSchema = request.schemaColumns ?? request.columns;
+  const usesDefaultSchemaTemplate = !Array.isArray(requestedSchema) || requestedSchema.length === 0;
+  const outputSchema = normalizeOutputSchema(requestedSchema);
+  const requiresAi = outputSchema.some(
+    (column) => normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy") !== "copy",
+  );
+  if (full || limit > reviewAiMaxRows) {
+    throw Object.assign(
+      new Error(`AI Gateway review analysis is limited to ${reviewAiMaxRows} rows per interactive run. Submit bounded batches.`),
+      { code: "REVIEW_AI_ROW_LIMIT_EXCEEDED", status: 422 },
+    );
+  }
+  return {
+    limit,
+    outputSchema,
+    runtime: requiresAi ? "gateway" : "direct_copy",
+    usesDefaultSchemaTemplate,
+  };
+}
+
+function reviewRunPaths(runId) {
+  const runDir = path.join(outputRoot, runId);
+  return {
+    runDir,
+    outputPath: path.join(runDir, "review_issue_rows.jsonl"),
+    csvOutputPath: path.join(runDir, "review_issue_rows.csv"),
+    summaryPath: path.join(runDir, "summary.json"),
+  };
+}
+
+async function readReviewSourceRows(lineReader, source, result, limit) {
+  const sourceRows = [];
+  for await (const line of lineReader) {
+    if (!line.trim()) continue;
+    const row = parseJsonLine(line, result);
+    if (!row) continue;
+    sourceRows.push(row);
+    if (limit > 0 && sourceRows.length >= limit) {
+      source.stop();
+      break;
+    }
+  }
+  return sourceRows;
+}
+
+async function analyzeAndWriteReviewRows({
+  sourceRows,
+  outputSchema,
+  result,
+  output,
+  csvOutput,
+  trainingRows,
+  gatewayUsage,
+}) {
+  const analyzedRows = await mapWithConcurrency(
+    sourceRows,
+    reviewAiConcurrency,
+    (row, index) => analyzeReviewRowWithGateway(row, outputSchema, index + 1),
+  );
+  for (let index = 0; index < analyzedRows.length; index += 1) {
+    const row = sourceRows[index];
+    const analyzed = analyzedRows[index];
+    const projected = analyzed.projected;
+    if (analyzed.model && !result.analysis.models.includes(analyzed.model)) result.analysis.models.push(analyzed.model);
+    if (analyzed.provider && !result.analysis.providers.includes(analyzed.provider)) result.analysis.providers.push(analyzed.provider);
+    if (analyzed.usageRecord) gatewayUsage.push(analyzed.usageRecord);
+    trainingRows.push(buildTrainingRow(row, projected, outputSchema));
+    recordClassifiedRow(result, analyzed.metricsRow, projected);
+    output.write(`${JSON.stringify(projected)}\n`);
+    csvOutput.write(`${outputSchema.map((column) => csvEscape(projected[column.targetName])).join(",")}\n`);
+  }
 }
 
 export async function runCellphonesReviewAnalysis(request = {}) {
