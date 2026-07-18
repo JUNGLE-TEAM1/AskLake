@@ -150,6 +150,7 @@ export function validateExecutionContract(contract, { execution = false } = {}) 
       "actions",
       "capabilities",
       "capabilityEvidence",
+      "liveInputEvidence",
       "safety",
       "cleanup",
       "evidence",
@@ -285,6 +286,21 @@ export function validateExecutionContract(contract, { execution = false } = {}) 
   }
   if (!isSha256(contract?.capabilityEvidence?.proofManifestSha256)) {
     errors.push("capabilityEvidence.proofManifestSha256 must be a SHA-256");
+  }
+
+  exactKeys(
+    contract?.liveInputEvidence,
+    new Set(["state", "inputSha256", "targetSelectionSha256"]),
+    "liveInputEvidence",
+    errors,
+  );
+  if (!["pending", "verified"].includes(contract?.liveInputEvidence?.state)) {
+    errors.push("liveInputEvidence.state must be pending or verified");
+  }
+  for (const key of ["inputSha256", "targetSelectionSha256"]) {
+    if (!isSha256(contract?.liveInputEvidence?.[key])) {
+      errors.push(`liveInputEvidence.${key} must be a SHA-256`);
+    }
   }
 
   exactKeys(
@@ -449,6 +465,14 @@ export function validateExecutionContract(contract, { execution = false } = {}) 
         "execution contract capabilityEvidence.proofManifestSha256 is unresolved",
       );
     }
+    if (contract?.liveInputEvidence?.state !== "verified") {
+      errors.push("execution contract liveInputEvidence.state must be verified");
+    }
+    for (const key of ["inputSha256", "targetSelectionSha256"]) {
+      if (contract?.liveInputEvidence?.[key] === ZERO_HASH) {
+        errors.push(`execution contract liveInputEvidence.${key} is unresolved`);
+      }
+    }
   } else {
     if (contract?.approval?.state !== "pending") {
       errors.push("template approval.state must remain pending");
@@ -464,6 +488,14 @@ export function validateExecutionContract(contract, { execution = false } = {}) 
       contract?.capabilityEvidence?.state !== "verified"
     ) {
       errors.push("template capabilityEvidence.state must be pending or verified");
+    }
+    if (contract?.liveInputEvidence?.state !== "pending") {
+      errors.push("template liveInputEvidence.state must remain pending");
+    }
+    for (const key of ["inputSha256", "targetSelectionSha256"]) {
+      if (contract?.liveInputEvidence?.[key] !== ZERO_HASH) {
+        errors.push(`template liveInputEvidence.${key} must remain unresolved`);
+      }
     }
   }
 

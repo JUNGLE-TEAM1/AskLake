@@ -56,6 +56,72 @@ function imageReceipt(revision, digestCharacter) {
   };
 }
 
+function liveInput() {
+  const bounded = ["Run A", "Run B", "Run C"].map((alias, index) => ({
+    alias,
+    jobId: `job-${index + 1}`,
+    datasetId: `dataset-${index + 1}`,
+    fixtureBatchId: "fixture-batch-shared",
+    consumerGroup: `consumer-group-${index + 1}`,
+    icebergTable: `iceberg_table_${index + 1}`,
+    expectedCount: 100,
+  }));
+  const faults = [
+    {
+      ...bounded[0],
+      alias: "Run D",
+      sourceAlias: "Run A",
+      failure: "mskAuthorization",
+    },
+    {
+      ...bounded[1],
+      alias: "Run E",
+      sourceAlias: "Run B",
+      failure: "sparkTerminal",
+    },
+  ];
+  return {
+    contractVersion: "1.0",
+    campaign: "eks-day18-resilience",
+    environment: "dev",
+    createdAt: "2026-07-18T00:00:00.000Z",
+    cluster: {
+      name: "asklake-dev",
+      namespace: "asklake-dev",
+      region: "ap-northeast-2",
+    },
+    preservedEc2: {
+      instanceId: "i-0123456789abcdef0",
+      envFileSha256: "c".repeat(64),
+    },
+    visibility: {
+      mode: "in-cluster-backend-service-account",
+      sparkApplicationsReadable: true,
+    },
+    baseline: {
+      activeFixtureRuns: 0,
+      activeSparkApplications: 0,
+      activeKubernetesJobs: 0,
+      pendingOrTerminatingPods: 0,
+      fastApiReady: 2,
+      collectorReady: 1,
+      hpaCurrent: 2,
+      hpaDesired: 2,
+      continuousActive: 0,
+    },
+    checks: {
+      fastApiImageMatchesReceipt: true,
+      collectorImageMatchesReceipt: true,
+      externalHealthSteady: true,
+      airflowConfigured: true,
+      mskDenyServiceAccountPresent: true,
+      driverDeleteAllowed: true,
+      continuousBoundaryVerified: true,
+    },
+    targets: { bounded, faults },
+  };
+}
+
 async function writePrivateJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);
@@ -117,6 +183,7 @@ test("binding derives capability proof and approval rejects manual tampering", a
   const currentPath = join(directory, "current.json");
   const candidatePath = join(directory, "candidate.json");
   const rollbackPath = join(directory, "rollback.json");
+  const liveInputPath = join(directory, "live-input.json");
   const revision = gitRevision("HEAD");
   const rollbackRevision = gitRevision("HEAD^");
   await prepareExecutionContract({
@@ -128,6 +195,7 @@ test("binding derives capability proof and approval rejects manual tampering", a
   await writePrivateJson(currentPath, rollbackReceipt);
   await writePrivateJson(rollbackPath, rollbackReceipt);
   await writePrivateJson(candidatePath, imageReceipt(revision, "b"));
+  await writePrivateJson(liveInputPath, liveInput());
   await bindExecutionContract({
     input: pendingPath,
     output: boundPath,
@@ -156,6 +224,7 @@ test("binding derives capability proof and approval rejects manual tampering", a
       currentReceipt: currentPath,
       candidateReceipt: candidatePath,
       rollbackReceipt: rollbackPath,
+      liveInput: liveInputPath,
       baseRef: revision,
       requiredMergedRefs: [revision],
     }),
@@ -169,11 +238,13 @@ test("binding derives capability proof and approval rejects manual tampering", a
     currentReceipt: currentPath,
     candidateReceipt: candidatePath,
     rollbackReceipt: rollbackPath,
+    liveInput: liveInputPath,
     baseRef: revision,
     requiredMergedRefs: [revision],
     approvedAt: "2026-07-18T00:02:00.000Z",
   });
   assert.equal(contract.approval.scopeHash, computeExecutionScopeHash(contract));
+  assert.equal(contract.liveInputEvidence.state, "verified");
   assert.deepEqual(
     validateExecutionContract(contract, { execution: true }),
     [],
@@ -208,6 +279,8 @@ test("binding and approval CLIs reject ambiguous arguments", () => {
       "/private/tmp/candidate.json",
       "--rollback-receipt",
       "/private/tmp/rollback.json",
+      "--live-input",
+      "/private/tmp/live-input.json",
       "--base-ref",
       "origin/pair1",
       "--require-merged-ref",
@@ -222,6 +295,7 @@ test("binding and approval CLIs reject ambiguous arguments", () => {
       currentReceipt: "/private/tmp/current.json",
       candidateReceipt: "/private/tmp/candidate.json",
       rollbackReceipt: "/private/tmp/rollback.json",
+      liveInput: "/private/tmp/live-input.json",
     },
   );
   assert.throws(() => parseBindingArguments(["--unknown", "value"]));

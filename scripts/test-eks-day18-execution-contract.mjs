@@ -55,6 +55,11 @@ function fixture() {
       implementationRevision: SHA_A,
       proofManifestSha256: HASH_A,
     },
+    liveInputEvidence: {
+      state: "verified",
+      inputSha256: HASH_A,
+      targetSelectionSha256: HASH_B,
+    },
     safety: {
       minimumFastApiReady: 2,
       immutableImagesOnly: true,
@@ -123,6 +128,11 @@ test("rejects an arbitrary approval hash and missing fault capabilities", () => 
     state: "pending",
     implementationRevision: "0".repeat(40),
     proofManifestSha256: "0".repeat(64),
+  };
+  input.liveInputEvidence = {
+    state: "pending",
+    inputSha256: "0".repeat(64),
+    targetSelectionSha256: "0".repeat(64),
   };
   const errors = validateExecutionContract(input, { execution: true });
   assert.ok(errors.some((error) => error.includes("canonical scope")));
@@ -195,6 +205,7 @@ test("prepares a private pending contract without overwriting", async () => {
   assert.equal(prepared.capabilities.mskFaultUsesPersistedRun, false);
   assert.equal(prepared.capabilities.sparkTerminalRetrySupported, false);
   assert.equal(prepared.capabilityEvidence.state, "pending");
+  assert.equal(prepared.liveInputEvidence.state, "pending");
   assert.equal((await stat(output)).mode & 0o777, 0o600);
   await assert.rejects(
     prepareExecutionContract({
