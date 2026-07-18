@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy.orm import Session
@@ -112,7 +113,15 @@ def execute_continuous_command(
             **(runtime.metrics or {}),
             "streamPartitionCursors": hooks.persisted_partition_cursors(db, job, runtime),
         }
-        runtime.metrics = record_runtime_command(runtime.metrics, transition)
+        # Reserve a new fence before a separately-owned control plane observes
+        # this intent.  It prevents a terminal observation from the previous
+        # worker attempt from being treated as the result of this start.
+        requested_attempt_id = f"start-{uuid4()}"
+        runtime.metrics = record_runtime_command(
+            runtime.metrics,
+            transition,
+            worker_attempt_id=requested_attempt_id,
+        )
         runtime.status = transition.next_status.value
         job.status = "running"
         job.last_state = "Continuous Spark worker 시작 요청"
@@ -134,7 +143,7 @@ def execute_continuous_command(
 
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
-        )
+        ) or requested_attempt_id
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
         runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)

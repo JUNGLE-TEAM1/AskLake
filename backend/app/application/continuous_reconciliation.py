@@ -91,10 +91,15 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
         if evidence.requested_action == "stop"
         else None
     )
-    if (
+    # A newly committed start/resume intent must win over terminal evidence
+    # left by an older worker attempt.  REST runners retain their last kill
+    # command until the next submission clears it, so applying that command
+    # before the restart path would immediately undo the new start request.
+    terminal_intent_is_current = evidence.desired_state != "running" and (
         requested_terminal
         or evidence.public_status in {"pausing", "stopping"}
-    ) and evidence.container_state in {"exited", "missing"}:
+    )
+    if terminal_intent_is_current and evidence.container_state in {"exited", "missing"}:
         terminal_status = requested_terminal or (
             "paused" if evidence.public_status == "pausing" else "stopped"
         )
