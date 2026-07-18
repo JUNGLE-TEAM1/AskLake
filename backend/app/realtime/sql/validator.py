@@ -80,6 +80,26 @@ class RealtimeSqlPlan:
     relations: tuple[RealtimeRelation, ...]
 
 
+def _reject_physical_relations(parsed: exp.Expression) -> None:
+    for table in parsed.find_all(exp.Table):
+        if table.catalog or table.db:
+            raise ContinuousSqlValidationError(
+                "REALTIME_SQL_PHYSICAL_RELATION_FORBIDDEN",
+                "Realtime SQL cannot reference physical catalogs or databases.",
+                {"relation": table.sql()},
+            )
+
+
+def _approved_relations(relations: Iterable[RealtimeRelation]) -> tuple[RealtimeRelation, ...]:
+    approved = tuple(relations)
+    if not approved or any(not item.approved for item in approved):
+        raise ContinuousSqlValidationError(
+            "REALTIME_SQL_RELATION_NOT_APPROVED",
+            "Every realtime SQL relation must be an approved Catalog Dataset.",
+        )
+    return approved
+
+
 class RealtimeSqlValidator:
     def validate(
         self,
@@ -91,20 +111,9 @@ class RealtimeSqlValidator:
         signals: ExecutionSignals | None = None,
         dimension_row_limit: int = 5_000_000,
     ) -> RealtimeSqlPlan:
-        relation_list = tuple(relations)
-        if not relation_list or any(not item.approved for item in relation_list):
-            raise ContinuousSqlValidationError(
-                "REALTIME_SQL_RELATION_NOT_APPROVED",
-                "Every realtime SQL relation must be an approved Catalog Dataset.",
-            )
+        relation_list = _approved_relations(relations)
         parsed = parse_single_select(query)
-        for table in parsed.find_all(exp.Table):
-            if table.catalog or table.db:
-                raise ContinuousSqlValidationError(
-                    "REALTIME_SQL_PHYSICAL_RELATION_FORBIDDEN",
-                    "Realtime SQL cannot reference physical catalogs or databases.",
-                    {"relation": table.sql()},
-                )
+        _reject_physical_relations(parsed)
         mode = classify_execution_mode(signals or ExecutionSignals())
         if mode != "realtime_incremental":
             raise ContinuousSqlValidationError(
