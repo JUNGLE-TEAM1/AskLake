@@ -8,7 +8,7 @@ Continuous SQL은 기존 일회성 SQL API와 별개의 장기 실행 Job이다.
 - queryable Iceberg static relation 1개 이상을 `INNER` 또는 `LEFT` equality JOIN한다.
 - deterministic scalar projection과 단순 passthrough CTE를 허용한다.
 - aggregate, window, subquery, DISTINCT, ORDER BY/LIMIT, RIGHT/FULL/CROSS, stream-stream JOIN과 nondeterministic function은 구조화된 validation error로 거절한다.
-- static JOIN key는 `uniqueKeySets`, `uniqueKeyColumns` 또는 `indexColumnsUnique=true`인 index metadata로 유일성이 증명돼야 한다. 단순 `indexColumns`는 유일키 증거가 아니다. 실행 시에도 실제 snapshot에서 중복을 다시 검사한다.
+- static JOIN key는 `uniqueKeySets`, `uniqueKeyColumns` 또는 `indexColumnsUnique=true`인 index metadata로 유일성이 증명돼야 한다. 단순 `indexColumns`는 유일키 증거가 아니다. ClickHouse 실행 시에도 실제 snapshot에서 중복을 다시 검사하되 exact cache identity별 검증 완료 registry를 재사용한다.
 
 Catalog relation은 `relationMode=streaming|static`, Iceberg `queryEngineTable`, schema와 snapshot identity를 사용한다. 기존 Kafka Continuous Dataset은 연결된 ETL Job으로 streaming mode를 호환 추론할 수 있으나 새 publication은 relationMode를 명시한다.
 
@@ -29,6 +29,7 @@ Catalog row 통계가 있고 `estimatedRowCount <= CONTINUOUS_SQL_STATIC_BROADCA
 - snapshot이 바뀌면 이전 frame을 unpersist하고 유일성을 다시 검증한다. 통계가 없거나 한도를 넘는 relation은 frame을 cache하지 않고, 한도 0은 cache 비활성이다.
 - 새 Continuous SQL Iceberg output table은 `_asklake_run_id` identity partition을 갖는다. exact publication count와 Dashboard revision delta query는 해당 batch partition을 가지치기할 수 있다. 사용자 projection에는 marker를 노출하지 않는다.
 - 기존 output table은 partition spec을 자동 변경하지 않는다. 가지치기 이득은 없을 수 있지만 exact `_asklake_run_id` 행 수 검증은 동일하게 수행한다.
+- ClickHouse static cache identity는 `(datasetId, snapshotId, schemaFingerprint, queryEngineTable, referencedColumns, joinColumns)` 전체다. 검증 완료 registry와 local table의 schema·row count가 모두 맞을 때만 Job 간 재사용한다. cache miss의 exact duplicate 검사는 JOIN key 정렬 순서를 이용한 aggregation-in-order와 query memory/thread 상한을 사용하고, 적재 전에는 최소 free-disk reserve를 확인한다. registry table이 사라지거나 immutable table identity가 달라지면 조용히 신뢰하지 않고 재적재 또는 구조화된 실패로 처리한다.
 
 ## lifecycle과 fencing
 

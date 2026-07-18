@@ -20,7 +20,14 @@ from app.services.clickhouse_client import (
     quote_clickhouse_identifier,
     quote_clickhouse_string,
 )
-from app.services.iceberg_dataset_reader import execute_trino_rows, quote_trino_identifier
+from app.services.clickhouse_static_snapshot_cache import (
+    ClickHouseStaticSnapshotCache,
+    clickhouse_static_table_ddl,
+    clickhouse_type,
+    normalized_column_name,
+    referenced_relation_schema,
+    relation_schema,
+)
 from app.services.trino_client import TrinoClient
 
 
@@ -42,6 +49,10 @@ class ClickHouseContinuousSqlWorkerGateway:
             lambda: ClickHouseClient(self.settings)
         )
         self.trino_client = trino_client or TrinoClient(self.settings)
+        self.static_cache = ClickHouseStaticSnapshotCache(
+            self.settings,
+            self.trino_client,
+        )
 
     def manage(
         self,
@@ -115,26 +126,17 @@ class ClickHouseContinuousSqlWorkerGateway:
             if binding is None:
                 raise ValueError("Pinned ClickHouse static relation binding is missing")
             table_name = clickhouse_static_runtime_table(names["prefix"], index, binding)
-            static_tables[str(relation.get("runtimeView") or "")] = table_name
-            schema = referenced_relation_schema(relation)
             join_columns = continuous_sql_static_join_columns(
                 job,
                 str(relation.get("datasetId") or ""),
             )
-            client.execute(
-                clickhouse_static_table_ddl(
-                    target.database,
-                    table_name,
-                    schema,
-                    order_by=join_columns,
-                )
-            )
-            self._load_static_relation(client, target.database, table_name, relation, binding)
-            self._verify_static_unique_key(
+            static_tables[str(relation.get("runtimeView") or "")] = self.static_cache.resolve(
                 client,
-                target.database,
-                table_name,
-                join_columns,
+                database=target.database,
+                preferred_table=table_name,
+                relation=relation,
+                binding=binding,
+                join_columns=join_columns,
             )
 
         client.execute(
@@ -174,123 +176,6 @@ class ClickHouseContinuousSqlWorkerGateway:
                 stream,
             )
         )
-
-    def _load_static_relation(
-        self,
-        client: ClickHouseClient,
-        database: str,
-        table: str,
-        relation: dict[str, Any],
-        binding: dict[str, Any],
-    ) -> None:
-        mapping = relation.get("queryEngineTable")
-        if not isinstance(mapping, dict):
-            raise ValueError("ClickHouse static relation has no Iceberg mapping")
-        snapshot_id = str(binding.get("snapshotId") or "").strip()
-        if not snapshot_id.lstrip("-").isdigit():
-            raise ValueError("ClickHouse static relation snapshot is invalid")
-        columns = [str(item[0]) for item in referenced_relation_schema(relation)]
-        if not columns:
-            raise ValueError("ClickHouse static relation schema is empty")
-        source = ".".join(
-            quote_trino_identifier(mapping.get(key))
-            for key in ("catalog", "schema", "table")
-        )
-        projection = ", ".join(quote_trino_identifier(item) for item in columns)
-        max_rows = int(self.settings.clickhouse_static_load_max_rows)
-        count_result = execute_trino_rows(
-            self.trino_client,
-            f"SELECT count(*) FROM {source} FOR VERSION AS OF {int(snapshot_id)}",
-            timeout_seconds=self.settings.trino_query_timeout_seconds,
-        )
-        if not count_result.rows or not count_result.rows[0]:
-            raise ValueError("ClickHouse static snapshot count is unavailable")
-        total_rows = int(count_result.rows[0][0])
-        if total_rows > max_rows:
-            raise ValueError(
-                "ClickHouse static snapshot exceeds CLICKHOUSE_STATIC_LOAD_MAX_ROWS"
-            )
-        target = qualified_clickhouse_table(database, table)
-        existing_count = client.query(f"SELECT count() AS row_count FROM {target}")
-        loaded_rows = int(existing_count.rows[0][0]) if existing_count.rows else 0
-        if loaded_rows == total_rows:
-            return
-        client.execute(f"TRUNCATE TABLE {target}")
-        if total_rows == 0:
-            return
-
-        batch_size = int(self.settings.clickhouse_insert_batch_rows)
-        page = self.trino_client.submit(
-            f"SELECT {projection} FROM {source} FOR VERSION AS OF {int(snapshot_id)}",
-            timeout_seconds=self.settings.trino_query_timeout_seconds,
-        )
-        inserted_rows = 0
-        page_count = 0
-        while True:
-            if page.error is not None:
-                raise RuntimeError(f"{page.error.code}: {page.error.message}")
-            for start in range(0, len(page.rows), batch_size):
-                batch = page.rows[start:start + batch_size]
-                inserted_rows += client.insert_json_rows(
-                    database,
-                    table,
-                    columns,
-                    batch,
-                )
-            if not page.next_uri:
-                break
-            page_count += 1
-            if page_count >= int(self.settings.trino_max_result_pages):
-                try:
-                    self.trino_client.cancel(page.next_uri, timeout_seconds=1.0)
-                except Exception:
-                    pass
-                raise RuntimeError("ClickHouse static snapshot exceeded the Trino page limit")
-            page = self.trino_client.fetch(
-                page.next_uri,
-                timeout_seconds=self.settings.trino_query_timeout_seconds,
-            )
-        if inserted_rows != total_rows:
-            raise RuntimeError(
-                f"ClickHouse static snapshot row count mismatch: expected={total_rows} inserted={inserted_rows}"
-            )
-        verified_count = client.query(f"SELECT count() AS row_count FROM {target}")
-        actual_rows = int(verified_count.rows[0][0]) if verified_count.rows else 0
-        if actual_rows != total_rows:
-            raise RuntimeError(
-                f"ClickHouse static snapshot verification failed: expected={total_rows} actual={actual_rows}"
-            )
-
-    @staticmethod
-    def _verify_static_unique_key(
-        client: ClickHouseClient,
-        database: str,
-        table: str,
-        columns: list[str],
-    ) -> None:
-        if not columns:
-            raise ValueError("ClickHouse static JOIN key is missing")
-        quoted = [quote_clickhouse_identifier(column) for column in columns]
-        invalid = " OR ".join(
-            f"isNull({column}) OR empty(trimBoth(toString({column})))"
-            for column in quoted
-        )
-        key = f"tuple({', '.join(quoted)})"
-        result = client.query(
-            "SELECT count() AS total_rows, "
-            f"countIf({invalid}) AS invalid_key_rows, "
-            f"uniqExact({key}) AS distinct_keys "
-            f"FROM {qualified_clickhouse_table(database, table)}"
-        )
-        if not result.rows or len(result.rows[0]) < 3:
-            raise RuntimeError("ClickHouse static key verification returned no result")
-        total_rows, invalid_rows, distinct_keys = (int(value or 0) for value in result.rows[0][:3])
-        if invalid_rows or total_rows != distinct_keys:
-            raise ClickHouseError(
-                "CLICKHOUSE_STATIC_KEY_NOT_UNIQUE",
-                "Pinned ClickHouse static snapshot has null, empty, or duplicate JOIN keys "
-                f"(total={total_rows}, invalid={invalid_rows}, distinct={distinct_keys}).",
-            )
 
     def _stop(
         self,
@@ -463,34 +348,6 @@ def clickhouse_output_table_ddl(
         f"({', '.join(definitions)}) "
         "ENGINE = ReplacingMergeTree(ingested_at) "
         "ORDER BY (kafka_partition, kafka_offset)"
-    )
-
-
-def clickhouse_static_table_ddl(
-    database: str,
-    table: str,
-    schema: list[Any],
-    *,
-    order_by: list[str] | None = None,
-) -> str:
-    definitions = [
-        f"{quote_clickhouse_identifier(str(item[0]))} "
-        f"{clickhouse_type(str(item[1]), nullable=True)}"
-        for item in schema
-        if isinstance(item, (list, tuple)) and len(item) >= 2
-    ]
-    if not definitions:
-        raise ValueError("ClickHouse static table schema is empty")
-    sort_key = (
-        f"({', '.join(quote_clickhouse_identifier(item) for item in order_by)})"
-        if order_by
-        else "tuple()"
-    )
-    settings_clause = " SETTINGS allow_nullable_key = 1" if order_by else ""
-    return (
-        f"CREATE TABLE IF NOT EXISTS {qualified_clickhouse_table(database, table)} "
-        f"({', '.join(definitions)}) ENGINE = MergeTree ORDER BY {sort_key}"
-        f"{settings_clause}"
     )
 
 
@@ -711,29 +568,6 @@ def clickhouse_runtime_sql(
     return expression.sql(dialect="clickhouse")
 
 
-def relation_schema(relation: dict[str, Any]) -> list[tuple[str, str]]:
-    return [
-        (str(item[0]), str(item[1]))
-        for item in relation.get("schema") or []
-        if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[0]).strip()
-    ]
-
-
-def referenced_relation_schema(relation: dict[str, Any]) -> list[tuple[str, str]]:
-    schema = relation_schema(relation)
-    referenced = {
-        normalized_column_name(item)
-        for item in relation.get("referencedColumns") or []
-        if normalized_column_name(item)
-    }
-    if not referenced:
-        return schema
-    selected = [item for item in schema if normalized_column_name(item[0]) in referenced]
-    if len(selected) != len(referenced):
-        raise ValueError("ClickHouse static relation references an unknown column")
-    return selected
-
-
 def clickhouse_static_runtime_table(
     prefix: str,
     index: int,
@@ -810,10 +644,6 @@ def clickhouse_safe_cast(value: str, type_name: str, alias: str) -> str:
     return f"{expression} AS {quote_clickhouse_identifier(alias)}"
 
 
-def normalized_column_name(value: Any) -> str:
-    return re.sub(r"\s+", "", str(value or "").strip().strip('"`')).casefold()
-
-
 def clickhouse_truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -829,24 +659,3 @@ def replace_runtime_table(query: str, runtime_view: str, target: str) -> str:
     if count == 0:
         raise ValueError(f"ClickHouse runtime relation was not found: {runtime_view}")
     return replaced
-
-
-def clickhouse_type(type_name: str, *, nullable: bool) -> str:
-    normalized = re.sub(r"\s+", "", str(type_name or "string").casefold())
-    if normalized in {"tinyint", "smallint", "integer", "int", "int32"}:
-        result = "Int32"
-    elif normalized in {"bigint", "long", "int64"}:
-        result = "Int64"
-    elif normalized in {"real", "float", "float32", "double", "float64"}:
-        result = "Float64"
-    elif normalized in {"boolean", "bool"}:
-        result = "Bool"
-    elif normalized in {"timestamp", "datetime", "timestampwithtimezone"}:
-        result = "DateTime64(3)"
-    elif normalized == "date":
-        result = "Date"
-    elif normalized.startswith("decimal") or normalized in {"numeric"}:
-        result = "Decimal(38, 9)"
-    else:
-        result = "String"
-    return f"Nullable({result})" if nullable else result

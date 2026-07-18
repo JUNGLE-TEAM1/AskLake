@@ -116,7 +116,7 @@ Dashboard 갱신
 
 Kafka의 새 메시지는 ClickHouse의 raw table에 먼저 저장된다. 이 raw table은 `topic + partition + offset`을 보존하므로, `INNER JOIN`에서 상대 데이터가 없어 결과 행이 만들어지지 않아도 소비 위치를 잃지 않는다.
 
-JOIN에 필요한 static Dataset은 Catalog가 가리키는 정확한 S3/Iceberg snapshot을 ClickHouse의 Job 전용 pinned static table로 한 번 적재한다.
+JOIN에 필요한 static Dataset은 Catalog가 가리키는 정확한 S3/Iceberg snapshot을 ClickHouse의 identity-scoped pinned static table로 한 번 적재한다. Dataset·snapshot·schema·참조 열·JOIN key가 모두 같은 검증 완료 table은 다른 Job도 재사용한다.
 
 Dashboard는 JOIN 결과를 다시 S3에 저장할 때까지 기다리지 않고 ClickHouse를 조회한다.
 
@@ -144,7 +144,7 @@ flowchart TD
 
     Loader(["정확한 snapshot을 ClickHouse로 적재"]):::backend
 
-    Dimension[("Job 전용 pinned static table") ]:::database
+    Dimension[("검증 identity별 공유 pinned static table") ]:::database
 
     Join(["JOIN Materialized View가 새 raw 행만 static 데이터와 JOIN"]):::backend
 
@@ -338,7 +338,7 @@ ClickHouse JOIN Dataset
 
 - Kafka Engine → ingest Materialized View → raw MergeTree를 구성한다.
 - topic/partition/offset을 보존한다.
-- Catalog의 exact Iceberg snapshot을 Job 전용 pinned static table에 적재한다.
+- Catalog의 exact Iceberg snapshot을 identity-scoped pinned static table에 적재하고 검증 registry로 Job 간 재사용한다.
 
 ### 4단계: JOIN Dataset과 Dashboard reader
 

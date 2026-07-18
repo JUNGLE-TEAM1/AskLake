@@ -35,6 +35,10 @@ from app.services.clickhouse_continuous_sql import (
     clickhouse_runtime_sql,
     clickhouse_type,
 )
+from app.services.clickhouse_static_snapshot_cache import (
+    ClickHouseStaticSnapshotCache,
+    static_snapshot_cache_identity,
+)
 from app.services.dashboard_physical_data import DashboardDatasetQuerySession
 
 
@@ -283,22 +287,114 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
 
         class DuplicateStaticClient:
             def query(self, query: str, **_kwargs) -> ClickHouseRows:
-                self.query_text = query
-                return ClickHouseRows(
-                    columns=["total_rows", "invalid_key_rows", "distinct_keys"],
-                    rows=[[3, 0, 2]],
-                )
+                self.queries = getattr(self, "queries", []) + [query]
+                if "invalid_key_rows" in query:
+                    return ClickHouseRows(columns=["invalid_key_rows"], rows=[[0]])
+                return ClickHouseRows(columns=["duplicate_found"], rows=[[1]])
 
         client = DuplicateStaticClient()
+        cache = ClickHouseStaticSnapshotCache(
+            Settings(_env_file=None, app_env="test"),
+            object(),
+        )
         with self.assertRaises(ClickHouseError) as caught:
-            ClickHouseContinuousSqlWorkerGateway._verify_static_unique_key(
+            cache._verify_static_unique_key(
                 client,
                 "asklake",
                 "users_static",
                 ["id"],
+                total_rows=3,
             )
         self.assertEqual(caught.exception.code, "CLICKHOUSE_STATIC_KEY_NOT_UNIQUE")
-        self.assertIn("uniqExact(tuple(`id`))", client.query_text)
+        self.assertTrue(any("GROUP BY `id`" in query for query in client.queries))
+        self.assertTrue(any("optimize_aggregation_in_order = 1" in query for query in client.queries))
+        self.assertTrue(any("max_memory_usage = 536870912" in query for query in client.queries))
+        self.assertFalse(any("uniqExact" in query for query in client.queries))
+
+    def test_verified_static_snapshot_cache_is_reused_across_job_prefixes(self) -> None:
+        relation = self._job().relation_bindings[1]
+        binding = {"datasetId": "dataset-users", "snapshotId": "101"}
+        identity = static_snapshot_cache_identity(relation, binding, ["id"])
+        self.assertEqual(
+            identity,
+            static_snapshot_cache_identity(relation, binding, ["id"]),
+        )
+        self.assertNotEqual(
+            clickhouse_static_runtime_table("asklake_first", 1, binding),
+            clickhouse_static_runtime_table("asklake_second", 1, binding),
+        )
+
+        class NoTrino:
+            def __getattr__(self, name):
+                raise AssertionError(f"Trino must not be used on a verified cache hit: {name}")
+
+        class RegisteredCacheClient:
+            def __init__(self) -> None:
+                self.executed: list[str] = []
+                self.queries: list[str] = []
+
+            def execute(self, query: str, **_kwargs) -> str:
+                self.executed.append(query)
+                return ""
+
+            def query(self, query: str, **_kwargs) -> ClickHouseRows:
+                self.queries.append(query)
+                if "asklake_static_cache_registry` FINAL" in query:
+                    return ClickHouseRows(
+                        columns=["table_name", "row_count"],
+                        rows=[["asklake_existing_static", 3]],
+                    )
+                if "FROM system.tables" in query:
+                    return ClickHouseRows(columns=["engine"], rows=[["MergeTree"]])
+                if "FROM system.columns" in query:
+                    return ClickHouseRows(
+                        columns=["name", "type"],
+                        rows=[["id", "Nullable(Int64)"], ["name", "Nullable(String)"]],
+                    )
+                if "count() AS row_count" in query:
+                    return ClickHouseRows(columns=["row_count"], rows=[[3]])
+                raise AssertionError(query)
+
+        client = RegisteredCacheClient()
+        cache = ClickHouseStaticSnapshotCache(
+            Settings(_env_file=None, app_env="test"),
+            NoTrino(),
+        )
+        table = cache.resolve(
+            client,
+            database="asklake",
+            preferred_table="asklake_second_static",
+            relation=relation,
+            binding=binding,
+            join_columns=["id"],
+        )
+
+        self.assertEqual(table, "asklake_existing_static")
+        self.assertEqual(len(client.executed), 1)
+        self.assertIn("CREATE TABLE IF NOT EXISTS", client.executed[0])
+
+    def test_static_snapshot_load_is_rejected_before_disk_reserve_is_exhausted(self) -> None:
+        class LowDiskClient:
+            def query(self, query: str, **_kwargs) -> ClickHouseRows:
+                self.query_text = query
+                return ClickHouseRows(
+                    columns=["free_space", "total_space"],
+                    rows=[[1_000_000_000, 30_000_000_000]],
+                )
+
+        cache = ClickHouseStaticSnapshotCache(
+            Settings(
+                _env_file=None,
+                app_env="test",
+                clickhouse_static_load_min_free_bytes=2_147_483_648,
+            ),
+            object(),
+        )
+
+        with self.assertRaises(ClickHouseError) as caught:
+            cache._require_load_capacity(LowDiskClient(), total_rows=12_092_405)
+
+        self.assertEqual(caught.exception.code, "CLICKHOUSE_STATIC_DISK_LOW")
 
     def test_status_reports_kafka_consumer_failure_instead_of_false_running(self) -> None:
         job = self._job()
