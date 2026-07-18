@@ -299,7 +299,7 @@ export function App() {
   const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
   const selectedJobCatalogDataset = datasets.find((dataset) => dataset.name === selectedJob.target);
   const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns";
-  const requiresSelectedDataset = activeFlow === "catalogDetail" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const requiresSelectedDataset = activeFlow === "catalogDetail";
   const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
   const sqlInitialDataset = useMemo(
     () => sqlInitialDatasetId
