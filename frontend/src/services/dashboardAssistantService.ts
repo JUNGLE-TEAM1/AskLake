@@ -17,6 +17,7 @@ export type DashboardAssistantWidgetContext = {
 
 export type DashboardAssistantRequest = {
   dashboardId?: string;
+  currentDatasetId?: string | null;
   mode: DashboardAssistantMode;
   pageId?: string | null;
   prompt: string;
@@ -34,6 +35,7 @@ export type DashboardAssistantWidgetPatch = {
 
 export type DashboardAssistantCreateWidgetAction = {
   type: "create_widget";
+  usedEvidenceIds?: string[];
   widget: {
     config: DashboardRuntimeWidgetConfig;
     datasetId: string;
@@ -45,12 +47,14 @@ export type DashboardAssistantCreateWidgetAction = {
 export type DashboardAssistantUpdateWidgetAction = {
   patch: DashboardAssistantWidgetPatch;
   type: "update_widget";
+  usedEvidenceIds?: string[];
   widgetId: string;
 };
 
 export type DashboardAssistantReportAction = {
   markdown: string;
   type: "report";
+  usedEvidenceIds?: string[];
 };
 
 export type DashboardAssistantAction =
@@ -62,8 +66,45 @@ export type DashboardAssistantResponse = {
   actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
   message: string;
+  model?: string | null;
+  provider?: string | null;
+  requestId?: string | null;
+  retrieval?: {
+    aliases?: string[];
+    datasetIds?: string[];
+    provenance?: string;
+    resultCount?: number;
+    fallbackEvidenceCount?: number;
+    fallbackReasons?: string[];
+    degradationReasons?: string[];
+    queryPlannerProvider?: string | null;
+    queryPlannerModel?: string | null;
+    queryEmbeddings?: Record<string, { provider?: string | null; model?: string | null; dimensions?: number | null }>;
+    relevanceProvider?: string | null;
+    relevanceModel?: string | null;
+    semanticModelNames?: string[];
+    semanticModelVersions?: Array<number | null>;
+    status?: string;
+  };
+  sources?: Array<{
+    body?: string;
+    chunkIndex?: number;
+    chunkingStrategy?: string;
+    datasetId?: string;
+    documentId?: string;
+    embeddingModel?: string;
+    embeddingProvider?: string;
+    fallbackApplied?: boolean;
+    fallbackReason?: string;
+    fallbackReasons?: string[];
+    metadata?: Record<string, unknown>;
+    parentDocumentId?: string;
+    semanticModelIds?: string[];
+    title?: string;
+  }>;
   warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
+  usedEvidenceIds?: string[];
 };
 
 export class DashboardAssistantNotConfiguredError extends Error {
@@ -79,6 +120,16 @@ export function isDashboardAssistantConfigured() {
 
 export function dashboardAssistantEndpointLabel() {
   return assistantEndpoint || "VITE_DASHBOARD_ASSISTANT_API_PATH";
+}
+
+export function dashboardEvidenceSummary(response: DashboardAssistantResponse) {
+  const sources = response.sources ?? [];
+  if (sources.length === 0) return "";
+  const labels = sources.map((source, index) => {
+    const label = source.title || source.body?.trim().slice(0, 120) || source.datasetId || source.documentId || "근거 문서";
+    return `${index + 1}. ${label}`;
+  });
+  return `RAG 근거 ${sources.length}건 · ${labels.join(" / ")}`;
 }
 
 export function buildDashboardAssistantWidgetContext(widget: DashboardRuntimeWidget): DashboardAssistantWidgetContext {
