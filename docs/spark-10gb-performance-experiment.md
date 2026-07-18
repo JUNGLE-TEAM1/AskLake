@@ -53,7 +53,7 @@ CloudWatch 자원 값은 30초 간격 17개 표본의 합계다. Spark UI에서�
 - Spark manifest에 단계별 시간과 실제 executor/resource 설정을 보존한다.
 - executor instance는 정수 `1..4`만 허용하고 실험은 `1`, `2`, `4`만 사용한다.
 
-로컬 Spark 4 회귀에서 단일 cast JSONL pipeline의 원본 `FileScanRDD` 물리 read는 3회에서 정확히 1회로 줄었다. 이는 production 10GB 시간 개선의 사전 증거일 뿐이며, 실제 향상률은 아래 live 표를 채운 뒤에만 확정한다.
+로컬 Spark 4 회귀에서 단일 cast JSONL pipeline의 원본 `FileScanRDD` 물리 read는 3회에서 정확히 1회로 줄었다. 이 사전 증거와 production 10GB live 결과가 같은 방향임을 아래 표에서 확인했다.
 
 ## 4. 실행 절차
 
@@ -89,21 +89,68 @@ rows/s = outputRows / (durationMs / 1000)
 
 ## 6. 결과
 
-아래 표는 live 실험이 끝날 때만 채운다. `pending`을 추정값으로 바꾸지 않는다.
+2026-07-18에 `origin/pair1` 기반 PR head `86ed3dfcd5f211575babdef1d4051829e1b2f5c6`의 immutable image를 dev에 배포해 측정했다. 세 후보 표본은 모두 실행 직전 active Run/Job/Spark Pod와 Spark NodePool이 `0`인 cold-start 조건에서 한 번씩 제출했다.
 
 | 지표 | 변경 전 1 | 최적화 1 | 최적화 2 | 최적화 4 |
 | --- | ---: | ---: | ---: | ---: |
-| Spark duration ms | 370,043 | pending | pending | pending |
-| 변경 전 대비 개선율 | - | pending | pending | pending |
-| 최적화 1 대비 speedup | - | 1.00x | pending | pending |
-| rows/s | 79,840 | pending | pending | pending |
-| source physical read | 반복/fixture 3 | 1 목표 | 1 목표 | 1 목표 |
-| executor peak | 1 | pending | pending | pending |
-| Spark node peak | 1 | pending | pending | pending |
-| exact data files | 실제 69 / manifest 0 | pending | pending | pending |
-| correctness gate | pass, file metric fail | pending | pending | pending |
+| Spark duration ms | 370,043 | 159,100 | 145,324 | 122,793 |
+| 변경 전 대비 개선율 | - | 57.0% | 60.7% | 66.8% |
+| 최적화 1 대비 speedup | - | 1.00x | 1.09x | 1.30x |
+| parallel efficiency | - | 100.0% | 54.7% | 32.4% |
+| rows/s | 79,841 | 185,699 | 203,303 | 240,606 |
+| command→terminal | 370초 | 242초 | 220초 | 200초 |
+| executor-seconds | 370.0 | 159.1 | 290.6 | 491.2 |
+| source physical read | 반복/fixture 3 | 1회 | 1회 | 1회 |
+| executor / core peak | 1 / 2 | 1 / 2 | 2 / 4 | 4 / 8 |
+| Spark node peak | 1 | 1 | 2 | 2 |
+| exact data files | 실제 69 / manifest 0 | 69 / 69 / 69 | 69 / 69 / 69 | 69 / 69 / 69 |
+| failed task / spill | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| correctness gate | file metric fail | pass | pass | pass |
 
-최종 결론에는 가장 빠른 설정뿐 아니라 1→2와 2→4의 한계 개선, node 증가, executor-seconds를 함께 적는다. 단일 10GB source object의 split 수, S3 throughput 또는 Iceberg write가 병목이면 executor 4가 선형으로 빨라지지 않는 것이 정상적인 실험 결과다.
+`exact data files`의 후보 값은 순서대로 runtime output, Spark Iceberg commit, Catalog current snapshot이다. 세 후보 모두 입력 `9,235,015,833 bytes`, 입력/출력 `29,544,766 rows`, Quality `pass`, current snapshot 일치 조건을 통과했다. source 물리 read stage도 각각 정확히 1개였고 읽은 bytes는 Spark 기준 약 9.236GB였다.
+
+### 6.1 단계별 시간
+
+| Spark phase | 최적화 1 | 최적화 2 | 최적화 4 |
+| --- | ---: | ---: | ---: |
+| Source validation | 96,137 ms | 73,483 ms | 56,643 ms |
+| Rule evaluation | 6 ms | 11 ms | 10 ms |
+| Quality aggregation | 187 ms | 229 ms | 185 ms |
+| Source post validation | 0 ms | 0 ms | 0 ms |
+| Target publish | 52,461 ms | 35,793 ms | 29,248 ms |
+
+Rule과 Quality는 더 이상 병목이 아니다. executor 증가로 Source와 Target은 모두 줄었지만 1→2의 전체 Spark 한계 개선은 8.7%, 2→4는 15.5%였다. source split 수, S3 처리량과 Iceberg write가 포함되므로 executor 수에 비례한 선형 단축은 나타나지 않았다.
+
+### 6.2 Pod·Node와 Spark 자원
+
+| 지표 | 최적화 1 | 최적화 2 | 최적화 4 |
+| --- | ---: | ---: | ---: |
+| driver peak | 1 | 1 | 1 |
+| executor Pod peak | 1 | 2 | 4 |
+| Spark node 유형 | `m8i.xlarge` | `m7i.xlarge`, `m7i-flex.xlarge` | `m6i.2xlarge`, `m7i-flex.xlarge` |
+| submit→driver | 22.88초 | 18.33초 | 15.89초 |
+| submit→첫 executor | 76.19초 | 71.01초 | 70.26초 |
+| submit→첫 running node | 28.57초 | 25.05초 | 27.88초 |
+| Spark 종료→idle | 6.43초 | 6.32초 | 8.82초 |
+| Spark 종료→node 0 | 694.43초 | 692.75초 | 장기 대기 생략 |
+| executor CPU time | 216.83초 | 253.76초 | 380.84초 |
+| JVM GC time | 6.73초 | 5.96초 | 9.25초 |
+| executor memory peak/capacity | 0.883/2.388GB | 0.883/4.776GB | 0.883/9.553GB |
+
+EKS Auto Mode가 workload 크기에 맞춰 node 유형을 선택했기 때문에 executor가 2개에서 4개로 늘어도 node peak는 2개로 같고, 대신 8 vCPU `m6i.2xlarge`가 포함됐다. executor memory peak는 거의 늘지 않았고 모든 표본에서 memory/disk spill이 `0`이어서, 이 workload는 메모리 부족보다 S3 read와 Iceberg publish의 병렬 처리량 영향을 더 크게 받았다.
+
+Pod Metrics API는 실험 계정의 read RBAC로 조회할 수 없어 `RBAC forbidden`으로 기록했다. executor CPU, memory, GC, task, spill은 Spark UI를 기준으로 사용했다. 표준 EC2 CloudWatch는 5분 집계 지연과 적은 표본 수 때문에 보조 지표로만 사용했다. 최적화 1은 Spark node 1개·1개 표본에서 CPU 평균/최대 `1.302/1.964 cores`, RX `158.009MB/s`, TX `7.411MB/s`였다. 최적화 2는 node 2개·2개 표본에서 CPU 평균/최대 `1.024/3.484 cores`, RX 평균/최대 `91.935/176.166MB/s`, TX 평균/최대 `4.006/4.820MB/s`였고, 최적화 4는 node 2개·1개 표본에서 CPU 평균/최대 `1.829/5.928 cores`, RX `159.463MB/s`, TX `8.113MB/s`였다.
+
+### 6.3 판정과 운영 선택
+
+- Issue #926의 1-executor 목표인 기존 `370,043ms` 대비 30% 이상 단축은 `159,100ms`, **57.0% 단축**으로 통과했다.
+- 가장 짧은 latency는 executor 4개의 `122,793ms`지만, executor 1개보다 22.8% 빠른 대신 executor-seconds는 약 3.09배다.
+- 이 10GB workload에서는 최적화 1개가 성능 acceptance와 자원 효율을 함께 만족한다. latency 우선 실행에서만 4개를 선택하고, 2개는 1개 대비 8.7% 단축에 그쳐 기본값으로 올릴 근거가 약하다.
+- 실험 종료 후 runtime executor 설정은 `1`로 복구한다. 완료 Spark/Iceberg/Catalog 증거는 유지하고 credential과 원본 식별자는 공개 문서에 남기지 않는다.
+
+### 6.4 실제 실행 기록
+
+각 후보는 CLI에서 같은 순서로 수행했다: immutable revision/설정 확인 → global/target active Run `0`, active Spark Pod `0`, Spark node `0` 확인 → observer와 Spark UI collector 시작 → Run 정확히 한 번 제출 → terminal success와 Iceberg/Catalog exact reconciliation 확인 → private mode-`0600` 증거 저장. executor `1→2→4` 사이에는 executor key만 변경하고 Backend 2개와 Collector 1개의 live env, image receipt, 외부 health를 다시 검증했다. 최종 복구도 같은 절차로 executor `1`과 active workload `0`을 확인한다.
 
 ## 7. 원본 증거와 공개 범위
 
