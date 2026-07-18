@@ -956,6 +956,10 @@ export function useAskLakeData({
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
+  const resetDraftPipeline = () => {
+    setDraftPipeline(initialDraftPipeline);
+  };
+
   const createPipelineFromDraft = async (
     pipelineDraft: DraftPipeline,
     {
@@ -1413,6 +1417,7 @@ export function useAskLakeData({
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
+    resetDraftPipeline,
     setSelectedDataset,
     setSelectedJob,
     setSqlResultDraft,

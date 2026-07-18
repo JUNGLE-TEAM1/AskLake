@@ -257,6 +257,7 @@ export function App() {
     createSqlDatasetJob,
     createTrinoSqlJob,
     refreshCatalogDatasets,
+    resetDraftPipeline,
     runsByJobId,
     selectedDataset,
     selectedJob,
@@ -409,6 +410,11 @@ export function App() {
       return;
     }
     const resolvedFlow = continuousKafkaDraft && isScheduleFlow(flow) ? "permission" : flow;
+    const isLeavingCreateWizard = wizardFlows.includes(activeFlow) && !wizardFlows.includes(resolvedFlow);
+    if (isLeavingCreateWizard) {
+      resetDraftPipeline();
+      if (typeof window !== "undefined") window.localStorage.removeItem("asklake.targetConfigDraft");
+    }
     const nextScheduleFlow = isScheduleFlow(resolvedFlow) ? resolvedFlow : lastScheduleFlow;
     if (isScheduleFlow(resolvedFlow)) {
       setLastScheduleFlow(resolvedFlow);
