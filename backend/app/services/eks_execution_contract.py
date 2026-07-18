@@ -22,7 +22,11 @@ SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS = (
     "applicationName",
     "applicationUid",
     "imageDigest",
+    "attemptGeneration",
     "driverPodName",
+)
+SPARK_KUBERNETES_TERMINAL_FAILURE_STATES = frozenset(
+    {"FAILED", "SUBMISSION_FAILED"}
 )
 
 
@@ -58,6 +62,24 @@ def spark_execution_lease_seconds() -> int:
     except ValueError:
         configured = DEFAULT_SPARK_EXECUTION_LEASE_SECONDS
     return max(10, min(configured, 3600))
+
+
+def spark_kubernetes_max_attempts() -> int:
+    try:
+        configured = int(
+            os.environ.get("ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS") or "2"
+        )
+    except ValueError:
+        configured = 2
+    return max(1, min(configured, 3))
+
+
+def spark_kubernetes_terminal_failure(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and str(value.get("state") or "").strip().upper()
+        in SPARK_KUBERNETES_TERMINAL_FAILURE_STATES
+    )
 
 
 def run_execution_lease_lost(job_id: str, run_id: str) -> ApiError:
@@ -143,6 +165,19 @@ def normalize_spark_kubernetes_execution(
                 run_id=run_id,
             )
         normalized[key] = item
+    attempt_generation = value.get("attemptGeneration", 1)
+    if (
+        not isinstance(attempt_generation, int)
+        or isinstance(attempt_generation, bool)
+        or attempt_generation < 1
+        or attempt_generation > 3
+    ):
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes execution identity has an invalid attemptGeneration.",
+            job_id=job_id,
+            run_id=run_id,
+        )
+    normalized["attemptGeneration"] = attempt_generation
     if normalized["runId"] != run_id or normalized["jobId"] != job_id:
         raise spark_execution_identity_mismatch(
             "Spark Kubernetes run/job identity does not match the persisted AskLake Run.",
@@ -157,6 +192,8 @@ def normalize_spark_kubernetes_execution(
         normalized["driverExitCode"] = value["driverExitCode"]
     if isinstance(value.get("recovered"), bool):
         normalized["recovered"] = value["recovered"]
+    if isinstance(value.get("replacement"), bool):
+        normalized["replacement"] = value["replacement"]
     if isinstance(value.get("resultMarkerFound"), bool):
         normalized["resultMarkerFound"] = value["resultMarkerFound"]
     return normalized

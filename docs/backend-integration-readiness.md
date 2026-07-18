@@ -5,7 +5,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
-2026-07-18 pair1·dev 통합은 dev의 최신 ETL/frontend/SQL 모듈 경계를 유지하면서 pair1의 EKS bounded fixture, Kubernetes Spark UID 복구, RDS owner/generation fence와 `external_ec2` 소유권 계약을 전용 adapter에 이식했다. 전체 backend 623개, frontend regression 138개, production Spark/EKS workload/deploy 정적 계약을 통과했다. 입력 revision, 검증과 남은 구조 품질 게이트는 [pair1·dev 통합 기록](pair1-dev-integration-2026-07-18.md)을 따른다.
+2026-07-18 pair1·dev 통합은 dev의 최신 ETL/frontend/SQL 모듈 경계를 유지하면서 pair1의 EKS bounded fixture, Kubernetes Spark UID 복구, RDS owner/generation fence와 `external_ec2` 소유권 계약을 전용 adapter에 이식했다. Day 18 후속 계약은 non-terminal 동일 UID 복구와 terminal-failed attempt generation을 분리하고, 기존 EKS fixture Run에 deny-only MSK evidence를 연결한다. Python 전체 회귀 873개와 Spark Kubernetes Node 계약 18개가 통과했다. 실제 live rollout/fault/E2E 완료 여부는 [Day 18 Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
 
 ## 1. 현재 연결 상태
 

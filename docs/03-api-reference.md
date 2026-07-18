@@ -1179,6 +1179,7 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | --- | --- | --- |
 | `ASKLAKE_CONTINUOUS_CONTROL_PLANE` | `external_ec2` | Kafka Continuous 제어권과 상태는 EC2에 남기고 EKS 접근을 차단한다. |
 | `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
+| `ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS` | `2` | terminal-failed SparkApplication 뒤 같은 logical Run에서 허용하는 attempt generation 상한이다. `1..3`으로 제한한다. |
 | `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS` | `7200` | SparkApplication polling의 최대 실행시간이다. heartbeat가 이 제한을 연장하지 않는다. |
 | `ASKLAKE_SPARK_RUNNER` | `kubernetes` | in-cluster API로 `SparkApplication`을 제출·복구·조회하고 driver 결과를 수집한다. |
 
@@ -1196,7 +1197,11 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 }
 ```
 
-`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`는 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. create/recover 직후 terminal 전에도 `etl_runs.task_states.sparkExecution.kubernetesExecution`에 namespace, application name/UID, run/job/image identity, 관찰 state와 recovery 여부를 저장한다. driver가 생기면 Pod name을 연결하고 terminal에는 Pod phase, termination reason/exit code, result marker 존재 여부를 합친다. terminal manifest와 이미 저장한 RDS identity의 namespace/name/UID/image/driver Pod가 다르거나 `success`에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 없으면 `409 SPARK_EXECUTION_IDENTITY_MISMATCH`로 성공 처리를 차단한다. timeout은 해당 application 삭제 후 실패 처리한다.
+`ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`와 같은 attempt generation은 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image/attempt identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. create/recover 직후 terminal 전에도 `etl_runs.task_states.sparkExecution.kubernetesExecution`에 namespace, application name/UID, attempt generation, run/job/image identity, 관찰 state와 recovery 여부를 저장한다. driver가 생기면 Pod name을 연결하고 terminal에는 Pod phase, termination reason/exit code, result marker 존재 여부를 합친다. terminal manifest와 이미 저장한 RDS identity의 namespace/name/UID/image/attempt/driver Pod가 다르거나 `success`에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 없으면 `409 SPARK_EXECUTION_IDENTITY_MISMATCH`로 성공 처리를 차단한다. timeout은 해당 application 삭제 후 실패 처리한다.
+
+terminal failure 뒤 internal execute 경계를 같은 `runId`로 다시 호출하면 기본 최대 2회 안에서 다음 deterministic application name과 새 UID를 만든다. 이전 terminal identity는 `sparkExecution.kubernetesAttempts`에 남고 현재 attempt와 분리된다. non-terminal application에는 새 UID를 만들 수 없으며, 상한을 넘으면 `409 SPARK_TERMINAL_RETRY_EXHAUSTED`다.
+
+`POST /api/internal/airflow/spark-runs/{runId}/fault-attempts/msk-authorization`는 Day 18 deny-only 증거를 기존 EKS fixture Run에 연결하는 bearer-protected adapter다. body는 `jobId`, `category: "AUTHORIZATION"`, `attemptedRecords: 1`, `acknowledgedRecords: 0`, 64자리 소문자 `evidenceSha256`만 허용한다. 다른 category/count, 일반 Job, terminal result 이후 입력, 같은 Run의 다른 evidence는 `409`로 거부한다. 동일 evidence 재전송은 새 generation을 만들지 않고 저장된 attempt를 반환한다.
 
 `kubernetesExecution`의 비밀값 없는 추적 필드는 다음과 같다. `driverPodName`과 terminal Pod 필드는 해당 단계가 관찰된 뒤 추가된다.
 
@@ -1207,9 +1212,11 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
   "namespace": "asklake-dev",
   "applicationName": "asklake-run-...",
   "applicationUid": "<Kubernetes UID>",
+  "attemptGeneration": 1,
   "imageDigest": "<repository>@sha256:<digest>",
   "state": "COMPLETED",
   "recovered": false,
+  "replacement": false,
   "driverPodName": "asklake-run-...-driver",
   "driverPodPhase": "Succeeded",
   "driverTerminationReason": "Completed",

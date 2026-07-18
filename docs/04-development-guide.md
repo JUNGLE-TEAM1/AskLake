@@ -739,6 +739,18 @@ kubectl -n "$ASKLAKE_K8S_NAMESPACE" auth can-i create sparkapplications.sparkope
 
 일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 
+### EKS bounded fault retry 검증
+
+유한 Spark batch의 terminal retry는 public `retry` command가 아니라 같은 internal Airflow `runId` 경계를 다시 호출한다. public command는 새 Run을 만들기 때문에 Day 18 Run D/E 증거에 사용할 수 없다. non-terminal 복구는 같은 SparkApplication UID를 유지하고, terminal failure 복구는 기본 최대 두 attempt 안에서 `attemptGeneration=2`와 새 UID를 사용한다. Run D의 MSK deny 결과는 실제 Describe-only write probe의 private log SHA-256을 계산한 뒤 internal fault adapter에 연결하고, 같은 Run을 `retry` command 값으로 실행한다. raw Run/Job/application/evidence 값은 `/private/tmp` mode `0600` 파일에만 둔다.
+
+```bash
+cd backend
+npm run test:spark-kubernetes
+./.venv/bin/python -m pytest tests/test_eks_execution_contract.py tests/test_etl_job_delete.py -q
+```
+
+위 테스트는 lost response의 동일 UID 복구, terminal-failed attempt의 다음 UID 생성, non-terminal replacement 거부, 최대 attempt 초과 거부, MSK `AUTHORIZATION` 1회/ack 0의 같은 RDS Run 연결, fault 뒤 같은 Run의 성공 Spark result 보존을 검증한다. 실제 deny Job, driver/executor fault와 live retry는 immutable candidate 재승격, clean baseline, exact private Run 입력과 필요한 기존 Kubernetes 권한이 모두 확인된 뒤에만 실행한다. 권한이 없으면 IAM/RBAC/NodePool을 늘리지 않고 blocker로 남긴다.
+
 작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
 ```bash

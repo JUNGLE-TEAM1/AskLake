@@ -125,6 +125,7 @@ def run_spark_job(
     run_id: str,
     *,
     spark_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    spark_attempt_generation: int = 1,
     source_boundary: dict[str, Any] | None = None,
     expected_kubernetes_execution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -170,6 +171,7 @@ def run_spark_job(
             "runId": run_id,
             **(
                 {
+                    "sparkAttemptGeneration": spark_attempt_generation,
                     "sparkKubernetesProgressFile": str(kubernetes_state_file),
                     **(
                         {"expectedKubernetesExecution": expected_kubernetes_execution}

@@ -227,7 +227,7 @@ RUNTIME_FACADE_DIGESTS = {
     api_job_operations: "75e6bd3df869cca9e2bda400cde9a7a064c46011b5af93a61550aba108ff01c0",
     api_review_operations: "2be232ab29999cf95de561949640ac487ce10c8a3837132c0d3a74779c66ebab",
     snapshot_operations: "a810d372db02d45cb3b2b55cdf8fcdcef22ae7301dded7cc663bb3d33d49f1bc",
-    airflow_operations: "57a215e49ae3edd1a7d329cf787280c756d12efb6391098bb9e4c98cae1a1180",
+    airflow_operations: "567b788d1e346458c21a677bd7d2c8ad21a4784e355c4fb01bf1af2a8a8eea6a",
     source_runtime: "22a2c6dbc4bc1381fab573d847985c674c02775023b5d0adf3ddfa06a14b5417",
     continuous_maintenance: "8adaf231c1e8f7c4e3c839be8d9f5ecdc34b1b567e0bda7f03cf8e7025fcf75a",
     continuous_session: "38179b3174532a806441c973e20f3ebd16806194750e513ce44657f32c4fd9ee",

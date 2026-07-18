@@ -66,6 +66,10 @@ Continuous runtime report, command, Catalog ACK는 `ASKLAKE_CONTINUOUS_RUNTIME_D
 
 EKS Continuous 실행은 `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes`일 때 전용 SparkApplication gateway가 Spark Operator API로 `Python` cluster-mode application을 생성한다. application은 Job ID와 worker attempt ID label을 갖고, digest-pinned `ASKLAKE_SPARK_KUBERNETES_IMAGE`, service account, private runtime-document S3 prefix를 모두 요구한다. JDBC URL/user/password는 SparkApplication spec에 평문으로 넣지 않고 `ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME`의 `secretKeyRef`로만 전달한다. pause/stop command도 worker attempt token을 포함해 새 attempt가 이전 command를 적용하지 않게 하며, SparkApplication `COMPLETED`는 공통 runtime의 정상 종료 상태 `exited`로 정규화한다. 이 모드는 일반 유한 Spark batch runner의 `ASKLAKE_SPARK_RUNNER`와 분리되어 있다.
 
+유한 EKS Spark batch는 RDS execution generation과 Spark attempt generation을 분리한다. FastAPI 응답 유실이나 process 교체처럼 기존 application이 terminal이 아니면 저장된 namespace/name/UID를 그대로 복구한다. 저장된 application이 terminal failure이면 같은 logical `runId` 아래에서만 다음 attempt generation을 허용하고, deterministic `-gN` application identity와 새 UID를 사용한다. 기본 상한은 두 attempt이며 최대 3을 넘길 수 없다. 이전 attempt identity는 RDS `kubernetesAttempts`에 보존하고 현재 identity와 섞지 않는다. 성공 Spark result와 Catalog materialization은 여전히 logical `runId` 하나를 key로 사용하므로 attempt가 늘어도 snapshot/materialization을 중복 확정하지 않는다.
+
+Day 18 MSK authorization fault는 별도 public Run을 만들지 않는다. 기존 EKS bounded fixture Run에 대해 internal bearer 경계가 정확히 한 번의 write 시도, `AUTHORIZATION`, acknowledgement 0과 private evidence SHA-256을 검증한 뒤 RDS execution lease generation에 `faultAttempts`를 기록한다. 이후 정상 Spark 실행은 같은 Run의 다음 RDS generation을 claim한다. 이 adapter는 기존 Describe-only identity의 실제 deny evidence를 연결할 뿐 IAM, RBAC 또는 NodePool을 변경하지 않는다.
+
 브라우저는 `/api/etl/jobs/statuses`의 persisted `continuousRuntime`을 일반 Job status polling과 같은 경로로 읽는다. 따라서 새로고침 후에도 frontend memory가 아니라 metadata DB의 Job/detail/runtime 상태로 hydrate한다. SSE는 dashboard domain event에만 사용하며 Continuous 상태의 canonical source는 status API다.
 
 | 영역 | 현재 선택 | 상태 | 메모 |
