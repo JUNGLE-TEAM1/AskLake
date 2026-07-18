@@ -45,6 +45,7 @@ export function DashboardCanvas({
   onLayoutCommit,
   onLayoutRejected,
   onPatchWidgetConfig,
+  onRetryWidgetData,
   onScrollTargetHandled,
   onSelectWidget,
   onSelectWidgetColorSlot,
@@ -60,6 +61,7 @@ export function DashboardCanvas({
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
   onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onRetryWidgetData?: (widgetId: string) => void;
   onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;
   onSelectWidgetColorSlot?: (widgetId: string, slotIndex: number) => void;
@@ -182,6 +184,7 @@ export function DashboardCanvas({
                 onDelete={onDeleteWidget}
                 onApplyWidgetPatch={onApplyWidgetPatch}
                 onPatchConfig={onPatchWidgetConfig}
+                onRetryData={onRetryWidgetData}
                 onSelect={onSelectWidget}
                 onSelectColorSlot={onSelectWidgetColorSlot}
               />

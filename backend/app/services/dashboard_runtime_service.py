@@ -9,13 +9,13 @@ from fastapi import status
 from pydantic import ValidationError
 
 from app.core.auth_context import ActorContext, require_permission
-from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.audit_repository import safe_record_audit_event
+from app.repositories.dashboard_batch_result_repository import DashboardBatchResultRepository
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.dashboard_live_repository import (
@@ -27,8 +27,6 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.dashboard import (
-    AreaChartWidgetConfig,
-    BarChartWidgetConfig,
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
     DashboardCard,
@@ -41,31 +39,23 @@ from app.schemas.dashboard import (
     DashboardStatus,
     DashboardRuntimeWidget,
     DashboardRuntimeWidgetType,
-    DashboardWidgetAggregation,
-    DashboardWidgetColorConfig,
     DashboardWidgetConfigBase,
-    DashboardWidgetFormat,
     DashboardWidgetLayout,
-    DashboardWidgetLineCurve,
-    DashboardWidgetOrientation,
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
     DeleteDraftWidgetResponse,
-    DonutChartWidgetConfig,
-    HeatmapChartWidgetConfig,
-    LineChartWidgetConfig,
-    MetricWidgetConfig,
     OkResponse,
-    PieChartWidgetConfig,
     PublishDashboardResponse,
-    RadialBarChartWidgetConfig,
     SaveDraftLayoutsRequest,
-    TableWidgetConfig,
-    TreemapChartWidgetConfig,
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
 from app.services.governance_enforcement import require_governed_access
+from app.services.dashboard_batch_widget_loader import (
+    DASHBOARD_DATA_FORBIDDEN,
+    DASHBOARD_DATA_UNAVAILABLE,
+    DashboardBatchWidgetLoader,
+)
 from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
 from app.services.resource_permission_service import (
     dashboard_with_persisted_permission_grants,
@@ -81,18 +71,21 @@ from app.services.dashboard_physical_data import (
     merge_dashboard_aggregate_states,
 )
 from app.services.dashboard_realtime_bridge import (
-    DASHBOARD_LEGACY_COLOR_MAP,
     append_dashboard_published_event,
     dashboard_datetime_to_iso,
     dashboard_widget_type_enum,
     default_dashboard_widget_layout,
     published_snapshot_event_cursor,
 )
+from app.services.dashboard_widget_config import (
+    dashboard_widget_config_to_json,
+    dashboard_widget_layout_to_json,
+    default_dashboard_widget_config,
+    normalize_dashboard_widget_config,
+)
 
 
 MAX_EXPLICIT_WIDGET_ROWS = 500
-DASHBOARD_DATA_FORBIDDEN = "DASHBOARD_DATA_FORBIDDEN"
-DASHBOARD_DATA_UNAVAILABLE = "DASHBOARD_DATA_UNAVAILABLE"
 logger = logging.getLogger(__name__)
 
 
@@ -102,13 +95,30 @@ class DashboardRuntimeService:
         repository: DashboardRuntimeRepository,
         catalog_repository: CatalogRepository,
         live_repository: DashboardLiveRepository | None = None,
+        batch_result_repository: DashboardBatchResultRepository | None = None,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.live_repository = live_repository
+        repository_db = getattr(repository, "db", None)
+        self.batch_result_repository = batch_result_repository or (
+            DashboardBatchResultRepository(repository_db)
+            if hasattr(repository_db, "get_bind") and hasattr(repository_db, "execute")
+            else None
+        )
+        self.batch_widget_loader = DashboardBatchWidgetLoader(
+            catalog_repository,
+            self.batch_result_repository,
+        )
         self._continuous_job_cache: dict[str, object | None] = {}
 
-    def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+    def get_published_runtime(
+        self,
+        dashboard_id: str,
+        actor: ActorContext | None = None,
+        *,
+        include_data: bool = True,
+    ) -> DashboardRuntimeResponse:
         actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
@@ -116,7 +126,14 @@ class DashboardRuntimeService:
         dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "view")
 
         revision = self.repository.get_published_revision(dashboard_id)
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
+        return self._build_runtime_response(
+            dashboard_meta,
+            DashboardRuntimeMode.PUBLISHED,
+            revision,
+            actor_context,
+            dashboard_card,
+            include_data=include_data,
+        )
 
     def query_published_widgets(
         self,
@@ -124,10 +141,29 @@ class DashboardRuntimeService:
         widget_ids: list[str],
         actor: ActorContext | None = None,
     ) -> list[DashboardRuntimeWidget]:
+        return self.query_widgets(
+            dashboard_id,
+            widget_ids,
+            DashboardRuntimeMode.PUBLISHED,
+            actor,
+        )
+
+    def query_widgets(
+        self,
+        dashboard_id: str,
+        widget_ids: list[str],
+        mode: DashboardRuntimeMode,
+        actor: ActorContext | None = None,
+    ) -> list[DashboardRuntimeWidget]:
         actor_context = actor or ActorContext()
         dashboard_meta = self._require_dashboard(dashboard_id)
-        self._require_dashboard_permission(dashboard_id, actor_context, "view")
-        revision = self.repository.get_published_revision(dashboard_id)
+        action = "view" if mode == DashboardRuntimeMode.PUBLISHED else "manage"
+        self._require_dashboard_permission(dashboard_id, actor_context, action)
+        revision = (
+            self.repository.get_published_revision(dashboard_id)
+            if mode == DashboardRuntimeMode.PUBLISHED
+            else self.repository.get_draft_revision(dashboard_id)
+        )
         if revision is None:
             return []
         pages = self.repository.list_pages(revision.id)
@@ -142,7 +178,7 @@ class DashboardRuntimeService:
         if missing:
             raise ApiError(
                 ErrorCode.NOT_FOUND,
-                "Published dashboard widget not found.",
+                f"{mode.value.capitalize()} dashboard widget not found.",
                 status.HTTP_404_NOT_FOUND,
                 {"dashboardId": dashboard_meta.id, "widgetIds": missing},
             )
@@ -160,7 +196,9 @@ class DashboardRuntimeService:
                     actor=actor_context,
                     remote_budget=remote_budget,
                     api_path=f"/api/dashboards/{dashboard_id}/widgets/query",
+                    dashboard_id=dashboard_id,
                     http_method="POST",
+                    use_live_results=mode == DashboardRuntimeMode.PUBLISHED,
                 )
                 for widget_id in requested_ids
             ]
@@ -171,7 +209,13 @@ class DashboardRuntimeService:
     def require_assistant_access(self, dashboard_id: str, actor: ActorContext) -> None:
         self._require_dashboard_permission(dashboard_id, actor, "view")
 
-    def ensure_draft_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+    def ensure_draft_runtime(
+        self,
+        dashboard_id: str,
+        actor: ActorContext | None = None,
+        *,
+        include_data: bool = True,
+    ) -> DashboardRuntimeResponse:
         actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
@@ -181,7 +225,14 @@ class DashboardRuntimeService:
         revision = self._ensure_draft_revision(dashboard_id)
         self.repository.db.commit()
 
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision, actor_context, dashboard_card)
+        return self._build_runtime_response(
+            dashboard_meta,
+            DashboardRuntimeMode.DRAFT,
+            revision,
+            actor_context,
+            dashboard_card,
+            include_data=include_data,
+        )
 
     def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
@@ -207,8 +258,15 @@ class DashboardRuntimeService:
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         self.repository.delete_page(page)
+        remaining_pages = self.repository.list_pages(revision.id)
+        replacement_page = None
+        if not remaining_pages:
+            replacement_page = self.repository.create_page(revision.id, "Untitled page", 0)
         self.repository.db.commit()
-        return DeleteDraftPageResponse(ok=True)
+        return DeleteDraftPageResponse(
+            ok=True,
+            replacement_page=self._page_response(replacement_page) if replacement_page else None,
+        )
 
     def create_draft_widget(
         self,
@@ -217,7 +275,8 @@ class DashboardRuntimeService:
         request: CreateDraftWidgetRequest,
         actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
-        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        actor_context = actor or ActorContext()
+        self._require_dashboard_permission(dashboard_id, actor_context, "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = dashboard_widget_type_enum(request.type)
@@ -232,7 +291,13 @@ class DashboardRuntimeService:
             data=self._resolve_widget_data(request.data, request.dataset_id),
         )
         self.repository.db.commit()
-        return DashboardWidgetMutationResponse(id=widget.id)
+        return self._build_widget_mutation_response(
+            dashboard_id,
+            widget,
+            actor_context,
+            api_path=f"/api/dashboards/{dashboard_id}/draft/pages/{page_id}/widgets",
+            http_method="POST",
+        )
 
     def update_draft_widget(
         self,
@@ -241,7 +306,8 @@ class DashboardRuntimeService:
         request: UpdateDraftWidgetRequest,
         actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
-        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
+        actor_context = actor or ActorContext()
+        self._require_dashboard_permission(dashboard_id, actor_context, "manage")
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
         current_type = dashboard_widget_type_enum(widget.type)
         next_type = dashboard_widget_type_enum(request.type or current_type)
@@ -269,7 +335,13 @@ class DashboardRuntimeService:
             update_data=update_data,
         )
         self.repository.db.commit()
-        return DashboardWidgetMutationResponse(id=widget.id)
+        return self._build_widget_mutation_response(
+            dashboard_id,
+            widget,
+            actor_context,
+            api_path=f"/api/dashboards/{dashboard_id}/draft/widgets/{widget_id}",
+            http_method="PATCH",
+        )
 
     def delete_draft_widget(self, dashboard_id: str, widget_id: str, actor: ActorContext | None = None) -> DeleteDraftWidgetResponse:
         self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
@@ -315,6 +387,8 @@ class DashboardRuntimeService:
         revision: DashboardRevisionModel | None,
         actor: ActorContext,
         dashboard_card: DashboardCard,
+        *,
+        include_data: bool = True,
     ) -> DashboardRuntimeResponse:
         snapshot_event_cursor = published_snapshot_event_cursor(self.repository.db, mode)
         has_published_revision = (
@@ -365,7 +439,9 @@ class DashboardRuntimeService:
                             actor=actor,
                             remote_budget=remote_budget,
                             api_path=runtime_api_path,
+                            dashboard_id=dashboard_meta.id,
                             http_method=runtime_http_method,
+                            include_data=include_data,
                         )
                         for widget in widgets
                     ]
@@ -376,6 +452,36 @@ class DashboardRuntimeService:
         finally:
             for session in sessions.values():
                 session.close()
+
+    def _build_widget_mutation_response(
+        self,
+        dashboard_id: str,
+        widget: DashboardWidgetModel,
+        actor: ActorContext,
+        *,
+        api_path: str,
+        http_method: str,
+    ) -> DashboardWidgetMutationResponse:
+        """Return only the saved widget so callers do not reload the entire draft."""
+        sessions: dict[str, DashboardDatasetQuerySession] = {}
+        try:
+            runtime_widget = self._widget_to_schema(
+                widget,
+                sessions,
+                {},
+                {},
+                {},
+                actor=actor,
+                remote_budget=DashboardRemoteScanBudget.from_environment(),
+                api_path=api_path,
+                dashboard_id=dashboard_id,
+                http_method=http_method,
+                include_data=False,
+            )
+        finally:
+            for session in sessions.values():
+                session.close()
+        return DashboardWidgetMutationResponse(id=widget.id, widget=runtime_widget)
 
     @staticmethod
     def _raise_dashboard_not_found(dashboard_id: str) -> None:
@@ -563,12 +669,38 @@ class DashboardRuntimeService:
         actor: ActorContext,
         remote_budget: DashboardRemoteScanBudget,
         api_path: str,
+        dashboard_id: str | None = None,
         http_method: str,
+        include_data: bool = True,
+        use_live_results: bool = True,
     ) -> DashboardRuntimeWidget:
-        if (
+        widget_type = DashboardRuntimeWidgetType(widget.type)
+        config = self._normalize_widget_config(widget_type, widget.config)
+        data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
+        calculation_version: str | None = None
+        calculated_at: datetime | None = None
+        is_live_widget = bool(
             widget.dataset_id
             and self.live_repository is not None
             and self._continuous_job(widget.dataset_id) is not None
+        )
+        if not include_data and widget.dataset_id:
+            return DashboardRuntimeWidget(
+                id=widget.id,
+                page_id=widget.page_id,
+                type=widget_type,
+                title=widget.title,
+                layout=DashboardWidgetLayout(**widget.layout),
+                config=config,
+                data=[],
+                dataset_id=widget.dataset_id,
+                query_id=widget.query_id,
+                live_refresh=is_live_widget,
+                data_status="pending",
+            )
+        if (
+            is_live_widget
+            and use_live_results
         ):
             return self._live_widget_to_schema(
                 widget,
@@ -579,9 +711,6 @@ class DashboardRuntimeService:
                 api_path=api_path,
                 http_method=http_method,
             )
-        widget_type = DashboardRuntimeWidgetType(widget.type)
-        config = self._normalize_widget_config(widget_type, widget.config)
-        data = list(widget.data or [])[:MAX_EXPLICIT_WIDGET_ROWS]
         if widget.dataset_id:
             if widget.dataset_id not in catalog_payloads:
                 catalog_payloads[widget.dataset_id] = self.catalog_repository.get_dataset_payload(widget.dataset_id)
@@ -595,79 +724,26 @@ class DashboardRuntimeService:
                     }
                     data = []
             else:
-                cache_key = "|".join((
-                    widget.dataset_id,
-                    widget_type.value,
-                    json.dumps(config, ensure_ascii=True, sort_keys=True, default=str),
-                ))
-                result = result_cache.get(cache_key)
-                if result is None and widget.dataset_id not in session_errors:
-                    session = sessions.get(widget.dataset_id)
-                    if session is None:
-                        try:
-                            dataset = dataset_with_persisted_permission_grants(
-                                self.catalog_repository.db,
-                                CatalogDatasetResponse.model_validate(payload),
-                            )
-                            require_dashboard_dataset_query_access(
-                                self.catalog_repository.db,
-                                actor,
-                                dataset,
-                                api_path=api_path,
-                                http_method=http_method,
-                            )
-                        except ApiError as exc:
-                            if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_FORBIDDEN,
-                                    "You do not have permission to query this widget's dataset.",
-                                )
-                            else:
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_UNAVAILABLE,
-                                    "Dashboard widget data could not be read from physical storage.",
-                                )
-                        except ValidationError:
-                            session_errors[widget.dataset_id] = (
-                                DASHBOARD_DATA_UNAVAILABLE,
-                                "Dashboard widget data could not be read from physical storage.",
-                            )
-                        if widget.dataset_id not in session_errors:
-                            try:
-                                session = DashboardDatasetQuerySession(
-                                    payload,
-                                    remote_budget=remote_budget,
-                                )
-                            except (ApiError, ValueError):
-                                session_errors[widget.dataset_id] = (
-                                    DASHBOARD_DATA_UNAVAILABLE,
-                                    "Dashboard widget data could not be read from physical storage.",
-                                )
-                        if session is not None:
-                            sessions[widget.dataset_id] = session
-                    if session is not None:
-                        try:
-                            result = session.read_widget(widget_type.value, config)
-                            result_cache[cache_key] = result
-                        except (ApiError, ValueError):
-                            result = None
-                if result is not None:
-                    config = result["config"]
-                    data = result["data"]
-                else:
-                    error_code, error_message = session_errors.get(
-                        widget.dataset_id,
-                        (
-                            DASHBOARD_DATA_UNAVAILABLE,
-                            "Dashboard widget data could not be read from physical storage.",
-                        ),
-                    )
-                    config = {
-                        **config,
-                        "error": error_code,
-                        "errorMessage": error_message,
-                    }
-                    data = []
+                loaded = self.batch_widget_loader.load(
+                    actor=actor,
+                    api_path=api_path,
+                    config=config,
+                    dashboard_id=dashboard_id,
+                    dataset_id=widget.dataset_id,
+                    http_method=http_method,
+                    page_id=widget.page_id,
+                    payload=payload,
+                    remote_budget=remote_budget,
+                    request_cache=result_cache,
+                    session_errors=session_errors,
+                    sessions=sessions,
+                    widget_id=widget.id,
+                    widget_type=widget_type,
+                )
+                calculated_at = loaded.calculated_at
+                calculation_version = loaded.calculation_version
+                config = loaded.config
+                data = loaded.data
         return DashboardRuntimeWidget(
             id=widget.id,
             page_id=widget.page_id,
@@ -678,6 +754,10 @@ class DashboardRuntimeService:
             data=data,
             dataset_id=widget.dataset_id,
             query_id=widget.query_id,
+            calculation_version=calculation_version,
+            calculated_at=dashboard_datetime_to_iso(calculated_at),
+            data_status="error" if config.get("error") else "ready",
+            data_error=str(config.get("errorMessage")) if config.get("errorMessage") else None,
         )
 
     def _continuous_job(self, dataset_id: str) -> object | None:
@@ -1054,78 +1134,27 @@ class DashboardRuntimeService:
             calculation_version=calculation_version,
             calculated_at=dashboard_datetime_to_iso(calculated_at),
             live_refresh=True,
+            data_status="error" if config.get("error") else "ready",
+            data_error=str(config.get("errorMessage")) if config.get("errorMessage") else None,
         )
 
     @staticmethod
     def _layout_to_json(layout: DashboardWidgetLayout) -> dict[str, int]:
-        return {
-            key: value
-            for key, value in {
-                "x": layout.x,
-                "y": layout.y,
-                "w": layout.w,
-                "h": layout.h,
-                "minW": layout.min_w,
-                "minH": layout.min_h,
-            }.items()
-            if value is not None
-        }
+        return dashboard_widget_layout_to_json(layout)
 
     @staticmethod
     def _config_to_json(
         widget_type: DashboardRuntimeWidgetType,
         config: DashboardWidgetConfigBase | None,
     ) -> dict[str, object]:
-        resolved_config = config or DashboardRuntimeService._default_config(widget_type)
-        payload = resolved_config.model_dump(by_alias=True, exclude_none=True, mode="json")
-        source_config = payload.pop("sourceConfig", None)
-        payload.pop("dataMode", None)
-        if not isinstance(source_config, dict):
-            return payload
-
-        persisted_config = dict(source_config)
-        for key in (
-            "body",
-            "color",
-            "description",
-            "placeholderKind",
-            "prompt",
-        ):
-            if key in payload:
-                persisted_config[key] = payload[key]
-        return persisted_config
+        return dashboard_widget_config_to_json(widget_type, config)
 
     @staticmethod
     def _normalize_widget_config(
         widget_type: DashboardRuntimeWidgetType,
         config: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        if config is None:
-            return DashboardRuntimeService._config_to_json(widget_type, None)
-
-        normalized = dict(config)
-        if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
-            return normalized
-
-        color = normalized.get("color")
-        if isinstance(color, str):
-            record_compatibility_path(
-                CompatibilityPath.DASHBOARD_LEGACY_COLOR,
-                reason="legacy scalar widget color is being normalized",
-                context={"color": color},
-            )
-            normalized["color"] = {
-                "colors": [
-                    DASHBOARD_LEGACY_COLOR_MAP.get(
-                        color,
-                        color if color.startswith("#") else "#2563eb",
-                    ),
-                ],
-            }
-        elif color is None:
-            normalized["color"] = {"colors": ["#2563eb"]}
-
-        return normalized
+        return normalize_dashboard_widget_config(widget_type, config)
 
     def _resolve_widget_data(
         self,
@@ -1140,73 +1169,4 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
-        color = DashboardWidgetColorConfig(colors=["#2563eb"])
-        if widget_type == DashboardRuntimeWidgetType.METRIC:
-            return MetricWidgetConfig(
-                aggregation=DashboardWidgetAggregation.COUNT,
-                format=DashboardWidgetFormat.NUMBER,
-                value_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.TABLE:
-            return TableWidgetConfig(columns=[])
-        if widget_type == DashboardRuntimeWidgetType.LINE_CHART:
-            return LineChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                curve=DashboardWidgetLineCurve.SMOOTH,
-                x_key="category",
-                y_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.AREA_CHART:
-            return AreaChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                stacked=False,
-                x_key="category",
-                y_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.DONUT_CHART:
-            return DonutChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                label_key="category",
-                value_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.PIE_CHART:
-            return PieChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                label_key="category",
-                value_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.RADIAL_BAR_CHART:
-            return RadialBarChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.AVG,
-                color=color,
-                format=DashboardWidgetFormat.PERCENT,
-                max=100,
-                min=0,
-                value_key="value",
-            )
-        if widget_type == DashboardRuntimeWidgetType.HEATMAP_CHART:
-            return HeatmapChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                value_key="value",
-                x_key="category",
-                y_key="series",
-            )
-        if widget_type == DashboardRuntimeWidgetType.TREEMAP_CHART:
-            return TreemapChartWidgetConfig(
-                aggregation=DashboardWidgetAggregation.SUM,
-                color=color,
-                label_key="category",
-                value_key="value",
-            )
-        return BarChartWidgetConfig(
-            aggregation=DashboardWidgetAggregation.SUM,
-            color=color,
-            orientation=DashboardWidgetOrientation.VERTICAL,
-            x_key="category",
-            y_key="value",
-        )
+        return default_dashboard_widget_config(widget_type)

@@ -27,6 +27,24 @@ Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종�
 SQL 결과 위젯 설정도 별도 form이나 renderer를 만들지 않고 Dashboard runtime `WidgetConfigPanel`, `WidgetRenderer`, `DashboardDatasetOption` adapter를 재사용한다. SQL 화면은 SQL 결과와 선택 데이터셋을 설정 panel의 데이터 소스로 제공하되 Dashboard 저장 상태는 만들지 않는다.
 Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며, 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
+### Dashboard DB schema 준비
+
+Dashboard의 테이블 구조는 사용자가 Dashboard를 열거나 저장하는 요청에서 만들지 않는다. backend 시작 전에 Dashboard 전용 versioned migration이 필요한 구조를 준비하고, 적용한 버전은 `dashboard_schema_migrations` 테이블에 기록한다.
+
+일반적인 backend 시작에서는 자동으로 한 번 확인된다. 배포 전 미리 확인하거나 기존 DB를 먼저 올릴 때는 아래 명령을 사용한다.
+
+```bash
+cd backend
+npm run migrate:dashboard-schema
+npm run verify:dashboard-storage
+```
+
+`migrate:dashboard-schema`는 이미 적용한 버전을 다시 실행하지 않는다. 현재는 Dashboard 카드·draft runtime과 batch widget 결과 cache 테이블만 다루는 작은 migration이며, 저장소 전체 DB를 관리하는 Alembic 도입은 별도 결정·별도 작업이다. `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
+
+Dashboard widget 데이터가 느리거나 실패하면 `dashboard_widget_data` 구조화 로그에서 correlation ID와 `dashboardId`, `pageId`, `widgetId`, `datasetId`, `stage`, `durationMs`, `result`, `errorCode`를 확인한다. `/api/health/metrics`의 `dashboard_widget_data_total{result,stage}`는 request cache hit, PostgreSQL cache hit, 물리 계산 miss와 오류 횟수를 구분한다. 로그와 metric에는 원본 row나 credential을 넣지 않는다.
+
+Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성 조건의 10회 중간값은 `npm run measure:dashboard-performance`로 확인한다. 측정값의 의미와 운영 환경에서 추가로 볼 항목은 [Dashboard 성능·회귀 검증 기록](./dashboard-performance-verification.md)에 유지한다.
+
 ## 2) 빌드
 
 ```bash
@@ -245,6 +263,13 @@ VITE_API_BASE_URL=http://localhost:8080
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
 Kafka Continuous 대시보드의 table, unique constraint, revision/source range, partition watermark, widget result/state를 실제 PostgreSQL 16에서 확인할 때는 opt-in verifier를 사용한다. 스크립트는 고유 fixture를 만들어 같은 `run_id`, 다른 `run_id`의 같은 offset, 부분 겹침 거절, manifest/fingerprint/cursor와 결과 재조회를 확인한 뒤 자신이 만든 행을 정리한다.
+
+Dashboard draft의 widget·layout 저장, 새 DB session 재조회, publish snapshot 분리와 잘못된 cross-page layout 요청의 rollback 기준은 외부 서비스 없이 SQLite 회귀 테스트로 확인한다.
+
+```bash
+cd backend
+npm run verify:dashboard-runtime-persistence
+```
 
 ```powershell
 docker compose up -d postgres
