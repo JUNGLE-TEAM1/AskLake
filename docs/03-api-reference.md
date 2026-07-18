@@ -1081,7 +1081,7 @@ type ReviewAnalysisRunRequest = {
 
 성공 시 `202 Accepted`와 `{ runId, status: "queued", source, result, error, createdAt, startedAt, finishedAt }`를 반환한다. `GET /api/review-analysis/runs/latest`는 현재 actor의 최신 run을, `GET /api/review-analysis/runs/{runId}`는 해당 actor 또는 admin이 볼 수 있는 지정 run을 반환한다. Run은 `review_analysis_runs`에 `queued -> running -> success|failed`로 저장되고 Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick이 같은 atomic claim을 사용해 allow-list Node bridge로 실제 object-storage JSONL을 처리한다. 일반 actor가 `source`를 생략하면 설정된 review source를 사용하며, 그와 다른 bucket/key 지정은 Catalog resource 권한 계약이 추가되기 전까지 `403`이다. Admin만 운영 목적으로 명시 source를 지정할 수 있다. `full=true`, `limit=0`, 또는 `ASKLAKE_REVIEW_AI_MAX_ROWS`를 넘는 interactive 요청은 `422`이며 bounded batch로 나눠야 한다.
 
-`trainModels=true`이면 AI Gateway가 라벨링한 분류형 output을 학습 후보로 사용한다. 최소 8개 학습 row, class별 최소 row, holdout accuracy/macro-F1, 모든 allowed class validation coverage를 모두 통과한 artifact만 SHA-256 digest와 label provider/model/source provenance를 포함한 manifest로 원자 게시한다. `GET /api/catalog/models`는 이 published manifest와 digest를 다시 검증한 artifact만 반환한다. 기존 `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 읽기 호환용 deprecated alias다.
+`trainModels=true`이면 AI Gateway가 라벨링한 분류형 output을 학습 후보로 사용한다. 최소 8개 학습 row, class별 최소 row, holdout accuracy/macro-F1, 모든 allowed class validation coverage를 모두 통과한 artifact만 SHA-256 digest와 label provider/model/source provenance를 포함한 manifest로 원자 게시한다. `GET /api/catalog/models`는 이 published manifest와 digest를 다시 검증한 artifact만 반환한다. 기존 `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다.
 
 ## 8.1) ETL Review Snapshot
 

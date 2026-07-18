@@ -20,12 +20,16 @@ from app.api.sql_test import with_preview_limit
 
 
 def test_unified_ai_and_review_routes_are_registered() -> None:
-    paths = {route.path for route in create_app().routes}
+    app = create_app()
+    paths = {route.path for route in app.routes}
+    openapi_paths = app.openapi()["paths"]
 
     assert "/api/ai/generate-sql" in paths
     assert "/api/review-analysis/preview" in paths
     assert "/api/review-analysis/runs" in paths
     assert "/api/review-analysis/runs/{run_id}" in paths
+    assert "202" in openapi_paths["/api/review-analysis/runs"]["post"]["responses"]
+    assert "200" in openapi_paths["/api/review-analysis/cellphones/run"]["post"]["responses"]
     assert ReviewAnalysisRunRequest().limit == 25
 
 

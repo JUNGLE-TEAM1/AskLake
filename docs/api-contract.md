@@ -3504,7 +3504,7 @@ type ReviewAnalysisRunResponse = {
 };
 ```
 
-Run state는 `review_analysis_runs`에 저장한다. Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick은 같은 atomic claim으로 allow-list versioned Node bridge를 호출하므로 재시작 뒤 남은 `queued` run도 재개되고, stale `running` lease는 실패로 종결된다. 일반 actor는 설정된 review source만 사용할 수 있고 다른 `source.bucket`/`source.key`는 `403`이며, admin만 운영 목적으로 명시 source를 선택할 수 있다. `full=true`, `limit=0`, `ASKLAKE_REVIEW_AI_MAX_ROWS` 초과 요청은 `422`로 거부한다. Preview와 Run의 `one_of_values` 결과는 요청 `allowedValues` 밖의 값을 허용하지 않고 provider/model이 없는 row도 실패한다. `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias다.
+Run state는 `review_analysis_runs`에 저장한다. Background Task와 `REVIEW_ANALYSIS_WORKER_INTERVAL_SECONDS` 주기의 recovery tick은 같은 atomic claim으로 allow-list versioned Node bridge를 호출하므로 재시작 뒤 남은 `queued` run도 재개되고, stale `running` lease는 실패로 종결된다. 일반 actor는 설정된 review source만 사용할 수 있고 다른 `source.bucket`/`source.key`는 `403`이며, admin만 운영 목적으로 명시 source를 선택할 수 있다. `full=true`, `limit=0`, `ASKLAKE_REVIEW_AI_MAX_ROWS` 초과 요청은 `422`로 거부한다. Preview와 Run의 `one_of_values` 결과는 요청 `allowedValues` 밖의 값을 허용하지 않고 provider/model이 없는 row도 실패한다. `/api/review-analysis/cellphones`와 `/api/review-analysis/cellphones/run`은 deprecated compatibility alias이며, 기존 POST alias는 `200 OK` 응답 계약을 유지한다.
 
 `trainModels=true`인 run은 AI Gateway label provenance를 포함한 분류형 row만 학습에 사용한다. 최소 8개 row, class별 최소 row, holdout accuracy·macro-F1 기준, 모든 allowed class validation coverage를 통과해야 한다. 성공 artifact는 SHA-256 digest와 source/provider model provenance를 포함한 manifest와 함께 latest registry에 atomic replace하며, 일부 target이라도 gate를 실패하면 새 manifest를 게시하지 않는다.
 
