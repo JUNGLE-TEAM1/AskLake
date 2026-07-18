@@ -39,7 +39,7 @@ spec:
             - secretRef:
                 name: asklake-backend-runtime
           env:
-            - name: ASKLAKE_CONTINUOUS_CONTROL_PLANE
+            - name: CONTINUOUS_CONTROL_PLANE
               value: worker
             - name: STARTUP_SCHEMA_MANAGEMENT_ENABLED
               value: "false"

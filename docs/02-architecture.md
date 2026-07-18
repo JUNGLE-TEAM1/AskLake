@@ -58,7 +58,7 @@ AskLake/
 
 ### Continuous Control Plane Ownership
 
-Kafka Continuous Job의 API 명령은 PostgreSQL metadata에 desired state만 저장한다. production web/API process는 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=disabled`로 실행하며 Spark 시작·중지·재조정 side effect를 수행하지 않는다. 별도 `continuous-worker`만 `worker` mode와 PostgreSQL lease를 통해 동일 DB의 intent를 읽고 실행한다. lease의 `generation`은 control-plane owner fencing이며, stream runtime의 `workerAttemptId`와 별개다.
+Kafka Continuous Job의 API 명령은 PostgreSQL metadata에 desired state만 저장한다. production web/API process는 `CONTINUOUS_CONTROL_PLANE=disabled`로 실행하며 Spark 시작·중지·재조정 side effect를 수행하지 않는다. 별도 `continuous-worker`만 `worker` mode와 PostgreSQL lease를 통해 동일 DB의 intent를 읽고 실행한다. lease의 `generation`은 control-plane owner fencing이며, stream runtime의 `workerAttemptId`와 별개다.
 
 Continuous runtime report, command, Catalog ACK는 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX`가 비어 있으면 Compose의 mounted local report directory를 사용한다. 값이 `s3://` 또는 `s3a://` URI이면 FastAPI/worker는 S3 object adapter로, Spark driver는 Hadoop S3A filesystem으로 같은 JSON object를 읽고 쓴다. 따라서 API pod와 Spark driver pod가 서로 다른 local volume을 공유하지 않아도 status hydration과 pause/stop command를 전달할 수 있다. S3 object replacement는 reader 관점에서 atomic하지만, 이 문서는 lock이 아니며 command ordering/fencing의 authority는 PostgreSQL `stateRevision`과 worker attempt token이다.
 
