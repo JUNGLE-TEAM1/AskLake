@@ -359,44 +359,29 @@ async def _event_stream(
             last_cursor = event.event_id
             realtime_metrics.increment("eventsReplayed")
 
-        while not await request.is_disconnected():
-            try:
-                item = await asyncio.wait_for(
-                    subscription.get(),
-                    timeout=settings.realtime_heartbeat_seconds,
-                )
-            except TimeoutError:
-                is_authorized = await asyncio.to_thread(
-                    _stream_identity_is_authorized,
-                    identity,
-                    dashboard_id,
-                    dataset_ids,
-                )
-                if not is_authorized:
-                    realtime_metrics.increment("authRejections")
-                    yield _system_event(
-                        "system.authorization_changed",
-                        {"reason": "session_or_permission_changed"},
-                    )
-                    return
-                yield _system_event(
-                    "system.heartbeat",
-                    {
-                        "currentCursor": last_cursor,
-                        "serverTime": datetime.now(UTC).isoformat(),
-                    },
-                )
-                continue
+        async for item in _live_events(
+            request, subscription, identity, dashboard_id, dataset_ids, last_cursor
+        ):
+            yield item
+    finally:
+        subscription.close()
 
-            if isinstance(item, RealtimeQueueOverflow):
-                realtime_metrics.increment("resyncRequired")
-                yield _system_event(
-                    "system.resync_required",
-                    {"reason": item.reason, "currentCursor": last_cursor},
-                )
-                return
-            if item.event_id <= last_cursor:
-                continue
+
+async def _live_events(
+    request: Request,
+    subscription: RealtimeSubscription,
+    identity: StreamIdentity,
+    dashboard_id: str,
+    dataset_ids: set[str],
+    last_cursor: int,
+):
+    while not await request.is_disconnected():
+        try:
+            item = await asyncio.wait_for(
+                subscription.get(),
+                timeout=settings.realtime_heartbeat_seconds,
+            )
+        except TimeoutError:
             is_authorized = await asyncio.to_thread(
                 _stream_identity_is_authorized,
                 identity,
@@ -410,10 +395,39 @@ async def _event_stream(
                     {"reason": "session_or_permission_changed"},
                 )
                 return
-            yield _domain_event(item)
-            last_cursor = item.event_id
-    finally:
-        subscription.close()
+            yield _system_event(
+                "system.heartbeat",
+                {
+                    "currentCursor": last_cursor,
+                    "serverTime": datetime.now(UTC).isoformat(),
+                },
+            )
+            continue
+
+        if isinstance(item, RealtimeQueueOverflow):
+            realtime_metrics.increment("resyncRequired")
+            yield _system_event(
+                "system.resync_required",
+                {"reason": item.reason, "currentCursor": last_cursor},
+            )
+            return
+        if item.event_id <= last_cursor:
+            continue
+        is_authorized = await asyncio.to_thread(
+            _stream_identity_is_authorized,
+            identity,
+            dashboard_id,
+            dataset_ids,
+        )
+        if not is_authorized:
+            realtime_metrics.increment("authRejections")
+            yield _system_event(
+                "system.authorization_changed",
+                {"reason": "session_or_permission_changed"},
+            )
+            return
+        yield _domain_event(item)
+        last_cursor = item.event_id
 
 
 def _load_replay_snapshot(
