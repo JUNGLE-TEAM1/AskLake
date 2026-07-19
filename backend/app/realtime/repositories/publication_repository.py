@@ -230,5 +230,7 @@ class RealtimePublicationRepository:
             "database": publication.physical_database,
             "table": publication.physical_table,
         }
+        payload["status"] = "available"
+        model.status = "available"
         model.payload = payload
         self.session.add(model)

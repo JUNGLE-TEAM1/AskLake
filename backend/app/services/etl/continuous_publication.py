@@ -29,6 +29,7 @@ RUNTIME_NAMES = {
     'backfill_catalog_revision',
     'callable',
     'canonical_storage_path',
+    'clickhouse_kafka_ingest_v2_enabled',
     'compact_storage_text',
     'continuous_runtime_report_path',
     'continuous_stream_publication_metadata',
@@ -62,6 +63,7 @@ RUNTIME_NAMES = {
     'recommended_dashboard_poll_ms',
     'reconcile_continuous_publications',
     'run_kafka_continuous_worker',
+    'settings',
     'set',
     'sorted',
     'str',
@@ -77,6 +79,12 @@ def continuous_worker_status(job: ETLJobModel, runtime: KafkaContinuousRuntimeMo
     try:
         return run_kafka_continuous_worker(job, runtime, "status")
     except ApiError as exc:
+        if clickhouse_kafka_ingest_v2_enabled(job, settings):
+            return {
+                "containerState": "failed",
+                "error": exc.message,
+                "worker": "kafka_connect_clickhouse_v2",
+            }
         return {"containerState": "unknown", "error": exc.message}
 
 

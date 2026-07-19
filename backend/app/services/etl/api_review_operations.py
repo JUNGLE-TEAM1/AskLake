@@ -23,6 +23,7 @@ RUNTIME_NAMES = {
     'begin_kafka_continuous_session',
     'blocked_principal_for_actor',
     'bool',
+    'clickhouse_kafka_ingest_v2_enabled',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
     'dict',
@@ -94,6 +95,11 @@ def command_kafka_continuous_job(
             fail_session=fail_kafka_continuous_session,
             mark_session_stopping=mark_kafka_continuous_session_stopping,
             with_permissions=with_job_permissions,
+            worker_kind=lambda current_job: (
+                "kafka_connect_clickhouse_v2"
+                if clickhouse_kafka_ingest_v2_enabled(current_job, settings)
+                else "spark_structured_streaming"
+            ),
         ),
     )
 

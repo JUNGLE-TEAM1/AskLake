@@ -505,7 +505,7 @@ class CatalogDataset(CamelModel):
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
-    status: Literal["available", "approval_required"]
+    status: Literal["preparing", "available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
     source: str
     rows: str
