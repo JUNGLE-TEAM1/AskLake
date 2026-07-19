@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
+from app.domain.audit import AuditTargetType
 from app.core.compatibility import (
     CompatibilityPath,
     record_compatibility_path,
@@ -484,7 +485,7 @@ def create_trino_sql_job(
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=request.source_run_id,
             target_name=request.source_run_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,
@@ -662,7 +663,7 @@ def create_trino_sql_job(
         metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
         target_id=job.id,
         target_name=job.name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
     return CreatePipelineResponse(
         catalog_target={
@@ -736,7 +737,7 @@ def command_job(
             status_code=exc.status_code,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
         raise
     if job.execution_mode == "continuous" and command not in continuous_commands:

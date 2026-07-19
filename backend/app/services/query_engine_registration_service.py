@@ -6,6 +6,7 @@ from typing import Any
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.permission_metadata import dedupe_grants, resource_permissions
+from app.domain.audit import AuditTargetType
 from app.application.catalog_publication import publish_catalog_payload
 from app.ports.catalog import CatalogWriterPort
 from app.repositories.audit_repository import safe_record_audit_event
@@ -189,7 +190,7 @@ class QueryEngineRegistrationService:
             metadata={"errorCode": error_code, "runId": run_id},
             result=result,
             target_id=dataset_id,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
 
 

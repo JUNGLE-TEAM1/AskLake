@@ -60,6 +60,10 @@ npm run build
 `npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 `npm run test:catalog-lineage-projection`은 저장된 API graph를 변경하지 않으면서 Catalog 화면에서 `PROCESS` node를 제거하고 동일 컬럼의 source→target edge만 만드는지 검증한다. UI 수동 확인에서는 `/etl/source`의 connector 카드, 전역 152px sidebar, `/catalog` 목록·lineage, `/dashboards/:dashboardId/edit`의 기본 닫힌 데이터 패널과 오른쪽 설정 패널 toggle을 desktop과 좁은 viewport에서 함께 확인한다.
 
+관리자 감사 로그 계약을 변경할 때는 test dependency를 설치한 Python 환경에서 `cd backend && npm run verify:admin-audit-contract`를 실행한다. 이 검증은 신규 writer의 enum-only 계약, production producer의 문자열 literal 금지, `query_run` HTTP 직렬화, 레거시 타입의 `unknown` 투영과 원본 metadata, `resourceType=unknown` 필터, OpenAPI enum, backend/frontend 타입 집합 일치와 inline enum/local `$ref` 의미 호환성을 확인한다. 실제 PostgreSQL과 FastAPI smoke는 `npm run verify:identity-admin`으로 임시 PostgreSQL schema에 smoke resource와 demo fixture를 만들고 admin/viewer session cookie로 검증한다. 이 smoke는 actor header fallback을 사용하지 않고 permission test grant, governance 상태와 session을 정리한 뒤 임시 schema를 drop하며 실패 시 non-zero로 종료한다. 프런트 부분 실패·stale 갱신·최신 요청 소유권은 `cd frontend && npm run test:admin-console-load`로 확인한다.
+
+EC2 반영 후에는 admin session으로 `/api/admin/audit-logs?resourceType=query_run&limit=10`과 `/api/admin/audit-logs?resourceType=unknown&limit=10`이 모두 `200`인지 확인한다. 관리 화면에서는 사용자·그룹·권한·제한 metric이 실제 각 API 응답과 일치하고 감사 로그 오류가 다른 탭의 성공 데이터를 `0`으로 바꾸지 않는지 확인한다. `scripts/deploy.sh diagnose`의 backend/frontend/database readiness도 함께 통과해야 하며, 실제 deploy·restart·traffic 전환은 release owner의 별도 승인을 받는다.
+
 ### 단계적 리팩토링 기준선
 
 2026년 단계적 리팩토링은 [리팩토링 진행 원장](./refactor-2026/progress-ledger.md)의 순서와 rollback 경계를 따른다. 코드·계약 기준선을 다시 생성할 때는 저장소 root에서 아래 명령을 실행한다.
@@ -135,7 +139,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
 .venv/bin/python scripts/verify-permission-create-flow-contract.py
 ```
 
-`npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 관리자 콘솔 API의 section별 부분 실패 격리, timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다. 관리자 콘솔만 빠르게 확인할 때는 `cd frontend && npm run test:admin-console-load`를 실행한다.
 
 Nessie가 생성한 SQL의 대용량 정확성·스캔량·실행시간·자원 사용량을 고정 Dataset snapshot과 질문 suite로 비교하는 내부 검증 기준은 [Nessie SQL 대용량 Benchmark](nessie-sql-benchmark.md)를 따른다. 이 benchmark는 공개 Query AI API나 자동 실행 동작을 추가하지 않으며, live campaign은 preflight와 별도의 명시적 confirmation을 거쳐야 한다.
 
@@ -235,6 +239,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
 
 프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
+
+`scripts/verify-deploy-readiness.sh`는 Docker 작업 전에 `ASKLAKE_PYTHON_BIN`이 정확히 Python 3.13인지 확인하고 다른 minor version이면 즉시 실패한다.
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. Compose render, backend/frontend deploy image build, backend production Node/Python dependency 준비, CI runner의 Spark runtime contract만 빠르게 확인하고 JSON release record를 남길 때는 `bash scripts/verify-deploy-readiness.sh`를 사용한다. 결과 파일 위치는 `ASKLAKE_RELEASE_RECORD_PATH`로 지정하며, record 작성 실패도 readiness 실패로 처리한다. GitHub Actions는 Node 22와 Python 3.13을 준비한다. 이 명령과 workflow는 EC2, production secret, Kafka/Spark long-running runtime을 변경하지 않는다. Phase 0-5 통합 후보의 merge 순서와 회귀 명령은 [배포 파이프라인 Phase 6 통합 후보 검증](./deployment-phase-6-integration.md)에 기록한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.

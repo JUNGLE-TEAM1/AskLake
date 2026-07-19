@@ -227,7 +227,7 @@ RUNTIME_FACADE_DIGESTS = {
     snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
     airflow_operations: "3ba467762ed088581513e591e232e7bed96c0b73654541dc24844715beafec76",
     source_runtime: "50528e057222df75676b42aa6a8f170dd2b94eda123c2b77b7f164071457536f",
-    continuous_maintenance: "459e03480a7c623e6b80545aa87264f1246afe1d6ec5822dc0617143766b60a2",
+    continuous_maintenance: "dc590f1f9469421dd7b4a5484ce469507e3ad710eca13ad5542b871b2b462b1d",
     continuous_session: "218eea6f08099161193e8c75d52bdfd488f8403c0e1dea24e8b3c60d4d03a3f5",
     continuous_publication: "6f5b6368a7fd8eca224b67fb3c20fb406997bb913a93f85a5a1dd5ac98fb6f57",
     replay_schedule: "fe83ec3f2262ccc5e30aa2c0bfe0226b0425f6556fa59128f1f3297edb4be772",

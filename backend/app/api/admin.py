@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
+from app.domain.audit import AuditTargetType
 from app.schemas.identity import (
     AdminAuditLogsResponse,
     AdminGovernanceControlsResponse,
@@ -112,7 +113,7 @@ def list_admin_audit_logs(
     from_at: Annotated[datetime | None, Query(alias="from")] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     q: Annotated[str | None, Query()] = None,
-    resource_type: Annotated[str | None, Query(alias="resourceType")] = None,
+    resource_type: Annotated[AuditTargetType | None, Query(alias="resourceType")] = None,
     result: Annotated[str | None, Query()] = None,
     to_at: Annotated[datetime | None, Query(alias="to")] = None,
 ) -> AdminAuditLogsResponse:
