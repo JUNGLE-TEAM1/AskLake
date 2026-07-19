@@ -8,6 +8,7 @@ from scripts.run_eks_day17_multi_spark import (
     DEFAULT_TABLE,
     REQUIRED_SCALE_SLOTS,
     candidate_job_values,
+    configured_runtime_slots,
     evaluate_preflight,
     initialize_submission_schema,
     replace_source_field,
@@ -40,6 +41,21 @@ def passing_slots() -> list[tuple[str, str]]:
 
 
 class Day17MultiSparkRunnerTests(unittest.TestCase):
+    def test_configured_runtime_slots_survives_etl_service_facade_refactor(self):
+        slots = [
+            {"consumerGroup": group, "table": table}
+            for group, table in passing_slots()
+        ]
+        with patch.dict(
+            "os.environ",
+            {"ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON": json.dumps(slots)},
+            clear=False,
+        ):
+            available, configured = configured_runtime_slots()
+
+        self.assertTrue(available)
+        self.assertEqual(configured, passing_slots())
+
     def evaluate(self, **overrides):
         values = {
             "active_run_counts": {

@@ -1160,6 +1160,8 @@ export function runPreflight(inputs, runner) {
     activeSparkApplications: steady.activeSparkApplications,
     activeKubernetesJobs: 0,
     pendingOrTerminatingPods: 0,
+    continuousRuntimes: Number(remote?.counts?.continuousRuntimes ?? 0),
+    continuousSessions: Number(remote?.counts?.continuousSessions ?? 0),
     nodes: steady.nodes,
   });
 }
@@ -2416,6 +2418,10 @@ export async function runCleanup(inputs, runner, initial) {
       && local.collectorReady === 1
       && local.hpaCurrent === 2
       && local.hpaDesired === 2
+      && Number(incluster?.counts?.continuousRuntimes ?? -1)
+        === Number(state.baseline.continuousRuntimes ?? -2)
+      && Number(incluster?.counts?.continuousSessions ?? -1)
+        === Number(state.baseline.continuousSessions ?? -2)
       && local.nodes.general <= state.baseline.nodes.general
       && local.nodes.spark <= state.baseline.nodes.spark,
   });
@@ -2433,6 +2439,10 @@ export async function runCleanup(inputs, runner, initial) {
       fastApiReady: remote.local.fastApiReady,
       collectorReady: remote.local.collectorReady,
       hpa: `${remote.local.hpaCurrent}/${remote.local.hpaDesired}`,
+      continuousRows: {
+        runtimes: remote.incluster.counts.continuousRuntimes,
+        sessions: remote.incluster.counts.continuousSessions,
+      },
       nodes: remote.local.nodes,
       continuousBoundary: "unchanged",
       durableEvidence: "preserved",

@@ -686,6 +686,10 @@ class FakeCleanupRunner {
       value: {
         status: "passed",
         checks: { allSteady: true },
+        counts: {
+          continuousRuntimes: 1,
+          continuousSessions: 4,
+        },
       },
     };
   }
@@ -752,6 +756,8 @@ test("bounded cleanup remains available before A/B/C success", async () => {
         msk: join(directory, "missing-msk.json"),
       },
       baseline: {
+        continuousRuntimes: 1,
+        continuousSessions: 4,
         nodes: { general: 1, spark: 1 },
       },
       runs: {},
@@ -900,8 +906,12 @@ class FakePreflightRunner {
           day17PreflightPassed: true,
           approvedTargetsExact: true,
           activeFixtureRunsZero: true,
-          continuousSessionsZero: true,
+          continuousRowsReadable: true,
           sparkApplicationsReadable: true,
+        },
+        counts: {
+          continuousRuntimes: 1,
+          continuousSessions: 4,
         },
       },
     };

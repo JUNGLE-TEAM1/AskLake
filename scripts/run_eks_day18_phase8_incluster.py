@@ -728,10 +728,15 @@ def preflight(request: dict[str, Any]) -> dict[str, Any]:
             (preflight_result.get("counts") or {}).get("activeFixtureRuns") or 0
         )
         == 0,
-        "continuousSessionsZero": int(
-            (preflight_result.get("counts") or {}).get("continuousSessions") or 0
-        )
-        == 0,
+        # Day 17 reports durable control-plane rows, not active EKS processes.
+        # Existing runtime/session history is expected while EC2 remains the
+        # owner. The outer runner verifies the live process boundary and the
+        # cleanup path proves these durable row counts remain unchanged.
+        "continuousRowsReadable": all(
+            isinstance((preflight_result.get("counts") or {}).get(key), int)
+            and (preflight_result.get("counts") or {}).get(key) >= 0
+            for key in ("continuousRuntimes", "continuousSessions")
+        ),
         "sparkApplicationsReadable": bool(
             (preflight_result.get("checks") or {}).get(
                 "sparkApplicationListReadable"

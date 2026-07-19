@@ -279,7 +279,8 @@ class Day18Phase8InclusterTest(unittest.TestCase):
                 "status": "passed",
                 "counts": {
                     "activeFixtureRuns": 0,
-                    "continuousSessions": 0,
+                    "continuousRuntimes": 1,
+                    "continuousSessions": 4,
                 },
                 "checks": {"sparkApplicationListReadable": True},
             },
@@ -302,6 +303,9 @@ class Day18Phase8InclusterTest(unittest.TestCase):
             }
             result = HELPER.preflight(request)
             self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["checks"]["continuousRowsReadable"])
+            self.assertEqual(result["counts"]["continuousRuntimes"], 1)
+            self.assertEqual(result["counts"]["continuousSessions"], 4)
             request["boundedTargets"][0]["jobId"] = "other-job"
             self.assertEqual(HELPER.preflight(request)["status"], "blocked")
         finally:

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -129,4 +129,16 @@ test("rejects non-private file mode", async () => {
   await writeFile(path, `${JSON.stringify(fixture())}\n`, { mode: 0o600 });
   await chmod(path, 0o644);
   assert.throws(() => loadAndVerifyDay18LiveInput(path), /mode 0600/);
+});
+
+test("preparation stages the live input inside the private verifier boundary", async () => {
+  const source = await readFile(
+    new URL("./prepare-eks-day18-live-input.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /mktemp -d \/private\/tmp\/asklake-day18-live-input\.XXXXXX/,
+  );
+  assert.match(source, /chmod 0700 "\$TEMP_DIR"/);
 });
