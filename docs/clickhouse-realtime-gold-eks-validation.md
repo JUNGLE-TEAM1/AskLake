@@ -4,9 +4,9 @@
 
 - Issue: `#1061`
 - 작업 브랜치: `feat-#1061`
-- 최종 `origin/pair1`: `3874f43dad1b5cd40c089d9a468fc057e9ffae72`
+- 최종 `origin/pair1`: `206f9202171220319b3f6dff3a7b506cbdd60a2f`
 - 최종 `origin/dev`: `c7ea77e48c940c04812e07d166af2f0401f59009`
-- 작업 HEAD와 pair1 merge-base: `3874f43dad1b5cd40c089d9a468fc057e9ffae72`
+- 작업 branch의 pair1 merge-base: `206f9202171220319b3f6dff3a7b506cbdd60a2f`
 - 감사일: 2026-07-19
 
 초기 기준 `392f8477` 이후 pair1에 추가된 Issue #1044 EKS Realtime V1 패키지와 PR #1063 Trino fixed-5 복구 강화는 feature branch를 두 차례 fast-forward해 보존했다. dev의 후속 Issue #1050 synthetic commerce generator/fixture는 #1061 최소 범위가 아니어서 제외했다. 공유 AWS/EKS apply, EC2 중단과 실제 owner 전환은 수행하지 않았다.

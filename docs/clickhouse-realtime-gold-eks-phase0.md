@@ -5,7 +5,7 @@
 - Issue: `#1061`
 - 작업 브랜치: `feat-#1061`
 - 최초 기준: `origin/pair1` `392f84776f698029f96b197775ff1d1a638fb86e`
-- 최종 diff 감사 기준: `origin/pair1` `3874f43dad1b5cd40c089d9a468fc057e9ffae72`
+- 최종 diff 감사 기준: `origin/pair1` `206f9202171220319b3f6dff3a7b506cbdd60a2f`
 - 최초 비교 대상: `origin/dev` `f84ff8fe5cef1807be8a9b8c2d4b2f6648367b0a`
 - 최종 재확인 대상: `origin/dev` `c7ea77e48c940c04812e07d166af2f0401f59009`
 - merge-base: `b9f7fbc2641d824797c189fbc313bf5541e277df`
@@ -16,6 +16,8 @@
 Phase 6 직전 `origin/pair1`이 Issue #1044의 EKS Realtime Kafka V1 canary package를 포함해 전진했다. 작업 변경을 stash로 보존한 뒤 feature branch를 최신 pair1까지 fast-forward하고 충돌을 수동 검수했다. V1은 Spark/Iceberg path이며 production owner transfer가 차단된 상태다. V2는 V1과 동시 활성화하지 않는다는 조건으로 별도 data-plane 범위를 유지한다.
 
 커밋 준비 직전 pair1은 PR #1063의 Trino fixed-5 복구·CAS 강화까지 포함한 `3874f43d`로 다시 전진했다. 같은 stash → fast-forward → 복원 절차로 통합했으며 충돌은 발생하지 않았다. 공용 architecture/development/guardrail/workload schema는 최신 Trino 계약을 보존한 상태에서 #1061 V2 경계만 additive diff로 남는지 재검증했다.
+
+최종 merge 직전 pair1은 PR #1065의 Trino fixed-2 조정까지 포함한 `206f9202`로 전진했다. feature branch에 일반 merge로 반영했으며 공용 문서와 workload schema는 자동 병합 후 ClickHouse/Trino 정적 검증을 다시 수행했다.
 
 최종 감사에서 `origin/dev`도 `c7ea77e4`까지 전진했으나 추가분은 Issue #1050 synthetic commerce fixture/generator와 문서뿐이었다. #1061 runtime 또는 EKS 계약 수정이 아니므로 반영하지 않았다.
 
