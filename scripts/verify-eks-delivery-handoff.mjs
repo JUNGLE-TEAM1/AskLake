@@ -39,6 +39,8 @@ const expectedServiceAccounts = {
   trino: 'asklake-trino',
   mskSmoke: 'asklake-msk-smoke',
   spark: 'asklake-spark',
+  realtimeV2Worker: 'asklake-realtime-v2-worker',
+  realtimeV2Connect: 'asklake-realtime-v2-connect',
 };
 
 const expectedFlows = new Set([
@@ -130,7 +132,7 @@ for (const [key, name] of Object.entries(expectedServiceAccounts)) {
   }
 }
 if (Object.keys(contract.kubernetes?.serviceAccounts ?? {}).length !== Object.keys(expectedServiceAccounts).length) {
-  fail('service account set must contain exactly the seven foundation workloads');
+  fail('service account set must contain exactly the nine foundation workloads');
 }
 
 for (const [key, name] of Object.entries(expectedConfigReferences)) {

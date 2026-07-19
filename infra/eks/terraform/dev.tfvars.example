@@ -156,6 +156,14 @@ irsa_oidc_provider_arn = null
 # EKS Pod Identity Agent is installed and managed.
 pod_identity_agent_ready = false
 
+# Realtime V2 recovery requires the snapshot-controller add-on before applying
+# the StorageClass/VolumeSnapshotClass foundation. Keep disabled until the exact
+# cluster-compatible version and lifecycle owner are reviewed.
+realtime_v2_snapshot_controller_mode              = "disabled"
+realtime_v2_snapshot_controller_version           = null
+realtime_v2_snapshot_controller_owner             = null
+realtime_v2_external_snapshot_controller_confirmed = false
+
 # Phase 13 uses the EKS Auto Mode managed ALB controller. Keep it disabled
 # until public/internal subnets, target/address type and listener protocol are
 # reviewed. HTTP uses the generated ALB DNS name; HTTPS additionally requires

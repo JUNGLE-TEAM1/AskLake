@@ -8,7 +8,8 @@
 
 - `origin/pair1` 기준 diff 감사와 모든 정적 검증 통과
 - Connect/ClickHouse/Backend 이미지의 ECR digest receipt
-- 암호화된 EBS StorageClass와 CSI VolumeSnapshotClass 확인
+- cluster-compatible exact snapshot-controller version과 lifecycle owner 승인
+- snapshot-controller add-on Available, 세 VolumeSnapshot CRD와 암호화된 EBS StorageClass/CSI VolumeSnapshotClass 확인
 - Terraform plan에서 `asklake-realtime-v2-connect` association 1개, exact topic 5개, source consumer/worker group 2개, wildcard 0개 확인
 - production과 다른 V2 generation, source topic, group, connector, ClickHouse target
 - 이전 exact owner running task 0과 V1 concurrent claim 0
@@ -27,12 +28,15 @@ status  asklake-connect-v2-<generation>-status
 
 ## 2. 적용 순서
 
-1. 검토된 Terraform plan으로 V2 generation과 전용 workload identity만 적용한다.
-2. V2 전용 namespace에 runtime Secret reference를 준비하되 값은 log/receipt에 출력하지 않는다.
-3. immutable digest와 `realtimeV2.enabled=true`, owner fence, generation, 암호화 StorageClass로 canonical Helm release를 적용한다.
-4. StatefulSet PVC가 Bound이고 Connect/ClickHouse/Keeper/worker가 Ready인 것을 확인한다.
-5. connector 1개와 선언된 task가 모두 RUNNING인지 확인하고 fixture를 발행한다. sink task group은 connector identity와 같은 source consumer group이고 Connect worker coordination group과 달라야 한다.
-6. partition별 source offset, Connect offset, ClickHouse `(topic,partition,offset)`, row count/checksum을 receipt의 `beforeRestart`에 기록한다.
+1. snapshot-controller 소유 계약과 exact add-on version이 포함된 Terraform plan을 검토·적용하고 add-on/CRD Available을 확인한다.
+2. `infra/eks/storage/realtime-v2-auto-mode.yaml`의 encrypted gp3 StorageClass와 Retain VolumeSnapshotClass를 적용한 뒤 live object의 driver/parameters를 정적 계약과 대조한다.
+3. V2 ECR repository에 검증된 image를 push하고 immutable digest receipt를 만든다.
+4. 검토된 Terraform plan으로 V2 generation과 전용 workload identity만 적용한다.
+5. V2 전용 namespace에 runtime Secret reference를 준비하되 값은 log/receipt에 출력하지 않는다.
+6. immutable digest와 `realtimeV2.enabled=true`, owner fence, generation, V2 StorageClass로 canonical Helm release를 적용한다.
+7. StatefulSet PVC가 Bound이고 Connect/ClickHouse/Keeper/worker가 Ready인 것을 확인한다.
+8. connector 1개와 선언된 task가 모두 RUNNING인지 확인하고 fixture를 발행한다. sink task group은 connector identity와 같은 source consumer group이고 Connect worker coordination group과 달라야 한다.
+9. partition별 source offset, Connect offset, ClickHouse `(topic,partition,offset)`, row count/checksum을 receipt의 `beforeRestart`에 기록한다.
 
 ## 3. restart 검증
 

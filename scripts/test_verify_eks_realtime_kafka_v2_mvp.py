@@ -59,6 +59,16 @@ class EksRealtimeKafkaV2MvpContractTests(unittest.TestCase):
         candidate["durableState"]["liveRestoreProven"] = True
         self.assertTrue(verify(candidate))
 
+    def test_preflight_cannot_claim_shared_mutation(self) -> None:
+        candidate = deepcopy(self.contract)
+        candidate["livePreflight"]["sharedMutationPerformed"] = True
+        self.assertTrue(verify(candidate))
+
+    def test_missing_live_prerequisite_cannot_be_claimed_present(self) -> None:
+        candidate = deepcopy(self.contract)
+        candidate["livePreflight"]["snapshotControllerObserved"] = True
+        self.assertTrue(verify(candidate))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ def verify(contract: dict[str, Any]) -> list[str]:
     iam = contract.get("iam") or {}
     durable = contract.get("durableState") or {}
     implementation = contract.get("implementation") or {}
+    preflight = contract.get("livePreflight") or {}
     rollback = contract.get("rollback") or {}
     gates = contract.get("gates") or {}
 
@@ -91,6 +92,26 @@ def verify(contract: dict[str, Any]) -> list[str]:
         errors.append("Phase 2 must record four active workloads and two isolated recovery workloads")
     if implementation.get("workloadTemplate") != "infra/eks/helm/asklake-workloads/templates/realtime-v2.yaml":
         errors.append("Phase 1 must use the canonical Helm V2 template")
+    if (
+        preflight.get("mode") != "read-only"
+        or preflight.get("result") != "no-go"
+        or preflight.get("observedV1OwnerActive") is not True
+        or preflight.get("sharedMutationPerformed") is not False
+        or preflight.get("staticRemediationReady") is not True
+    ):
+        errors.append("Phase 4A must record a read-only no-go preflight with zero shared mutation")
+    for observation in (
+        "autoModeEncryptedStorageClassObserved",
+        "snapshotApiObserved",
+        "snapshotControllerObserved",
+        "v2ServiceAccountsObserved",
+        "v2PodIdentityObserved",
+        "v2ImageRepositoriesObserved",
+    ):
+        if preflight.get(observation) is not False:
+            errors.append(f"Phase 4A missing live prerequisite must remain false: {observation}")
+    if preflight.get("evidence") != "docs/eks-realtime-kafka-v2-live-preflight.md":
+        errors.append("Phase 4A must bind the sanitized live preflight evidence")
     forbidden = set(rollback.get("forbidden") or [])
     if {"automatic-cross-engine-fallback", "run-v1-and-v2-for-the-same-identity"} - forbidden:
         errors.append("rollback must forbid automatic fallback and concurrent V1/V2 ownership")
@@ -117,6 +138,10 @@ def verify(contract: dict[str, Any]) -> list[str]:
         ROOT / "infra" / "eks" / "terraform" / "workload-identity.tf",
         ROOT / "deploy" / "eks-realtime-kafka-v2-receipt.schema.json",
         ROOT / "docs" / "eks-realtime-kafka-v2-canary-runbook.md",
+        ROOT / "docs" / "eks-realtime-kafka-v2-live-preflight.md",
+        ROOT / "infra" / "eks" / "storage" / "realtime-v2-auto-mode.yaml",
+        ROOT / "infra" / "eks" / "terraform" / "realtime-v2-storage.tf",
+        ROOT / "scripts" / "verify-eks-realtime-v2-storage.py",
         ROOT / "deploy" / "realtime-v2-provenance.json",
     ]
     for path in required_evidence:

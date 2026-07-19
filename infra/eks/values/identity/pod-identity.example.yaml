@@ -10,3 +10,5 @@ serviceAccounts:
     annotations: {}
   spark:
     annotations: {}
+  realtimeV2Connect:
+    annotations: {}

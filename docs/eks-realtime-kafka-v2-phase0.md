@@ -73,16 +73,19 @@ V1 checkpoint 삭제, Connect offset reset, generation 재사용, 같은 identit
 
 ## 7. 현재 완료 범위와 검증
 
-Phase 0 topology 결정 뒤 Phase 1 canonical Helm package와 Phase 2 static runtime contract까지 완료했다. `realtimeV2.enabled=false`가 기본이며 activation에는 승인, previous exact owner fence, generation, storage class와 Backend/Connect/ClickHouse immutable digest가 모두 필요하다. package는 worker와 Kafka Connect Deployment 각 1개, ClickHouse와 Keeper StatefulSet 각 1개, 삭제·축소 Retain PVC 2개를 렌더한다. V1/V2 동시 enable과 Secret·mutable image·local authoritative state는 거부한다.
+Phase 0 topology 결정 뒤 Phase 1 canonical Helm package, Phase 2 static runtime contract와 Phase 4A read-only live preflight까지 완료했다. `realtimeV2.enabled=false`가 기본이며 activation에는 승인, previous exact owner fence, generation, storage class와 Backend/Connect/ClickHouse immutable digest가 모두 필요하다. package는 worker와 Kafka Connect Deployment 각 1개, ClickHouse와 Keeper StatefulSet 각 1개, 삭제·축소 Retain PVC 2개를 렌더한다. V1/V2 동시 enable과 Secret·mutable image·local authoritative state는 거부한다.
 
 Terraform은 generation 하나에서 source/DLQ/internal topic 5개와 source consumer/Connect worker group 2개를 파생하고 전용 Connect identity만 추가한다. worker coordination group과 sink task group은 protocol 충돌을 막기 위해 분리한다. MSK IAM auth 2.3.6 uber JAR은 검증된 checksum으로 Connect image classpath에 포함하며 Kafka Connect plugin path에서는 제외한다. Helm `recoveryMode`는 paired CSI snapshot을 새 PVC로 복원하면서 Connect/worker를 0개 렌더한다. receipt schema와 실제 순서는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)에 고정했다.
 
-MSK IAM/Pod Identity 실제 apply, ECR image receipt, PVC restart, snapshot/restore와 live canary는 아직 완료되지 않았다. machine contract는 `deploy/eks-realtime-kafka-v2-mvp.json`이며 다음 명령으로 검증한다.
+Phase 4A는 공유 환경을 변경하지 않고 current cluster를 조회했다. V1 owner는 실행 중이지만 V2 전용 ServiceAccount/Pod Identity/ECR repository, Auto Mode encrypted StorageClass, VolumeSnapshot CRD와 snapshot-controller가 없어서 live V2 apply는 NO-GO다. repository에는 exact-version snapshot-controller 소유 계약, Auto Mode encrypted gp3/Retain snapshot class, V2 ServiceAccount와 ECR repository 계약을 추가했다. 상세 sanitized 증거는 [V2 live preflight](eks-realtime-kafka-v2-live-preflight.md)에 있다.
+
+MSK IAM/Pod Identity 실제 apply, image push/ECR digest receipt, PVC restart, snapshot/restore와 live canary는 아직 완료되지 않았다. machine contract는 `deploy/eks-realtime-kafka-v2-mvp.json`이며 다음 명령으로 검증한다.
 
 ```bash
 python3 -m unittest scripts.test_verify_eks_realtime_kafka_v2_mvp
 python3 scripts/verify_eks_realtime_kafka_v2_mvp.py
 bash scripts/verify-eks-realtime-v2-workload.sh
+python3 scripts/verify-eks-realtime-v2-storage.py
 ```
 
 validator 통과는 EKS V2 runtime 완료나 공유 AWS apply 승인이 아니다. IAM·restart·backup/restore의 정적 계약만 ready이며 실제 apply, live canary와 production transfer gate는 계속 false다.
@@ -100,3 +103,16 @@ validator 통과는 EKS V2 runtime 완료나 공유 AWS apply 승인이 아니�
 기존 `docs/realtime-2026/clickhouse-v2-recovery-runbook.md`는 application-level hot/archive cutover 계약이고, 이번 `docs/eks-realtime-kafka-v2-canary-runbook.md`는 EKS workload identity/PVC/snapshot canary 계약이라 소유 범위가 겹치지 않는다. 기존 EC2 Compose 파일은 수정하지 않았고 EKS workload 정의는 `infra/eks/helm/asklake-workloads/templates/realtime-v2.yaml` 한 곳만 canonical source로 유지한다.
 
 최종 정적 검증은 Terraform `52 passed, 0 failed`, ClickHouse V2 release `60 tests`, V2 machine contract `9 tests`, 전체 EKS workload Helm lint/render와 receipt JSON Schema를 통과했다. Connect와 ClickHouse V2 image는 로컬에서 각각 build됐고 Connect image 안의 IAM JAR checksum/classpath를 다시 확인했다. account ARN scan 결과는 기존 Terraform test의 `111122223333` mock fixture뿐이며 실제 account/resource 식별자는 없다. 이 결과에는 ECR push, AWS plan/apply, EKS Pod/PVC/snapshot 또는 live offset/row 증거가 포함되지 않는다.
+
+### Phase 4A follow-up diff 감사
+
+2026-07-19 read-only preflight 보완은 fetch한 `origin/feat-#1062@538c645adb6fef49f4d58adbcc385027e7a0e71d`를 기준으로 별도 감사했다. 이 감사는 위 33개 최초 구현 감사를 변경하지 않는다. 변경은 tracked 20개와 신규 4개, 합계 24개이며 snapshot-controller/Auto Mode storage foundation, V2 ServiceAccount/ECR 계약, sanitized preflight/SSOT와 해당 verifier·테스트로만 구성된다.
+
+- Issue #1062 범위 밖 변경: 0
+- 동일 blob checksum의 신규 중복 산출물: 0
+- canonical Helm 외 독립 V2 workload manifest: 0
+- credential/access key/private key/실제 account ARN·live generation: 0
+- mock account ARN: 기존 Terraform test/example 형식의 `111122223333`만 2개 파일
+- `pair1` 직접 수정, PR/merge, 공유 AWS/EKS mutation: 0
+
+`git diff --check`와 V2 machine contract `11 tests`, storage/Helm/foundation/delivery verifier, Terraform `55 passed, 0 failed`를 통과했다. 이 follow-up에도 image push, Terraform/Kubernetes apply, Pod/PVC/snapshot 생성, live offset/row 증거는 포함되지 않는다.

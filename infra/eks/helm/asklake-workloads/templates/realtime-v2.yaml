@@ -159,7 +159,7 @@ spec:
       annotations: {asklake.io/owner-generation: {{ $generation | quote }}, asklake.io/source-topic: {{ $sourceTopic | quote }}, asklake.io/consumer-group: {{ $group | quote }}}
     spec:
       serviceAccountName: {{ .Values.realtimeV2.serviceAccounts.connect }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       nodeSelector: {{ toYaml .Values.realtimeV2.nodeSelector | nindent 8 }}
       initContainers:
         - name: stage-secret-sources

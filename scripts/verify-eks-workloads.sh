@@ -439,4 +439,5 @@ PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixtur
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 "$ROOT_DIR/scripts/verify-eks-realtime-v2-workload.sh"
+"$PYTHON_BIN" "$ROOT_DIR/scripts/verify-eks-realtime-v2-storage.py"
 echo "EKS workload contract verification passed."

@@ -833,6 +833,7 @@ Issue #1062의 EKS V2 정적 runtime 계약은 다음 명령으로 topology, can
 python3 -m unittest scripts.test_verify_eks_realtime_kafka_v2_mvp
 python3 scripts/verify_eks_realtime_kafka_v2_mvp.py
 bash scripts/verify-eks-realtime-v2-workload.sh
+python3 scripts/verify-eks-realtime-v2-storage.py
 
 docker run --rm --entrypoint sh \
   -v "$PWD/infra/eks:/workspace" \
@@ -841,7 +842,9 @@ docker run --rm --entrypoint sh \
   -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
 ```
 
-선택 topology는 Kafka Connect 1, ClickHouse 1, Keeper 1과 ClickHouse/Keeper별 encrypted EBS PVC다. Terraform은 generation 하나에서 exact topic 5개와 분리된 source consumer/Connect worker group 2개를 파생한다. connector config는 source consumer group을 명시해 worker coordination group과 충돌하지 않는다. Connect image는 checksum-pinned MSK IAM uber JAR을 worker classpath에 두고 plugin path에서는 제외한다. `recoveryMode`는 paired CSI snapshot-backed StatefulSet 2개만 렌더해 복원 중 consumer claim을 0으로 유지한다. production HA와 owner transfer는 별도 gate다. 전체 계약은 [EKS Realtime Kafka V2 Phase 0](eks-realtime-kafka-v2-phase0.md), 승인 후 절차는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)을 따른다.
+선택 topology는 Kafka Connect 1, ClickHouse 1, Keeper 1과 ClickHouse/Keeper별 encrypted EBS PVC다. Terraform은 generation 하나에서 exact topic 5개와 분리된 source consumer/Connect worker group 2개를 파생한다. connector config는 source consumer group을 명시해 worker coordination group과 충돌하지 않는다. Connect image는 checksum-pinned MSK IAM uber JAR을 worker classpath에 두고 plugin path에서는 제외한다. `recoveryMode`는 paired CSI snapshot-backed StatefulSet 2개만 렌더해 복원 중 consumer claim을 0으로 유지한다.
+
+Phase 4A read-only preflight에서 current cluster에는 legacy `gp2` StorageClass만 있고 VolumeSnapshot CRD/snapshot-controller, V2 ServiceAccount/Pod Identity와 V2 ECR repository가 없음을 확인했다. 따라서 V1 owner가 실행 중이어도 V2 apply는 NO-GO다. 적용 전에는 exact-version snapshot-controller ownership을 먼저 확정하고 add-on/CRD Available, `infra/eks/storage/realtime-v2-auto-mode.yaml`의 encrypted gp3 StorageClass/Retain VolumeSnapshotClass, immutable image digest, exact V2 identity 순서로 준비한다. repository의 정적 계약은 live resource 존재 증거가 아니다. production HA와 owner transfer는 별도 gate다. 전체 계약은 [EKS Realtime Kafka V2 Phase 0](eks-realtime-kafka-v2-phase0.md), [V2 live preflight](eks-realtime-kafka-v2-live-preflight.md), 승인 후 절차는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)을 따른다.
 
 일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 

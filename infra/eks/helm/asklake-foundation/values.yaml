@@ -48,6 +48,16 @@ serviceAccounts:
     name: asklake-spark
     annotations: {}
     automountServiceAccountToken: true
+  realtimeV2Worker:
+    create: true
+    name: asklake-realtime-v2-worker
+    annotations: {}
+    automountServiceAccountToken: false
+  realtimeV2Connect:
+    create: true
+    name: asklake-realtime-v2-connect
+    annotations: {}
+    automountServiceAccountToken: false
   replayProducer:
     create: false
     name: asklake-replay-producer

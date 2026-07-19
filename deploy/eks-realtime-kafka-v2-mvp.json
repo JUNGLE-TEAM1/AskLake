@@ -5,7 +5,7 @@
     "branch": "pair1",
     "commit": "6943a9764e1b0152575802ba03ac8a7d85c6915a"
   },
-  "phase": "phase2-static-runtime-contract-complete-live-activation-blocked",
+  "phase": "phase4a-read-only-preflight-complete-live-activation-blocked",
   "decision": {
     "status": "decided",
     "selectedPath": "v2-kafka-connect-clickhouse",
@@ -133,6 +133,20 @@
     "isolatedRecoveryWorkloadCount": 2,
     "receiptSchema": "deploy/eks-realtime-kafka-v2-receipt.schema.json",
     "canaryRunbook": "docs/eks-realtime-kafka-v2-canary-runbook.md"
+  },
+  "livePreflight": {
+    "mode": "read-only",
+    "evidence": "docs/eks-realtime-kafka-v2-live-preflight.md",
+    "result": "no-go",
+    "observedV1OwnerActive": true,
+    "autoModeEncryptedStorageClassObserved": false,
+    "snapshotApiObserved": false,
+    "snapshotControllerObserved": false,
+    "v2ServiceAccountsObserved": false,
+    "v2PodIdentityObserved": false,
+    "v2ImageRepositoriesObserved": false,
+    "sharedMutationPerformed": false,
+    "staticRemediationReady": true
   },
   "rollback": {
     "automatic": false,

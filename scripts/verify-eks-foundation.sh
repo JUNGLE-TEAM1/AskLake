@@ -242,8 +242,8 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
-if [[ "$service_account_count" -ne 7 ]]; then
-  echo "expected 7 workload service accounts, rendered $service_account_count" >&2
+if [[ "$service_account_count" -ne 9 ]]; then
+  echo "expected 9 workload service accounts, rendered $service_account_count" >&2
   exit 1
 fi
 
@@ -254,7 +254,9 @@ for service_account in \
   asklake-airflow \
   asklake-trino \
   asklake-msk-smoke \
-  asklake-spark; do
+  asklake-spark \
+  asklake-realtime-v2-worker \
+  asklake-realtime-v2-connect; do
   if ! grep -q "name: $service_account" "$RENDERED_FILE"; then
     echo "rendered foundation is missing service account: $service_account" >&2
     exit 1
@@ -347,8 +349,8 @@ grep -q 'continuousOwner: "ec2-mvp"' "$RENDERED_FILE"
 grep -q 'workloadIdentityMode: "disabled"' "$RENDERED_FILE"
 
 irsa_annotation_count="$(grep -c 'eks.amazonaws.com/role-arn:' "$IRSA_RENDERED_FILE")"
-if [[ "$irsa_annotation_count" -ne 4 ]]; then
-  echo "IRSA render must contain exactly four workload role annotations" >&2
+if [[ "$irsa_annotation_count" -ne 5 ]]; then
+  echo "IRSA render must contain exactly five workload role annotations" >&2
   exit 1
 fi
 

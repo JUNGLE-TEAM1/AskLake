@@ -682,7 +682,7 @@ run "workload_repository_contract" {
 
   assert {
     condition = alltrue([
-      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime"] :
+      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime", "kafka-connect-v2", "clickhouse-v2"] :
       contains(keys(output.ecr_repository_urls), component)
     ])
     error_message = "ECR outputs must expose every EKS workload image component."
@@ -1813,4 +1813,69 @@ run "reject_partial_metrics_server_contract" {
   }
 
   expect_failures = [check.metrics_server_contract]
+}
+
+run "realtime_v2_snapshot_controller_defaults_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition = (
+      output.realtime_v2_snapshot_controller_handoff.mode == "disabled" &&
+      !output.realtime_v2_snapshot_controller_handoff.ready_for_apply &&
+      length(aws_eks_addon.realtime_v2_snapshot_controller) == 0
+    )
+    error_message = "Realtime V2 snapshot controller must render no add-on before exact version and ownership review."
+  }
+}
+
+run "realtime_v2_snapshot_controller_addon_contract" {
+  command = plan
+
+  variables {
+    environment                                        = "dev"
+    owner                                              = "pair-a"
+    resource_lifecycle                                 = "mvp-owned"
+    cluster_mode                                       = "create"
+    control_plane_subnet_ids                           = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories                            = false
+    realtime_v2_snapshot_controller_mode               = "eks_addon"
+    realtime_v2_snapshot_controller_version            = "v8.6.0-eksbuild.2"
+    realtime_v2_snapshot_controller_owner              = "pair-a"
+    realtime_v2_external_snapshot_controller_confirmed = false
+  }
+
+  assert {
+    condition = (
+      aws_eks_addon.realtime_v2_snapshot_controller[0].addon_name == "snapshot-controller" &&
+      aws_eks_addon.realtime_v2_snapshot_controller[0].addon_version == "v8.6.0-eksbuild.2" &&
+      jsondecode(aws_eks_addon.realtime_v2_snapshot_controller[0].configuration_values).nodeSelector["karpenter.sh/nodepool"] == "asklake-general" &&
+      output.realtime_v2_snapshot_controller_handoff.ready_for_apply
+    )
+    error_message = "Reviewed Realtime V2 snapshot inputs must create the exact add-on on the canonical general pool."
+  }
+}
+
+run "reject_partial_realtime_v2_snapshot_controller_contract" {
+  command = plan
+
+  variables {
+    environment                          = "dev"
+    owner                                = "pair-a"
+    resource_lifecycle                   = "mvp-owned"
+    cluster_mode                         = "create"
+    control_plane_subnet_ids             = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories              = false
+    realtime_v2_snapshot_controller_mode = "eks_addon"
+  }
+
+  expect_failures = [check.realtime_v2_snapshot_controller_contract]
 }
