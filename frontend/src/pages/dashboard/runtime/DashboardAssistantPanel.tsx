@@ -98,6 +98,20 @@ function appendPromptText(currentPrompt: string, nextText: string) {
   return `${current} ${next}`;
 }
 
+function buildAssistantRequestIntent(
+  prompt: string,
+  messages: AssistantMessage[],
+  hasSelectedWidget: boolean,
+) {
+  const previousUserPrompts = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.text);
+  return {
+    mode: classifyDashboardAssistantMode(prompt, { hasSelectedWidget, previousUserPrompts }),
+    requestPrompt: buildDashboardAssistantRequestPrompt(prompt, previousUserPrompts),
+  };
+}
+
 export function DashboardAssistantPanel({
   currentDatasetId,
   dashboardId,
@@ -146,14 +160,7 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
-    const previousUserPrompts = messages
-      .filter((message) => message.role === "user")
-      .map((message) => message.text);
-    const mode = classifyDashboardAssistantMode(nextPrompt, {
-      hasSelectedWidget: Boolean(selectedWidget),
-      previousUserPrompts,
-    });
-    const requestPrompt = buildDashboardAssistantRequestPrompt(nextPrompt, previousUserPrompts);
+    const { mode, requestPrompt } = buildAssistantRequestIntent(nextPrompt, messages, Boolean(selectedWidget));
     const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: requestPrompt, selectedWidgetId: selectedWidget?.id ?? null } });
     try {
       const response = await requestDashboardAssistant({
