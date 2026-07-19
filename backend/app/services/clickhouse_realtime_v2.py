@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, settings
@@ -102,6 +103,8 @@ class ClickHouseRealtimeV2WorkerGateway:
             if action == "status":
                 if run is None:
                     return self._worker_result(job, "missing")
+                if not self._control_plane_ready(job, run):
+                    self._provision(job, run)
                 return self._status(job, run)
             if action == "pause":
                 self._set_pipeline_state(job, run, desired_state="paused", retire=False)
@@ -118,6 +121,7 @@ class ClickHouseRealtimeV2WorkerGateway:
             ClickHouseError,
             KafkaConnectError,
             RuntimeError,
+            SQLAlchemyError,
             ValueError,
         ) as exc:
             code = getattr(exc, "code", "CLICKHOUSE_REALTIME_V2_FAILED")
@@ -360,11 +364,19 @@ class ClickHouseRealtimeV2WorkerGateway:
                         :schema_fingerprint, :snapshot_id, :database,
                         'dimension_current_v2', 'publishing', :created_by
                     )
+                    ON CONFLICT (id) DO UPDATE SET
+                        schema_fingerprint = EXCLUDED.schema_fingerprint,
+                        source_snapshot_id = EXCLUDED.source_snapshot_id,
+                        physical_database = EXCLUDED.physical_database,
+                        physical_table = EXCLUDED.physical_table,
+                        status = 'publishing'
                 """), {
                     "id": version_id,
                     "dataset_id": dataset_id,
                     "version": next_version,
-                    "schema_fingerprint": str(relation.get("schemaFingerprint") or ""),
+                    "schema_fingerprint": realtime_v2_schema_fingerprint(
+                        str(relation.get("schemaFingerprint") or "")
+                    ),
                     "snapshot_id": snapshot_id,
                     "database": self.settings.clickhouse_v2_database,
                     "created_by": created_by,
@@ -380,6 +392,18 @@ class ClickHouseRealtimeV2WorkerGateway:
                     "database": self.settings.clickhouse_v2_database,
                 })
             db.commit()
+
+    def _control_plane_ready(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+    ) -> bool:
+        _pipeline_id, version_id, _deployment_id = realtime_v2_pipeline_ids(job, run)
+        with self.session_factory() as db:
+            return db.execute(
+                text("SELECT 1 FROM realtime_pipeline_versions WHERE id = :version_id"),
+                {"version_id": version_id},
+            ).first() is not None
 
     def _load_dimension_rows(
         self,
@@ -1061,10 +1085,18 @@ def realtime_v2_dimension_version_id(
     snapshot_id: str,
     schema_fingerprint: str,
 ) -> str:
+    normalized_schema_fingerprint = realtime_v2_schema_fingerprint(schema_fingerprint)
     digest = hashlib.sha256(
-        f"{dataset_id}|{snapshot_id}|{schema_fingerprint}".encode("utf-8")
+        f"{dataset_id}|{snapshot_id}|{normalized_schema_fingerprint}".encode("utf-8")
     ).hexdigest()
     return f"rtdv_{digest[:48]}"
+
+
+def realtime_v2_schema_fingerprint(value: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    if len(normalized) == 64 and all(character in "0123456789abcdef" for character in normalized):
+        return normalized
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
 def realtime_v2_dimension_versions(

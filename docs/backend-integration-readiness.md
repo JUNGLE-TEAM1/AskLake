@@ -639,6 +639,8 @@ Production Compose는 PR09 V2 routing과 consumer flag를 기본 활성화한다
 
 체크된 항목은 repository/local/container evidence다. ClickHouse serving mode Job은 topic-scoped connector를 자동 등록하고 reconcile이 JOIN과 publication을 수행한다. `/api/health/realtime`은 worker plugin과 V2 reader가 준비되지 않으면 HTTP 503으로 fail closed하지만 fresh deployment에 Job connector가 없는 것은 장애로 보지 않는다. PR06/09 additive migration은 `0017`/`0018`이며 production rollback에서 downgrade하지 않는다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)과 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
 
+V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL `VARCHAR(64)`에 직접 저장하지 않고 canonical SHA-256 fingerprint로 고정한다. 시작 중 dimension/control-plane 등록이 완료되지 않은 Job은 status reconciliation이 idempotent provisioning을 다시 수행한 뒤 partition checkpoint를 생성하므로, 부분 시작 실패가 외래키 오류로 고착되지 않는다.
+
 ## Legacy removal evidence readiness
 
 - [x] production legacy register 10경로와 evidence manifest ID·owner 1:1 검증
