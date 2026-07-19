@@ -292,6 +292,15 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertFalse(self.connector.resumed)
         self.assertEqual(self.ingest.register_calls, [])
 
+    def test_stopped_intent_projects_stop_from_a_paused_connector(self) -> None:
+        self.connector.paused = True
+
+        result = self.gateway.manage(job(), runtime("stopped"), "status")
+
+        self.assertEqual(result["containerState"], "exited")
+        self.assertEqual(result["requestedAction"], "stop")
+        self.assertFalse(self.connector.resumed)
+
     def test_failed_connector_is_reconfigured_before_restart(self) -> None:
         self.connector.state = "FAILED"
 
