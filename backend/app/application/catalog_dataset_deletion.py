@@ -16,6 +16,7 @@ from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.models import (
     CatalogDatasetModel,
     ContinuousSqlJobModel,
@@ -475,7 +476,7 @@ def process_claimed_deletion(
             status_code=status.HTTP_200_OK,
             target_id=row.dataset_id,
             target_name=row.dataset_name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
         repository.update_status(row, "succeeded", commit=False)
         db.commit()
