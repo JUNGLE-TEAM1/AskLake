@@ -1441,6 +1441,8 @@ def sync_airflow_run(
     catalog_result = previous_task_states.get("catalogResult")
     airflow_reservation = previous_task_states.get("airflowReservation")
     eks_mvp_fixture = previous_task_states.get("eksMvpFixture")
+    eks_day18_campaign = previous_task_states.get("eksDay18Campaign")
+    fault_attempts = previous_task_states.get("faultAttempts")
     run.task_states = task_state_snapshot(task_instances)
     if isinstance(spark_execution, dict):
         run.task_states["sparkExecution"] = spark_execution
@@ -1452,6 +1454,10 @@ def sync_airflow_run(
         run.task_states["airflowReservation"] = airflow_reservation
     if isinstance(eks_mvp_fixture, dict):
         run.task_states["eksMvpFixture"] = eks_mvp_fixture
+    if isinstance(eks_day18_campaign, dict):
+        run.task_states["eksDay18Campaign"] = eks_day18_campaign
+    if isinstance(fault_attempts, list):
+        run.task_states["faultAttempts"] = fault_attempts
     run.last_synced_at = synced_at
     run.sync_error = None
 

@@ -1220,6 +1220,19 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
                     "startedAt": "2026-07-12T11:00:00Z",
                     "status": "running",
                 },
+                "eksDay18Campaign": {
+                    "campaignId": "a" * 32,
+                    "alias": "Run D",
+                    "sourceAlias": "Run A",
+                    "state": "airflow_submitted",
+                },
+                "faultAttempts": [
+                    {
+                        "generation": 1,
+                        "category": "AUTHORIZATION",
+                        "status": "failed",
+                    }
+                ],
             }
             db.commit()
 
@@ -1239,6 +1252,11 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             self.assertEqual(run.task_states["sparkExecution"]["attemptId"], "attempt-1")
             self.assertEqual(run.task_states["sparkExecution"]["status"], "running")
             self.assertEqual(run.task_states["eksMvpFixture"]["runId"], run_id)
+            self.assertEqual(
+                run.task_states["eksDay18Campaign"]["state"],
+                "airflow_submitted",
+            )
+            self.assertEqual(run.task_states["faultAttempts"][0]["generation"], 1)
 
     def test_task_instance_404_does_not_mark_dag_run_missing(self) -> None:
         job_id = "JOB-SQLITE-AIRFLOW-TASKS-MISSING"
