@@ -27,6 +27,7 @@ KST = timezone(timedelta(hours=9))
 MEBIBYTE = 1024 * 1024
 DEFAULT_USERS = 3_000
 SIZING_SAMPLE_USERS = 300
+GENERATOR_VERSION = 3
 
 TARGET_CATEGORIES = (
     "Computers & Accessories",
@@ -38,6 +39,39 @@ TARGET_CATEGORIES = (
     "Portable Audio & Video",
     "Wearable Technology",
 )
+
+CATEGORY_PURCHASE_PROFILE = {
+    "Computers & Accessories": {"group": "medium", "multiplier": 1.00},
+    "Camera & Photo": {"group": "medium", "multiplier": 1.00},
+    "Television & Video": {"group": "low", "multiplier": 0.70},
+    "Headphones, Earbuds & Accessories": {"group": "high", "multiplier": 1.30},
+    "Home Audio": {"group": "medium", "multiplier": 1.00},
+    "Car & Vehicle Electronics": {"group": "low", "multiplier": 0.70},
+    "Portable Audio & Video": {"group": "low", "multiplier": 0.70},
+    "Wearable Technology": {"group": "high", "multiplier": 1.30},
+}
+
+DEFAULT_DATE_MULTIPLIERS = {
+    "traffic": 1.0,
+    "impression_to_click": 1.0,
+    "click_to_cart": 1.0,
+    "cart_to_purchase_click": 1.0,
+}
+
+DATE_PROFILE_MULTIPLIERS = {
+    "weekend_campaign": {
+        "traffic": 1.60,
+        "impression_to_click": 0.72,
+        "click_to_cart": 0.86,
+        "cart_to_purchase_click": 0.95,
+    },
+    "payday_promotion": {
+        "traffic": 1.00,
+        "impression_to_click": 1.00,
+        "click_to_cart": 1.35,
+        "cart_to_purchase_click": 1.15,
+    },
+}
 
 USER_COLUMNS = (
     "user_id",
@@ -157,6 +191,52 @@ def safe_float(value: Any) -> float | None:
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def build_date_profiles(start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
+    """Resolve named date profiles inside the requested generation window."""
+    dates: list[datetime] = []
+    current = start
+    while current < end:
+        dates.append(current)
+        current += timedelta(days=1)
+    if len(dates) < 3:
+        return {}
+
+    weekend_dates = [item for item in dates if item.weekday() >= 5][:2]
+    if not weekend_dates:
+        weekend_dates = [dates[min(1, len(dates) - 1)]]
+
+    payday = next(
+        (item for item in dates if item.day == 25 and item.date() not in {day.date() for day in weekend_dates}),
+        None,
+    )
+    if payday is None:
+        payday_candidates = [
+            item for item in dates if item.date() not in {day.date() for day in weekend_dates}
+        ]
+        payday = payday_candidates[len(payday_candidates) // 2]
+
+    return {
+        "weekend_campaign": {
+            "dates": [item.date().isoformat() for item in weekend_dates],
+            "multipliers": dict(DATE_PROFILE_MULTIPLIERS["weekend_campaign"]),
+        },
+        "payday_promotion": {
+            "dates": [payday.date().isoformat()],
+            "multipliers": dict(DATE_PROFILE_MULTIPLIERS["payday_promotion"]),
+        },
+    }
+
+
+def date_multiplier_lookup(
+    profiles: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    lookup: dict[str, dict[str, float]] = {}
+    for profile in profiles.values():
+        for date in profile["dates"]:
+            lookup[date] = profile["multipliers"]
+    return lookup
 
 
 def poisson(rng: random.Random, mean: float) -> int:
@@ -579,6 +659,8 @@ def generate_events(
     channel_cart_multiplier = {"referral": 1.12, "email": 1.06, "paid_search": 0.90}
     channel_purchase_multiplier = {"referral": 1.18, "email": 1.08, "paid_search": 0.90}
     last_valid_event_time = end - timedelta(microseconds=1)
+    date_profiles = build_date_profiles(start, end)
+    multipliers_by_date = date_multiplier_lookup(date_profiles)
 
     try:
         for profile in profiles:
@@ -594,10 +676,22 @@ def generate_events(
                 session_id = f"SES-{session_count:08d}"
                 device = actual_device(rng, user["primary_device"])
                 referrer = actual_referrer(rng, user["acquisition_channel"])
-                span_seconds = max(1, int((end - eligible_start).total_seconds()))
-                day_offset = rng.randrange(max(1, math.ceil(span_seconds / 86_400)))
-                session_day = eligible_start + timedelta(days=day_offset)
-                session_day = min(session_day, end - timedelta(seconds=1))
+                eligible_dates: list[datetime] = []
+                candidate_day = eligible_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                while candidate_day < end:
+                    if candidate_day + timedelta(days=1) > eligible_start:
+                        eligible_dates.append(candidate_day)
+                    candidate_day += timedelta(days=1)
+                session_day = weighted_choice(
+                    rng,
+                    eligible_dates,
+                    [
+                        multipliers_by_date.get(
+                            item.date().isoformat(), DEFAULT_DATE_MULTIPLIERS
+                        )["traffic"]
+                        for item in eligible_dates
+                    ],
+                )
                 started_at = session_day.replace(
                     hour=session_hour(rng, device),
                     minute=rng.randint(0, 59),
@@ -608,6 +702,9 @@ def generate_events(
                     started_at = eligible_start.replace(microsecond=0)
                 if started_at >= end:
                     started_at = end - timedelta(seconds=1)
+                date_multipliers = multipliers_by_date.get(
+                    started_at.date().isoformat(), DEFAULT_DATE_MULTIPLIERS
+                )
 
                 categories = tuple(profile.category_weights)
                 category_weights = tuple(profile.category_weights[item] for item in categories)
@@ -648,6 +745,7 @@ def generate_events(
                     click_probability = 0.29 * (0.72 + 0.38 * min(affinity_ratio, 2.6))
                     click_probability *= 0.90 + 0.18 * (product.average_rating / 5.0)
                     click_probability *= {"mobile": 0.98, "desktop": 1.04, "tablet": 0.95}[device]
+                    click_probability *= date_multipliers["impression_to_click"]
                     if rng.random() >= clamp(click_probability, 0.08, 0.72):
                         continue
 
@@ -658,6 +756,7 @@ def generate_events(
                     cart_probability = 0.18 * membership_cart_multiplier[user["membership_tier"]]
                     cart_probability *= channel_cart_multiplier.get(user["acquisition_channel"], 1.0)
                     cart_probability *= price_factor
+                    cart_probability *= date_multipliers["click_to_cart"]
                     if rng.random() >= clamp(cart_probability, 0.025, 0.48):
                         continue
 
@@ -667,6 +766,8 @@ def generate_events(
                     purchase_probability = 0.34 * membership_purchase_multiplier[user["membership_tier"]]
                     purchase_probability *= channel_purchase_multiplier.get(user["acquisition_channel"], 1.0)
                     purchase_probability *= price_factor * profile.purchase_propensity
+                    purchase_probability *= CATEGORY_PURCHASE_PROFILE[category]["multiplier"]
+                    purchase_probability *= date_multipliers["cart_to_purchase_click"]
                     if rng.random() >= clamp(purchase_probability, 0.04, 0.72):
                         continue
 
@@ -746,8 +847,10 @@ def generate_dataset(
     validate_run_id(run_id)
     if not source.is_file():
         raise ValueError(f"source does not exist: {source}")
-    if product_count <= 0 or days <= 0:
-        raise ValueError("products and days must be positive")
+    if product_count <= 0:
+        raise ValueError("products must be positive")
+    if days < 3:
+        raise ValueError("days must be at least 3 so both date profiles can be planted")
     if user_count is not None and user_count <= 0:
         raise ValueError("users must be positive")
     if target_total_size_mb is not None and target_total_size_mb <= 0:
@@ -823,7 +926,7 @@ def generate_dataset(
     all_files = [file for dataset in datasets.values() for file in dataset["files"]]
 
     manifest = {
-        "generator_version": 2,
+        "generator_version": GENERATOR_VERSION,
         "run_id": run_id,
         "seed": seed,
         "source_file": source.name,
@@ -853,6 +956,25 @@ def generate_dataset(
             **{key: value for key, value in event_stats.items() if key != "bytes_written"},
         },
         "product_selection": selection_stats,
+        "behavior_profile": {
+            "version": 1,
+            "category_purchase_intent": {
+                "applied_stage": "cart_to_purchase_click",
+                "categories": CATEGORY_PURCHASE_PROFILE,
+            },
+            "date_profiles": build_date_profiles(start, end),
+            "thresholds": {
+                "category_adjacent_group_gap_pp": 1.0,
+                "category_max_min_gap_pp": 3.0,
+                "category_max_min_ratio": 1.5,
+                "minimum_clicks_per_category": 1_000,
+                "minimum_purchase_clicks_per_category": 50,
+                "weekend_campaign_traffic_ratio": 1.20,
+                "weekend_campaign_ctr_drop_pp": 2.0,
+                "payday_traffic_tolerance_pct": 10.0,
+                "payday_click_to_cart_lift_pp": 3.0,
+            },
+        },
         "datasets": datasets,
         "files": all_files,
         "total_bytes": total_bytes,
@@ -871,6 +993,9 @@ def generate_dataset(
             "premium/vip users have higher funnel progression than basic users",
             "mobile sessions concentrate in local evening hours",
             "gender and region have no direct behavior multiplier and act as null controls",
+            "category purchase-click propensity follows high, medium, and low groups",
+            "the first weekend campaign increases traffic while lowering CTR",
+            "the payday promotion keeps traffic near normal while increasing click-to-cart progression",
         ],
     }
     manifest_path = run_dir / "manifest.json"

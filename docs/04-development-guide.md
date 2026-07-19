@@ -1129,6 +1129,17 @@ python3 -m unittest backend/scripts/synthetic-commerce/test_generate.py
 
 `manifest.json`에는 데이터셋별 전체 행 수·바이트, 파일별 행 수·바이트·SHA-256, seed, 시간 범위가 기록된다. 분석기는 이 증거와 실제 파일을 대조하고 사용자/상품 외래키, 가입 이후 이벤트, 퍼널 순서와 심어 둔 분석 패턴을 검증한다. `--target-total-size-mb`를 늘리면 같은 분포와 계약으로 확장되며 출력 바이트를 정확히 맞추는 기능은 아니다. 생성 규칙, 컬럼 계약, 인사이트 품질 기준과 산출물 커밋 정책은 `backend/scripts/synthetic-commerce/README.md`를 따른다.
 
+Issue #1050의 발표용 데이터는 S3 과거 30일 synthetic v3 기준선과 Kafka 격리 5분 realtime profile v1을 분리한다. 카테고리 high/mid/low 구매 의향, 날짜별 독립 퍼널 변화, 기준선 대비 상승·유사·하락과 결정적 run identity가 생성기·분석기·고정 fixture에 구현되어 있다. 전체 계약, 고정 결과와 one-shot replay 명령은 `backend/scripts/synthetic-commerce/README.md`의 `Issue #1050 데모 데이터`를 따른다. 실제 sliding 5분 Dashboard 집계는 포함하지 않으므로 화면에는 `최근 5분 데모 run`으로 표시한다.
+
+```bash
+cd backend
+npm run verify:synthetic-commerce
+
+python3 scripts/synthetic-commerce/generate_realtime.py \
+  --baseline-dir fixtures/synthetic-commerce/commerce-fixed-3000-v3-seed-20260711 \
+  --validate-dir fixtures/synthetic-commerce/commerce-realtime-5m-v1-seed-20260711
+```
+
 생성·분석이 통과하면 local MinIO와 metadata PostgreSQL을 올리고, manifest에 기록된 part만 고유 run prefix에 업로드한 뒤 Prefix Preview부터 Spark/Catalog/SQL까지 이어지는 E2E를 실행한다.
 
 ```bash

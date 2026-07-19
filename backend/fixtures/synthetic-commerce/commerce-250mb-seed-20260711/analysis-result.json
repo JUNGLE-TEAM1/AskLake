@@ -1,0 +1,1141 @@
+{
+  "counts": {
+    "products": 10000,
+    "users": 33702,
+    "events": 849760
+  },
+  "integrity": [
+    {
+      "name": "orphan user references",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "orphan product references",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "events before signup",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "purchase click without prior cart in session/product",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "cart without prior click in session/product",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "events outside generation window",
+      "value": 0,
+      "expected": 0,
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: meta/part-00000.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: users/part-00000.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: click_events/part-00000.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: click_events/part-00001.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: click_events/part-00002.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    },
+    {
+      "name": "manifest evidence: click_events/part-00003.jsonl",
+      "value": "match",
+      "expected": "match",
+      "passed": true
+    }
+  ],
+  "manifest_files_checked": 6,
+  "patterns": [
+    {
+      "name": "young users show stronger headphones/wearables affinity",
+      "observed": 1.762,
+      "criterion": "18-34 share / 45+ share >= 1.25",
+      "passed": true
+    },
+    {
+      "name": "older users show stronger TV/home-audio affinity",
+      "observed": 1.738,
+      "criterion": "45+ share / 18-34 share >= 1.25",
+      "passed": true
+    },
+    {
+      "name": "referral out-converts paid search",
+      "observed": 1.631,
+      "criterion": "referral / paid-search click-to-purchase >= 1.35",
+      "passed": true
+    },
+    {
+      "name": "premium/vip out-convert basic",
+      "observed": 1.915,
+      "criterion": "mean premium/vip rate / basic rate >= 1.30",
+      "passed": true
+    },
+    {
+      "name": "mobile has stronger evening concentration than desktop",
+      "observed": 29.44,
+      "criterion": "mobile evening share - desktop evening share >= 15 percentage points",
+      "passed": true
+    },
+    {
+      "name": "every category has enough click and purchase-click samples",
+      "observed": [
+        21321,
+        927
+      ],
+      "criterion": "clicks >= 1000 and purchase_clicks >= 50 per category",
+      "passed": true
+    },
+    {
+      "name": "category purchase-intent groups are ordered with adjacent gaps",
+      "observed": {
+        "medium": 6.137,
+        "low": 4.323,
+        "high": 7.66
+      },
+      "criterion": "high > medium > low with each adjacent gap >= 1.0pp",
+      "passed": true
+    },
+    {
+      "name": "category purchase-intent spread is visually distinct",
+      "observed": {
+        "gap_pp": 3.41,
+        "ratio": 1.793
+      },
+      "criterion": "max-min >= 3.0pp and ratio >= 1.5",
+      "passed": true
+    },
+    {
+      "name": "weekend campaign raises traffic and lowers CTR",
+      "observed": {
+        "traffic_ratio": 1.57,
+        "ctr_drop_pp": 9.655
+      },
+      "criterion": "traffic ratio >= 1.2 and CTR drop >= 2.0pp",
+      "passed": true
+    },
+    {
+      "name": "payday promotion keeps traffic normal and raises click-to-cart",
+      "observed": {
+        "traffic_delta_pct": 3.565,
+        "click_to_cart_lift_pp": 6.7
+      },
+      "criterion": "traffic within +/-10.0% and click-to-cart lift >= 3.0pp",
+      "passed": true
+    },
+    {
+      "name": "daily raw counts do not move in fixed parallel ratios",
+      "observed": {
+        "ctr_range_pp": 10.71,
+        "click_to_cart_range_pp": 8.92
+      },
+      "criterion": "CTR range >= 2pp and click-to-cart range >= 3pp",
+      "passed": true
+    }
+  ],
+  "category_metrics": [
+    {
+      "category": "Wearable Technology",
+      "clicks": 27919,
+      "carts": 4813,
+      "purchase_clicks": 2152,
+      "click_to_cart_pct": 17.24,
+      "click_to_purchase_pct": 7.71
+    },
+    {
+      "category": "Headphones, Earbuds & Accessories",
+      "clicks": 30169,
+      "carts": 5183,
+      "purchase_clicks": 2296,
+      "click_to_cart_pct": 17.18,
+      "click_to_purchase_pct": 7.61
+    },
+    {
+      "category": "Camera & Photo",
+      "clicks": 23937,
+      "carts": 4315,
+      "purchase_clicks": 1486,
+      "click_to_cart_pct": 18.03,
+      "click_to_purchase_pct": 6.21
+    },
+    {
+      "category": "Home Audio",
+      "clicks": 25351,
+      "carts": 4467,
+      "purchase_clicks": 1564,
+      "click_to_cart_pct": 17.62,
+      "click_to_purchase_pct": 6.17
+    },
+    {
+      "category": "Computers & Accessories",
+      "clicks": 26321,
+      "carts": 4501,
+      "purchase_clicks": 1586,
+      "click_to_cart_pct": 17.1,
+      "click_to_purchase_pct": 6.03
+    },
+    {
+      "category": "Portable Audio & Video",
+      "clicks": 21321,
+      "carts": 3738,
+      "purchase_clicks": 927,
+      "click_to_cart_pct": 17.53,
+      "click_to_purchase_pct": 4.35
+    },
+    {
+      "category": "Television & Video",
+      "clicks": 26161,
+      "carts": 4577,
+      "purchase_clicks": 1130,
+      "click_to_cart_pct": 17.5,
+      "click_to_purchase_pct": 4.32
+    },
+    {
+      "category": "Car & Vehicle Electronics",
+      "clicks": 21509,
+      "carts": 3777,
+      "purchase_clicks": 924,
+      "click_to_cart_pct": 17.56,
+      "click_to_purchase_pct": 4.3
+    }
+  ],
+  "daily_metric_counts": [
+    {
+      "event_date": "2026-06-01",
+      "metric_name": "carts",
+      "metric_value": 1082
+    },
+    {
+      "event_date": "2026-06-01",
+      "metric_name": "clicks",
+      "metric_value": 6373
+    },
+    {
+      "event_date": "2026-06-01",
+      "metric_name": "impressions",
+      "metric_value": 18500
+    },
+    {
+      "event_date": "2026-06-01",
+      "metric_name": "purchase_clicks",
+      "metric_value": 349
+    },
+    {
+      "event_date": "2026-06-02",
+      "metric_name": "carts",
+      "metric_value": 1132
+    },
+    {
+      "event_date": "2026-06-02",
+      "metric_name": "clicks",
+      "metric_value": 6435
+    },
+    {
+      "event_date": "2026-06-02",
+      "metric_name": "impressions",
+      "metric_value": 18567
+    },
+    {
+      "event_date": "2026-06-02",
+      "metric_name": "purchase_clicks",
+      "metric_value": 377
+    },
+    {
+      "event_date": "2026-06-03",
+      "metric_name": "carts",
+      "metric_value": 1139
+    },
+    {
+      "event_date": "2026-06-03",
+      "metric_name": "clicks",
+      "metric_value": 6502
+    },
+    {
+      "event_date": "2026-06-03",
+      "metric_name": "impressions",
+      "metric_value": 18461
+    },
+    {
+      "event_date": "2026-06-03",
+      "metric_name": "purchase_clicks",
+      "metric_value": 418
+    },
+    {
+      "event_date": "2026-06-04",
+      "metric_name": "carts",
+      "metric_value": 1185
+    },
+    {
+      "event_date": "2026-06-04",
+      "metric_name": "clicks",
+      "metric_value": 6727
+    },
+    {
+      "event_date": "2026-06-04",
+      "metric_name": "impressions",
+      "metric_value": 18795
+    },
+    {
+      "event_date": "2026-06-04",
+      "metric_name": "purchase_clicks",
+      "metric_value": 404
+    },
+    {
+      "event_date": "2026-06-05",
+      "metric_name": "carts",
+      "metric_value": 1169
+    },
+    {
+      "event_date": "2026-06-05",
+      "metric_name": "clicks",
+      "metric_value": 6509
+    },
+    {
+      "event_date": "2026-06-05",
+      "metric_name": "impressions",
+      "metric_value": 18729
+    },
+    {
+      "event_date": "2026-06-05",
+      "metric_name": "purchase_clicks",
+      "metric_value": 355
+    },
+    {
+      "event_date": "2026-06-06",
+      "metric_name": "carts",
+      "metric_value": 1161
+    },
+    {
+      "event_date": "2026-06-06",
+      "metric_name": "clicks",
+      "metric_value": 7516
+    },
+    {
+      "event_date": "2026-06-06",
+      "metric_name": "impressions",
+      "metric_value": 29966
+    },
+    {
+      "event_date": "2026-06-06",
+      "metric_name": "purchase_clicks",
+      "metric_value": 393
+    },
+    {
+      "event_date": "2026-06-07",
+      "metric_name": "carts",
+      "metric_value": 1126
+    },
+    {
+      "event_date": "2026-06-07",
+      "metric_name": "clicks",
+      "metric_value": 7473
+    },
+    {
+      "event_date": "2026-06-07",
+      "metric_name": "impressions",
+      "metric_value": 29734
+    },
+    {
+      "event_date": "2026-06-07",
+      "metric_name": "purchase_clicks",
+      "metric_value": 345
+    },
+    {
+      "event_date": "2026-06-08",
+      "metric_name": "carts",
+      "metric_value": 1025
+    },
+    {
+      "event_date": "2026-06-08",
+      "metric_name": "clicks",
+      "metric_value": 6526
+    },
+    {
+      "event_date": "2026-06-08",
+      "metric_name": "impressions",
+      "metric_value": 18594
+    },
+    {
+      "event_date": "2026-06-08",
+      "metric_name": "purchase_clicks",
+      "metric_value": 362
+    },
+    {
+      "event_date": "2026-06-09",
+      "metric_name": "carts",
+      "metric_value": 1174
+    },
+    {
+      "event_date": "2026-06-09",
+      "metric_name": "clicks",
+      "metric_value": 6410
+    },
+    {
+      "event_date": "2026-06-09",
+      "metric_name": "impressions",
+      "metric_value": 18775
+    },
+    {
+      "event_date": "2026-06-09",
+      "metric_name": "purchase_clicks",
+      "metric_value": 384
+    },
+    {
+      "event_date": "2026-06-10",
+      "metric_name": "carts",
+      "metric_value": 1120
+    },
+    {
+      "event_date": "2026-06-10",
+      "metric_name": "clicks",
+      "metric_value": 6410
+    },
+    {
+      "event_date": "2026-06-10",
+      "metric_name": "impressions",
+      "metric_value": 18594
+    },
+    {
+      "event_date": "2026-06-10",
+      "metric_name": "purchase_clicks",
+      "metric_value": 382
+    },
+    {
+      "event_date": "2026-06-11",
+      "metric_name": "carts",
+      "metric_value": 1126
+    },
+    {
+      "event_date": "2026-06-11",
+      "metric_name": "clicks",
+      "metric_value": 6369
+    },
+    {
+      "event_date": "2026-06-11",
+      "metric_name": "impressions",
+      "metric_value": 18739
+    },
+    {
+      "event_date": "2026-06-11",
+      "metric_name": "purchase_clicks",
+      "metric_value": 372
+    },
+    {
+      "event_date": "2026-06-12",
+      "metric_name": "carts",
+      "metric_value": 1127
+    },
+    {
+      "event_date": "2026-06-12",
+      "metric_name": "clicks",
+      "metric_value": 6526
+    },
+    {
+      "event_date": "2026-06-12",
+      "metric_name": "impressions",
+      "metric_value": 18937
+    },
+    {
+      "event_date": "2026-06-12",
+      "metric_name": "purchase_clicks",
+      "metric_value": 399
+    },
+    {
+      "event_date": "2026-06-13",
+      "metric_name": "carts",
+      "metric_value": 1107
+    },
+    {
+      "event_date": "2026-06-13",
+      "metric_name": "clicks",
+      "metric_value": 6481
+    },
+    {
+      "event_date": "2026-06-13",
+      "metric_name": "impressions",
+      "metric_value": 18570
+    },
+    {
+      "event_date": "2026-06-13",
+      "metric_name": "purchase_clicks",
+      "metric_value": 349
+    },
+    {
+      "event_date": "2026-06-14",
+      "metric_name": "carts",
+      "metric_value": 1196
+    },
+    {
+      "event_date": "2026-06-14",
+      "metric_name": "clicks",
+      "metric_value": 6725
+    },
+    {
+      "event_date": "2026-06-14",
+      "metric_name": "impressions",
+      "metric_value": 19132
+    },
+    {
+      "event_date": "2026-06-14",
+      "metric_name": "purchase_clicks",
+      "metric_value": 426
+    },
+    {
+      "event_date": "2026-06-15",
+      "metric_name": "carts",
+      "metric_value": 1136
+    },
+    {
+      "event_date": "2026-06-15",
+      "metric_name": "clicks",
+      "metric_value": 6502
+    },
+    {
+      "event_date": "2026-06-15",
+      "metric_name": "impressions",
+      "metric_value": 18832
+    },
+    {
+      "event_date": "2026-06-15",
+      "metric_name": "purchase_clicks",
+      "metric_value": 378
+    },
+    {
+      "event_date": "2026-06-16",
+      "metric_name": "carts",
+      "metric_value": 1181
+    },
+    {
+      "event_date": "2026-06-16",
+      "metric_name": "clicks",
+      "metric_value": 6620
+    },
+    {
+      "event_date": "2026-06-16",
+      "metric_name": "impressions",
+      "metric_value": 19037
+    },
+    {
+      "event_date": "2026-06-16",
+      "metric_name": "purchase_clicks",
+      "metric_value": 373
+    },
+    {
+      "event_date": "2026-06-17",
+      "metric_name": "carts",
+      "metric_value": 1147
+    },
+    {
+      "event_date": "2026-06-17",
+      "metric_name": "clicks",
+      "metric_value": 6677
+    },
+    {
+      "event_date": "2026-06-17",
+      "metric_name": "impressions",
+      "metric_value": 18962
+    },
+    {
+      "event_date": "2026-06-17",
+      "metric_name": "purchase_clicks",
+      "metric_value": 415
+    },
+    {
+      "event_date": "2026-06-18",
+      "metric_name": "carts",
+      "metric_value": 1125
+    },
+    {
+      "event_date": "2026-06-18",
+      "metric_name": "clicks",
+      "metric_value": 6646
+    },
+    {
+      "event_date": "2026-06-18",
+      "metric_name": "impressions",
+      "metric_value": 19016
+    },
+    {
+      "event_date": "2026-06-18",
+      "metric_name": "purchase_clicks",
+      "metric_value": 403
+    },
+    {
+      "event_date": "2026-06-19",
+      "metric_name": "carts",
+      "metric_value": 1150
+    },
+    {
+      "event_date": "2026-06-19",
+      "metric_name": "clicks",
+      "metric_value": 6717
+    },
+    {
+      "event_date": "2026-06-19",
+      "metric_name": "impressions",
+      "metric_value": 19415
+    },
+    {
+      "event_date": "2026-06-19",
+      "metric_name": "purchase_clicks",
+      "metric_value": 412
+    },
+    {
+      "event_date": "2026-06-20",
+      "metric_name": "carts",
+      "metric_value": 1175
+    },
+    {
+      "event_date": "2026-06-20",
+      "metric_name": "clicks",
+      "metric_value": 6858
+    },
+    {
+      "event_date": "2026-06-20",
+      "metric_name": "impressions",
+      "metric_value": 19734
+    },
+    {
+      "event_date": "2026-06-20",
+      "metric_name": "purchase_clicks",
+      "metric_value": 411
+    },
+    {
+      "event_date": "2026-06-21",
+      "metric_name": "carts",
+      "metric_value": 1121
+    },
+    {
+      "event_date": "2026-06-21",
+      "metric_name": "clicks",
+      "metric_value": 6593
+    },
+    {
+      "event_date": "2026-06-21",
+      "metric_name": "impressions",
+      "metric_value": 19184
+    },
+    {
+      "event_date": "2026-06-21",
+      "metric_name": "purchase_clicks",
+      "metric_value": 388
+    },
+    {
+      "event_date": "2026-06-22",
+      "metric_name": "carts",
+      "metric_value": 1176
+    },
+    {
+      "event_date": "2026-06-22",
+      "metric_name": "clicks",
+      "metric_value": 6803
+    },
+    {
+      "event_date": "2026-06-22",
+      "metric_name": "impressions",
+      "metric_value": 19615
+    },
+    {
+      "event_date": "2026-06-22",
+      "metric_name": "purchase_clicks",
+      "metric_value": 401
+    },
+    {
+      "event_date": "2026-06-23",
+      "metric_name": "carts",
+      "metric_value": 1201
+    },
+    {
+      "event_date": "2026-06-23",
+      "metric_name": "clicks",
+      "metric_value": 6764
+    },
+    {
+      "event_date": "2026-06-23",
+      "metric_name": "impressions",
+      "metric_value": 19461
+    },
+    {
+      "event_date": "2026-06-23",
+      "metric_name": "purchase_clicks",
+      "metric_value": 389
+    },
+    {
+      "event_date": "2026-06-24",
+      "metric_name": "carts",
+      "metric_value": 1271
+    },
+    {
+      "event_date": "2026-06-24",
+      "metric_name": "clicks",
+      "metric_value": 7161
+    },
+    {
+      "event_date": "2026-06-24",
+      "metric_name": "impressions",
+      "metric_value": 20358
+    },
+    {
+      "event_date": "2026-06-24",
+      "metric_name": "purchase_clicks",
+      "metric_value": 437
+    },
+    {
+      "event_date": "2026-06-25",
+      "metric_name": "carts",
+      "metric_value": 1638
+    },
+    {
+      "event_date": "2026-06-25",
+      "metric_name": "clicks",
+      "metric_value": 6827
+    },
+    {
+      "event_date": "2026-06-25",
+      "metric_name": "impressions",
+      "metric_value": 19694
+    },
+    {
+      "event_date": "2026-06-25",
+      "metric_name": "purchase_clicks",
+      "metric_value": 624
+    },
+    {
+      "event_date": "2026-06-26",
+      "metric_name": "carts",
+      "metric_value": 1191
+    },
+    {
+      "event_date": "2026-06-26",
+      "metric_name": "clicks",
+      "metric_value": 6962
+    },
+    {
+      "event_date": "2026-06-26",
+      "metric_name": "impressions",
+      "metric_value": 20333
+    },
+    {
+      "event_date": "2026-06-26",
+      "metric_name": "purchase_clicks",
+      "metric_value": 424
+    },
+    {
+      "event_date": "2026-06-27",
+      "metric_name": "carts",
+      "metric_value": 1297
+    },
+    {
+      "event_date": "2026-06-27",
+      "metric_name": "clicks",
+      "metric_value": 6971
+    },
+    {
+      "event_date": "2026-06-27",
+      "metric_name": "impressions",
+      "metric_value": 20026
+    },
+    {
+      "event_date": "2026-06-27",
+      "metric_name": "purchase_clicks",
+      "metric_value": 431
+    },
+    {
+      "event_date": "2026-06-28",
+      "metric_name": "carts",
+      "metric_value": 1236
+    },
+    {
+      "event_date": "2026-06-28",
+      "metric_name": "clicks",
+      "metric_value": 7203
+    },
+    {
+      "event_date": "2026-06-28",
+      "metric_name": "impressions",
+      "metric_value": 20460
+    },
+    {
+      "event_date": "2026-06-28",
+      "metric_name": "purchase_clicks",
+      "metric_value": 429
+    },
+    {
+      "event_date": "2026-06-29",
+      "metric_name": "carts",
+      "metric_value": 1218
+    },
+    {
+      "event_date": "2026-06-29",
+      "metric_name": "clicks",
+      "metric_value": 7186
+    },
+    {
+      "event_date": "2026-06-29",
+      "metric_name": "impressions",
+      "metric_value": 20676
+    },
+    {
+      "event_date": "2026-06-29",
+      "metric_name": "purchase_clicks",
+      "metric_value": 398
+    },
+    {
+      "event_date": "2026-06-30",
+      "metric_name": "carts",
+      "metric_value": 1239
+    },
+    {
+      "event_date": "2026-06-30",
+      "metric_name": "clicks",
+      "metric_value": 7216
+    },
+    {
+      "event_date": "2026-06-30",
+      "metric_name": "impressions",
+      "metric_value": 20740
+    },
+    {
+      "event_date": "2026-06-30",
+      "metric_name": "purchase_clicks",
+      "metric_value": 437
+    }
+  ],
+  "daily_funnel": [
+    {
+      "event_date": "2026-06-01",
+      "impressions": 18500,
+      "clicks": 6373,
+      "carts": 1082,
+      "purchase_clicks": 349,
+      "ctr_pct": 34.45,
+      "click_to_cart_pct": 16.98,
+      "cart_to_purchase_click_pct": 32.26
+    },
+    {
+      "event_date": "2026-06-02",
+      "impressions": 18567,
+      "clicks": 6435,
+      "carts": 1132,
+      "purchase_clicks": 377,
+      "ctr_pct": 34.66,
+      "click_to_cart_pct": 17.59,
+      "cart_to_purchase_click_pct": 33.3
+    },
+    {
+      "event_date": "2026-06-03",
+      "impressions": 18461,
+      "clicks": 6502,
+      "carts": 1139,
+      "purchase_clicks": 418,
+      "ctr_pct": 35.22,
+      "click_to_cart_pct": 17.52,
+      "cart_to_purchase_click_pct": 36.7
+    },
+    {
+      "event_date": "2026-06-04",
+      "impressions": 18795,
+      "clicks": 6727,
+      "carts": 1185,
+      "purchase_clicks": 404,
+      "ctr_pct": 35.79,
+      "click_to_cart_pct": 17.62,
+      "cart_to_purchase_click_pct": 34.09
+    },
+    {
+      "event_date": "2026-06-05",
+      "impressions": 18729,
+      "clicks": 6509,
+      "carts": 1169,
+      "purchase_clicks": 355,
+      "ctr_pct": 34.75,
+      "click_to_cart_pct": 17.96,
+      "cart_to_purchase_click_pct": 30.37
+    },
+    {
+      "event_date": "2026-06-06",
+      "impressions": 29966,
+      "clicks": 7516,
+      "carts": 1161,
+      "purchase_clicks": 393,
+      "ctr_pct": 25.08,
+      "click_to_cart_pct": 15.45,
+      "cart_to_purchase_click_pct": 33.85
+    },
+    {
+      "event_date": "2026-06-07",
+      "impressions": 29734,
+      "clicks": 7473,
+      "carts": 1126,
+      "purchase_clicks": 345,
+      "ctr_pct": 25.13,
+      "click_to_cart_pct": 15.07,
+      "cart_to_purchase_click_pct": 30.64
+    },
+    {
+      "event_date": "2026-06-08",
+      "impressions": 18594,
+      "clicks": 6526,
+      "carts": 1025,
+      "purchase_clicks": 362,
+      "ctr_pct": 35.1,
+      "click_to_cart_pct": 15.71,
+      "cart_to_purchase_click_pct": 35.32
+    },
+    {
+      "event_date": "2026-06-09",
+      "impressions": 18775,
+      "clicks": 6410,
+      "carts": 1174,
+      "purchase_clicks": 384,
+      "ctr_pct": 34.14,
+      "click_to_cart_pct": 18.32,
+      "cart_to_purchase_click_pct": 32.71
+    },
+    {
+      "event_date": "2026-06-10",
+      "impressions": 18594,
+      "clicks": 6410,
+      "carts": 1120,
+      "purchase_clicks": 382,
+      "ctr_pct": 34.47,
+      "click_to_cart_pct": 17.47,
+      "cart_to_purchase_click_pct": 34.11
+    },
+    {
+      "event_date": "2026-06-11",
+      "impressions": 18739,
+      "clicks": 6369,
+      "carts": 1126,
+      "purchase_clicks": 372,
+      "ctr_pct": 33.99,
+      "click_to_cart_pct": 17.68,
+      "cart_to_purchase_click_pct": 33.04
+    },
+    {
+      "event_date": "2026-06-12",
+      "impressions": 18937,
+      "clicks": 6526,
+      "carts": 1127,
+      "purchase_clicks": 399,
+      "ctr_pct": 34.46,
+      "click_to_cart_pct": 17.27,
+      "cart_to_purchase_click_pct": 35.4
+    },
+    {
+      "event_date": "2026-06-13",
+      "impressions": 18570,
+      "clicks": 6481,
+      "carts": 1107,
+      "purchase_clicks": 349,
+      "ctr_pct": 34.9,
+      "click_to_cart_pct": 17.08,
+      "cart_to_purchase_click_pct": 31.53
+    },
+    {
+      "event_date": "2026-06-14",
+      "impressions": 19132,
+      "clicks": 6725,
+      "carts": 1196,
+      "purchase_clicks": 426,
+      "ctr_pct": 35.15,
+      "click_to_cart_pct": 17.78,
+      "cart_to_purchase_click_pct": 35.62
+    },
+    {
+      "event_date": "2026-06-15",
+      "impressions": 18832,
+      "clicks": 6502,
+      "carts": 1136,
+      "purchase_clicks": 378,
+      "ctr_pct": 34.53,
+      "click_to_cart_pct": 17.47,
+      "cart_to_purchase_click_pct": 33.27
+    },
+    {
+      "event_date": "2026-06-16",
+      "impressions": 19037,
+      "clicks": 6620,
+      "carts": 1181,
+      "purchase_clicks": 373,
+      "ctr_pct": 34.77,
+      "click_to_cart_pct": 17.84,
+      "cart_to_purchase_click_pct": 31.58
+    },
+    {
+      "event_date": "2026-06-17",
+      "impressions": 18962,
+      "clicks": 6677,
+      "carts": 1147,
+      "purchase_clicks": 415,
+      "ctr_pct": 35.21,
+      "click_to_cart_pct": 17.18,
+      "cart_to_purchase_click_pct": 36.18
+    },
+    {
+      "event_date": "2026-06-18",
+      "impressions": 19016,
+      "clicks": 6646,
+      "carts": 1125,
+      "purchase_clicks": 403,
+      "ctr_pct": 34.95,
+      "click_to_cart_pct": 16.93,
+      "cart_to_purchase_click_pct": 35.82
+    },
+    {
+      "event_date": "2026-06-19",
+      "impressions": 19415,
+      "clicks": 6717,
+      "carts": 1150,
+      "purchase_clicks": 412,
+      "ctr_pct": 34.6,
+      "click_to_cart_pct": 17.12,
+      "cart_to_purchase_click_pct": 35.83
+    },
+    {
+      "event_date": "2026-06-20",
+      "impressions": 19734,
+      "clicks": 6858,
+      "carts": 1175,
+      "purchase_clicks": 411,
+      "ctr_pct": 34.75,
+      "click_to_cart_pct": 17.13,
+      "cart_to_purchase_click_pct": 34.98
+    },
+    {
+      "event_date": "2026-06-21",
+      "impressions": 19184,
+      "clicks": 6593,
+      "carts": 1121,
+      "purchase_clicks": 388,
+      "ctr_pct": 34.37,
+      "click_to_cart_pct": 17.0,
+      "cart_to_purchase_click_pct": 34.61
+    },
+    {
+      "event_date": "2026-06-22",
+      "impressions": 19615,
+      "clicks": 6803,
+      "carts": 1176,
+      "purchase_clicks": 401,
+      "ctr_pct": 34.68,
+      "click_to_cart_pct": 17.29,
+      "cart_to_purchase_click_pct": 34.1
+    },
+    {
+      "event_date": "2026-06-23",
+      "impressions": 19461,
+      "clicks": 6764,
+      "carts": 1201,
+      "purchase_clicks": 389,
+      "ctr_pct": 34.76,
+      "click_to_cart_pct": 17.76,
+      "cart_to_purchase_click_pct": 32.39
+    },
+    {
+      "event_date": "2026-06-24",
+      "impressions": 20358,
+      "clicks": 7161,
+      "carts": 1271,
+      "purchase_clicks": 437,
+      "ctr_pct": 35.18,
+      "click_to_cart_pct": 17.75,
+      "cart_to_purchase_click_pct": 34.38
+    },
+    {
+      "event_date": "2026-06-25",
+      "impressions": 19694,
+      "clicks": 6827,
+      "carts": 1638,
+      "purchase_clicks": 624,
+      "ctr_pct": 34.67,
+      "click_to_cart_pct": 23.99,
+      "cart_to_purchase_click_pct": 38.1
+    },
+    {
+      "event_date": "2026-06-26",
+      "impressions": 20333,
+      "clicks": 6962,
+      "carts": 1191,
+      "purchase_clicks": 424,
+      "ctr_pct": 34.24,
+      "click_to_cart_pct": 17.11,
+      "cart_to_purchase_click_pct": 35.6
+    },
+    {
+      "event_date": "2026-06-27",
+      "impressions": 20026,
+      "clicks": 6971,
+      "carts": 1297,
+      "purchase_clicks": 431,
+      "ctr_pct": 34.81,
+      "click_to_cart_pct": 18.61,
+      "cart_to_purchase_click_pct": 33.23
+    },
+    {
+      "event_date": "2026-06-28",
+      "impressions": 20460,
+      "clicks": 7203,
+      "carts": 1236,
+      "purchase_clicks": 429,
+      "ctr_pct": 35.21,
+      "click_to_cart_pct": 17.16,
+      "cart_to_purchase_click_pct": 34.71
+    },
+    {
+      "event_date": "2026-06-29",
+      "impressions": 20676,
+      "clicks": 7186,
+      "carts": 1218,
+      "purchase_clicks": 398,
+      "ctr_pct": 34.76,
+      "click_to_cart_pct": 16.95,
+      "cart_to_purchase_click_pct": 32.68
+    },
+    {
+      "event_date": "2026-06-30",
+      "impressions": 20740,
+      "clicks": 7216,
+      "carts": 1239,
+      "purchase_clicks": 437,
+      "ctr_pct": 34.79,
+      "click_to_cart_pct": 17.17,
+      "cart_to_purchase_click_pct": 35.27
+    }
+  ],
+  "all_integrity_passed": true,
+  "all_planted_patterns_passed": true
+}
