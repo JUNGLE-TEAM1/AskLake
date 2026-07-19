@@ -139,6 +139,8 @@ def main():
     input_bytes = 0
     input_file_count = 0
     staging_path = None
+    materialization_staging_path = None
+    materialization_write_started = False
     output_write_started = False
     input_rows = 0
     output_file_count = 0
@@ -183,6 +185,9 @@ def main():
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
         spark = make_spark(source_collection, iceberg_target)
         spark_resources = spark_resource_manifest(spark)
+        spark_resources["cacheStorageLevel"] = "NONE"
+        spark_resources["materializationMode"] = "run_scoped_parquet_staging"
+        spark_resources["outputFrameCacheMode"] = "staged_parquet_reuse"
         source_phase = begin_phase()
         verify_spark_source_inventory(
             spark,
@@ -220,22 +225,28 @@ def main():
                 contracted_df,
                 canonical_rules,
             )
-        contracted_df = persist_reusable_frame(contracted_df)
+        staging_path = spark_staging_path(output_path, run_id)
+        materialization_staging_path = spark_materialization_staging_path(output_path, run_id)
+        delete_spark_path(spark, staging_path)
+        delete_spark_path(spark, materialization_staging_path)
+        quarantine_staging_path = f"{staging_path}_quarantine"
+        materialization_phase = begin_phase()
         try:
-            input_rows, null_required = schema_contract_summary(
-                contracted_df,
-                required_targets,
-            )
-        except Exception:
-            contracted_df.unpersist(blocking=False)
-            raise
+            materialization_write_started = True
+            contracted_df.write.mode("overwrite").parquet(materialization_staging_path)
+            staged_df = spark.read.parquet(materialization_staging_path)
+            spark_resources["materializationFileCount"] = len(staged_df.inputFiles())
+        finally:
+            finish_phase(phase_timings, "materializationStaging", materialization_phase)
+        input_rows, null_required = schema_contract_summary(
+            staged_df,
+            required_targets,
+        )
         if null_required:
-            contracted_df.unpersist(blocking=False)
             raise ValueError(
                 "Approved schema required columns produced null values after casting: "
                 f"{', '.join(null_required)}"
             )
-        cached_frames.append(contracted_df)
         validate_kafka_fixture_row_count(kafka_fixture_boundary, input_rows)
         finish_phase(phase_timings, "sourceValidation", source_phase)
         review_analysis_preflight = plan_review_row_analysis_checks(transform_steps)
@@ -245,6 +256,13 @@ def main():
             if check.get("runtimeStatus") == "missing_model_artifact" and check.get("modelRequired")
         ]
         if blocking_text_model_checks:
+            materialization_cleanup_errors = cleanup_spark_paths(
+                spark,
+                [materialization_staging_path],
+            )
+            spark_resources["materializationCleanupStatus"] = (
+                "failed" if materialization_cleanup_errors else "success"
+            )
             ended_at = now_iso()
             quality = {
                 "blockingFailures": len(blocking_text_model_checks),
@@ -293,7 +311,7 @@ def main():
             if canonical_runtime_supported:
                 execution = apply_spark_snapshot_rules(
                     spark,
-                    contracted_df,
+                    staged_df,
                     canonical_rules,
                     input_row_count=input_rows,
                     pre_materialized_transform_count=pre_materialized_transform_count,
@@ -303,7 +321,7 @@ def main():
                 quality = snapshot_quality_report(execution["quality"])
                 quarantine_df = execution["quarantine"]
             elif canonical_snapshot:
-                transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
+                transformed_df = apply_transform_steps(spark, staged_df, transform_steps)
                 canonical_quality_rules = [
                     rule for rule in canonical_rules
                     if rule and rule.get("kind") == "quality" and rule.get("enabled") is not False
@@ -313,7 +331,7 @@ def main():
                 quality = snapshot_quality_report(quality_execution["quality"])
                 quarantine_df = quality_execution["quarantine"]
             else:
-                transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
+                transformed_df = apply_transform_steps(spark, staged_df, transform_steps)
         finally:
             finish_phase(phase_timings, "ruleEvaluation", rule_phase)
         output_frame = select_final_schema_columns(transformed_df, final_schema_columns)
@@ -333,9 +351,6 @@ def main():
                 "ICEBERG_PARTITION_CONTRACT_MISMATCH "
                 f"expected={iceberg_target['partitionColumns']} resolved={resolved_partition_columns}"
             )
-        staging_path = spark_staging_path(output_path, run_id)
-        delete_spark_path(spark, staging_path)
-        quarantine_staging_path = f"{staging_path}_quarantine"
         write_df = output_df
         if source_collection.get("selectionKind") == "prefix" and input_file_count > 1:
             max_partitions = max(2, int(os.environ.get("ASKLAKE_SPARK_PREFIX_OUTPUT_PARTITIONS_MAX", "32") or "32"))
@@ -345,25 +360,13 @@ def main():
             if canonical_snapshot
             else None
         )
-        output_cache_required = (
-            not canonical_snapshot
-            or canonical_output_rows is None
-        )
-        if output_cache_required:
-            written_df = persist_reusable_frame(write_df)
-            cached_frames.append(written_df)
-            spark_resources["outputFrameCacheMode"] = "materialized_output_cache"
-        else:
-            written_df = write_df
-            spark_resources["outputFrameCacheMode"] = "source_cache_direct_publish"
-        written_df_fully_materialized = False
+        written_df = write_df
         quality_phase = begin_phase()
         try:
             if canonical_snapshot:
                 output_rows = canonical_output_rows
-                if output_cache_required:
+                if output_rows is None:
                     output_rows = written_df.count()
-                    written_df_fully_materialized = True
                     quality["outputRowCountSource"] = "spark_count_fallback"
                 else:
                     quality["outputRowCountSource"] = "canonical_quality_counters"
@@ -371,7 +374,6 @@ def main():
                 quality = evaluate_quality_rules(written_df, quality_rules)
                 output_rows = int(quality.get("sampleRows") or 0)
                 quality["outputRowCountSource"] = "legacy_quality_aggregate"
-                written_df_fully_materialized = True
                 classifier_checks = evaluate_custom_csv_classifier_checks(
                     written_df,
                     transform_steps,
@@ -413,6 +415,14 @@ def main():
             finish_phase(phase_timings, "sourcePostValidation", source_postcheck_phase)
         if quality["status"] == "fail":
             cleanup_errors = cleanup_failed_output_paths(spark, staging_path)
+            materialization_cleanup_errors = cleanup_spark_paths(
+                spark,
+                [materialization_staging_path],
+            )
+            cleanup_errors.extend(materialization_cleanup_errors)
+            spark_resources["materializationCleanupStatus"] = (
+                "failed" if materialization_cleanup_errors else "success"
+            )
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -464,8 +474,6 @@ def main():
                     "path": f"{output_path.rstrip('/')}_quarantine",
                 }
                 quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
-            if written_df_fully_materialized:
-                release_cached_frame(contracted_df, cached_frames)
             if iceberg_target:
                 output_write_started = True
                 iceberg_commit = commit_iceberg_table(
@@ -505,9 +513,14 @@ def main():
                 output_file_count = len(staged_output.inputFiles())
                 publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
         finally:
-            if not written_df_fully_materialized:
-                release_cached_frame(contracted_df, cached_frames)
             finish_phase(phase_timings, "targetPublish", publish_phase)
+        materialization_cleanup_errors = cleanup_spark_paths(
+            spark,
+            [materialization_staging_path],
+        )
+        spark_resources["materializationCleanupStatus"] = (
+            "failed" if materialization_cleanup_errors else "success"
+        )
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -569,6 +582,16 @@ def main():
             if spark is not None and output_write_started
             else []
         )
+        materialization_cleanup_errors = (
+            cleanup_spark_paths(spark, [materialization_staging_path])
+            if spark is not None and materialization_write_started
+            else []
+        )
+        cleanup_errors.extend(materialization_cleanup_errors)
+        if materialization_write_started:
+            spark_resources["materializationCleanupStatus"] = (
+                "failed" if materialization_cleanup_errors else "success"
+            )
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
@@ -603,7 +626,7 @@ def main():
         error_transform = getattr(exc, "transform", None) or transform
         if error_transform is not None:
             result["transform"] = error_transform
-        if output_write_started:
+        if output_write_started or materialization_write_started:
             result["outputCleanup"] = {
                 "errors": cleanup_errors,
                 "status": "failed" if cleanup_errors else "success",
@@ -624,6 +647,11 @@ def main():
 def spark_staging_path(output_path, run_id):
     safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
     return f"{str(output_path).rstrip('/')}.__staging__{safe_run_id}"
+
+
+def spark_materialization_staging_path(output_path, run_id):
+    safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
+    return f"{str(output_path).rstrip('/')}.__materialization__{safe_run_id}"
 
 
 def delete_spark_path(spark, path_value):
@@ -1090,13 +1118,20 @@ def exact_nonnegative_integer(value):
 
 
 def cleanup_failed_output_paths(spark, output_path):
-    errors = []
     paths = [str(output_path).rstrip("/"), f"{str(output_path).rstrip('/')}_quarantine"]
+    return cleanup_spark_paths(spark, paths)
+
+
+def cleanup_spark_paths(spark, paths):
+    errors = []
     for path in paths:
+        if not path:
+            continue
         try:
             hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(path)
             file_system = hadoop_path.getFileSystem(spark._jsc.hadoopConfiguration())
-            file_system.delete(hadoop_path, True)
+            if file_system.exists(hadoop_path) and not file_system.delete(hadoop_path, True):
+                raise RuntimeError(f"Could not delete Spark path: {path}")
         except Exception as exc:
             reason = " ".join(str(exc).split()) or exc.__class__.__name__
             errors.append({"path": path, "reason": reason[:500]})

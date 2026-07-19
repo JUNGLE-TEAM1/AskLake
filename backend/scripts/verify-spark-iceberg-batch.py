@@ -118,11 +118,18 @@ def assert_spark_file_evidence(result: dict, table: str, snapshot_id: str) -> No
     assert isinstance(phase_timings, dict), result
     for phase in (
         "sourceValidation",
+        "materializationStaging",
         "qualityAggregation",
         "sourcePostValidation",
         "targetPublish",
     ):
         assert int((phase_timings.get(phase) or {}).get("durationMs") or 0) >= 0, phase_timings
+    spark_resources = result.get("sparkResources") or {}
+    assert spark_resources.get("cacheStorageLevel") == "NONE", spark_resources
+    assert spark_resources.get("materializationMode") == "run_scoped_parquet_staging", spark_resources
+    assert int(spark_resources.get("materializationFileCount") or 0) > 0, spark_resources
+    assert spark_resources.get("materializationCleanupStatus") == "success", spark_resources
+    assert spark_resources.get("outputFrameCacheMode") == "staged_parquet_reuse", spark_resources
 
 
 def run_spark(

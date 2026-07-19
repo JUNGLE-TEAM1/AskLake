@@ -15,8 +15,12 @@ try {
   assert(actionBudget.process.status === 0, `Action-budget pipeline exited ${actionBudget.process.status}:\n${actionBudget.process.stdout}\n${actionBudget.process.stderr}`);
   assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
   assert(actionBudget.report.outputRows === 3, `Expected 3 action-budget output rows: ${JSON.stringify(actionBudget.report)}`);
-  assert(actionBudget.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected explicit reusable cache evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
-  assert(actionBudget.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected canonical counters to avoid a write-only output cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.cacheStorageLevel === "NONE", `Expected the batch path to avoid executor DataFrame cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.materializationMode === "run_scoped_parquet_staging", `Expected run-scoped Parquet materialization: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.materializationFileCount > 0, `Expected materialized Parquet files: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.materializationCleanupStatus === "success", `Expected successful materialization cleanup: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.outputFrameCacheMode === "staged_parquet_reuse", `Expected downstream work to reuse staged Parquet instead of executor cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.phaseTimings?.materializationStaging?.durationMs >= 0, `Expected materialization timing evidence: ${JSON.stringify(actionBudget.report.phaseTimings)}`);
   assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
   assert(actionBudget.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected canonical row counters to replace the duplicate output count: ${JSON.stringify(actionBudget.report.quality)}`);
@@ -29,7 +33,7 @@ try {
   assert(preMaterialized.report.outputRows === 3, `Expected 3 pre-materialized output rows: ${JSON.stringify(preMaterialized.report)}`);
   assert(preMaterialized.report.transform?.preMaterializedTransformCount === 3, `Expected all proven transform-prefix rules in the source materialization: ${JSON.stringify(preMaterialized.report.transform)}`);
   assert(preMaterialized.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two pre-materialized row-preserving SQL transforms: ${JSON.stringify(preMaterialized.report.transform)}`);
-  assert(preMaterialized.report.sparkResources?.outputFrameCacheMode === "source_cache_direct_publish", `Expected the pre-materialized source cache to publish without a second output cache: ${JSON.stringify(preMaterialized.report.sparkResources)}`);
+  assert(preMaterialized.report.sparkResources?.outputFrameCacheMode === "staged_parquet_reuse", `Expected the pre-materialized prefix to continue from staged Parquet: ${JSON.stringify(preMaterialized.report.sparkResources)}`);
   const preMaterializedReadCount = preMaterialized.process.stderr.split(sourceReadMarker).length - 1;
   assert(preMaterializedReadCount === 1, `Expected exactly 1 raw JSONL read for the pre-materialized prefix, got ${preMaterializedReadCount}:\n${preMaterialized.process.stderr}`);
 
@@ -46,13 +50,23 @@ try {
   assert(success.report.quality?.outputRowCountSource === "canonical_quality_counters", `Expected dropped/quarantined counters to derive the exact final row count: ${JSON.stringify(success.report.quality)}`);
   assert(parquetFiles(path.join(tempDir, "success-output")).length > 0, "Success target Parquet was not created.");
   assert(parquetFiles(path.join(tempDir, "success-output_quarantine")).length > 0, "Quarantine Parquet was not created.");
+  assertNoMaterializationStaging("success-output");
 
   const failed = runPipeline("failed", failBatchManifest());
   assert(failed.process.status !== 0, "Fail Batch pipeline unexpectedly exited successfully.");
   assert(failed.report.status === "failed", `Fail Batch report did not fail: ${JSON.stringify(failed.report)}`);
   assert(failed.report.failedStage === "quality", `Expected quality failure stage: ${JSON.stringify(failed.report)}`);
   assert(failed.report.quality?.blockingFailures === 1, `Expected blocking quality evidence: ${JSON.stringify(failed.report.quality)}`);
+  assert(failed.report.sparkResources?.materializationCleanupStatus === "success", `Expected failed quality run to clean materialization staging: ${JSON.stringify(failed.report.sparkResources)}`);
   assert(!existsSync(path.join(tempDir, "failed-output")), "Fail Batch must not create a target directory.");
+  assertNoMaterializationStaging("failed-output");
+
+  const schemaFailed = runPipeline("schema-failed", requiredCastFailManifest());
+  assert(schemaFailed.process.status !== 0, "Required cast failure pipeline unexpectedly exited successfully.");
+  assert(schemaFailed.report.status === "failed", `Required cast failure report did not fail: ${JSON.stringify(schemaFailed.report)}`);
+  assert(schemaFailed.report.sparkResources?.materializationCleanupStatus === "success", `Expected schema failure to clean materialization staging: ${JSON.stringify(schemaFailed.report.sparkResources)}`);
+  assert(!existsSync(path.join(tempDir, "schema-failed-output")), "Required cast failure must not create a target directory.");
+  assertNoMaterializationStaging("schema-failed-output");
 
   const mixedSqlFailed = runPipeline("mixed-sql-failed", mixedSqlFailBatchManifest());
   assert(mixedSqlFailed.process.status !== 0, "Mixed SQL + Fail Batch pipeline unexpectedly succeeded.");
@@ -62,6 +76,7 @@ try {
     !readdirSync(tempDir).some((name) => name.startsWith("mixed-sql-failed-output.__staging__")),
     "Mixed SQL + Fail Batch must clean its staging directory.",
   );
+  assertNoMaterializationStaging("mixed-sql-failed-output");
 
   console.log("verify-snapshot-spark-pipeline: ok");
 } finally {
@@ -331,6 +346,23 @@ function mixedSqlFailBatchManifest() {
   };
 }
 
+function requiredCastFailManifest() {
+  const schemaColumns = baseSchema().map((column) => (
+    column.targetName === "rating"
+      ? { ...column, nullable: false, type: "Integer" }
+      : column
+  ));
+  return {
+    partitionColumns: "",
+    qualityRules: [],
+    ruleContractVersion: "1.0",
+    ruleOutputSchema: schemaColumns.map((column) => [column.targetName, column.type]),
+    rules: [],
+    schemaColumns,
+    transformSteps: [],
+  };
+}
+
 function canonicalRule(overrides) {
   return {
     contractVersion: "1.0",
@@ -372,6 +404,13 @@ function parquetFiles(directory) {
   };
   visit(directory);
   return output;
+}
+
+function assertNoMaterializationStaging(outputName) {
+  assert(
+    !readdirSync(tempDir).some((name) => name.startsWith(`${outputName}.__materialization__`)),
+    `${outputName} must clean its materialization staging directory.`,
+  );
 }
 
 function assert(condition, message) {
