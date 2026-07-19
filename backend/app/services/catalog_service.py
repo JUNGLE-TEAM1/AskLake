@@ -53,7 +53,6 @@ from app.services.resource_permission_service import (
 )
 from app.services.trino_client import TrinoClient
 
-
 def dataset_for_latest_successful_materialization(
     dataset: CatalogDatasetResponse,
 ) -> CatalogDatasetResponse:
@@ -64,7 +63,6 @@ def dataset_for_latest_successful_materialization(
     when no successful materialization is available so callers can return the
     existing storage error with the correct dataset identity.
     """
-
     successful_runs = [
         run
         for run in dataset.materialization_runs
@@ -72,14 +70,12 @@ def dataset_for_latest_successful_materialization(
     ]
     if not successful_runs:
         return dataset
-
     def created_at(run: object) -> datetime:
         value = str(getattr(run, "created_at", ""))
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return datetime.min.replace(tzinfo=timezone.utc)
-
     selected = max(successful_runs, key=created_at)
     updates: dict[str, object] = {
         "source_run_id": selected.run_id,
