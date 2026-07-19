@@ -346,7 +346,7 @@ export function DashboardPage({
   };
 
   const openDashboardFromList = (dashboard: SavedDashboardCard) => {
-    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
+    openRuntimeDashboard(dashboard.id, "published");
   };
 
   const selectRuntimeWidget = (widgetId: string) => {
