@@ -149,6 +149,11 @@ def build_realtime_v2_plan(
                 physical_table=_RAW_VIEW,
                 schema=schema,
                 kafka_topic=topic,
+                record_parsing=(
+                    dict(source.get("recordParsing") or {})
+                    if isinstance(source, dict)
+                    else None
+                ),
             ))
             continue
         join_columns = tuple(continuous_sql_static_join_columns(job, dataset_id))
