@@ -124,6 +124,20 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
 
         session_factory.assert_not_called()
 
+    def test_external_ec2_dedicated_worker_runs_kafka_reconciliation(self) -> None:
+        with (
+            patch.object(
+                etl_service.settings,
+                "asklake_continuous_control_plane",
+                "external_ec2",
+            ),
+            patch.object(etl_service.settings, "continuous_control_plane", "worker"),
+            patch.object(etl_service, "sync_active_kafka_continuous_jobs") as sync,
+        ):
+            etl_service.sync_active_kafka_continuous_runtimes()
+
+        sync.assert_called_once()
+
     def test_external_ec2_lifespan_does_not_start_continuous_sync_loop(self) -> None:
         @asynccontextmanager
         async def internal_mcp_lifespan():
