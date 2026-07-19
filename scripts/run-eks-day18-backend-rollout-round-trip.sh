@@ -294,7 +294,7 @@ ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend \
 candidate_revision="$(release_revision)"
 [[ "$candidate_revision" =~ ^[0-9]+$ && "$candidate_revision" -gt "$prior_revision" ]] || \
   fail "candidate promotion did not advance the Helm release revision"
-verify_steady_phase "$candidate_backend_image"
+wait_for_steady_phase "$candidate_backend_image"
 write_private_evidence "candidate_promotion_passed"
 echo "backend_round_trip_candidate_promotion=passed"
 
@@ -326,7 +326,7 @@ ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend \
 final_revision="$(release_revision)"
 [[ "$final_revision" =~ ^[0-9]+$ && "$final_revision" -gt "$rollback_revision" ]] || \
   fail "candidate re-promotion did not advance the Helm release revision"
-verify_steady_phase "$candidate_backend_image"
+wait_for_steady_phase "$candidate_backend_image"
 write_private_evidence "candidate_repromotion_passed"
 echo "backend_round_trip_candidate_repromotion=passed"
 echo "backend_round_trip_final_fastapi=2_of_2"
