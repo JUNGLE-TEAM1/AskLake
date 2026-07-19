@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 RUNTIME_NAMES = {
+    'AuditTargetType',
     'ApiError',
     'ContinuousQuarantineResponse',
     'ContinuousWorkerLogsResponse',
@@ -415,7 +416,7 @@ def record_continuous_replay_override_audit(
         status_code=status.HTTP_200_OK if result == "success" else status.HTTP_502_BAD_GATEWAY,
         target_id=job.id,
         target_name=job.name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
 
 

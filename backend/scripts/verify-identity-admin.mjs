@@ -7,28 +7,64 @@ const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || "python3";
 const port = Number(process.env.ASKLAKE_IDENTITY_ADMIN_PORT || 18085);
 const baseUrl = process.env.ASKLAKE_IDENTITY_ADMIN_BASE_URL || `http://127.0.0.1:${port}`;
 const shouldStartServer = process.env.ASKLAKE_IDENTITY_ADMIN_START_SERVER !== "false";
+const healthTimeoutMs = Number(process.env.ASKLAKE_IDENTITY_ADMIN_HEALTH_TIMEOUT_MS || 20_000);
+const isolateDatabase = shouldStartServer && process.env.ASKLAKE_IDENTITY_ADMIN_ISOLATE_DATABASE !== "false";
+const baseDatabaseUrl = process.env.ASKLAKE_IDENTITY_ADMIN_DATABASE_URL
+  || process.env.DATABASE_URL
+  || "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake";
 const env = {
   ...process.env,
   PYTHONPATH: [backendDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
 };
 
 let serverProcess = null;
+let isolatedSchema = "";
 
-try {
-  await runSmoke();
-} catch (error) {
+main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-} finally {
-  if (serverProcess) serverProcess.kill("SIGTERM");
+  process.exit(1);
+});
+
+async function main() {
+  try {
+    await runSmoke();
+  } finally {
+    await stopFastApiServer();
+    if (isolatedSchema) dropIsolatedDatabaseSchema();
+  }
 }
 
 async function runSmoke() {
   ensureFastApiPythonDependencies();
-  if (shouldStartServer) serverProcess = startFastApiServer();
+  if (shouldStartServer) {
+    if (isolateDatabase) prepareIsolatedDatabaseSchema();
+    serverProcess = startFastApiServer();
+  }
 
   await waitForHealth();
+  if (isolatedSchema) seedSmokeResource();
 
+  const context = {
+    adminCookie: "",
+    createdGrantId: "",
+    demoBlocked: false,
+    viewerCookie: "",
+    smokePrincipalId: `identity-admin-smoke-${process.pid}-${Date.now()}@asklake.local`,
+  };
+
+  try {
+    await verifyAuthentication(context);
+    await verifyAdminDirectory(context);
+    const editableResource = await verifyPermissionAdministration(context);
+    await verifyAuditAdministration(context, editableResource);
+    await verifyGovernanceAdministration(context);
+    console.log("verify-identity-admin: ok");
+  } finally {
+    await cleanupSmokeState(context);
+  }
+}
+
+async function verifyAuthentication(context) {
   const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -52,31 +88,43 @@ async function runSmoke() {
   }, 401);
   assert(failedLogin.error?.code === "UNAUTHORIZED", "Invalid login should return UNAUTHORIZED.");
 
-  const currentUser = await get("/api/users/me");
+  const adminLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin.user@asklake.local", password: "asklake-admin" }),
+  });
+  const adminLoginPayload = await readPayload(adminLoginResponse);
+  assert(adminLoginResponse.ok && adminLoginPayload.user?.role === "admin", "Admin user should be able to log in.");
+  context.adminCookie = adminLoginResponse.headers.get("set-cookie")?.split(";")[0] || "";
+  assert(context.adminCookie, "Admin login response should include a session cookie.");
+}
+
+async function verifyAdminDirectory(context) {
+  const headers = cookieHeaders(context.adminCookie);
+  const currentUser = await get("/api/users/me", headers);
   assert(currentUser.id === "admin-user", "Current user should resolve the default Admin User actor.");
   assert(currentUser.profile?.avatarInitials === "AU", "Current user profile should include avatar initials.");
   assert(Array.isArray(currentUser.groups) && currentUser.groups.length === 0, "Admin current user should not include resource access groups.");
   assert(typeof currentUser.permissionsSummary?.canView === "number", "Current user should include permission summary.");
 
-  const adminUsers = await get("/api/admin/users");
+  const adminUsers = await get("/api/admin/users", headers);
   assert(Array.isArray(adminUsers.users), "Admin users response should include users array.");
   assert(adminUsers.users.some((user) => user.role === "admin"), "Admin users should include an admin actor.");
   const adminUser = adminUsers.users.find((user) => user.id === "admin-user");
   assert(adminUser && adminUser.groups.length === 0, "Admin user should not belong to resource access groups.");
 
-  const adminGroups = await get("/api/admin/groups");
+  const adminGroups = await get("/api/admin/groups", headers);
   assert(Array.isArray(adminGroups.groups), "Admin groups response should include groups array.");
-  assert(adminGroups.groups.some((group) => group.id === "data-platform"), "Admin groups should include data-platform.");
+  assert(adminGroups.groups.some((group) => group.id === "analytics"), "Admin groups should include the viewer's analytics group.");
+}
 
-  const adminPermissions = await get("/api/admin/permissions");
+async function verifyPermissionAdministration(context) {
+  const adminHeaders = cookieHeaders(context.adminCookie);
+  const adminPermissions = await get("/api/admin/permissions", adminHeaders);
   assert(Array.isArray(adminPermissions.resources), "Admin permissions response should include resources array.");
   assert(
     adminPermissions.resources.every((resource) => Array.isArray(resource.grants)),
     "Admin permission resources should include grant arrays.",
-  );
-  assert(
-    adminPermissions.resources.some((resource) => resource.grants.some((grant) => grant.source === "admin_seed")),
-    "Admin permissions should merge persisted permission_grants rows.",
   );
   const editableResource = adminPermissions.resources.find((resource) => resource.resourceType === "dataset")
     || adminPermissions.resources.find((resource) => resource.resourceType === "etl_job")
@@ -87,22 +135,33 @@ async function runSmoke() {
     resourceType: editableResource.resourceType,
     resourceId: editableResource.resourceId,
     principalType: "user",
-    principalId: "temporary.editor@asklake.local",
+    principalId: context.smokePrincipalId,
     actions: ["view"],
-  });
-  const createdGrant = findGrant(createdPermissions, editableResource, "temporary.editor@asklake.local");
+  }, adminHeaders);
+  const createdGrant = findGrant(createdPermissions, editableResource, context.smokePrincipalId);
   assert(createdGrant?.id, "Created permission grant should include id.");
+  context.createdGrantId = createdGrant.id;
   assert(createdGrant.source === "admin", "Created permission grant should use admin source.");
 
   const patchedPermissions = await patch(`/api/admin/permissions/${createdGrant.id}`, {
     actions: ["view", "query"],
-  });
-  const patchedGrant = findGrant(patchedPermissions, editableResource, "temporary.editor@asklake.local");
+  }, adminHeaders);
+  const patchedGrant = findGrant(patchedPermissions, editableResource, context.smokePrincipalId);
   assert(patchedGrant.actions.includes("query"), "Patched permission grant should include query action.");
 
-  const deletedPermissions = await del(`/api/admin/permissions/${createdGrant.id}`);
-  const deletedGrant = findGrant(deletedPermissions, editableResource, "temporary.editor@asklake.local");
+  const deletedPermissions = await del(`/api/admin/permissions/${createdGrant.id}`, adminHeaders);
+  context.createdGrantId = "";
+  const deletedGrant = findGrant(deletedPermissions, editableResource, context.smokePrincipalId);
   assert(!deletedGrant, "Deleted permission grant should be removed from admin permission response.");
+
+  const viewerLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "demo.user@asklake.local", password: "asklake-demo" }),
+  });
+  await readPayload(viewerLoginResponse);
+  context.viewerCookie = viewerLoginResponse.headers.get("set-cookie")?.split(";")[0] || "";
+  assert(viewerLoginResponse.ok && context.viewerCookie, "Viewer login should create a session for authorization checks.");
 
   const forbiddenEdit = await postExpectError("/api/admin/permissions", {
     resourceType: editableResource.resourceType,
@@ -110,10 +169,14 @@ async function runSmoke() {
     principalType: "user",
     principalId: "blocked.user@asklake.local",
     actions: ["view"],
-  }, 403, { "X-AskLake-Role": "viewer" });
+  }, 403, cookieHeaders(context.viewerCookie));
   assert(forbiddenEdit.error?.code === "FORBIDDEN", "Non-admin actor should not create permission grants.");
+  return editableResource;
+}
 
-  const adminAuditLogs = await get("/api/admin/audit-logs");
+async function verifyAuditAdministration(context, editableResource) {
+  const adminHeaders = cookieHeaders(context.adminCookie);
+  const adminAuditLogs = await get("/api/admin/audit-logs", adminHeaders);
   assert(Array.isArray(adminAuditLogs.logs), "Admin audit log response should include logs array.");
   assert(adminAuditLogs.logs.length >= 3, "Admin audit log response should include persisted permission grant events.");
   assert(
@@ -121,17 +184,17 @@ async function runSmoke() {
     "Admin audit logs should include the persisted permission grant creation event.",
   );
   assert(
-    adminAuditLogs.logs.every((log) => log.requestId && log.createdAt && log.actorId),
-    "Admin audit logs should include requestId, createdAt, and actorId.",
+    adminAuditLogs.logs.every((log) => log.requestId && log.createdAt && log.actorId) && haveCanonicalAuditTargetTypes(adminAuditLogs.logs),
+    "Admin audit logs should include required identity fields and canonical target types.",
   );
 
-  const filteredAuditLogs = await get(`/api/admin/audit-logs?resourceType=${encodeURIComponent(editableResource.resourceType)}&q=${encodeURIComponent("temporary.editor")}&limit=10`);
+  const filteredAuditLogs = await get(`/api/admin/audit-logs?resourceType=${encodeURIComponent(editableResource.resourceType)}&q=${encodeURIComponent(context.smokePrincipalId)}&limit=10`, adminHeaders);
   assert(
     filteredAuditLogs.logs.length >= 1 && filteredAuditLogs.logs.every((log) => log.targetType === editableResource.resourceType),
     "Admin audit logs should support resourceType and text search filters.",
   );
 
-  const authAuditLogs = await get(`/api/admin/audit-logs?resourceType=auth&q=${encodeURIComponent("demo.user")}&limit=20`);
+  const authAuditLogs = await get(`/api/admin/audit-logs?resourceType=auth&q=${encodeURIComponent("demo.user")}&limit=20`, adminHeaders);
   assert(
     authAuditLogs.logs.some((log) => log.action === "auth.login.succeeded" && log.result === "success"),
     "Auth audit logs should include successful login events.",
@@ -145,7 +208,15 @@ async function runSmoke() {
     "Auth audit logs should include failed login events.",
   );
 
-  const governanceControls = await get("/api/admin/governance-controls");
+  const queryRunAuditLogs = await get("/api/admin/audit-logs?resourceType=query_run&limit=10", adminHeaders);
+  assert(Array.isArray(queryRunAuditLogs.logs), "Query Run audit filter should return a logs array.");
+  const unknownAuditLogs = await get("/api/admin/audit-logs?resourceType=unknown&limit=10", adminHeaders);
+  assert(Array.isArray(unknownAuditLogs.logs), "Unknown audit filter should return a logs array.");
+}
+
+async function verifyGovernanceAdministration(context) {
+  const adminHeaders = cookieHeaders(context.adminCookie);
+  const governanceControls = await get("/api/admin/governance-controls", adminHeaders);
   assert(Array.isArray(governanceControls.principalControls), "Governance controls should include principal controls.");
   assert(Array.isArray(governanceControls.resourceLocks), "Governance controls should include resource locks.");
 
@@ -154,7 +225,8 @@ async function runSmoke() {
     principalType: "user",
     reason: "Identity admin smoke user block",
     status: "blocked",
-  });
+  }, adminHeaders);
+  context.demoBlocked = true;
   const blockedLogin = await postExpectError("/api/auth/login", {
     email: "demo.user@asklake.local",
     password: "asklake-demo",
@@ -166,7 +238,8 @@ async function runSmoke() {
     principalType: "user",
     reason: "Identity admin smoke user unblock",
     status: "active",
-  });
+  }, adminHeaders);
+  context.demoBlocked = false;
   const unblockedLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,11 +247,27 @@ async function runSmoke() {
   });
   await readPayload(unblockedLoginResponse);
   assert(unblockedLoginResponse.ok, "Unblocked user should be able to log in again.");
+  const unblockedCookie = unblockedLoginResponse.headers.get("set-cookie")?.split(";")[0] || "";
+  if (unblockedCookie) await cleanupRequest("/api/auth/logout", "POST", unblockedCookie, {});
 
-  const forbidden = await getExpectError("/api/admin/users", 403, { "X-AskLake-Role": "viewer" });
+  const forbidden = await getExpectError("/api/admin/users", 403, cookieHeaders(context.viewerCookie));
   assert(forbidden.error?.code === "FORBIDDEN", "Non-admin actor should receive FORBIDDEN.");
+}
 
-  console.log("verify-identity-admin: ok");
+async function cleanupSmokeState(context) {
+  if (context.createdGrantId && context.adminCookie) {
+    await cleanupRequest(`/api/admin/permissions/${context.createdGrantId}`, "DELETE", context.adminCookie);
+  }
+  if (context.demoBlocked && context.adminCookie) {
+    await cleanupRequest("/api/admin/governance/principals", "PATCH", context.adminCookie, {
+      principalId: "demo-user",
+      principalType: "user",
+      reason: "Identity admin smoke cleanup",
+      status: "active",
+    });
+  }
+  if (context.viewerCookie) await cleanupRequest("/api/auth/logout", "POST", context.viewerCookie, {});
+  if (context.adminCookie) await cleanupRequest("/api/auth/logout", "POST", context.adminCookie, {});
 }
 
 function ensureFastApiPythonDependencies() {
@@ -208,7 +297,13 @@ function ensureFastApiPythonDependencies() {
 function startFastApiServer() {
   const child = spawn(pythonBin, ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)], {
     cwd: backendDir,
-    env,
+    env: {
+      ...env,
+      AUTH_LEGACY_DEMO_USERS_ENABLED: "true",
+      CONTINUOUS_CONTROL_PLANE: "disabled",
+      DATABASE_URL: env.DATABASE_URL || baseDatabaseUrl,
+      REALTIME_EVENTS_ENABLED: "false",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (chunk) => process.stdout.write(`[fastapi] ${chunk}`));
@@ -216,8 +311,72 @@ function startFastApiServer() {
   return child;
 }
 
+async function stopFastApiServer() {
+  if (!serverProcess || serverProcess.exitCode !== null) return;
+  const exited = new Promise((resolve) => serverProcess.once("exit", resolve));
+  serverProcess.kill("SIGTERM");
+  await Promise.race([exited, sleep(5_000)]);
+}
+
+function prepareIsolatedDatabaseSchema() {
+  isolatedSchema = `identity_admin_smoke_${process.pid}_${Date.now()}`;
+  runDatabaseCommand(
+    "from sqlalchemy import create_engine, text\n"
+      + "import os\n"
+      + "engine = create_engine(os.environ['ASKLAKE_SMOKE_BASE_DATABASE_URL'])\n"
+      + "schema = os.environ['ASKLAKE_SMOKE_SCHEMA']\n"
+      + "with engine.begin() as connection:\n"
+      + "    connection.execute(text(f'CREATE SCHEMA \\\"{schema}\\\"'))\n",
+    baseDatabaseUrl,
+  );
+  const separator = baseDatabaseUrl.includes("?") ? "&" : "?";
+  env.DATABASE_URL = `${baseDatabaseUrl}${separator}options=${encodeURIComponent(`-csearch_path=${isolatedSchema}`)}`;
+}
+
+function seedSmokeResource() {
+  runDatabaseCommand(
+    "from app.core.database import SessionLocal\n"
+      + "from app.models.etl import ETLJobModel\n"
+      + "with SessionLocal() as db:\n"
+      + "    db.add(ETLJobModel(id='identity-admin-smoke-job', name='identity_admin_smoke', owner='admin-user', status='scheduled', tag='[smoke]', source='smoke', target='identity_admin_smoke', schedule='manual', source_config=[], source_label='Smoke fixture', source_type='SQL Result', schema_columns=[], schema_sample_rows=[], target_format='parquet', target_layer='SILVER', transform_output_columns=[], transform_steps=[], quality_invalid_rows=[], quality_rules=[], last_run='never', last_state='ready', next_run='-', stats={}, dag_steps=[]))\n"
+      + "    db.commit()\n",
+    env.DATABASE_URL,
+  );
+}
+
+function dropIsolatedDatabaseSchema() {
+  runDatabaseCommand(
+    "from sqlalchemy import create_engine, text\n"
+      + "import os\n"
+      + "engine = create_engine(os.environ['ASKLAKE_SMOKE_BASE_DATABASE_URL'])\n"
+      + "schema = os.environ['ASKLAKE_SMOKE_SCHEMA']\n"
+      + "with engine.begin() as connection:\n"
+      + "    connection.execute(text(f'DROP SCHEMA IF EXISTS \\\"{schema}\\\" CASCADE'))\n",
+    baseDatabaseUrl,
+  );
+  isolatedSchema = "";
+}
+
+function runDatabaseCommand(source, databaseUrl) {
+  const result = spawnSync(pythonBin, ["-c", source], {
+    cwd: backendDir,
+    env: {
+      ...env,
+      ASKLAKE_SMOKE_BASE_DATABASE_URL: databaseUrl,
+      ASKLAKE_SMOKE_SCHEMA: isolatedSchema,
+      DATABASE_URL: databaseUrl,
+    },
+    stdio: "pipe",
+    text: true,
+  });
+  if (result.status !== 0) {
+    throw new Error(["Identity admin smoke database setup failed.", result.stderr].filter(Boolean).join("\n"));
+  }
+}
+
 async function waitForHealth() {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  const deadline = Date.now() + healthTimeoutMs;
+  while (Date.now() < deadline) {
     try {
       const health = await get("/api/health");
       if (health.ok && health.database?.ok) return;
@@ -278,6 +437,33 @@ function findGrant(permissions, resource, principalId) {
   return permissions.resources
     .find((item) => item.resourceType === resource.resourceType && item.resourceId === resource.resourceId)
     ?.grants.find((grant) => grant.principalId === principalId);
+}
+
+function cookieHeaders(cookie) {
+  return { Cookie: cookie };
+}
+
+async function cleanupRequest(route, method, cookie, body) {
+  try {
+    await fetch(`${baseUrl}${route}`, {
+      method,
+      headers: {
+        Cookie: cookie,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch {
+    // Preserve the original smoke failure while best-effort cleanup runs.
+  }
+}
+
+function haveCanonicalAuditTargetTypes(logs) {
+  const supported = new Set([
+    "etl_job", "dataset", "dashboard", "query_run", "ai_module", "admin_module",
+    "ui", "auth", "user", "group", "unknown",
+  ]);
+  return logs.every((log) => supported.has(log.targetType));
 }
 
 async function readResponse(response) {

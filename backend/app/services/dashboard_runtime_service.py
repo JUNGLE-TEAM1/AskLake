@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
+from app.domain.audit import AuditTargetType
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
@@ -542,7 +543,7 @@ class DashboardRuntimeService:
                 status_code=exc.status_code,
                 target_id=dashboard.id,
                 target_name=dashboard.name,
-                target_type="dashboard",
+                target_type=AuditTargetType.DASHBOARD,
             )
             raise
         return dashboard

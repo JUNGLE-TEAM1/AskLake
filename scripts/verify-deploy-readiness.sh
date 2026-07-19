@@ -64,10 +64,28 @@ prepare_backend_python_dependencies() {
   "$BACKEND_PYTHON" -m pip install -r backend/requirements.txt
 }
 
+verify_python_runtime() {
+  "$PYTHON_BIN" -c '
+import sys
+
+required = (3, 13)
+actual = sys.version_info[:2]
+if actual != required:
+    print(
+        f"error: deploy readiness requires Python {required[0]}.{required[1]}; "
+        f"ASKLAKE_PYTHON_BIN resolved to Python {actual[0]}.{actual[1]}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+'
+}
+
 need_command "$DOCKER_BIN"
 need_command "$NODE_BIN"
 need_command "$NPM_BIN"
 need_command "$PYTHON_BIN"
+
+verify_python_runtime || exit 1
 
 run_check compose_config \
   "$DOCKER_BIN" compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" config --quiet

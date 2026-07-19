@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.schemas.catalog import CatalogDatasetResponse
 from app.services.governance_enforcement import require_governed_access
@@ -46,6 +47,6 @@ def require_dashboard_dataset_query_access(
             status_code=exc.status_code,
             target_id=dataset.id,
             target_name=dataset.name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
         raise

@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from app.domain.audit import AuditTargetType
 from app.schemas.common import CamelModel
 from app.schemas.permissions import PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions
 
@@ -93,7 +94,7 @@ class AdminAuditLogEntry(CamelModel):
     request_id: str
     result: Literal["success", "failed", "forbidden"]
     target_id: str
-    target_type: Literal["etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui", "auth", "user", "group"]
+    target_type: AuditTargetType
     actor_name: str | None = None
     actor_role: str | None = None
     actor_groups: list[str] = Field(default_factory=list)
