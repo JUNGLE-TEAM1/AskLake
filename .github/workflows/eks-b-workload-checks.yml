@@ -19,6 +19,12 @@ on:
       - "infra/eks/secrets/**"
       - "infra/eks/values/workloads/**"
       - "scripts/test-eks-runtime-secrets.mjs"
+      - "scripts/test-eks-trino-distributed-evidence.mjs"
+      - "scripts/deploy-eks-trino-distributed.sh"
+      - "scripts/lib/verify_eks_trino_active_workers.py"
+      - "scripts/verify-eks-trino-distributed-evidence.mjs"
+      - "scripts/verify-eks-trino-distributed-live.sh"
+      - "scripts/verify-eks-trino-distributed.sh"
       - "scripts/verify-eks-runtime-secrets.mjs"
       - "scripts/verify-eks-runtime-secrets.sh"
       - "scripts/verify-eks-web-workloads.sh"
@@ -78,6 +84,7 @@ jobs:
         run: |
           scripts/verify-eks-workloads.sh
           scripts/verify-eks-web-workloads.sh
+          node scripts/test-eks-trino-distributed-evidence.mjs
 
       - name: Verify Trino collector AWS storage contract
         working-directory: backend

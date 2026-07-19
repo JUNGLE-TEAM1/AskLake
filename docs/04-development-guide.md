@@ -1979,6 +1979,50 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 
 EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
+Trino distributed mode는 기본 비활성이다. 활성화할 때는 private values에
+`includeCoordinator=false`, 1~5 범위의 `workerReplicas`, worker General node selector, 완전한 CPU/memory
+request/limit와 termination grace를 모두 명시한다. 5는 비용·오입력 방지용 MVP 안전 상한이며 기본
+worker 수나 성능 보장이 아니다. 첫 live 후보는 Git 제외 private values에서 worker `2`개로
+시작하지만 checked-in values와 example에 실제 worker sizing을 추가하지 않는다.
+정적 검증은 기본 single render, 완전한 opt-in render, 0·6을 포함한 누락/범위 밖 입력 거부,
+coordinator-only Service, 동일 image/Secret/ServiceAccount, Airflow-only 격리와 HPA/PDB/PVC/RBAC/Secret
+부재를 확인한다.
+
+분산 discovery는 client용 virtual ClusterIP가 아니라 coordinator만 선택하는 headless
+`asklake-trino-discovery`를 사용한다. Trino 482 automatic internal TLS가 DNS 결과의 실제 Pod IP를
+IP-encoded hostname으로 변환해야 하므로 headless endpoint는 coordinator Pod IP 하나와 정확히
+일치해야 한다. coordinator는 `Recreate`로 교체하며 동시 coordinator 2개를 허용하지 않는다.
+
+```bash
+scripts/verify-eks-trino-distributed.sh
+scripts/verify-eks-workloads.sh
+node scripts/test-eks-trino-distributed-evidence.mjs
+```
+
+승인된 격리 live campaign은 `docs/eks-trino-distributed-phase0.md` 순서를 사용한다. 일반 개발/CI에서
+Helm apply, worker Pod 삭제 또는 rollback을 실행하지 않는다. receipt는 raw endpoint, ARN, bucket,
+node/query/Pod UID를 저장하지 않고 SHA-256 identity와 boolean/count만 남기며
+`verify-eks-trino-distributed-evidence.mjs`를 통과해야 한다. worker 삭제는 exact Pod UID precondition을
+사용하고 in-flight query는 성공/실패를 사실대로 기록한다. graceful shutdown 또는 fault-tolerant
+execution 증거로 해석하지 않는다. 실제 receipt 검증은 배포된 `pair1` full commit을 반드시 묶는다.
+
+```bash
+ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
+  node scripts/verify-eks-trino-distributed-evidence.mjs \
+  /path/to/redacted-trino-distributed-receipt.json
+```
+
+실제 component release는 Git 제외 mode `0600` private values를 사용해 먼저 server-side dry-run한다.
+승인된 적용은 배포 worktree의 `HEAD`와 fetched `origin/pair1`을 동일한 full SHA로 고정하고
+`ASKLAKE_TRINO_DEPLOYMENT_COMMIT`에 그 값을 전달해 `deploy-eks-trino-distributed.sh --apply`로
+수행하며 현재 immutable Trino image를 보존한다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
+query를 먼저 검증하고 그 Helm revision을 안전 rollback 기준으로 고정한다. apply 뒤
+`verify-eks-trino-distributed-live.sh <worker-count>`가 Deployment Ready뿐 아니라
+FastAPI의 materializer identity로 `system.runtime.nodes`를 조회해 coordinator 1개와 active worker
+수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 실패하면 deploy script가 안전 단일 coordinator Helm revision으로 되돌린다. 이
+active-node gate는 배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
+exact-UID 장애 복구, `2→1→2` scale-down/복원과 안전 rollback까지 같은 campaign에서 검증해야 한다.
+
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 
 `spark_job_run.py`는 배포 경로 호환 façade이고 Kafka bounded offset·MSK IAM·fixture row-count 구현은 `backend/scripts/runtime/spark_job_runtime.py`에 있다. `scripts/verify-eks-workloads.sh`는 façade의 존재와 실제 runtime 구현을 각각 검사해야 하며, 구현 문자열을 façade에 복제해 검증을 통과시키지 않는다. EKS lease와 Kubernetes identity helper를 변경하면 realtime architecture budget과 `tests.test_eks_execution_contract`, `tests.test_eks_runtime_boundary`, `tests.test_runtime_io_ports`, `npm run test:spark-kubernetes`를 함께 실행한다.
