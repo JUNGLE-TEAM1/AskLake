@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -8,6 +8,9 @@ from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
+    CatalogDatasetDeletionAcceptedResponse,
+    CatalogDatasetDeletionImpact,
+    CatalogDatasetDeletionStatusResponse,
     CatalogDatasetListResponse,
     CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
@@ -17,6 +20,10 @@ from app.schemas.catalog import (
     LineageGraphResponse,
     VerifyCatalogUniqueKeyRequest,
     VerifyCatalogUniqueKeyResponse,
+)
+from app.application.catalog_dataset_deletion import (
+    CatalogDatasetDeletionService,
+    process_catalog_dataset_deletion_by_id,
 )
 from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
@@ -38,6 +45,12 @@ def get_trino_materialization_service(db: Annotated[Session, Depends(get_db)]) -
     return TrinoMaterializationService(SqlRepository(db), CatalogRepository(db))
 
 
+def get_catalog_dataset_deletion_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> CatalogDatasetDeletionService:
+    return CatalogDatasetDeletionService(db)
+
+
 @router.get("/datasets", response_model=CatalogDatasetListResponse)
 def list_datasets(
     service: Annotated[CatalogService, Depends(get_catalog_service)],
@@ -53,6 +66,47 @@ def get_dataset(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetResponse:
     return service.get_dataset(dataset_id, actor)
+
+
+@router.get(
+    "/datasets/{dataset_id}/deletion-impact",
+    response_model=CatalogDatasetDeletionImpact,
+)
+def get_dataset_deletion_impact(
+    dataset_id: str,
+    service: Annotated[CatalogDatasetDeletionService, Depends(get_catalog_dataset_deletion_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> CatalogDatasetDeletionImpact:
+    return service.impact(dataset_id, actor)
+
+
+@router.delete(
+    "/datasets/{dataset_id}",
+    response_model=CatalogDatasetDeletionAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def delete_dataset(
+    dataset_id: str,
+    background_tasks: BackgroundTasks,
+    service: Annotated[CatalogDatasetDeletionService, Depends(get_catalog_dataset_deletion_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+    confirm_name: Annotated[str, Query(alias="confirmName", min_length=1, max_length=255)],
+) -> CatalogDatasetDeletionAcceptedResponse:
+    response = service.request(dataset_id, actor, confirm_name=confirm_name)
+    background_tasks.add_task(process_catalog_dataset_deletion_by_id, response.deletion_id)
+    return response
+
+
+@router.get(
+    "/dataset-deletions/{deletion_id}",
+    response_model=CatalogDatasetDeletionStatusResponse,
+)
+def get_dataset_deletion_status(
+    deletion_id: str,
+    service: Annotated[CatalogDatasetDeletionService, Depends(get_catalog_dataset_deletion_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> CatalogDatasetDeletionStatusResponse:
+    return service.status(deletion_id, actor)
 
 
 @router.get("/datasets/{dataset_id}/rows", response_model=CatalogDatasetRowsResponse)

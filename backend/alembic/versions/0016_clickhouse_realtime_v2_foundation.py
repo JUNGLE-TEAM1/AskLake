@@ -703,6 +703,78 @@ def upgrade() -> None:
         ["pipeline_version_id", "serving_key", "status"],
     )
 
+    routing_inspector = sa.inspect(op.get_bind())
+    if "realtime_routing_assignments" in routing_inspector.get_table_names():
+        existing_indexes = {
+            item["name"]
+            for item in routing_inspector.get_indexes("realtime_routing_assignments")
+        }
+        if "ix_realtime_routing_assignments_engine" not in existing_indexes:
+            op.create_index(
+                "ix_realtime_routing_assignments_engine",
+                "realtime_routing_assignments",
+                ["desired_engine", "status", "updated_at"],
+            )
+        if op.get_bind().dialect.name != "sqlite":
+            op.alter_column(
+                "realtime_routing_assignments",
+                "scope_id",
+                server_default=sa.text("'deployment'"),
+            )
+            op.alter_column(
+                "realtime_routing_assignments",
+                "binding_epoch",
+                server_default=sa.text("0"),
+            )
+            op.alter_column(
+                "realtime_routing_assignments",
+                "status",
+                server_default=sa.text("'pending'"),
+            )
+            existing_checks = {
+                item.get("name")
+                for item in routing_inspector.get_check_constraints(
+                    "realtime_routing_assignments"
+                )
+            }
+            for name, condition in (
+                ("ck_realtime_routing_assignments_deployment_scope", "scope_id = 'deployment'"),
+                ("ck_realtime_routing_assignments_resource_type", "resource_type IN ('dataset', 'dashboard')"),
+                ("ck_realtime_routing_assignments_engine", "desired_engine IN ('clickhouse', 'trino')"),
+                ("ck_realtime_routing_assignments_binding_epoch", "binding_epoch >= 0"),
+                (
+                    "ck_realtime_routing_assignments_sticky_bucket",
+                    "sticky_bucket IS NULL OR (sticky_bucket >= 0 AND sticky_bucket < 10000)",
+                ),
+                ("ck_realtime_routing_assignments_status", "status IN ('pending', 'active', 'disabled')"),
+                (
+                    "ck_realtime_routing_assignments_active_clickhouse_version",
+                    "status <> 'active' OR desired_engine <> 'clickhouse' OR pipeline_version_id IS NOT NULL",
+                ),
+            ):
+                if name not in existing_checks:
+                    op.create_check_constraint(
+                        name,
+                        "realtime_routing_assignments",
+                        condition,
+                    )
+            existing_foreign_keys = {
+                item.get("name")
+                for item in routing_inspector.get_foreign_keys(
+                    "realtime_routing_assignments"
+                )
+            }
+            if "fk_realtime_routing_assignments_version" not in existing_foreign_keys:
+                op.create_foreign_key(
+                    "fk_realtime_routing_assignments_version",
+                    "realtime_routing_assignments",
+                    "realtime_pipeline_versions",
+                    ["pipeline_version_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
+        return
+
     op.create_table(
         "realtime_routing_assignments",
         sa.Column(

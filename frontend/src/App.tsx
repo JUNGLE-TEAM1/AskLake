@@ -272,7 +272,8 @@ export function App() {
     catalogError,
     catalogLoading,
     createPipeline,
-    dataRequirements,
+    dataRequirements, datasetDeletionPendingById,
+    deleteDataset, loadDatasetDeletionImpact,
     deleteMaterializationRun,
     datasets,
     draftPipeline,
@@ -648,7 +649,7 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => completeWizardFlowAndMove("target", "review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => completeWizardFlowAndMove("permission", "target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={catalogError} loading={catalogLoading} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasetDeletionPendingById={datasetDeletionPendingById} datasets={datasets} error={catalogError} loading={catalogLoading} onDeleteDataset={deleteDataset} onLoadDeletionImpact={loadDatasetDeletionImpact} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} currentUser={currentUser} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}

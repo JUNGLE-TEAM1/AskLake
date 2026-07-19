@@ -19,7 +19,7 @@
 
 ## 제거 조건
 
-polling은 STACK-04 최종 검증 전 제거하지 않는다. 운영 기본값은 polling이며 다음 조건을 모두 만족한 뒤에만 hybrid 또는 sse를 선택한다.
+polling은 SSE 장애 시 자동 fallback과 운영 rollback 경로로 제거하지 않는다. Production Compose는 SSE를 기본 선택하며 다음 조건은 배포 환경에서 계속 확인한다.
 
 - durable replay와 cursor 만료 resync 검증
 - proxy buffering 비활성 및 heartbeat 확인

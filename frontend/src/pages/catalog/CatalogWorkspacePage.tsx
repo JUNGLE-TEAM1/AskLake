@@ -1,4 +1,4 @@
-import type { AuditResult, CatalogDataset } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetDeletionImpact } from "../../types";
 import { Button } from "../../components/ui/button";
 import { SemanticLayerPage } from "../semantic/SemanticLayerPage";
 import { CatalogPage as CatalogExplorerPage } from "./CatalogExplorerPage";
@@ -10,10 +10,13 @@ export function CatalogPage({
   onViewChange,
   ...catalogProps
 }: {
+  datasetDeletionPendingById: Record<string, boolean>;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onDeleteDataset: (datasetId: string) => Promise<boolean>;
+  onLoadDeletionImpact: (datasetId: string) => Promise<CatalogDatasetDeletionImpact>;
   onOpenSql: (dataset: CatalogDataset) => void;
   onRefresh?: () => void;
   onViewChange?: (view: CatalogView) => void;

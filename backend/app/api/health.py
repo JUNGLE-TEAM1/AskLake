@@ -13,6 +13,7 @@ from app.services.realtime_metrics import realtime_metrics
 from app.core.observability import metrics_snapshot
 from app.realtime.application.ingest_service import RealtimeIngestService
 from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
 
 router = APIRouter()
 
@@ -68,16 +69,30 @@ def realtime_health_check(response: Response) -> dict[str, object]:
     v2_status = "disabled"
     connector_state = "DISABLED"
     task_states: list[str] = []
+    clickhouse_ready = False
+    worker_ready = False
     if state.clickhouse_realtime_v2_enabled:
         try:
             probe = RealtimeIngestService().probe()
-            v2_ready = probe.ready
-            v2_status = "ready" if probe.ready else "degraded"
+            worker_ready = probe.runtime_ready
             connector_state = probe.connector_state
             task_states = list(probe.task_states)
         except (KafkaConnectError, ValueError):
-            v2_status = "unavailable"
             connector_state = "UNAVAILABLE"
+        client: ClickHouseClient | None = None
+        try:
+            client = ClickHouseClient.realtime_v2_reader()
+            clickhouse_ready = client.ping()
+        except (ClickHouseError, ValueError):
+            clickhouse_ready = False
+        finally:
+            if client is not None:
+                client.close()
+        # A fresh deployment has no connector until a Continuous SQL Job is
+        # started. Readiness must verify the worker and ClickHouse, not require
+        # a connector that cannot exist yet.
+        v2_ready = worker_ready and clickhouse_ready
+        v2_status = "ready" if v2_ready else "unavailable"
     realtime_v2 = {
         "enabled": state.clickhouse_realtime_v2_enabled,
         "ready": v2_ready,
@@ -92,7 +107,9 @@ def realtime_health_check(response: Response) -> dict[str, object]:
             ),
             "state": connector_state,
             "taskStates": task_states,
+            "workerReady": worker_ready,
         },
+        "clickhouse": {"ready": clickhouse_ready},
     }
     if not state.realtime_events_enabled:
         if state.clickhouse_realtime_v2_enabled:

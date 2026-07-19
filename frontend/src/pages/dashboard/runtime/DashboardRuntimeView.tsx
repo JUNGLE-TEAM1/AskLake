@@ -310,7 +310,9 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     });
   };
   const assistantContext = {
-    activeDatasetId: selectedDatasetId,
+    activeDatasetId: inspectorMode === "assistant"
+      ? assistantDatasetIds[0] ?? null
+      : selectedDatasetId,
     selectedDatasetIds: assistantDatasetIds,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
@@ -371,7 +373,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     await onCreateToolbarWidget(kind);
   };
   const handleSelectDataset = (datasetId: string) => {
-    onSelectDataset(datasetId);
     const dataset = dashboardDatasets.find((item) => item.id === datasetId);
     if (!dataset) return;
 
@@ -382,15 +383,22 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
           ? current.filter((id) => id !== datasetId)
           : [...current, datasetId]
       ));
-      if (!wasSelected) queueAssistantPromptText(dataset.name);
+      if (!wasSelected) {
+        onSelectDataset(datasetId);
+        queueAssistantPromptText(dataset.name);
+      }
       return;
     }
 
+    onSelectDataset(datasetId);
     setIsInspectorOpen(true);
     queueVisualizationPromptText(dataset.name);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
+      setAssistantDatasetIds((current) => (
+        current.includes(dataset.id) ? current : [...current, dataset.id]
+      ));
       queueAssistantPromptText(column.name);
       onSelectDataset(dataset.id);
       return;
@@ -508,7 +516,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
             isLoading={dashboardDatasetsLoading}
             onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
-            selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : []}
+            selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : undefined}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />

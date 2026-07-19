@@ -100,6 +100,18 @@ class Settings(BaseSettings):
     kafka_connect_url: str | None = None
     kafka_connect_connector_name: str = "asklake-clickhouse-realtime-v2"
     kafka_connect_request_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
+    clickhouse_v2_url: str = "https://localhost:8443"
+    clickhouse_v2_database: str = "asklake_realtime_v2"
+    clickhouse_v2_materializer_user: str = "asklake_v2_materializer"
+    clickhouse_v2_materializer_password: str | None = None
+    clickhouse_v2_reader_user: str = "asklake_v2_reader"
+    clickhouse_v2_reader_password: str | None = None
+    clickhouse_v2_tls_ca_file: str | None = None
+    clickhouse_realtime_v2_batch_max_positions: int = Field(
+        default=10_000,
+        ge=1,
+        le=100_000,
+    )
     clickhouse_url: str = "http://localhost:8123"
     clickhouse_user: str = "asklake"
     clickhouse_password: str | None = None
@@ -118,6 +130,8 @@ class Settings(BaseSettings):
     realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     review_analysis_worker_interval_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
+    catalog_deletion_worker_enabled: bool = True
+    catalog_deletion_worker_interval_seconds: float = Field(default=2.0, ge=0.5, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"
@@ -544,6 +558,42 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Kafka Engine V1 and Kafka Connect V2 cannot own the same active ClickHouse generation"
                 )
+        if not self.clickhouse_realtime_v2_enabled or self.is_development_runtime:
+            return
+        parsed_url = urlparse(self.clickhouse_v2_url)
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError(
+                "CLICKHOUSE_V2_URL must be an explicit https URL outside local development"
+            )
+        if re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*",
+            self.clickhouse_v2_database,
+        ) is None:
+            raise ValueError(
+                "CLICKHOUSE_V2_DATABASE must be a safe ClickHouse identifier"
+            )
+        if not self.clickhouse_v2_tls_ca_file:
+            raise ValueError(
+                "CLICKHOUSE_V2_TLS_CA_FILE is required outside local development"
+            )
+        credentials = {
+            "CLICKHOUSE_V2_MATERIALIZER_PASSWORD": self.clickhouse_v2_materializer_password,
+            "CLICKHOUSE_V2_READER_PASSWORD": self.clickhouse_v2_reader_password,
+        }
+        for key, secret in credentials.items():
+            normalized = str(secret or "")
+            if len(normalized) < 16 or "replace-with-" in normalized:
+                raise ValueError(
+                    f"{key} must be a non-placeholder value with at least 16 characters"
+                )
+        if self.clickhouse_v2_materializer_user == self.clickhouse_v2_reader_user:
+            raise ValueError(
+                "CLICKHOUSE_V2_MATERIALIZER_USER and CLICKHOUSE_V2_READER_USER must be distinct"
+            )
+        if self.clickhouse_v2_materializer_password == self.clickhouse_v2_reader_password:
+            raise ValueError(
+                "CLICKHOUSE_V2 materializer and reader passwords must be distinct"
+            )
 
     def _validate_ai_runtime(self) -> None:
         if (

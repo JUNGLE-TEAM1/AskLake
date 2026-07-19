@@ -267,3 +267,14 @@ test("dashboard assistant surfaces reject stale responses before persistence", (
     assert.match(source, /complete\(lease\)/);
   }
 });
+
+test("dashboard assistant sends and renders the same explicit multi-dataset selection", () => {
+  const runtimeView = readFileSync(new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url), "utf8");
+  const sidebar = readFileSync(new URL("../src/pages/dashboard/runtime/DatasetSidebar.tsx", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../src/pages/dashboard/runtime/DashboardAssistantPanel.tsx", import.meta.url), "utf8");
+
+  assert.match(runtimeView, /setAssistantDatasetIds\(\(current\) => \([\s\S]*current\.includes\(dataset\.id\)[\s\S]*\[\.\.\.current, dataset\.id\]/);
+  assert.match(runtimeView, /selectedDatasetIds=\{inspectorMode === "assistant" \? assistantDatasetIds : undefined\}/);
+  assert.match(sidebar, /selectedDatasetIds !== undefined[\s\S]*selectedDatasetIds\.includes\(dataset\.id\)[\s\S]*dataset\.id === selectedDatasetId/);
+  assert.match(panel, /selectedDatasetIds,[\s\S]*selectedWidgetId/);
+});

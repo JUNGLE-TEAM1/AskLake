@@ -25,6 +25,7 @@ from app.services.realtime_event_service import realtime_event_dispatcher
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
 from app.services.rag_service import RagService
 from app.services.review_analysis_service import ReviewAnalysisService
+from app.application.catalog_dataset_deletion import process_next_catalog_dataset_deletion
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,17 @@ async def review_analysis_worker_loop() -> None:
         await asyncio.sleep(settings.review_analysis_worker_interval_seconds)
 
 
+async def catalog_deletion_worker_loop() -> None:
+    await asyncio.sleep(settings.catalog_deletion_worker_interval_seconds)
+    while True:
+        try:
+            while await asyncio.to_thread(process_next_catalog_dataset_deletion):
+                pass
+        except Exception:  # Keep durable queued work recoverable on the next tick.
+            logger.exception("Catalog dataset deletion worker tick failed")
+        await asyncio.sleep(settings.catalog_deletion_worker_interval_seconds)
+
+
 def initialize_auth_on_startup() -> None:
     with SessionLocal() as db:
         # Some operational tests inject an auth-only session sentinel. Real
@@ -96,6 +108,8 @@ async def lifespan(_app: FastAPI):
     scheduled_task = asyncio.create_task(scheduled_job_tick_loop())
     review_analysis_task = asyncio.create_task(review_analysis_worker_loop())
     background_tasks = [snapshot_airflow_task, scheduled_task, review_analysis_task]
+    if settings.catalog_deletion_worker_enabled:
+        background_tasks.append(asyncio.create_task(catalog_deletion_worker_loop()))
     if settings.continuous_control_plane == "embedded":
         background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     if settings.realtime_events_enabled:

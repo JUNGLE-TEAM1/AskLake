@@ -9,6 +9,12 @@
 
 `POST /api/catalog/datasets/{datasetId}/unique-keys/verify-and-register`는 `{ columns: string[] }`을 받고 Dataset `manage` 권한을 검사한 뒤 query 가능한 정적 Iceberg table에서 exact `count(*)`, invalid key count, distinct key count를 계산한다. `invalidKeyRows=0`이고 `totalRows=distinctKeys`일 때만 단일/복합 key set을 Catalog에 저장한다. 실패는 `CATALOG_UNIQUE_KEY_VERIFICATION_FAILED`와 세 count를 반환하며 추정치나 UI 선언만으로 유일성을 등록하지 않는다. Continuous SQL UI는 `CONTINUOUS_SQL_STATIC_KEY_NOT_UNIQUE`의 `datasetId`와 `joinColumns`를 이용해 이 API를 자동 호출하고 validate/create/start를 재개한다.
 
+### Catalog Dataset 전체 삭제
+
+`GET /api/catalog/datasets/{datasetId}/deletion-impact`는 `delete` 권한을 확인하고 `canDelete`, `blockers`, `artifacts`, `retainedResources`를 반환한다. active ETL/SQL/Continuous workload, 중지되지 않은 schedule, Dataset을 source로 쓰는 Job, downstream lineage, Dashboard widget, Semantic model/metric/dimension/relationship, active RAG classification/index 작업, AskLake 소유권을 입증할 수 없는 storage path는 blocker다.
+
+`DELETE /api/catalog/datasets/{datasetId}?confirmName={datasetName}`는 exact Dataset 이름 확인과 같은 impact를 transaction 직전에 다시 검사하고 blocker가 없을 때 `catalog_dataset_deletions` receipt를 저장한 뒤 `202`와 `{ deletionId, datasetId, status }`를 반환한다. 이름이 다르면 `422 CATALOG_DATASET_DELETE_CONFIRMATION_MISMATCH`다. `GET /api/catalog/dataset-deletions/{deletionId}`는 durable 상태와 `errorCode`/`errorMessage`를 반환한다. 성공 전에는 Dataset row를 유지하며, worker는 관리 Iceberg/ClickHouse/local/S3/RAG artifact를 먼저 멱등 삭제하고 내부 Dataset metadata를 정리한다. 감사 로그, 완료 Run 이력, 중지된 producer Job 정의와 deletion receipt는 보존한다. receipt가 존재하는 Dataset ID로의 늦은 Catalog publication은 `409 DATASET_DELETION_FENCED`다.
+
 PR 07의 내부 리팩터링은 기존 API 계약에 additive field도 추가하지 않는다. Pipeline draft validation, persisted Job mapping, finite Snapshot command planning, Catalog payload publication을 application/domain 경계로 옮기되 다음 외부 계약을 그대로 유지한다.
 
 - `recordParsing`, `schemaColumns`, Rule, schedule, permission, target request shape
@@ -34,6 +40,7 @@ Catalog terminal publication은 `datasetId`, materialization version, storage lo
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6b | P1 | `GET /api/catalog/datasets/{datasetId}/rows` | 최신 성공 materialization sample page 조회 |
+| 6c | P1 | `GET /api/catalog/datasets/{datasetId}/deletion-impact`, `DELETE /api/catalog/datasets/{datasetId}`, `GET /api/catalog/dataset-deletions/{deletionId}` | 목록 직접 Dataset 삭제 영향도·작업 상태 |
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
@@ -115,7 +122,7 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
-Production startup은 기본적으로 알려진 legacy demo 계정을 `disabled`로 바꾸고 해당 세션을 폐기합니다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시할 수 있습니다. `scripts/verify-deploy-env.sh`는 두 값의 lowercase boolean 및 일치를 검증하고, backend startup은 이전 deploy에서 disabled된 demo 계정을 active로 복구합니다. 폐기된 세션은 복구하지 않으므로 다시 로그인해야 합니다. 운영 인증은 `BOOTSTRAP_ADMIN_*`, Secure session cookie, client header fallback 차단 계약을 계속 유지합니다.
+Production startup은 기존 `auth_users.status`와 `auth_sessions`를 변경하지 않으며 재배포만으로 legacy demo 계정을 비활성화하지 않습니다. `AUTH_LEGACY_DEMO_USERS_ENABLED=false` 또는 미설정이면 알려진 demo identity를 새로 만들거나 disabled 계정을 복구하지 않고 `BOOTSTRAP_ADMIN_*` 계정만 보장합니다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시해 누락 demo 계정을 생성하고 기존 demo 계정을 active로 동기화합니다. `scripts/verify-deploy-env.sh`는 두 값의 lowercase boolean 및 일치를 검증합니다. 운영 인증은 Secure session cookie와 client header fallback 차단 계약을 계속 유지하며 계정 status 변경은 명시적인 관리 작업이 소유합니다.
 
 운영 세션 쿠키는 기본적으로 `Secure`, `HttpOnly`, `SameSite=Lax`를 사용합니다. HTTPS가 아직 없는 제한된 dev HTTP ALB는 `AUTH_SESSION_COOKIE_SECURE=false`를 명시할 수 있지만 `HttpOnly`와 `SameSite=Lax`는 유지되며, 이 예외는 header-auth fallback, public signup, legacy demo 계정 정책을 변경하지 않습니다. HTTPS 전환 뒤에는 반드시 `true`로 복구합니다.
 
@@ -547,8 +554,8 @@ type CatalogDataset = {
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
-  status: "available" | "approval_required";
-  freshness: "latest" | "stale" | "approval";
+  status: "preparing" | "available" | "approval_required";
+  freshness: "latest" | "realtime" | "stale" | "approval";
   source: string;
   rows: string;
   size: string;
@@ -659,6 +666,8 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 ### Kafka Continuous Runtime
 
 Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, `desiredState`, `observedState`, `stateRevision`, `fencingToken`, heartbeat, lag, last flush, counters, Rule identity, `lastError`, `errorDetail`) to `JobRowData`. `status`와 `lastError`는 기존 client를 위한 호환 field이며 신규 상태·오류 field는 additive다. 상세 소유권과 전이 규칙은 [Continuous runtime 상태·오류 소유권](refactor-2026/contracts/runtime-state-ownership.md)을 따른다.
+
+`CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`가 모두 설정된 일반 Kafka Continuous Job은 같은 command API를 유지하되 Spark Structured Streaming을 시작하지 않는다. control-plane worker가 Kafka Connect raw sink를 등록·재개하고 `raw_events_v2_current`의 해당 topic/partition/offset을 관찰한다. `startContinuous` 직후 Catalog Dataset은 pending serving binding과 `status=preparing`으로 저장되며, 첫 offset은 active binding, `status=available`, `dataset_freshness`, `dataset_revision_commits`, schema-v2 `dataset.revision.committed` event를 같은 transaction으로 게시한다. Dashboard reader는 active binding과 `streamingSource.topic`으로 ClickHouse raw view를 제한한다. V2 상태는 Spark runtime report 대신 Connector state와 ClickHouse offset을 `continuousRuntime`에 직접 투영하고 `processingResult.worker`는 `kafka_connect_clickhouse_v2`다. 이 hot-ingest slice는 S3/Iceberg archive를 만들지 않는다.
 
 `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. In an embedded local runtime they launch or signal a Spark Structured Streaming worker. In production web/API mode they first persist intent and return `processingResult.controlPlaneOnly=true`; the separately deployed, PostgreSQL-lease-owning Continuous worker alone performs the Spark side effect. Both modes reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Start/resume also passes PostgreSQL topic/partition `nextOffset` watermarks; `foreachBatch` filters older offsets before any write so a full duplicate is skipped and a partial overlap publishes only the unseen suffix. Each non-empty filtered batch derives a deterministic Run/source boundary from Job, checkpoint, consumer identity, a durable publication sequence and offset ranges, then appends `_asklake_run_id`-marked rows to the persisted Iceberg target. Spark raw batch ID is diagnostic only. A failure after Iceberg commit and before manifest/checkpoint completion reuses the same committed marker on retry instead of appending duplicates. Job hydrate verifies the exact reported snapshot and exact `_asklake_run_id` row count through Trino before Catalog cursor advancement and does this reconciliation before worker liveness failure handling. A terminal stale report window is recovered by listing completed S3 manifests after the acknowledged cursor; an incomplete last manifest never advances the ACK. An exited/missing/stale worker becomes `failed` only while active, and intentional pause/stop exits complete as `paused`/`stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
@@ -3876,7 +3885,8 @@ Query:
 
 - `q?: string`: action, actor, api path, target, metadata text 검색.
 - `actorId?: string`: actor id/name 부분 검색.
-- `resourceType?: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group"`.
+- `resourceType?: "etl_job" | "dataset" | "dashboard" | "query_run" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group" | "unknown"`.
+  - `unknown`은 현재 계약에 없는 레거시 저장 타입과 명시적인 `unknown` 행을 함께 조회합니다.
 - `result?: "success" | "failed" | "forbidden"`.
 - `from?: ISO datetime`.
 - `to?: ISO datetime`.
@@ -4005,9 +4015,13 @@ type AuditEntry = {
   request_id: string;
   result: "success" | "failed" | "forbidden";
   target_id: string;
-  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
+  target_type: "etl_job" | "dataset" | "dashboard" | "query_run" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group" | "unknown";
 };
 ```
+
+계약 밖의 레거시 `target_type`은 응답에서 `unknown`으로 투영하고 원래 값은 해당 로그의 `metadata.rawTargetType`에 보존합니다. 신규 감사 이벤트 writer는 `AuditTargetType`의 알려진 enum member만 전달해야 하며 문자열이나 `unknown` 쓰기는 거부합니다. `unknown`은 레거시 읽기 호환 전용이고 신규 오타를 숨기는 저장값으로 사용하지 않습니다.
+
+OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현될 수 있으므로 하위 호환성 판정은 reference를 resolve한 뒤 primitive type과 enum 값의 의미를 비교합니다. 기존 enum 제거와 type 변경은 breaking이며 값 추가는 additive입니다.
 
 ## 10. 백엔드 구현 체크리스트
 
@@ -4087,8 +4101,8 @@ type PermissionGrant = {
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
-| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. 기본 false |
-| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink opt-in의 effective 값. 기본 false |
+| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
+| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
 | clickhouseRealtimeConsumerOwner | disabled \| kafka_engine_v1 \| kafka_connect_v2 | deployment의 단일 consumer owner 설정. readiness나 실제 claim을 뜻하지 않음 |
 | latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |

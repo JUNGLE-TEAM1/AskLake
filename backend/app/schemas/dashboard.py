@@ -11,7 +11,10 @@ from app.schemas.permissions import PermissionGrant, ResourcePermissions
 def _reject_corrupt_dashboard_title(value: str | None) -> str | None:
     if value is None:
         return value
-    if re.fullmatch(r"[\s?\ufffd]+", value):
+    # Reject titles made entirely from whitespace, punctuation, or Unicode
+    # replacement characters. This catches mojibake such as "???? (??)"
+    # while still allowing a valid title that happens to contain punctuation.
+    if value.strip() and not re.search(r"[^\W_\ufffd]", value, re.UNICODE):
         raise ValueError("Dashboard title contains only replacement characters.")
     return value
 
@@ -165,6 +168,8 @@ class CreateDashboardRequest(CamelModel):
     owner: str | None = None
     sql_run_id: str | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardCardResponse(CamelModel):
     dashboard: DashboardCard
@@ -172,6 +177,8 @@ class DashboardCardResponse(CamelModel):
 
 class UpdateDashboardRequest(CamelModel):
     title: str
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DeleteDashboardResponse(CamelModel):
@@ -392,6 +399,8 @@ class DashboardWidgetQueryResponse(CamelModel):
 
 class CreateDraftPageRequest(CamelModel):
     title: str
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DashboardPageResponse(CamelModel):

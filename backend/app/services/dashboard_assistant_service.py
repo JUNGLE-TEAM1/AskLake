@@ -38,6 +38,15 @@ LOW_SIGNAL_PROMPTS = {
     "아무거나", "진행해줘", "랜덤으로진행해줘", "랜덤으로해줘",
 }
 DASHBOARD_ASSISTANT_PROMPT_LIMIT = 8_000
+JOIN_INTENT_PATTERN = re.compile(
+    "(?:join|merge|\uC870\uC778|\uACB0\uD569|\uD569\uCE58|\uD569\uCCD0|\uBB36\uC5B4)",
+    re.IGNORECASE,
+)
+MULTI_SOURCE_PATTERN = re.compile(
+    "(?:\uB450\\s*(?:\uAC1C|\uAC1C\uC758)?\\s*\uB370\uC774\uD130|"
+    "\uC5EC\uB7EC\\s*\uB370\uC774\uD130|\uBCF5\uC218\\s*\uB370\uC774\uD130)",
+    re.IGNORECASE,
+)
 
 
 class DashboardAssistantService:
@@ -274,11 +283,28 @@ def _requires_materialized_join_dataset(request: DashboardAssistantRequest) -> b
     if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
         return False
     normalized = request.prompt.strip().lower()
-    if not re.search(r"(?:join|조인|결합)", normalized):
+    selected_dataset_ids = {
+        dataset_id.strip()
+        for dataset_id in request.selected_dataset_ids
+        if dataset_id.strip()
+    }
+    explicitly_multi_source = bool(MULTI_SOURCE_PATTERN.search(normalized))
+    join_intent = bool(JOIN_INTENT_PATTERN.search(normalized))
+
+    # A dashboard widget is bound to one physical dataset. Two or more raw
+    # selections must therefore be materialized first, even when the prompt
+    # merely says "make a chart" and never spells out JOIN.
+    if len(selected_dataset_ids) > 1 or explicitly_multi_source:
+        return True
+    if not join_intent:
         return False
-    selected_count = len(set(request.selected_dataset_ids))
-    explicitly_multi_source = bool(re.search(r"(?:두\s*(?:개|개의)?\s*데이터|여러\s*데이터|복수\s*데이터)", normalized))
-    return selected_count != 1 or explicitly_multi_source
+
+    # One explicitly selected dataset can already be a saved JOIN result. The
+    # currentDatasetId is the equivalent legacy single-selection signal.
+    effective_dataset_count = len(selected_dataset_ids)
+    if effective_dataset_count == 0 and request.current_dataset_id:
+        effective_dataset_count = 1
+    return effective_dataset_count != 1
 
 
 def _build_visualization_retry_prompt(prompt: str) -> str:

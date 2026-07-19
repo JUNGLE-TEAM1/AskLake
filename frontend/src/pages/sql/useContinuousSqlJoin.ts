@@ -43,8 +43,14 @@ export function useContinuousSqlJoin({
   const [catalogDataset, setCatalogDataset] = useState<CatalogDataset | null>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const relationMix = useMemo(() => getContinuousSqlRelationMix(selectedDatasets), [selectedDatasets]);
+  const v2Enabled = Boolean(
+    featureConfig?.clickhouseRealtimeV2Enabled
+      && featureConfig.kafkaConnectSinkEnabled
+      && featureConfig.clickhouseRealtimeConsumerOwner === "kafka_connect_v2",
+  );
   const featureEnabled = Boolean(
-    featureConfig?.continuousSqlJoinEnabled && featureConfig.clickhouseContinuousJoinEnabled,
+    featureConfig?.continuousSqlJoinEnabled
+      && (featureConfig.clickhouseContinuousJoinEnabled || v2Enabled),
   );
 
   useEffect(() => {
@@ -83,6 +89,11 @@ export function useContinuousSqlJoin({
           try {
             const published = await getCatalogDataset(latest.outputDatasetId);
             if (!active) return;
+            if (published.status !== "available") {
+              setProgressMessage("Kafka 소비 준비 완료 · 첫 실제 이벤트 게시를 기다리고 있습니다.");
+              if (active) timer = globalThis.setTimeout(() => void poll(), 1_000);
+              return;
+            }
             setCatalogDataset(published);
             setProgressMessage("첫 실제 이벤트가 JOIN되어 GOLD 카탈로그와 대시보드 데이터 소스에 게시됐습니다.");
             return;
@@ -156,7 +167,13 @@ export function useContinuousSqlJoin({
         clientRequestId: createClientRequestId(),
         name: `${outputName.trim()} Continuous SQL`,
         output: {
-          clickhouseTarget: { database: "asklake", engine: "clickhouse", table: outputIdentity.table },
+          clickhouseTarget: v2Enabled
+            ? {
+                database: "asklake_realtime_v2",
+                engine: "clickhouse",
+                table: "serving_events_v2",
+              }
+            : { database: "asklake", engine: "clickhouse", table: outputIdentity.table },
           datasetId: outputIdentity.datasetId,
           datasetName: outputName.trim(),
           layer: "GOLD",

@@ -6,8 +6,8 @@ from app.schemas.common import CamelModel, CursorPageMeta
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
-DatasetFreshness = Literal["latest", "stale", "approval"]
-DatasetStatus = Literal["available", "approval_required"]
+DatasetFreshness = Literal["latest", "realtime", "stale", "approval"]
+DatasetStatus = Literal["preparing", "available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
@@ -16,6 +16,7 @@ MaterializationSourceKind = Literal["etl", "sql", "kafka", "continuous_sql"]
 MaterializationMode = Literal["snapshot", "delta"]
 QueryEngineTableFormat = Literal["iceberg", "parquet"]
 QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
+CatalogDatasetDeletionStatus = Literal["queued", "validating", "purging", "metadata_cleanup", "succeeded", "failed"]
 PhysicalBindingRole = Literal["serving", "archive"]
 PhysicalBindingEngine = Literal["clickhouse", "trino"]
 PhysicalBindingStatus = Literal["pending", "active", "stale", "failed"]
@@ -220,6 +221,45 @@ class VerifyCatalogUniqueKeyResponse(CamelModel):
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str
+
+
+class CatalogDatasetDeletionBlocker(CamelModel):
+    resource_type: str
+    resource_id: str
+    resource_name: str
+    reason: str
+
+
+class CatalogDatasetDeletionArtifact(CamelModel):
+    kind: str
+    location: str
+
+
+class CatalogDatasetDeletionImpact(CamelModel):
+    artifacts: list[CatalogDatasetDeletionArtifact] = Field(default_factory=list)
+    blockers: list[CatalogDatasetDeletionBlocker] = Field(default_factory=list)
+    can_delete: bool
+    dataset_id: str
+    dataset_name: str
+    estimated_size_bytes: int = 0
+    retained_resources: list[str] = Field(default_factory=list)
+
+
+class CatalogDatasetDeletionAcceptedResponse(CamelModel):
+    dataset_id: str
+    deletion_id: str
+    status: CatalogDatasetDeletionStatus
+
+
+class CatalogDatasetDeletionStatusResponse(CamelModel):
+    created_at: str
+    dataset_id: str
+    dataset_name: str
+    deletion_id: str
+    error_code: str | None = None
+    error_message: str | None = None
+    status: CatalogDatasetDeletionStatus
+    updated_at: str
 
 
 class CreateDerivedDatasetMetadata(CamelModel):

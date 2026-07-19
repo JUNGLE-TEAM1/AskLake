@@ -205,6 +205,11 @@ def reconcile_continuous_runtime(
     )
     if not signal_applied:
         return
+    if worker_status.get("worker") == "kafka_connect_clickhouse_v2":
+        _reconcile_clickhouse_kafka_ingest_v2(
+            db, job, runtime, worker_status, container_state, worker, hooks
+        )
+        return
     payload, contract_initialized, evidence = _runtime_evidence(
         runtime, report_document, worker_status, container_state
     )
@@ -311,6 +316,125 @@ def _apply_deferred_terminal_signal(
         runtime.last_error = str(exc)
         etl_repository.save_kafka_continuous_command(db, job, runtime)
         return worker_status, container_state, False
+
+
+def _reconcile_clickhouse_kafka_ingest_v2(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    worker_status: dict[str, Any],
+    container_state: str,
+    worker: KafkaRuntimeGateway,
+    hooks: ContinuousReconciliationHooks,
+) -> None:
+    """Project Kafka Connect V2 evidence without waiting for a Spark report."""
+
+    requested_action = _optional_string(worker_status.get("requestedAction"))
+    if container_state in {"exited", "missing"}:
+        if runtime.status in {"pausing", "stopping"} or requested_action in {
+            "pause",
+            "stop",
+            "terminate",
+        }:
+            terminal_status = (
+                "paused"
+                if runtime.status == "pausing" or requested_action == "pause"
+                else "stopped"
+            )
+            _apply_clickhouse_kafka_ingest_v2_terminal(
+                db, job, runtime, terminal_status, container_state, hooks
+            )
+            return
+        if runtime.status in {"starting", "running"}:
+            _restart_missing_worker(db, job, runtime, worker, hooks)
+            return
+
+    if container_state not in {"running", "starting", "created", "healthy"}:
+        message = _optional_string(worker_status.get("error"))
+        if message:
+            if runtime.status != "failed":
+                runtime.failed_count = int(runtime.failed_count or 0) + 1
+            runtime.status = "failed"
+            runtime.last_error = message
+            runtime.metrics = record_runtime_error(
+                runtime.metrics,
+                stage=ContinuousErrorStage.EXECUTION,
+                code="kafka_connect_clickhouse_v2_status_failed",
+                message=message,
+                retryable=True,
+                context={"jobId": job.id},
+            )
+            job.status = "failed"
+            job.last_state = "Kafka Connect → ClickHouse V2 수집 상태 확인 실패"
+            job.progress = None
+            hooks.sync_session(db, runtime)
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return
+
+    try:
+        total_rows = max(0, int(worker_status.get("storedCount") or 0))
+    except (TypeError, ValueError):
+        total_rows = 0
+    observed = "running" if container_state in {"running", "healthy"} else "starting"
+    runtime.consumed_count = max(int(runtime.consumed_count or 0), total_rows)
+    runtime.stored_count = max(int(runtime.stored_count or 0), total_rows)
+    runtime.status = observed
+    runtime.last_error = None
+    runtime.metrics = {
+        **(runtime.metrics or {}),
+        "clickhouseKafkaIngestV2": {
+            "offsets": list(worker_status.get("clickhouseOffsets") or []),
+            "publicationRevision": worker_status.get("publicationRevision"),
+            "storedCount": total_rows,
+            "worker": "kafka_connect_clickhouse_v2",
+        },
+    }
+    runtime.metrics = clear_runtime_error(runtime.metrics)
+    runtime.metrics = record_runtime_observation(
+        runtime.metrics,
+        observed,
+        default_public_status=observed,
+        worker_attempt_id=_optional_string(worker_status.get("workerAttemptId")),
+    )
+    job.status = "running"
+    if observed == "running" and total_rows > 0:
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 중 · Catalog/Dashboard 게시됨"
+        job.progress = {"label": "Kafka Connect V2 수집 중", "value": 70}
+    elif observed == "running":
+        job.last_state = "Kafka Connect → ClickHouse V2 첫 offset 대기"
+        job.progress = {"label": "Kafka Connect V2 첫 데이터 대기", "value": 20}
+    else:
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 시작 확인 중"
+        job.progress = {"label": "Kafka Connect V2 시작 확인 중", "value": 10}
+    hooks.sync_session(db, runtime)
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
+
+
+def _apply_clickhouse_kafka_ingest_v2_terminal(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    terminal_status: str,
+    container_state: str,
+    hooks: ContinuousReconciliationHooks,
+) -> None:
+    runtime.status = terminal_status
+    runtime.metrics = clear_runtime_error(runtime.metrics)
+    runtime.metrics = record_runtime_observation(
+        runtime.metrics,
+        observed_state_from_evidence(terminal_status, container_state),
+        default_public_status=terminal_status,
+    )
+    runtime.last_error = None
+    if terminal_status == "paused":
+        job.status = "paused"
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 일시정지됨"
+    else:
+        job.status = "stopped"
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 중지됨"
+    job.progress = None
+    hooks.sync_session(db, runtime)
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
 
 
 def _runtime_evidence(

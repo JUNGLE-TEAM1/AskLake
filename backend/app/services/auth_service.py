@@ -223,26 +223,6 @@ class AuthService:
         if changed:
             self.db.commit()
 
-    def _disable_legacy_demo_users(self) -> None:
-        demo_ids = [str(item["id"]) for item in DEMO_AUTH_USERS]
-        demo_emails = [str(item["email"]) for item in DEMO_AUTH_USERS]
-        users = list(self.db.scalars(
-            select(AuthUserModel).where(
-                AuthUserModel.id.in_(demo_ids) | AuthUserModel.email.in_(demo_emails)
-            )
-        ))
-        if not users:
-            return
-        user_ids = [user.id for user in users]
-        changed = False
-        for user in users:
-            if user.status != "disabled":
-                user.status = "disabled"
-                changed = True
-        deleted = self.db.execute(delete(AuthSessionModel).where(AuthSessionModel.user_id.in_(user_ids)))
-        if changed or int(getattr(deleted, "rowcount", 0) or 0) > 0:
-            self.db.commit()
-
     def _ensure_bootstrap_admin(self) -> None:
         email = settings.bootstrap_admin_email
         password = settings.bootstrap_admin_password
@@ -286,7 +266,6 @@ def initialize_auth(db: Session) -> None:
             service._ensure_demo_users()
             service._ensure_bootstrap_admin()
         else:
-            service._disable_legacy_demo_users()
             service._ensure_bootstrap_admin()
     except Exception:
         db.rollback()

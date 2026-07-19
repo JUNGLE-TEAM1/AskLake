@@ -5,13 +5,24 @@ import { apiConfig } from "../../services/apiClient";
 
 import { normalizeDatasetStatus } from "../../utils/statusMeta";
 
-import type { CatalogDataset } from "../../types";
+import type { CatalogDataset, ResourcePermissions } from "../../types";
 
 export const catalogDatasetStorageKey = "asklake.catalogDatasets";
 
 export const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 
 export const maxStoredCatalogDatasets = 30;
+
+const mockCatalogDatasetPermissions = {
+  canDelete: true,
+  canManage: true,
+  canQuery: true,
+  canRun: true,
+  canShare: true,
+  canView: true,
+  computedFor: "mock-admin",
+  enforced: false,
+} satisfies ResourcePermissions;
 
 export const emptySelectedDataset: CatalogDataset = {
   description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
@@ -118,6 +129,7 @@ export function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   return {
     ...dataset,
     materializationRuns: dataset.materializationRuns ?? [],
+    permissions: apiConfig.useMock ? dataset.permissions ?? { ...mockCatalogDatasetPermissions } : dataset.permissions,
     status: normalizeDatasetStatus(String(dataset.status)),
   };
 }

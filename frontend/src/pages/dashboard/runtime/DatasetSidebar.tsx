@@ -147,7 +147,7 @@ export function DatasetSidebar({
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
-  selectedDatasetIds = [],
+  selectedDatasetIds,
 }: DatasetSidebarProps) {
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
@@ -207,7 +207,9 @@ export function DatasetSidebar({
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  selected: dataset.id === selectedDatasetId || selectedDatasetIds.includes(dataset.id),
+                  selected: selectedDatasetIds !== undefined
+                    ? selectedDatasetIds.includes(dataset.id)
+                    : dataset.id === selectedDatasetId,
                   title: dataset.name,
                 };
               }),

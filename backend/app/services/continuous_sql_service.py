@@ -29,6 +29,7 @@ from app.repositories.continuous_sql_repository import (
 from app.schemas.common import ErrorCode
 from app.schemas.continuous_sql import (
     ContinuousSqlBatch,
+    ClickHouseWriterTarget,
     ContinuousSqlCommandRequest,
     ContinuousSqlCommandResponse,
     ContinuousSqlCreateRequest,
@@ -141,22 +142,10 @@ class ContinuousSqlService:
 
         compiled = self._compile(request, actor, api_path="/api/query/continuous-jobs")
         job_id = f"csql_{uuid4().hex}"
-        if request.output.serving_mode == "clickhouse":
-            if request.output.clickhouse_target is None:
-                raise RuntimeError("Validated ClickHouse output target is missing")
-            output_target = request.output.clickhouse_target
-            output_storage_path = request.output.storage_path or output_target.table_uri
-            checkpoint_path = request.checkpoint_path or (
-                f"{output_target.table_uri}/_consumer/{job_id}"
-            )
-        else:
-            if request.output.iceberg_target is None or request.output.storage_path is None:
-                raise RuntimeError("Validated Iceberg output target is missing")
-            output_target = request.output.iceberg_target
-            output_storage_path = request.output.storage_path
-            checkpoint_path = request.checkpoint_path or (
-                f"{request.output.storage_path}/_checkpoints/{job_id}"
-            )
+        output_target, output_storage_path, checkpoint_path = self._resolve_create_output(
+            request,
+            job_id,
+        )
         compiled_plan = {
             **compiled.compiled_plan,
             "servingMode": request.output.serving_mode,
@@ -200,6 +189,38 @@ class ContinuousSqlService:
                 status.HTTP_409_CONFLICT,
             ) from exc
         return self._job_schema(job)
+
+    def _resolve_create_output(
+        self,
+        request: ContinuousSqlCreateRequest,
+        job_id: str,
+    ) -> tuple[Any, str, str]:
+        if request.output.serving_mode == "clickhouse":
+            if request.output.clickhouse_target is None:
+                raise RuntimeError("Validated ClickHouse output target is missing")
+            output_target = request.output.clickhouse_target
+            if (
+                self.settings.clickhouse_realtime_v2_enabled
+                and self.settings.kafka_connect_sink_enabled
+                and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+            ):
+                output_target = ClickHouseWriterTarget(
+                    database=self.settings.clickhouse_v2_database,
+                    table="serving_events_v2",
+                )
+            output_storage_path = request.output.storage_path or output_target.table_uri
+            checkpoint_path = request.checkpoint_path or (
+                f"{output_target.table_uri}/_consumer/{job_id}"
+            )
+        else:
+            if request.output.iceberg_target is None or request.output.storage_path is None:
+                raise RuntimeError("Validated Iceberg output target is missing")
+            output_target = request.output.iceberg_target
+            output_storage_path = request.output.storage_path
+            checkpoint_path = request.checkpoint_path or (
+                f"{request.output.storage_path}/_checkpoints/{job_id}"
+            )
+        return output_target, output_storage_path, checkpoint_path
 
     def list(self, actor: ActorContext) -> ContinuousSqlJobList:
         jobs = self.repository.list_jobs(owner=None if actor.is_admin else actor.name)
@@ -758,13 +779,24 @@ class ContinuousSqlService:
         )
 
     def _require_clickhouse_enabled(self) -> None:
-        if self.settings.clickhouse_continuous_join_enabled:
+        if self.settings.clickhouse_continuous_join_enabled or (
+            self.settings.clickhouse_realtime_v2_enabled
+            and self.settings.kafka_connect_sink_enabled
+            and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+        ):
             return
         raise ApiError(
             "CLICKHOUSE_CONTINUOUS_SQL_DISABLED",
             "ClickHouse Continuous SQL serving is disabled.",
             status.HTTP_409_CONFLICT,
-            {"setting": "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED"},
+            {
+                "settings": [
+                    "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED",
+                    "CLICKHOUSE_REALTIME_V2_ENABLED",
+                    "KAFKA_CONNECT_SINK_ENABLED",
+                    "CLICKHOUSE_REALTIME_CONSUMER_OWNER",
+                ]
+            },
         )
 
     def _require_job(

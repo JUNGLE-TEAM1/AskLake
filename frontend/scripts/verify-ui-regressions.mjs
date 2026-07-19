@@ -1239,6 +1239,17 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard list entries always open in published view mode",
+    file: "src/pages/dashboard/DashboardPage.tsx",
+    patterns: [
+      /const openDashboardFromList = \(dashboard: SavedDashboardCard\) => \{\s*openRuntimeDashboard\(dashboard\.id, "published"\);\s*\};/,
+      /openRuntimeDashboard\(nextDashboard\.id, "draft"\);/,
+    ],
+    forbiddenPatterns: [
+      /openRuntimeDashboard\(dashboard\.id, dashboard\.status === "published" \? "published" : "draft"\);/,
+    ],
+  },
+  {
     name: "Dashboard API adapters do not hide backend failures with local state",
     file: "src/services/dashboardRuntimeApi.ts",
     patterns: [

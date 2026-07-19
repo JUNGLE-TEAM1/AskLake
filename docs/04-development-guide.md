@@ -42,6 +42,8 @@ npm run verify:dashboard-storage
 
 `migrate:dashboard-schema`는 Dashboard 전용 versioned migration만 실행한다. `migrate:metadata-schema`는 backend traffic 전 Dashboard, ETL, Catalog, SQL metadata와 Continuous/Realtime supporting table을 함께 준비하는 배포 bootstrap이다. backend startup도 같은 bootstrap을 수행하므로 request 또는 control-plane hot path가 최초 DDL을 소유하지 않는다. 현재는 저장소 전체 DB를 관리하는 Alembic 도입 전의 명시적 bootstrap이며, `20260718_dashboard_batch_cache_v1`은 `dashboard_batch_widget_results`를 만들며 배포 전에 적용돼야 한다.
 
+Catalog Dataset 전체 삭제를 변경할 때는 `catalog_dataset_deletions` receipt/fence가 metadata bootstrap에서 준비되는지, impact blocker가 삭제 요청 시 다시 계산되는지, 물리 purge 실패 때 Catalog row가 남는지 확인한다. 로컬 최소 검증은 `cd backend && PYTHONPATH=. .venv/bin/python -m unittest tests.test_catalog_dataset_deletion -v`와 `cd frontend && npm run verify:ui-regressions && npm run build`다. 목록 row 삭제 action은 상세 route를 열지 않아야 하며 `succeeded` 전에는 frontend 목록에서 optimistic removal을 하지 않는다.
+
 Dashboard widget 데이터가 느리거나 실패하면 `dashboard_widget_data` 구조화 로그에서 correlation ID와 `dashboardId`, `pageId`, `widgetId`, `datasetId`, `stage`, `durationMs`, `result`, `errorCode`를 확인한다. `/api/health/metrics`의 `dashboard_widget_data_total{result,stage}`는 request cache hit, PostgreSQL cache hit, 물리 계산 miss와 오류 횟수를 구분한다. 로그와 metric에는 원본 row나 credential을 넣지 않는다.
 
 Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성 조건의 10회 중간값은 `npm run measure:dashboard-performance`로 확인한다. 측정값의 의미와 운영 환경에서 추가로 볼 항목은 [Dashboard 성능·회귀 검증 기록](./dashboard-performance-verification.md)에 유지한다.
@@ -59,6 +61,10 @@ npm run build
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 `npm run test:catalog-lineage-projection`은 저장된 API graph를 변경하지 않으면서 Catalog 화면에서 `PROCESS` node를 제거하고 동일 컬럼의 source→target edge만 만드는지 검증한다. UI 수동 확인에서는 `/etl/source`의 connector 카드, 전역 152px sidebar, `/catalog` 목록·lineage, `/dashboards/:dashboardId/edit`의 기본 닫힌 데이터 패널과 오른쪽 설정 패널 toggle을 desktop과 좁은 viewport에서 함께 확인한다.
+
+관리자 감사 로그 계약을 변경할 때는 test dependency를 설치한 Python 환경에서 `cd backend && npm run verify:admin-audit-contract`를 실행한다. 이 검증은 신규 writer의 enum-only 계약, production producer의 문자열 literal 금지, `query_run` HTTP 직렬화, 레거시 타입의 `unknown` 투영과 원본 metadata, `resourceType=unknown` 필터, OpenAPI enum, backend/frontend 타입 집합 일치와 inline enum/local `$ref` 의미 호환성을 확인한다. 실제 PostgreSQL과 FastAPI smoke는 `npm run verify:identity-admin`으로 임시 PostgreSQL schema에 smoke resource와 demo fixture를 만들고 admin/viewer session cookie로 검증한다. 이 smoke는 actor header fallback을 사용하지 않고 permission test grant, governance 상태와 session을 정리한 뒤 임시 schema를 drop하며 실패 시 non-zero로 종료한다. 프런트 부분 실패·stale 갱신·최신 요청 소유권은 `cd frontend && npm run test:admin-console-load`로 확인한다.
+
+EC2 반영 후에는 admin session으로 `/api/admin/audit-logs?resourceType=query_run&limit=10`과 `/api/admin/audit-logs?resourceType=unknown&limit=10`이 모두 `200`인지 확인한다. 관리 화면에서는 사용자·그룹·권한·제한 metric이 실제 각 API 응답과 일치하고 감사 로그 오류가 다른 탭의 성공 데이터를 `0`으로 바꾸지 않는지 확인한다. `scripts/deploy.sh diagnose`의 backend/frontend/database readiness도 함께 통과해야 하며, 실제 deploy·restart·traffic 전환은 release owner의 별도 승인을 받는다.
 
 ### 단계적 리팩토링 기준선
 
@@ -135,7 +141,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
 .venv/bin/python scripts/verify-permission-create-flow-contract.py
 ```
 
-`npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 관리자 콘솔 API의 section별 부분 실패 격리, timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다. 관리자 콘솔만 빠르게 확인할 때는 `cd frontend && npm run test:admin-console-load`를 실행한다.
 
 Nessie가 생성한 SQL의 대용량 정확성·스캔량·실행시간·자원 사용량을 고정 Dataset snapshot과 질문 suite로 비교하는 내부 검증 기준은 [Nessie SQL 대용량 Benchmark](nessie-sql-benchmark.md)를 따른다. 이 benchmark는 공개 Query AI API나 자동 실행 동작을 추가하지 않으며, live campaign은 preflight와 별도의 명시적 confirmation을 거쳐야 한다.
 
@@ -235,6 +241,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
 
 프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
+
+`scripts/verify-deploy-readiness.sh`는 Docker 작업 전에 `ASKLAKE_PYTHON_BIN`이 정확히 Python 3.13인지 확인하고 다른 minor version이면 즉시 실패한다.
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. Compose render, backend/frontend deploy image build, backend production Node/Python dependency 준비, CI runner의 Spark runtime contract만 빠르게 확인하고 JSON release record를 남길 때는 `bash scripts/verify-deploy-readiness.sh`를 사용한다. 결과 파일 위치는 `ASKLAKE_RELEASE_RECORD_PATH`로 지정하며, record 작성 실패도 readiness 실패로 처리한다. GitHub Actions는 Node 22와 Python 3.13을 준비한다. 이 명령과 workflow는 EC2, production secret, Kafka/Spark long-running runtime을 변경하지 않는다. Phase 0-5 통합 후보의 merge 순서와 회귀 명령은 [배포 파이프라인 Phase 6 통합 후보 검증](./deployment-phase-6-integration.md)에 기록한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
@@ -899,11 +907,11 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
 
-ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse`를 함께 설정한다. `CLICKHOUSE_URL`은 Compose private endpoint `http://clickhouse:8123`를 사용하고 16자 이상의 전용 password를 server `deploy/.env`에만 둔다. ClickHouse port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/Trino/credential/backend-service wiring 불일치를 배포 전에 차단한다. `scripts/deploy.sh`는 enabled 배포에서 Redpanda와 ClickHouse를 먼저 기동하고 backend credential로 실제 query readiness를 확인하며, disabled 배포에서는 이전 profile의 stale ClickHouse container를 제거한다.
+Production 배포 템플릿은 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse-realtime-v2`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`, `KAFKA_CONNECT_URL=http://kafka-connect-v2:8083`, `DASHBOARD_SYNC_MODE=sse`, `REALTIME_EVENTS_ENABLED=true`를 기본값으로 사용한다. V2 ClickHouse 계정 비밀번호, TLS 파일, connector properties와 immutable Kafka Connect image digest는 server `deploy/.env` 또는 secret storage에만 둔다. ClickHouse와 Kafka Connect port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/credential/TLS/image/backend-service wiring 불일치를 배포 전에 차단한다.
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
-Production은 알려진 legacy demo 계정을 기본적으로 허용하지 않는다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정할 수 있다. `scripts/verify-deploy-env.sh`는 두 값이 lowercase `true|false`가 아니거나 서로 다르면 preflight를 실패시킨다. opt-in startup은 이전 배포에서 비활성화된 demo 계정을 복구하므로 일반 운영에서는 두 플래그를 `false`로 유지한다. bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 opt-in과 무관하게 유지한다.
+Production은 알려진 legacy demo 계정을 기본적으로 생성하거나 복구하지 않는다. Backend startup은 기존 `auth_users.status`와 session을 보존하므로 재배포 자체가 활성 admin을 비활성화하지 않는다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정해 누락 계정 생성, disabled demo 계정 복구와 frontend 로그인 안내를 함께 활성화한다. `scripts/verify-deploy-env.sh`는 두 값이 lowercase `true|false`가 아니거나 서로 다르면 preflight를 실패시킨다. 일반 운영에서는 두 플래그를 `false`로 유지하고 계정 차단·해제는 명시적인 admin/DB 작업으로 수행한다. bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 opt-in과 무관하게 유지한다.
 
 dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
@@ -1551,9 +1559,9 @@ npm run build
 
 Docker/ClickHouse/Kafka가 필요한 `npm run verify:clickhouse-kafka-join`은 PR02 이후의 integration/operator profile에서 실행한다. 공통 빠른 검증으로 분류하지 않는다. PR별 신규 검증 command는 해당 PR에서 `package.json`, 이 문서, `docs/system-guardrails.md`와 CI workflow를 함께 갱신한다. 실행하지 못한 live/production 항목은 PASS로 쓰지 않고 operator gate로 남긴다.
 
-### PR02 V2 기반시설과 migration
+### ClickHouse V2 기반시설과 migration
 
-PR02의 Compose service는 모두 `clickhouse-realtime-v2` profile 뒤에 있으며 기본 `docker compose up`에는 포함되지 않는다. profile은 기존 V1 옆에 기반 프로세스만 기동하고 backend consumer owner를 이전하거나 connector를 등록하지 않는다.
+V2 Compose service는 모두 `clickhouse-realtime-v2` profile에 있다. Production 기본 profile/flag/owner는 Kafka Connect V2로 맞춰져 있고 local root Compose만 profile을 명시한다. ClickHouse serving mode Job 시작이 토픽별 connector를 자동 등록하며 reconcile이 receipt/checkpoint, JOIN, Catalog revision과 SSE publication을 계속 전진시킨다.
 
 먼저 외부 runtime이 필요 없는 설정과 migration 계약을 검증한다. 가상환경 Python에 `backend/requirements.txt`의 Alembic/SQLAlchemy dependency가 설치돼 있어야 한다.
 
@@ -1605,7 +1613,7 @@ curl --fail http://127.0.0.1:18083/connector-plugins
 curl --fail http://127.0.0.1:18123/ping
 ```
 
-이 smoke는 process와 plugin만 확인한다. connector definition은 PR03 전에는 등록하지 않으므로 Kafka→ClickHouse ingest 검증이 아니다. PR03 전에는 `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`로 전환하지 않는다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
+이 smoke는 process와 plugin만 확인한다. 실제 ingest/JOIN은 ClickHouse serving mode Job 또는 V2 container E2E에서 확인한다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
 
 ### PR09 archive/recovery와 최종 release gate
 

@@ -7,6 +7,7 @@ from app.core.auth_context import ActorContext, get_actor_context
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.schemas.auth import AuthSessionResponse, AuthUserResponse, LoginRequest, LogoutResponse, SignupRequest
 from app.services.auth_service import (
@@ -94,7 +95,7 @@ def login(
                 result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
                 status_code=exc.status_code,
                 target_id=payload.email,
-                target_type="auth",
+                target_type=AuditTargetType.AUTH,
             )
         raise
     issue_session_cookie(response, str(session["token"]))
@@ -110,7 +111,7 @@ def login(
         status_code=status.HTTP_200_OK,
         target_id=actor.id or actor.email or actor.name,
         target_name=actor.name,
-        target_type="auth",
+        target_type=AuditTargetType.AUTH,
     )
     return AuthUserResponse(user=IdentityService(db).get_current_user(actor))
 
@@ -182,7 +183,7 @@ def logout(
         status_code=status.HTTP_200_OK,
         target_id=actor.id or actor.email or actor.name,
         target_name=actor.name,
-        target_type="auth",
+        target_type=AuditTargetType.AUTH,
     )
     delete_session_cookie(response)
     return LogoutResponse()

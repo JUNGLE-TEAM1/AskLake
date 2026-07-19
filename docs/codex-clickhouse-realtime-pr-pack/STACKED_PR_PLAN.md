@@ -67,4 +67,4 @@ PR09 local integration은 54개 V2 release contract, PostgreSQL concurrent switc
 | PR08 | frontend component/browser contract와 production mock fail-closed |
 | PR09 | isolated full-stack E2E, chaos, hot/archive parity, cutover/rollback drill |
 
-검증을 실행하지 못한 항목은 통과로 기록하지 않는다. production-like evidence가 없는 PR은 기능 플래그 기본값을 `false`로 유지한다.
+검증을 실행하지 못한 항목은 통과로 기록하지 않는다. 이 원칙은 9개 PR 작성 당시 플래그를 `false`로 유지한 기준이며, 누적 PR09 병합 뒤 production Compose 기본값은 별도 V2 전환 변경에서 활성화됐다.

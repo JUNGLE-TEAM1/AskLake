@@ -45,6 +45,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage와 최신 성공 materialization을 기준으로 한 스키마·실제 sample row 페이지 탐색. 목록은 이름·상태·태그를 우선하고 긴 설명은 반복 노출하지 않으며, lineage는 실행 provenance의 `PROCESS` 데이터를 보존하되 사용자 화면에서는 source→target 관계로 축약한다.
+- Catalog 목록의 각 데이터셋에서 바로 삭제를 시작한다. 삭제 전 영향도에서 진행 중/예약 producer, source consumer, downstream lineage, Dashboard, Semantic, RAG 참조를 확인하며 blocker가 없고 사용자가 데이터셋 이름을 재입력한 경우에만 AskLake가 관리하는 물리 데이터와 내부 metadata를 비동기로 삭제한다. 상세 화면 진입은 삭제의 선행 조건이 아니다.
 - Dataset 범위의 read-only SQL 실행. `TRINO_ENABLED=true`의 기본 `실행`은 원본 SQL을 보존한 채 서버가 최대 100행으로 감싼 `preview` Query Run을 제출하고, 작은 결과를 PostgreSQL에 저장해 먼저 표시한다. `전체 보기` 또는 `CSV 다운로드`를 요청할 때만 원본 SQL의 별도 `run` Query Run을 만들고 private object page storage와 signed cursor로 전체 결과를 준비한다. `TRINO_ENABLED=false`에서는 기존 DuckDB snapshot pagination을 compatibility 경로로 유지한다. 상세 lifecycle과 저장·retention은 [Trino Query Run Contract](trino-query-run-contract.md), [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다.
 - SQL 분석은 데스크톱에서 편집기와 결과/차트 영역을 기존 높이 대비 약 50% 확장하고 각 영역에 하나의 스크롤만 사용한다. 1180px 이하에서는 고정 높이를 해제해 세로 흐름으로 전환한다. 사용자가 전체 삭제한 빈 SQL은 유지하고 기본 쿼리는 초기 dataset 선택, dataset 변경, 명시적 reset에서만 복원한다.
 - SQL 편집기 상단의 Nessie SQL 작성 Popover: 선택 데이터셋 context와 사용자 프롬프트로 SQL 초안을 제안한다. 입력 후에는 폼을 접고 생성 상태와 편집기 적용 action을 Bubble로 표시하며, SQL은 사용자가 적용한 뒤 별도로 실행한다.
@@ -56,9 +57,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 성공한 Trino preview 결과 화면은 CSV 다운로드와 반복 SQL Job 생성을 제공한다. CSV는 on-demand 전체 결과 `run`이 완료된 뒤 해당 저장 page를 stream하고, 반복 SQL Job 생성은 전체 결과 저장을 기다리지 않고 preview의 SQL·Dataset context·출력 컬럼을 recipe로 저장한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다. 편집 진입 시 왼쪽 데이터 패널은 닫힌 상태로 시작하고, 데이터 패널과 오른쪽 설정 패널은 명시적 버튼으로 열고 닫되 선택·편집 상태를 유지한다.
-- Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. 원본 event는 기존대로 S3/MinIO에 둔다.
+- Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. V2 Kafka hot-ingest는 Kafka Connect가 ClickHouse `raw_events_v2`에 기록한 원문과 offset을 즉시 읽고, 장기 S3/MinIO archive는 이 빠른 수집 경로와 별도인 Bronze archive 범위다.
 - Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 기본 static binding은 Job 시작 시 snapshot을 고정하는 PINNED_AT_START이며, LATEST_PER_BATCH와 static change backfill은 각각 별도 기능 플래그와 운영 승인이 필요한 opt-in이다. 새 Continuous SQL Job의 기본 micro-batch trigger는 5초이고, Catalog 통계가 안전 한도 이하인 불변 static snapshot은 worker가 재사용한다. 5초는 시작 주기이며 JOIN·Iceberg commit·Trino 검증·Dashboard 게시 시간까지 포함한 반영 SLA는 아니다.
-- 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. 기존 Iceberg mode와 일반 Kafka Continuous Job은 바꾸지 않으며 ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.
+- 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Continuous SQL Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.
+- 일반 Kafka Continuous Job은 `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`일 때 Spark Structured Streaming 대신 Kafka Connect → ClickHouse `raw_events_v2` 경로를 사용한다. start 시 Catalog Dataset은 `preparing`으로 만들어지고, 해당 topic의 첫 offset이 확인되면 `available`과 revision/SSE event를 같은 publication transaction으로 기록해 Dashboard source와 위젯 조회가 열린다. 세 조건 중 하나라도 꺼지면 기존 Spark/Iceberg Continuous 경로를 유지한다.
 - 감사 로그와 toast feedback
 
 ## 5) Backend 확장 범위
@@ -72,6 +74,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세와 최신 성공 materialization의 실제 row 페이지를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
+| Catalog dataset delete | 목록 직접 삭제, 영향도 blocker, 내구성 작업 상태, 관리 물리 데이터·내부 metadata 정리 | High | `docs/api-contract.md` |
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 cursor 결과 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run을 1회성 Iceberg Dataset 또는 반복 full-refresh Trino SQL Job으로 연결 | Medium | `docs/api-contract.md` |
@@ -137,7 +140,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe만 저장하고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.
 10. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 전환한다. Trino page 차트는 현재 표시 범위만 임시로 시각화한다.
 11. DuckDB compatibility 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결한다.
-12. 선택 관계가 Kafka streaming Dataset 1개와 static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. 사용자가 출력 카탈로그 이름과 시작 간격을 확인하면 ClickHouse GOLD output Job을 생성하고 즉시 start command를 보낸다. 첫 batch publication 뒤 출력 Dataset은 Catalog와 Dashboard source에 나타난다. 일반 `실행`으로 만든 Trino preview와 반복 SQL Job은 이 연속 처리 경로로 자동 승격하지 않는다.
+12. 선택 관계가 Kafka streaming Dataset 1개와 static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. 사용자가 출력 카탈로그 이름과 시작 간격을 확인하면 ClickHouse GOLD output Job을 생성하고 즉시 start command를 보낸다. 출력 Dataset은 Catalog에 `preparing`으로 즉시 나타나고, 첫 batch publication 뒤 `available`로 전환되어 Dashboard source에 나타난다. 일반 `실행`으로 만든 Trino preview와 반복 SQL Job은 이 연속 처리 경로로 자동 승격하지 않는다.
 
 ### Flow C. FastAPI live backend 연결
 
@@ -203,7 +206,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ## 11) ClickHouse Realtime Serving V2 전환 프로그램
 
-현재 `dev`의 Realtime 2026 ClickHouse mode는 Kafka Engine과 `PINNED_AT_START` static snapshot을 사용하는 opt-in V1이다. durable SSE와 Dashboard targeted refetch도 이미 존재하며 운영 기본값은 polling/disabled다.
+현재 `dev`의 Realtime 2026 production 배포 템플릿은 Kafka Connect V2를 단일 consumer owner로 사용하고 durable SSE와 Dashboard targeted refetch를 기본 활성화한다. Kafka Engine V1은 동시 소비를 막기 위해 기본 비활성 상태로 둔다.
 
 V2는 이 기준선을 다음 방향으로 단계 확장한다.
 

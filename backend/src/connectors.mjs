@@ -10,6 +10,7 @@ import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
+  objectStorageDockerEnvWithoutCredentials,
   resolveObjectStorageConfig,
   resolveInheritedObjectStorageCredentials,
   s3ClientOptions,
@@ -1824,12 +1825,10 @@ function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }
       422,
     );
   }
-  const runtimeStorageFields = executionMode === "rest" ? [] : storageFields;
   const storageEnvironment = Object.fromEntries(
-    objectStorageDockerEnv(runtimeStorageFields).filter(([name]) => (
-      executionMode === "docker"
-      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
-    )),
+    executionMode === "docker"
+      ? objectStorageDockerEnv(storageFields)
+      : objectStorageDockerEnvWithoutCredentials(storageFields),
   );
   const inspectEnvironment = {
     ...storageEnvironment,

@@ -134,6 +134,17 @@ export function objectStorageDockerEnv(fields = []) {
   return entries.filter(([, value]) => value !== undefined && value !== null && String(value) !== "");
 }
 
+export function objectStorageDockerEnvWithoutCredentials(fields = []) {
+  const credentialNames = new Set([
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+  ]);
+  return objectStorageDockerEnv(fields).filter(([name]) => !credentialNames.has(name));
+}
+
 export function toDockerEnvArgs(entries) {
   return entries.flatMap(([name, value]) => ["-e", `${name}=${value}`]);
 }

@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { testObjectStorageSource } from "../src/connectors.mjs";
 import {
   objectStorageDockerEnv,
+  objectStorageDockerEnvWithoutCredentials,
   resolveObjectStorageConfig,
   resolveInheritedObjectStorageCredentials,
   s3ClientOptions,
@@ -105,6 +106,17 @@ try {
     ], "rest"),
     (error) => error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID",
   );
+  const restRuntimeEnvironment = Object.fromEntries(
+    objectStorageDockerEnvWithoutCredentials([
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://custom-minio.internal:9000"],
+      ["Access Key", "local-compatible-access"],
+      ["Secret Key", "local-compatible-secret"],
+    ]),
+  );
+  assert.equal(restRuntimeEnvironment.MINIO_ENDPOINT, "http://custom-minio.internal:9000");
+  assert.equal("MINIO_ACCESS_KEY" in restRuntimeEnvironment, false);
+  assert.equal("MINIO_SECRET_KEY" in restRuntimeEnvironment, false);
   assert.throws(
     () => listS3Buckets(),
     (error) => error?.code === "SERVICE_UNAVAILABLE" && error?.status === 503,
