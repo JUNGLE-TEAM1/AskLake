@@ -1274,6 +1274,7 @@ terminal failure 뒤 internal execute 경계를 같은 `runId`로 다시 호출�
 - `details`는 secret key를 재귀적으로 redaction하며 validation input 원문과 unhandled stack을 반환하지 않는다.
 - `GET /api/health/live`는 process liveness, `GET /api/health/ready`는 DB readiness, 기존 `GET /api/health`는 호환 readiness다.
 - `GET /api/health/metrics`는 현재 backend process의 진단 counter snapshot을 반환한다.
+- `GET /api/health/ai`는 `gateway` runtime에서 Gateway `/health`를 확인한다. 정상은 HTTP 200과 `status=ready`, 설정 누락·provider/MCP 장애는 HTTP 503과 `unconfigured` 또는 `unavailable`이다. 응답의 `gateway`에는 service/provider/model/MCP/check/capability 진단만 포함하고 token·provider key는 반환하지 않는다. `direct` rollback runtime에서는 `status=disabled`다.
 
 ## 11) ClickHouse Realtime Serving V2 additive API
 

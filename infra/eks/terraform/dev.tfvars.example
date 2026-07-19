@@ -184,9 +184,9 @@ external_secrets_service_account = "asklake-external-secrets"
 # These remain separate learning/selection gates. Do not infer them from the
 # Secret delivery choice. Gateway mode also needs a separately approved AI
 # provider workload contract before the full-service Secret gate can open.
-airflow_api_auth_mode               = "undecided"
-ai_runtime_mode                     = "undecided"
-ai_provider_workload_contract_ready = false
+airflow_api_auth_mode               = "username_password"
+ai_runtime_mode                     = "gateway"
+ai_provider_workload_contract_ready = true
 
 # Day 14 Metrics Server is an EKS community add-on. Keep disabled until the
 # target cluster exists, then query its compatible versions and record the

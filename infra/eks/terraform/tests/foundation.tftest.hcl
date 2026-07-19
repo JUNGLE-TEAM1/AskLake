@@ -180,6 +180,11 @@ run "new_cluster_contract" {
   }
 
   assert {
+    condition     = output.service_account_names["aiGateway"] == "asklake-ai-gateway"
+    error_message = "AI Gateway service account must remain stable and separate from Backend."
+  }
+
+  assert {
     condition = (
       aws_eks_cluster.this[0].access_config[0].authentication_mode == "API" &&
       !aws_eks_cluster.this[0].access_config[0].bootstrap_cluster_creator_admin_permissions
@@ -677,7 +682,7 @@ run "workload_repository_contract" {
 
   assert {
     condition = alltrue([
-      for component in ["frontend", "backend", "airflow", "trino", "spark-runtime"] :
+      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime"] :
       contains(keys(output.ecr_repository_urls), component)
     ])
     error_message = "ECR outputs must expose every EKS workload image component."
@@ -1588,10 +1593,16 @@ run "phase14_web_workload_handoff_is_fail_closed" {
 
   assert {
     condition = (
+      output.phase14_web_workload_handoff.contract_version == "1.1" &&
       output.phase14_web_workload_handoff.workloads.frontend.service == "frontend" &&
       output.phase14_web_workload_handoff.workloads.frontend.service_port == 80 &&
       output.phase14_web_workload_handoff.workloads.backend.service == "fastapi" &&
-      output.phase14_web_workload_handoff.workloads.backend.service_port == 8080
+      output.phase14_web_workload_handoff.workloads.backend.service_port == 8080 &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service == "ai-gateway" &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service_port == 8090 &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service_account == "asklake-ai-gateway" &&
+      !output.phase14_web_workload_handoff.workloads.ai_gateway.public_ingress &&
+      output.phase14_web_workload_handoff.required_references.ai_gateway_secret == "asklake-ai-gateway-runtime"
     )
     error_message = "Phase 14 Services must match the Phase 13 ALB routes."
   }
@@ -1599,6 +1610,14 @@ run "phase14_web_workload_handoff_is_fail_closed" {
   assert {
     condition     = contains(output.phase14_web_workload_handoff.apply_gates, "backend-runtime-boundary-ready")
     error_message = "FastAPI multi-replica deployment must remain gated by Pair B's runtime boundary."
+  }
+
+  assert {
+    condition = (
+      contains(output.phase14_web_workload_handoff.apply_gates, "ai-gateway-runtime-ready") &&
+      contains(output.phase14_web_workload_handoff.apply_gates, "ai-gateway-network-policy-ready")
+    )
+    error_message = "AI Gateway deployment must remain gated by runtime and NetworkPolicy readiness."
   }
 }
 

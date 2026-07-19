@@ -995,7 +995,7 @@ Phase 6 image delivery workflow를 수정하면 아래 검증을 실행한다. �
 bash scripts/verify-eks-image-delivery.sh
 ```
 
-실제 ECR push는 GitHub의 `EKS image delivery` workflow를 수동 실행한다. 먼저 선택한 environment에 region, OIDC image role ARN, Frontend output bucket variable을 등록하고 foundation Terraform이 만든 다섯 repository가 존재하는지 확인한다. 성공 artifact의 receipt는 `node scripts/verify-eks-image-receipt.mjs <path>`로 재검증한 뒤 Phase 5 handoff의 image 값으로 사용한다. 장기 AWS access key를 GitHub Secret이나 repository에 추가하지 않는다. 세부 실행 gate는 [Phase 6 ECR Image Delivery](eks-phase-6-image-delivery.md)를 따른다.
+실제 ECR push는 GitHub의 `EKS image delivery` workflow를 수동 실행한다. 먼저 선택한 environment에 region, OIDC image role ARN, Frontend output bucket variable을 등록하고 foundation Terraform이 만든 여섯 repository에 `ai-gateway`가 포함됐는지 확인한다. 성공 artifact의 현재 receipt는 `node scripts/verify-eks-image-receipt.mjs --require-ai-gateway <path>`로 재검증한 뒤 Phase 5 handoff의 image 값으로 사용한다. v1.0 receipt는 과거 rollback 소비자에서만 호환되고 새 Gateway 배포에는 사용할 수 없다. 장기 AWS access key를 GitHub Secret이나 repository에 추가하지 않는다. 세부 실행 gate는 [Phase 6 ECR Image Delivery](eks-phase-6-image-delivery.md)를 따른다.
 
 Phase 7/13 network ingress를 변경하면 아래 검증을 실행한다. 기본 values는 Kubernetes resource를 렌더링하지 않아야 한다. enabled values는 Auto Mode readiness, exposure, target/address type, listener protocol과 subnet 2개 이상이 필요하다. HTTP는 AWS 생성 ALB DNS를 사용하므로 host·certificate·DNS owner를 비워 두고, HTTPS를 선택할 때만 세 값을 모두 요구한다. 실제 identifier가 들어간 values는 example 파일에 저장하지 않는다.
 
@@ -1022,7 +1022,9 @@ helm template external-secrets external-secrets/external-secrets \
 
 15일차 최초 Backend runtime 전환은 `DATABASE_URL`, `BOOTSTRAP_ADMIN_PASSWORD` 두 key의 수동 target에서 시작했으며 이후 Airflow 연결에서 5개로 확장됐다. 이 상태는 역사적 migration baseline이다. 현재 `infra/eks/secrets/backend-runtime-external-secret.yaml`은 bounded Backend가 실제 소비하는 DB 2개, Airflow 3개, Trino 인증·서명·CA 7개의 정확한 12-key canonical mapping이다. AI runtime 선택 전에는 planning 계약의 AI key를 placeholder로 만들지 않는다. 기존 target을 같은 이름의 ESO 소유 target으로 인계하기 전에는 AWS source와 staged target의 key 집합 및 전체 byte hash가 일치해야 한다. 값, endpoint와 ARN은 출력하거나 tracked·일반 artifact에 저장하지 않는다.
 
-Backend key 집합은 `runtime-secret-contract.example.json`의 `runtimeProfiles.backend`가 기준이다. 현재 `active=bounded`이며 운영 verifier, image preflight, handover와 rollback은 이 12-key profile을 읽는다. `full-service` scope는 공통 key에 선택한 Airflow 인증 방식과 AI runtime profile의 실제 소비 key만 합성한다. 따라서 username/password 기준 direct는 13개, gateway는 16개이며 API token 선택 시 인증 key가 교체된다. AI runtime/provider 선택과 실제 source 확장이 모두 끝나기 전에는 full-service scope를 선택하지 않는다. `--audit`은 bounded profile을, `--ready`는 decision-aware full-service profile을 요구한다.
+Backend key 집합은 `runtime-secret-contract.example.json`의 `runtimeProfiles.backend`가 기준이다. `full-service` scope는 공통 key에 선택한 Airflow 인증 방식과 AI runtime profile의 실제 소비 key만 합성한다. username/password 기준 direct rollback은 13개, Gateway target은 provider key를 제외한 15개다. 별도 `asklake-ai-gateway-runtime`은 service/MCP/provider key exact 3개다. `--audit`은 전달 계약을, `--full-service-ready`는 선택과 provider workload 승인을 함께 요구한다.
+
+Gateway 전환은 `promote-eks-ai-gateway-runtime.sh --preflight|--apply <gateway-values> <direct-rollback-values> <direct-rollback-source.json>`를 사용한다. 두 private values, exact 13-key direct source와 runtime contract는 Git 제외·`0600`이어야 한다. apply는 두 Gateway source/임시 target의 전체 canonical hash를 대조하고 ExternalSecret/ConfigMap을 함께 전환하며, 실패하면 Backend Secrets Manager source, 저장한 spec과 direct values를 복원한다. 배포 전 `verify-eks-ai-gateway-runtime.mjs`는 ExternalSecret Ready/Owner, target controller ownerReference, exact 15/3 key, 공유 token binding, Helm ConfigMap owner를 값 출력 없이 확인한다. 제품 동작은 별도 `run-eks-ai-gateway-live-smoke.sh`로 `/api/health/ai`, Query AI, Dashboard Assistant를 확인한다.
 
 ```bash
 kubectl apply --dry-run=server \
@@ -2011,7 +2013,7 @@ Phase 5 private handoff는 `scripts/prepare-eks-day16-a-handoff.sh`로 생성하
 
 현재 `asklake-runtime` owner는 전용 `asklake-runtime-config` release로 확정됐다. `scripts/prepare-eks-runtime-config-values.sh`가 live ConfigMap을 Git 제외 `0600` values로 내보내고, `scripts/deploy-eks-runtime-config-release.sh`가 live/render canonical hash 일치와 Helm server dry-run을 통과한 경우에만 ownership을 인수한다. 이후 `scripts/verify-eks-runtime-config-release.sh`는 단독 release annotation, exact data hash와 workload 무변경을 확인한다. 실제 dev 전환은 data 변경 없이 완료됐다.
 
-AI runtime은 MVP에서 `direct`로 선택했다. 기본 manifest와 tracked example은 12-key bounded fail-closed 상태를 유지하며, 실제 dev 전환은 `scripts/promote-eks-backend-full-service-secret.sh`만 사용한다. 이 실행기는 `OPENAI_API_KEY`를 포함한 exact 13-key source를 검증하고 임시 ExternalSecret target의 전체 byte hash를 먼저 대조한 뒤 canonical target과 FastAPI 두 replica를 전환한다. 실패하면 AWS source, ExternalSecret과 Backend를 bounded 상태로 복구한다. 재시작 직후 ALB target은 draining을 거치므로 Backend/RDS/ALB steady가 30초 연속 확인돼야 성공한다. dev에서는 source/target 13-key, FastAPI 2/2와 EKS Pod의 OpenAI API 인증 HTTP 200을 확인했다. 값은 command output, evidence 또는 Git에 남기지 않는다.
+EKS의 목표 AI runtime은 `gateway`다. 기존 direct 13-key 전환기는 rollback 호환 경로이며 새 배포의 정상 경로가 아니다. Gateway 전환은 provider-key-free Backend exact 15-key, 별도 Gateway exact 3-key, service/MCP token 동일성, `AI_QUERY_PROVIDER=gateway`, private Service URL과 immutable Gateway image를 모두 만족해야 한다. `deploy-eks-web-workloads.sh --apply`는 이 계약을 fail-closed로 확인하며 live apply 뒤 `/api/health/ai`, Dashboard Assistant, Query AI를 별도 smoke한다. Secret 값은 command output, evidence 또는 Git에 남기지 않는다.
 
 OpenAI Platform key에는 자동 TTL을 설정할 수 없어 dev 키 이름에 운영 폐기일을 표시하고 별도 만료 작업으로 폐기한다. 현재 MVP 키의 폐기일은 2026-07-31이다. 폐기 때는 OpenAI key를 revoke하고 Secrets Manager에서 `OPENAI_API_KEY`를 제거한 뒤 bounded manifest로 rollback하여 FastAPI와 ALB steady를 다시 검증한다.
 

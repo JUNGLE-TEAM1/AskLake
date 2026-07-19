@@ -37,13 +37,14 @@ function imageReceipt(revision, digestCharacter) {
     "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev";
   const digest = `sha256:${digestCharacter.repeat(64)}`;
   return {
-    contractVersion: "1.0",
+    contractVersion: "1.1",
     environment: "dev",
     gitRevision: revision,
     platform: "linux/amd64",
     images: {
       frontend: `${registry}/frontend@${digest}`,
       backend: `${registry}/backend@${digest}`,
+      aiGateway: `${registry}/ai-gateway@${digest}`,
       airflow: `${registry}/airflow@${digest}`,
       sparkRuntime: `${registry}/spark-runtime@${digest}`,
       trino: `${registry}/trino@${digest}`,

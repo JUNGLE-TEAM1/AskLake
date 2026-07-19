@@ -3,9 +3,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+const args = process.argv.slice(2);
+const requireAiGateway = args.includes('--require-ai-gateway');
+const receiptArg = args.find((arg) => !arg.startsWith('--'));
 const receiptPath = resolve(
   process.cwd(),
-  process.argv[2] ?? 'infra/eks/delivery/image-receipt.example.json',
+  receiptArg ?? 'infra/eks/delivery/image-receipt.example.json',
 );
 const errors = [];
 const fail = (message) => errors.push(message);
@@ -34,7 +37,10 @@ exactKeys(receipt, new Set([
   'createdAt',
 ]), 'receipt');
 
-if (receipt.contractVersion !== '1.0') fail('contractVersion must be 1.0');
+if (!['1.0', '1.1'].includes(receipt.contractVersion)) fail('contractVersion must be 1.0 or 1.1');
+if (requireAiGateway && receipt.contractVersion !== '1.1') {
+  fail('--require-ai-gateway requires contractVersion 1.1');
+}
 if (!['dev', 'staging'].includes(receipt.environment)) fail('environment must be dev or staging');
 if (!/^[a-f0-9]{40}$/.test(receipt.gitRevision ?? '')) fail('gitRevision must be a full Git SHA');
 if (receipt.platform !== 'linux/amd64') fail('platform must be linux/amd64');
@@ -47,6 +53,7 @@ const components = {
   sparkRuntime: 'spark-runtime',
   trino: 'trino',
 };
+if (receipt.contractVersion === '1.1') components.aiGateway = 'ai-gateway';
 exactKeys(receipt.images, new Set(Object.keys(components)), 'images');
 
 const immutableEcrImage = /^(\d{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com\/([a-z0-9][a-z0-9._/-]*)@sha256:([a-f0-9]{64})$/;

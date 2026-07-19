@@ -90,6 +90,10 @@ required_files=(
   "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-input.mjs"
   "$ROOT_DIR/scripts/deploy-eks-day16-runtime-secrets.sh"
   "$ROOT_DIR/scripts/promote-eks-backend-full-service-secret.sh"
+  "$ROOT_DIR/scripts/promote-eks-ai-gateway-runtime.sh"
+  "$ROOT_DIR/scripts/verify-eks-ai-gateway-runtime.mjs"
+  "$ROOT_DIR/scripts/test-eks-ai-gateway-runtime.mjs"
+  "$ROOT_DIR/scripts/run-eks-ai-gateway-live-smoke.sh"
   "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh"
   "$ROOT_DIR/infra/eks/secrets/spark-runtime-external-secret.yaml"
   "$ROOT_DIR/infra/eks/secrets/trino-runtime-external-secret.yaml"
@@ -146,6 +150,7 @@ done
 bash "$ROOT_DIR/scripts/test-eks-spark-rbac-contract.sh"
 bash "$ROOT_DIR/scripts/test-eks-image-receipt-input.sh"
 node "$ROOT_DIR/scripts/test-eks-runtime-config-contract.mjs"
+node "$ROOT_DIR/scripts/test-eks-ai-gateway-runtime.mjs"
 node "$ROOT_DIR/scripts/test-eks-backend-runtime-profile.mjs"
 node --test "$ROOT_DIR/scripts/test-eks-day17-scale-observer.mjs"
 bash "$ROOT_DIR/scripts/verify-eks-day18-recovery-smoke.sh"
@@ -157,6 +162,7 @@ bash "$ROOT_DIR/scripts/test-tracked-evidence-redaction.sh"
 bash "$ROOT_DIR/scripts/verify-tracked-evidence-redaction.sh"
 node --check "$ROOT_DIR/scripts/resolve-eks-backend-runtime-profile.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-config-contract.mjs"
+node --check "$ROOT_DIR/scripts/verify-eks-ai-gateway-runtime.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs"
 node --check "$ROOT_DIR/scripts/watch-eks-day17-scale.mjs"
 python3 -m py_compile "$ROOT_DIR/backend/scripts/verify_eks_phase5_bounded_evidence.py"
@@ -182,6 +188,8 @@ helm template asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-c
   exit 1
 }
 grep -q '^  name: asklake-runtime$' "$runtime_config_render"
+grep -q 'AI_QUERY_PROVIDER: gateway' "$runtime_config_render"
+grep -q 'AI_GATEWAY_BASE_URL: http://ai-gateway:8090' "$runtime_config_render"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: external_ec2' "$runtime_config_render"
 grep -q 'ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON:' "$runtime_config_render"
 rm -f "$runtime_config_render"
@@ -227,15 +235,22 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set serviceAccounts.aiGateway.automountServiceAccountToken=true >/dev/null 2>&1; then
+  echo "Helm schema allowed AI Gateway to mount a Kubernetes API token" >&2
+  exit 1
+fi
+
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
-if [[ "$service_account_count" -ne 6 ]]; then
-  echo "expected 6 workload service accounts, rendered $service_account_count" >&2
+if [[ "$service_account_count" -ne 7 ]]; then
+  echo "expected 7 workload service accounts, rendered $service_account_count" >&2
   exit 1
 fi
 
 for service_account in \
   asklake-frontend \
   asklake-backend \
+  asklake-ai-gateway \
   asklake-airflow \
   asklake-trino \
   asklake-msk-smoke \
@@ -268,6 +283,19 @@ backend_service_account="$({
 
 if ! grep -q '^automountServiceAccountToken: true$' <<<"$backend_service_account"; then
   echo "asklake-backend must mount its ServiceAccount token for SparkApplication API calls" >&2
+  exit 1
+fi
+
+ai_gateway_service_account="$(awk '
+  /^kind: ServiceAccount$/ { block = $0 ORS; capture = 1; next }
+  capture { block = block $0 ORS }
+  capture && /^---$/ {
+    if (block ~ /name: asklake-ai-gateway/) { printf "%s", block; exit }
+    capture = 0; block = ""
+  }
+' "$RENDERED_FILE")"
+if ! grep -q '^automountServiceAccountToken: false$' <<<"$ai_gateway_service_account"; then
+  echo "asklake-ai-gateway must not mount a Kubernetes API token" >&2
   exit 1
 fi
 
@@ -437,6 +465,8 @@ node --check "$ROOT_DIR/scripts/lib/validate-trino-password-db.mjs"
 node "$ROOT_DIR/scripts/test-trino-password-db.mjs"
 bash -n "$ROOT_DIR/scripts/deploy-eks-day16-runtime-secrets.sh"
 bash -n "$ROOT_DIR/scripts/promote-eks-backend-full-service-secret.sh"
+bash -n "$ROOT_DIR/scripts/promote-eks-ai-gateway-runtime.sh"
+bash -n "$ROOT_DIR/scripts/run-eks-ai-gateway-live-smoke.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-day16-runtime-secret-delivery.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-day16-trino-values.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-day16-trino-values.sh"

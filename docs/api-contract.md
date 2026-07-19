@@ -2222,6 +2222,7 @@ Validation:
 - `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
 - frontend는 선택한 dataset id만 전달합니다. backend가 현재 actor의 권한·governance를 확인한 뒤 Catalog에서 최신 metadata와 schema를 다시 읽으므로 client metadata는 신뢰하거나 provider에 전달하지 않습니다.
 - backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
+- EKS에서도 `AI_QUERY_PROVIDER=gateway`, `AI_GATEWAY_BASE_URL=http://ai-gateway:8090`을 사용한다. Gateway는 public Ingress 없이 private ClusterIP와 NetworkPolicy 뒤에 있고, Backend runtime Secret에는 provider key를 두지 않는다. `GET /api/health/ai`는 secret을 제외한 provider/MCP readiness를 반환한다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 평균, 합계, 개수, 그룹화처럼 prompt에 명시된 분석 의도가 SQL select/group/aggregation에 반영됐는지 검증합니다. 위반하면 위반 목록을 포함해 Gateway에 한 번만 교정 재요청하고 두 번째 응답도 위반하면 `422 VALIDATION_ERROR`를 반환합니다.

@@ -26,6 +26,10 @@ for command in aws git jq kubectl node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 [[ -s "$MANIFEST" && -s "$RUNTIME_CONTRACT" && -s "$STATE" ]] || fail "Backend full-service input is missing"
+node "$ROOT_DIR/scripts/verify-eks-runtime-secrets.mjs" --full-service-ready "$RUNTIME_CONTRACT" >/dev/null || \
+  fail "direct rollback runtime contract is not ready"
+jq -e '.runtimeDecisions.aiRuntime.status=="selected" and .runtimeDecisions.aiRuntime.selected=="direct"' \
+  "$RUNTIME_CONTRACT" >/dev/null || fail "this legacy promoter is restricted to explicit direct rollback contracts"
 git -C "$ROOT_DIR" check-ignore -q -- "$RUNTIME_CONTRACT" || fail "private runtime contract must remain ignored"
 [[ "$(stat -f '%Lp' "$RUNTIME_CONTRACT")" == "600" ]] || fail "private runtime contract must use mode 0600"
 export ASKLAKE_EKS_CLUSTER_NAME="${ASKLAKE_EKS_CLUSTER_NAME:-$(jq -r '.outputs.cluster_name.value // empty' "$STATE")}"
