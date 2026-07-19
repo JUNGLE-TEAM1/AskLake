@@ -128,3 +128,5 @@ validator와 receipt 통과는 이 격리 generation의 live canary 완료를 �
 - `pair1` 직접 수정, PR/merge: 0
 
 live 검증은 사용자가 승인한 격리 generation 범위에서만 수행했고 rollback까지 완료했다. 최종 회귀는 Backend owner/connector 21 tests, deploy regression 62 tests, ClickHouse V2 release 60 tests, continuous runtime 40 tests, Kubernetes contract 4 tests, machine contract 11 tests, Terraform 55 tests, receipt JSON Schema, Helm lint/render, storage verifier와 `git diff --check`를 통과했다. EKS 최종 상태는 원본 V2 runtime resource 0, V2 PVC 2개와 ready snapshot 2개 보존, isolated restore consumer 0, 기존 V1 worker 동일 UID·Ready다.
+
+commit/push 직후 외부 Helm `Rollback to 13`이 revision 15로 들어온 것도 감지했다. connector의 persisted state는 계속 STOPPED/tasks 0이라 source owner가 재활성화되지는 않았고, revision 16에서 `realtimeV2.enabled=false`를 다시 적용한 뒤 90초 동안 revision 16, enabled false, 원본 V2 resource 0을 연속 확인했다. 이는 중복 wrapper 이력 때문에 요구한 post-commit live 상태 감사에 포함한다.
