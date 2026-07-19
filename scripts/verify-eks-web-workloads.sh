@@ -217,6 +217,20 @@ if grep -Fq 'OPENAI_API_KEY' "$RENDERED_FILE"; then
   exit 1
 fi
 
+network_policy_block="$(awk '
+  /^kind: NetworkPolicy$/ { policy = 1; block = $0 ORS; next }
+  policy { block = block $0 ORS }
+  policy && /^---$/ { printf "%s", block; exit }
+' "$RENDERED_FILE")"
+[[ "$(grep -c 'port: 53' <<<"$network_policy_block")" -eq 2 ]] || {
+  echo "AI Gateway NetworkPolicy must allow TCP and UDP DNS" >&2
+  exit 1
+}
+if grep -Fq 'kubernetes.io/metadata.name: kube-system' <<<"$network_policy_block"; then
+  echo "AI Gateway DNS egress must support the EKS virtual DNS Service IP" >&2
+  exit 1
+fi
+
 collector_block="$(awk '
   /^  name: trino-result-collector$/ { in_collector = 1 }
   in_collector { print }
