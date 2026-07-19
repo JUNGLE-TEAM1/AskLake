@@ -19,6 +19,8 @@ Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Contin
 
 EKS Continuous gateway와 worker package는 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `asklake-workloads`의 disabled `realtimeV1` component는 `asklake-backend` service account의 SparkApplication RBAC를 재사용하며, apply 전에 EC2 Kafka scope를 fence하고 canonical ownership manifest를 같은 release에서 바꿔야 한다. approval, previous-owner fence와 generation이 없으면 Helm render가 실패한다.
 
+`infra/eks/helm/asklake-realtime-data-plane`도 같은 future rollout 경계를 따른다. `disabled`와 `shadow`는 EKS worker를 만들지 않고 EC2 owner를 유지한다. `cutover`는 기존 EC2 `all`과 V1 fence, 대체 EC2 `kafka` owner 준비, 승인, `eks-continuous-worker-v2` owner와 새 generation을 요구하고 V2 worker scope를 `continuous_sql`로 고정한다. canonical manifest는 같은 release에서 Kafka owner를 EC2 하나, Continuous SQL owner를 EKS 하나로 분리해야 한다. schema acknowledgement는 실제 workload나 manifest를 증명하지 않으며, 적용은 [EKS ClickHouse 실시간 GOLD 런북](../../eks-clickhouse-realtime-gold-runbook.md)의 owner 대조와 rollback receipt를 필요로 한다.
+
 ## 실패 조건
 
 `scripts/refactor_audit/control_plane_ownership.py`는 다음을 fail closed 한다.

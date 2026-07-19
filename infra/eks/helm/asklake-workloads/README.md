@@ -84,6 +84,14 @@ rendered Pod template. A chart change does not mutate the live release by itself
 use a server-side dry-run and verify actual Pod placement during the next
 authorized Helm upgrade.
 
+## Realtime backend opt-in
+
+The default Backend still renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
+
+Only an approved owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker in `asklake-realtime-data-plane`.
+
+ClickHouse/Keeper StatefulSets, PVCs, Kafka Connect and the worker are not part of this chart. See [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
+
 ## Trino distributed opt-in
 
 The disabled default remains the proven single Trino process and is the rollback

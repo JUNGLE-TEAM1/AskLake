@@ -1910,7 +1910,7 @@ type CatalogDatasetResponse = {
 };
 ```
 
-`queryEngineTable`은 `queryEngineStatus=available`일 때만 응답한다. `queryEngineRequired`는 현재 API runtime이 Trino physical mapping을 요구하는지 나타내며 `TRINO_ENABLED`와 같다. SQL 결과 Dataset 생성은 Catalog `pending` 저장, Iceberg CTAS, `DESCRIBE` 물리 확인, `available` 전환 순서로 처리하며 사용자가 physical mapping을 입력하지 않는다. CTAS continuation은 `trino-result-collector`가 처리하고 materialization GET은 persisted state만 읽는다. CTAS는 성공했지만 확인이 실패하면 `registration_failed`와 안전한 오류 코드만 남기고 mapping을 제거하며, terminal run GET은 같은 table 확인만 안전하게 재시도할 수 있다. `TRINO_ENABLED=true`에서는 `available` mapping이 없는 Dataset의 `permissions.canQuery`를 false로 응답하고 backend compiler도 동일 Dataset을 `422 VALIDATION_ERROR`로 차단한다.
+`queryEngineTable`은 `queryEngineStatus=available`일 때만 응답한다. `queryEngineRequired`는 현재 API runtime이 해당 Dataset에 Trino physical mapping을 요구하는지 나타낸다. `storageFormat=clickhouse` Dataset은 Trino mapping을 요구하지 않으며 V2 reader로 실제 행을 조회하므로 `TRINO_ENABLED=true`여도 이 조건만으로 `permissions.canQuery`를 false로 만들지 않는다. Kafka raw V2 Dataset은 `streamingSource.topic`으로 공유 view를 제한하고 저장된 `recordParsing`이 있으면 공백 필드를, 없으면 JSON field를 Catalog schema로 projection한다. SQL 결과 Dataset 생성은 Catalog `pending` 저장, Iceberg CTAS, `DESCRIBE` 물리 확인, `available` 전환 순서로 처리하며 사용자가 physical mapping을 입력하지 않는다. CTAS continuation은 `trino-result-collector`가 처리하고 materialization GET은 persisted state만 읽는다. CTAS는 성공했지만 확인이 실패하면 `registration_failed`와 안전한 오류 코드만 남기고 mapping을 제거하며, terminal run GET은 같은 table 확인만 안전하게 재시도할 수 있다. 그 외 Dataset은 `TRINO_ENABLED=true`에서 `available` mapping이 없으면 `permissions.canQuery`를 false로 응답하고 backend compiler도 동일 Dataset을 `422 VALIDATION_ERROR`로 차단한다.
 
 Materialization 제출과 조회는 source run submitter ID 또는 admin 여부뿐 아니라 base/reference Dataset의 현재 `query` grant, user/group block, resource lock을 다시 검사합니다. 저장된 user ID가 있는 run은 동일 display name으로 소유권을 우회할 수 없고 ID 없는 legacy run에만 name fallback을 허용합니다.
 
@@ -4108,10 +4108,11 @@ type PermissionGrant = {
 
 ## EKS MVP execution and Continuous ownership contract
 
-- EKS workload는 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`를 고정한다.
+- EKS workload 기본값은 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`이며 ClickHouse Realtime V2를 비활성화한다.
 - 일반 Job 목록은 Continuous Job을 숨기고 Snapshot/SQL Job만 현재 EKS control-plane resource로 노출한다.
 - Continuous 생성·상세·수정·삭제·command·전용 runtime 조회와 Continuous dataset freshness/dashboard widget data 조회는 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`와 `details.controlPlane="external_ec2"`를 반환한다.
 - EKS process는 Continuous runtime background sync를 시작하지 않는다.
+- 승인된 Realtime owner transfer에서는 EKS web/API를 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=local`, `CONTINUOUS_CONTROL_PLANE=disabled`로 전환하고 별도 EKS Worker만 `CONTINUOUS_CONTROL_PLANE=worker`를 사용한다. V2/sink/owner/private Service URL/TLS Secret은 하나의 schema-validated opt-in이며 EC2 process 0과 canonical ownership manifest 변경 없이 활성화할 수 없다.
 - FastAPI Spark/Catalog singleton은 `etl_runs` row의 owner, expiry, generation을 사용한다. 별도 lease table은 없다.
 - `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` 기본값은 60초이고 heartbeat는 기본 20초다. lease TTL은 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이며 최대 실행시간이 아니다.
 - `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`는 EKS에서 7200초로 주입하며 SparkApplication polling의 절대 제한이다. lease heartbeat는 이 timeout을 연장하지 않는다.

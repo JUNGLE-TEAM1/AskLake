@@ -1,0 +1,151 @@
+{{- if ne .Values.mode "disabled" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: asklake-clickhouse-keeper-v2
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-realtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keeper
+spec:
+  serviceName: asklake-clickhouse-keeper-v2-headless
+  replicas: {{ .Values.keeper.replicas }}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "asklake-realtime.selectorLabels" (dict "component" "keeper" "release" .Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-realtime.selectorLabels" (dict "component" "keeper" "release" .Release.Name) | nindent 8 }}
+        app.kubernetes.io/part-of: asklake
+    spec:
+      serviceAccountName: {{ .Values.keeper.serviceAccountName }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.keeper.terminationGracePeriodSeconds }}
+      nodeSelector:
+        {{- toYaml .Values.keeper.nodeSelector | nindent 8 }}
+      containers:
+        - name: keeper
+          image: {{ include "asklake-realtime.image" .Values.keeper.image | quote }}
+          imagePullPolicy: {{ .Values.keeper.image.pullPolicy }}
+          command:
+            - clickhouse-keeper
+            - --config-file=/etc/asklake/keeper/keeper.xml
+          ports:
+            - {name: keeper-client, containerPort: 9181, protocol: TCP}
+            - {name: keeper-raft, containerPort: 9234, protocol: TCP}
+          startupProbe:
+            tcpSocket: {port: keeper-client}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket: {port: keeper-client}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: {port: keeper-client}
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.keeper.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/asklake/keeper, readOnly: true}
+            - {name: data, mountPath: /var/lib/clickhouse-keeper}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ .Values.keeper.configSecret.name }}
+            items:
+              - key: {{ .Values.keeper.configSecret.configKey }}
+                path: keeper.xml
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.keeper.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.keeper.storage.size | quote }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: asklake-clickhouse-v2
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-realtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  serviceName: asklake-clickhouse-v2-headless
+  replicas: {{ .Values.clickhouse.replicas }}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 8 }}
+        app.kubernetes.io/part-of: asklake
+    spec:
+      serviceAccountName: {{ .Values.clickhouse.serviceAccountName }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.clickhouse.terminationGracePeriodSeconds }}
+      nodeSelector:
+        {{- toYaml .Values.clickhouse.nodeSelector | nindent 8 }}
+      containers:
+        - name: clickhouse
+          image: {{ include "asklake-realtime.image" .Values.clickhouse.image | quote }}
+          imagePullPolicy: {{ .Values.clickhouse.image.pullPolicy }}
+          ports:
+            - {name: https, containerPort: 8443, protocol: TCP}
+            - {name: native-secure, containerPort: 9440, protocol: TCP}
+            - {name: interserver, containerPort: 9010, protocol: TCP}
+          startupProbe:
+            tcpSocket: {port: native-secure}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: {port: native-secure}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: {port: native-secure}
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.clickhouse.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse}
+            - {name: config, mountPath: /etc/clickhouse-server/config.d/asklake.xml, subPath: asklake.xml, readOnly: true}
+            - {name: config, mountPath: /etc/clickhouse-server/users.d/asklake.xml, subPath: users.xml, readOnly: true}
+            - {name: config, mountPath: /var/run/asklake/clickhouse/ca.crt, subPath: ca.crt, readOnly: true}
+            - {name: config, mountPath: /var/run/asklake/clickhouse/server.crt, subPath: server.crt, readOnly: true}
+            - {name: config, mountPath: /var/run/asklake/clickhouse/server.key, subPath: server.key, readOnly: true}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ .Values.clickhouse.configSecret.name }}
+            defaultMode: 0400
+            items:
+              - {key: {{ .Values.clickhouse.configSecret.configKey }}, path: asklake.xml}
+              - {key: {{ .Values.clickhouse.configSecret.usersKey }}, path: users.xml}
+              - {key: {{ .Values.clickhouse.configSecret.caKey }}, path: ca.crt}
+              - {key: {{ .Values.clickhouse.configSecret.certificateKey }}, path: server.crt}
+              - {key: {{ .Values.clickhouse.configSecret.privateKeyKey }}, path: server.key}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.clickhouse.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.storage.size | quote }}
+{{- end }}

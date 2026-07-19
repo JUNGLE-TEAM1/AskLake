@@ -23,9 +23,15 @@ from app.services.resource_permission_service import dataset_with_persisted_perm
 
 
 class ContinuousSqlCatalogResolver:
-    def __init__(self, db: Session) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        allow_clickhouse_streaming: bool = False,
+    ) -> None:
         self.db = db
         self.catalog_repository = CatalogRepository(db)
+        self.allow_clickhouse_streaming = allow_clickhouse_streaming
 
     def resolve_authorized(
         self,
@@ -86,7 +92,7 @@ class ContinuousSqlCatalogResolver:
     ) -> CatalogRelation:
         stream_job = self._stream_job(dataset.id)
         mode = self._relation_mode(payload, dataset.id, stream_job)
-        normalized_mapping = self._query_engine_mapping(payload, dataset.id)
+        normalized_mapping = self._relation_mapping(payload, dataset.id, mode)
         schema, fingerprint, snapshot_id = self._schema_identity(
             payload, dataset.id, stream_job, mode,
         )
@@ -148,6 +154,66 @@ class ContinuousSqlCatalogResolver:
                 {"datasetId": dataset_id, "relationMode": explicit_mode},
             )
         return explicit_mode or ("streaming" if stream_job is not None else "static")
+
+    def _relation_mapping(
+        self,
+        payload: dict[str, Any],
+        dataset_id: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        if mode == "streaming" and self.allow_clickhouse_streaming:
+            return self._clickhouse_stream_mapping(payload, dataset_id)
+        return self._query_engine_mapping(payload, dataset_id)
+
+    @staticmethod
+    def _clickhouse_stream_mapping(
+        payload: dict[str, Any],
+        dataset_id: str,
+    ) -> dict[str, Any]:
+        mapping = payload.get("clickhouseTable") or payload.get("clickhouse_table")
+        storage_format = str(
+            payload.get("storageFormat") or payload.get("storage_format") or ""
+        ).strip().casefold()
+        if not isinstance(mapping, dict) or storage_format != "clickhouse":
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
+            )
+        database = str(mapping.get("database") or "").strip()
+        table = str(mapping.get("table") or "").strip()
+        if not database or not table:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
+            )
+        active_binding = next(
+            (
+                item
+                for item in payload.get("physicalBindings") or []
+                if isinstance(item, dict)
+                and str(item.get("role") or "").strip().casefold() in {"raw", "serving"}
+                and str(item.get("engine") or "").strip().casefold() == "clickhouse"
+                and str(item.get("status") or "").strip().casefold() == "active"
+                and str(item.get("database") or "").strip() == database
+                and str(item.get("table") or "").strip() == table
+            ),
+            None,
+        )
+        if active_binding is None:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
+            )
+        return {
+            "catalog": "clickhouse",
+            "schema": database,
+            "table": table,
+            "format": "clickhouse",
+            "partitionColumns": [],
+        }
 
     @staticmethod
     def _query_engine_mapping(payload: dict[str, Any], dataset_id: str) -> dict[str, Any]:

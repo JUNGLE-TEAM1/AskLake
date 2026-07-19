@@ -83,7 +83,11 @@ class Settings(BaseSettings):
     # The deployed EC2 worker keeps both scopes by default. An approved
     # EC2/EKS transfer may split Kafka and Continuous SQL into separate workers.
     continuous_worker_scope: Literal["all", "kafka", "continuous_sql"] = "all"
-    continuous_worker_owner: Literal["ec2-continuous-worker", "eks-continuous-worker-v1"] = "ec2-continuous-worker"
+    continuous_worker_owner: Literal[
+        "ec2-continuous-worker",
+        "eks-continuous-worker-v1",
+        "eks-continuous-worker-v2",
+    ] = "ec2-continuous-worker"
     continuous_worker_generation: str | None = None
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
@@ -353,10 +357,17 @@ class Settings(BaseSettings):
         generation = str(self.continuous_worker_generation or "").strip()
         if generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", generation) is None:
             raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
-        if self.continuous_worker_owner == "eks-continuous-worker-v1" and (
-            self.continuous_worker_scope != "kafka" or not generation
+        expected_eks_scope = {
+            "eks-continuous-worker-v1": "kafka",
+            "eks-continuous-worker-v2": "continuous_sql",
+        }.get(self.continuous_worker_owner)
+        if expected_eks_scope is not None and (
+            self.continuous_worker_scope != expected_eks_scope or not generation
         ):
-            raise ValueError("EKS Continuous owner requires Kafka scope and an explicit generation")
+            raise ValueError(
+                f"{self.continuous_worker_owner} requires {expected_eks_scope} scope "
+                "and an explicit generation"
+            )
         self.continuous_worker_generation = generation or None
         self._validate_auth_runtime()
         self._validate_trino_runtime()

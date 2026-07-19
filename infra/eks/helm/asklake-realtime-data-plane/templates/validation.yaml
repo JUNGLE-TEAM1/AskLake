@@ -1,0 +1,21 @@
+{{- if ne .Values.mode "disabled" -}}
+{{- if not .Values.networkPolicy.enabled -}}
+{{- fail "networkPolicy.enabled must be true for a realtime data-plane render" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq .Values.mode "shadow" -}}
+{{- if ne (int .Values.continuousWorker.replicas) 0 -}}
+{{- fail "shadow mode must not render a Continuous worker" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq .Values.mode "cutover" -}}
+{{- if or (not .Values.ownership.ec2Quiesced) (not .Values.ownership.ec2KafkaOwnerReady) (not .Values.ownership.realtimeV1Fenced) (not .Values.ownership.transferApproved) -}}
+{{- fail "cutover requires legacy EC2 all-scope quiesce, EC2 Kafka owner readiness, EKS Realtime V1 fence, and ownership-transfer approval" -}}
+{{- end -}}
+{{- if ne .Values.ownership.canonicalOwner "eks-continuous-worker-v2" -}}
+{{- fail "cutover canonicalOwner must be eks-continuous-worker-v2" -}}
+{{- end -}}
+{{- if lt (int .Values.continuousWorker.replicas) 1 -}}
+{{- fail "cutover requires an explicitly sized Continuous worker" -}}
+{{- end -}}
+{{- end -}}

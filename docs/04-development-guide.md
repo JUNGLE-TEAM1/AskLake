@@ -2340,6 +2340,25 @@ npm run verify:control-plane-ownership
 
 이 검증은 배포를 실행하지 않으며 `backend/app/main.py`의 lifespan이나 Compose environment를 변경하지 않는다. 현재 owner 선언과 repository entrypoint marker가 어긋나거나 required control plane을 둘 이상의 workload가 claim하면 merge 전에 실패한다.
 
+### EKS ClickHouse Realtime data plane 검증
+
+EKS의 ClickHouse/Keeper PVC는 stateless `asklake-workloads`에 추가하지 않고 별도 `asklake-realtime-data-plane` release가 소유한다. 기본 mode는 `disabled`이고 Kubernetes object를 만들지 않는다. `shadow`는 data service만 렌더하며 Continuous Worker replica를 0으로 고정한다. `cutover`는 기존 EC2 `all` quiesce, 대체 EC2 `kafka` owner 준비, Realtime V1 fence, transfer 승인, `eks-continuous-worker-v2` Continuous SQL owner와 새 generation이 모두 있을 때만 `continuous_sql` scope worker를 렌더한다.
+
+```bash
+scripts/verify-eks-realtime-data-plane.sh
+scripts/verify-eks-workloads.sh
+
+terraform -chdir=infra/eks/terraform fmt -check -recursive
+terraform -chdir=infra/eks/terraform init -backend=false
+terraform -chdir=infra/eks/terraform validate
+```
+
+검증기는 default/shadow/cutover render, immutable digest, 외부 Secret, EBS storage 입력, NetworkPolicy CIDR, Kafka Connect Pod Identity, backend `external_ec2` 기본값과 invalid owner/TLS/sizing 조합을 확인한다. checked-in test values의 replica/resource/storage/grace 값은 schema fixture일 뿐 운영 권장값이 아니다. Terraform CLI가 없는 로컬 SKIP은 CI PASS를 대신하지 않는다.
+
+Issue #1044의 `realtimeV1` Spark/Iceberg worker와 V2 ClickHouse backend opt-in은 상호 배타다. 둘을 동시에 enabled로 렌더하면 workload schema가 실패한다. V1 canary package가 repository에 있어도 production owner는 canonical manifest와 실제 process/lease evidence로 별도 확인한다.
+
+실제 shadow/apply, EC2 quiesce, canonical owner 변경, fault injection과 rollback은 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의 승인 경계를 따른다.
+
 ### 10단계 stacked PR 순차 머지 검증
 
 현재 refactor PR은 모두 base `dev`인 누적 branch다. `stacked-pr-merge-plan.json`의 order대로 한 번에 하나만 merge하고, 매 merge 뒤 `dev`를 fetch한 다음 다음 PR의 changed files·conflict·required checks를 다시 확인한다. validator 통과는 GitHub live check나 review 승인을 대신하지 않는다.
