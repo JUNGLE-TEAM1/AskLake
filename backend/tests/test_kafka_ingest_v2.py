@@ -16,6 +16,7 @@ from app.models.dashboard_live import DatasetFreshnessModel
 from app.models.realtime import RealtimeEventModel
 from app.realtime.infrastructure.kafka_connect_gateway import ConnectorProbe
 from app.repositories.catalog_repository import dataset_model_to_payload
+from app.schemas.catalog import CatalogDatasetResponse
 from app.services.clickhouse_client import ClickHouseRows
 from app.services.kafka_ingest_v2 import (
     ClickHouseKafkaIngestV2Gateway,
@@ -171,6 +172,7 @@ class KafkaIngestV2Tests(unittest.TestCase):
             catalog = db.get(CatalogDatasetModel, "ds_kafka_v2_events")
             payload = dataset_model_to_payload(catalog)
         self.assertEqual(payload["status"], "preparing")
+        self.assertEqual(CatalogDatasetResponse.model_validate(payload).freshness, "realtime")
         self.assertEqual(payload["physicalBindings"][0]["status"], "pending")
         self.assertEqual(payload["streamingSource"]["topic"], "events.v2")
 

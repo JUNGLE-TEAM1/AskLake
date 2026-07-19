@@ -555,7 +555,7 @@ type CatalogDataset = {
   permissions?: ResourcePermissions;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   status: "preparing" | "available" | "approval_required";
-  freshness: "latest" | "stale" | "approval";
+  freshness: "latest" | "realtime" | "stale" | "approval";
   source: string;
   rows: string;
   size: string;
