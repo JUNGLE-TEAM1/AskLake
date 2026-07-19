@@ -64,6 +64,7 @@
     "verify:snapshot-rule-conformance": "node scripts/verify-snapshot-rule-conformance.mjs",
     "verify:spark-schema-contract": "node scripts/verify-spark-schema-contract.mjs",
     "verify:snapshot-spark-pipeline": "node scripts/verify-snapshot-spark-pipeline.mjs",
+    "verify:spark-s3-staging": "node scripts/verify-spark-s3-staging.mjs",
     "verify:spark-csv-quoting": "node scripts/verify-spark-csv-quoting.mjs",
     "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
     "verify:target-mode-contract": "PYTHONPATH=. .venv/bin/python scripts/verify-target-mode-contract.py",

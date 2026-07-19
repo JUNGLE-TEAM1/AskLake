@@ -34,7 +34,7 @@
         "backend/scripts/run_eks_day17_multi_spark.py::prepare_candidate_jobs": 139,
         "backend/scripts/run_eks_day17_multi_spark.py::submit_runs": 139,
         "backend/scripts/runtime/spark_job_runtime.py::commit_iceberg_table": 101,
-        "backend/scripts/runtime/spark_job_runtime.py::main": 494,
+        "backend/scripts/runtime/spark_job_runtime.py::main": 491,
         "backend/scripts/snapshot_rule_runtime.py::apply_snapshot_rules": 220,
         "backend/scripts/spark_snapshot_rules.py::apply_spark_snapshot_rules": 113,
         "backend/scripts/verify-airflow-dag-catalog-wiring.py::main": 129,

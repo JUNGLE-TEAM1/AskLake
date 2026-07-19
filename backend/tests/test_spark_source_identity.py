@@ -539,6 +539,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
             cleanup = stack.enter_context(
                 patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[])
             )
+            materialization_cleanup = stack.enter_context(
+                patch.object(spark_job_run, "cleanup_spark_paths", return_value=[])
+            )
             stack.enter_context(patch.object(spark_job_run.F, "lit", return_value="run-1"))
             stack.enter_context(patch.object(spark_job_run.F, "current_timestamp", return_value="now"))
             stack.enter_context(patch("builtins.print"))
@@ -552,9 +555,14 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["failedStage"], "Source Inventory")
         self.assertIn("phase=after_read", report["error"])
-        self.assertNotIn("outputCleanup", report)
+        self.assertEqual(report["outputCleanup"], {"errors": [], "status": "success"})
+        self.assertEqual(report["sparkResources"]["materializationCleanupStatus"], "success")
         cleanup.assert_not_called()
-        self.assertEqual(frame.unpersist.call_count, 2)
+        materialization_cleanup.assert_called_once_with(
+            spark,
+            ["s3a://m3-output/run-1.__materialization__run-1"],
+        )
+        self.assertEqual(frame.unpersist.call_count, 0)
         spark.stop.assert_called_once_with()
 
     def test_identity_status_checks_use_bounded_concurrency_and_keep_path_order(self) -> None:

@@ -255,9 +255,24 @@ The validator checks:
 
 Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-contract`를 실행한다. 이 검증은 필수 컬럼 1개와 10개에서 동일한 수의 내부 Spark job으로 null/cast 결과를 확인해, 필수 컬럼 수에 비례해 source scan action이 증가하는 회귀를 차단한다. JSON/JSONL reader는 승인된 schema와 dotted source path를 사용하므로 DataFrame 생성 시 inference action을 실행하지 않아야 한다.
 
-Snapshot Rule runtime은 transform-only Job에서 빈 Quality 단계를 별도 Spark action으로 평가하지 않는다. Job runner는 확정 schema projection을 `MEMORY_AND_DISK`로 persist하고 schema count/null 집계로 한 번 materialize한 뒤 Rule, Quality, sample, target write까지 같은 cache lineage를 재사용한다. 같은 Spark type의 `String`/`Long`/`Boolean` identity cast·copy·rename과 승인된 row-preserving SQL로만 된 canonical transform 선두 prefix는 persist 전에 적용하므로 첫 source scan이 write 재사용 frame까지 만든다. 이 수는 `transform.preMaterializedTransformCount`로 남긴다. canonical Quality counter가 정확한 경로는 write 후 다시 쓰지 않을 output frame을 두 번째로 persist하지 않고 source cache에서 직접 publish하며 `sparkResources.outputFrameCacheMode=source_cache_direct_publish`를 남긴다. counter fallback과 legacy Quality는 `materialized_output_cache`를 유지한다. 각 transform은 이전 output row count를 재사용한다. 직접 컬럼 복사와 `TRIM(CAST(<input> AS STRING))`으로 제한한 total·row-preserving SQL subset은 rule별 `count()` 없이 typed Column으로 컴파일하고 `transform.rowPreservingSqlExpressionCount`에 그 수를 남긴다. type-changing transform, 임의 SQL expression과 `SELECT`는 기존 validation action 및 오류 처리를 유지한다. legacy Quality rule은 전체 행·규칙별 실패·union 실패를 한 번의 aggregate action으로 계산한다. `npm run verify:snapshot-rule-conformance`와 `npm run verify:spark-schema-contract`는 rule/필수 컬럼 수가 늘어도 action 수가 증가하지 않는지 확인한다. `npm run verify:snapshot-spark-pipeline`은 일반 action-budget과 생산형 3-rule pre-materialized prefix를 실제 JSONL에서 Parquet까지 실행하고 Spark `FileScanRDD` 로그에서 해당 원본 경로의 물리 read가 각각 정확히 1회인지 검증한다.
+Snapshot Rule runtime은 transform-only Job에서 빈 Quality 단계를 별도 Spark action으로 평가하지 않는다. Job runner는 확정 schema projection과 지원되는 row-preserving transform 선두 prefix를 run 전용 Parquet materialization 경로에 먼저 쓴 뒤, 그 Parquet를 새 DataFrame으로 읽어 schema count/null, Rule, Quality, sample과 target write를 수행한다. 전체 projected/output frame을 `MEMORY_AND_DISK`로 persist하지 않으며 `sparkResources.cacheStorageLevel=NONE`, `materializationMode=run_scoped_parquet_staging`, `outputFrameCacheMode=staged_parquet_reuse`를 남긴다. 같은 Spark type의 `String`/`Long`/`Boolean` identity cast·copy·rename과 승인된 row-preserving SQL로만 된 canonical transform 선두 prefix는 staging 전에 적용하고 그 수를 `transform.preMaterializedTransformCount`로 남긴다. 직접 컬럼 복사와 `TRIM(CAST(<input> AS STRING))`으로 제한한 total·row-preserving SQL subset은 rule별 `count()` 없이 typed Column으로 컴파일하고 `transform.rowPreservingSqlExpressionCount`에 그 수를 남긴다. type-changing transform, 임의 SQL expression과 `SELECT`는 기존 validation action 및 오류 처리를 유지한다. legacy Quality rule은 전체 행·규칙별 실패·union 실패 수를 하나의 aggregate action으로 계산한다. `npm run verify:snapshot-rule-conformance`와 `npm run verify:spark-schema-contract`는 rule/필수 컬럼 수가 늘어도 action 수가 증가하지 않는지 확인한다. `npm run verify:snapshot-spark-pipeline`은 실제 JSONL 원본 물리 read가 정확히 1회인지, staged Parquet가 생성되는지, success·quality failure·schema exception에서 staging이 정리되는지 검증한다.
 
-canonical Quality의 `evaluatedRowCount - droppedCount - quarantinedCount`가 유효하면 final projection 뒤 `outputRows`도 이 counter를 재사용하고 `quality.outputRowCountSource=canonical_quality_counters`를 기록한다. counter가 없거나 잘못되면 `spark_count_fallback` 전체 count를 유지한다. counter 경로에서는 publish가 final frame을 모두 materialize할 때까지 source cache를 해제하지 않아 raw source read 1회 예산을 지킨다.
+실제 dev EKS의 10GB/100GB cache before와 staging after 결과, JVM heap·GC·spill·
+cleanup 및 성능 trade-off는 [Spark cache-independent staging EKS
+experiment](spark-cache-independent-staging-eks-experiment-2026-07-20.md)에
+기록한다. 이 scale receipt는 고유 S3 Parquet output을 사용하며 공유
+Iceberg/Catalog를 변경하지 않는다.
+
+실제 AWS S3 경로까지 확인할 때는 개발용 output bucket만 명시하고 아래 opt-in smoke를 실행한다. 이 검증은 3행 fixture를 `asklake-validation/issue-931/<고유 run>/`에 올린 뒤 같은 Spark runtime으로 S3A source read, run 전용 Parquet materialization, 정식 Parquet publish를 수행한다. 원본 물리 read 1회, staging 정리, 정식 Parquet 존재를 확인하고 `finally`에서 해당 run prefix의 현재 객체와 version/delete marker를 모두 삭제해 각각 residue 0을 검증한다. 공유 EKS 설정이나 SparkApplication은 변경하지 않는다.
+
+```bash
+ASKLAKE_VERIFY_S3_STAGING_LIVE=true \
+ASKLAKE_VERIFY_S3_STAGING_BUCKET=<dev-output-bucket> \
+AWS_REGION=<dev-region> \
+npm run verify:spark-s3-staging
+```
+
+canonical Quality의 `evaluatedRowCount - droppedCount - quarantinedCount`가 유효하면 final projection 뒤 `outputRows`도 이 counter를 재사용하고 `quality.outputRowCountSource=canonical_quality_counters`를 기록한다. counter가 없거나 잘못되면 `spark_count_fallback` 전체 count를 유지한다. 두 경로 모두 후속 action은 raw source가 아니라 staged Parquet를 읽으므로 raw source physical full read 1회 예산을 지킨다.
 
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
