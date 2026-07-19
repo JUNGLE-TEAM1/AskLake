@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
-from sqlalchemy import Text, inspect, select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.compatibility import record_legacy_runtime_error_projection
@@ -20,6 +20,10 @@ from app.models import (
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
 from app.repositories import etl_job_list_repository
+from app.repositories.etl_schema_migrations import (
+    columns_by_name,
+    migrate_columns_to_text,
+)
 from app.schemas.etl import (
     CatalogDataset,
     ContinuousMaintenanceRun,
@@ -32,14 +36,6 @@ from app.schemas.etl import (
 from app.services.rule_compiler import compile_rule_set
 
 _schema_ready_bind_ids: set[int] = set()
-
-
-def column_requires_text_migration(
-    columns: dict[str, dict[str, Any]],
-    name: str,
-) -> bool:
-    column = columns.get(name)
-    return column is not None and not isinstance(column.get("type"), Text)
 
 
 class RunExecutionLease(NamedTuple):
@@ -64,12 +60,8 @@ def ensure_schema(db: Session) -> None:
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
-        existing_column_defs = {
-            column["name"]: column
-            for column in inspector.get_columns("etl_jobs")
-        }
-        existing_columns = set(existing_column_defs)
-        if "payload" in existing_columns:
+        existing_column_defs = columns_by_name(inspector, "etl_jobs")
+        if "payload" in existing_column_defs:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
@@ -133,7 +125,7 @@ def ensure_schema(db: Session) -> None:
             "transform_steps": "JSON",
         }
         for column_name, column_type in column_defs.items():
-            if column_name not in existing_columns:
+            if column_name not in existing_column_defs:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
 
         runtime_columns = {column["name"] for column in inspector.get_columns("kafka_continuous_runtimes")}
@@ -209,32 +201,11 @@ def ensure_schema(db: Session) -> None:
             else:
                 sql_value = f"'{default_value}'"
             connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
-        if column_requires_text_migration(
-            existing_column_defs,
-            "schema_fingerprint",
-        ):
-            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
-        if column_requires_text_migration(existing_column_defs, "last_state"):
-            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
+        migrate_columns_to_text(connection, "etl_jobs", existing_column_defs, ("schema_fingerprint", "last_state"))
 
-        existing_run_column_defs = {
-            column["name"]: column
-            for column in inspector.get_columns("etl_runs")
-        }
-        existing_run_columns = set(existing_run_column_defs)
-        if column_requires_text_migration(
-            existing_run_column_defs,
-            "failed_stage",
-        ):
-            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
-        if column_requires_text_migration(
-            existing_run_column_defs,
-            "error_summary",
-        ):
-            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
+        existing_run_column_defs = columns_by_name(inspector, "etl_runs")
+        migrate_columns_to_text(connection, "etl_runs", existing_run_column_defs, ("failed_stage", "error_summary"))
 
-
-        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
         run_column_defs = {
             "airflow_dag_id": "VARCHAR(255)",
             "airflow_dag_run_id": "VARCHAR(255)",
@@ -248,7 +219,7 @@ def ensure_schema(db: Session) -> None:
             "execution_generation": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in run_column_defs.items():
-            if column_name not in existing_run_columns:
+            if column_name not in existing_run_column_defs:
                 connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
         connection.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_etl_runs_execution_claim "
