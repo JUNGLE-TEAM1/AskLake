@@ -239,9 +239,20 @@ class CatalogDatasetRowsTest(unittest.TestCase):
     def test_clickhouse_dataset_rows_use_the_realtime_v2_reader(self) -> None:
         dataset = self.dataset.model_copy(update={
             "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
+            "physical_bindings": [{
+                "role": "serving",
+                "engine": "clickhouse",
+                "status": "active",
+                "bindingEpoch": 1,
+                "versionId": "kiv2-job",
+                "pipelineVersionId": "kiv2-job",
+                "database": "asklake_v2",
+                "table": "raw_events_v2_current",
+            }],
             "schema_": [["event_time", "Timestamp"], ["level", "String"]],
             "storage_format": "clickhouse",
             "storage_location": "clickhouse://asklake_v2/raw_events_v2",
+            "streaming_source": {"topic": "events.v2"},
         })
         client = FakeCatalogRowsClickHouseClient()
 
@@ -255,6 +266,7 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertEqual(page.row_count, 3)
         self.assertEqual(page.rows, [["2026-07-19T07:30:00Z", "INFO"]])
         self.assertTrue(client.closed)
+        self.assertTrue(all("kafka_topic = 'events.v2'" in query for query in client.queries))
 
     def test_clickhouse_dataset_query_permission_does_not_require_trino_registration(self) -> None:
         dataset = self.dataset.model_copy(update={
