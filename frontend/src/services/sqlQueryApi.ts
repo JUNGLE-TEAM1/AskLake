@@ -1,8 +1,11 @@
 import type {
   CatalogDataset,
+  DashboardRuntimeWidgetConfig,
+  DashboardRuntimeWidgetType,
   SqlResultDraft,
   TrinoQueryEstimate,
   TrinoQueryRun,
+  TrinoQueryRunChart,
   TrinoQueryRunResultPage,
   TrinoQueryValidation,
 } from "../types";
@@ -95,6 +98,20 @@ export async function getTrinoQueryRunResultPage(
 ): Promise<TrinoQueryRunResultPage> {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return apiClient.get<TrinoQueryRunResultPage>(`/api/query/runs/${encodeURIComponent(runId)}/results${query}`);
+}
+
+
+export async function getTrinoQueryRunChart(
+  runId: string,
+  type: DashboardRuntimeWidgetType,
+  config: DashboardRuntimeWidgetConfig,
+  signal?: AbortSignal,
+): Promise<TrinoQueryRunChart> {
+  return apiClient.post<TrinoQueryRunChart>(
+    `/api/query/runs/${encodeURIComponent(runId)}/chart`,
+    { config, type },
+    { signal, timeoutMs: 30_000 },
+  );
 }
 
 

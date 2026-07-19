@@ -4,6 +4,7 @@ from pydantic import Field, field_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.catalog import QueryEngineStatus
+from app.schemas.dashboard import DashboardRuntimeWidgetType
 
 TrinoQueryRunStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 TrinoQueryRunMode = Literal["preview", "run"]
@@ -65,6 +66,19 @@ class TrinoQueryRunResultPage(CamelModel):
     run_id: str
     total_pages: int | None = Field(default=None, ge=0)
     total_rows: int | None = Field(default=None, ge=0)
+
+
+class TrinoQueryRunChartRequest(CamelModel):
+    type: DashboardRuntimeWidgetType
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class TrinoQueryRunChartResponse(CamelModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    group_count: int = Field(ge=0)
+    run_id: str
+    source_row_count: int = Field(ge=0)
 
 
 class TrinoMaterializationRunResponse(CamelModel):

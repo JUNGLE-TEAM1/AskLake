@@ -43,10 +43,17 @@ export type SqlRemoteResultPagination = {
   totalPages?: number | null;
 };
 
+export type SqlChartStatus = {
+  error?: string | null;
+  onRetry?: () => void;
+  pending?: boolean;
+};
+
 type SqlResultsPanelProps = {
   activeChartSource?: SqlChartSource;
   baseDatasetSelected: boolean;
   chartConfig: SqlChartConfig | null;
+  chartStatus?: SqlChartStatus;
   dialogResultDraft: SqlResultDraft | null;
   dialogOpen: boolean;
   dialogPageError?: string | null;
@@ -88,14 +95,26 @@ function SqlChartEmptyState() {
 function SqlResultContent({
   activeChartSource,
   chartConfig,
+  chartStatus,
   resultDraft,
   resultView,
   isLoading = false,
   executionInfo,
-}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "executionInfo" | "resultDraft" | "resultView"> & { isLoading?: boolean }) {
+}: Pick<SqlResultsPanelProps, "activeChartSource" | "chartConfig" | "chartStatus" | "executionInfo" | "resultDraft" | "resultView"> & { isLoading?: boolean }) {
   if (resultView === "execution") return executionInfo;
   if (!resultDraft) return null;
   if (resultView === "table") return <SqlPreviewTable isLoading={isLoading} resultDraft={resultDraft} />;
+  if (chartStatus?.pending) {
+    return (
+      <Empty className={styles.resultViewEmpty} size="sm" variant="bordered">
+        <EmptyHeader>
+          <EmptyTitle>전체 SQL 결과를 집계하고 있습니다.</EmptyTitle>
+          <EmptyDescription>현재 100행 미리보기가 아니라 저장된 전체 결과로 차트를 준비합니다.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+  if (chartStatus?.error) return <SqlResultPageError message={chartStatus.error} onRetry={chartStatus.onRetry} />;
   if (chartConfig && activeChartSource) {
     return <SqlResultChart chartConfig={chartConfig} source={activeChartSource} />;
   }
@@ -162,6 +181,23 @@ function getResultRange(resultDraft: SqlResultDraft) {
   };
 }
 
+function getResultDialogDescription({
+  columnCount,
+  range,
+  resultView,
+  sourceRowCount,
+}: {
+  columnCount: number;
+  range: ReturnType<typeof getResultRange>;
+  resultView: SqlResultView;
+  sourceRowCount?: number;
+}) {
+  if (resultView === "chart") {
+    return `전체 ${(sourceRowCount ?? range.total).toLocaleString()}행 서버 집계 · ${columnCount}컬럼 · 차트 보기`;
+  }
+  return `${range.start.toLocaleString()}–${range.end.toLocaleString()} / ${range.total.toLocaleString()}행 · ${columnCount}컬럼 · 표 보기`;
+}
+
 function SqlResultActions({
   downloadDisabled,
   downloadPending,
@@ -201,6 +237,7 @@ export function SqlResultsPanel({
   activeChartSource,
   baseDatasetSelected,
   chartConfig,
+  chartStatus,
   dialogResultDraft,
   dialogOpen,
   dialogPageError,
@@ -237,7 +274,6 @@ export function SqlResultsPanel({
   const resultScrollbars = resultView === "execution" || (isCompactTableResult && resultDraft && resultDraft.columns.length <= 4)
     ? "vertical"
     : "both";
-
   return (
     <>
       <Panel
@@ -286,6 +322,7 @@ export function SqlResultsPanel({
                 <SqlResultContent
                   activeChartSource={activeChartSource}
                   chartConfig={chartConfig}
+                  chartStatus={chartStatus}
                   executionInfo={executionInfo}
                   resultDraft={resultDraft}
                   resultView={resultView}
@@ -318,14 +355,13 @@ export function SqlResultsPanel({
           </>
         )}
       </Panel>
-
       {resultDraft && dialogDraft && dialogRange && resultView !== "execution" && (
         <Dialog onOpenChange={onDialogOpenChange} open={dialogOpen}>
           <DialogContent className="grid h-[min(900px,calc(100vh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none grid-rows-[max-content_minmax(0,1fr)] overflow-hidden">
             <DialogHeader>
               <DialogTitle>SQL 결과 전체 보기</DialogTitle>
               <DialogDescription>
-                {dialogRange.start.toLocaleString()}–{dialogRange.end.toLocaleString()} / {dialogRange.total.toLocaleString()}행 · {dialogDraft.columns.length}컬럼 · {resultView === "chart" ? "차트" : "표"} 보기
+                {getResultDialogDescription({ columnCount: dialogDraft.columns.length, range: dialogRange, resultView, sourceRowCount: activeChartSource?.sourceRowCount })}
               </DialogDescription>
             </DialogHeader>
             <div className={styles.resultDialogBody}>
@@ -396,6 +432,7 @@ export function SqlResultsPanel({
                       <SqlResultContent
                         activeChartSource={activeChartSource}
                         chartConfig={chartConfig}
+                        chartStatus={chartStatus}
                         executionInfo={executionInfo}
                         isLoading={dialogPagePending}
                         resultDraft={dialogDraft}
@@ -409,6 +446,7 @@ export function SqlResultsPanel({
                   <SqlResultContent
                     activeChartSource={activeChartSource}
                     chartConfig={chartConfig}
+                    chartStatus={chartStatus}
                     executionInfo={executionInfo}
                     resultDraft={dialogDraft}
                     resultView={resultView}

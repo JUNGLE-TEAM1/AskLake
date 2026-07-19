@@ -54,6 +54,7 @@ import {
 } from "./useTrinoFullResult";
 import { useTrinoPreviewRun } from "./useTrinoPreviewRun";
 import { useTrinoQueryPreflight } from "./useTrinoQueryPreflight";
+import { useTrinoResultChart } from "./useTrinoResultChart";
 
 function createClientRequestId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -179,10 +180,27 @@ export function SqlAnalysisPage({
     () => visibleResult ? buildSqlChartSources(visibleResult, selectedContextDatasets) : [],
     [selectedContextDatasets, visibleResult],
   );
-  const activeChartSource = useMemo(
+  const configuredChartSource = useMemo(
     () => chartConfig ? chartSources.find((source) => source.id === chartConfig.sourceId) : undefined,
     [chartConfig, chartSources],
   );
+  const usesFullResultChart = Boolean(
+    visibleResult?.engine === "trino"
+    && configuredChartSource?.kind === "sql_result",
+  );
+  const trinoResultChart = useTrinoResultChart({
+    chartConfig: usesFullResultChart ? chartConfig : null,
+    fullResultRun: fullResult.run,
+    source: usesFullResultChart ? configuredChartSource : undefined,
+  });
+  const activeChartSource = usesFullResultChart ? trinoResultChart.source : configuredChartSource;
+  const activeChartConfig = usesFullResultChart
+    ? trinoResultChart.chartConfig ?? chartConfig
+    : chartConfig;
+  useEffect(() => {
+    if (fullResult.intent !== "chart" || !trinoResultChart.source) return;
+    fullResult.clearIntent();
+  }, [fullResult.clearIntent, fullResult.intent, trinoResultChart.source]);
   const selectedDatasetIdSet = useMemo(
     () => new Set(selectedContextDatasets.map((item) => item.id)),
     [selectedContextDatasets],
@@ -741,6 +759,10 @@ export function SqlAnalysisPage({
     if (!visibleResult) return;
     setChartConfig(nextConfig);
     setResultView("chart");
+    const nextSource = chartSources.find((source) => source.id === nextConfig.sourceId);
+    if (visibleResult.engine === "trino" && nextSource?.kind === "sql_result") {
+      fullResult.prepareChart();
+    }
     onAction("analysis.chart.configured", `/api/query/runs/${visibleResult.runId}/visualization`, visibleResult.datasetId);
   };
 
@@ -749,6 +771,13 @@ export function SqlAnalysisPage({
     isTrinoResultReady(actionTrinoRun) && actionTrinoRun.mode === "preview"
   );
   const fullResultPreparing = fullResult.preparing;
+  const retryTrinoResultChart = () => {
+    if (!fullResult.run || !isTrinoResultReady(fullResult.run)) {
+      fullResult.prepareChart();
+      return;
+    }
+    trinoResultChart.retry();
+  };
   const materializationResult = visibleResult?.engine === "trino"
     ? trinoPreviewReady ? visibleResult : null
     : resultDraft;
@@ -839,7 +868,12 @@ export function SqlAnalysisPage({
         <SqlResultsPanel
           activeChartSource={activeChartSource}
           baseDatasetSelected={Boolean(baseDataset)}
-          chartConfig={chartConfig}
+          chartConfig={activeChartConfig}
+          chartStatus={usesFullResultChart ? {
+            error: trinoResultChart.error ?? fullResult.error,
+            onRetry: retryTrinoResultChart,
+            pending: (fullResult.intent === "chart" && fullResult.preparing) || trinoResultChart.pending,
+          } : undefined}
           dialogPageError={visibleResult?.engine === "trino" ? fullResult.pageError ?? fullResult.error : resultPageError}
           dialogPagePending={visibleResult?.engine === "trino" ? fullResult.pagePending : resultPagePending}
           dialogRemotePagination={fullResult.pagination}

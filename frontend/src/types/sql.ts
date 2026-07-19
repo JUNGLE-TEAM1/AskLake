@@ -1,4 +1,5 @@
 import type { CatalogDataset } from "./catalog";
+import type { DashboardRuntimeWidgetConfig } from "./dashboard";
 import type { ScheduleOverlapPolicy } from "./etl";
 
 export type DerivedDatasetLayer = Extract<CatalogDataset["layer"], "SILVER" | "GOLD">;
@@ -125,6 +126,14 @@ export type TrinoQueryRunResultPage = {
   runId: string;
   totalPages?: number | null;
   totalRows?: number | null;
+};
+
+export type TrinoQueryRunChart = {
+  config: DashboardRuntimeWidgetConfig;
+  data: Array<Record<string, unknown>>;
+  groupCount: number;
+  runId: string;
+  sourceRowCount: number;
 };
 
 export type CreateDerivedDatasetRequest = {

@@ -488,10 +488,12 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 
 ## 12) SQL 결과 시각화 경계
 
-- SQL 화면의 왼쪽 `차트 생성하기` 탭은 bounded `SqlResultDraft`, 현재 로드된 Trino 논리 결과 page, 또는 선택한 Catalog dataset sample을 로컬 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다. Trino page의 row range를 source label에 명시한다.
+- SQL 화면의 왼쪽 `차트 생성하기` 탭은 Dashboard `WidgetConfigPanel`과 `WidgetRenderer`를 재사용한다. DuckDB compatibility 결과는 bounded `SqlResultDraft`를 로컬 변환하지만, Trino SQL 결과는 현재 100행 preview page를 차트 원본으로 사용하지 않는다.
+- Trino SQL 결과 차트를 적용하면 `POST /api/query/runs/{previewRunId}/full-results`로 연결된 전체 결과 run을 시작하거나 재사용한다. `storageStatus=available` 이후 backend가 private result page를 순차적으로 읽어 `POST /api/query/runs/{fullRunId}/chart`에서 집계하고, browser에는 최대 500개 chart group만 반환한다. 원본 전체 행과 object storage 위치는 browser memory로 전달하지 않는다.
+- 집계 중에는 부분 page 차트를 그리지 않고 명시적인 준비 상태를 표시한다. 결과 page 이동은 표에만 영향을 주며 이미 계산된 차트 값은 바뀌지 않는다. 차트 집계도 result page/CSV와 같은 submitter/admin ownership, 현재 Dataset query 권한, governance lock, retention을 재검사한다.
 - 적용한 차트 설정은 SQL 화면 메모리에만 유지하며, SQL 결과 toolbar에는 대시보드 생성 action을 제공하지 않는다.
 - 대시보드 생성과 저장은 별도 대시보드 메뉴의 runtime/builder 계약을 사용한다. 기존 `DashboardEntry.source = "sql"` 호환 타입은 즉시 제거하지 않지만 SQL 화면에서는 해당 entry를 만들지 않는다.
-- Trino 원격 결과 한 page의 차트는 SQL 화면 메모리에만 존재하는 임시 시각화다. 전체 Query Run 차트나 persistent Dashboard source로 저장하지 않으며 반복 사용하려면 먼저 materialized Dataset으로 전환한다.
+- 전체 결과 집계 차트도 SQL 화면 메모리에만 존재하는 임시 시각화이며 persistent Dashboard source로 저장하지 않는다. 반복 사용·게시·스케줄 갱신이 필요하면 SQL recipe를 materialized Dataset으로 전환한 뒤 Dashboard runtime을 사용한다.
 ## ETL Permission 데이터 소유권
 
 - 사용자·그룹 후보의 source of truth는 backend `GET /api/etl/permission-options`다. 새 작업은 인증된 생성 사용자가 조회할 수 있고, 기존 작업은 admin·생성자·담당자·`manage` 권한자만 조회할 수 있다.

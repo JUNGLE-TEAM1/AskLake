@@ -17,6 +17,8 @@ from app.models.sql import SqlRunResultPageModel
 from app.schemas.common import ErrorCode
 from app.schemas.trino import (
     TrinoClientPage,
+    TrinoQueryRunChartRequest,
+    TrinoQueryRunChartResponse,
     TrinoQueryRunError,
     TrinoQueryRunResponse,
     TrinoQueryRunResult,
@@ -24,6 +26,7 @@ from app.schemas.trino import (
 )
 from app.services.trino_client import TrinoClient
 from app.services.trino_query_access import TrinoQueryAccessService
+from app.services.trino_query_chart import build_trino_result_chart
 from app.services.trino_query_preview import save_inline_preview_page
 from app.services.trino_query_result_manifest import (
     build_result_manifest,
@@ -330,6 +333,56 @@ class TrinoQueryResultService:
 
         return stream()
 
+    def prepare_chart_data(
+        self,
+        run_id: str,
+        request: TrinoQueryRunChartRequest,
+        actor: ActorContext | None = None,
+    ) -> TrinoQueryRunChartResponse:
+        response = self.run_store.load(run_id)
+        actor_context = actor or ActorContext()
+        self.access.require_access_for_response(response, actor_context, operation="view")
+        self.require_retention(response)
+        if response.mode != "run":
+            raise ApiError(
+                ErrorCode.RESULT_PAGE_NOT_READY,
+                "Create the full result before aggregating chart data",
+                status.HTTP_409_CONFLICT,
+                {"runId": run_id, "mode": response.mode},
+            )
+        if response.status != "succeeded" or response.result is None or response.result.storage_status != "available":
+            raise ApiError(
+                ErrorCode.RESULT_PAGE_NOT_READY,
+                "Chart data is available after the full query result is prepared",
+                status.HTTP_409_CONFLICT,
+            )
+        pages = self.repository.list_result_pages(run_id)
+        if not pages:
+            self._raise_missing_page(response)
+        first_columns, first_rows = self._read_page(pages[0])
+
+        def result_rows() -> Iterator[list[list[object]]]:
+            yield first_rows
+            for page in pages[1:]:
+                columns, rows = self._read_page(page)
+                if columns != first_columns:
+                    raise ApiError(
+                        ErrorCode.RESULT_STORAGE_UNAVAILABLE,
+                        "Trino result page columns are inconsistent",
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+                yield rows
+
+        chart = build_trino_result_chart(
+            columns=first_columns,
+            pages=result_rows(),
+            request=request,
+            run_id=run_id,
+            source_row_count=response.result.row_count or 0,
+        )
+        self._record_chart_aggregation(response, actor_context, chart)
+        return chart
+
     def require_retention(self, response: TrinoQueryRunResponse) -> None:
         expires_at = response.result.retention_expires_at if response.result else None
         if not expires_at:
@@ -394,6 +447,29 @@ class TrinoQueryResultService:
             api_path=f"/api/query/runs/{response.run_id}/exports/csv",
             http_method="GET",
             metadata={"rowCount": response.result.row_count if response.result else None},
+            result="success",
+            status_code=status.HTTP_200_OK,
+            target_id=response.run_id,
+            target_type=AuditTargetType.QUERY_RUN,
+        )
+
+    def _record_chart_aggregation(
+        self,
+        response: TrinoQueryRunResponse,
+        actor: ActorContext,
+        chart: TrinoQueryRunChartResponse,
+    ) -> None:
+        safe_record_audit_event(
+            self.repository.db,
+            action="query_run.chart.aggregate",
+            actor=actor,
+            api_path=f"/api/query/runs/{response.run_id}/chart",
+            http_method="POST",
+            metadata={
+                "groupCount": chart.group_count,
+                "rowCount": chart.source_row_count,
+                "trinoQueryId": response.trino_query_id,
+            },
             result="success",
             status_code=status.HTTP_200_OK,
             target_id=response.run_id,

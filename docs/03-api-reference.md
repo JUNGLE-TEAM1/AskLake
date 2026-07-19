@@ -596,7 +596,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | 최대 100행 Trino preview Query Run 제출, 상태 polling, on-demand 전체 결과 run, signed-cursor page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
+| SQL 분석 | 최대 100행 Trino preview Query Run 제출, 상태 polling, on-demand 전체 결과 run, signed-cursor page, server CSV와 전체 결과 server-aggregated chart. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
 | Query AI 생성 | 선택 Dataset ID와 prompt를 FastAPI에 보내고 private Gateway + 단일 사용 MCP context + Semantic RAG + Catalog cost metadata로 초안을 생성한다. 실제 사용 근거만 표시하고 backend cost guard와 intent guard가 공통 최대 1회 교정하며 로컬 SQL fallback은 없다. | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 SQL 내부 다단계 모달에서 스케줄·거버넌스·저장 설정을 완료하고 `createSqlDatasetJob`으로 명시적 draft를 제출; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter와 draft/published runtime. Assistant 시각화는 검증된 widget action만 적용하며 local/mock chart fallback 없음 | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
@@ -606,11 +606,11 @@ SQL 화면은 한국어/공백 dataset·column 표시명을 금지하지 않는�
 
 Schedule UI는 `직접 실행`과 `반복 실행` 두 선택지만 사용하며, `직접 실행`은 payload의 `스케줄링 건너뛰기` label로 정규화한다. 스케줄링을 건너뛰면 사용자가 `POST /api/etl/jobs/{jobId}/commands`의 `run` command action으로 필요할 때 1회 Run을 만든다. 반복 실행을 선택한 때만 반복 주기, 실행 시각, IANA `timezone`, `overlapPolicy`를 노출하며 재시도 상세값은 재시도 사용 시에만 표시한다. `startDate`, `endDate`, `nextRunUtc`, `watermarkPolicy`는 create request에 보존하되 UI에서는 기본값을 사용한다. 기본 `overlapPolicy`는 `skip_if_running`이며, 재시도는 다음 예약 시각 계산을 밀지 않고 현재 Run 안에서 2배 지수 백오프 정책으로 처리한다.
 
-SQL 분석 UI의 SQL editor 높이·toolbar·textarea scroll은 기존 계약을 유지한다. Trino 기본 실행은 `mode=preview`, `limit=100`이며 실행 평가와 `쿼리 실행`, `첫 결과 준비` timeline은 결과 panel의 세 번째 `실행 정보` view에 표시한다. `전체 보기`/`CSV 다운로드`는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 전체 결과 run을 시작하거나 재사용한다. DuckDB compatibility mode는 기존 snapshot pagination을 유지한다.
+SQL 분석 UI의 SQL editor 높이·toolbar·textarea scroll은 기존 계약을 유지한다. Trino 기본 실행은 `mode=preview`, `limit=100`이며 실행 평가와 `쿼리 실행`, `첫 결과 준비` timeline은 결과 panel의 세 번째 `실행 정보` view에 표시한다. `전체 보기`/`CSV 다운로드`/SQL 결과 차트는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 전체 결과 run을 시작하거나 재사용한다. DuckDB compatibility mode는 기존 snapshot pagination을 유지한다.
 
 Catalog의 `storageLocation`이 `s3://` 또는 `s3a://` Parquet이면 `POST /api/query/runs`는 backend S3/MinIO credential로 object를 query-scoped 임시 cache에 읽어 DuckDB에 등록한다. 원격 파일 합계는 `ASKLAKE_SQL_PREVIEW_MAX_REMOTE_BYTES` 기본 512 MiB로 제한하며, 연결·인증·object 오류를 빈 Preview로 숨기지 않고 `SQL_STORAGE_ERROR`로 반환한다.
 
-SQL 위젯 생성은 별도 AI/API 호출 없이 bounded `SqlResultDraft`, 현재 로드된 Trino 논리 결과 page, 또는 선택한 `CatalogDataset.sampleRows`를 `DashboardDatasetOption`으로 변환한다. Trino page 기반 차트는 현재 page 범위만 임시로 시각화하며 전체 Query Run 또는 persistent Dashboard source를 의미하지 않는다. 왼쪽 `차트 생성하기`는 Dashboard runtime의 `WidgetConfigPanel`을 재사용하고 오른쪽 `차트 보기`에 렌더링한다. `데이터 미리보기`는 원본 SQL 표를, `실행 정보`는 평가와 timeline을 유지한다. SQL 결과 toolbar에서는 Dashboard 저장 또는 1회성 Dataset materialization action을 노출하지 않는다.
+SQL 위젯 생성은 Dashboard runtime의 `WidgetConfigPanel`을 재사용한다. DuckDB compatibility 결과는 bounded `SqlResultDraft`를 로컬 변환한다. Trino 결과에 차트를 적용하면 연결된 full-result run을 시작하거나 재사용하고, 준비 완료 뒤 `POST /api/query/runs/{fullRunId}/chart`가 private result page 전체를 서버에서 집계해 최대 500개 group만 반환한다. 현재 100행 page를 전체 결과처럼 그리지 않으며 page 이동은 표에만 영향을 준다. `데이터 미리보기`는 현재 cursor page를, `실행 정보`는 평가와 timeline을 유지한다. 전체 결과 차트도 SQL 화면의 임시 시각화이므로 Dashboard 저장 또는 반복 사용은 materialized Dataset을 거쳐야 한다.
 
 ## 8) Pair Handoff Contracts
 
@@ -959,9 +959,10 @@ type QueryRunResponse = TrinoQueryRunResponse | SqlResultDraft;
 필수 확인:
 
 - Trino 결과 행은 `GET /api/query/runs/{runId}/results`의 current cursor page에서만 읽는다.
+- Trino SQL 결과 차트는 성공한 `mode="run"` 전체 결과에 `POST /api/query/runs/{runId}/chart`를 호출해 server aggregation으로 읽는다. preview page row를 차트 입력으로 재사용하지 않는다.
 - `runId`는 Dashboard `sourceRunId`가 된다.
 - `datasetId`는 Dashboard `datasetId`와 같아야 한다.
-- Trino current page 차트는 SQL 화면의 임시 시각화이고 전체 Query Run 또는 persistent Dashboard source가 아니다. publish/반복 사용은 materialized Dataset을 사용한다.
+- Trino 전체 결과 집계 차트는 SQL 화면의 임시 시각화이고 persistent Dashboard source가 아니다. publish/반복 사용은 materialized Dataset을 사용한다.
 - `mode: "preview"`와 `previewLimit`이 있는 legacy 응답은 DuckDB compatibility 결과로 취급한다.
 
 ### Pair B -> Pair C: Lineage Context
