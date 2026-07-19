@@ -203,7 +203,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ## 11) ClickHouse Realtime Serving V2 전환 프로그램
 
-현재 `dev`의 Realtime 2026 ClickHouse mode는 Kafka Engine과 `PINNED_AT_START` static snapshot을 사용하는 opt-in V1이다. durable SSE와 Dashboard targeted refetch도 이미 존재하며 운영 기본값은 polling/disabled다.
+현재 `dev`의 Realtime 2026 production 배포 템플릿은 Kafka Connect V2를 단일 consumer owner로 사용하고 durable SSE와 Dashboard targeted refetch를 기본 활성화한다. Kafka Engine V1은 동시 소비를 막기 위해 기본 비활성 상태로 둔다.
 
 V2는 이 기준선을 다음 방향으로 단계 확장한다.
 

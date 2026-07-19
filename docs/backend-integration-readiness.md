@@ -604,7 +604,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 실제 Kafka/MinIO/Spark/Iceberg/Trino Continuous SQL E2E와 fault/restart 검증
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
-현재 운영 기본값은 polling/disabled이며 schema 변경 없이 기존 동작으로 rollback할 수 있다. 자동화가 추가됐더라도 새 workflow의 성공 run과 production-like operator evidence 전에는 realtime flag 활성화가 No-Go다. 상세 판정은 `docs/realtime-2026/final-audit.md`를 따른다.
+Production Compose 기본값은 Kafka Connect V2 ClickHouse serving과 SSE를 활성화하고 Kafka Engine V1을 비활성화한다. 장애 시 `DASHBOARD_SYNC_MODE=polling`, `REALTIME_EVENTS_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=false`, `KAFKA_CONNECT_SINK_ENABLED=false`, owner `disabled`와 profile 제거로 ingestion을 중지한다. V1로 rollback할 때는 새 generation에서만 V1 단일 owner를 명시한다.
 
 ## ClickHouse Realtime Serving V2 readiness
 
@@ -617,10 +617,10 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] PR01~09 merge 순서, disabled-mode rollback과 production 미전환 원칙 문서화
 - [x] PR02 repository: ClickHouse 26.3.17.4 exact image/digest, Kafka Connect 8.2.2 base와 공식 Sink v1.4.0 checksum provenance
 - [x] PR02 repository: 기본-off local/production profile, local loopback/prod private TLS 경계와 단일 Keeper/ClickHouse/Connect demo topology
-- [x] PR02 repository: role-separated six-account init, 다섯 V2 설정, V1/V2 owner fail-closed와 config-only health HTTP 503
+- [x] V2 repository: role-separated six-account init, V1/V2 owner fail-closed, worker plugin·V2 reader live health HTTP 503
 - [x] PR02 repository: deploy preflight의 V2 regression cases와 CI의 V2 profile render·Alembic upgrade/downgrade/upgrade lifecycle
 - [x] PR02 repository: Alembic 0016의 신규 metadata 10-table expand, fresh/current/repeat/development-downgrade topology test와 backend image migration 포함
-- [x] PR02 isolated live: clean start/restart, strict CA 9440 health, final 8443/9440-only listener와 six-account RBAC grant
+- [x] V2 isolated live: clean start/restart, strict CA 9440 health, HTTPS 8443·secure native 9440·interserver HTTPS 9010과 six-account RBAC grant
 - [ ] PR02 operator evidence: 실제 production certificate handshake, clean host/EC2 reboot, connector 등록·restart/rebalance, backup/restore와 HA failover
 - [x] PR03 repository: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
 - [x] PR04 repository: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
@@ -629,15 +629,15 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] PR07 repository: bounded ClickHouse Dashboard query, mutation-aware current requery, event-log replica replay와 event별 permission recheck
 - [x] PR08 repository/browser: Dataset cursor cache, epoch-aware snapshot replacement, stale/degraded last-good UX와 live route mock 제거
 - [x] PR09 repository: same-boundary hot/archive parity, idempotent rebuild ledger, gate-checked cutover/rollback, 0018 migration과 release CI
-- [x] PR09 local integration: PostgreSQL concurrent cutover 단일 event, ClickHouse 100-position parity smoke, 831 backend + 144 frontend 전체 회귀와 deploy 58 checks
+- [x] PR09 local integration: PostgreSQL concurrent cutover 단일 event, ClickHouse 100-position parity smoke, 실제 Kafka→TLS ClickHouse 자동 JOIN/Catalog/SSE E2E와 deploy 62 checks
 - [ ] PR09 operator evidence: 실제 browser cutover→rollback DOM, multi-partition poison/rebalance, service restart/chaos와 backup/restore
 - [ ] 100k deterministic fixture 유실·논리 중복 0, restart/rebalance/gap/poison 검증
 - [ ] 최소 72시간 shadow count/checksum과 SLO evidence
 - [ ] production HA topology, backup/restore와 rollback drill에 대한 별도 운영 승인
 
-PR09 merge는 production activation이 아니다. 모든 V2 routing과 consumer flag는 operator evidence와 traffic-promotion 승인 전까지 기본 `false`이며 단일 EC2 Compose는 demo/staging으로만 판정한다.
+Production Compose는 PR09 V2 routing과 consumer flag를 기본 활성화한다. 단일 EC2 Compose는 HA로 판정하지 않으며 secret·TLS·immutable image, connector live readiness와 migration이 충족되지 않으면 preflight 또는 health가 배포를 차단한다.
 
-체크된 PR03~09 항목은 이 누적 branch의 repository/local evidence이며 merge 또는 production 승인이 아니다. Compose는 connector definition을 자동 등록하지 않는다. PR03 live connector probe가 준비되지 않으면 `/api/health/realtime`은 V2 enabled 상태에서 HTTP 503으로 fail closed한다. PR06/09의 additive migration은 각각 0013/0014이고 production rollback에서 downgrade하지 않는다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)과 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+체크된 항목은 repository/local/container evidence다. ClickHouse serving mode Job은 topic-scoped connector를 자동 등록하고 reconcile이 JOIN과 publication을 수행한다. `/api/health/realtime`은 worker plugin과 V2 reader가 준비되지 않으면 HTTP 503으로 fail closed하지만 fresh deployment에 Job connector가 없는 것은 장애로 보지 않는다. PR06/09 additive migration은 `0017`/`0018`이며 production rollback에서 downgrade하지 않는다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)과 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
 
 ## Legacy removal evidence readiness
 

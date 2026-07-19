@@ -5,6 +5,11 @@
     <http_port remove="remove"/>
     <https_port>8443</https_port>
     <tcp_port_secure>9440</tcp_port_secure>
+    <!-- ReplicatedMergeTree still needs an interserver endpoint after the
+         plaintext listener is removed. Keep it private to the Compose network
+         and use the same server certificate as the public TLS listeners. -->
+    <interserver_http_port remove="remove"/>
+    <interserver_https_port>9010</interserver_https_port>
     <openSSL>
         <server>
             <certificateFile>/run/asklake-clickhouse-v2-secrets/server.crt</certificateFile>

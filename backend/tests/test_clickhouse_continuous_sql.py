@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.models.base import Base
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
+from app.realtime.domain.source_boundary import PartitionBoundary, SourceBoundary
+from app.realtime.sql.clickhouse_compiler import ClickHouseRealtimeCompiler
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
 from app.repositories.dashboard_live_repository import (
@@ -35,6 +37,13 @@ from app.services.clickhouse_continuous_sql import (
     clickhouse_runtime_sql,
     clickhouse_type,
 )
+from app.services.clickhouse_realtime_v2 import (
+    build_realtime_v2_plan,
+    realtime_v2_connector_name,
+    realtime_v2_dimension_versions,
+    realtime_v2_dlq_topic,
+)
+from app.services.continuous_sql_gateway import RoutedContinuousSqlWorkerGateway
 from app.services.dashboard_physical_data import DashboardDatasetQuerySession
 
 
@@ -108,7 +117,99 @@ class FakeContinuousStatusClient:
         raise AssertionError(query)
 
 
+class FakeRoutedGateway:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls: list[str] = []
+
+    def manage(self, _job, _run, action: str, _options=None):
+        self.calls.append(action)
+        return {"gateway": self.name, "containerState": "running"}
+
+
 class ClickHouseContinuousSqlTests(unittest.TestCase):
+    def test_v2_owner_routes_clickhouse_jobs_to_v2_gateway(self) -> None:
+        v1 = FakeRoutedGateway("v1")
+        v2 = FakeRoutedGateway("v2")
+        iceberg = FakeRoutedGateway("iceberg")
+        configured = Settings(
+            _env_file=None,
+            app_env="test",
+            continuous_sql_join_enabled=True,
+            clickhouse_realtime_v2_enabled=True,
+            kafka_connect_sink_enabled=True,
+            clickhouse_realtime_consumer_owner="kafka_connect_v2",
+            kafka_connect_url="http://connect.internal:8083",
+        )
+        gateway = RoutedContinuousSqlWorkerGateway(
+            configured,
+            iceberg_gateway=iceberg,
+            clickhouse_gateway=v1,
+            clickhouse_v2_gateway=v2,
+        )
+
+        result = gateway.manage(self._job(), None, "status")
+
+        self.assertEqual(result["gateway"], "v2")
+        self.assertEqual(v2.calls, ["status"])
+        self.assertEqual(v1.calls, [])
+
+    def test_v2_plan_compiles_existing_continuous_sql_contract(self) -> None:
+        job = self._job()
+        run = ContinuousSqlRunModel(
+            run_id="v2-run",
+            job_id=job.id,
+            generation=1,
+            fencing_token="fence",
+            plan_hash=job.plan_hash,
+            status="running",
+            static_bindings=[{"datasetId": "dataset-users", "snapshotId": "77"}],
+            checkpoint_path="clickhouse://asklake/v2",
+        )
+        dimensions = realtime_v2_dimension_versions(job, run)
+        plan = build_realtime_v2_plan(
+            job,
+            run,
+            dimension_version_ids=dimensions,
+            database="asklake_realtime_v2",
+        )
+        compiled = ClickHouseRealtimeCompiler().compile(
+            plan,
+            boundary=SourceBoundary.build((
+                PartitionBoundary("events", 0, -1, 2),
+            )),
+            serving_database="asklake_realtime_v2",
+            serving_table="serving_events_v2",
+            serving_dataset_id=job.output_dataset_id,
+            pipeline_version_id="pipeline-v2",
+            pipeline_generation=1,
+        )
+
+        self.assertEqual(plan.relations[0].physical_table, "raw_events_v2_current")
+        self.assertEqual(plan.relations[1].physical_table, "dimension_current_v2_latest")
+        self.assertIn("serving_events_v2", compiled.insert_sql)
+        self.assertIn("raw_events_v2_current", compiled.insert_sql)
+        for metadata in (
+            "kafka_partition",
+            "kafka_offset",
+            "kafka_timestamp",
+        ):
+            self.assertGreaterEqual(compiled.select_sql.count(metadata), 2)
+
+    def test_v2_connector_identity_and_dlq_are_job_scoped_and_bounded(self) -> None:
+        first = realtime_v2_connector_name("asklake-clickhouse-realtime-v2", "events-1")
+        second = realtime_v2_connector_name("asklake-clickhouse-realtime-v2", "events-2")
+        dlq = realtime_v2_dlq_topic("x" * 249)
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            first,
+            realtime_v2_connector_name("asklake-clickhouse-realtime-v2", "events-1"),
+        )
+        self.assertLessEqual(len(first), 128)
+        self.assertLessEqual(len(dlq), 249)
+        self.assertTrue(dlq.endswith(".dlq"))
+
     def test_output_contract_is_additive_and_keeps_iceberg_default(self) -> None:
         iceberg = ContinuousSqlOutput.model_validate({
             "datasetId": "dataset-output",
@@ -350,6 +451,36 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
             client.close()
         self.assertEqual(result.columns, ["value"])
         self.assertEqual(result.rows, [[7]])
+
+    def test_v2_reader_uses_dedicated_endpoint_database_and_identity(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.host, "clickhouse-v2")
+            self.assertEqual(request.url.params["database"], "asklake_realtime_v2")
+            self.assertTrue(request.headers.get("authorization", "").startswith("Basic "))
+            return httpx.Response(
+                200,
+                json={
+                    "meta": [{"name": "ok", "type": "UInt8"}],
+                    "data": [{"ok": 1}],
+                },
+            )
+
+        configured = Settings(
+            _env_file=None,
+            app_env="test",
+            clickhouse_v2_url="https://clickhouse-v2:8443",
+            clickhouse_v2_database="asklake_realtime_v2",
+            clickhouse_v2_reader_user="asklake_v2_reader",
+            clickhouse_v2_reader_password="reader-secret",
+        )
+        client = ClickHouseClient.realtime_v2_reader(
+            configured,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            self.assertTrue(client.ping())
+        finally:
+            client.close()
 
     def test_dashboard_query_uses_clickhouse_final_and_existing_widget_contract(self) -> None:
         client = FakeDashboardClickHouseClient()

@@ -544,7 +544,7 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 ## 14) Realtime 2026 전환 아키텍처
 
-Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. STACK-02에서 Dashboard SSE 경로까지 구현됐고 운영 기본값은 계속 polling/disabled다.
+Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. Production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE 경로를 기본 활성화하고, 같은 generation의 중복 소비를 막기 위해 Kafka Engine V1은 비활성화한다.
 
 ```text
 Spark/Iceberg commit
@@ -563,7 +563,7 @@ Spark/Iceberg commit
 - 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
 - Dataset revision과 `dataset.revision.committed`, Dashboard published revision과 `dashboard.published`는 각각 같은 transaction에서 기록한다. event insert 실패 시 canonical 변경도 rollback한다.
 - frontend는 Dataset별 최고 revision만 coalesce하고 affected widget REST endpoint만 재조회한다. Dashboard publish와 resync는 snapshot을 다시 읽으며 offline/stream 장애에서는 adaptive polling으로 복귀한다.
-- DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
+- Production Compose의 DASHBOARD_SYNC_MODE 기본값은 `sse`이고 REALTIME_EVENTS_ENABLED 기본값은 `true`다. event backbone이 비활성화되거나 연결이 실패하면 기존 adaptive polling으로 fail closed한다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
 - 새 Continuous SQL request의 `triggerIntervalSeconds` 기본값은 5초다. 이는 micro-batch 시작 주기이며, 실제 end-to-end 반영 시간은 Spark JOIN, Iceberg commit, exact Trino 검증, Catalog/Dashboard publication 시간을 더한 값이다. 기존 Job은 DB에 저장된 주기를 유지하고 일반 Kafka Continuous Job의 기본값은 바꾸지 않는다.
@@ -695,11 +695,11 @@ ClickHouse serving commit
 - 현재 저장소에는 tenant model이 없으므로 V2도 `scope_id="deployment"`와 기존 resource ACL을 사용한다. tenant isolation은 별도 foundation 없이 암묵적으로 추가하지 않는다.
 - `streaming_required` SQL은 이 프로그램에서 분류만 하고 자동 배포하지 않는다. 현재 Spark V1이 stream-stream/window/retraction을 지원한다고 간주하지 않는다.
 
-### PR02 기반시설 경계
+### ClickHouse Realtime V2 운영 경계
 
-PR02는 기존 V1 옆에 기본 비활성 `clickhouse-realtime-v2` Compose profile을 추가한다. 이 profile은 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 기동한다. local은 loopback HTTP 포트로 개발하고 production Compose는 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하며 Connect worker에 CA를 mount한다. 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 현재 단일 Keeper/ClickHouse/Connect topology는 demo/staging이며 HA가 아니다.
+Production Compose는 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 `clickhouse-realtime-v2` 기본 profile로 기동한다. local root Compose에서는 명시적으로 profile을 선택한다. Production ClickHouse final server는 HTTPS 8443, secure native 9440, interserver HTTPS 9010만 사용하고 Connect entrypoint는 같은 CA로 JVM PKCS12 truststore를 만든 뒤 strict JDBC TLS를 사용한다. 현재 단일 Keeper/ClickHouse/Connect topology는 사용 가능한 단일 EC2 배포 형태지만 HA는 아니다.
 
-Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`을 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. 다만 PR02에는 실제 consumer adapter가 없으므로 이 guard를 claim 직전에 호출하고 connector를 등록하는 책임은 PR03에 있다. `/api/health/realtime`의 `v2.ready`는 configuration-only 기반 단계에서 항상 `false`이고, V2 flag를 켜면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다.
+Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`과 V2 전용 URL·database·materializer/reader credential·CA 경로를 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. Continuous SQL ClickHouse Job을 시작하면 pinned Iceberg dimension을 적재하고, 토픽 단위 connector를 자동 등록·재개한 뒤 raw receipt/checkpoint, JOIN materialization, Catalog revision과 SSE event를 순서대로 발행한다. `/api/health/realtime`은 worker plugin과 V2 reader 연결을 확인하므로 아직 Job connector가 하나도 없는 fresh deployment도 준비 상태가 될 수 있고, 개별 connector task 장애는 Job reconcile에서 재시작한다.
 
 Alembic `0016_clickhouse_realtime_v2_foundation`은 최신 `0015_ai_generation_evidence_audit` 다음에 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 

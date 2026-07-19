@@ -60,10 +60,14 @@ TRINO_COLLECTOR_POLL_SECONDS=1
 TRINO_PROGRESS_POLL_SECONDS=0.5
 TRINO_PROGRESS_TIMEOUT_SECONDS=1
 TRINO_CLEANUP_POLL_SECONDS=3600
-DASHBOARD_SYNC_MODE=polling
-REALTIME_EVENTS_ENABLED=false
-CONTINUOUS_SQL_JOIN_ENABLED=false
+DASHBOARD_SYNC_MODE=sse
+REALTIME_EVENTS_ENABLED=true
+CONTINUOUS_SQL_JOIN_ENABLED=true
 CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false
+CLICKHOUSE_REALTIME_V2_ENABLED=true
+KAFKA_CONNECT_SINK_ENABLED=true
+CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2
+KAFKA_CONNECT_URL=http://kafka-connect-v2:8083
 CLICKHOUSE_URL=http://clickhouse:8123
 CLICKHOUSE_USER=asklake
 CLICKHOUSE_PASSWORD=<server-only secret>
@@ -94,9 +98,12 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
-- `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. 기본값은 `false`다.
-- `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
-- `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Continuous SQL 중 `servingMode=clickhouse` 요청만 허용하는 추가 opt-in이다. 상위 Continuous SQL flag가 꺼지면 effective false이며, 운영에서는 Trino와 Compose `clickhouse` profile이 함께 켜져야 한다.
+- `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. Production Compose 기본값은 `true`다.
+- `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. Production Compose 기본값은 `true`이며 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
+- `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Kafka Engine V1 worker의 kill switch다. Production Compose는 V2의 단일 consumer ownership을 위해 기본값을 `false`로 둔다.
+- `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`: Production Compose에서 V2 application과 Kafka Connect sink를 함께 활성화한다.
+- `CLICKHOUSE_REALTIME_CONSUMER_OWNER`: production 기본값은 `kafka_connect_v2`다. 같은 Job generation에서 `kafka_engine_v1`과 동시에 사용할 수 없다.
+- `KAFKA_CONNECT_URL`: production private origin `http://kafka-connect-v2:8083`을 사용한다.
 - `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`: backend가 private ClickHouse HTTP endpoint를 호출할 때 쓰는 서버 전용 연결값이다. password는 frontend와 API 응답에 노출하지 않는다.
 - `CLICKHOUSE_QUERY_TIMEOUT_SECONDS`, `CLICKHOUSE_STATIC_LOAD_MAX_ROWS`, `CLICKHOUSE_INSERT_BATCH_ROWS`: Dashboard 질의 timeout, 시작 시 S3/Iceberg 정적 snapshot 적재 상한, 적재 batch 크기다.
 - `LATEST_STATIC_PER_BATCH_ENABLED`, `STATIC_CHANGE_BACKFILL_ENABLED`: Continuous SQL이 활성화된 경우에만 effective true가 될 수 있는 advanced mode opt-in이다.
@@ -1256,7 +1263,7 @@ ClickHouse identifier를 `queryEngineTable`에 저장하지 않는다. archive b
 
 기존 `GET /api/realtime/events`와 `realtime_event_log`를 재사용한다. 기존 event 이름 `dataset.revision.committed`, `dashboard.published`와 `system.*` control event를 rename하지 않는다. V2는 schema version 2 allowlist payload에 `bindingEpoch`, revision, `pipelineVersionId`, `materializationId`와 mutation type을 추가하되 event 본문에 row/widget 결과를 넣지 않는다. Browser는 `(bindingEpoch, revision)`을 비교하고 epoch가 증가한 cutover/rollback 결과를 수용한다.
 
-V2 설정 이름은 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`이다. 모두 기본 비활성이며 모순된 V1/V2 owner 조합은 startup에서 실패한다. raw ingest adapter가 누적 branch에 존재하더라도 실제 connector/restart/rebalance와 production cutover gate가 승인되기 전에는 production owner를 `kafka_connect_v2`로 전환하지 않는다. 상세 경계는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
+V2 설정 이름은 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`이다. Production Compose는 V2/sink를 활성화하고 owner를 `kafka_connect_v2`로 설정한다. 모순된 V1/V2 owner 조합은 startup에서 실패하며 secret·TLS·immutable image 또는 live connector readiness가 없으면 preflight/health가 fail closed한다. 상세 경계는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 
 ### 내부 archive/recovery 계약
 

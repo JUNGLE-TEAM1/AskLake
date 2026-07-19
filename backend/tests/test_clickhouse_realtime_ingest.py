@@ -87,6 +87,12 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
         self.assertEqual(config["value.converter"], "org.apache.kafka.connect.storage.StringConverter")
         self.assertEqual(config["exactlyOnce"], "true")
         self.assertEqual(config["consumer.override.isolation.level"], "read_committed")
+        self.assertEqual(config["errors.deadletterqueue.topic.replication.factor"], "1")
+        self.assertEqual(config["jdbcConnectionProperties"], "?ssl=true&sslmode=strict")
+        self.assertEqual(config["zkPath"], "/asklake/realtime-v2/connect-state")
+        self.assertEqual(config["zkDatabase"], "connect_state")
+        self.assertNotIn("sslrootcert", config)
+        self.assertNotIn("ssl_socket_sni", config)
         self.assertIn("HoistField$Value", config["transforms.hoistPayload.type"])
         self.assertTrue(config["password"].startswith("${file:"))
         self.assertNotIn("password", connector_config_fingerprint(config))
@@ -130,6 +136,8 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
 
         for fragment in (
             "raw_events_v2",
+            "connect_state",
+            "KeeperMap('/asklake/realtime-v2/connect-state')",
             "kafka_topic",
             "kafka_partition",
             "kafka_offset",
@@ -139,6 +147,31 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
             "raw_events_v2_current",
         ):
             self.assertIn(fragment, ddl)
+
+    def test_tls_runtime_keeps_private_https_replication_endpoint(self) -> None:
+        deploy_root = Path(__file__).parents[2] / "deploy/clickhouse-v2"
+        tls_config = (deploy_root / "config.d/tls.xml").read_text()
+        plaintext_override = (deploy_root / "initdb/99-disable-plaintext.sh").read_text()
+
+        self.assertIn('<interserver_http_port remove="remove"/>', tls_config)
+        self.assertIn("<interserver_https_port>9010</interserver_https_port>", tls_config)
+        self.assertIn('<interserver_http_port remove="remove"/>', plaintext_override)
+        self.assertNotIn("interserver_https_port remove", plaintext_override)
+
+    def test_ingest_role_can_create_only_the_exactly_once_state_table(self) -> None:
+        access_control = (
+            Path(__file__).parents[2]
+            / "deploy/clickhouse-v2/initdb/01-access-control.sh"
+        ).read_text()
+
+        self.assertIn(
+            "GRANT CREATE TABLE ON \\`${database}\\`.connect_state TO asklake_v2_ingest_role;",
+            access_control,
+        )
+        self.assertNotIn(
+            "GRANT CREATE TABLE ON \\`${database}\\`.* TO asklake_v2_ingest_role;",
+            access_control,
+        )
 
 
 if __name__ == "__main__":

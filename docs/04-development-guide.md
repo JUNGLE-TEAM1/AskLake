@@ -899,7 +899,7 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
 
-ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse`를 함께 설정한다. `CLICKHOUSE_URL`은 Compose private endpoint `http://clickhouse:8123`를 사용하고 16자 이상의 전용 password를 server `deploy/.env`에만 둔다. ClickHouse port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/Trino/credential/backend-service wiring 불일치를 배포 전에 차단한다. `scripts/deploy.sh`는 enabled 배포에서 Redpanda와 ClickHouse를 먼저 기동하고 backend credential로 실제 query readiness를 확인하며, disabled 배포에서는 이전 profile의 stale ClickHouse container를 제거한다.
+Production 배포 템플릿은 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse-realtime-v2`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`, `KAFKA_CONNECT_URL=http://kafka-connect-v2:8083`, `DASHBOARD_SYNC_MODE=sse`, `REALTIME_EVENTS_ENABLED=true`를 기본값으로 사용한다. V2 ClickHouse 계정 비밀번호, TLS 파일, connector properties와 immutable Kafka Connect image digest는 server `deploy/.env` 또는 secret storage에만 둔다. ClickHouse와 Kafka Connect port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/credential/TLS/image/backend-service wiring 불일치를 배포 전에 차단한다.
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
@@ -1551,9 +1551,9 @@ npm run build
 
 Docker/ClickHouse/Kafka가 필요한 `npm run verify:clickhouse-kafka-join`은 PR02 이후의 integration/operator profile에서 실행한다. 공통 빠른 검증으로 분류하지 않는다. PR별 신규 검증 command는 해당 PR에서 `package.json`, 이 문서, `docs/system-guardrails.md`와 CI workflow를 함께 갱신한다. 실행하지 못한 live/production 항목은 PASS로 쓰지 않고 operator gate로 남긴다.
 
-### PR02 V2 기반시설과 migration
+### ClickHouse V2 기반시설과 migration
 
-PR02의 Compose service는 모두 `clickhouse-realtime-v2` profile 뒤에 있으며 기본 `docker compose up`에는 포함되지 않는다. profile은 기존 V1 옆에 기반 프로세스만 기동하고 backend consumer owner를 이전하거나 connector를 등록하지 않는다.
+V2 Compose service는 모두 `clickhouse-realtime-v2` profile에 있다. Production 기본 profile/flag/owner는 Kafka Connect V2로 맞춰져 있고 local root Compose만 profile을 명시한다. ClickHouse serving mode Job 시작이 토픽별 connector를 자동 등록하며 reconcile이 receipt/checkpoint, JOIN, Catalog revision과 SSE publication을 계속 전진시킨다.
 
 먼저 외부 runtime이 필요 없는 설정과 migration 계약을 검증한다. 가상환경 Python에 `backend/requirements.txt`의 Alembic/SQLAlchemy dependency가 설치돼 있어야 한다.
 
@@ -1605,7 +1605,7 @@ curl --fail http://127.0.0.1:18083/connector-plugins
 curl --fail http://127.0.0.1:18123/ping
 ```
 
-이 smoke는 process와 plugin만 확인한다. connector definition은 PR03 전에는 등록하지 않으므로 Kafka→ClickHouse ingest 검증이 아니다. PR03 전에는 `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`로 전환하지 않는다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
+이 smoke는 process와 plugin만 확인한다. 실제 ingest/JOIN은 ClickHouse serving mode Job 또는 V2 container E2E에서 확인한다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
 
 ### PR09 archive/recovery와 최종 release gate
 

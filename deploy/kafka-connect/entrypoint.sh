@@ -5,6 +5,11 @@ readonly KAFKA_CONNECT_SECRET_SOURCE_DIR="/run/asklake-secrets-source/kafka-conn
 readonly KAFKA_CONNECT_SECRET_STAGING_DIR="/run/secrets"
 readonly KAFKA_CONNECT_RUNTIME_UID="1000"
 readonly KAFKA_CONNECT_RUNTIME_GID="1000"
+readonly KAFKA_CONNECT_TRUSTSTORE_PATH="${KAFKA_CONNECT_SECRET_STAGING_DIR}/clickhouse-v2-truststore.p12"
+readonly KAFKA_CONNECT_KEYTOOL_BIN="${KAFKA_CONNECT_V2_KEYTOOL_BIN:-keytool}"
+# This protects a truststore containing only the public CA certificate. It is
+# intentionally not an application credential.
+readonly KAFKA_CONNECT_TRUSTSTORE_PASSWORD="changeit"
 
 stage_kafka_connect_secrets() {
   if [[ "$(id -u)" != "0" ]]; then
@@ -31,6 +36,26 @@ stage_kafka_connect_secrets() {
     stage_kafka_connect_secret \
       "clickhouse-v2-ca.crt" \
       "clickhouse-v2-ca.crt"
+    build_clickhouse_truststore
+  fi
+}
+
+build_clickhouse_truststore() {
+  local ca_file="${KAFKA_CONNECT_SECRET_STAGING_DIR}/clickhouse-v2-ca.crt"
+
+  rm -f "${KAFKA_CONNECT_TRUSTSTORE_PATH}"
+  "${KAFKA_CONNECT_KEYTOOL_BIN}" -importcert -noprompt \
+    -alias asklake-clickhouse-v2-ca \
+    -file "${ca_file}" \
+    -keystore "${KAFKA_CONNECT_TRUSTSTORE_PATH}" \
+    -storetype PKCS12 \
+    -storepass "${KAFKA_CONNECT_TRUSTSTORE_PASSWORD}" >/dev/null 2>&1
+  chown "${KAFKA_CONNECT_RUNTIME_UID}:${KAFKA_CONNECT_RUNTIME_GID}" \
+    "${KAFKA_CONNECT_TRUSTSTORE_PATH}"
+  chmod 0400 "${KAFKA_CONNECT_TRUSTSTORE_PATH}"
+  if [[ "$(stat -c '%u:%g:%a' "${KAFKA_CONNECT_TRUSTSTORE_PATH}")" != "1000:1000:400" ]]; then
+    echo "Kafka Connect truststore ownership or mode is invalid" >&2
+    return 1
   fi
 }
 
@@ -58,6 +83,10 @@ stage_kafka_connect_secret() {
 
 main() {
   stage_kafka_connect_secrets
+
+  if [[ "${KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED:-false}" == "true" ]]; then
+    export KAFKA_OPTS="${KAFKA_OPTS:-} -Djavax.net.ssl.trustStore=${KAFKA_CONNECT_TRUSTSTORE_PATH} -Djavax.net.ssl.trustStorePassword=${KAFKA_CONNECT_TRUSTSTORE_PASSWORD} -Djavax.net.ssl.trustStoreType=PKCS12"
+  fi
 
   if (( $# == 0 )); then
     set -- /etc/confluent/docker/run

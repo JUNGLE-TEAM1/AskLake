@@ -4061,8 +4061,8 @@ type PermissionGrant = {
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
-| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. 기본 false |
-| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink opt-in의 effective 값. 기본 false |
+| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
+| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
 | clickhouseRealtimeConsumerOwner | disabled \| kafka_engine_v1 \| kafka_connect_v2 | deployment의 단일 consumer owner 설정. readiness나 실제 claim을 뜻하지 않음 |
 | latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |

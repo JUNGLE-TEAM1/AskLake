@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 import json
 import re
+import ssl
 from typing import Any, Iterable
 
 import httpx
@@ -35,19 +36,73 @@ class ClickHouseClient:
         runtime_settings: Settings | None = None,
         *,
         transport: httpx.BaseTransport | None = None,
+        base_url: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
+        tls_ca_file: str | None = None,
     ) -> None:
         self.settings = runtime_settings or settings
+        self.database = database or self.settings.clickhouse_database
+        resolved_user = self.settings.clickhouse_user if user is None else user
+        resolved_password = self.settings.clickhouse_password if password is None else password
         auth = None
-        if self.settings.clickhouse_user:
+        if resolved_user:
             auth = (
-                self.settings.clickhouse_user,
-                self.settings.clickhouse_password or "",
+                resolved_user,
+                resolved_password or "",
             )
+        verify: bool | ssl.SSLContext = True
+        if tls_ca_file:
+            try:
+                verify = ssl.create_default_context(cafile=tls_ca_file)
+            except (OSError, ssl.SSLError) as exc:
+                raise ClickHouseError(
+                    "CLICKHOUSE_TLS_CA_INVALID",
+                    "ClickHouse TLS CA file is unavailable or invalid.",
+                ) from exc
         self._client = httpx.Client(
-            base_url=self.settings.clickhouse_url.rstrip("/"),
+            base_url=(base_url or self.settings.clickhouse_url).rstrip("/"),
             auth=auth,
             timeout=self.settings.clickhouse_query_timeout_seconds,
             transport=transport,
+            verify=verify,
+        )
+
+    @classmethod
+    def realtime_v2_materializer(
+        cls,
+        runtime_settings: Settings | None = None,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> "ClickHouseClient":
+        resolved = runtime_settings or settings
+        return cls(
+            resolved,
+            transport=transport,
+            base_url=resolved.clickhouse_v2_url,
+            user=resolved.clickhouse_v2_materializer_user,
+            password=resolved.clickhouse_v2_materializer_password,
+            database=resolved.clickhouse_v2_database,
+            tls_ca_file=resolved.clickhouse_v2_tls_ca_file,
+        )
+
+    @classmethod
+    def realtime_v2_reader(
+        cls,
+        runtime_settings: Settings | None = None,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> "ClickHouseClient":
+        resolved = runtime_settings or settings
+        return cls(
+            resolved,
+            transport=transport,
+            base_url=resolved.clickhouse_v2_url,
+            user=resolved.clickhouse_v2_reader_user,
+            password=resolved.clickhouse_v2_reader_password,
+            database=resolved.clickhouse_v2_database,
+            tls_ca_file=resolved.clickhouse_v2_tls_ca_file,
         )
 
     def close(self) -> None:
@@ -141,7 +196,7 @@ class ClickHouseClient:
     ) -> httpx.Response:
         params = {
             "database": validate_clickhouse_identifier(
-                database or self.settings.clickhouse_database
+                database or self.database
             ),
             "wait_end_of_query": "1",
         }

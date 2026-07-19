@@ -43,8 +43,14 @@ export function useContinuousSqlJoin({
   const [catalogDataset, setCatalogDataset] = useState<CatalogDataset | null>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const relationMix = useMemo(() => getContinuousSqlRelationMix(selectedDatasets), [selectedDatasets]);
+  const v2Enabled = Boolean(
+    featureConfig?.clickhouseRealtimeV2Enabled
+      && featureConfig.kafkaConnectSinkEnabled
+      && featureConfig.clickhouseRealtimeConsumerOwner === "kafka_connect_v2",
+  );
   const featureEnabled = Boolean(
-    featureConfig?.continuousSqlJoinEnabled && featureConfig.clickhouseContinuousJoinEnabled,
+    featureConfig?.continuousSqlJoinEnabled
+      && (featureConfig.clickhouseContinuousJoinEnabled || v2Enabled),
   );
 
   useEffect(() => {
@@ -156,7 +162,13 @@ export function useContinuousSqlJoin({
         clientRequestId: createClientRequestId(),
         name: `${outputName.trim()} Continuous SQL`,
         output: {
-          clickhouseTarget: { database: "asklake", engine: "clickhouse", table: outputIdentity.table },
+          clickhouseTarget: v2Enabled
+            ? {
+                database: "asklake_realtime_v2",
+                engine: "clickhouse",
+                table: "serving_events_v2",
+              }
+            : { database: "asklake", engine: "clickhouse", table: outputIdentity.table },
           datasetId: outputIdentity.datasetId,
           datasetName: outputName.trim(),
           layer: "GOLD",

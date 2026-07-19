@@ -212,7 +212,9 @@ class DashboardDatasetQuerySession:
         )
         if v2_binding is not None:
             self.table, self.query_table, self.columns, self.binding_epoch = v2_binding
-            self.clickhouse_client = clickhouse_client or ClickHouseClient()
+            self.clickhouse_client = (
+                clickhouse_client or ClickHouseClient.realtime_v2_reader()
+            )
             self.revision_delta_available = False
             return True
         clickhouse_table = clickhouse_dataset_table(dataset)
