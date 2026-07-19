@@ -54,8 +54,9 @@ coordinator를 만드는 잘못된 변경이다.
 - Warehouse/Query Result bucket과 prefix, RDS `iceberg_catalog`, Backend Trino
   URL과 CA mount를 변경하지 않는다. 기존 Iceberg query/materializer data
   privilege는 그대로 유지한다. 분산 모드에서만 live 검증에 쓰는
-  `asklake-materializer`에 `system_information: read`를 추가하며 write와 graceful
-  shutdown 권한은 주지 않는다.
+  `asklake-materializer`에 `system_information: read`, system catalog read-only와
+  `system.runtime.nodes|tasks` SELECT만 추가하며 다른 system table, write와 graceful shutdown
+  권한은 주지 않는다.
 - workload chart는 namespace, ServiceAccount, Pod Identity, Secret, RDS, S3 또는
   외부 LoadBalancer를 생성하지 않는다.
 - 기존 component-scoped `asklake-trino` Helm owner를 유지한다. 별도 release가
@@ -210,6 +211,13 @@ node scripts/test-eks-trino-distributed-evidence.mjs
 component-scoped Helm release, Git 제외 `0600` private values, immutable image receipt와
 실제 병합된 `pair1` commit을 먼저 고정한 뒤 실행한다. 첫 live 후보의 worker replica는 `2`다.
 일반 CI는 apply, Pod 삭제, scale 변경 또는 rollback을 수행하지 않는다.
+
+2026-07-19 첫 live 시도에서는 General NodePool이 이미 CPU 6을 사용한 상태에서 pool 상한
+CPU 8·memory 32Gi가 새 x86 node의 system overhead까지 수용하지 못해 coordinator와 worker가
+Pending이 됐다. 다른 private Auto Mode 값은 유지하고 live pool 상한만 CPU 12·memory 48Gi로
+올린 뒤 NodePool Ready와 새 node scale-out을 확인했다. 이는 worker를 상시 실행하거나 5개
+처리량을 보장하는 값이 아니라, opt-in 최대 5개를 검증할 수 있게 하는 비용·capacity 상한이다.
+배포 전에는 항상 현재 cluster-wide requests와 다른 active workload를 다시 확인한다.
 
 1. 현재 live values를 보존한 채 distributed를 끈 새 chart를 먼저 적용한다. coordinator replica 1,
    `Recreate`, worker/discovery resource 부재, Backend health와 인증된 Iceberg query를 확인하고 이

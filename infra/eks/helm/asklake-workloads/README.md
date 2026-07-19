@@ -90,7 +90,8 @@ internal TLS hostname conversion; the virtual client Service ClusterIP is never
 used for discovery. The coordinator Deployment uses `Recreate` so two
 coordinators cannot overlap during rollout. The Iceberg data ACL is unchanged;
 distributed mode grants the internal materializer read-only system information
-access solely for node/task evidence, never write or graceful-shutdown access.
+and `system.runtime.nodes|tasks` table access solely for node/task evidence,
+never other system tables, write, or graceful-shutdown access.
 
 ```bash
 scripts/verify-eks-trino-distributed.sh

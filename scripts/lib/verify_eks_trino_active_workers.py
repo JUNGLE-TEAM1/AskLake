@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import sys
 
 from app.core.config import settings
@@ -13,6 +13,11 @@ from app.services.trino_client import TrinoClient
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def retry(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(75)
 
 
 def integer_stat(raw_stats: dict[str, object], *keys: str) -> int:
@@ -138,14 +143,14 @@ rows, _, _ = consume_query(
     """,
 )
 if len(rows) != 1 or len(rows[0]) != 2:
-    fail("Trino node query returned an unexpected result")
+    retry("Trino node query is not ready")
 
 coordinator_count = int(rows[0][0])
 active_worker_count = int(rows[0][1])
 if coordinator_count != 1:
-    fail("Trino coordinator count is not exactly one")
+    retry("Trino coordinator count is not ready")
 if active_worker_count != expected_workers:
-    fail("active Trino worker count does not match the deployment contract")
+    retry("active Trino worker count is not ready")
 
 query_evidence = verify_non_empty_iceberg_read(client)
 

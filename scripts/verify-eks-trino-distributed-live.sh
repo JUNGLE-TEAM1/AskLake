@@ -61,11 +61,16 @@ backend_pod="$(kubectl get pod -n "$NAMESPACE" -l 'app.kubernetes.io/component=b
 
 node_gate_output=""
 for _ in {1..18}; do
-  if node_gate_output="$(kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
-    python - "$EXPECTED_WORKERS" <"$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py" 2>/dev/null)"; then
+  set +e
+  node_gate_output="$(kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
+    python - "$EXPECTED_WORKERS" <"$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py" 2>/dev/null)"
+  node_gate_status=$?
+  set -e
+  if [[ "$node_gate_status" -eq 0 ]]; then
     break
   fi
   node_gate_output=""
+  [[ "$node_gate_status" -eq 75 ]] || fail "authenticated Trino node/query gate failed before worker-count evaluation"
   sleep 5
 done
 [[ -n "$node_gate_output" ]] || fail "Trino workers did not register before the 90-second discovery deadline"

@@ -38,10 +38,16 @@ data:
     {
       "catalogs": [
         {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "all"},
+{{- if .Values.trino.distributed.enabled }}
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": "system", "allow": "read-only"},
+{{- end }}
         {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "read-only"}
       ],
       "tables": [
         {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+{{- if .Values.trino.distributed.enabled }}
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": "system", "schema": "runtime", "table": "nodes|tasks", "privileges": ["SELECT"]},
+{{- end }}
         {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT"]}
       ],
       "schemas": [{"user": {{ .Values.trino.config.materializerUser | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "owner": true}],
