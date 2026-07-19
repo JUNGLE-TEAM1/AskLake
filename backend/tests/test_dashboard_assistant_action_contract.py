@@ -318,3 +318,52 @@ def test_amazon_visualization_retries_gateway_contract_failure_and_returns_creat
     assert response.actions[0].widget.dataset_id == "amazon-products"
     assert response.actions[0].widget.config["aggregation"] == "count"
     assert "재시도" in generate.call_args.kwargs["prompt"]
+
+
+def test_dashboard_question_retries_gateway_contract_failure_with_report_only_instruction() -> None:
+    context = assistant_context()
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "dashboardId": "dashboard-1",
+        "mode": "dashboard_question",
+        "prompt": "현재 대시보드를 요약해줘",
+    })
+    report = {
+        "actions": [{
+            "type": "report",
+            "markdown": "현재 대시보드는 지역별 매출을 보여줍니다.",
+            "usedEvidenceIds": [],
+        }],
+        "message": "요약을 생성했습니다.",
+        "model": "gpt-test",
+        "provider": "openai_compatible",
+        "usedEvidenceIds": [],
+        "warnings": [],
+    }
+
+    with (
+        patch("app.services.dashboard_assistant_service.build_assistant_context", return_value=context),
+        patch("app.services.dashboard_assistant_service.issue_ai_context_token", side_effect=["token-1", "token-2"]),
+        patch(
+            "app.services.dashboard_assistant_service.AiGatewayClient.generate_dashboard_response",
+            side_effect=[
+                ApiError("INTERNAL_ERROR", "AI gateway generation failed", 502),
+                report,
+            ],
+        ) as generate,
+    ):
+        response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
+
+    assert generate.call_count == 2
+    assert [action.type for action in response.actions] == ["report"]
+    assert "report action" in generate.call_args.kwargs["prompt"]
+    assert "create_widget" in generate.call_args.kwargs["prompt"]
