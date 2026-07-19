@@ -225,6 +225,22 @@ Spark Continuous target은 backend-owned append Iceberg table이다. Backend는 
 
 Continuous control plane은 사용자 intent인 `desiredState`, 현재 worker 증거인 `observedState`, 기존 화면/API용 `status` projection을 분리한다. PostgreSQL command transaction만 desired state와 단조 증가 `stateRevision`을 쓰고, reconciler만 active worker attempt의 report/container 증거를 observed state로 정규화한다. API와 frontend는 더 작은 revision 또는 이전 worker fencing token의 결과를 적용하지 않는다. checkpoint, manifest, Catalog와 Dashboard의 성공 여부는 각 durable 저장소가 소유하며 runtime은 이를 대신하지 않고 단계별 진단만 투영한다. 전체 writer/reader/recovery 표는 [Continuous runtime 상태·오류 소유권](refactor-2026/contracts/runtime-state-ownership.md)을 따른다.
 
+EKS에서 FastAPI V2 opt-in은 stateless `asklake-web` release가 소유하고,
+ClickHouse/Keeper/Kafka Connect와 `continuous_sql` worker는 별도
+`asklake-realtime-v2` release가 소유한다. web chart의 기본 render는 foundation 소유
+`asklake-runtime`을 바꾸지 않으며 V2 opt-in에서만 private `clickhouse-v2:8443`,
+`kafka-connect-v2:8083`, `asklake-realtime-runtime`의 서버 전용 credential과 CA를
+FastAPI에 추가한다. StatefulSet `clickhouse-v2`/`clickhouse-keeper-v2`와 claim template
+`clickhouse-data`/`keeper-data`는 최초 EKS V2의 retained PVC identity를 보존한다.
+in-place chart migration은 최초 `asklake-workloads` release의 immutable
+`realtime-v2-keeper`/`realtime-v2-clickhouse`/`realtime-v2-connect` selector도 보존한다.
+ClickHouse target Secret은 image init/re-init용 서로 다른 6계정 password와
+TLS/Keeper config·certificate를 제공하고, Backend/Kafka Connect target은 같은
+materializer/reader/ingest credential·CA property를 별도 key로 재바인딩한다.
+V2 worker는 `continuous_sql` scope만 claim하고 Kafka reconciliation은 기존 EKS V1
+`kafka` 하나가 계속 소유한다. split EC2 Kafka, V1 fence, 같은 scope의 owner 0개나
+2개는 Helm schema/template과 live lease gate에서 실패한다.
+
 Continuous command와 reconciliation orchestration은 `app.application.continuous_commands`와 `app.application.continuous_reconciliation`이 소유한다. 명령 use case는 desired state와 revision을 먼저 commit한 뒤 외부 worker side effect를 수행하고, 응답 유실은 deterministic worker identity 조회로 복구한다. reconciler는 immutable evidence에서 순수 decision을 만들며 report 부재를 실패로 추측하지 않는다. `etl_service.py`의 기존 함수는 production dependency와 legacy hook을 조립하는 compatibility facade로만 남는다. 상세 transaction, fencing, 증거 우선순위는 [Continuous 명령·Reconciliation Application 계약](refactor-2026/contracts/continuous-command-reconciliation.md)을 따른다.
 
 Continuous micro-batch 발행은 `app.application.continuous_publication`이 output 검증, durable manifest, Catalog materialization, Dashboard revision을 독립 단계로 조정한다. object storage/Trino 검증 중에는 DB publication lock을 잡지 않고 Catalog와 Dashboard를 별도 transaction으로 commit한다. 따라서 Catalog 성공 뒤 Dashboard가 실패해도 적재나 Catalog Run을 되돌리지 않으며, 같은 batch/run/manifest fingerprint의 재시도는 기존 output과 Catalog Run에서 실패 단계만 재개한다. 단계별 증거와 legacy backfill은 [Continuous Materialization·Catalog·Dashboard 발행 계약](refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
@@ -539,7 +555,7 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.
-- Issue #735의 EKS + MSK MVP는 dev 검증 runtime으로 실제 가동 중이지만 production cutover 경로로 승인된 상태는 아니다. dev에서는 frontend/FastAPI/Airflow/단일 Trino coordinator/Spark batch가 EKS에서 실행되고 배포 broker는 MSK Serverless + IAM을 사용한다. 기존 EC2 Kafka Continuous control plane과 worker는 rollback 원본이자 유일한 Continuous owner로 유지한다. 테스트 fixture producer는 EKS 밖에서 격리된 MSK topic에 입력하며 Kafka/Redpanda broker를 EKS 안에 운영하지 않는다. 로컬 Redpanda는 fixture/replay 경로로 남긴다.
+- Issue #735 당시의 pre-cutover EKS + MSK MVP는 dev 검증 runtime으로 실제 가동 중이었지만 production cutover 경로로 승인된 상태는 아니었다. dev에서는 frontend/FastAPI/Airflow/단일 Trino coordinator/Spark batch가 EKS에서 실행되고 배포 broker는 MSK Serverless + IAM을 사용했다. 그 시점에는 기존 EC2 Kafka Continuous control plane과 worker를 rollback 원본이자 유일한 Continuous owner로 유지했다. 현재 canonical owner는 위 `Kafka Continuous Ingestion`의 Issue #1072 계약과 `deploy/control-plane-ownership.json`을 따른다. 테스트 fixture producer는 EKS 밖에서 격리된 MSK topic에 입력하며 Kafka/Redpanda broker를 EKS 안에 운영하지 않는다. 로컬 Redpanda는 fixture/replay 경로로 남긴다.
 - EKS 전환의 환경 inventory, 미결정 경계, Pair A/B handoff와 resource 생성 gate는 [EKS + MSK MVP Phase 0 환경·인수 계약](eks-msk-mvp-phase-0-contract.md)을 따른다. EKS FastAPI가 EC2 Continuous runtime을 동시에 제어하지 못하게 하는 routing/feature boundary가 구현되기 전에는 production 전환으로 간주하지 않는다.
 - Phase 1 foundation은 `infra/eks/terraform`의 existing/create cluster 입력, ECR와 Trino handoff output, `infra/eks/helm/asklake-foundation`의 namespace/service account/RBAC 계약으로 구성한다. Phase 10부터 신규 cluster compute는 EKS Auto Mode이고 표준 Managed Node Group은 만들지 않는다. `asklake-backend`는 SparkApplication 제출·조회·취소와 Pod log/Event 조회에 한정된 namespace Role과 API token을 사용한다. `asklake-spark`도 executor Pod·Service·ConfigMap lifecycle 최소 Role과 API token을 사용한다. Spark 4 shutdown cleanup이 label selector로 Pod·Service·ConfigMap·PVC를 정리하므로 해당 namespace Role에는 이 resource의 `deletecollection`을 포함하되 Secret·Node·cluster-wide 권한은 추가하지 않는다. Frontend·Airflow·Trino·MSK smoke는 Kubernetes API token mount를 금지한다. Replay Producer 입력은 `create=false`로 유지한다. dev foundation revision 3에는 이 token/RBAC 경계와 실제 `pod_identity` mode를 적용했고, 별도 Helm release로 Spark Operator CRD/controller/webhook까지 배포했다. 2026-07-16에는 B runtime provider를 배포해 실제 FastAPI 요청이 SparkApplication과 driver/executor Pod를 만들고 같은 `runId` 재요청이 한 object로 수렴하는 것까지 확인했다. 상세 계약과 실제 인수 상태는 [Phase 1 인수 계약](eks-msk-mvp-phase-1-handoff.md), [B workload foundation handoff](eks-day15-b-workload-foundation-handoff.md), [FastAPI-Spark 연결 기록](eks-day16-b-spark-link-live-evidence.md)을 따른다.
 - Phase 3 data plane은 MSK와 RDS를 `disabled`/`existing`/`create`, S3를 `disabled`/`existing`/`managed-existing`/`create` 모드로 분리하고 기본값을 `disabled`로 둔다. `managed-existing`은 기존 Raw/Output/Warehouse/Query Result bucket을 Terraform state로 import해 public access block, encryption과 versioning을 관리하되 `prevent_destroy`와 `shared-preserved` lifecycle로 삭제를 차단한다. 배포 broker는 IAM 인증 MSK Serverless만 허용하며 test topic/group은 기존 EC2 Continuous consumer와 격리한다. RDS create는 private PostgreSQL과 `asklake_app` 초기 database까지만 소유하고 Airflow/Iceberg database·user·grant는 별도 멱등 bootstrap이 담당한다. workload IAM은 최소 권한 policy document까지만 만들며 IRSA 또는 Pod Identity 선택 전에는 role에 연결하지 않는다. 실제 apply 경계는 [Phase 3 Data Plane 계약](eks-phase-3-data-plane.md)을 따른다.
@@ -667,9 +683,18 @@ Airflow MVP는 `LocalExecutor`와 image에 bake한 DAG를 사용하고 metadata�
 
 MVP에서 Kafka Continuous control-plane은 EC2에 남는다. EKS FastAPI의 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2`는 Continuous 생성·상세·수정·삭제·명령·전용 runtime 조회뿐 아니라 Continuous dataset freshness와 dashboard widget data 조회도 `409 CONTINUOUS_CONTROL_OWNED_BY_EC2`로 거절하고 일반 Job 목록에서는 Continuous Job을 숨긴다. EKS process는 Continuous background sync도 시작하지 않는다. 따라서 EKS와 EC2가 같은 Continuous worker나 상태 DB를 동시에 제어하거나 EKS가 stale Continuous 결과를 읽는 shared mode는 허용하지 않는다.
 
-Issue #1044의 EKS Realtime Kafka 전환은 이 경계를 즉시 해제하지 않는다. 읽기 전용 live inventory와 저장소 증거로 V1 Spark Structured Streaming을 EKS MVP 경로로 선택했지만 current owner는 계속 EC2다. owner identity는 `(brokerIdentity, topic, consumerGroup, generation, checkpointIdentity)` 전체로 비교하고, 한 identity에 active owner를 정확히 하나만 허용한다. V1은 기존 SparkApplication·Pod Identity·S3 runtime document/checkpoint 기반을 재사용한다. V2 Kafka Connect → ClickHouse는 EC2 Compose 기능을 보존하지만 EKS package·MSK IAM·durable volume/restore 계약이 부족해 deferred한다. 새 generation, zero-active-old-owner 증거와 수동 rollback 승인이 함께 기록되기 전에는 선택된 V1도 EKS에서 활성화하지 않는다. 상세 비교는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), 실행 순서와 receipt는 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
+Issue #1044 선택 당시에는 EKS Realtime Kafka 전환이 이 경계를 즉시 해제하지 않았다. 읽기 전용 live inventory와 저장소 증거로 V1 Spark Structured Streaming을 EKS MVP 경로로 선택했지만, 전환 전 owner는 EC2였다. owner identity는 `(brokerIdentity, topic, consumerGroup, generation, checkpointIdentity)` 전체로 비교하고, 한 identity에 active owner를 정확히 하나만 허용한다. V1은 기존 SparkApplication·Pod Identity·S3 runtime document/checkpoint 기반을 재사용한다. V2 Kafka Connect → ClickHouse는 당시 EC2 Compose 기능을 보존했지만 EKS package·MSK IAM·durable volume/restore 계약이 부족해 deferred했다. 새 generation, zero-active-old-owner 증거와 수동 rollback 승인이 함께 기록되기 전에는 선택된 V1도 EKS에서 활성화하지 않았다. 현재는 V1이 EKS `kafka` owner를 유지하고 V2가 `continuous_sql`만 소유하는 Issue #1072 계약을 따른다. 상세 비교는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), 실행 순서와 receipt는 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
 
-선택된 V1의 정적 workload package는 `asklake-workloads` chart의 `realtimeV1` component다. 기본 `enabled=false`이며 owner transfer 승인, 이전 EC2 Kafka scope fence와 새 generation이 모두 없으면 Helm render가 실패한다. EKS worker는 `CONTINUOUS_WORKER_SCOPE=kafka`만 실행하고 V2 feature flag와 consumer owner를 workload env에서 명시적으로 비활성화해 공용 ConfigMap의 EC2 V2 설정이 선택 경로를 덮어쓰지 못하게 한다. PostgreSQL `kafka_continuous_runtimes.metrics.ownerClaim`의 owner, generation, broker/topic/group/checkpoint fingerprint, fencing token과 state revision이 worker env와 일치하는 Job만 reconcile한다. claim 없는 legacy runtime은 EC2 기본 worker만 처리하고 EKS claim이 기록된 runtime은 새 EC2 worker도 건너뛴다. `asklake-backend` ServiceAccount로 SparkApplication API와 private `continuous-runtime` S3 prefix를 사용하고, 실제 Spark driver/executor는 `asklake-spark` Pod Identity로 exact MSK topic/group, S3 checkpoint/output/warehouse에 접근한다. Continuous SQL은 EC2 scope에 남기므로 Kafka 이전이 다른 control plane을 함께 이동시키지 않는다.
+선택된 V1의 정적 workload package는 `asklake-workloads` chart의 `realtimeV1`
+component다. EKS worker는 `CONTINUOUS_WORKER_SCOPE=kafka`만 실행하고 V2 feature flag와
+consumer owner를 workload env에서 명시적으로 비활성화한다. PostgreSQL
+`kafka_continuous_runtimes.metrics.ownerClaim`의 owner, generation,
+broker/topic/group/checkpoint fingerprint, fencing token과 state revision이 worker env와
+일치하는 Job만 reconcile한다. `asklake-backend` ServiceAccount로 SparkApplication API와
+private `continuous-runtime` S3 prefix를 사용하고, 실제 Spark driver/executor는
+`asklake-spark` Pod Identity로 exact MSK topic/group, S3 checkpoint/output/warehouse에
+접근한다. Issue #1072 이후 Continuous SQL은 별도 EKS V2 scope로 이동하며 V1 Kafka/Spark
+경로는 그대로 유지한다.
 
 FastAPI singleton은 별도 lease table을 만들지 않는다. 기존 `etl_runs` row의 `execution_owner`, `execution_lease_expires_at`, `execution_generation`을 사용해 같은 `runId`의 Spark/Catalog 외부 실행을 한 generation만 소유하게 한다. 기본 lease는 60초이고 20초마다 갱신한다. lease는 최대 작업 시간을 제한하지 않으며 `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`와 독립적이다. 정상 작업은 heartbeat로 계속 연장되고, process 또는 heartbeat가 멈추면 마지막 갱신 후 최대 약 60초에 다음 generation이 takeover할 수 있다. lease를 잃은 이전 generation은 결과를 저장할 수 없다.
 
@@ -752,11 +777,22 @@ production control-plane과 metadata의 권위는 FastAPI/Python이다. Source c
 
 상세 authority matrix, Kafka 보장 범위, bridge error/rollback 계약은 [Spark/Kafka Runtime Script·Python/Node 경계](refactor-2026/contracts/runtime-scripts-node-boundary.md)를, Source connector operation mapping은 [Source Connector Python·Node 권위 경계](refactor-2026/contracts/source-connector-authority-boundary.md)를 따른다.
 
-Production deployment topology에서 EKS 웹·유한 배치 cell과 EC2 Continuous cell의 장기 control-plane claim을 분리한다. 현재 Kafka Continuous runtime sync와 Continuous SQL runtime sync의 canonical deployment owner는 EC2 Continuous cell 하나이며 EKS cell은 두 loop를 claim하지 않는다. `deploy/control-plane-ownership.json`과 exactly-one validator는 이 선언의 누락·중복과 source marker drift를 PR에서 차단하지만 실행 중 cluster discovery나 leader election을 대신하지 않는다. FastAPI lifespan과 실제 workload 이동 없이 적용하는 정적 경계이며, 상세 계약은 [EKS·EC2 Continuous control-plane 단일-owner 계약](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
+Production deployment topology에서 web/finite-batch와 두 Continuous scope를 분리한다.
+Issue #1072 target manifest는 EKS Realtime V1이 Kafka Continuous runtime sync를,
+EKS Realtime V2가 Continuous SQL runtime sync를 각각 하나씩 claim하고 EC2 worker는
+rollback standby로 quiesce한다. `deploy/control-plane-ownership.json`과 exactly-one
+validator는 이 선언의 누락·중복과 source marker drift를 PR에서 차단하지만 실행 중
+cluster discovery나 PostgreSQL lease를 대신하지 않는다. 상세 계약은
+[EKS·EC2 Continuous control-plane 단일-owner 계약](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
 
 EKS ClickHouse Realtime V2는 기존 stateless workload chart와 분리한 `asklake-realtime-data-plane` release로 준비한다. 기본 render는 비어 있고 shadow는 Keeper·ClickHouse·Kafka Connect와 PVC만 만들며 EC2 owner를 유지한다. cutover에서만 별도 Continuous Worker와 EKS Backend의 local API path를 함께 활성화한다. ClickHouse/Keeper direct StatefulSet은 단일-node staging topology이므로 HA를 주장하지 않으며, TLS·여섯 role credential은 External Secret, Kafka Connect MSK 접근은 exact topic/group ARN의 전용 Pod Identity, east-west와 AWS/RDS 접근은 NetworkPolicy가 소유한다. 실제 owner 전환은 EC2 process 0, canonical manifest 변경과 EKS worker rollout을 하나의 승인 release에서 수행한다.
 
-EKS Realtime V1 Spark/Iceberg canary package와 V2 ClickHouse path는 같은 Kafka identity를 동시에 claim할 수 없다. workload schema는 `realtimeV1.enabled=true`와 V2 backend opt-in의 동시 설정을 거부한다. V2 cutover는 기존 EC2 `all` worker와 활성 V1 worker/claim이 0인 시점에 EC2 `kafka` scope와 EKS V2 `continuous_sql` scope를 한 승인 release로 분리한다. V2 worker는 `eks-continuous-worker-v2` identity만 허용해 Kafka scope를 직접 reconcile하지 않으며, raw V2 Kafka 소비는 전용 Kafka Connect owner가 담당하고 EC2 Kafka worker는 그 밖의 Kafka Continuous reconciliation을 보존한다.
+EKS Realtime V1 Spark/Iceberg worker와 V2 ClickHouse worker는 서로 다른 reconciliation
+scope를 claim한다. V1은 `kafka`, V2는 `continuous_sql`에 고정되며 V2 worker는
+`eks-continuous-worker-v2` identity로 Kafka scope를 직접 reconcile하지 않는다. raw V2
+Kafka 소비는 전용 Kafka Connect가 담당하고 V1 worker는 기존 non-V2 Kafka/Spark
+reconciliation을 보존한다. cutover는 EC2 control loop가 quiesced이고 V1이 ready인
+경우에만 허용한다.
 
 ## 18) Frontend 상태 소유권과 ETL Wizard 경계
 

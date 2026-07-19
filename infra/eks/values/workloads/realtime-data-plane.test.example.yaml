@@ -13,7 +13,7 @@ ownership:
 keeper:
   replicas: 1
   image:
-    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse-v2
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
     pullPolicy: IfNotPresent
   nodeSelector: {kubernetes.io/arch: amd64}
@@ -28,7 +28,7 @@ keeper:
 clickhouse:
   replicas: 1
   image:
-    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse-v2
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
     pullPolicy: IfNotPresent
   nodeSelector: {kubernetes.io/arch: amd64}
@@ -36,11 +36,17 @@ clickhouse:
   terminationGracePeriodSeconds: 120
   configSecret:
     name: asklake-clickhouse-v2-config
-    configKey: config.xml
-    usersKey: users.xml
+    tlsConfigKey: tls.xml
+    keeperConfigKey: keeper.xml
     caKey: ca.crt
     certificateKey: server.crt
     privateKeyKey: server.key
+    adminPasswordKey: adminPassword
+    ingestPasswordKey: ingestPassword
+    materializerPasswordKey: materializerPassword
+    migrationPasswordKey: migrationPassword
+    observerPasswordKey: observerPassword
+    readerPasswordKey: readerPassword
   storage: {storageClassName: gp3, size: 20Gi}
   resources:
     requests: {cpu: "1", memory: 2Gi}
@@ -49,12 +55,13 @@ clickhouse:
 kafkaConnect:
   replicas: 1
   image:
-    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/kafka-connect-clickhouse
+    repository: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/kafka-connect-v2
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
     pullPolicy: IfNotPresent
   nodeSelector: {kubernetes.io/arch: amd64}
-  serviceAccountName: asklake-kafka-connect-v2
-  createServiceAccount: true
+  serviceAccountName: asklake-realtime-v2-connect
+  # Reuse the externally managed legacy Pod Identity ServiceAccount during migration.
+  createServiceAccount: false
   terminationGracePeriodSeconds: 60
   envSecretName: asklake-kafka-connect-v2-runtime
   fileSecret:
@@ -74,7 +81,7 @@ continuousWorker:
   nodeSelector: {kubernetes.io/arch: amd64}
   serviceAccountName: asklake-backend
   terminationGracePeriodSeconds: 90
-  backendConfigMapName: asklake-backend-config
+  backendConfigMapName: asklake-runtime
   backendRuntimeSecretName: asklake-backend-runtime
   realtimeRuntimeSecret:
     name: asklake-realtime-runtime
@@ -89,6 +96,4 @@ networkPolicy:
   enabled: true
   mskCidrs: [10.0.0.0/24]
   rdsCidrs: [10.0.1.0/24]
-  awsApiCidrs: [10.0.2.0/24]
-  kubernetesApiCidrs: [10.0.3.0/32]
   podIdentityAgentCidrs: [169.254.170.23/32]

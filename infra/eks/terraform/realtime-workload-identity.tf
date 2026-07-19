@@ -5,9 +5,9 @@ variable "realtime_kafka_connect_identity_enabled" {
 }
 
 variable "realtime_kafka_connect_service_account_name" {
-  description = "Stable ServiceAccount rendered by the realtime data-plane chart."
+  description = "Stable Kafka Connect V2 ServiceAccount. The legacy EKS identity is preserved during the canonical chart migration."
   type        = string
-  default     = "asklake-kafka-connect-v2"
+  default     = "asklake-realtime-v2-connect"
 
   validation {
     condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.realtime_kafka_connect_service_account_name))
@@ -62,15 +62,19 @@ locals {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ConnectToMskServerless"
-        Effect   = "Allow"
-        Action   = ["kafka-cluster:Connect"]
+        Sid    = "ConnectToMskServerless"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:Connect",
+          "kafka-cluster:WriteDataIdempotently",
+        ]
         Resource = [local.msk_cluster_arn]
       },
       {
         Sid    = "UseExactRealtimeTopics"
         Effect = "Allow"
         Action = [
+          "kafka-cluster:CreateTopic",
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:ReadData",
           "kafka-cluster:WriteData",

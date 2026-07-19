@@ -218,7 +218,16 @@ Domain event는 `id`, `event`, JSON `data`를 가지며 `dataset.revision.commit
 }
 ```
 
-V2 flag가 켜지면 `v2.status="configuration_validated"`가 되지만 PR02에서는 live probe가 없으므로 `v2.ready`는 계속 `false`다. 이 경우 endpoint도 HTTP `503`으로 fail closed하며 event backbone이 꺼져 있으면 top-level `status="not_ready"`, 켜져 있으면 `status="unavailable"`이다. `connector.configured`는 sink flag, URL과 name이 설정됐다는 configuration marker이지 Connect REST/plugin/task 또는 ClickHouse write health가 아니다. V2가 꺼지면 기존 realtime health 동작을 유지한다.
+V2 flag가 켜지면 endpoint는 Kafka Connect의 plugin/worker readiness와 ClickHouse V2
+reader ping을 실제로 확인한다. 두 검사가 모두 성공해야 `v2.ready=true`,
+`v2.status="ready"`가 되며 실패하면 HTTP `503`으로 fail closed한다. 아직 Continuous
+SQL Job이 없어 connector가 `UNREGISTERED`인 것은 worker/plugin과 ClickHouse가 준비된
+경우 배포 readiness 실패가 아니다. Job이 존재하면 `connector.state`와 `taskStates`를
+별도 운영 증거로 확인한다. event backbone이 꺼져 있으면 top-level
+`status="not_ready"`, 켜져 있으나 의존성이 실패하면 `status="unavailable"`이다.
+`connector.configured`는 sink flag, URL과 name이 설정됐다는 marker이며 URL, connector
+name, credential과 TLS 경로는 응답하지 않는다. V2가 꺼지면 기존 realtime health
+동작을 유지한다.
 
 Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 snapshot 작성 시작 시점의 `eventCursor`가 포함된다. frontend는 이 cursor 이후를 구독하므로 snapshot fetch와 EventSource 연결 사이의 event도 replay된다.
 

@@ -1,0 +1,142 @@
+{
+  "contractVersion": "1.0",
+  "evidenceType": "example",
+  "environment": "dev",
+  "capturedAt": "2026-01-01T00:00:00Z",
+  "images": {
+    "backend": "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "clickhouse": "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse-v2@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "kafkaConnect": "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/kafka-connect-v2@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "fixture": {
+    "jobId": "job-example",
+    "runId": "run-example",
+    "outputDatasetId": "dataset-gold-example",
+    "dashboardId": "dashboard-example",
+    "widgetId": "widget-example",
+    "generation": 1,
+    "position": { "topic": "fixture.events", "partition": 0, "offset": 42 }
+  },
+  "health": {
+    "v2": {
+      "enabled": true,
+      "ready": true,
+      "status": "ready",
+      "consumerOwner": "kafka_connect_v2",
+      "clickhouse": { "ready": true },
+      "connector": { "state": "RUNNING", "workerReady": true, "taskStates": ["RUNNING"] }
+    }
+  },
+  "ownership": {
+    "v1Kafka": { "desired": 1, "ready": 1, "scope": "kafka", "owner": "eks-continuous-worker-v1" },
+    "v2Continuous": { "desired": 1, "ready": 1, "scope": "continuous_sql", "owner": "eks-continuous-worker-v2" },
+    "ec2ContinuousProcesses": 0,
+    "activeControlPlanes": [
+      "kafka-continuous-runtime-sync:eks-realtime-v1-worker",
+      "continuous-sql-runtime-sync:eks-realtime-v2-worker"
+    ]
+  },
+  "regressions": {
+    "finiteBatch": {
+      "jobId": "batch-job-example",
+      "status": "success",
+      "orchestrator": "airflow",
+      "runtime": "spark",
+      "storage": "iceberg",
+      "icebergSnapshotId": "snapshot-batch-example",
+      "catalogStatus": "available",
+      "queryEngine": "trino",
+      "returnedRows": 1
+    },
+    "v1Kafka": {
+      "jobId": "v1-job-example",
+      "status": "success",
+      "runtime": "spark_structured_streaming",
+      "storage": "iceberg",
+      "icebergSnapshotId": "snapshot-v1-example",
+      "catalogStatus": "available",
+      "queryEngine": "trino",
+      "returnedRows": 1,
+      "position": { "topic": "fixture.v1", "partition": 0, "offset": 7 }
+    }
+  },
+  "job": {
+    "id": "job-example",
+    "activeRunId": "run-example",
+    "generation": 1,
+    "servingMode": "clickhouse",
+    "outputLayer": "GOLD",
+    "desiredState": "running",
+    "observedState": "running",
+    "outputDatasetId": "dataset-gold-example"
+  },
+  "batch": {
+    "runId": "run-example",
+    "generation": 1,
+    "stage": "dashboard_ready",
+    "datasetRevision": 1,
+    "rowCount": 1,
+    "sourceBoundaryId": "boundary-example",
+    "sourcePositions": [{ "topic": "fixture.events", "partition": 0, "offset": 42 }]
+  },
+  "catalog": {
+    "id": "dataset-gold-example",
+    "status": "available",
+    "layer": "GOLD",
+    "freshness": "realtime",
+    "servingEngine": "clickhouse",
+    "servingVersionId": "version-example",
+    "datasetRevision": 1,
+    "sourceBoundaryId": "boundary-example"
+  },
+  "dashboard": {
+    "id": "dashboard-example",
+    "widgetId": "widget-example",
+    "datasetId": "dataset-gold-example",
+    "datasetRevision": 1,
+    "generation": 1,
+    "usesFinalProjection": true,
+    "returnedRows": 1
+  },
+  "clickhouse": {
+    "outputUsesFinal": true,
+    "rawRowCount": 1,
+    "outputRowCount": 1,
+    "rawPositions": [{ "topic": "fixture.events", "partition": 0, "offset": 42 }],
+    "outputPositions": [{ "topic": "fixture.events", "partition": 0, "offset": 42 }],
+    "duplicateSourcePositions": 0
+  },
+  "persistence": {
+    "pvcUidsBefore": { "clickhouse": "pvc-clickhouse-example", "keeper": "pvc-keeper-example" },
+    "pvcUidsAfterReapply": { "clickhouse": "pvc-clickhouse-example", "keeper": "pvc-keeper-example" },
+    "helmRevisionBefore": 1,
+    "helmRevisionAfter": 2,
+    "webConfigPreserved": true,
+    "workerConfigPreserved": true
+  },
+  "faults": [
+    { "scenario": "continuous-worker-pod", "injected": true, "recovered": true, "jobGeneration": 1, "duplicatePublications": 0, "dataLoss": 0, "recoverySeconds": 5 },
+    { "scenario": "kafka-connect-deployment", "injected": true, "recovered": true, "jobGeneration": 1, "duplicatePublications": 0, "dataLoss": 0, "recoverySeconds": 5 },
+    { "scenario": "clickhouse-pod", "injected": true, "recovered": true, "jobGeneration": 1, "duplicatePublications": 0, "dataLoss": 0, "recoverySeconds": 5 }
+  ],
+  "rollback": {
+    "executed": true,
+    "completed": true,
+    "v1KafkaReady": 1,
+    "v2ContinuousDesired": 0,
+    "finiteBatchSmokeJobId": "batch-job-example",
+    "pvcUids": { "clickhouse": "pvc-clickhouse-example", "keeper": "pvc-keeper-example" },
+    "catalogDatasetId": "dataset-gold-example"
+  },
+  "redeploy": {
+    "executed": true,
+    "healthReady": true,
+    "v1KafkaReady": 1,
+    "v2ContinuousReady": 1,
+    "jobId": "job-example",
+    "catalogDatasetId": "dataset-gold-example",
+    "dashboardDatasetRevision": 1,
+    "dashboardRows": 1,
+    "pvcUids": { "clickhouse": "pvc-clickhouse-example", "keeper": "pvc-keeper-example" }
+  }
+}

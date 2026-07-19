@@ -87,7 +87,7 @@
         "replicas": {"type": "integer", "const": 1},
         "image": {"$ref": "#/$defs/image"},
         "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
-        "serviceAccountName": {"type": "string", "minLength": 1},
+        "serviceAccountName": {"type": "string", "const": "asklake-clickhouse-v2"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
         "configSecret": {
           "type": "object",
@@ -110,19 +110,25 @@
         "replicas": {"type": "integer", "const": 1},
         "image": {"$ref": "#/$defs/image"},
         "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
-        "serviceAccountName": {"type": "string", "minLength": 1},
+        "serviceAccountName": {"type": "string", "const": "asklake-clickhouse-v2"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
         "configSecret": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "configKey", "usersKey", "caKey", "certificateKey", "privateKeyKey"],
+          "required": ["name", "tlsConfigKey", "keeperConfigKey", "caKey", "certificateKey", "privateKeyKey", "adminPasswordKey", "ingestPasswordKey", "materializerPasswordKey", "migrationPasswordKey", "observerPasswordKey", "readerPasswordKey"],
           "properties": {
             "name": {"type": "string", "minLength": 1},
-            "configKey": {"type": "string", "minLength": 1},
-            "usersKey": {"type": "string", "minLength": 1},
+            "tlsConfigKey": {"type": "string", "minLength": 1},
+            "keeperConfigKey": {"type": "string", "minLength": 1},
             "caKey": {"type": "string", "minLength": 1},
             "certificateKey": {"type": "string", "minLength": 1},
-            "privateKeyKey": {"type": "string", "minLength": 1}
+            "privateKeyKey": {"type": "string", "minLength": 1},
+            "adminPasswordKey": {"type": "string", "minLength": 1},
+            "ingestPasswordKey": {"type": "string", "minLength": 1},
+            "materializerPasswordKey": {"type": "string", "minLength": 1},
+            "migrationPasswordKey": {"type": "string", "minLength": 1},
+            "observerPasswordKey": {"type": "string", "minLength": 1},
+            "readerPasswordKey": {"type": "string", "minLength": 1}
           }
         },
         "storage": {"$ref": "#/$defs/storage"},
@@ -137,8 +143,8 @@
         "replicas": {"type": "integer", "const": 1},
         "image": {"$ref": "#/$defs/image"},
         "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
-        "serviceAccountName": {"type": "string", "const": "asklake-kafka-connect-v2"},
-        "createServiceAccount": {"type": "boolean", "const": true},
+        "serviceAccountName": {"type": "string", "const": "asklake-realtime-v2-connect"},
+        "createServiceAccount": {"type": "boolean"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
         "envSecretName": {"type": "string", "minLength": 1},
         "fileSecret": {
@@ -164,7 +170,7 @@
         "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
         "serviceAccountName": {"type": "string", "const": "asklake-backend"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
-        "backendConfigMapName": {"type": "string", "const": "asklake-backend-config"},
+        "backendConfigMapName": {"type": "string", "const": "asklake-runtime"},
         "backendRuntimeSecretName": {"type": "string", "const": "asklake-backend-runtime"},
         "realtimeRuntimeSecret": {
           "type": "object",
@@ -183,13 +189,11 @@
     "networkPolicyEnabled": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "mskCidrs", "rdsCidrs", "awsApiCidrs", "kubernetesApiCidrs", "podIdentityAgentCidrs"],
+      "required": ["enabled", "mskCidrs", "rdsCidrs", "podIdentityAgentCidrs"],
       "properties": {
         "enabled": {"type": "boolean", "const": true},
         "mskCidrs": {"$ref": "#/$defs/cidrs"},
         "rdsCidrs": {"$ref": "#/$defs/cidrs"},
-        "awsApiCidrs": {"$ref": "#/$defs/cidrs"},
-        "kubernetesApiCidrs": {"$ref": "#/$defs/cidrs"},
         "podIdentityAgentCidrs": {"$ref": "#/$defs/cidrs"}
       }
     }
@@ -255,8 +259,8 @@
             "properties": {
               "canonicalOwner": {"const": "eks-continuous-worker-v2"},
               "ec2Quiesced": {"const": true},
-              "ec2KafkaOwnerReady": {"const": true},
-              "realtimeV1Fenced": {"const": true},
+              "ec2KafkaOwnerReady": {"const": false},
+              "realtimeV1Fenced": {"const": false},
               "transferApproved": {"const": true},
               "generation": {"minLength": 1}
             }

@@ -2,35 +2,52 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: asklake-clickhouse-keeper-v2
+  name: clickhouse-keeper-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
-    app.kubernetes.io/component: keeper
+    app.kubernetes.io/component: realtime-v2-keeper
 spec:
-  serviceName: asklake-clickhouse-keeper-v2-headless
+  serviceName: clickhouse-keeper-v2
   replicas: {{ .Values.keeper.replicas }}
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   podManagementPolicy: OrderedReady
   updateStrategy:
     type: RollingUpdate
   selector:
     matchLabels:
-      {{- include "asklake-realtime.selectorLabels" (dict "component" "keeper" "release" .Release.Name) | nindent 6 }}
+      app.kubernetes.io/name: asklake-workloads
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      app.kubernetes.io/component: realtime-v2-keeper
   template:
     metadata:
       labels:
-        {{- include "asklake-realtime.selectorLabels" (dict "component" "keeper" "release" .Release.Name) | nindent 8 }}
+        app.kubernetes.io/name: asklake-workloads
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: realtime-v2-keeper
         app.kubernetes.io/part-of: asklake
     spec:
       serviceAccountName: {{ .Values.keeper.serviceAccountName }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.keeper.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
       nodeSelector:
         {{- toYaml .Values.keeper.nodeSelector | nindent 8 }}
       containers:
         - name: keeper
           image: {{ include "asklake-realtime.image" .Values.keeper.image | quote }}
           imagePullPolicy: {{ .Values.keeper.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
           command:
             - clickhouse-keeper
             - --config-file=/etc/asklake/keeper/keeper.xml
@@ -53,7 +70,8 @@ spec:
             {{- toYaml .Values.keeper.resources | nindent 12 }}
           volumeMounts:
             - {name: config, mountPath: /etc/asklake/keeper, readOnly: true}
-            - {name: data, mountPath: /var/lib/clickhouse-keeper}
+            - {name: keeper-data, mountPath: /var/lib/clickhouse-keeper}
+            - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
           secret:
@@ -61,9 +79,12 @@ spec:
             items:
               - key: {{ .Values.keeper.configSecret.configKey }}
                 path: keeper.xml
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
   volumeClaimTemplates:
     - metadata:
-        name: data
+        name: keeper-data
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: {{ .Values.keeper.storage.storageClassName | quote }}
@@ -74,35 +95,64 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: asklake-clickhouse-v2
+  name: clickhouse-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
-    app.kubernetes.io/component: clickhouse
+    app.kubernetes.io/component: realtime-v2-clickhouse
 spec:
-  serviceName: asklake-clickhouse-v2-headless
+  serviceName: clickhouse-v2
   replicas: {{ .Values.clickhouse.replicas }}
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   podManagementPolicy: OrderedReady
   updateStrategy:
     type: RollingUpdate
   selector:
     matchLabels:
-      {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 6 }}
+      app.kubernetes.io/name: asklake-workloads
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      app.kubernetes.io/component: realtime-v2-clickhouse
   template:
     metadata:
       labels:
-        {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 8 }}
+        app.kubernetes.io/name: asklake-workloads
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: realtime-v2-clickhouse
         app.kubernetes.io/part-of: asklake
     spec:
       serviceAccountName: {{ .Values.clickhouse.serviceAccountName }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.clickhouse.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
       nodeSelector:
         {{- toYaml .Values.clickhouse.nodeSelector | nindent 8 }}
       containers:
         - name: clickhouse
           image: {{ include "asklake-realtime.image" .Values.clickhouse.image | quote }}
           imagePullPolicy: {{ .Values.clickhouse.image.pullPolicy }}
+          env:
+            - {name: CLICKHOUSE_DB, value: asklake_realtime_v2}
+            - {name: CLICKHOUSE_USER, value: asklake_admin}
+            - {name: CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS, value: "1"}
+            - {name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1"}
+            - {name: CLICKHOUSE_V2_DISABLE_PLAINTEXT_AFTER_INIT, value: "true"}
+            - {name: CLICKHOUSE_V2_TLS_STAGING_REQUIRED, value: "true"}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.adminPasswordKey }}}}
+            - name: CLICKHOUSE_V2_INGEST_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.ingestPasswordKey }}}}
+            - name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.materializerPasswordKey }}}}
+            - name: CLICKHOUSE_V2_MIGRATION_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.migrationPasswordKey }}}}
+            - name: CLICKHOUSE_V2_OBSERVER_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.observerPasswordKey }}}}
+            - name: CLICKHOUSE_V2_READER_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.clickhouse.configSecret.name }}, key: {{ .Values.clickhouse.configSecret.readerPasswordKey }}}}
           ports:
             - {name: https, containerPort: 8443, protocol: TCP}
             - {name: native-secure, containerPort: 9440, protocol: TCP}
@@ -122,26 +172,33 @@ spec:
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           volumeMounts:
-            - {name: data, mountPath: /var/lib/clickhouse}
-            - {name: config, mountPath: /etc/clickhouse-server/config.d/asklake.xml, subPath: asklake.xml, readOnly: true}
-            - {name: config, mountPath: /etc/clickhouse-server/users.d/asklake.xml, subPath: users.xml, readOnly: true}
-            - {name: config, mountPath: /var/run/asklake/clickhouse/ca.crt, subPath: ca.crt, readOnly: true}
-            - {name: config, mountPath: /var/run/asklake/clickhouse/server.crt, subPath: server.crt, readOnly: true}
-            - {name: config, mountPath: /var/run/asklake/clickhouse/server.key, subPath: server.key, readOnly: true}
+            - {name: clickhouse-data, mountPath: /var/lib/clickhouse}
+            - {name: config, mountPath: /etc/clickhouse-server/config.d/asklake, readOnly: true}
+            - {name: tls-source, mountPath: /run/asklake-secrets-source/clickhouse-v2, readOnly: true}
+            - {name: tls-staged, mountPath: /run/asklake-clickhouse-v2-secrets}
       volumes:
         - name: config
           secret:
             secretName: {{ .Values.clickhouse.configSecret.name }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.clickhouse.configSecret.tlsConfigKey }}, path: tls.xml}
+              - {key: {{ .Values.clickhouse.configSecret.keeperConfigKey }}, path: keeper.xml}
+        - name: tls-source
+          secret:
+            secretName: {{ .Values.clickhouse.configSecret.name }}
             defaultMode: 0400
             items:
-              - {key: {{ .Values.clickhouse.configSecret.configKey }}, path: asklake.xml}
-              - {key: {{ .Values.clickhouse.configSecret.usersKey }}, path: users.xml}
               - {key: {{ .Values.clickhouse.configSecret.caKey }}, path: ca.crt}
               - {key: {{ .Values.clickhouse.configSecret.certificateKey }}, path: server.crt}
               - {key: {{ .Values.clickhouse.configSecret.privateKeyKey }}, path: server.key}
+        - name: tls-staged
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
   volumeClaimTemplates:
     - metadata:
-        name: data
+        name: clickhouse-data
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: {{ .Values.clickhouse.storage.storageClassName | quote }}

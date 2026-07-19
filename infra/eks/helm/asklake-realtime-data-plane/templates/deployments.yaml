@@ -2,26 +2,30 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: asklake-kafka-connect-v2
+  name: kafka-connect-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
-    app.kubernetes.io/component: kafka-connect
+    app.kubernetes.io/component: realtime-v2-connect
 spec:
   replicas: {{ .Values.kafkaConnect.replicas }}
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "asklake-realtime.selectorLabels" (dict "component" "kafka-connect" "release" .Release.Name) | nindent 6 }}
+      app.kubernetes.io/name: asklake-workloads
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      app.kubernetes.io/component: realtime-v2-connect
   template:
     metadata:
       labels:
-        {{- include "asklake-realtime.selectorLabels" (dict "component" "kafka-connect" "release" .Release.Name) | nindent 8 }}
+        app.kubernetes.io/name: asklake-workloads
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: realtime-v2-connect
         app.kubernetes.io/part-of: asklake
     spec:
       serviceAccountName: {{ .Values.kafkaConnect.serviceAccountName }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.kafkaConnect.terminationGracePeriodSeconds }}
       nodeSelector:
         {{- toYaml .Values.kafkaConnect.nodeSelector | nindent 8 }}
@@ -31,11 +35,42 @@ spec:
           imagePullPolicy: {{ .Values.kafkaConnect.image.pullPolicy }}
           ports:
             - {name: rest, containerPort: 8083, protocol: TCP}
-          envFrom:
-            - secretRef:
-                name: {{ .Values.kafkaConnect.envSecretName }}
           env:
             - {name: KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED, value: "true"}
+            {{- range $name := list
+              "CONNECT_BOOTSTRAP_SERVERS"
+              "CONNECT_GROUP_ID"
+              "CONNECT_CONFIG_STORAGE_TOPIC"
+              "CONNECT_OFFSET_STORAGE_TOPIC"
+              "CONNECT_STATUS_STORAGE_TOPIC"
+              "CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR"
+              "CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR"
+              "CONNECT_STATUS_STORAGE_REPLICATION_FACTOR"
+              "CONNECT_CONFIG_PROVIDERS"
+              "CONNECT_CONFIG_PROVIDERS_FILE_CLASS"
+              "CONNECT_CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY"
+              "CONNECT_KEY_CONVERTER"
+              "CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE"
+              "CONNECT_VALUE_CONVERTER"
+              "CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE"
+              "CONNECT_PLUGIN_PATH"
+              "CONNECT_REST_ADVERTISED_HOST_NAME"
+              "CONNECT_REST_PORT"
+              "CONNECT_SECURITY_PROTOCOL"
+              "CONNECT_SASL_MECHANISM"
+              "CONNECT_SASL_JAAS_CONFIG"
+              "CONNECT_SASL_CLIENT_CALLBACK_HANDLER_CLASS"
+              "CONNECT_CUB_KAFKA_TIMEOUT"
+              "KAFKA_HEAP_OPTS"
+              "ASKLAKE_MSK_IAM_AUTH_JAR"
+              "ASKLAKE_V2_SOURCE_TOPIC"
+              "ASKLAKE_V2_DLQ_TOPIC" }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.kafkaConnect.envSecretName }}
+                  key: {{ $name }}
+            {{- end }}
           startupProbe:
             httpGet: {path: /, port: rest}
             periodSeconds: 5
@@ -96,7 +131,7 @@ spec:
         asklake.io/control-plane-generation: {{ .Values.ownership.generation | quote }}
     spec:
       serviceAccountName: {{ .Values.continuousWorker.serviceAccountName }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.continuousWorker.terminationGracePeriodSeconds }}
       nodeSelector:
         {{- toYaml .Values.continuousWorker.nodeSelector | nindent 8 }}
@@ -122,8 +157,8 @@ spec:
             - {name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "true"}
             - {name: KAFKA_CONNECT_SINK_ENABLED, value: "true"}
             - {name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: kafka_connect_v2}
-            - {name: KAFKA_CONNECT_URL, value: "http://asklake-kafka-connect-v2:8083"}
-            - {name: CLICKHOUSE_V2_URL, value: "https://asklake-clickhouse-v2:8443"}
+            - {name: KAFKA_CONNECT_URL, value: "http://kafka-connect-v2:8083"}
+            - {name: CLICKHOUSE_V2_URL, value: "https://clickhouse-v2:8443"}
             - {name: CLICKHOUSE_V2_DATABASE, value: asklake_realtime_v2}
             - {name: CLICKHOUSE_V2_MATERIALIZER_USER, value: asklake_v2_materializer}
             - name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
@@ -148,7 +183,7 @@ spec:
               command:
                 - python
                 - -c
-                - "import socket; [socket.create_connection(x, 3).close() for x in [('asklake-clickhouse-v2', 8443), ('asklake-kafka-connect-v2', 8083)]]"
+                - "import socket; [socket.create_connection(x, 3).close() for x in [('clickhouse-v2', 8443), ('kafka-connect-v2', 8083)]]"
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
