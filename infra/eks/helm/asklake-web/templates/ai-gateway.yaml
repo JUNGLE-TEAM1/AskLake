@@ -148,11 +148,10 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-      ports:
+    # EKS may expose cluster DNS through a virtual Service IP without a
+    # selectable kube-system Pod endpoint. Restrict DNS by port/protocol while
+    # allowing that VIP to remain reachable.
+    - ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
