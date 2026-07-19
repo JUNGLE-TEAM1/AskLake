@@ -451,10 +451,12 @@ export function parseDenyProbeLog(raw) {
     record?.code,
     record?.causeCode,
   ].map((value) => String(value ?? "").toUpperCase());
-  const exactTopicAuthorization = protocolCodes.some(
+  const protocolCode = protocolCodes.find(
     (value) =>
       value === "29"
-      || value.includes("TOPIC_AUTHORIZATION_FAILED"),
+      || value === "31"
+      || value.includes("TOPIC_AUTHORIZATION_FAILED")
+      || value.includes("CLUSTER_AUTHORIZATION_FAILED"),
   );
   if (
     !record
@@ -462,7 +464,7 @@ export function parseDenyProbeLog(raw) {
     || Array.isArray(record)
     || record.status !== "failed"
     || record.category !== "AUTHORIZATION"
-    || !exactTopicAuthorization
+    || !protocolCode
     || Object.hasOwn(record, "producedCount")
     || Number(record.acknowledgedMessages ?? 0) !== 0
   ) {
@@ -472,6 +474,15 @@ export function parseDenyProbeLog(raw) {
     acknowledgedMessages: 0,
     attemptedMessages: 1,
     category: "AUTHORIZATION",
+    // KafkaJS enables idempotent production for the normal fixture producer.
+    // With the exact Describe-only IAM role, MSK can therefore reject the
+    // cluster-scoped idempotent-write request (31) before the topic write (29).
+    // Both are exact protocol authorization failures with zero acknowledgement.
+    protocolCode: protocolCode.includes("TOPIC_")
+      ? "29"
+      : protocolCode.includes("CLUSTER_")
+        ? "31"
+        : protocolCode,
     evidenceSha256: sha256(Buffer.from(String(raw))),
   };
 }
@@ -1240,6 +1251,7 @@ function probeReceiptIsValid(value, campaignId) {
         && value.privateIdentity[key].length > 0,
     )
     && value?.probe?.category === "AUTHORIZATION"
+    && ["29", "31"].includes(value?.probe?.protocolCode)
     && value?.probe?.attemptedMessages === 1
     && value?.probe?.acknowledgedMessages === 0
     && /^[a-f0-9]{64}$/.test(value?.probe?.evidenceSha256 ?? "")

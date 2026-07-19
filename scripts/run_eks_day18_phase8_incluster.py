@@ -26,10 +26,6 @@ from app.models import ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.services import etl_service
 from app.services.airflow_client import build_airflow_client
-from app.services.etl.airflow_operations import (
-    airflow_run_reservation,
-    submit_or_reconcile_airflow_job_run,
-)
 from app.services.etl.eks_fixture import (
     persisted_eks_mvp_fixture_source_boundary,
 )
@@ -212,6 +208,22 @@ def private_identity(
     return identity
 
 
+def initialize_mutation_schema() -> None:
+    """Finish repository DDL before opening a fault-run transaction.
+
+    The helper runs in a fresh Python process for every action, so the
+    repository's process-local schema cache starts empty. Letting
+    save_command_result initialize the schema after the action has already
+    read etl_jobs creates a self-blocking PostgreSQL lock: that transaction
+    holds an ACCESS SHARE lock while a second connection requests ALTER TABLE.
+    """
+    db = SessionLocal()
+    try:
+        etl_repository.ensure_schema(db)
+    finally:
+        db.close()
+
+
 def reserve_fault_run(request: dict[str, Any]) -> dict[str, Any]:
     campaign_id = request_campaign(request)
     db = SessionLocal()
@@ -256,7 +268,10 @@ def reserve_fault_run(request: dict[str, Any]) -> dict[str, Any]:
             raise Day18Phase8Error("fault target already has an active Run")
 
         airflow_client = build_airflow_client()
-        run = airflow_run_reservation(job, "run", airflow_client)
+        # These operations are runtime-bound by the public ETL facade. Importing
+        # their extracted implementation module directly bypasses that binding
+        # and leaves dependencies such as spark_kubernetes_mode_enabled absent.
+        run = etl_service.airflow_run_reservation(job, "run", airflow_client)
         update_marker(
             run,
             campaign_id=campaign_id,
@@ -416,7 +431,7 @@ def submit_reserved_run(request: dict[str, Any]) -> dict[str, Any]:
             request,
         )
         airflow_client = build_airflow_client()
-        submitted, error = submit_or_reconcile_airflow_job_run(
+        submitted, error = etl_service.submit_or_reconcile_airflow_job_run(
             job,
             "run",
             run,
@@ -766,6 +781,8 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
     handler = actions.get(action)
     if handler is None:
         raise Day18Phase8Error("unsupported action")
+    if action in {"reserve", "record_msk_fault", "execute", "submit"}:
+        initialize_mutation_schema()
     return handler(request)
 
 

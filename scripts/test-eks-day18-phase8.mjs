@@ -181,7 +181,15 @@ test("deny log accepts exactly one authorization failure with zero ack", () => {
   const parsed = parseDenyProbeLog(raw);
   assert.equal(parsed.attemptedMessages, 1);
   assert.equal(parsed.acknowledgedMessages, 0);
+  assert.equal(parsed.protocolCode, "29");
   assert.match(parsed.evidenceSha256, /^[a-f0-9]{64}$/);
+
+  const idempotentWriteDenied = parseDenyProbeLog(`${JSON.stringify({
+    status: "failed",
+    category: "AUTHORIZATION",
+    code: "31",
+  })}\n`);
+  assert.equal(idempotentWriteDenied.protocolCode, "31");
 
   assert.throws(
     () =>
