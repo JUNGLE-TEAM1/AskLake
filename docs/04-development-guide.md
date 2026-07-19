@@ -2569,4 +2569,6 @@ npm run build
 
 EKS 완료 판정에는 위 로컬 검증 외에 신규 공개 Job API로 생성한 격리 identity의 MSK ingest, 첫 ClickHouse row, restart recovery, pause/resume/stop, rollback receipt가 필요하다.
 
+2026-07-20 canary는 위 lifecycle과 rollback을 통과했으며 `deploy/eks-realtime-kafka-job-v2-receipt.json`에 secret-free 결과를 남겼다. V1/V2 Kafka worker는 같은 control-plane lease를 공유하므로 V1 fence → V2 canary → V2 disable → V1 lease 복구 순서를 지킨다. dual-run이나 두 owner의 동시 consumer claim으로 검증하지 않는다.
+
 EKS web/API와 V2 worker image를 올리기 전에 `npm run migrate:runtime-schema` one-shot을 실행한다. 이 bootstrap은 기존 `dataset_freshness`와 `dataset_revision_commits`에도 V2 publication의 additive column/index를 멱등 보강한다. schema가 뒤처진 상태에서는 connector 등록 전에 fail closed한다.

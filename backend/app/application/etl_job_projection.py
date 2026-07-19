@@ -247,9 +247,7 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     config = request.continuous_config
     base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
-        # Runtime selection is server-owned and immutable for the lifetime of
-        # the Job.  Legacy Continuous Jobs have no marker and remain on the
-        # Spark V1 path; every newly-created Continuous Job is fenced to V2.
+        # Server-owned marker; markerless legacy Jobs remain Spark V1.
         "runtimeEngine": "kafka_connect_clickhouse_v2",
         "runtimeGeneration": 1,
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
@@ -272,17 +270,10 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
     checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
-    metrics = record_runtime_observation(
-        {},
-        "stopped",
-        default_public_status="stopped",
-    )
+    metrics = record_runtime_observation({}, "stopped", default_public_status="stopped")
     if config.get("runtimeEngine") == "kafka_connect_clickhouse_v2":
-        metrics = {
-            **metrics,
-            "runtimeEngine": "kafka_connect_clickhouse_v2",
-            "runtimeGeneration": int(config.get("runtimeGeneration") or 1),
-        }
+        metrics = {**metrics, "runtimeEngine": "kafka_connect_clickhouse_v2",
+                   "runtimeGeneration": int(config.get("runtimeGeneration") or 1)}
     runtime = KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
@@ -293,11 +284,9 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         status="stopped",
         metrics=metrics,
     )
-    if (
-        config.get("runtimeEngine") == "kafka_connect_clickhouse_v2"
-        and settings.kafka_continuous_v2_api_enabled
-        and settings.kafka_continuous_v2_owner_generation
-    ):
+    if (config.get("runtimeEngine") == "kafka_connect_clickhouse_v2"
+            and settings.kafka_continuous_v2_api_enabled
+            and settings.kafka_continuous_v2_owner_generation):
         from app.services.continuous_runtime_sync import assign_runtime_owner_claim
 
         assign_runtime_owner_claim(

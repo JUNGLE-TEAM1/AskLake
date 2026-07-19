@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "issue": 1073,
+  "capturedAt": "2026-07-20T03:06:00+09:00",
+  "testedCodeRevision": "7189de9a0d33f53d3ee952d5f0a317401221c9fa",
+  "environment": {
+    "cluster": "asklake-dev",
+    "namespace": "asklake-dev",
+    "generation": "v2-canary-20260719-01",
+    "topology": "non-ha-canary"
+  },
+  "route": {
+    "executionMode": "continuous",
+    "runtimeEngine": "kafka_connect_clickhouse_v2",
+    "runtimeGeneration": 1,
+    "sparkFallbackObserved": false
+  },
+  "identitySha256": {
+    "job": "dfdce4ecea681640273775fc52494810daa3c000e46253a8ba077257edaef796",
+    "broker": "0adfd3514aab89f9e22706fa9a0175df5a53dedbae17f6bf00ab0b8333e222b4",
+    "topic": "be072cc6be1b0dad0856a14d4067bad7f345ea18f22134baca39c4e299ed30f7",
+    "consumerGroup": "555175a63aabad74d5bc1961441e78685ab577aca7ba5ca5bbaec0d86823f309",
+    "checkpoint": "df6bb5173096cc685d4a67dcb4d3912519811935ab90c197805ef3db707d9d57",
+    "connector": "e8efcd5e75baad821d1d74036937c87ada565e956dd6ecf8738af04ca1bd0fbd"
+  },
+  "admission": {
+    "publicCreateApi": "pass",
+    "serverOwnedEngineMarker": "pass",
+    "exactOwnerClaim": "pass",
+    "runtimeSchemaBootstrap": "pass"
+  },
+  "lifecycle": {
+    "connectorAndTaskRunning": "pass",
+    "exactConsumerGroup": "pass",
+    "authorizedGenerationDlq": "pass",
+    "baselineRows": 60,
+    "rowsAfterFirstFixture": 65,
+    "pause": "pass",
+    "resume": "pass",
+    "connectPodUidChanged": true,
+    "runningAfterConnectRestart": "pass",
+    "rowsAfterRestartFixture": 70,
+    "stop": "pass"
+  },
+  "exactOneOwner": {
+    "v1ReplicasDuringV2Canary": 0,
+    "v2RunningTasksDuringCanary": 1,
+    "concurrentV1V2ConsumerClaims": 0,
+    "sharedControlLeaseRequiresSerialCanary": true
+  },
+  "rollback": {
+    "v2RunningTasks": 0,
+    "v2WorkloadObjects": 0,
+    "v2ApiAdmissionEnabled": false,
+    "clickhousePvcRetained": true,
+    "keeperPvcRetained": true,
+    "v1WorkerReplicas": 1,
+    "v1LeaseReacquired": true,
+    "fixtureProducerPodsRemoved": true
+  },
+  "limitations": [
+    "The V1 and V2 Kafka-scope workers share one PostgreSQL control-plane lease, so this canary fenced V1 and exercised the owners serially.",
+    "This is a single Connect, single ClickHouse, single Keeper non-HA canary; it is not a production scale or HA claim.",
+    "The V2 hot path does not create the long-term S3/Iceberg archive."
+  ],
+  "secretsIncluded": false,
+  "result": "pass"
+}

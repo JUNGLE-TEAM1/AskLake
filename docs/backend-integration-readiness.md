@@ -747,4 +747,6 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 - [x] V2 marker Job의 disabled/unready 상태는 Spark fallback 없이 fail closed
 - [x] 결정적 connector/keeper identity와 persisted generation 사용
 - [x] 기존 UI에 `실시간 · ClickHouse`, `배치 · Spark` 표기
-- [ ] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt
+- [x] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt
+
+2026-07-20 격리 EKS canary는 ClickHouse row 60→65, pause/resume, Connect Pod 교체 복구, 추가 적재 65→70, stop을 확인했다. rollback은 V2 task/workload 0, admission disabled, V2 PVC 2개 보존, V1 worker/lease 복구까지 완료했다. V1/V2 worker는 같은 Kafka control-plane lease를 공유하므로 동시 실행이 아니라 exact-one serial fence로 검증했다. 근거는 `deploy/eks-realtime-kafka-job-v2-receipt.json`이다.
