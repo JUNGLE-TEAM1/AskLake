@@ -141,8 +141,16 @@ verify_single_mode() {
       .metadata.name] | sort | first // empty
   ')"
   [[ -n "$backend_pod" ]] || fail "a Ready FastAPI Pod is required for the Trino query gate"
-  kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
-    python - 0 <"$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py" >/dev/null
+  single_query_ready=false
+  for _ in {1..18}; do
+    if kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
+      python - 0 <"$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py" >/dev/null 2>&1; then
+      single_query_ready=true
+      break
+    fi
+    sleep 5
+  done
+  [[ "$single_query_ready" == "true" ]] || fail "single coordinator Iceberg query did not recover before the 90-second deadline"
 }
 
 # First create a safe rollback target: single mode with Recreate. The previous

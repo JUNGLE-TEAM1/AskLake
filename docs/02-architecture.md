@@ -647,7 +647,8 @@ client용 `Service/asklake-trino`는 기존 `component=trino` coordinator만 선
 분리한다. 두 role은 동일 digest image, node environment, internal shared secret, JKS/password DB,
 JDBC Iceberg catalog, Warehouse 설정과 `asklake-trino` ServiceAccount/Pod Identity를 사용한다.
 기존 Iceberg data privilege는 유지하고 분산 live evidence를 위해 내부 materializer에만 read-only
-system information을 허용한다. write/graceful-shutdown 권한은 허용하지 않는다. worker replicas는
+system information과 `system.runtime.nodes|tasks` SELECT만 허용한다. 다른 system table,
+write/graceful-shutdown 권한은 허용하지 않는다. worker replicas는
 MVP 안전 상한인 1~5 범위의 opt-in private input이며 이 범위에 기본 sizing 의미는 없다. 첫 live
 후보는 private input에서 worker `2`개로 시작하지만 chart default와 운영 sizing은 계속 미정이다. resources,
 placement와 Kubernetes termination grace도 opt-in private input이고 HPA/PDB/PVC/별도 NodePool은

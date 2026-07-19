@@ -80,8 +80,14 @@ test "$(grep -c 'app.kubernetes.io/component: "trino-worker"' "$DISTRIBUTED_REND
 grep -q 'terminationGracePeriodSeconds: 60' "$DISTRIBUTED_RENDER"
 grep -q 'system_information' "$DISTRIBUTED_RENDER"
 grep -q '"user": "asklake-materializer", "allow": \["read"\]' "$DISTRIBUTED_RENDER"
+grep -q '"user": "asklake-materializer", "catalog": "system", "allow": "read-only"' "$DISTRIBUTED_RENDER"
+grep -q '"user": "asklake-materializer", "catalog": "system", "schema": "runtime", "table": "nodes|tasks", "privileges": \["SELECT"\]' "$DISTRIBUTED_RENDER"
 if grep -q 'system_information' "$DEFAULT_RENDER"; then
   echo "single-node render changed the proven system-information ACL" >&2
+  exit 1
+fi
+if grep -q '"catalog": "system"' "$DEFAULT_RENDER"; then
+  echo "single-node render unexpectedly grants system catalog access" >&2
   exit 1
 fi
 

@@ -2013,14 +2013,21 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
 ```
 
 실제 component release는 Git 제외 mode `0600` private values를 사용해 먼저 server-side dry-run한다.
+General NodePool의 live CPU/memory 상한도 실제 cluster-wide requests와 새 node system overhead를
+수용해야 한다. 2026-07-19 검증에서는 기존 8 CPU·32Gi 상한이 이미 사용 중인 6 CPU 때문에 새
+x86 node를 만들지 못해 private live 상한을 12 CPU·48Gi로 조정했다. 이 값은 상시 node 수나
+worker 성능 sizing이 아니며 다른 workload와 부하가 달라지면 다시 계산한다.
 승인된 적용은 배포 worktree의 `HEAD`와 fetched `origin/pair1`을 동일한 full SHA로 고정하고
 `ASKLAKE_TRINO_DEPLOYMENT_COMMIT`에 그 값을 전달해 `deploy-eks-trino-distributed.sh --apply`로
 수행하며 현재 immutable Trino image를 보존한다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
 query를 먼저 검증하고 그 Helm revision을 안전 rollback 기준으로 고정한다. apply 뒤
 `verify-eks-trino-distributed-live.sh <worker-count>`가 Deployment Ready뿐 아니라
 FastAPI의 materializer identity로 `system.runtime.nodes`를 조회해 coordinator 1개와 active worker
-수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 실패하면 deploy script가 안전 단일 coordinator Helm revision으로 되돌린다. 이
-active-node gate는 배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
+수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 이 조회 권한은 distributed
+mode의 materializer에만 `system_information: read`, system catalog
+read-only와 `system.runtime.nodes|tasks` SELECT를 함께 부여하며 일반 query identity에는 주지 않는다.
+실패하면 deploy script가 안전 단일 coordinator Helm revision으로 되돌린다. active-node gate는
+배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
 exact-UID 장애 복구, `2→1→2` scale-down/복원과 안전 rollback까지 같은 campaign에서 검증해야 한다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
