@@ -212,6 +212,9 @@ class ClickHouseKafkaIngestV2Gateway:
             self._register_and_resume(job, runtime)
             return self._result(job, "starting")
         if probe.connector_state == "PAUSED":
+            if job.status in {"starting", "running"}:
+                self._register_and_resume(job, runtime)
+                return self._result(job, "starting")
             return self._result(job, "exited", requested_action="pause")
         states = {probe.connector_state, *probe.task_states}
         if "FAILED" in states:

@@ -115,6 +115,7 @@ def job():
         ],
         dataset_id="ds_kafka_v2_events",
         rag=False,
+        status="running",
         execution_mode="continuous",
         source_config=[["TOPIC / QUEUE NAME", "events.v2"]],
     )
@@ -257,6 +258,26 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(CatalogDatasetResponse.model_validate(payload).freshness, "realtime")
         self.assertEqual(payload["physicalBindings"][0]["status"], "pending")
         self.assertEqual(payload["streamingSource"]["topic"], "events.v2")
+
+    def test_running_intent_resumes_and_reconfigures_a_paused_connector(self) -> None:
+        self.connector.paused = True
+
+        result = self.gateway.manage(job(), runtime(), "status")
+
+        self.assertEqual(result["containerState"], "starting")
+        self.assertTrue(self.connector.resumed)
+        self.assertEqual(len(self.ingest.register_calls), 1)
+
+    def test_paused_intent_keeps_a_paused_connector_stopped(self) -> None:
+        paused_job = job()
+        paused_job.status = "paused"
+        self.connector.paused = True
+
+        result = self.gateway.manage(paused_job, runtime(), "status")
+
+        self.assertEqual(result["containerState"], "exited")
+        self.assertFalse(self.connector.resumed)
+        self.assertEqual(self.ingest.register_calls, [])
 
     def test_first_raw_offset_publishes_catalog_and_sse_revision(self) -> None:
         self.gateway.manage(job(), runtime(), "start")
