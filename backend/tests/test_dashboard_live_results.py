@@ -298,6 +298,7 @@ class DashboardLiveRuntimeTests(unittest.TestCase):
             SimpleNamespace(),
             FakeCatalogRepository(live_repository.db),
             live_repository,
+            prepared_live_results_only=False,
         )
         return service
 
@@ -332,6 +333,49 @@ class DashboardLiveRuntimeTests(unittest.TestCase):
         self.assertEqual(response.applied_revision, 4)
         self.assertEqual(response.data, [{"category": "A", "amount": 30.0}])
         self.assertEqual(live_repository.db.commits, 1)
+        self.assertEqual(live_repository.save_calls, [])
+
+    def test_prepared_only_request_never_calculates_a_new_revision(self) -> None:
+        state = aggregate_state([{
+            "category": "A",
+            "__asklake_state_count": 2,
+            "__asklake_state_sum": 30.0,
+            "__asklake_state_min": 10.0,
+            "__asklake_state_max": 20.0,
+        }])
+        live_repository = FakeLiveRepository(
+            latest_revision=5,
+            saved_result=self.saved_result(applied_revision=4, state=state),
+        )
+        service = self.service(live_repository)
+        service.prepared_live_results_only = True
+
+        with patch(
+            "app.services.dashboard_runtime_service.DashboardDatasetQuerySession",
+            side_effect=AssertionError("browser refresh must not open a physical session"),
+        ) as physical_session:
+            response = render_live_widget(service)
+
+        physical_session.assert_not_called()
+        self.assertEqual(response.applied_revision, 4)
+        self.assertEqual(response.data, [{"category": "A", "amount": 30.0}])
+        self.assertEqual(live_repository.save_calls, [])
+
+    def test_prepared_only_request_returns_pending_before_background_baseline(self) -> None:
+        live_repository = FakeLiveRepository(latest_revision=1, saved_result=None)
+        service = self.service(live_repository)
+        service.prepared_live_results_only = True
+
+        with patch.object(
+            service,
+            "_full_widget_result",
+            side_effect=AssertionError("browser refresh must not establish the baseline"),
+        ) as full_calculation:
+            response = render_live_widget(service)
+
+        full_calculation.assert_not_called()
+        self.assertEqual(response.data_status, "pending")
+        self.assertEqual(response.data, [])
         self.assertEqual(live_repository.save_calls, [])
 
     def test_live_widget_locks_catalog_before_freshness_revision(self) -> None:
