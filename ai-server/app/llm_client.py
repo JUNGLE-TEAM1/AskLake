@@ -714,7 +714,8 @@ def system_prompt_for_mode(mode: str) -> str:
     instructions = {
         "query_sql": (
             "Produce one read-only SQL draft and never execute SQL or tools. Use only datasets in context. "
-            "When context.ragContext.provenance is semantic_layer_rag, use its source chunks only when they materially influence the SQL or explanation. "
+            "For multi-dataset SQL, use only the allowedRelationship equality keys supplied in the user prompt, qualify every column with a table alias, and never invent a JOIN key. "
+            "When context.ragContext.retrieval.provenance is semantic_layer_rag, use its source chunks only when they materially influence the SQL or explanation. "
             "Return in usedEvidenceIds only exact source documentId values actually used; return an empty list when no retrieved source helped."
         ),
         "classify_dataset": (

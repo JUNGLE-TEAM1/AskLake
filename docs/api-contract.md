@@ -2109,9 +2109,9 @@ Request 예시:
   "baseDatasetId": "ds_orders_clean",
   "currentQuery": "SELECT order_id, customer_id FROM orders_clean LIMIT 100;",
   "mode": "draft_sql",
-  "prompt": "고객별 주문과 클릭 이벤트를 조인해서 보고 싶다",
+  "prompt": "고객별 주문 금액과 고객 지역을 조인해서 보고 싶다",
   "semanticModelId": "semantic_customer_orders_v3",
-  "selectedDatasetIds": ["ds_orders_clean", "ds_clickstream_events"]
+  "selectedDatasetIds": ["ds_orders_clean", "ds_customers"]
 }
 ```
 
@@ -2123,6 +2123,15 @@ type QueryAiSuggestionResponse = {
   generationAttempts: number;
   regenerationCount: number;
   generatorVersion: string;
+  joinEvidence: Array<{
+    source: string;
+    relationshipType: string;
+    leftDatasetId: string;
+    leftDatasetName: string;
+    rightDatasetId: string;
+    rightDatasetName: string;
+    columnPairs: Array<{ leftColumn: string; rightColumn: string }>;
+  }>;
   promptVersion: string;
   mode: "draft_sql";
   requestId: string;
@@ -2141,11 +2150,22 @@ Response 예시:
 
 ```json
 {
-  "body": "orders_clean에서 customer_id별 total_amount 합계를 조회하는 읽기 전용 SQL 초안입니다.",
+  "body": "orders_clean과 customers를 검증된 customer_id 관계로 연결한 읽기 전용 SQL 초안입니다.",
   "generationAttempts": 1,
   "regenerationCount": 0,
-  "generatorVersion": "query-ai-service-v2",
-  "promptVersion": "cost-aware-v2",
+  "generatorVersion": "query-ai-service-v3",
+  "joinEvidence": [
+    {
+      "source": "semantic_model:semantic_customer_orders_v3@3",
+      "relationshipType": "many_to_one",
+      "leftDatasetId": "ds_orders_clean",
+      "leftDatasetName": "orders_clean",
+      "rightDatasetId": "ds_customers",
+      "rightDatasetName": "customers",
+      "columnPairs": [{"leftColumn": "customer_id", "rightColumn": "customer_id"}]
+    }
+  ],
+  "promptVersion": "join-aware-v3",
   "mode": "draft_sql",
   "requestId": "85afbfc4-e3ac-4b3d-9281-c8beaa0fe020",
   "model": "gpt-4.1-mini",
@@ -2159,8 +2179,8 @@ Response 예시:
     "resultCount": 1
   },
   "sources": [{"documentId": "rag_doc_orders_17", "datasetId": "ds_orders_clean"}],
-  "sql": "SELECT customer_id, SUM(total_amount) AS total_amount_sum\nFROM orders_clean\nGROUP BY customer_id\nORDER BY total_amount_sum DESC\nLIMIT 100;",
-  "title": "고객별 주문 금액 SQL 초안",
+  "sql": "SELECT c.region, SUM(o.total_amount) AS total_amount_sum\nFROM orders_clean o\nJOIN customers c ON o.customer_id = c.customer_id\nGROUP BY c.region\nORDER BY total_amount_sum DESC\nLIMIT 100;",
+  "title": "지역별 주문 금액 SQL 초안",
   "usedEvidenceIds": ["rag_doc_orders_17"]
 }
 ```
@@ -2168,15 +2188,20 @@ Response 예시:
 Validation:
 
 - `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
-- frontend는 선택한 dataset id만 전달합니다. backend가 현재 actor의 권한·governance를 확인한 뒤 Catalog에서 최신 metadata와 schema를 다시 읽으므로 client metadata는 신뢰하거나 provider에 전달하지 않습니다.
+- frontend는 기준 Dataset 하나만이 아니라 현재 SQL 분석 화면에서 선택한 Dataset ID 전부를 `selectedDatasetIds`로 전달합니다. backend는 기준 ID를 합쳐 중복 제거한 전체 목록에 대해 권한·governance를 각각 확인하고, Catalog 최신 metadata/schema와 MCP batch context도 같은 전체 목록으로 조회합니다. client metadata는 신뢰하거나 provider에 전달하지 않습니다.
+- 사용자 prompt 한도는 8,000자이며, 선택 Dataset 전체의 schema·JOIN 계약을 덧붙이는 내부 Gateway prompt에는 32,000자 한도를 둡니다. 전체 컨텍스트가 이 한도를 넘으면 Dataset이나 schema를 몰래 누락하지 않고 `query_ai_context_too_large`로 명확히 실패합니다.
 - backend는 Query AI provider key를 읽지 않고 private AI Gateway에 service token과 dataset-scoped signed context만 전달합니다. provider key는 `AI_PROVIDER_API_KEY`로 AI Gateway 컨테이너에만 주입하며 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - 평균, 합계, 개수, 그룹화처럼 prompt에 명시된 분석 의도가 SQL select/group/aggregation에 반영됐는지 검증합니다. 위반하면 위반 목록을 포함해 Gateway에 한 번만 교정 재요청하고 두 번째 응답도 위반하면 `422 VALIDATION_ERROR`를 반환합니다.
-- backend가 Catalog의 schema/type, storage bytes, partition column, estimated rows, key/role hint와 Trino scan 경계를 cost-aware context로 제공한다. 응답 SQL은 `SELECT *`, CROSS JOIN/key 없는 JOIN, partition column 함수, untyped temporal literal, 허가되지 않은 approximate aggregation을 정적으로 검사합니다.
+- backend가 Catalog의 schema/type, storage bytes, partition column, estimated rows, 검증된 unique-key set, index metadata와 Trino scan 경계를 join-aware cost context로 제공한다. 일반 index는 unique key 증적으로 취급하지 않습니다.
+- 게시된 Semantic Model relationship과 Catalog의 검증된 unique-key 증적에서 선택 Dataset 사이의 `allowedRelationship`을 만듭니다. AI가 반환한 `JOIN ON`은 허용 관계의 equality column pair와 정확히 일치해야 하며, 복합 key는 모든 predicate를 `AND`로 포함해야 합니다. column 존재·type 호환·table alias 한정도 SQLGlot AST로 재검사합니다.
+- `CROSS JOIN`, `USING`, `ON TRUE`, `OR`/범위 predicate, key 없는 JOIN, 허용 목록에 없는 임의 JOIN key는 교정 대상입니다. 사용자가 JOIN을 명시했지만 안전한 관계가 하나도 없으면 provider를 호출하지 않고 `422 VALIDATION_ERROR`와 `join_relationship_missing`을 반환합니다.
+- `joinEvidence`는 후보 관계 전체가 아니라 최종 검증 SQL의 `ON` 절과 정확히 일치해 실제 사용된 관계만 반환합니다. UI는 이를 `JOIN 근거`로 표시하고 RAG 문서 근거와 구분합니다.
+- 응답 SQL은 이 JOIN 검사와 함께 `SELECT *`, partition column 함수, untyped temporal literal, 허가되지 않은 approximate aggregation을 정적으로 검사합니다.
 - intent 위반과 cost 위반은 하나의 공통 retry budget을 사용하며 전체 교정은 최대 1회입니다. `generationAttempts`, `regenerationCount`, `generatorVersion`, `promptVersion`은 benchmark lineage와 운영 분석을 위한 additive metadata입니다.
 - 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
-- 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
+- 선택된 reference dataset이 있고 안전한 `allowedRelationship`이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다. 관계 metadata는 생성 제약이며 RAG 문서 근거로 가장하지 않습니다. SQL/설명에 실제 영향을 준 RAG source만 기존 `usedEvidenceIds`와 `sources`에 남습니다.
 - frontend는 Gateway가 검증된 SQL 초안을 반환하지 않으면 오류를 표시하며 로컬 SQL 초안을 대신 만들지 않습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.

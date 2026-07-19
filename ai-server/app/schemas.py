@@ -371,7 +371,7 @@ class GenerateRequest(BaseModel):
 
     mode: GenerationMode = "query_sql"
     request_id: str | None = Field(default=None, max_length=255)
-    prompt: str = Field(min_length=1, max_length=8_000)
+    prompt: str = Field(min_length=1, max_length=32_000)
     current_query: str | None = Field(default=None, max_length=20_000)
     base_dataset_id: str | None = Field(default=None, max_length=255)
     rag_context: dict[str, Any] = Field(default_factory=dict)

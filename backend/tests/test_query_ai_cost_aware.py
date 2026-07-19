@@ -43,7 +43,8 @@ def orders_dataset() -> CatalogDatasetResponse:
 
 def test_prompt_contains_bounded_cost_context_without_rows() -> None:
     prompt = _build_query_generation_prompt("2025년 주문 수", [orders_dataset()])
-    assert "Cost-aware context version: cost-aware-v2" in prompt
+    assert "Cost-aware context version: join-aware-v3" in prompt
+    assert "JOIN relationship context version: join-aware-v3" in prompt
     assert "rows=1000000" in prompt
     assert "storageBytes=5690924" in prompt
     assert "partitionColumns=order_date" in prompt
@@ -127,7 +128,7 @@ def test_intent_and_cost_share_one_retry_budget() -> None:
     assert generate.call_count == 2
     assert response.generation_attempts == 2
     assert response.regeneration_count == 1
-    assert response.generator_version == "query-ai-service-v2"
-    assert response.prompt_version == "cost-aware-v2"
+    assert response.generator_version == "query-ai-service-v3"
+    assert response.prompt_version == "join-aware-v3"
     assert "count(*)" in response.sql.lower()
     assert "untyped_temporal_literal" in generate.call_args.kwargs["prompt"]
