@@ -271,8 +271,6 @@ def prepare_dimension_snapshot(
     if not count.rows or not count.rows[0]:
         raise ValueError("V2 dimension snapshot count is unavailable")
     total_rows = int(count.rows[0][0])
-    if total_rows > int(runtime_settings.continuous_sql_static_cache_max_rows):
-        raise ValueError("V2 dimension exceeds CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS")
     dataset_id = str(relation.get("datasetId") or "")
     join_columns = continuous_sql_static_join_columns(job, dataset_id)
     indexes = {name: index for index, name in enumerate(columns)}

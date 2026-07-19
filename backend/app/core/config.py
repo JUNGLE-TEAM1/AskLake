@@ -127,7 +127,6 @@ class Settings(BaseSettings):
     clickhouse_password: str | None = None
     clickhouse_database: str = "asklake"
     clickhouse_query_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
-    clickhouse_static_load_max_rows: int = Field(default=15_000_000, ge=1, le=100_000_000)
     clickhouse_insert_batch_rows: int = Field(default=20_000, ge=1, le=100_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
