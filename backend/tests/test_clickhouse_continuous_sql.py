@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 import httpx
 from sqlalchemy import create_engine
@@ -20,6 +21,7 @@ from app.repositories.dashboard_live_repository import (
 )
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.continuous_sql import ContinuousSqlOutput
+from app.schemas.trino import TrinoClientPage
 from app.services.clickhouse_client import ClickHouseClient, ClickHouseError, ClickHouseRows
 from app.services.clickhouse_continuous_publication import (
     ClickHouseContinuousSqlPublicationService,
@@ -260,6 +262,55 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
 
         self.assertTrue(gateway.provisioned)
         self.assertEqual(result["containerState"], "running")
+
+    def test_v2_dimension_snapshot_is_published_in_bounded_batches(self) -> None:
+        class PagedTrino:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+                self.queries.append(query)
+                if "count(*)" in query:
+                    return TrinoClientPage(queryId="count", rows=[[3]])
+                return TrinoClientPage(
+                    queryId="rows",
+                    rows=[[1, "Alice"], [2, "Bob"]],
+                    nextUri="http://trino:8080/v1/statement/rows/1",
+                )
+
+            def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
+                return TrinoClientPage(queryId="rows", rows=[[3, "Carol"]])
+
+        class BatchedClickHouse:
+            def __init__(self) -> None:
+                self.batch_sizes: list[int] = []
+
+            def insert_json_rows(self, _database, _table, _columns, rows) -> int:
+                materialized = list(rows)
+                self.batch_sizes.append(len(materialized))
+                return len(materialized)
+
+        job = self._job()
+        trino = PagedTrino()
+        clickhouse = BatchedClickHouse()
+        gateway = ClickHouseRealtimeV2WorkerGateway(
+            Settings(_env_file=None, app_env="test"),
+            trino_client=trino,  # type: ignore[arg-type]
+        )
+
+        with patch("app.services.clickhouse_realtime_v2._DIMENSION_INSERT_BATCH_ROWS", 2):
+            evidence = gateway._publish_dimension_snapshot(
+                clickhouse,  # type: ignore[arg-type]
+                job,
+                job.relation_bindings[1],
+                {"snapshotId": "77"},
+                version_id="dimension-v77",
+            )
+
+        self.assertEqual(clickhouse.batch_sizes, [2, 1])
+        self.assertEqual(evidence.row_count, 3)
+        self.assertEqual(len(evidence.checksum), 64)
+        self.assertIn('ORDER BY "id"', trino.queries[-1])
 
     def test_output_contract_is_additive_and_keeps_iceberg_default(self) -> None:
         iceberg = ContinuousSqlOutput.model_validate({

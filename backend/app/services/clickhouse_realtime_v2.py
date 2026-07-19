@@ -22,7 +22,7 @@ from app.core.permission_metadata import permission_grants_from_roles, resource_
 from app.models.catalog import CatalogDatasetModel
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.models.dashboard_live import DatasetFreshnessModel
-from app.realtime.application.dimension_publish_worker import DimensionPublishWorker
+from app.realtime.application.dimension_publish_worker import DimensionPublishEvidence
 from app.realtime.application.ingest_service import RealtimeIngestService
 from app.realtime.application.materializer import RealtimeMaterializer
 from app.realtime.domain.dimension import DimensionRow, default_missing_policy
@@ -66,6 +66,7 @@ _OWNER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
 _SERVING_TABLE = "serving_events_v2"
 _SERVING_VIEW = "serving_current_v2"
 _RAW_VIEW = "raw_events_v2_current"
+_DIMENSION_INSERT_BATCH_ROWS = 5_000
 
 
 class ClickHouseRealtimeV2WorkerGateway:
@@ -268,13 +269,12 @@ class ClickHouseRealtimeV2WorkerGateway:
                 created_by=job.created_by,
             )
             try:
-                rows = self._load_dimension_rows(job, relation, binding)
-                evidence = DimensionPublishWorker(client).publish(
-                    database=self.settings.clickhouse_v2_database,
-                    dataset_id=dataset_id,
+                evidence = self._publish_dimension_snapshot(
+                    client,
+                    job,
+                    relation,
+                    binding,
                     version_id=version_id,
-                    semantics="current",
-                    rows=rows,
                 )
                 with self.session_factory() as db:
                     DimensionRepository(db).activate(
@@ -405,12 +405,15 @@ class ClickHouseRealtimeV2WorkerGateway:
                 {"version_id": version_id},
             ).first() is not None
 
-    def _load_dimension_rows(
+    def _publish_dimension_snapshot(
         self,
+        client: ClickHouseClient,
         job: ContinuousSqlJobModel,
         relation: dict[str, Any],
         binding: dict[str, Any],
-    ) -> list[DimensionRow]:
+        *,
+        version_id: str,
+    ) -> DimensionPublishEvidence:
         mapping = relation.get("queryEngineTable")
         if not isinstance(mapping, dict):
             raise ValueError("V2 dimension has no Iceberg mapping")
@@ -442,12 +445,39 @@ class ClickHouseRealtimeV2WorkerGateway:
         if any(item not in indexes for item in join_columns):
             raise ValueError("V2 dimension JOIN key is missing from the snapshot")
 
-        result: list[DimensionRow] = []
+        dataset_id = str(relation.get("datasetId") or "")
+        order_by = ", ".join(quote_trino_identifier(item) for item in join_columns)
         page = self.trino_client.submit(
-            f"SELECT {projection} FROM {source} FOR VERSION AS OF {snapshot_id}",
+            f"SELECT {projection} FROM {source} FOR VERSION AS OF {snapshot_id} "
+            f"ORDER BY {order_by}",
             timeout_seconds=self.settings.trino_query_timeout_seconds,
         )
         page_count = 0
+        inserted_rows = 0
+        previous_key: str | None = None
+        checksum = hashlib.sha256()
+        batch: list[tuple[object, ...]] = []
+        insert_columns = (
+            "scope_id",
+            "dimension_dataset_id",
+            "dimension_version_id",
+            "dimension_key",
+            "payload",
+            "row_version",
+        )
+
+        def flush_batch() -> None:
+            nonlocal inserted_rows
+            if not batch:
+                return
+            inserted_rows += client.insert_json_rows(
+                self.settings.clickhouse_v2_database,
+                "dimension_current_v2",
+                insert_columns,
+                batch,
+            )
+            batch.clear()
+
         while True:
             if page.error is not None:
                 raise RuntimeError(f"{page.error.code}: {page.error.message}")
@@ -459,10 +489,31 @@ class ClickHouseRealtimeV2WorkerGateway:
                 keys = [payload[item] for item in join_columns]
                 if any(item is None or str(item).strip() == "" for item in keys):
                     raise ValueError("V2 dimension JOIN keys cannot be null or empty")
-                result.append(DimensionRow(
+                row = DimensionRow(
                     key=json.dumps(keys, ensure_ascii=False, separators=(",", ":")),
                     payload=payload,
+                )
+                if row.key == previous_key:
+                    raise ValueError("V2 dimension JOIN keys must be unique")
+                previous_key = row.key
+                checksum.update(json.dumps({
+                    "key": row.key,
+                    "payload": row.payload,
+                    "validFrom": None,
+                    "validTo": None,
+                    "rowVersion": row.row_version,
+                }, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                checksum.update(b"\n")
+                batch.append((
+                    "deployment",
+                    dataset_id,
+                    version_id,
+                    row.key,
+                    row.canonical_payload(),
+                    row.row_version,
                 ))
+                if len(batch) >= _DIMENSION_INSERT_BATCH_ROWS:
+                    flush_batch()
             if not page.next_uri:
                 break
             page_count += 1
@@ -472,11 +523,16 @@ class ClickHouseRealtimeV2WorkerGateway:
                 page.next_uri,
                 timeout_seconds=self.settings.trino_query_timeout_seconds,
             )
-        if len(result) != total_rows:
+        flush_batch()
+        if inserted_rows != total_rows:
             raise RuntimeError(
-                f"V2 dimension row count mismatch: expected={total_rows} actual={len(result)}"
+                f"V2 dimension row count mismatch: expected={total_rows} actual={inserted_rows}"
             )
-        return result
+        return DimensionPublishEvidence(
+            row_count=inserted_rows,
+            checksum=checksum.hexdigest(),
+            physical_table="dimension_current_v2",
+        )
 
     def _initialize_control_plane(
         self,
