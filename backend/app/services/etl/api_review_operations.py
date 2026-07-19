@@ -24,6 +24,7 @@ RUNTIME_NAMES = {
     'blocked_principal_for_actor',
     'bool',
     'clickhouse_kafka_ingest_v2_enabled',
+    'clickhouse_kafka_ingest_v2_selected',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
     'dict',
@@ -54,6 +55,7 @@ RUNTIME_NAMES = {
     'persisted_stream_partition_cursors',
     'reconcile_pending_continuous_replay_catalog',
     'reconcile_stale_continuous_maintenance_runs',
+    'require_kafka_ingest_v2_ready',
     'require_no_active_continuous_maintenance',
     'resolve_internal_data_lake_source',
     'review_entry',
@@ -76,6 +78,8 @@ def command_kafka_continuous_job(
     command: str,
     actor: ActorContext,
 ) -> JobCommandResponse:
+    if command in {"startContinuous", "resumeContinuous"}:
+        require_kafka_ingest_v2_ready(job, settings)
     return execute_continuous_command(
         db,
         job,
@@ -97,7 +101,7 @@ def command_kafka_continuous_job(
             with_permissions=with_job_permissions,
             worker_kind=lambda current_job: (
                 "kafka_connect_clickhouse_v2"
-                if clickhouse_kafka_ingest_v2_enabled(current_job, settings)
+                if clickhouse_kafka_ingest_v2_selected(current_job)
                 else "spark_structured_streaming"
             ),
         ),

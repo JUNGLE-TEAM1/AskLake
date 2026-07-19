@@ -10,6 +10,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.auth_context import ActorContext
+from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.catalog import CatalogDatasetModel
 from app.models.dashboard_live import DatasetFreshnessModel
@@ -21,6 +23,8 @@ from app.services.clickhouse_client import ClickHouseRows
 from app.services.kafka_ingest_v2 import (
     ClickHouseKafkaIngestV2Gateway,
     kafka_ingest_v2_enabled,
+    kafka_ingest_v2_selected,
+    require_kafka_ingest_v2_ready,
 )
 from app.services import etl_service
 
@@ -97,8 +101,14 @@ def job():
         target="kafka_v2_events",
         target_description="",
         target_layer="BRONZE",
+        storage_path="s3a://lake/kafka-v2",
+        target_path="s3a://lake/kafka-v2",
         source_label="Kafka topic events.v2",
-        continuous_config={"triggerIntervalSeconds": 5},
+        continuous_config={
+            "runtimeEngine": "kafka_connect_clickhouse_v2",
+            "runtimeGeneration": 1,
+            "triggerIntervalSeconds": 5,
+        },
         schema_columns=[
             {"sourceName": "event_id", "targetName": "event_id", "type": "long", "included": True},
             {"sourceName": "region", "targetName": "region", "type": "string", "included": True},
@@ -149,6 +159,55 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertFalse(kafka_ingest_v2_enabled(
             SimpleNamespace(execution_mode="snapshot"), self.settings
         ))
+
+    def test_legacy_continuous_job_without_engine_marker_remains_v1(self) -> None:
+        legacy = job()
+        legacy.continuous_config = {"triggerIntervalSeconds": 5}
+
+        self.assertFalse(kafka_ingest_v2_selected(legacy))
+        self.assertFalse(kafka_ingest_v2_enabled(legacy, self.settings))
+
+    def test_selected_v2_job_fails_closed_when_runtime_flags_are_disabled(self) -> None:
+        disabled = Settings(_env_file=None, app_env="test")
+
+        with self.assertRaises(ApiError) as raised:
+            require_kafka_ingest_v2_ready(job(), disabled)
+
+        self.assertEqual(raised.exception.code, "CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE")
+
+    def test_control_plane_only_start_rejects_unavailable_v2_before_persisting_intent(self) -> None:
+        disabled = Settings(_env_file=None, app_env="test")
+        with (
+            patch.object(etl_service, "settings", disabled),
+            patch.object(etl_service, "execute_continuous_command") as execute,
+            self.assertRaises(ApiError) as raised,
+        ):
+            etl_service.command_kafka_continuous_job(
+                None, job(), "startContinuous", ActorContext(name="owner")
+            )
+
+        self.assertEqual(raised.exception.code, "CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE")
+        execute.assert_not_called()
+
+    def test_external_api_admission_assigns_exact_eks_owner_generation(self) -> None:
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "external_ec2"),
+            patch.object(etl_service.settings, "kafka_continuous_v2_api_enabled", True),
+            patch.object(
+                etl_service.settings,
+                "kafka_continuous_v2_owner_generation",
+                "v2-job-1073-g1",
+            ),
+        ):
+            runtime_model = etl_service.continuous_runtime_from_job(job())
+            require_kafka_ingest_v2_ready(job(), etl_service.settings)
+
+        claim = runtime_model.metrics["ownerClaim"]
+        self.assertEqual(claim["owner"], "eks-kafka-connect-clickhouse-v2")
+        self.assertEqual(claim["generation"], "v2-job-1073-g1")
+        self.assertEqual(claim["topic"], "events.v2")
+        self.assertEqual(claim["consumerGroup"], "asklake-stream-job-kafka-v2")
+        self.assertEqual(claim["stateRevision"], 1)
 
     def test_etl_worker_facade_delegates_to_v2_before_spark_bridge(self) -> None:
         expected = {"containerState": "running", "worker": "kafka_connect_clickhouse_v2"}

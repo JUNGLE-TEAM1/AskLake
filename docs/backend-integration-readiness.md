@@ -739,3 +739,12 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 - [x] frontend reversed polling과 stable browser selector 계약
 - [x] nightly의 isolated loopback·credential fail-closed guard
 - [ ] 실제 Kafka/Spark/object storage/browser nightly는 `self-hosted + asklake-e2e` runner에서 배포 후보마다 실행
+
+## Kafka Job engine routing readiness (#1073)
+
+- [x] 신규 Continuous create가 server-owned ClickHouse V2 engine/generation marker를 저장
+- [x] marker 없는 기존 Continuous Job은 Spark V1로 보존
+- [x] V2 marker Job의 disabled/unready 상태는 Spark fallback 없이 fail closed
+- [x] 결정적 connector/keeper identity와 persisted generation 사용
+- [x] 기존 UI에 `실시간 · ClickHouse`, `배치 · Spark` 표기
+- [ ] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt

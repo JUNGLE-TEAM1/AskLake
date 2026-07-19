@@ -260,3 +260,10 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - `npm run verify:refactor-release-execution`은 격리 nightly fault, production canary clean reboot, backup/restore drill이 모두 증명되기 전 exit 2로 차단한다.
 - production 배포, EC2 reboot, traffic promotion은 별도 명시적 승인과 release owner가 필요하다.
 - rollback은 DB 수동 편집, checkpoint 삭제, 수동 chown을 정상 절차로 사용하지 않는다.
+
+# Kafka Job engine routing guardrail (#1073)
+
+- 신규 `executionMode=continuous` Job의 engine은 backend가 ClickHouse V2로 영속화하며 Browser가 V1/V2를 선택하지 않는다.
+- marker가 없는 기존 Continuous Job만 Spark V1 호환 경로를 사용한다.
+- V2 marker Job에서 V2 flag/owner/readiness가 없으면 `CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE`로 실패하고 Spark로 자동 fallback하지 않는다.
+- EKS canary는 production과 다른 topic/group/generation/connector를 사용하고 기존 V1 checkpoint, V2 PVC/snapshot, offset을 삭제하지 않는다.

@@ -2548,3 +2548,23 @@ docker compose --profile clickhouse-realtime-v2 config --quiet
 ```
 
 실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+
+## 신규 Kafka Job engine routing 검증 (#1073)
+
+신규 Continuous Job은 `runtimeEngine=kafka_connect_clickhouse_v2`를 서버가 저장하고, 기존 marker 없는 Job은 Spark V1로 남는다. V2 marker Job은 V2 flag/owner가 준비되지 않으면 Spark로 fallback하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_kafka_ingest_v2 \
+  tests.test_continuous_runtime_contract \
+  tests.test_etl_job_commands -v
+
+cd ../frontend
+npm run test:etl-draft-contract
+npm run test:continuous-runtime-contract
+npm run test:e2e-selectors
+npm run build
+```
+
+EKS 완료 판정에는 위 로컬 검증 외에 신규 공개 Job API로 생성한 격리 identity의 MSK ingest, 첫 ClickHouse row, restart recovery, pause/resume/stop, rollback receipt가 필요하다.

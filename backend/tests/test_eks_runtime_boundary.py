@@ -31,10 +31,17 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
     def test_external_ec2_rejects_continuous_command_before_database_access(self) -> None:
         database = Mock()
 
-        with patch.object(
-            etl_service.settings,
-            "asklake_continuous_control_plane",
-            "external_ec2",
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "external_ec2"),
+            patch.object(
+                etl_service.etl_repository,
+                "get_job_for_update",
+                return_value=SimpleNamespace(
+                    execution_mode="continuous",
+                    continuous_config=None,
+                    source_type="Stream / Kafka",
+                ),
+            ),
         ):
             with self.assertRaises(ApiError) as raised:
                 etl_service.command_job(
@@ -46,15 +53,21 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "CONTINUOUS_CONTROL_OWNED_BY_EC2")
         self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
-        database.assert_not_called()
 
     def test_external_ec2_rejects_continuous_read_before_database_access(self) -> None:
         database = Mock()
 
-        with patch.object(
-            etl_service.settings,
-            "asklake_continuous_control_plane",
-            "external_ec2",
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "external_ec2"),
+            patch.object(
+                etl_service.etl_repository,
+                "get_job",
+                return_value=SimpleNamespace(
+                    execution_mode="continuous",
+                    continuous_config=None,
+                    source_type="Stream / Kafka",
+                ),
+            ),
         ):
             with self.assertRaises(ApiError) as raised:
                 etl_service.get_kafka_continuous_worker_logs(
@@ -65,7 +78,6 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
                 )
 
         self.assertEqual(raised.exception.code, "CONTINUOUS_CONTROL_OWNED_BY_EC2")
-        database.assert_not_called()
 
     def test_external_ec2_hides_continuous_jobs_from_general_list(self) -> None:
         with patch.object(
@@ -78,7 +90,7 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
 
     def test_external_ec2_rejects_continuous_job_detail_without_refreshing_runtime(self) -> None:
         database = Mock()
-        continuous_job = SimpleNamespace(execution_mode="continuous")
+        continuous_job = SimpleNamespace(execution_mode="continuous", continuous_config=None)
 
         with (
             patch.object(

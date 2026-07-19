@@ -28,6 +28,12 @@ class EksControlPlaneContractTests(unittest.TestCase):
             self.assertTrue(contract.external_continuous_control_plane_enabled())
             self.assertTrue(contract.job_visible_in_current_control_plane("snapshot"))
             self.assertFalse(contract.job_visible_in_current_control_plane("continuous"))
+            self.assertTrue(contract.job_visible_in_current_control_plane(
+                "continuous", {"runtimeEngine": "kafka_connect_clickhouse_v2"}
+            ))
+            contract.require_local_continuous_control_plane(
+                {"runtimeEngine": "kafka_connect_clickhouse_v2"}
+            )
             with self.assertRaises(ApiError) as raised:
                 contract.require_local_continuous_control_plane()
 

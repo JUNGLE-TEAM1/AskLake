@@ -1223,7 +1223,7 @@ type ReviewSnapshot = {
 - backend는 source connector 결과를 재확인하며 실패 시 Review를 `확인 필요`로 반환합니다. frontend fixture로 성공 상태를 대체하지 않습니다.
 - 내부 `Data Lake` source는 `sourceConfig`의 `Source Dataset ID`를 기준으로 Catalog dataset을 다시 검증합니다. dataset은 `available` 상태이며 현재 actor가 조회할 수 있어야 하고, `queryEngineStatus=available`인 Iceberg `queryEngineTable`을 가져야 합니다. 실제 Snapshot Run은 이 table identity를 Spark catalog source로 읽습니다. `Data Lake Parquet`은 이 계약과 별개로 S3/S3A path connector 검증을 유지합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
-- `basicInformation`은 내부 `id`와 자동 생성용 `jobName`을 제외하고 소스, 처리 방식, 출력 데이터셋 이름, 설명을 반환합니다. `executionMode=snapshot`은 `배치 처리`, `executionMode=continuous`는 `실시간 스트리밍`으로 표시합니다.
+- `basicInformation`은 내부 `id`와 자동 생성용 `jobName`을 제외하고 소스, 처리 방식, 출력 데이터셋 이름, 설명을 반환합니다. `executionMode=snapshot`은 `배치 · Spark`, `executionMode=continuous`는 `실시간 · ClickHouse`로 표시합니다. 신규 Continuous Job의 response `continuousConfig`에는 server-owned `runtimeEngine=kafka_connect_clickhouse_v2`, `runtimeGeneration=1`이 additive하게 포함됩니다. 기존 marker 없는 Job은 Spark V1 호환 row입니다.
 - `permission`은 `담당자`, `로그인한 모든 사용자`, non-public 대상별 허용 action을 반환합니다. 담당자는 backend fallback으로 전체 권한을 가지며 `public:view`는 `로그인한 모든 사용자=조회 가능`으로 표시합니다. optional `principalName`이 있으면 대상 ID 대신 사람이 읽는 이름을 표시합니다.
 - `validation`은 실제 생성 차단 조건인 소스 데이터, 선택형 레코드 구조화, 출력 스키마, 처리 규칙, 접근 권한, 저장 위치만 반환합니다. 스케줄과 실패 재시도는 별도 단계에서 설정하지만 `canCreate`를 막지 않으므로 준비 상태에 포함하지 않습니다.
 - `ruleCompilation.status`가 `pass`일 때만 `canCreate`가 true가 될 수 있습니다. `rules`가 비어 있으면 output schema는 포함된 source schema와 같은 pass-through 결과이며 `ruleSummary`가 비어 있어도 실패하지 않습니다.

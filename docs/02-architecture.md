@@ -832,6 +832,8 @@ ClickHouse serving commit
 
 ### V2 소유권
 
+- 신규 `executionMode=continuous` ETL Job은 server-owned `continuousConfig.runtimeEngine=kafka_connect_clickhouse_v2`와 positive `runtimeGeneration`을 저장한다. marker가 없는 기존 Continuous Job은 Spark V1로 남는다. 배포 flag는 저장된 engine을 바꾸지 않으며 V2 marker Job에서 V2가 준비되지 않으면 Spark로 우회하지 않고 실패한다.
+
 - Kafka source position은 topic/partition/offset과 read-committed expected position 집합이 소유한다. raw max offset 하나만으로 checkpoint 완료를 판단하지 않는다.
 - ClickHouse raw/serving은 재구축 가능한 hot store다. Dashboard, parity와 checksum은 canonical deduplicated current view만 읽는다.
 - Iceberg Bronze와 immutable dimension history는 replay/rebuild source다. Gold projection은 ClickHouse와 같은 pipeline/dimension version의 archive binding이다.
@@ -869,6 +871,6 @@ Recovery application/repository는 backend-owned 내부 경계다. 현재 외부
 3. static/dimension version, source boundary, serving current count/checksum이 맞아야 revision을 공개한다.
 4. pointer switch와 rollback은 새 global Dataset revision과 단조 증가 `bindingEpoch`를 만든다.
 5. NOTIFY는 wake-up일 뿐이며 기존 durable event cursor가 유실 복구의 근거다.
-6. V2 flag off에서는 현재 V1/Iceberg/polling 동작과 API 필수 field를 바꾸지 않는다.
+6. V2 flag off에서는 marker 없는 기존 V1/Iceberg/polling 동작을 바꾸지 않는다. V2 marker가 있는 신규 Job은 fail closed하고 V1으로 자동 fallback하지 않는다.
 
 상세 DDL, transaction, API, failure recovery와 검증은 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md), PR 의존 관계는 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.
