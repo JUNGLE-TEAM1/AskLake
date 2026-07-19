@@ -14,6 +14,14 @@ ADD --checksum=sha256:e146cf1205c3a15630fcdf667556da931cb3269e63b1f3f3bedf7dfd1f
     https://github.com/ClickHouse/clickhouse-kafka-connect/releases/download/v1.4.0/clickhouse-kafka-connect-v1.4.0.zip \
     /tmp/clickhouse-kafka-connect-v1.4.0.zip
 
+# AWS's Kafka Connect guidance requires the IAM auth uber JAR on the worker
+# classpath and outside CONNECT_PLUGIN_PATH to avoid PluginClassLoader splits.
+ADD --checksum=sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08 \
+    https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.6/aws-msk-iam-auth-2.3.6-all.jar \
+    /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
+
+ENV CLASSPATH=/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
+
 USER root
 RUN confluent-hub install --no-prompt /tmp/clickhouse-kafka-connect-v1.4.0.zip \
     && rm -f /tmp/clickhouse-kafka-connect-v1.4.0.zip

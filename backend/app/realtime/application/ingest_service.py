@@ -48,16 +48,18 @@ class RealtimeIngestService:
             configured_owner=self.settings.clickhouse_realtime_consumer_owner,
             claimed_owners=("kafka_connect_v2",),
         )
+        resolved_connector_name = connector_name or self.settings.kafka_connect_connector_name
         config = build_raw_sink_config(
             topic=topic,
             table=table,
             dlq_topic=dlq_topic,
+            consumer_group=resolved_connector_name,
             database=self.settings.clickhouse_v2_database,
             state_path=state_path,
         )
         gateway = KafkaConnectGateway(
             self.settings,
-            connector_name=connector_name,
+            connector_name=resolved_connector_name,
         )
         try:
             gateway.put_connector(config)

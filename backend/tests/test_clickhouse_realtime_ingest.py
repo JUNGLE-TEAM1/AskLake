@@ -81,12 +81,14 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
             topic="events.raw",
             table="raw_events_v2",
             dlq_topic="events.raw.dlq",
+            consumer_group="asklake-eks-realtime-v2-test-g1",
         )
 
         self.assertEqual(config["connector.class"], CONNECTOR_CLASS)
         self.assertEqual(config["value.converter"], "org.apache.kafka.connect.storage.StringConverter")
         self.assertEqual(config["exactlyOnce"], "true")
         self.assertEqual(config["consumer.override.isolation.level"], "read_committed")
+        self.assertEqual(config["consumer.override.group.id"], "asklake-eks-realtime-v2-test-g1")
         self.assertEqual(config["errors.deadletterqueue.topic.replication.factor"], "1")
         self.assertEqual(config["jdbcConnectionProperties"], "?ssl=true&sslmode=strict")
         self.assertEqual(config["zkPath"], "/asklake/realtime-v2/connect-state")
@@ -96,6 +98,15 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
         self.assertIn("HoistField$Value", config["transforms.hoistPayload.type"])
         self.assertTrue(config["password"].startswith("${file:"))
         self.assertNotIn("password", connector_config_fingerprint(config))
+
+    def test_connector_config_rejects_an_unsafe_consumer_group(self) -> None:
+        with self.assertRaisesRegex(ValueError, "consumer_group"):
+            build_raw_sink_config(
+                topic="events.raw",
+                table="raw_events_v2",
+                dlq_topic="events.raw.dlq",
+                consumer_group="asklake-eks-realtime-v2-*",
+            )
 
     def test_gateway_requires_plugin_and_all_tasks_running(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

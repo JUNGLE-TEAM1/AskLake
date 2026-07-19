@@ -51,6 +51,7 @@ def build_raw_sink_config(
     topic: str,
     table: str,
     dlq_topic: str,
+    consumer_group: str,
     database: str = "asklake_realtime_v2",
     state_path: str = "/asklake/realtime-v2/connect-state",
 ) -> dict[str, str]:
@@ -58,6 +59,8 @@ def build_raw_sink_config(
         raise ValueError("topic and dlq_topic must be safe Kafka topic names")
     if topic == dlq_topic:
         raise ValueError("DLQ topic must differ from the source topic")
+    if not _CONNECTOR_NAME.fullmatch(consumer_group):
+        raise ValueError("consumer_group must be a safe exact Kafka group")
     if not _IDENTIFIER.fullmatch(table) or not _IDENTIFIER.fullmatch(database):
         raise ValueError("database and table must be safe ClickHouse identifiers")
     if not _KEEPER_PATH.fullmatch(state_path) or "//" in state_path or ".." in state_path:
@@ -96,6 +99,7 @@ def build_raw_sink_config(
         "consumer.override.isolation.level": "read_committed",
         "consumer.override.enable.auto.commit": "false",
         "consumer.override.auto.offset.reset": "earliest",
+        "consumer.override.group.id": consumer_group,
     }
 
 

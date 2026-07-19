@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "trino"],
+  "required": ["namespace", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "realtimeV2", "trino"],
   "properties": {
     "namespace": {"type": "string", "const": "asklake-dev"},
     "global": {
@@ -20,6 +20,7 @@
     "mskSmoke": {"$ref": "#/$defs/mskSmoke"},
     "sparkApplication": {"$ref": "#/$defs/sparkApplication"},
     "realtimeV1": {"$ref": "#/$defs/realtimeV1"},
+    "realtimeV2": {"$ref": "#/$defs/realtimeV2"},
     "trino": {"$ref": "#/$defs/trino"}
   },
   "$defs": {
@@ -30,6 +31,16 @@
       "properties": {
         "repository": {"type": "string", "minLength": 1},
         "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "optionalImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$|^$"},
         "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
       }
     },
@@ -395,6 +406,94 @@
           }
         },
         "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "realtimeV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "recoveryMode", "ownerTransfer", "serviceAccounts", "images", "nodeSelector", "storage", "runtimeSecret", "msk", "clickhouse", "connect", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "recoveryMode": {"type": "boolean"},
+        "ownerTransfer": {
+          "type": "object", "additionalProperties": false,
+          "required": ["approved", "previousOwnerFenced", "generation"],
+          "properties": {
+            "approved": {"type": "boolean"},
+            "previousOwnerFenced": {"type": "boolean"},
+            "generation": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,40}$|^$"}
+          }
+        },
+        "serviceAccounts": {
+          "type": "object", "additionalProperties": false,
+          "required": ["worker", "connect"],
+          "properties": {
+            "worker": {"type": "string", "const": "asklake-realtime-v2-worker"},
+            "connect": {"type": "string", "const": "asklake-realtime-v2-connect"}
+          }
+        },
+        "images": {
+          "type": "object", "additionalProperties": false,
+          "required": ["clickhouse", "connect"],
+          "properties": {"clickhouse": {"$ref": "#/$defs/optionalImage"}, "connect": {"$ref": "#/$defs/optionalImage"}}
+        },
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+        "storage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["storageClassName", "clickhouseSize", "keeperSize", "restoreSnapshots"],
+          "properties": {
+            "storageClassName": {"type": "string"},
+            "clickhouseSize": {"type": "string", "pattern": "^[1-9][0-9]*Gi$"},
+            "keeperSize": {"type": "string", "pattern": "^[1-9][0-9]*Gi$"},
+            "restoreSnapshots": {
+              "type": "object", "additionalProperties": false,
+              "required": ["clickhouse", "keeper"],
+              "properties": {
+                "clickhouse": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$|^$"},
+                "keeper": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$|^$"}
+              }
+            }
+          }
+        },
+        "runtimeSecret": {
+          "type": "object", "additionalProperties": false, "required": ["name"],
+          "properties": {"name": {"type": "string", "const": "asklake-realtime-v2-runtime"}}
+        },
+        "msk": {
+          "type": "object", "additionalProperties": false,
+          "required": ["bootstrapSecretName", "bootstrapSecretKey", "iamAuthJar", "sourceTopicPrefix", "dlqTopicPrefix", "consumerGroupPrefix", "workerGroupPrefix", "internalTopicPrefix"],
+          "properties": {
+            "bootstrapSecretName": {"type": "string", "const": "asklake-msk-runtime"},
+            "bootstrapSecretKey": {"type": "string", "const": "bootstrapBrokersSaslIam"},
+            "iamAuthJar": {"type": "string", "const": "/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar"},
+            "sourceTopicPrefix": {"type": "string", "const": "asklake.eks-realtime.v2.fixture"},
+            "dlqTopicPrefix": {"type": "string", "const": "asklake.eks-realtime.v2.dlq"},
+            "consumerGroupPrefix": {"type": "string", "const": "asklake-eks-realtime-v2"},
+            "workerGroupPrefix": {"type": "string", "const": "asklake-eks-realtime-v2-worker"},
+            "internalTopicPrefix": {"type": "string", "const": "asklake-connect-v2"}
+          }
+        },
+        "clickhouse": {
+          "type": "object", "additionalProperties": false, "required": ["database", "serviceName"],
+          "properties": {
+            "database": {"type": "string", "const": "asklake_realtime_v2"},
+            "serviceName": {"type": "string", "const": "clickhouse-v2"}
+          }
+        },
+        "connect": {
+          "type": "object", "additionalProperties": false, "required": ["serviceName"],
+          "properties": {"serviceName": {"type": "string", "const": "kafka-connect-v2"}}
+        },
+        "resources": {
+          "type": "object", "additionalProperties": false,
+          "required": ["worker", "connect", "clickhouse", "keeper"],
+          "properties": {
+            "worker": {"$ref": "#/$defs/resources"},
+            "connect": {"$ref": "#/$defs/resources"},
+            "clickhouse": {"$ref": "#/$defs/resources"},
+            "keeper": {"$ref": "#/$defs/resources"}
+          }
+        }
       }
     },
     "bucketPrefix": {

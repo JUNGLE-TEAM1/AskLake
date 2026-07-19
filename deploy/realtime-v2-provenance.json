@@ -27,6 +27,13 @@
       "version": "1.4.0",
       "sha256": "e146cf1205c3a15630fcdf667556da931cb3269e63b1f3f3bedf7dfd1ffc2cb0",
       "source": "https://github.com/ClickHouse/clickhouse-kafka-connect/releases/download/v1.4.0/clickhouse-kafka-connect-v1.4.0.zip"
+    },
+    {
+      "kind": "github-release-asset",
+      "name": "aws-msk-iam-auth-2.3.6-all.jar",
+      "version": "2.3.6",
+      "sha256": "de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08",
+      "source": "https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.6/aws-msk-iam-auth-2.3.6-all.jar"
     }
   ]
 }

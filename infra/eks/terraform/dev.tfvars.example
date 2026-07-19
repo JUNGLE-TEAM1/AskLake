@@ -138,6 +138,10 @@ storage_prefixes = {
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
 
+# Null means no Kafka Connect V2 identity or IAM role. An approved isolated
+# canary sets one generation; all five topics and its group are then derived.
+msk_realtime_v2_generation = null
+
 # Phase 4 workload identity is another explicit selection gate. Leave disabled
 # until the team studies IRSA vs EKS Pod Identity in the actual cluster.
 workload_identity_mode = "disabled"

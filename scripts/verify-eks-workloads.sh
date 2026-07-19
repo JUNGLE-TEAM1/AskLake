@@ -438,4 +438,5 @@ node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
+"$ROOT_DIR/scripts/verify-eks-realtime-v2-workload.sh"
 echo "EKS workload contract verification passed."

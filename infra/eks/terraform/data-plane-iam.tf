@@ -8,6 +8,9 @@ module "workload_iam_policies" {
   msk_topic_arns  = local.msk_topic_arns
   msk_group_arns  = local.msk_group_arns
 
+  msk_realtime_v2_topic_arns = local.msk_realtime_v2_topic_arns
+  msk_realtime_v2_group_arns = local.msk_realtime_v2_group_arns
+
   storage_bucket_arns = local.storage_bucket_arns
   storage_object_arns = local.storage_object_arns
   storage_prefixes    = var.storage_prefixes

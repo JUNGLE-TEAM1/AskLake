@@ -1244,6 +1244,88 @@ run "irsa_workload_identity_contract" {
   }
 }
 
+run "realtime_v2_connect_has_exact_generation_identity" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+    msk_realtime_v2_generation              = "contract-v2-g1"
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode = "irsa"
+    irsa_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.example.invalid/existing"
+  }
+
+  assert {
+    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV2Connect"])
+    error_message = "A configured V2 generation must add exactly one dedicated Connect workload identity."
+  }
+
+  assert {
+    condition = (
+      length(local.msk_realtime_v2_topic_arns) == 5 &&
+      length(local.msk_realtime_v2_group_arns) == 2 &&
+      alltrue([for arn in concat(local.msk_realtime_v2_topic_arns, local.msk_realtime_v2_group_arns) : !strcontains(arn, "*")]) &&
+      one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedTopics"]).Resource == local.msk_realtime_v2_topic_arns &&
+      one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedConsumerGroup"]).Resource == local.msk_realtime_v2_group_arns
+    )
+    error_message = "V2 Connect IAM must bind exactly five derived topics and two derived sink/worker groups without wildcard resources."
+  }
+
+  assert {
+    condition = (
+      output.msk_contract.realtime_v2_identity.source_topic == "asklake.eks-realtime.v2.fixture.contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.dlq_topic == "asklake.eks-realtime.v2.dlq.contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.config_topic == "asklake-connect-v2-contract-v2-g1-config" &&
+      output.msk_contract.realtime_v2_identity.offset_topic == "asklake-connect-v2-contract-v2-g1-offset" &&
+      output.msk_contract.realtime_v2_identity.status_topic == "asklake-connect-v2-contract-v2-g1-status" &&
+      output.msk_contract.realtime_v2_identity.consumer_group == "asklake-eks-realtime-v2-contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.worker_group == "asklake-eks-realtime-v2-worker-contract-v2-g1"
+    )
+    error_message = "V2 runtime identities must be derived deterministically from one generation."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.workload["realtimeV2Connect"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:sub"] == "system:serviceaccount:${var.namespace}:asklake-realtime-v2-connect" &&
+      length(one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedTopics"]).Action) == 4
+    )
+    error_message = "V2 Connect trust must bind the dedicated service account and expose only its reviewed topic actions."
+  }
+}
+
+run "reject_invalid_realtime_v2_generation" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "external"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    create_ecr_repositories    = false
+    msk_realtime_v2_generation = "bad*generation"
+  }
+
+  expect_failures = [var.msk_realtime_v2_generation]
+}
+
 run "reject_unpaired_realtime_topic" {
   command = plan
 

@@ -111,6 +111,21 @@ variable "msk_realtime_topics" {
   }
 }
 
+variable "msk_realtime_v2_generation" {
+  description = "Optional exact generation for the isolated EKS Kafka Connect to ClickHouse V2 canary. All source, DLQ, internal topic, and group identities are derived from it; null keeps the V2 identity absent."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.msk_realtime_v2_generation == null || can(regex(
+      "^[a-z0-9][a-z0-9.-]{0,40}$",
+      var.msk_realtime_v2_generation,
+    ))
+    error_message = "msk_realtime_v2_generation must be null or a lowercase generation of at most 41 characters without wildcards."
+  }
+}
+
 variable "rds_mode" {
   description = "Disable RDS wiring, reference an existing instance, or create an MVP-owned PostgreSQL instance."
   type        = string
