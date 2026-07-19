@@ -110,7 +110,7 @@ class RealtimeMaterializer:
         target = qualified_clickhouse_table(database, view)
         result = self.clickhouse.query(
             "SELECT count() AS row_count, "
-            "lower(hex(SHA256(arrayStringConcat(arraySort(groupArray(" 
+            "lower(hex(SHA256(arrayStringConcat(arraySort(groupArray("
             "concat(serving_key, ':', toString(row_version), ':', payload)"
             ")), '\\n')))) AS checksum "
             f"FROM {target} "

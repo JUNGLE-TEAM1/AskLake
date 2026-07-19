@@ -25,6 +25,14 @@ AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](
 - 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
 - Dashboard card/list와 draft/published runtime API는 FastAPI 응답만 source of truth로 사용한다. Catalog 기반 runtime widget은 `sampleRows` snapshot 대신 성공한 물리 materialization을 DuckDB로 제한 집계하거나 최대 500행 preview로 읽는다.
 
+### Catalog Dataset Deletion Ownership
+
+- 삭제 진입점은 Catalog 목록 row의 독립 action이다. row 선택/상세 route와 삭제 action을 결합하지 않으며, frontend는 삭제 영향도와 durable deletion status를 backend에서 읽는다.
+- `GET /api/catalog/datasets/{datasetId}/deletion-impact`가 active producer/run, scheduled producer, source consumer, downstream lineage, Dashboard widget, Semantic model, active RAG 작업과 관리되지 않는 저장 경로를 blocker로 반환한다. blocker가 하나라도 있으면 삭제 요청을 받지 않는다.
+- `DELETE /api/catalog/datasets/{datasetId}`는 `delete` 권한을 검사하고 `catalog_dataset_deletions`에 작업과 actor/impact snapshot을 먼저 저장한 뒤 `202`를 반환한다. embedded worker와 API background kick은 같은 DB 작업을 멱등 claim하며, 상태는 `queued -> validating -> purging -> metadata_cleanup -> succeeded|failed`다.
+- purger는 Catalog가 소유권을 입증한 Iceberg/ClickHouse table, local lake path, 설정된 output bucket prefix와 RAG OpenSearch/staging artifact만 삭제한다. source object나 관리 범위 밖 경로는 삭제하지 않고 impact blocker로 처리한다.
+- 물리 정리가 성공한 뒤 같은 metadata transaction에서 Dataset row, permission/lock, Dashboard 계산 cache, freshness/revision/cursor와 RAG dataset metadata를 정리한다. 감사 로그와 완료된 ETL/SQL 실행 이력 및 중지된 producer Job 정의는 보존한다. deletion receipt는 같은 Dataset ID의 늦은 publication을 차단하는 fence로 남는다.
+
 ### Text Structuring Model Artifact Ownership
 
 - text structuring model artifact는 Catalog dataset이 아니라 ETL 변환 실행에 사용하는 재사용 가능한 runtime artifact다.
