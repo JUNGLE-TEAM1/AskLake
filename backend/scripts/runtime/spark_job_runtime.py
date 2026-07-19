@@ -39,6 +39,7 @@ from runtime.spark_iceberg_identifiers import (
     read_spark_iceberg_source,
     required_iceberg_identifier,
 )
+from runtime.spark_materialization_staging import RunScopedParquetStaging, spark_staging_path
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -139,8 +140,7 @@ def main():
     input_bytes = 0
     input_file_count = 0
     staging_path = None
-    materialization_staging_path = None
-    materialization_write_started = False
+    materialization = None
     output_write_started = False
     input_rows = 0
     output_file_count = 0
@@ -226,18 +226,11 @@ def main():
                 canonical_rules,
             )
         staging_path = spark_staging_path(output_path, run_id)
-        materialization_staging_path = spark_materialization_staging_path(output_path, run_id)
+        materialization = RunScopedParquetStaging(output_path, run_id)
         delete_spark_path(spark, staging_path)
-        delete_spark_path(spark, materialization_staging_path)
+        delete_spark_path(spark, materialization.path)
         quarantine_staging_path = f"{staging_path}_quarantine"
-        materialization_phase = begin_phase()
-        try:
-            materialization_write_started = True
-            contracted_df.write.mode("overwrite").parquet(materialization_staging_path)
-            staged_df = spark.read.parquet(materialization_staging_path)
-            spark_resources["materializationFileCount"] = len(staged_df.inputFiles())
-        finally:
-            finish_phase(phase_timings, "materializationStaging", materialization_phase)
+        staged_df = materialization.materialize(spark, contracted_df, phase_timings, spark_resources)
         input_rows, null_required = schema_contract_summary(
             staged_df,
             required_targets,
@@ -256,12 +249,8 @@ def main():
             if check.get("runtimeStatus") == "missing_model_artifact" and check.get("modelRequired")
         ]
         if blocking_text_model_checks:
-            materialization_cleanup_errors = cleanup_spark_paths(
-                spark,
-                [materialization_staging_path],
-            )
-            spark_resources["materializationCleanupStatus"] = (
-                "failed" if materialization_cleanup_errors else "success"
+            materialization_cleanup_errors = materialization.cleanup(
+                spark, spark_resources, cleanup_spark_paths
             )
             ended_at = now_iso()
             quality = {
@@ -415,14 +404,10 @@ def main():
             finish_phase(phase_timings, "sourcePostValidation", source_postcheck_phase)
         if quality["status"] == "fail":
             cleanup_errors = cleanup_failed_output_paths(spark, staging_path)
-            materialization_cleanup_errors = cleanup_spark_paths(
-                spark,
-                [materialization_staging_path],
+            materialization_cleanup_errors = materialization.cleanup(
+                spark, spark_resources, cleanup_spark_paths
             )
             cleanup_errors.extend(materialization_cleanup_errors)
-            spark_resources["materializationCleanupStatus"] = (
-                "failed" if materialization_cleanup_errors else "success"
-            )
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -514,13 +499,7 @@ def main():
                 publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
         finally:
             finish_phase(phase_timings, "targetPublish", publish_phase)
-        materialization_cleanup_errors = cleanup_spark_paths(
-            spark,
-            [materialization_staging_path],
-        )
-        spark_resources["materializationCleanupStatus"] = (
-            "failed" if materialization_cleanup_errors else "success"
-        )
+        materialization.cleanup(spark, spark_resources, cleanup_spark_paths)
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -583,15 +562,11 @@ def main():
             else []
         )
         materialization_cleanup_errors = (
-            cleanup_spark_paths(spark, [materialization_staging_path])
-            if spark is not None and materialization_write_started
+            materialization.cleanup(spark, spark_resources, cleanup_spark_paths)
+            if spark is not None and materialization is not None
             else []
         )
         cleanup_errors.extend(materialization_cleanup_errors)
-        if materialization_write_started:
-            spark_resources["materializationCleanupStatus"] = (
-                "failed" if materialization_cleanup_errors else "success"
-            )
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
@@ -626,7 +601,7 @@ def main():
         error_transform = getattr(exc, "transform", None) or transform
         if error_transform is not None:
             result["transform"] = error_transform
-        if output_write_started or materialization_write_started:
+        if output_write_started or (materialization and materialization.write_started):
             result["outputCleanup"] = {
                 "errors": cleanup_errors,
                 "status": "failed" if cleanup_errors else "success",
@@ -642,16 +617,6 @@ def main():
         release_all_cached_frames(cached_frames)
         if spark is not None:
             spark.stop()
-
-
-def spark_staging_path(output_path, run_id):
-    safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
-    return f"{str(output_path).rstrip('/')}.__staging__{safe_run_id}"
-
-
-def spark_materialization_staging_path(output_path, run_id):
-    safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
-    return f"{str(output_path).rstrip('/')}.__materialization__{safe_run_id}"
 
 
 def delete_spark_path(spark, path_value):
