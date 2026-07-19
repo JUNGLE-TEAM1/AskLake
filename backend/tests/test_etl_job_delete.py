@@ -1220,7 +1220,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
                     "startedAt": "2026-07-12T11:00:00Z",
                     "status": "running",
                 },
-                "eksDay18Campaign": {
+                "day18Phase8": {
                     "campaignId": "a" * 32,
                     "alias": "Run D",
                     "sourceAlias": "Run A",
@@ -1253,7 +1253,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             self.assertEqual(run.task_states["sparkExecution"]["status"], "running")
             self.assertEqual(run.task_states["eksMvpFixture"]["runId"], run_id)
             self.assertEqual(
-                run.task_states["eksDay18Campaign"]["state"],
+                run.task_states["day18Phase8"]["state"],
                 "airflow_submitted",
             )
             self.assertEqual(run.task_states["faultAttempts"][0]["generation"], 1)
