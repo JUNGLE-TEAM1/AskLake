@@ -36,6 +36,7 @@ import {
   TIME_SERIES_POINT_LIMIT,
   timeSeriesCategoryTimestamps,
 } from "./timeSeries";
+import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type SimpleRow = Record<string, unknown>;
@@ -750,7 +751,19 @@ function VisualizationRequestWidget({
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useDashboardAssistantRequestGate(JSON.stringify([assistantContext?.activeDatasetId, assistantContext?.dashboardId, assistantContext?.pageId, widget.id]), () => { setIsSaving(false); assistantContext?.onWorkingWidgetChange?.(null); });
+  const assistantWidgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+  const surfaceKey = JSON.stringify([
+    assistantContext?.dashboardId,
+    assistantContext?.pageId ?? widget.pageId,
+    widget.id,
+  ]);
+  const surfaceKeyRef = useRef(surfaceKey);
+  surfaceKeyRef.current = surfaceKey;
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([
+    assistantContext?.activeDatasetId,
+    surfaceKey,
+    dashboardAssistantWidgetContextSignature(assistantWidgets),
+  ]), () => { setIsSaving(false); assistantContext?.onWorkingWidgetChange?.(null); });
 
   useEffect(() => {
     setPrompt(savedPrompt);
@@ -793,7 +806,7 @@ function VisualizationRequestWidget({
         return;
       }
 
-      const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+      const submissionSurfaceKey = surfaceKey;
       lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-widget-assistant", version: assistantContext?.pageId ?? widget.pageId, params: { currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null, dashboardId: assistantContext?.dashboardId, prompt: nextPrompt, widgetId: widget.id } });
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
@@ -803,11 +816,10 @@ function VisualizationRequestWidget({
         prompt: nextPrompt,
         selectedWidgetId: widget.id,
         widgetId: widget.id,
-        widgets: widgets.map(buildDashboardAssistantWidgetContext),
+        widgets: assistantWidgets.map(buildDashboardAssistantWidgetContext),
       }, { signal: lease.signal });
       if (!requests.current.isCurrent(lease)) return;
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
-      const configPatch = widgetPatch?.config ?? response.configPatch;
       if (widgetPatch && onApplyWidgetPatch) {
         if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
           throw new Error("AI가 시각화 위젯으로 변환할 type 또는 datasetId를 만들지 못했습니다.");
@@ -823,13 +835,10 @@ function VisualizationRequestWidget({
           },
         });
         if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
-      } else if (configPatch && Object.keys(configPatch).length > 0) {
-        const applied = await onPatchConfig({ prompt: nextPrompt, ...configPatch });
-        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
-      if (!requests.current.isCurrent(lease)) return;
+      if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setRequestTone("success");
       setMessage([
         "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
@@ -886,8 +895,6 @@ function visualizationResponseWidgetPatch(
     ),
   );
   if (updateAction) return updateAction.patch;
-
-  if (response.widgetPatch) return response.widgetPatch;
 
   const createAction = response.actions.find(
     (action): action is DashboardAssistantCreateWidgetAction => action.type === "create_widget",

@@ -731,9 +731,12 @@ def system_prompt_for_mode(mode: str) -> str:
         "dashboard_assistant": (
             "Create only dashboard actions allowed by context.dashboard.widgetOptions. Use only catalogContext datasets, "
             "context.dashboard.availableDatasets, and existing context.dashboard.widgets. Never invent IDs or columns. "
+            "Treat context.dashboard.availableDatasets[].columns as the authoritative column names and physical types, "
+            "and choose dimensions and numeric values that match those types. "
             "For visualization requests create_widget unless selectedWidgetId/widgetId names an existing widget, then update_widget. "
-            "Put update fields under patch and create fields under widget. Always provide a concise natural Korean chart title and a fully renderable config. "
-            "If a requested field is unavailable, explain the limitation without an action. For questions prefer a Korean markdown report. "
+            "Return exactly one create_widget or update_widget action for a visualization request. Put update fields under patch and create fields under widget. "
+            "Every update patch must differ from the supplied current widget. Always provide a concise natural Korean chart title and a fully renderable config. "
+            "If a requested field is unavailable, explain the limitation without an action. For dashboard questions return only a Korean markdown report and never mutate widgets. "
             "For every action, put in that action's usedEvidenceIds only exact context.ragContext source documentId values that materially influenced that specific action; otherwise use an empty list. "
             "The top-level usedEvidenceIds must be the exact union of the action-level lists and must be empty when no action used retrieved evidence."
         ),

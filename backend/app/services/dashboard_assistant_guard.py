@@ -302,9 +302,28 @@ def _guard_update_widget_action(
             dataset_id=patch.dataset_id,
             config=config_payload,
         )
+        if not _patch_changes_widget(action.patch, widget):
+            return None, [f"update_widget {action.widget_id!r}에 실제 변경사항이 없어 제외했습니다."]
         return action, warnings
 
+    if not _patch_changes_widget(patch, widget):
+        return None, [f"update_widget {action.widget_id!r}에 실제 변경사항이 없어 제외했습니다."]
     return action, []
+
+
+def _patch_changes_widget(
+    patch: DashboardAssistantWidgetPatch,
+    widget: AssistantWidgetContext,
+) -> bool:
+    if patch.title is not None and patch.title != widget.title:
+        return True
+    if patch.type is not None and _widget_type_enum(patch.type) != widget.type:
+        return True
+    if patch.dataset_id is not None and patch.dataset_id != widget.dataset_id:
+        return True
+    if patch.config is not None and _config_to_dict(patch.config) != _config_to_dict(widget.config):
+        return True
+    return False
 
 
 def _ensure_korean_widget_title(

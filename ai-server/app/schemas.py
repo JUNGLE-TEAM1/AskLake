@@ -211,9 +211,26 @@ class DashboardActionOutput(BaseModel):
         elif self.type == "create_widget":
             if self.widget is None or self.patch is not None or self.widget_id is not None or self.markdown is not None:
                 raise ValueError("Create actions must contain only widget")
+            if (
+                not self.widget.title
+                or self.widget.type is None
+                or not self.widget.dataset_id
+                or self.widget.config is None
+            ):
+                raise ValueError("Create actions must contain a complete widget")
         elif self.type == "update_widget":
             if not self.widget_id or self.patch is None or self.widget is not None or self.markdown is not None:
                 raise ValueError("Update actions must contain widgetId and patch")
+            if all(
+                value is None
+                for value in (
+                    self.patch.title,
+                    self.patch.type,
+                    self.patch.dataset_id,
+                    self.patch.config,
+                )
+            ):
+                raise ValueError("Update actions must contain at least one changed field")
         return self
 
 

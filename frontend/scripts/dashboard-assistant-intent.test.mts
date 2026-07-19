@@ -6,6 +6,7 @@ import {
   classifyDashboardAssistantMode,
   isContextualVisualizationFollowUp,
   isWidgetMutationPrompt,
+  resolveDashboardAssistantMutationTarget,
 } from "../src/pages/dashboard/runtime/dashboardAssistantIntent.ts";
 
 test("common analytical show requests create a visualization in the dashboard editor", () => {
@@ -62,5 +63,36 @@ test("explanation follow-ups do not inherit a prior field as a mutation", () => 
       previousUserPrompts: ["field_1 event_id"],
     }),
     "dashboard_question",
+  );
+});
+
+test("an explicit create request does not overwrite a merely selected widget", () => {
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("새 막대 차트를 추가해줘", "widget-1"),
+    null,
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("지역별 매출 차트를 만들어줘", "widget-1"),
+    null,
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("같은 차트를 하나 더 만들어줘", "widget-1"),
+    null,
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("선택한 차트 색상을 빨간색으로 바꿔줘", "widget-1"),
+    "widget-1",
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("차트를 빨간색으로 만들어줘", "widget-1"),
+    "widget-1",
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("막대차트로 만들어줘", "widget-1"),
+    "widget-1",
+  );
+  assert.equal(
+    resolveDashboardAssistantMutationTarget("make the chart red", "widget-1"),
+    "widget-1",
   );
 });

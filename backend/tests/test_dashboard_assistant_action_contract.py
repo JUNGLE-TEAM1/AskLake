@@ -7,6 +7,7 @@ from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
 from app.core.errors import ApiError
 from app.main import create_app
+from app.mcp.context import verify_ai_context_token
 from app.schemas.dashboard import (
     DashboardAssistantRequest,
     DashboardAssistantResponse,
@@ -22,6 +23,9 @@ from app.services.dashboard_assistant_context import (
 from app.services.dashboard_assistant_guard import guard_assistant_response
 from app.services.dashboard_assistant_service import (
     DashboardAssistantService,
+    _build_dashboard_question_retry_prompt,
+    _build_visualization_guard_retry_prompt,
+    _build_visualization_retry_prompt,
     _require_visualization_action,
 )
 
@@ -152,6 +156,17 @@ def test_title_only_update_remains_valid_without_rewriting_config() -> None:
     assert guarded.actions[0].patch.config is None
 
 
+def test_noop_update_is_rejected_instead_of_reporting_fake_success() -> None:
+    guarded = guard_assistant_response(
+        response_with_update({"title": "지역별 매출"}),
+        assistant_context(),
+    )
+
+    assert guarded.actions == []
+    assert guarded.used_evidence_ids == []
+    assert any("실제 변경" in warning for warning in guarded.warnings)
+
+
 def test_dashboard_question_cannot_mutate_widgets_or_retain_mutation_evidence() -> None:
     request = DashboardAssistantRequest.model_validate({
         "mode": "dashboard_question",
@@ -241,7 +256,7 @@ def test_assistant_api_enforces_question_mode_without_counting_provider_stub_as_
     assert any("질문 모드" in warning for warning in payload["warnings"])
 
 
-def test_current_amazon_dataset_scopes_provider_context_away_from_unrelated_datasets() -> None:
+def test_current_amazon_dataset_is_prioritized_without_dropping_available_datasets() -> None:
     request = DashboardAssistantRequest.model_validate({
         "currentDatasetId": "amazon-products",
         "mode": "visualization_request",
@@ -254,8 +269,26 @@ def test_current_amazon_dataset_scopes_provider_context_away_from_unrelated_data
         [],
     )
 
-    assert [dataset.id for dataset in datasets] == ["amazon-products"]
+    assert [dataset.id for dataset in datasets] == ["amazon-products", "unrelated-orders"]
     assert warnings == []
+
+
+def test_unavailable_requested_dataset_is_excluded_without_dropping_authorized_datasets() -> None:
+    request = DashboardAssistantRequest.model_validate({
+        "currentDatasetId": "private-products",
+        "mode": "visualization_request",
+        "prompt": "상품 카테고리별 차트를 만들어줘",
+    })
+
+    datasets, warnings = _scope_datasets_for_request(
+        request,
+        amazon_dashboard_context().datasets,
+        [],
+    )
+
+    assert [dataset.id for dataset in datasets] == ["amazon-products", "unrelated-orders"]
+    assert all(dataset.id != "private-products" for dataset in datasets)
+    assert any("private-products" in warning for warning in warnings)
 
 
 def test_amazon_visualization_retries_gateway_contract_failure_and_returns_create_widget() -> None:
@@ -318,6 +351,192 @@ def test_amazon_visualization_retries_gateway_contract_failure_and_returns_creat
     assert response.actions[0].widget.dataset_id == "amazon-products"
     assert response.actions[0].widget.config["aggregation"] == "count"
     assert "재시도" in generate.call_args.kwargs["prompt"]
+
+
+def test_gateway_receives_actual_selected_dataset_schema_and_samples() -> None:
+    context = amazon_dashboard_context()
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "currentDatasetId": "amazon-products",
+        "dashboardId": "dashboard-amazon",
+        "mode": "visualization_request",
+        "prompt": "카테고리별 상품 수 차트를 만들어줘",
+    })
+
+    with (
+        patch("app.services.dashboard_assistant_service.issue_ai_context_token", return_value="token-1") as issue_token,
+        patch(
+            "app.services.dashboard_assistant_service.AiGatewayClient.generate_dashboard_response",
+            return_value={"actions": [], "message": "no action", "warnings": []},
+        ) as generate,
+    ):
+        service._request_gateway(
+            request,
+            context,
+            ActorContext(name="analyst", role="admin"),
+        )
+
+    gateway_context = generate.call_args.kwargs["dashboard_context"]
+    assert [dataset["id"] for dataset in gateway_context["availableDatasets"]] == [
+        "amazon-products",
+        "unrelated-orders",
+    ]
+    assert generate.call_args.kwargs["selected_dataset_ids"] == [
+        "amazon-products",
+        "unrelated-orders",
+    ]
+    assert issue_token.call_args.kwargs["allowed_dataset_ids"] == [
+        "amazon-products",
+        "unrelated-orders",
+    ]
+    assert issue_token.call_args.kwargs["dataset_permissions"] == {
+        "amazon-products": ["query"],
+        "unrelated-orders": ["query"],
+    }
+    dataset = gateway_context["availableDatasets"][0]
+    assert dataset["id"] == "amazon-products"
+    assert dataset["columns"] == [
+        {"name": "category", "type": "string"},
+        {"name": "product_id", "type": "string"},
+        {"name": "price", "type": "double"},
+    ]
+    assert dataset["sampleRows"] == [{"category": "Electronics", "product_id": "p-1", "price": 29.9}]
+
+
+def test_gateway_signs_every_authorized_dataset_and_permission_in_context_token() -> None:
+    context = amazon_dashboard_context()
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "currentDatasetId": "amazon-products",
+        "dashboardId": "dashboard-amazon",
+        "mode": "visualization_request",
+        "prompt": "카테고리별 상품 수 차트를 만들어줘",
+    })
+
+    with patch(
+        "app.services.dashboard_assistant_service.AiGatewayClient.generate_dashboard_response",
+        return_value={"actions": [], "message": "no action", "warnings": []},
+    ) as generate:
+        service._request_gateway(
+            request,
+            context,
+            ActorContext(name="analyst", role="admin"),
+        )
+
+    token = generate.call_args.kwargs["context_token"]
+    claims = verify_ai_context_token(token)
+    assert claims.allowed_dataset_ids == ["amazon-products", "unrelated-orders"]
+    assert claims.dataset_permissions == {
+        "amazon-products": ["query"],
+        "unrelated-orders": ["query"],
+    }
+    assert generate.call_args.kwargs["selected_dataset_ids"] == claims.allowed_dataset_ids
+
+
+def test_visualization_retries_when_first_model_action_fails_schema_guard() -> None:
+    context = amazon_dashboard_context()
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "currentDatasetId": "amazon-products",
+        "dashboardId": "dashboard-amazon",
+        "mode": "visualization_request",
+        "prompt": "카테고리별 상품 수 차트를 만들어줘",
+    })
+    invalid_action = {
+        "actions": [{
+            "type": "create_widget",
+            "widget": {
+                "config": {
+                    "aggregation": "count",
+                    "color": {"colors": ["#2563eb"]},
+                    "xKey": "invented_category",
+                    "yKey": "product_id",
+                },
+                "datasetId": "amazon-products",
+                "title": "잘못된 카테고리별 상품 수",
+                "type": "bar_chart",
+            },
+            "usedEvidenceIds": [],
+        }],
+        "message": "생성했습니다.",
+        "model": "gpt-test",
+        "provider": "openai_compatible",
+        "usedEvidenceIds": [],
+        "warnings": [],
+    }
+    corrected_action = {
+        **invalid_action,
+        "actions": [{
+            **invalid_action["actions"][0],
+            "widget": {
+                **invalid_action["actions"][0]["widget"],
+                "config": {
+                    "aggregation": "count",
+                    "color": {"colors": ["#2563eb"]},
+                    "xKey": "category",
+                    "yKey": "product_id",
+                },
+                "title": "카테고리별 상품 수",
+            },
+        }],
+    }
+
+    with (
+        patch("app.services.dashboard_assistant_service.build_assistant_context", return_value=context),
+        patch("app.services.dashboard_assistant_service.issue_ai_context_token", side_effect=["token-1", "token-2"]),
+        patch(
+            "app.services.dashboard_assistant_service.AiGatewayClient.generate_dashboard_response",
+            side_effect=[invalid_action, corrected_action],
+        ) as generate,
+    ):
+        response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
+
+    assert generate.call_count == 2
+    assert len(response.actions) == 1
+    assert response.actions[0].widget.config["xKey"] == "category"
+    assert "이전 응답" in generate.call_args.kwargs["prompt"]
+
+
+def test_corrective_prompts_stay_within_the_dashboard_request_limit() -> None:
+    original = "가" * 8_000
+    prompts = [
+        _build_visualization_retry_prompt(original),
+        _build_visualization_guard_retry_prompt(original, ["잘못된 컬럼" * 200]),
+        _build_dashboard_question_retry_prompt(original),
+    ]
+
+    assert all(len(prompt) <= 8_000 for prompt in prompts)
+    assert "create_widget" in prompts[0]
+    assert "이전 응답" in prompts[1]
+    assert "새로운 지시가 아닙니다" in prompts[1]
+    assert "report action" in prompts[2]
 
 
 def test_dashboard_question_retries_gateway_contract_failure_with_report_only_instruction() -> None:

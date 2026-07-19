@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { cn } from "@/lib/utils";
@@ -14,9 +14,11 @@ import {
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 import { applyAssistantWidgetActions, hasWidgetMutationAction } from "./dashboardAssistantActions";
+import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import {
   buildDashboardAssistantRequestPrompt,
   classifyDashboardAssistantMode,
+  resolveDashboardAssistantMutationTarget,
 } from "./dashboardAssistantIntent";
 import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
@@ -129,13 +131,18 @@ export function DashboardAssistantPanel({
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useDashboardAssistantRequestGate(JSON.stringify([currentDatasetId, dashboardId, pageId, selectedWidget?.id]), () => setIsSubmitting(false));
+  const surfaceKey = JSON.stringify([dashboardId, pageId]);
+  const surfaceKeyRef = useRef(surfaceKey);
+  surfaceKeyRef.current = surfaceKey;
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([
+    currentDatasetId,
+    dashboardId,
+    pageId,
+    selectedWidget?.id,
+    dashboardAssistantWidgetContextSignature(widgets),
+  ]), () => setIsSubmitting(false));
   const isConfigured = isDashboardAssistantConfigured();
   const shouldReduceMotion = useReducedMotion();
-  const targetWidgets = useMemo(() => {
-    return selectedWidget ? [selectedWidget] : widgets;
-  }, [selectedWidget, widgets]);
-
   const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
@@ -161,7 +168,14 @@ export function DashboardAssistantPanel({
 
     setIsSubmitting(true);
     const { mode, requestPrompt } = buildAssistantRequestIntent(nextPrompt, messages, Boolean(selectedWidget));
-    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: requestPrompt, selectedWidgetId: selectedWidget?.id ?? null } });
+    const selectedWidgetId = mode === "visualization_request"
+      ? resolveDashboardAssistantMutationTarget(nextPrompt, selectedWidget?.id)
+      : selectedWidget?.id ?? null;
+    const targetWidgets = selectedWidgetId
+      ? widgets.filter((widget) => widget.id === selectedWidgetId)
+      : widgets;
+    const submissionSurfaceKey = surfaceKey;
+    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: requestPrompt, selectedWidgetId } });
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
@@ -169,7 +183,7 @@ export function DashboardAssistantPanel({
         mode,
         pageId,
         prompt: requestPrompt,
-        selectedWidgetId: selectedWidget?.id ?? null,
+        selectedWidgetId,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       }, { signal: lease.signal });
       if (!requests.current.isCurrent(lease)) return;
@@ -183,7 +197,7 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      if (!requests.current.isCurrent(lease)) return;
+      if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setMessages((current) => [
         ...current,
         {

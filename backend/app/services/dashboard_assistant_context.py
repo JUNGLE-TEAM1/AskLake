@@ -181,7 +181,7 @@ def _scope_datasets_for_request(
     datasets: list[AssistantDatasetContext],
     widgets: list[Any],
 ) -> tuple[list[AssistantDatasetContext], list[str]]:
-    """Limit provider context to the explicitly selected dataset/widget when present."""
+    """Prioritize explicitly selected datasets without dropping other authorized datasets."""
 
     requested_dataset_ids: list[str] = []
     if request.current_dataset_id:
@@ -195,14 +195,16 @@ def _scope_datasets_for_request(
         )
 
     requested_dataset_ids = list(dict.fromkeys(requested_dataset_ids))
-    if not requested_dataset_ids:
-        return datasets, []
-
     dataset_by_id = {dataset.id: dataset for dataset in datasets}
-    scoped_datasets = [
+    prioritized_datasets = [
         dataset_by_id[dataset_id]
         for dataset_id in requested_dataset_ids
         if dataset_id in dataset_by_id
+    ]
+    prioritized_ids = {dataset.id for dataset in prioritized_datasets}
+    scoped_datasets = [
+        *prioritized_datasets,
+        *(dataset for dataset in datasets if dataset.id not in prioritized_ids),
     ]
     missing_dataset_ids = [
         dataset_id

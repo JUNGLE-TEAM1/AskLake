@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { applyAssistantWidgetActions } from "../src/pages/dashboard/runtime/dashboardAssistantActions.ts";
+import { dashboardAssistantWidgetContextSignature } from "../src/pages/dashboard/runtime/dashboardAssistantContextSignature.ts";
 
 const currentWidget = {
   config: {
@@ -117,11 +118,84 @@ test("missing persistence confirmation fails closed", async () => {
   );
 });
 
+test("a no-op update is rejected instead of reporting fake success", async () => {
+  let persistenceCalls = 0;
+  await assert.rejects(
+    applyAssistantWidgetActions({
+      datasets: [],
+      onUpdateWidget: async () => {
+        persistenceCalls += 1;
+        return true;
+      },
+      response: {
+        actions: [{
+          patch: { title: "지역별 매출" },
+          type: "update_widget",
+          usedEvidenceIds: [],
+          widgetId: "widget-1",
+        }],
+        message: "updated",
+        warnings: [],
+      },
+      widgets: [currentWidget] as never,
+    }),
+    /실제 변경사항이 없습니다/,
+  );
+  assert.equal(persistenceCalls, 0);
+});
+
+test("multiple mutation actions are rejected before any draft API callback", async () => {
+  let persistenceCalls = 0;
+  await assert.rejects(
+    applyAssistantWidgetActions({
+      datasets: [],
+      onCreateWidget: async () => {
+        persistenceCalls += 1;
+        return true;
+      },
+      response: {
+        actions: [
+          {
+            type: "create_widget",
+            widget: { config: {}, datasetId: "sales", title: "차트 1", type: "bar_chart" },
+            usedEvidenceIds: [],
+          },
+          {
+            type: "create_widget",
+            widget: { config: {}, datasetId: "sales", title: "차트 2", type: "line_chart" },
+            usedEvidenceIds: [],
+          },
+        ],
+        message: "created",
+        warnings: [],
+      },
+      widgets: [],
+    }),
+    /여러 위젯 변경/,
+  );
+  assert.equal(persistenceCalls, 0);
+});
+
+test("widget context signature changes when the current editor config changes", () => {
+  const before = dashboardAssistantWidgetContextSignature([currentWidget] as never);
+  const after = dashboardAssistantWidgetContextSignature([{
+    ...currentWidget,
+    config: { ...currentWidget.config, xKey: "category" },
+  }] as never);
+
+  assert.notEqual(after, before);
+});
+
 test("dashboard assistant surfaces reject stale responses before persistence", () => {
   const service = readFileSync(new URL("../src/services/dashboardAssistantService.ts", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../src/pages/dashboard/runtime/DashboardAssistantPanel.tsx", import.meta.url), "utf8");
   const widget = readFileSync(new URL("../src/pages/dashboard/runtime/WidgetRenderer.tsx", import.meta.url), "utf8");
   const ownership = readFileSync(new URL("../src/pages/dashboard/runtime/useDashboardAssistantRequestGate.ts", import.meta.url), "utf8");
+  const signature = readFileSync(new URL("../src/pages/dashboard/runtime/dashboardAssistantContextSignature.ts", import.meta.url), "utf8");
+  const runtimeView = readFileSync(new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url), "utf8");
+  const creator = readFileSync(new URL("../src/pages/dashboard/runtime/useDraftWidgetCreator.ts", import.meta.url), "utf8");
+  const mutations = readFileSync(new URL("../src/pages/dashboard/runtime/useDraftWidgetMutations.ts", import.meta.url), "utf8");
+  const runtimeApi = readFileSync(new URL("../src/services/dashboardRuntimeApi.ts", import.meta.url), "utf8");
 
   assert.match(service, /options: ApiRequestOptions = \{\}/);
   assert.match(service, /signal: options\.signal/);
@@ -129,6 +203,18 @@ test("dashboard assistant surfaces reject stale responses before persistence", (
   assert.match(ownership, /new LatestRequestGate\(\)/);
   assert.match(ownership, /requests\.current\.invalidate\(\)/);
   assert.match(ownership, /requests\.begin\(createResourceQueryKey\(input\)\)/);
+  assert.match(signature, /widget\.config/);
+  assert.match(panel, /dashboardAssistantWidgetContextSignature\(widgets\)/);
+  assert.match(panel, /surfaceKeyRef\.current !== submissionSurfaceKey/);
+  assert.match(widget, /dashboardAssistantWidgetContextSignature\(assistantWidgets\)/);
+  assert.match(widget, /surfaceKeyRef\.current !== submissionSurfaceKey/);
+  assert.doesNotMatch(widget, /response\.widgetPatch|response\.configPatch/);
+  assert.match(runtimeView, /onCreateWidget=\{onCreateDatasetWidget\}/);
+  assert.match(runtimeView, /onUpdateWidget=\{onUpdateWidget\}/);
+  assert.match(creator, /await createDraftWidget\(dashboardId, selectedPageId,/);
+  assert.match(mutations, /await updateDraftWidget\(dashboardId, widgetId, input\)/);
+  assert.match(runtimeApi, /\/draft\/pages\/\$\{encodeURIComponent\(pageId\)\}\/widgets/);
+  assert.match(runtimeApi, /\/draft\/widgets\/\$\{encodeURIComponent\(widgetId\)\}/);
   for (const source of [panel, widget]) {
     assert.match(source, /useDashboardAssistantRequestGate\(/);
     assert.match(source, /beginDashboardAssistantRequest\(/);
