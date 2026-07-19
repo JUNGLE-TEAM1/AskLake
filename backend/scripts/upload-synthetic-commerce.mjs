@@ -110,8 +110,8 @@ async function readManifest() {
   } catch (error) {
     throw new Error(`Synthetic-commerce manifest could not be read: ${manifestPath}: ${error.message}`);
   }
-  if (manifest?.generator_version !== 2) {
-    throw new Error(`Synthetic-commerce generator_version 2 is required: ${manifestPath}`);
+  if (![2, 3].includes(manifest?.generator_version)) {
+    throw new Error(`Synthetic-commerce generator_version 2 or 3 is required: ${manifestPath}`);
   }
   if (!manifest.run_id || path.basename(String(manifest.run_id)) !== manifest.run_id) {
     throw new Error("manifest.run_id must be one safe path segment.");

@@ -16,6 +16,8 @@ output/
 .artifacts/
 __pycache__/
 *.pyc
+**/analysis.sqlite
+**/insights.md
 .playwright-cli/
 deploy/.env
 deploy/ec2.env
