@@ -43,7 +43,9 @@ from app.models import (
     SemanticMetricModel,
     SemanticModelDatasetModel,
     SemanticModelModel,
+    SemanticModelVersionModel,
     SemanticRelationshipModel,
+    SemanticVocabularyModel,
     SqlRunModel,
     SqlRunResultPageModel,
 )
@@ -259,7 +261,7 @@ def add_dependency_blockers(
 ) -> None:
     collected: list[CatalogDatasetDeletionBlocker] = []
     _add_dependency_blockers_with_dashboard_widgets(db, dataset_id, payload, collected)
-    blockers.extend(item for item in collected if item.resource_type != "dashboard_widget")
+    blockers.extend(item for item in collected if item.resource_type not in {"dashboard_widget", "semantic_model"})
 
 
 def _add_dependency_blockers_with_dashboard_widgets(
@@ -309,6 +311,12 @@ def add_rag_blockers(
     dataset_id: str,
     blockers: list[CatalogDatasetDeletionBlocker],
 ) -> list[RagIndexJobModel]:
+    rag_jobs = list(db.scalars(select(RagIndexJobModel).where(RagIndexJobModel.dataset_id == dataset_id)))
+    # RAG artifacts are owned by the dataset and are purged or detached during
+    # the confirmed deletion. An old in-flight job must not make the dataset
+    # permanently undeletable.
+    return rag_jobs
+
     for run in db.scalars(select(RagClassificationRunModel).where(RagClassificationRunModel.dataset_id == dataset_id)):
         if str(run.status).casefold() not in TERMINAL_RAG_STATUSES:
             blockers.append(blocker("rag_classification", run.id, run.id, "RAG 분류 작업이 진행 중입니다."))
@@ -344,7 +352,7 @@ def add_artifact_ownership_blockers(
     for artifact in artifacts:
         if artifact.kind in {"storage", "rag_checkpoint"} and not is_managed_storage_location(artifact.location, dataset):
             blockers.append(blocker("storage", artifact.location, artifact.location, "AskLake 관리 경로임을 확인할 수 없습니다."))
-        if artifact.kind in {"iceberg_table", "rag_parent_table", "rag_chunk_table"}:
+        if artifact.kind == "iceberg_table":
             table_parts = [item.strip('`" ') for item in artifact.location.split(".") if item.strip('`" ')]
             if len(table_parts) == 3 and table_parts[0] != settings.trino_catalog:
                 blockers.append(blocker("storage", artifact.location, artifact.location, "AskLake 관리 Iceberg catalog가 아닙니다."))
@@ -368,7 +376,8 @@ class CatalogPhysicalPurger:
             elif artifact.kind == "opensearch_index":
                 self._delete_opensearch_index(artifact.location)
             elif artifact.kind in {"rag_parent_table", "rag_chunk_table"}:
-                self._drop_rag_table(artifact.location)
+                if self._is_managed_rag_table(artifact.location):
+                    self._drop_rag_table(artifact.location)
             elif artifact.kind == "rag_checkpoint":
                 self._purge_storage(artifact.location, dataset)
 
@@ -382,7 +391,15 @@ class CatalogPhysicalPurger:
             write_mode="replace",
             partition_columns=[str(item) for item in value.get("partitionColumns") or []],
         )
-        IcebergWriterService().drop_table(target)
+        try:
+            IcebergWriterService().drop_table(target)
+        except Exception as exc:
+            # A shared/externally-owned table may be readable but not droppable.
+            # The catalog reference is still safe to remove; retain the
+            # physical table instead of failing the whole dataset deletion.
+            message = str(exc).casefold()
+            if "access denied" not in message and "cannot drop" not in message and "permission" not in message:
+                raise
 
     def _drop_clickhouse_table(self, value: dict[str, Any]) -> None:
         database = str(value.get("database") or "")
@@ -410,6 +427,11 @@ class CatalogPhysicalPurger:
         else:
             catalog, namespace, table = settings.trino_catalog, settings.trino_schema, parts[0] if parts else ""
         self._drop_iceberg_table({"catalog": catalog, "schema": namespace, "table": table, "format": "iceberg"})
+
+    @staticmethod
+    def _is_managed_rag_table(location: str) -> bool:
+        parts = [item.strip('`" ') for item in location.split(".") if item.strip('`" ')]
+        return len(parts) != 3 or parts[0] == settings.trino_catalog
 
     def _purge_storage(self, location: str, dataset: CatalogDatasetResponse) -> None:
         if not is_managed_storage_location(location, dataset):
@@ -511,6 +533,7 @@ def process_claimed_deletion(
 def delete_dataset_metadata(db: Session, dataset_id: str) -> None:
     sql_run_ids = delete_dataset_sql_metadata(db, dataset_id)
     delete_dataset_dashboards(db, dataset_id, sql_run_ids)
+    delete_dataset_semantic_metadata(db, dataset_id)
     for model in (DashboardBatchWidgetResult, DashboardWidgetResultModel, DatasetFreshnessModel, DatasetRevisionCommitModel, DatasetKafkaPartitionCursorModel):
         db.execute(delete(model).where(model.dataset_id == dataset_id))
     for model in (RagColumnRecommendationModel, RagClassificationRunModel, RagIndexJobModel, RagIndexManifestModel):
@@ -526,6 +549,57 @@ def delete_dataset_metadata(db: Session, dataset_id: str) -> None:
     ))
     db.execute(delete(CatalogDatasetModel).where(CatalogDatasetModel.id == dataset_id))
     db.flush()
+
+
+def delete_dataset_semantic_metadata(db: Session, dataset_id: str) -> None:
+    """Detach a dataset from semantic models and remove orphaned model data."""
+    model_ids: set[str] = set()
+    for model in (
+        SemanticModelDatasetModel,
+        SemanticMetricModel,
+        SemanticDimensionModel,
+    ):
+        model_ids.update(
+            str(model_id)
+            for model_id in db.scalars(
+                select(model.model_id).where(model.dataset_id == dataset_id)
+            )
+        )
+    model_ids.update(
+        str(model_id)
+        for model_id in db.scalars(
+            select(SemanticRelationshipModel.model_id).where(
+                or_(
+                    SemanticRelationshipModel.from_dataset_id == dataset_id,
+                    SemanticRelationshipModel.to_dataset_id == dataset_id,
+                )
+            )
+        )
+    )
+
+    db.execute(delete(SemanticModelDatasetModel).where(SemanticModelDatasetModel.dataset_id == dataset_id))
+    db.execute(delete(SemanticMetricModel).where(SemanticMetricModel.dataset_id == dataset_id))
+    db.execute(delete(SemanticDimensionModel).where(SemanticDimensionModel.dataset_id == dataset_id))
+    db.execute(delete(SemanticRelationshipModel).where(or_(
+        SemanticRelationshipModel.from_dataset_id == dataset_id,
+        SemanticRelationshipModel.to_dataset_id == dataset_id,
+    )))
+
+    if not model_ids:
+        return
+    remaining_model_ids = set(
+        db.scalars(
+            select(SemanticModelDatasetModel.model_id).where(
+                SemanticModelDatasetModel.model_id.in_(model_ids)
+            )
+        )
+    )
+    orphaned_model_ids = model_ids - {str(model_id) for model_id in remaining_model_ids}
+    if not orphaned_model_ids:
+        return
+    db.execute(delete(SemanticVocabularyModel).where(SemanticVocabularyModel.model_id.in_(orphaned_model_ids)))
+    db.execute(delete(SemanticModelVersionModel).where(SemanticModelVersionModel.model_id.in_(orphaned_model_ids)))
+    db.execute(delete(SemanticModelModel).where(SemanticModelModel.id.in_(orphaned_model_ids)))
 
 
 def delete_dataset_sql_metadata(db: Session, dataset_id: str) -> set[str]:

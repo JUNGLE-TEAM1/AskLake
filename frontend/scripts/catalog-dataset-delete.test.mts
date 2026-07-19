@@ -46,3 +46,21 @@ test("Dataset delete invalidates SQL and dashboard frontend state", () => {
   assert.match(dashboardPage, /visibleSelectedPublishedWidgets/);
   assert.match(sql, /setReferenceDatasetIds\(\[\]\)/);
 });
+
+test("Dataset deletion impact keeps cleanup resources separate from blockers", () => {
+  const action = read("src/pages/catalog/CatalogDatasetDeleteAction.tsx");
+  assert.match(action, /삭제 시 함께 정리되는 리소스/);
+  assert.match(action, /const cleanupArtifacts = impact\?\.artifacts \?\? \[\]/);
+  assert.match(action, /const blockingResources = impact\?\.blockers \?\? \[\]/);
+  assert.match(action, /blockingResources\.length/);
+  assert.match(action, /삭제를 먼저 막고 있는 리소스/);
+});
+
+test("Dataset deletion dialog keeps the confirmation controls visible with long impacts", () => {
+  const action = read("src/pages/catalog/CatalogDatasetDeleteAction.tsx");
+  assert.match(action, /max-h-\[calc\(100vh-2rem\)\]/);
+  assert.match(action, /grid-rows-\[auto_minmax\(0,1fr\)_auto\]/);
+  assert.match(action, /min-h-0 overflow-y-auto/);
+  assert.match(action, /max-h-48 list-disc space-y-1 overflow-y-auto/);
+  assert.match(action, /max-h-32 space-y-1 overflow-y-auto/);
+});
