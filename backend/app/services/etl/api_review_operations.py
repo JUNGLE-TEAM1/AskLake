@@ -24,12 +24,14 @@ RUNTIME_NAMES = {
     'blocked_principal_for_actor',
     'bool',
     'clickhouse_kafka_ingest_v2_enabled',
+    'clickhouse_kafka_ingest_v2_selected',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
     'dict',
     'execute_continuous_command',
     'execute_list_source_assets',
     'execute_test_source_connector',
+    'external_continuous_control_plane_enabled',
     'fail_kafka_continuous_session',
     'field_value',
     'has_pending_continuous_replay_catalog',
@@ -54,6 +56,7 @@ RUNTIME_NAMES = {
     'persisted_stream_partition_cursors',
     'reconcile_pending_continuous_replay_catalog',
     'reconcile_stale_continuous_maintenance_runs',
+    'require_kafka_ingest_v2_ready',
     'require_no_active_continuous_maintenance',
     'resolve_internal_data_lake_source',
     'review_entry',
@@ -76,13 +79,20 @@ def command_kafka_continuous_job(
     command: str,
     actor: ActorContext,
 ) -> JobCommandResponse:
+    if command in {"startContinuous", "resumeContinuous"}:
+        require_kafka_ingest_v2_ready(job, settings)
     return execute_continuous_command(
         db,
         job,
         ContinuousCommandRequest(command=command, job_id=job.id),
         actor,
         worker=CallableKafkaRuntimeGateway(run_kafka_continuous_worker),
-        dispatch_worker=settings.continuous_control_plane == "embedded",
+        # The EKS web/API process persists command intent only. Kafka Connect
+        # and ClickHouse credentials stay in the exact-generation V2 worker.
+        dispatch_worker=(
+            settings.continuous_control_plane == "embedded"
+            and not external_continuous_control_plane_enabled()
+        ),
         hooks=ContinuousCommandHooks(
             is_kafka_job=is_kafka_job,
             runtime_from_job=continuous_runtime_from_job,
@@ -97,7 +107,7 @@ def command_kafka_continuous_job(
             with_permissions=with_job_permissions,
             worker_kind=lambda current_job: (
                 "kafka_connect_clickhouse_v2"
-                if clickhouse_kafka_ingest_v2_enabled(current_job, settings)
+                if clickhouse_kafka_ingest_v2_selected(current_job)
                 else "spark_structured_streaming"
             ),
         ),

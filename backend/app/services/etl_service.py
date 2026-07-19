@@ -257,6 +257,8 @@ from app.application.source_connectors import (
 from app.core.config import settings
 from app.services.kafka_ingest_v2 import (
     kafka_ingest_v2_enabled as clickhouse_kafka_ingest_v2_enabled,
+    kafka_ingest_v2_selected as clickhouse_kafka_ingest_v2_selected,
+    require_kafka_ingest_v2_ready,
     run_clickhouse_kafka_ingest_v2,
 )
 from app.core.errors import ApiError
@@ -705,7 +707,7 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    if external_continuous_control_plane_enabled():
+    if external_continuous_control_plane_enabled() and settings.continuous_control_plane != "worker":
         return
     sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
         reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,
@@ -731,8 +733,6 @@ def command_job(
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    if command in continuous_commands:
-        require_local_continuous_control_plane()
     job = (
         etl_repository.get_job_for_update(db, job_id)
         if command in {"run", "retry", "startContinuous", "resumeContinuous"}
@@ -741,7 +741,7 @@ def command_job(
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     if job.execution_mode == "continuous":
-        require_local_continuous_control_plane()
+        require_local_continuous_control_plane(getattr(job, "continuous_config", None))
     if (
         scheduled_due_at is not None
         and not scheduled_job_occurrence_is_claimable(job, scheduled_due_at)

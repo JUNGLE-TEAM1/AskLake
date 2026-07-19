@@ -309,7 +309,7 @@ def list_jobs(
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode),
+            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 
@@ -328,7 +328,7 @@ def list_job_statuses(
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode),
+            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 
@@ -407,7 +407,9 @@ def run_due_scheduled_jobs(
     jobs = [
         job
         for job in etl_repository.list_job_models(db)
-        if job_visible_in_current_control_plane(getattr(job, "execution_mode", None))
+        if job_visible_in_current_control_plane(
+            getattr(job, "execution_mode", None), getattr(job, "continuous_config", None)
+        )
     ]
     if request.job_id:
         jobs = [job for job in jobs if job.id == request.job_id]
@@ -475,7 +477,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
             status.HTTP_404_NOT_FOUND,
         )
     if job_model.execution_mode == "continuous":
-        require_local_continuous_control_plane()
+        require_local_continuous_control_plane(getattr(job_model, "continuous_config", None))
     return hydrate_job_query(
         db,
         job_id,
@@ -485,7 +487,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode),
+            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 

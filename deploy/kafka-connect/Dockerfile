@@ -14,19 +14,22 @@ ADD --checksum=sha256:e146cf1205c3a15630fcdf667556da931cb3269e63b1f3f3bedf7dfd1f
     https://github.com/ClickHouse/clickhouse-kafka-connect/releases/download/v1.4.0/clickhouse-kafka-connect-v1.4.0.zip \
     /tmp/clickhouse-kafka-connect-v1.4.0.zip
 
-# AWS MSK IAM auth 2.3.6 all-dependencies artifact. The checksum is published
-# beside the primary Maven Central artifact and keeps the EKS Kafka Connect
-# image independent from node-local credential files.
-ADD --checksum=sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c083 \
-    https://repo1.maven.org/maven2/software/amazon/msk/aws-msk-iam-auth/2.3.6/aws-msk-iam-auth-2.3.6-all.jar \
-    /usr/share/java/kafka/aws-msk-iam-auth-2.3.6-all.jar
+# AWS's Kafka Connect guidance requires the IAM auth uber JAR on the worker
+# classpath and outside CONNECT_PLUGIN_PATH to avoid PluginClassLoader splits.
+ADD --checksum=sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08 \
+    https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.6/aws-msk-iam-auth-2.3.6-all.jar \
+    /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
+
+ENV CLASSPATH=/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
 
 USER root
-RUN confluent-hub install --no-prompt /tmp/clickhouse-kafka-connect-v1.4.0.zip \
-    && test -s /usr/share/java/kafka/aws-msk-iam-auth-2.3.6-all.jar \
-    && rm -f /tmp/clickhouse-kafka-connect-v1.4.0.zip
+RUN chmod 0444 /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar \
+    && confluent-hub install --no-prompt /tmp/clickhouse-kafka-connect-v1.4.0.zip \
+    && rm -f /tmp/clickhouse-kafka-connect-v1.4.0.zip \
+    && mv /etc/confluent/docker/ensure /etc/confluent/docker/ensure.upstream
 
 COPY --chown=0:0 --chmod=0755 entrypoint.sh /usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh
+COPY --chown=0:0 --chmod=0755 ensure.sh /etc/confluent/docker/ensure
 
 # The wrapper starts as root only long enough to copy root-readable bind mounts
 # into tmpfs. It then execs the canonical worker as numeric appuser 1000:1000.

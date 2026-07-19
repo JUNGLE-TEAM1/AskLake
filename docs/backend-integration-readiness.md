@@ -73,6 +73,8 @@ EC2 control loop quiesce, V1 ready, transfer 승인과 새 V2 generation이 모�
 cutover render가 열린다. 이 선언은 runtime 역할을 자동으로 옮기지 않으며 실제
 EKS/EC2 process와 lease 대조는 rollout gate다.
 
+Issue #1062의 EKS V2는 public API나 runtime routing을 아직 활성화하지 않는다. Kafka Connect 1, ClickHouse 1, Keeper 1과 encrypted EBS PVC를 non-HA canary topology로 선택했고 canonical Helm workload, generation-derived 5-topic/2-group IAM, image-local auth plugin, paired CSI snapshot recovery와 receipt 계약까지 정적으로 완료했다. source consumer group과 Connect worker group은 분리된다. AWS apply, live restart/restore와 production transfer는 차단 상태이며 `deploy/eks-realtime-kafka-v2-mvp.json` validator 통과만으로 V2 runtime readiness를 표시하지 않는다.
+
 배포 readiness의 현재 관찰 기준은 [배포 파이프라인 Phase 0 기준선](./deployment-phase-0-baseline.md)에 기록한다. Compose health와 API JSON health, Spark driver 상태, Kafka Continuous session heartbeat는 별개로 확인한다. request/worker hot path의 schema DDL 경쟁 제거와 자동 release gate는 아직 후속 Phase 범위다.
 
 Rule/target 변경의 빠른 검증은 `npm run verify:dataset-identity`, `npm run verify:rule-compiler`, `npm run verify:snapshot-rule-conformance`, `npm run verify:spark-schema-contract`, `npm run verify:snapshot-spark-pipeline`, `npm run verify:kafka-target-projection`, `npm run verify:target-mode-contract` 순서로 실행한다. `verify:dataset-identity`는 서로 다른 한글/slug-collision target의 Job·dataset ID 분리와 정확히 같은 target의 append 재사용을 격리 SQLite metadata DB에서 확인한다. `verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용해 실행 의미의 동등성을 확인한다. Spark schema contract는 필수 컬럼별로 원본을 다시 읽지 않고 하나의 집계 action으로 input row count와 모든 null/cast 실패 컬럼을 함께 식별한다. JSON/JSONL runtime은 승인된 source path로 명시적 reader schema를 구성해 schema inference scan을 만들지 않고 dotted nested path를 target alias로 펼친다. projected source는 `MEMORY_AND_DISK`로 한 번 materialize하고 schema, Rule/Quality, write가 같은 cache를 재사용한다. 같은 Spark type의 identity cast·copy·rename과 승인된 row-preserving SQL로만 된 canonical 선두 prefix는 첫 materialization 전에 적용해 write가 변환을 다시 계산하지 않으며 `preMaterializedTransformCount`로 남긴다. canonical counter가 정확하면 output frame을 별도 cache로 다시 만들지 않고 source cache에서 직접 publish하며 `sparkResources.outputFrameCacheMode=source_cache_direct_publish`를 기록한다. 현재 Snapshot의 raw source read 예산은 전체 pipeline에서 정확히 1회이며 `verify:snapshot-spark-pipeline`이 실제 JSONL `FileScanRDD` 로그로 일반 action-budget과 생산형 3-rule prefix를 각각 회귀 검증한다. 직접 컬럼 복사와 `TRIM(CAST(<input> AS STRING))`으로 한정한 row-preserving SQL transform은 이전 row count를 재사용해 규칙별 validation `count()`를 만들지 않으며, conformance test가 9개 규칙에서도 추가 count action 0을 확인한다. type-changing transform과 일반 SQL은 기존 검증을 유지한다. legacy Quality rule도 rule별 `filter().count()` 대신 전체/규칙별/union 실패 수를 하나의 aggregate action으로 계산한다. Kafka Snapshot Job bridge는 확정 schema와 compiler output schema를 전달하고 Iceberg target/Catalog schema를 동일 projection으로 생성한다. `npm run verify:kafka-review-scheduled-ingest`는 실제 Job create/command와 direct JSONL compatibility를 end-to-end로 검증하고, 실제 Job의 Iceberg/Catalog/offset 및 retry idempotency는 `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`로 검증한다.
@@ -746,3 +748,14 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 - [x] frontend reversed polling과 stable browser selector 계약
 - [x] nightly의 isolated loopback·credential fail-closed guard
 - [ ] 실제 Kafka/Spark/object storage/browser nightly는 `self-hosted + asklake-e2e` runner에서 배포 후보마다 실행
+
+## Kafka Job engine routing readiness (#1073)
+
+- [x] 신규 Continuous create가 server-owned ClickHouse V2 engine/generation marker를 저장
+- [x] marker 없는 기존 Continuous Job은 Spark V1로 보존
+- [x] V2 marker Job의 disabled/unready 상태는 Spark fallback 없이 fail closed
+- [x] 결정적 connector/keeper identity와 persisted generation 사용
+- [x] 기존 UI에 `실시간 · ClickHouse`, `배치 · Spark` 표기
+- [x] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt
+
+2026-07-20 격리 EKS canary는 ClickHouse row 60→65, pause/resume, Connect Pod 교체 복구, 추가 적재 65→70, stop을 확인했다. rollback은 V2 task/workload 0, admission disabled, V2 PVC 2개 보존, V1 worker/lease 복구까지 완료했다. V1/V2 worker는 같은 Kafka control-plane lease를 공유하므로 동시 실행이 아니라 exact-one serial fence로 검증했다. 근거는 `deploy/eks-realtime-kafka-job-v2-receipt.json`이다.

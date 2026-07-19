@@ -138,6 +138,10 @@ storage_prefixes = {
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
 
+# Null means no Kafka Connect V2 identity or IAM role. An approved isolated
+# canary sets one generation; all five topics and its group are then derived.
+msk_realtime_v2_generation = null
+
 # Phase 4 workload identity is another explicit selection gate. Leave disabled
 # until the team studies IRSA vs EKS Pod Identity in the actual cluster.
 workload_identity_mode = "disabled"
@@ -151,6 +155,14 @@ irsa_oidc_provider_arn = null
 # Pod Identity can be selected only after the platform owner confirms that the
 # EKS Pod Identity Agent is installed and managed.
 pod_identity_agent_ready = false
+
+# Realtime V2 recovery requires the snapshot-controller add-on before applying
+# the StorageClass/VolumeSnapshotClass foundation. Keep disabled until the exact
+# cluster-compatible version and lifecycle owner are reviewed.
+realtime_v2_snapshot_controller_mode              = "disabled"
+realtime_v2_snapshot_controller_version           = null
+realtime_v2_snapshot_controller_owner             = null
+realtime_v2_external_snapshot_controller_confirmed = false
 
 # Phase 13 uses the EKS Auto Mode managed ALB controller. Keep it disabled
 # until public/internal subnets, target/address type and listener protocol are

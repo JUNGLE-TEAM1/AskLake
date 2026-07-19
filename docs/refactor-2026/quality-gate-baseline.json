@@ -23,7 +23,7 @@
         "backend/app/application/eks_airflow_execution.py::reconcile_eks_airflow_catalog": 170,
         "backend/app/services/catalog_service.py::CatalogService.verify_and_register_unique_key": 121,
         "backend/app/services/dashboard_runtime_service.py::DashboardRuntimeService._widget_to_schema": 108,
-        "backend/app/services/etl_service.py::command_job": 245,
+        "backend/app/services/etl_service.py::command_job": 243,
         "backend/app/services/etl_service.py::verify_spark_iceberg_result": 169,
         "backend/scripts/runtime/kafka_continuous_runtime.py::main": 470,
         "backend/scripts/runtime/kafka_continuous_runtime.py::main.write_batch": 361,

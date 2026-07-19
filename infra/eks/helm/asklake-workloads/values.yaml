@@ -260,6 +260,59 @@ realtimeV1:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {cpu: "1", memory: 1Gi}
 
+realtimeV2:
+  enabled: false
+  recoveryMode: false
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  serviceAccounts:
+    worker: asklake-realtime-v2-worker
+    connect: asklake-realtime-v2-connect
+  images:
+    clickhouse: {repository: "", digest: "", pullPolicy: IfNotPresent}
+    connect: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  storage:
+    storageClassName: ""
+    clickhouseSize: 20Gi
+    keeperSize: 10Gi
+    restoreSnapshots:
+      clickhouse: ""
+      keeper: ""
+  runtimeSecret:
+    name: asklake-realtime-v2-runtime
+  msk:
+    bootstrapSecretName: asklake-msk-runtime
+    bootstrapSecretKey: bootstrapBrokersSaslIam
+    iamAuthJar: /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
+    sourceTopicPrefix: asklake.eks-realtime.v2.fixture
+    dlqTopicPrefix: asklake.eks-realtime.v2.dlq
+    consumerGroupPrefix: asklake-eks-realtime-v2
+    workerGroupPrefix: asklake-eks-realtime-v2-worker
+    internalTopicPrefix: asklake-connect-v2
+  clickhouse:
+    database: asklake_realtime_v2
+    serviceName: clickhouse-v2
+  connect:
+    serviceName: kafka-connect-v2
+  resources:
+    worker:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    connect:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    clickhouse:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {cpu: "2", memory: 4Gi}
+    keeper:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+
 trino:
   enabled: true
   replicas: 1

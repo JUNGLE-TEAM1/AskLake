@@ -31,7 +31,7 @@
     "serviceAccounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "replayProducer"],
+      "required": ["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "realtimeV2Worker", "realtimeV2Connect", "replayProducer"],
       "properties": {
         "frontend": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "backend": { "$ref": "#/$defs/kubernetesApiServiceAccount" },
@@ -40,6 +40,8 @@
         "trino": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "mskSmoke": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "spark": { "$ref": "#/$defs/kubernetesApiServiceAccount" },
+        "realtimeV2Worker": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
+        "realtimeV2Connect": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "replayProducer": { "$ref": "#/$defs/disabledServiceAccount" }
       }
     }

@@ -23,6 +23,7 @@ from app.core.config import Settings, settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.continuous_runtime import runtime_contract_projection
 from app.models.catalog import CatalogDatasetModel
 from app.models.dashboard_live import DatasetFreshnessModel, DatasetRevisionCommitModel
 from app.models.etl import ETLJobModel, KafkaContinuousRuntimeModel
@@ -56,6 +57,22 @@ ConnectorFactory = Callable[[str], KafkaConnectGateway]
 IngestServiceFactory = Callable[[Settings], RealtimeIngestService]
 _RAW_VIEW = "raw_events_v2_current"
 _RAW_TABLE = "raw_events_v2"
+KAFKA_INGEST_V2_RUNTIME_ENGINE = "kafka_connect_clickhouse_v2"
+
+
+def kafka_ingest_v2_selected(job: ETLJobModel) -> bool:
+    """Return whether the persisted Job contract selected V2.
+
+    An absent marker is intentionally treated as the legacy Spark V1 contract
+    so enabling V2 cannot silently move an existing Job to another consumer.
+    """
+
+    persisted_config = getattr(job, "continuous_config", None)
+    config = persisted_config if isinstance(persisted_config, dict) else {}
+    return (
+        job.execution_mode == "continuous"
+        and config.get("runtimeEngine") == KAFKA_INGEST_V2_RUNTIME_ENGINE
+    )
 
 
 def kafka_ingest_v2_enabled(
@@ -66,10 +83,39 @@ def kafka_ingest_v2_enabled(
 
     resolved = runtime_settings or settings
     return (
-        job.execution_mode == "continuous"
+        kafka_ingest_v2_selected(job)
         and bool(resolved.clickhouse_realtime_v2_enabled)
         and bool(resolved.kafka_connect_sink_enabled)
         and resolved.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+    )
+
+
+def require_kafka_ingest_v2_ready(
+    job: ETLJobModel,
+    runtime_settings: Settings | None = None,
+) -> None:
+    """Fail closed when a V2 Job cannot use its persisted runtime engine."""
+
+    if not kafka_ingest_v2_selected(job):
+        return
+    resolved = runtime_settings or settings
+    if (
+        resolved.asklake_continuous_control_plane == "external_ec2"
+        and resolved.kafka_continuous_v2_api_enabled
+        and resolved.kafka_continuous_v2_owner_generation
+    ):
+        return
+    if kafka_ingest_v2_enabled(job, resolved):
+        return
+    raise ApiError(
+        "CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE",
+        "This realtime Job requires ClickHouse V2, but the V2 runtime is not ready.",
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        {
+            "jobId": job.id,
+            "runtimeEngine": KAFKA_INGEST_V2_RUNTIME_ENGINE,
+            "retryable": True,
+        },
     )
 
 
@@ -167,9 +213,21 @@ class ClickHouseKafkaIngestV2Gateway:
             self._register_and_resume(job, runtime)
             return self._result(job, "starting")
         if probe.connector_state == "PAUSED":
-            return self._result(job, "exited", requested_action="pause")
+            contract = runtime_contract_projection(
+                runtime.metrics,
+                public_status=runtime.status,
+                legacy_error=runtime.last_error,
+            )
+            if contract["desiredState"] == "running":
+                self._register_and_resume(job, runtime)
+                return self._result(job, "starting")
+            requested_action = (
+                "stop" if contract["desiredState"] == "stopped" else "pause"
+            )
+            return self._result(job, "exited", requested_action=requested_action)
         states = {probe.connector_state, *probe.task_states}
         if "FAILED" in states:
+            self._register_and_resume(job, runtime)
             connector = self.connector_factory(self._connector_name(job, runtime))
             try:
                 connector.restart_failed()
@@ -199,18 +257,23 @@ class ClickHouseKafkaIngestV2Gateway:
         runtime: KafkaContinuousRuntimeModel,
     ) -> None:
         connector_name = self._connector_name(job, runtime)
+        generation = self._runtime_generation(job)
         validate_clickhouse_consumer_ownership(
             job_id=job.id,
-            generation=1,
+            generation=generation,
             configured_owner=self.settings.clickhouse_realtime_consumer_owner,
             claimed_owners=("kafka_connect_v2",),
         )
         self.ingest_service_factory(self.settings).register(
             topic=runtime.topic,
             table=_RAW_TABLE,
-            dlq_topic=realtime_v2_dlq_topic(runtime.topic),
-            generation=1,
+            dlq_topic=(
+                self.settings.kafka_connect_dlq_topic
+                or realtime_v2_dlq_topic(runtime.topic)
+            ),
+            generation=generation,
             connector_name=connector_name,
+            consumer_group=runtime.consumer_group_id,
             state_path=self._state_path(job),
         )
         connector = self.connector_factory(connector_name)
@@ -532,6 +595,14 @@ class ClickHouseKafkaIngestV2Gateway:
     def _state_path(self, job: ETLJobModel) -> str:
         digest = hashlib.sha256(job.id.encode("utf-8")).hexdigest()[:32]
         return f"/asklake/realtime-v2/ingest/{digest}"
+
+    @staticmethod
+    def _runtime_generation(job: ETLJobModel) -> int:
+        config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+        generation = config.get("runtimeGeneration")
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+            raise ValueError("Kafka V2 runtime generation must be a positive integer")
+        return generation
 
     @staticmethod
     def _topic_from_job(job: ETLJobModel) -> str:

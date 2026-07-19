@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "issue": 1062,
+  "baseline": {
+    "branch": "pair1",
+    "commit": "6943a9764e1b0152575802ba03ac8a7d85c6915a"
+  },
+  "phase": "phase5-live-canary-validated-and-rolled-back",
+  "decision": {
+    "status": "decided",
+    "selectedPath": "v2-kafka-connect-clickhouse",
+    "selectedTopology": "single-connect-single-clickhouse-single-keeper-ebs-canary",
+    "activationAllowed": true,
+    "productionHaClaimAllowed": false,
+    "reason": "The existing V2 connector requires exactlyOnce=true with ClickHouse KeeperMap. A single Connect worker, single ClickHouse node and single Keeper with separate encrypted EBS PVCs preserve that contract with the smallest isolated EKS canary footprint; multi-node HA remains a separate production gate."
+  },
+  "evidence": {
+    "ec2ComposeV2": [
+      "deploy/docker-compose.prod.yml::clickhouse-keeper-v2",
+      "deploy/docker-compose.prod.yml::clickhouse-v2",
+      "deploy/docker-compose.prod.yml::kafka-connect-v2",
+      "deploy/kafka-connect/Dockerfile",
+      "backend/app/realtime/infrastructure/kafka_connect_gateway.py::build_raw_sink_config"
+    ],
+    "eksV1": [
+      "deploy/eks-realtime-kafka-mvp.json",
+      "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml",
+      "infra/eks/terraform/modules/workload-iam-policies/main.tf"
+    ],
+    "missingBeforeImplementation": [
+      "Kafka Connect image-local MSK IAM plugin evidence",
+      "exact generation-scoped Kafka Connect IAM policy and Pod Identity",
+      "encrypted ClickHouse and Keeper PVC recovery evidence",
+      "backup and restore receipt",
+      "isolated EKS V2 restart and rollback evidence"
+    ]
+  },
+  "ownership": {
+    "policy": "exactly-one",
+    "identityFields": [
+      "brokerIdentity",
+      "sourceTopic",
+      "consumerGroup",
+      "generation",
+      "connectorIdentity",
+      "clickhouseTarget"
+    ],
+    "productionOwnerUnchanged": true,
+    "proposedCanaryOwner": "eks-kafka-connect-clickhouse-v2",
+    "transferState": "blocked",
+    "fenceRule": "V1 and V2 must never claim the same broker, topic, group and generation. V2 activation requires a separate canary identity or a receipt proving the previous exact owner has zero tasks and zero claims."
+  },
+  "runtimeIdentity": {
+    "brokerKind": "msk-serverless",
+    "authentication": "iam",
+    "sourceTopicTemplate": "asklake.eks-realtime.v2.fixture.<generation>",
+    "consumerGroupTemplate": "asklake-eks-realtime-v2-<generation>",
+    "connectWorkerGroupTemplate": "asklake-eks-realtime-v2-worker-<generation>",
+    "connectorTemplate": "asklake-eks-realtime-v2-<generation>",
+    "dlqTopicTemplate": "asklake.eks-realtime.v2.dlq.<generation>",
+    "connectInternalTopicTemplates": {
+      "config": "asklake-connect-v2-<generation>-config",
+      "offset": "asklake-connect-v2-<generation>-offset",
+      "status": "asklake-connect-v2-<generation>-status"
+    },
+    "clickhouseDatabase": "asklake_realtime_v2",
+    "clickhouseTableTemplate": "raw_events_v2",
+    "sharedProductionIdentityAllowed": false
+  },
+  "topology": {
+    "kafkaConnectReplicas": 1,
+    "sinkTasksMax": 1,
+    "clickhouseReplicas": 1,
+    "keeperReplicas": 1,
+    "clickhouseState": "encrypted-ebs-pvc",
+    "keeperState": "encrypted-ebs-pvc",
+    "connectState": "generation-scoped-msk-internal-topics",
+    "localFilesystemAuthoritative": false,
+    "ha": false,
+    "productionHaGate": "2+ ClickHouse replicas, 3 Keeper replicas, 2+ Connect workers and failover evidence"
+  },
+  "iam": {
+    "serviceAccount": "asklake-realtime-v2-connect",
+    "plannedPodIdentityAssociationCount": 1,
+    "appliedPodIdentityAssociationCount": 1,
+    "generationInput": "msk_realtime_v2_generation",
+    "topicResourceCount": 5,
+    "groupResourceCount": 2,
+    "imagePlugin": {
+      "version": "2.3.6",
+      "sha256": "de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08",
+      "classpath": "/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar",
+      "connectPluginPathAllowed": false
+    },
+    "requiredClusterActions": [
+      "kafka-cluster:Connect",
+      "kafka-cluster:WriteDataIdempotently"
+    ],
+    "requiredTopicActions": [
+      "kafka-cluster:CreateTopic",
+      "kafka-cluster:DescribeTopic",
+      "kafka-cluster:ReadData",
+      "kafka-cluster:WriteData"
+    ],
+    "requiredGroupActions": [
+      "kafka-cluster:DescribeGroup",
+      "kafka-cluster:AlterGroup"
+    ],
+    "wildcardsAllowed": false,
+    "contractReady": true,
+    "applied": true
+  },
+  "durableState": {
+    "kafkaConnectWorkerOffsets": "msk-offset-internal-topic",
+    "kafkaConnectConfig": "msk-config-internal-topic",
+    "kafkaConnectStatus": "msk-status-internal-topic",
+    "sinkExactlyOnceState": "clickhouse-keepermap-on-keeper-pvc",
+    "clickhouseRows": "clickhouse-data-pvc",
+    "sourceBoundary": ["topic", "partition", "offset"],
+    "backupAuthority": "paired-csi-volume-snapshot-receipt",
+    "restoreTargetMustBeIsolated": true,
+    "recoveryModeConsumerResources": 0,
+    "contractReady": true,
+    "liveRestartProven": true,
+    "liveRestoreProven": true
+  },
+  "implementation": {
+    "status": "live-canary-validated-and-rolled-back",
+    "defaultEnabled": false,
+    "canonicalHelmPackage": "infra/eks/helm/asklake-workloads",
+    "workloadTemplate": "infra/eks/helm/asklake-workloads/templates/realtime-v2.yaml",
+    "duplicateStandaloneManifestAllowed": false,
+    "workloadCount": 4,
+    "isolatedRecoveryWorkloadCount": 2,
+    "receiptSchema": "deploy/eks-realtime-kafka-v2-receipt.schema.json",
+    "canaryRunbook": "docs/eks-realtime-kafka-v2-canary-runbook.md"
+  },
+  "livePreflight": {
+    "mode": "read-only",
+    "evidence": "docs/eks-realtime-kafka-v2-live-preflight.md",
+    "result": "no-go",
+    "observedV1OwnerActive": true,
+    "autoModeEncryptedStorageClassObserved": false,
+    "snapshotApiObserved": false,
+    "snapshotControllerObserved": false,
+    "v2ServiceAccountsObserved": false,
+    "v2PodIdentityObserved": false,
+    "v2ImageRepositoriesObserved": false,
+    "sharedMutationPerformed": false,
+    "staticRemediationReady": true
+  },
+  "liveValidation": {
+    "generation": "v2-canary-20260719-01",
+    "receipt": "deploy/eks-realtime-kafka-v2-receipt.json",
+    "result": "pass",
+    "ingestProven": true,
+    "restartProven": true,
+    "pairedSnapshotReady": true,
+    "isolatedRestoreProven": true,
+    "rollbackProven": true,
+    "productionTransferClaimed": false
+  },
+  "rollback": {
+    "automatic": false,
+    "newGenerationRequired": true,
+    "orderedInvariants": [
+      "disable-new-v2-reconciliation",
+      "stop-v2-connector-and-prove-zero-running-tasks",
+      "record-final-source-offsets-and-clickhouse-boundary",
+      "prove-zero-v2-owner-claim",
+      "preserve-connect-internal-topics-and-pvcs-and-backups",
+      "activate-v1-only-with-a-new-approved-generation",
+      "compare-offset-and-publication-boundaries"
+    ],
+    "forbidden": [
+      "automatic-cross-engine-fallback",
+      "reuse-generation-across-owner-transfer",
+      "run-v1-and-v2-for-the-same-identity",
+      "reset-connect-offsets-to-force-recovery",
+      "delete-v1-checkpoints-or-v2-pvcs-during-rollback"
+    ]
+  },
+  "gates": {
+    "topologyDecisionRecorded": true,
+    "staticWorkloadContractReady": true,
+    "mskIamContractReady": true,
+    "durableRestartContractReady": true,
+    "backupRestoreContractReady": true,
+    "sharedAwsApplyAllowed": true,
+    "liveCanaryReady": true,
+    "productionTransferAllowed": false
+  }
+}

@@ -86,9 +86,14 @@ class Settings(BaseSettings):
     continuous_worker_owner: Literal[
         "ec2-continuous-worker",
         "eks-continuous-worker-v1",
+        "eks-kafka-connect-clickhouse-v2",
         "eks-continuous-worker-v2",
     ] = "ec2-continuous-worker"
     continuous_worker_generation: str | None = None
+    # Web/API admission is separate from worker credentials. The external EKS
+    # worker owns Kafka Connect and ClickHouse secrets.
+    kafka_continuous_v2_api_enabled: bool = False
+    kafka_continuous_v2_owner_generation: str | None = None
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
@@ -109,6 +114,7 @@ class Settings(BaseSettings):
     ] = "disabled"
     kafka_connect_url: str | None = None
     kafka_connect_connector_name: str = "asklake-clickhouse-realtime-v2"
+    kafka_connect_dlq_topic: str | None = None
     kafka_connect_request_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
     clickhouse_v2_url: str = "https://localhost:8443"
     clickhouse_v2_database: str = "asklake_realtime_v2"
@@ -358,6 +364,7 @@ class Settings(BaseSettings):
             raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
         expected_eks_scope = {
             "eks-continuous-worker-v1": "kafka",
+            "eks-kafka-connect-clickhouse-v2": "kafka",
             "eks-continuous-worker-v2": "continuous_sql",
         }.get(self.continuous_worker_owner)
         if expected_eks_scope is not None and (
@@ -368,6 +375,12 @@ class Settings(BaseSettings):
                 "and an explicit generation"
             )
         self.continuous_worker_generation = generation or None
+        api_generation = str(self.kafka_continuous_v2_owner_generation or "").strip()
+        if api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", api_generation) is None:
+            raise ValueError("KAFKA_CONTINUOUS_V2_OWNER_GENERATION must be a lowercase generation token")
+        if self.kafka_continuous_v2_api_enabled and not api_generation:
+            raise ValueError("KAFKA_CONTINUOUS_V2_API_ENABLED requires an owner generation")
+        self.kafka_continuous_v2_owner_generation = api_generation or None
         self._validate_auth_runtime()
         self._validate_trino_runtime()
         self._validate_clickhouse_runtime()

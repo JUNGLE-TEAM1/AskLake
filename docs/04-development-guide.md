@@ -834,6 +834,25 @@ bash scripts/verify-eks-workloads.sh
 
 validator 통과는 V1 선택과 disabled-by-default package의 정합성만 뜻하며 owner transfer나 AWS apply 승인이 아니다. Terraform은 same-generation exact topic/group과 Backend·Spark의 `continuous-runtime` prefix를 허용한다. Spark driver가 runtime report를 직접 기록하므로 둘 중 하나라도 빠지면 live readiness가 실패한다. read-only IAM probe의 ready mode는 expected generation과 exact runtime object ARN을 요구하고 action-resource mapping, explicit Deny, target role, permissions boundary, bucket-root wildcard와 ListBucket prefix를 fail-closed로 검사한다. 2026-07-19 격리 canary는 MSK 100건 consume/store와 checkpoint restart 중복 0을 통과했지만 기존 production identity transfer는 별도다. 전체 비교와 gate는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), exact 실행 순서와 receipt 판정은 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
 
+Issue #1062의 EKS V2 정적 runtime 계약은 다음 명령으로 topology, canonical Helm active/recovery render, generation-derived IAM과 activation-blocked 상태를 검증한다. 현재 통과는 공유 AWS apply, PVC restart/restore 또는 live canary 완료가 아니다.
+
+```bash
+python3 -m unittest scripts.test_verify_eks_realtime_kafka_v2_mvp
+python3 scripts/verify_eks_realtime_kafka_v2_mvp.py
+bash scripts/verify-eks-realtime-v2-workload.sh
+python3 scripts/verify-eks-realtime-v2-storage.py
+
+docker run --rm --entrypoint sh \
+  -v "$PWD/infra/eks:/workspace" \
+  -w /workspace/terraform \
+  hashicorp/terraform:1.15.8 \
+  -c 'export TF_DATA_DIR=/tmp/tfdata; terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate && terraform test'
+```
+
+선택 topology는 Kafka Connect 1, ClickHouse 1, Keeper 1과 ClickHouse/Keeper별 encrypted EBS PVC다. Terraform은 generation 하나에서 exact topic 5개와 분리된 source consumer/Connect worker group 2개를 파생한다. connector config는 source consumer group을 명시해 worker coordination group과 충돌하지 않는다. Connect image는 checksum-pinned MSK IAM uber JAR을 worker classpath에 두고 plugin path에서는 제외한다. `recoveryMode`는 paired CSI snapshot-backed StatefulSet 2개만 렌더해 복원 중 consumer claim을 0으로 유지한다.
+
+Phase 4A read-only preflight에서 current cluster에는 legacy `gp2` StorageClass만 있고 VolumeSnapshot CRD/snapshot-controller, V2 ServiceAccount/Pod Identity와 V2 ECR repository가 없음을 확인했다. 따라서 V1 owner가 실행 중이어도 V2 apply는 NO-GO다. 적용 전에는 exact-version snapshot-controller ownership을 먼저 확정하고 add-on/CRD Available, `infra/eks/storage/realtime-v2-auto-mode.yaml`의 encrypted gp3 StorageClass/Retain VolumeSnapshotClass, immutable image digest, exact V2 identity 순서로 준비한다. repository의 정적 계약은 live resource 존재 증거가 아니다. production HA와 owner transfer는 별도 gate다. 전체 계약은 [EKS Realtime Kafka V2 Phase 0](eks-realtime-kafka-v2-phase0.md), [V2 live preflight](eks-realtime-kafka-v2-live-preflight.md), 승인 후 절차는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)을 따른다.
+
 일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 
 ### EKS bounded fault retry 검증
@@ -2572,6 +2591,30 @@ docker compose --profile clickhouse-realtime-v2 config --quiet
 ```
 
 실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+
+## 신규 Kafka Job engine routing 검증 (#1073)
+
+신규 Continuous Job은 `runtimeEngine=kafka_connect_clickhouse_v2`를 서버가 저장하고, 기존 marker 없는 Job은 Spark V1로 남는다. V2 marker Job은 V2 flag/owner가 준비되지 않으면 Spark로 fallback하지 않는다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest \
+  tests.test_kafka_ingest_v2 \
+  tests.test_continuous_runtime_contract \
+  tests.test_etl_job_commands -v
+
+cd ../frontend
+npm run test:etl-draft-contract
+npm run test:continuous-runtime-contract
+npm run test:e2e-selectors
+npm run build
+```
+
+EKS 완료 판정에는 위 로컬 검증 외에 신규 공개 Job API로 생성한 격리 identity의 MSK ingest, 첫 ClickHouse row, restart recovery, pause/resume/stop, rollback receipt가 필요하다.
+
+2026-07-20 canary는 위 lifecycle과 rollback을 통과했으며 `deploy/eks-realtime-kafka-job-v2-receipt.json`에 secret-free 결과를 남겼다. V1/V2 Kafka worker는 같은 control-plane lease를 공유하므로 V1 fence → V2 canary → V2 disable → V1 lease 복구 순서를 지킨다. dual-run이나 두 owner의 동시 consumer claim으로 검증하지 않는다.
+
+EKS web/API와 V2 worker image를 올리기 전에 `npm run migrate:runtime-schema` one-shot을 실행한다. 이 bootstrap은 기존 `dataset_freshness`와 `dataset_revision_commits`에도 V2 publication의 additive column/index를 멱등 보강한다. schema가 뒤처진 상태에서는 connector 등록 전에 fail closed한다.
 
 ### Issue #1072 EKS FastAPI V2 연결
 

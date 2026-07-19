@@ -202,7 +202,7 @@ EXTRACTED_EXPORTS = {
 REVIEWED_FUNCTION_DIGESTS = {
     etl_airflow_projection: "561e59a5d2ce87eb2400c9031a0bf992d1da4d7f15b3d43db38e243afb76c4ad",
     etl_schedule: "26c08d45a62467ca65e335f5fb96ceb2d013409d27036f506b08e504def07265",
-    etl_job_projection: "bc2e0c68fdd9c06207e4e926c4dd325c4fb69c99adc4ebeea9205ea59a990a02",
+    etl_job_projection: "09cbf36cd25ff3264e1c9e9619bbd526e1fb4ba11c4210236810d6dc8ce9391d",
     etl_record_parsing: "77381844dca157f2f2ac362bd993944e5ce44d5e395ed8d228d45bb75c463400",
     etl_runtime_support: "ace274c30f459fbbe213acff0a5a2335fb529aa83d90d382c361e3d3f4f69d65",
     etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
@@ -224,14 +224,14 @@ RUNTIME_FACADE_MODULES = (
 )
 
 RUNTIME_FACADE_DIGESTS = {
-    api_job_operations: "8f6d08b8809e12ebd3e51abca619394f0626820546e55b7780d6239cb9ad0ac6",
-    api_review_operations: "73cdb622d8015c72d595c814f860ff98ff73b3956fbd5de6842de8d75e58350e",
+    api_job_operations: "0f55c9cfa85ccbcfb84f9707a82a7c67c3160ac3bf30b42f9ec9aa625406224b",
+    api_review_operations: "e8a8fab725d3d07d8568e34ea00efc54c13c4dca516a73003a5ede25cf961f98",
     snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
     airflow_operations: "0013244d083c763ceb97e4a42d02f072a0455e232820ede3fb238c27b8af6c4f",
     source_runtime: "515fab302fa25e7d025379c9abde06e07594fa9f55628361389e7a5fe7d8727e",
-    continuous_maintenance: "250e43bfe5ef4e4250b5d8767c63b6abe463c8708319102910fd9d0282d9497c",
-    continuous_session: "c2a9fcc15e5e3f9dc7a338890f86511a274987f9dce5febd1744694072c97bb7",
-    continuous_publication: "c19c098f2079a418a0159107f492981061ad41884517194624966afc7d46cae0",
+    continuous_maintenance: "6b7b462f7e52ee73ec6d528aa5164aef3ef1ccfdc5d56e30286d693ae20b7c58",
+    continuous_session: "f2e9eeacbd69d640965bb45d6797bfb39022cc74f56be7ada07e802f49c7aea4",
+    continuous_publication: "d4a9e4df6e5d5450045579d5e4f6513c8a76544f086856b0ecf78785065cffdf",
     replay_schedule: "34427dad1a14a6d8fcb2ae2f264476fd2b7f8c23a0c85f7ba9d9f747dbac6155",
 }
 

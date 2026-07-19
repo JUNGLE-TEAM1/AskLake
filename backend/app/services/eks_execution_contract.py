@@ -34,12 +34,31 @@ def external_continuous_control_plane_enabled() -> bool:
     return settings.asklake_continuous_control_plane == "external_ec2"
 
 
-def job_visible_in_current_control_plane(execution_mode: str | None) -> bool:
-    return not external_continuous_control_plane_enabled() or execution_mode != "continuous"
+def clickhouse_v2_continuous_job(continuous_config: Any | None) -> bool:
+    return (
+        isinstance(continuous_config, dict)
+        and continuous_config.get("runtimeEngine") == "kafka_connect_clickhouse_v2"
+    )
 
 
-def require_local_continuous_control_plane() -> None:
-    if not external_continuous_control_plane_enabled():
+def job_visible_in_current_control_plane(
+    execution_mode: str | None,
+    continuous_config: Any | None = None,
+) -> bool:
+    return (
+        not external_continuous_control_plane_enabled()
+        or execution_mode != "continuous"
+        or clickhouse_v2_continuous_job(continuous_config)
+    )
+
+
+def require_local_continuous_control_plane(
+    continuous_config: Any | None = None,
+) -> None:
+    if (
+        not external_continuous_control_plane_enabled()
+        or clickhouse_v2_continuous_job(continuous_config)
+    ):
         return
     raise ApiError(
         "CONTINUOUS_CONTROL_OWNED_BY_EC2",

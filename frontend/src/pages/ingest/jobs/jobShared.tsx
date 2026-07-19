@@ -146,6 +146,13 @@ export function continuousRuntimeLabel(job: JobRowData) {
   return `${continuousRuntimeStatusLabels[runtime.status] ?? runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
 }
 
+export function continuousEngineLabel(job: JobRowData) {
+  if (job.executionMode !== "continuous") return "배치 · Spark";
+  return job.continuousConfig?.runtimeEngine === "kafka_connect_clickhouse_v2"
+    ? "실시간 · ClickHouse"
+    : "실시간 · Spark (기존 V1)";
+}
+
 export function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
   if (action === "detail" || action === "runs") return false;
   return !canRunJobCommand(job, action);

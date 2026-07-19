@@ -43,6 +43,38 @@ variable "msk_group_arns" {
   }
 }
 
+variable "msk_realtime_v2_topic_arns" {
+  type = list(string)
+
+  validation {
+    condition = (
+      contains([0, 5], length(var.msk_realtime_v2_topic_arns)) &&
+      length(var.msk_realtime_v2_topic_arns) == length(toset(var.msk_realtime_v2_topic_arns)) &&
+      alltrue([
+        for arn in var.msk_realtime_v2_topic_arns :
+        can(regex("^arn:[^:]+:kafka:[^:]+:[0-9]{12}:topic/[^/]+/[^/]+/(asklake\\.eks-realtime\\.v2\\.(fixture|dlq)\\.[a-z0-9][a-z0-9.-]{0,40}|asklake-connect-v2-[a-z0-9][a-z0-9.-]{0,40}-(config|offset|status))$", arn))
+      ])
+    )
+    error_message = "msk_realtime_v2_topic_arns must be empty or contain exactly five unique generation-scoped V2 topic ARNs without wildcards."
+  }
+}
+
+variable "msk_realtime_v2_group_arns" {
+  type = list(string)
+
+  validation {
+    condition = (
+      contains([0, 2], length(var.msk_realtime_v2_group_arns)) &&
+      length(var.msk_realtime_v2_group_arns) == length(toset(var.msk_realtime_v2_group_arns)) &&
+      alltrue([
+        for arn in var.msk_realtime_v2_group_arns :
+        can(regex("^arn:[^:]+:kafka:[^:]+:[0-9]{12}:group/[^/]+/[^/]+/asklake-eks-realtime-v2-(worker-)?[a-z0-9][a-z0-9.-]{0,40}$", arn))
+      ])
+    )
+    error_message = "msk_realtime_v2_group_arns must be empty or contain exactly two unique generation-scoped V2 sink and worker group ARNs without wildcards."
+  }
+}
+
 variable "storage_bucket_arns" {
   type = map(string)
 }

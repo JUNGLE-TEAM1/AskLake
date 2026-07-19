@@ -67,12 +67,12 @@ def require_continuous_job_access(
     http_method: str,
     suffix: str,
 ) -> ETLJobModel:
-    require_local_continuous_control_plane()
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     if job.execution_mode != "continuous" or not is_kafka_job(job):
         raise ApiError(ErrorCode.INVALID_JOB_STATE, "Continuous operation requires a continuous Kafka Job.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    require_local_continuous_control_plane(getattr(job, "continuous_config", None))
     require_governed_access(
         db,
         actor,

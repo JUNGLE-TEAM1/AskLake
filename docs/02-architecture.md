@@ -685,6 +685,8 @@ MVP에서 Kafka Continuous control-plane은 EC2에 남는다. EKS FastAPI의 `AS
 
 Issue #1044 선택 당시에는 EKS Realtime Kafka 전환이 이 경계를 즉시 해제하지 않았다. 읽기 전용 live inventory와 저장소 증거로 V1 Spark Structured Streaming을 EKS MVP 경로로 선택했지만, 전환 전 owner는 EC2였다. owner identity는 `(brokerIdentity, topic, consumerGroup, generation, checkpointIdentity)` 전체로 비교하고, 한 identity에 active owner를 정확히 하나만 허용한다. V1은 기존 SparkApplication·Pod Identity·S3 runtime document/checkpoint 기반을 재사용한다. V2 Kafka Connect → ClickHouse는 당시 EC2 Compose 기능을 보존했지만 EKS package·MSK IAM·durable volume/restore 계약이 부족해 deferred했다. 새 generation, zero-active-old-owner 증거와 수동 rollback 승인이 함께 기록되기 전에는 선택된 V1도 EKS에서 활성화하지 않았다. 현재는 V1이 EKS `kafka` owner를 유지하고 V2가 `continuous_sql`만 소유하는 Issue #1072 계약을 따른다. 상세 비교는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), 실행 순서와 receipt는 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
 
+Issue #1062의 V2 canary는 `(brokerIdentity, sourceTopic, consumerGroup, generation, connectorIdentity, clickhouseTarget)`을 owner identity로 사용한다. Kafka Connect config/offset/status는 generation-scoped MSK internal topic, sink exactly-once state는 KeeperMap과 Keeper PVC, serving row는 ClickHouse PVC가 authority다. Terraform은 generation에서 exact source/DLQ/internal topic 5개와 source consumer/Connect worker group 2개를 파생하고 전용 Connect identity에만 연결한다. worker coordination group과 sink task group은 서로 다르며 connector config가 source consumer group을 명시한다. V2 control-plane worker는 `eks-kafka-connect-clickhouse-v2` owner와 explicit generation을 사용하고 full broker/topic/group/checkpoint owner claim이 일치하는 runtime만 reconcile한다. ClickHouse CA와 reader/materializer credential은 V2 Secret reference로만 주입된다. paired CSI snapshot restore는 별도 namespace의 recovery-only release가 ClickHouse/Keeper StatefulSet만 생성해 Kafka consumer claim을 만들지 않는다. single Connect/ClickHouse/Keeper topology는 복구 계약을 검증하는 non-HA canary이며 production replica topology를 고정하지 않는다. V1 checkpoint와 Iceberg archive는 rollback·장기 보관 경계로 보존한다. 상세 결정은 [EKS Realtime Kafka V2 Phase 0](eks-realtime-kafka-v2-phase0.md), live 절차는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)을 따른다.
+
 선택된 V1의 정적 workload package는 `asklake-workloads` chart의 `realtimeV1`
 component다. EKS worker는 `CONTINUOUS_WORKER_SCOPE=kafka`만 실행하고 V2 feature flag와
 consumer owner를 workload env에서 명시적으로 비활성화한다. PostgreSQL
@@ -870,6 +872,8 @@ ClickHouse serving commit
 
 ### V2 소유권
 
+- 신규 `executionMode=continuous` ETL Job은 server-owned `continuousConfig.runtimeEngine=kafka_connect_clickhouse_v2`와 positive `runtimeGeneration`을 저장한다. marker가 없는 기존 Continuous Job은 Spark V1로 남는다. 배포 flag는 저장된 engine을 바꾸지 않으며 V2 marker Job에서 V2가 준비되지 않으면 Spark로 우회하지 않고 실패한다.
+
 - Kafka source position은 topic/partition/offset과 read-committed expected position 집합이 소유한다. raw max offset 하나만으로 checkpoint 완료를 판단하지 않는다.
 - ClickHouse raw/serving은 재구축 가능한 hot store다. Dashboard, parity와 checksum은 canonical deduplicated current view만 읽는다.
 - Iceberg Bronze와 immutable dimension history는 replay/rebuild source다. Gold projection은 ClickHouse와 같은 pipeline/dimension version의 archive binding이다.
@@ -882,6 +886,8 @@ ClickHouse serving commit
 ### ClickHouse Realtime V2 운영 경계
 
 Production Compose는 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 `clickhouse-realtime-v2` 기본 profile로 기동한다. local root Compose에서는 명시적으로 profile을 선택한다. Production ClickHouse final server는 HTTPS 8443, secure native 9440, interserver HTTPS 9010만 사용하고 Connect entrypoint는 같은 CA로 JVM PKCS12 truststore를 만든 뒤 strict JDBC TLS를 사용한다. 현재 단일 Keeper/ClickHouse/Connect topology는 사용 가능한 단일 EC2 배포 형태지만 HA는 아니다.
+
+EKS 격리 MVP도 Connect/ClickHouse/Keeper 각 1개와 sink task 1개만 사용한다. Connect는 전용 Pod Identity로 generation-scoped topic 5개/group 2개만 claim하고, JVM 기본 CA에 ClickHouse CA를 추가한 합성 truststore로 MSK와 ClickHouse TLS를 동시에 검증한다. ClickHouse와 Keeper는 서로 다른 encrypted EBS PVC를 authority로 사용하며 paired CSI snapshot만 복구 단위다. `recoveryMode`는 `asklake-v2-restore-*` namespace에서 두 StatefulSet만 렌더하고 Kafka consumer는 0개다. Issue #1062 live receipt는 ingest/restart/격리 restore/rollback을 통과했지만 production HA나 owner transfer를 승인하지 않는다.
 
 Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`과 V2 전용 URL·database·materializer/reader credential·CA 경로를 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. Continuous SQL ClickHouse Job을 시작하면 pinned Iceberg dimension을 적재하고, 토픽 단위 connector를 자동 등록·재개한 뒤 raw receipt/checkpoint, JOIN materialization, Catalog revision과 SSE event를 순서대로 발행한다. `/api/health/realtime`은 worker plugin과 V2 reader 연결을 확인하므로 아직 Job connector가 하나도 없는 fresh deployment도 준비 상태가 될 수 있고, 개별 connector task 장애는 Job reconcile에서 재시작한다.
 
@@ -905,6 +911,6 @@ Recovery application/repository는 backend-owned 내부 경계다. 현재 외부
 3. static/dimension version, source boundary, serving current count/checksum이 맞아야 revision을 공개한다.
 4. pointer switch와 rollback은 새 global Dataset revision과 단조 증가 `bindingEpoch`를 만든다.
 5. NOTIFY는 wake-up일 뿐이며 기존 durable event cursor가 유실 복구의 근거다.
-6. V2 flag off에서는 현재 V1/Iceberg/polling 동작과 API 필수 field를 바꾸지 않는다.
+6. V2 flag off에서는 marker 없는 기존 V1/Iceberg/polling 동작을 바꾸지 않는다. V2 marker가 있는 신규 Job은 fail closed하고 V1으로 자동 fallback하지 않는다.
 
 상세 DDL, transaction, API, failure recovery와 검증은 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md), PR 의존 관계는 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.

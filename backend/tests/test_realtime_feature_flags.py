@@ -27,6 +27,8 @@ REALTIME_ENV_KEYS = {
     "CLICKHOUSE_REALTIME_CONSUMER_OWNER",
     "KAFKA_CONNECT_URL",
     "KAFKA_CONNECT_CONNECTOR_NAME",
+    "KAFKA_CONTINUOUS_V2_API_ENABLED",
+    "KAFKA_CONTINUOUS_V2_OWNER_GENERATION",
     "CLICKHOUSE_V2_URL",
     "CLICKHOUSE_V2_DATABASE",
     "CLICKHOUSE_V2_MATERIALIZER_USER",
@@ -47,6 +49,26 @@ def settings_with_env(**values: str) -> Settings:
 
 
 class RealtimeFeatureFlagTests(unittest.TestCase):
+    def test_v2_api_admission_requires_a_bounded_owner_generation(self) -> None:
+        with self.assertRaises(ValueError):
+            settings_with_env(KAFKA_CONTINUOUS_V2_API_ENABLED="true")
+
+        with self.assertRaises(ValueError):
+            settings_with_env(
+                KAFKA_CONTINUOUS_V2_API_ENABLED="true",
+                KAFKA_CONTINUOUS_V2_OWNER_GENERATION="INVALID_GENERATION",
+            )
+
+        configured = settings_with_env(
+            KAFKA_CONTINUOUS_V2_API_ENABLED="true",
+            KAFKA_CONTINUOUS_V2_OWNER_GENERATION="v2-canary-20260719-01",
+        )
+        self.assertTrue(configured.kafka_continuous_v2_api_enabled)
+        self.assertEqual(
+            configured.kafka_continuous_v2_owner_generation,
+            "v2-canary-20260719-01",
+        )
+
     def test_defaults_preserve_polling_and_disable_new_runtime(self) -> None:
         state = resolve_realtime_feature_state(settings_with_env())
 

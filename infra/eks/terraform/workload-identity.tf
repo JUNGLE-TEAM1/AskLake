@@ -16,18 +16,25 @@ locals {
     local.use_storage
   )
   identity_role_suffixes = {
-    backend  = "backend"
-    trino    = "trino"
-    mskSmoke = "msk-smoke"
-    spark    = "spark"
+    backend           = "backend"
+    trino             = "trino"
+    mskSmoke          = "msk-smoke"
+    spark             = "spark"
+    realtimeV2Connect = "realtime-v2-connect"
   }
 
-  active_identity_policy_documents = local.identity_resources_ready ? {
+  base_identity_policy_documents = local.identity_resources_ready ? {
     backend  = local.workload_iam_policy_documents.backend
     trino    = local.workload_iam_policy_documents.trino
     mskSmoke = local.workload_iam_policy_documents.msk_smoke
     spark    = local.workload_iam_policy_documents.spark
   } : {}
+  active_identity_policy_documents = merge(
+    local.base_identity_policy_documents,
+    local.identity_resources_ready && local.msk_realtime_v2_identity != null ? {
+      realtimeV2Connect = local.workload_iam_policy_documents.realtime_v2_connect
+    } : {},
+  )
 
   workload_assume_role_policies = local.identity_resources_ready ? {
     for workload in keys(local.active_identity_policy_documents) :
@@ -100,13 +107,13 @@ check "pod_identity_agent_contract" {
 
 check "workload_identity_policy_completeness" {
   assert {
-    condition = !local.identity_resources_ready || toset(keys(local.active_identity_policy_documents)) == toset([
+    condition = !local.identity_resources_ready || toset(keys(local.active_identity_policy_documents)) == toset(concat([
       "backend",
       "trino",
       "mskSmoke",
       "spark",
-    ])
-    error_message = "workload identity requires exact backend, Trino, MSK smoke, and Spark policy documents."
+    ], local.msk_realtime_v2_identity == null ? [] : ["realtimeV2Connect"]))
+    error_message = "workload identity requires exact base policy documents and the dedicated V2 Connect policy when a V2 generation is configured."
   }
 }
 

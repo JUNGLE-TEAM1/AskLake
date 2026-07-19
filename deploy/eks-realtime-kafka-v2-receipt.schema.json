@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asklake.local/schemas/eks-realtime-kafka-v2-receipt.schema.json",
+  "title": "AskLake EKS Realtime Kafka V2 canary receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "issue",
+    "generation",
+    "runtime",
+    "ownership",
+    "iam",
+    "boundaries",
+    "restart",
+    "snapshots",
+    "isolatedRestore",
+    "rollback",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "issue": {"const": 1062},
+    "generation": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,40}$"},
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clusterArnSha256", "namespace", "release", "connectImageDigest", "clickhouseImageDigest"],
+      "properties": {
+        "clusterArnSha256": {"$ref": "#/$defs/sha256"},
+        "namespace": {"$ref": "#/$defs/dnsName"},
+        "release": {"$ref": "#/$defs/dnsName"},
+        "connectImageDigest": {"$ref": "#/$defs/imageDigest"},
+        "clickhouseImageDigest": {"$ref": "#/$defs/imageDigest"}
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceTopic", "consumerGroup", "workerGroup", "connector", "previousExactOwnerRunningTasks", "concurrentV1Claims"],
+      "properties": {
+        "sourceTopic": {"type": "string", "pattern": "^asklake\\.eks-realtime\\.v2\\.fixture\\.[a-z0-9][a-z0-9.-]{0,40}$"},
+        "consumerGroup": {"type": "string", "pattern": "^asklake-eks-realtime-v2-(?!worker-)[a-z0-9][a-z0-9.-]{0,40}$"},
+        "workerGroup": {"type": "string", "pattern": "^asklake-eks-realtime-v2-worker-[a-z0-9][a-z0-9.-]{0,40}$"},
+        "connector": {"type": "string", "pattern": "^asklake-eks-realtime-v2-(?!worker-)[a-z0-9][a-z0-9.-]{0,40}$"},
+        "previousExactOwnerRunningTasks": {"const": 0},
+        "concurrentV1Claims": {"const": 0}
+      }
+    },
+    "iam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["serviceAccount", "associationCount", "topicResourceCount", "groupResourceCount", "wildcardResourceCount", "credentialSource"],
+      "properties": {
+        "serviceAccount": {"const": "asklake-realtime-v2-connect"},
+        "associationCount": {"const": 1},
+        "topicResourceCount": {"const": 5},
+        "groupResourceCount": {"const": 2},
+        "wildcardResourceCount": {"const": 0},
+        "credentialSource": {"enum": ["irsa", "pod_identity"]}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beforeRestart", "afterRestart", "afterRestore"],
+      "properties": {
+        "beforeRestart": {"$ref": "#/$defs/boundary"},
+        "afterRestart": {"$ref": "#/$defs/boundary"},
+        "afterRestore": {"$ref": "#/$defs/boundary"}
+      }
+    },
+    "restart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connectPodUidChanged", "clickhousePodUidChanged", "keeperPodUidChanged", "offsetRegressions", "missingRows", "duplicateBoundaries"],
+      "properties": {
+        "connectPodUidChanged": {"const": true},
+        "clickhousePodUidChanged": {"const": true},
+        "keeperPodUidChanged": {"const": true},
+        "offsetRegressions": {"const": 0},
+        "missingRows": {"const": 0},
+        "duplicateBoundaries": {"const": 0}
+      }
+    },
+    "snapshots": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "name", "sourcePvcUid", "snapshotContentUid", "readyToUse"],
+        "properties": {
+          "component": {"enum": ["clickhouse", "keeper"]},
+          "name": {"$ref": "#/$defs/dnsName"},
+          "sourcePvcUid": {"type": "string", "minLength": 1},
+          "snapshotContentUid": {"type": "string", "minLength": 1},
+          "readyToUse": {"const": true}
+        }
+      }
+    },
+    "isolatedRestore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "release", "consumerResourcesRendered", "sourcePvcReused", "restoredPvcCount"],
+      "properties": {
+        "namespace": {"$ref": "#/$defs/dnsName"},
+        "release": {"$ref": "#/$defs/dnsName"},
+        "consumerResourcesRendered": {"const": 0},
+        "sourcePvcReused": {"const": false},
+        "restoredPvcCount": {"const": 2}
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v2RunningTasks", "v2OwnerClaims", "statePreserved", "v1GenerationReused"],
+      "properties": {
+        "v2RunningTasks": {"const": 0},
+        "v2OwnerClaims": {"const": 0},
+        "statePreserved": {"const": true},
+        "v1GenerationReused": {"const": false}
+      }
+    },
+    "result": {"enum": ["pass", "fail"]}
+  },
+  "$defs": {
+    "dnsName": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "imageDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partitionOffsets", "rowCount", "rowChecksum"],
+      "properties": {
+        "partitionOffsets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "rowCount": {"type": "integer", "minimum": 1},
+        "rowChecksum": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}
