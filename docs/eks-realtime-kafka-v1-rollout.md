@@ -1,6 +1,6 @@
 # EKS Realtime Kafka V1 rollout·rollback runbook
 
-이 문서는 Issue #1044에서 선택한 V1 Spark Structured Streaming을 EC2 Continuous owner에서 EKS owner로 전환할 때의 실행 계약이다. 현재 상태는 **정적 기반 완료, live rollout 차단**이다. 이 문서 자체는 AWS/EKS를 변경하지 않으며, `deploy/eks-realtime-kafka-mvp.json`의 모든 live gate가 증거와 함께 닫히기 전에는 실행 승인서가 아니다.
+이 문서는 Issue #1044에서 선택한 V1 Spark Structured Streaming을 EC2 Continuous owner에서 EKS owner로 전환할 때의 실행 계약이다. 2026-07-19에 격리 generation의 live EKS canary와 checkpoint restart를 완료했다. 기존 EC2 production identity의 owner transfer는 수행하지 않았으므로, 아래 production cutover 순서는 계속 별도 승인 계약이다.
 
 ## 1. 고정 identity와 owner 계약
 
@@ -20,7 +20,7 @@
 
 실제 broker endpoint, ARN, account ID, credential과 Secret 값은 receipt에 기록하지 않는다. 식별이 필요하면 배포 Secret reference와 SHA-256 hash만 남긴다.
 
-## 2. 현재 차단 조건
+## 2. 사전 차단 조건과 해소 결과
 
 2026-07-19 읽기 전용 policy 감사에서 Spark role의 generation-scoped `asklake.eks-realtime.fixture.*` topic과 `asklake-eks-realtime-v1-*` group resource, Backend role의 `continuous-runtime/*` object resource가 각각 0개였고 두 role 모두 bucket-root S3 object wildcard가 남아 있었다. Terraform 정적 계약은 narrow prefix, 동일 generation의 exact topic/group pair와 runtime resource를 포함하지만 공유 account에는 apply하지 않았다.
 
@@ -30,6 +30,8 @@
 2. Backend Pod Identity policy가 해당 deployment의 private `continuous-runtime/*` prefix만 읽고 쓸 수 있다.
 
 wildcard action/resource, broad topic/group prefix, 다른 deployment의 runtime prefix가 발견되면 중단한다.
+
+2026-07-19 live 실행에서는 전용 `asklake-realtime-v1-worker`와 `asklake-realtime-v1-spark` ServiceAccount/Pod Identity를 만들고, 동일 generation의 exact topic/group과 Backend·Spark 양쪽의 `continuous-runtime/*`만 허용했다. 최종 read-only probe는 association 각 1개, broad action/resource 없음, blocker 0, `activationReady=true`를 확인했다. Spark가 runtime report를 직접 쓰므로 Backend뿐 아니라 Spark policy에도 이 prefix가 필요하다는 사실을 Terraform과 probe 계약에 반영했다.
 
 ## 3. 승인된 live canary 순서
 
@@ -101,4 +103,6 @@ python3 scripts/observe_eks_realtime_kafka_readiness.py
 bash scripts/verify-eks-workloads.sh
 ```
 
-이 저장소 작업에서는 공유 AWS/EKS apply, EC2 scope 변경, workload scale, owner manifest 변경, canary produce/consume를 수행하지 않는다. 실제 실행 결과는 위 receipt schema로 별도 승인된 운영 작업에서 채운다.
+2026-07-19 승인된 운영 실행에서 generation `1044-20260719-058ff8ac`의 격리 canary를 적용했다. 최종 immutable revision은 `2f941035e2e8cd0264cd7d4b96e67a951ca9b6f3`이며 Backend와 Spark runtime은 private image receipt의 linux/amd64 digest를 사용한다. 100건 produce 후 source range `partition 0: 0-100`, consumed/stored/quarantine `100/100/0`, lag 0, Iceberg snapshot·단일 publication manifest를 확인했다. 같은 checkpoint에서 SparkApplication UID를 교체한 뒤에도 consumed/stored는 `100/100`, publication은 batch 0 한 건, checkpoint는 `offsets/0`·`commits/0` 한 쌍으로 유지되어 offset regression과 중복 publication이 없었다.
+
+Helm worker upgrade 중 `Recreate` 전략의 zero-overlap과 이전 digest rollback 후 재적용을 실제로 수행했고, 기존 EC2 production stream은 계속 별도 identity의 owner로 보존했다. canary runtime document의 Catalog ACK는 아직 `null`이므로 이 증거는 EKS Kafka consume/checkpoint/Iceberg 경로의 완료이며 기존 production identity cutover 완료를 뜻하지 않는다.

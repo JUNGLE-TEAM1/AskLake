@@ -795,7 +795,7 @@ worker service account에는 Spark Operator의 `sparkapplications`에 대한 `ge
 
 ### EKS Continuous worker 렌더와 사전 점검
 
-`asklake-workloads`의 `realtimeV1` component는 현재 EKS의 `asklake-backend` service account와 `asklake-backend-sparkapplications` Role을 재사용하는 단일 replica worker package다. 기본값은 disabled이고 EC2 owner를 중지하거나 `deploy/control-plane-ownership.json`을 자동으로 바꾸지 않는다. owner transfer 승인 전에는 apply하지 않는다.
+`asklake-workloads`의 `realtimeV1` component는 전용 `asklake-realtime-v1-worker`와 `asklake-realtime-v1-spark` ServiceAccount를 사용하는 단일 replica worker package다. 기존 web release와 독립적으로 foundation의 `asklake-runtime` ConfigMap을 참조한다. 기본값은 disabled이고 EC2 owner를 중지하거나 `deploy/control-plane-ownership.json`을 자동으로 바꾸지 않는다. exact identity의 owner transfer 승인 전에는 apply하지 않는다.
 
 ```bash
 cd backend
@@ -825,7 +825,7 @@ npm run verify:control-plane-ownership
 bash scripts/verify-eks-workloads.sh
 ```
 
-validator 통과는 V1 선택과 disabled-by-default package의 정합성만 뜻하며 owner transfer, AWS apply 또는 live MSK 증거를 의미하지 않는다. Terraform은 same-generation exact topic/group과 Backend 전용 `continuous-runtime` prefix만 허용한다. read-only IAM probe의 ready mode는 expected generation과 exact runtime object ARN을 요구하고 action-resource mapping, explicit Deny, target role, permissions boundary, bucket-root wildcard와 ListBucket prefix를 fail-closed로 검사한다. 실제 transfer에서는 EC2 worker scope를 먼저 `continuous_sql`로 바꾸고 Kafka lease·process 0을 증명한 뒤 durable owner claim과 같은 generation으로 EKS V1을 배포한다. 전체 비교와 gate는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), exact 실행 순서와 receipt 판정은 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
+validator 통과는 V1 선택과 disabled-by-default package의 정합성만 뜻하며 owner transfer나 AWS apply 승인이 아니다. Terraform은 same-generation exact topic/group과 Backend·Spark의 `continuous-runtime` prefix를 허용한다. Spark driver가 runtime report를 직접 기록하므로 둘 중 하나라도 빠지면 live readiness가 실패한다. read-only IAM probe의 ready mode는 expected generation과 exact runtime object ARN을 요구하고 action-resource mapping, explicit Deny, target role, permissions boundary, bucket-root wildcard와 ListBucket prefix를 fail-closed로 검사한다. 2026-07-19 격리 canary는 MSK 100건 consume/store와 checkpoint restart 중복 0을 통과했지만 기존 production identity transfer는 별도다. 전체 비교와 gate는 [EKS Realtime Kafka MVP Phase 0](eks-realtime-kafka-mvp-phase0.md), exact 실행 순서와 receipt 판정은 [V1 rollout·rollback runbook](eks-realtime-kafka-v1-rollout.md)을 따른다.
 
 일반 Snapshot Job은 별도의 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초, 허용 범위 1~60초)마다 active Airflow Run을 동기화한다. PostgreSQL advisory lock으로 배포 전체에서 한 backend process만 각 cycle을 수행하며 Job별 transaction으로 실패를 격리한다. 따라서 상세 GET이나 브라우저 polling은 Airflow를 직접 호출하거나 DB를 쓰지 않는다.
 

@@ -140,7 +140,7 @@ bash ../scripts/verify-eks-workloads.sh
 
 Phase 0과 Decision Gate는 API, DB schema, runtime flag 또는 workload를 변경하지 않으므로 `docs/03-api-reference.md`와 `docs/api-contract.md`의 shape 변경은 없다. Phase 1에서 owner/generation/checkpoint/evidence가 public API나 persisted schema에 추가되면 두 API 문서를 같은 변경에서 갱신한다.
 
-Phase 1과 Phase 2의 disabled-by-default EKS package, worker scope 분리, 최소 IAM 및 durable prefix 정적 계약은 완료했다. Phase 3 live canary와 Phase 4 owner transfer는 `docs/eks-realtime-kafka-v1-rollout.md` 순서를 따르며, 공유 AWS apply, EC2 stop 또는 traffic 전환은 별도 승인된 운영 단계다.
+Phase 1과 Phase 2의 disabled-by-default EKS package, worker scope 분리, 최소 IAM 및 durable prefix 정적 계약은 완료했다. 2026-07-19 승인된 Phase 3 격리 live canary는 MSK 100건 consume, Iceberg 100건 commit, S3 checkpoint와 재시작 후 중복 0을 증명했다. Phase 4의 기존 production identity owner transfer는 수행하지 않았으며 `docs/eks-realtime-kafka-v1-rollout.md`의 별도 승인 순서를 따른다.
 
 ## 8. origin/feat-#1044 중복-wrapper 감사
 
@@ -187,6 +187,8 @@ scripts/verify_eks_realtime_kafka_mvp.py
 ```
 
 분류는 worker scope/legacy lease·durable owner claim 6개, 안전하지 않은 standalone manifest wrapper 제거 3개, machine contract·validator 3개, read-only IAM probe/test 2개, SSOT/runbook 9개, canonical Helm package 5개, 최소 IAM/durable prefix Terraform 8개, EKS 통합 verifier 1개다. 삭제한 standalone template/render/test는 owner-transfer approval, previous-owner fence, generation gate가 없는 두 번째 배포 경로였고, 동일 기능을 fail-closed Helm component 하나로 수렴했다.
+
+live canary 보완 커밋 전에도 `origin/feat-#1044`를 다시 fetch해 기준 `2f941035e2e8cd0264cd7d4b96e67a951ca9b6f3`과 전체 diff를 대조했다. 변경은 이 문서, `docs/04-development-guide.md`, `docs/eks-realtime-kafka-v1-rollout.md`, `docs/system-guardrails.md`, `infra/eks/helm/asklake-workloads/README.md`, `infra/eks/terraform/tests/foundation.tftest.hcl`의 6개 exact allowlist뿐이다. untracked 파일 0개, #1044 범위 밖 변경 0개이며 6개 파일의 SHA-256을 상호 비교한 결과 동일 내용의 중복 산출물도 0개다.
 
 파일명 검색 결과 남은 #1044 산출물은 machine contract 1개, 비교 문서 1개, rollout runbook 1개, Helm workload 1개, contract validator/test 한 쌍과 역할이 다른 read-only live probe/test 한 쌍뿐이다. render 결과, credential/identifier, evidence dump, 두 번째 workload package 또는 중복 validator는 없다. 따라서 **#1044 범위 밖 변경 0건, 중복 산출물 0건**으로 판정한다.
 

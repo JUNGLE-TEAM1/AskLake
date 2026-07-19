@@ -1197,7 +1197,7 @@ run "irsa_workload_identity_contract" {
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Condition.StringLike["s3:prefix"] == ["raw", "raw/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*", "continuous-runtime", "continuous-runtime/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"]
     )
