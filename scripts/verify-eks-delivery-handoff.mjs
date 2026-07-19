@@ -34,6 +34,7 @@ try {
 const expectedServiceAccounts = {
   frontend: 'asklake-frontend',
   backend: 'asklake-backend',
+  aiGateway: 'asklake-ai-gateway',
   airflow: 'asklake-airflow',
   trino: 'asklake-trino',
   mskSmoke: 'asklake-msk-smoke',
@@ -49,6 +50,9 @@ const expectedFlows = new Set([
   'backend-to-kubernetes-api:tcp:443',
   'backend-to-rds:tcp:5432',
   'backend-to-trino:tcp:8443',
+  'backend-to-ai-gateway:tcp:8090',
+  'ai-gateway-to-backend-mcp:tcp:8080',
+  'ai-gateway-to-provider:tcp:443',
   'trino-to-rds:tcp:5432',
   'trino-to-s3-sts:tcp:443',
   'backend-spark-to-s3-sts:tcp:443',
@@ -72,6 +76,7 @@ const requiredDecisions = new Set([
 const expectedConfigReferences = {
   runtimeConfigMap: 'asklake-runtime',
   backendSecret: 'asklake-backend-runtime',
+  aiGatewaySecret: 'asklake-ai-gateway-runtime',
   airflowSecret: 'asklake-airflow-runtime',
   sparkSecret: 'asklake-spark-runtime',
   trinoSecret: 'asklake-trino-runtime',
@@ -125,7 +130,7 @@ for (const [key, name] of Object.entries(expectedServiceAccounts)) {
   }
 }
 if (Object.keys(contract.kubernetes?.serviceAccounts ?? {}).length !== Object.keys(expectedServiceAccounts).length) {
-  fail('service account set must contain exactly the six foundation workloads');
+  fail('service account set must contain exactly the seven foundation workloads');
 }
 
 for (const [key, name] of Object.entries(expectedConfigReferences)) {
@@ -147,7 +152,7 @@ if (fixture.consumerGroup !== 'asklake-eks-mvp-spark-v1') fail('fixture consumer
 if (fixture.outputPrefix !== 'eks-mvp/output/') fail('fixture output prefix must remain isolated');
 if (fixture.checkpointPrefix !== 'checkpoints/eks-mvp/') fail('fixture checkpoint prefix must remain under the approved S3 checkpoint root');
 
-const imageNames = ['frontend', 'backend', 'airflow', 'sparkRuntime', 'trino'];
+const imageNames = ['frontend', 'backend', 'aiGateway', 'airflow', 'sparkRuntime', 'trino'];
 requireExactKeys(contract.images, new Set(imageNames), 'images');
 const immutableImage = /^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
 for (const imageName of imageNames) {

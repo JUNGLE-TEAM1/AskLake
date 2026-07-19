@@ -34,7 +34,7 @@ exactKeys(receipt, new Set([
   'createdAt',
 ]), 'receipt');
 
-if (receipt.contractVersion !== '1.0') fail('contractVersion must be 1.0');
+if (receipt.contractVersion !== '1.1') fail('contractVersion must be 1.1');
 if (!['dev', 'staging'].includes(receipt.environment)) fail('environment must be dev or staging');
 if (!/^[a-f0-9]{40}$/.test(receipt.gitRevision ?? '')) fail('gitRevision must be a full Git SHA');
 if (receipt.platform !== 'linux/amd64') fail('platform must be linux/amd64');
@@ -43,6 +43,7 @@ if (Number.isNaN(Date.parse(receipt.createdAt ?? ''))) fail('createdAt must be a
 const components = {
   frontend: 'frontend',
   backend: 'backend',
+  aiGateway: 'ai-gateway',
   airflow: 'airflow',
   sparkRuntime: 'spark-runtime',
   trino: 'trino',

@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for component in frontend backend airflow spark-runtime trino; do
+          for component in frontend backend ai-gateway airflow spark-runtime trino; do
             aws ecr describe-repositories \
               --region "$AWS_REGION" \
               --repository-names "$ECR_PREFIX/$component" \
@@ -119,6 +119,13 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --provenance=false \
+            --file ai-server/Dockerfile \
+            --tag "$ECR_REGISTRY/$ECR_PREFIX/ai-gateway:$display_tag" \
+            --push ai-server
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
             --file backend/Dockerfile \
             --target spark-runtime \
             --tag "$ECR_REGISTRY/$ECR_PREFIX/spark-runtime:$display_tag" \
@@ -144,6 +151,7 @@ jobs:
 
           frontend_image="$ECR_REGISTRY/$ECR_PREFIX/frontend@$(get_digest "$ECR_PREFIX/frontend")"
           backend_image="$ECR_REGISTRY/$ECR_PREFIX/backend@$(get_digest "$ECR_PREFIX/backend")"
+          ai_gateway_image="$ECR_REGISTRY/$ECR_PREFIX/ai-gateway@$(get_digest "$ECR_PREFIX/ai-gateway")"
           airflow_image="$ECR_REGISTRY/$ECR_PREFIX/airflow@$(get_digest "$ECR_PREFIX/airflow")"
           spark_image="$ECR_REGISTRY/$ECR_PREFIX/spark-runtime@$(get_digest "$ECR_PREFIX/spark-runtime")"
           trino_image="$ECR_REGISTRY/$ECR_PREFIX/trino@$(get_digest "$ECR_PREFIX/trino")"
@@ -154,6 +162,7 @@ jobs:
             --revision "$GITHUB_SHA" \
             --image "frontend=$frontend_image" \
             --image "backend=$backend_image" \
+            --image "aiGateway=$ai_gateway_image" \
             --image "airflow=$airflow_image" \
             --image "sparkRuntime=$spark_image" \
             --image "trino=$trino_image"

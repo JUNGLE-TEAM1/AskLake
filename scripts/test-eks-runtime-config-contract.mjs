@@ -14,13 +14,17 @@ const image = `example.invalid/spark@sha256:${'a'.repeat(64)}`;
 
 writeFileSync(receiptPath, JSON.stringify({images: {sparkRuntime: image}}));
 
-function run({mode = '--audit', owner = '', actualOwner = '', managed = false, actualImage = image}) {
+function run({mode = '--audit', owner = '', actualOwner = '', managed = false, actualImage = image, aiProvider = 'gateway', gatewayBaseUrl = 'http://ai-gateway:8090'}) {
   writeFileSync(configPath, JSON.stringify({
     metadata: {
       annotations: actualOwner ? {'meta.helm.sh/release-name': actualOwner} : {},
       labels: managed ? {'app.kubernetes.io/managed-by': 'Helm'} : {},
     },
-    data: {ASKLAKE_SPARK_KUBERNETES_IMAGE: actualImage},
+    data: {
+      ASKLAKE_SPARK_KUBERNETES_IMAGE: actualImage,
+      AI_QUERY_PROVIDER: aiProvider,
+      AI_GATEWAY_BASE_URL: gatewayBaseUrl,
+    },
   }));
   const result = spawnSync(process.execPath, [verifier, mode, configPath, receiptPath], {
     encoding: 'utf8',
@@ -41,11 +45,13 @@ try {
   if (result.status !== 0 || result.output?.status !== 'ready') throw new Error('approved exact Helm ownership was rejected');
   result = run({mode: '--ready', owner: 'asklake-web', actualOwner: 'asklake-web', managed: true, actualImage: 'stale'});
   if (result.status === 0 || result.output?.image !== 'blocked') throw new Error('stale Spark image was accepted');
+  result = run({mode: '--ready', owner: 'asklake-web', actualOwner: 'asklake-web', managed: true, aiProvider: 'direct'});
+  if (result.status === 0 || result.output?.aiRuntime !== 'blocked') throw new Error('direct AI runtime was accepted');
   result = run({mode: '--ready', owner: 'asklake-web', actualOwner: 'asklake-foundation', managed: true});
   if (result.status === 0 || result.output?.ownership !== 'blocked') throw new Error('wrong Helm owner was accepted');
   result = run({mode: '--ready', owner: 'arbitrary-owner', actualOwner: 'arbitrary-owner', managed: true});
   if (result.status === 0 || !result.stderr.includes('not an approved')) throw new Error('unapproved owner was accepted');
-  console.log('EKS runtime ConfigMap contract tests passed (6 scenarios).');
+  console.log('EKS runtime ConfigMap contract tests passed (7 scenarios).');
 } finally {
   rmSync(directory, {recursive: true, force: true});
 }

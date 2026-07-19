@@ -182,6 +182,8 @@ helm template asklake-runtime-config "$ROOT_DIR/infra/eks/helm/asklake-runtime-c
   exit 1
 }
 grep -q '^  name: asklake-runtime$' "$runtime_config_render"
+grep -q 'AI_QUERY_PROVIDER: gateway' "$runtime_config_render"
+grep -q 'AI_GATEWAY_BASE_URL: http://ai-gateway:8090' "$runtime_config_render"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: external_ec2' "$runtime_config_render"
 grep -q 'ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON:' "$runtime_config_render"
 rm -f "$runtime_config_render"
@@ -227,15 +229,22 @@ if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
+if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set serviceAccounts.aiGateway.automountServiceAccountToken=true >/dev/null 2>&1; then
+  echo "Helm schema allowed AI Gateway to mount a Kubernetes API token" >&2
+  exit 1
+fi
+
 service_account_count="$(grep -c '^kind: ServiceAccount$' "$RENDERED_FILE")"
-if [[ "$service_account_count" -ne 6 ]]; then
-  echo "expected 6 workload service accounts, rendered $service_account_count" >&2
+if [[ "$service_account_count" -ne 7 ]]; then
+  echo "expected 7 workload service accounts, rendered $service_account_count" >&2
   exit 1
 fi
 
 for service_account in \
   asklake-frontend \
   asklake-backend \
+  asklake-ai-gateway \
   asklake-airflow \
   asklake-trino \
   asklake-msk-smoke \
@@ -268,6 +277,19 @@ backend_service_account="$({
 
 if ! grep -q '^automountServiceAccountToken: true$' <<<"$backend_service_account"; then
   echo "asklake-backend must mount its ServiceAccount token for SparkApplication API calls" >&2
+  exit 1
+fi
+
+ai_gateway_service_account="$(awk '
+  /^kind: ServiceAccount$/ { block = $0 ORS; capture = 1; next }
+  capture { block = block $0 ORS }
+  capture && /^---$/ {
+    if (block ~ /name: asklake-ai-gateway/) { printf "%s", block; exit }
+    capture = 0; block = ""
+  }
+' "$RENDERED_FILE")"
+if ! grep -q '^automountServiceAccountToken: false$' <<<"$ai_gateway_service_account"; then
+  echo "asklake-ai-gateway must not mount a Kubernetes API token" >&2
   exit 1
 fi
 

@@ -49,6 +49,25 @@ backend:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
+aiGateway:
+  enabled: true
+  image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/ai-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  replicaCount: 1
+  serviceAccountName: asklake-ai-gateway
+  service: { name: ai-gateway, type: ClusterIP, port: 8090 }
+  runtimeSecretName: asklake-ai-gateway-runtime
+  runtimeSecretKeys:
+    internalAuthToken: AI_GATEWAY_SERVICE_TOKEN
+    mcpServiceToken: AI_MCP_SERVICE_TOKEN
+    providerApiKey: AI_PROVIDER_API_KEY
+  provider: openai_compatible
+  providerBaseUrl: https://api.openai.com/v1
+  providerModel: gpt-4.1-mini
+  mcpServerUrl: http://fastapi:8080/internal/mcp
+  requestTimeoutSeconds: 30
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 collector:
   enabled: true
   replicaCount: 1

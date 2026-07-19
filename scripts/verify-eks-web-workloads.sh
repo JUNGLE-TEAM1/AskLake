@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-web"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/web.test.example.yaml"
+DEPLOY_SCRIPT="$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
 RENDERED_FILE="$(mktemp)"
 HPA_DISABLED_RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED_FILE" "$HPA_DISABLED_RENDERED"' EXIT
@@ -17,16 +18,18 @@ fi
 helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 
-if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 3 ]] || \
-   [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 2 ]] || \
+if [[ "$(grep -c '^kind: Deployment$' "$RENDERED_FILE")" -ne 4 ]] || \
+   [[ "$(grep -c '^kind: Service$' "$RENDERED_FILE")" -ne 3 ]] || \
+   [[ "$(grep -c '^kind: NetworkPolicy$' "$RENDERED_FILE")" -ne 1 ]] || \
    [[ "$(grep -c '^kind: HorizontalPodAutoscaler$' "$RENDERED_FILE")" -ne 1 ]]; then
-  echo "web chart must render Frontend, FastAPI, Collector Deployments, two Services, and one FastAPI HPA" >&2
+  echo "web chart must render Frontend, FastAPI, AI Gateway, Collector Deployments, three Services, one private NetworkPolicy, and one FastAPI HPA" >&2
   exit 1
 fi
 
 for contract in \
   'name: frontend' \
   'name: fastapi' \
+  'name: ai-gateway' \
   'name: trino-result-collector' \
   'apiVersion: autoscaling/v2' \
   'serviceAccountName: asklake-frontend' \
@@ -35,6 +38,15 @@ for contract in \
   'kubernetes.io/arch: amd64' \
   'name: asklake-runtime' \
   'name: asklake-backend-runtime' \
+  'name: asklake-ai-gateway-runtime' \
+  'serviceAccountName: asklake-ai-gateway' \
+  'automountServiceAccountToken: false' \
+  'name: INTERNAL_AUTH_TOKEN' \
+  'name: PROVIDER_API_KEY' \
+  'name: MCP_SERVICE_TOKEN' \
+  'http://fastapi:8080/internal/mcp' \
+  'name: ai-gateway-private' \
+  'type: Recreate' \
   'mountPath: /var/run/asklake/secrets' \
   'key: trino-ca.pem' \
   'path: trino-ca.pem' \
@@ -56,8 +68,8 @@ helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
 grep -Fq 'name: asklake-backend-trino-runtime' "$RENDERED_FILE"
 grep -Fq 'secretName: asklake-backend-trino-runtime' "$RENDERED_FILE"
 
-if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 3 ]]; then
-  echo "web workloads must use three digest-pinned image references" >&2
+if [[ "$(grep -c '@sha256:' "$RENDERED_FILE")" -ne 4 ]]; then
+  echo "web workloads must use four digest-pinned image references" >&2
   exit 1
 fi
 
@@ -68,13 +80,13 @@ if [[ -z "$fastapi_image" || "$collector_image" != "$fastapi_image" ]]; then
   exit 1
 fi
 
-if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 3 ]]; then
-  echo "web workloads must schedule all three Deployments on AMD64 nodes" >&2
+if [[ "$(grep -c 'kubernetes.io/arch: amd64' "$RENDERED_FILE")" -ne 4 ]]; then
+  echo "web workloads must schedule all four Deployments on AMD64 nodes" >&2
   exit 1
 fi
 
 if [[ "$(grep -c 'path: /api/health' "$RENDERED_FILE")" -ne 2 ]] || \
-   [[ "$(grep -c 'tcpSocket:' "$RENDERED_FILE")" -ne 1 ]]; then
+   [[ "$(grep -c 'tcpSocket:' "$RENDERED_FILE")" -ne 2 ]]; then
   echo "backend must keep DB-aware health for startup/readiness and use TCP liveness" >&2
   exit 1
 fi
@@ -85,7 +97,7 @@ if [[ "$(grep -c 'terminationGracePeriodSeconds: 360' "$RENDERED_FILE")" -ne 1 ]
   exit 1
 fi
 
-if [[ "$(grep -c '^  replicas:' "$RENDERED_FILE")" -ne 2 ]]; then
+if [[ "$(grep -c '^  replicas:' "$RENDERED_FILE")" -ne 3 ]]; then
   echo "HPA-enabled render must leave FastAPI replicas to the autoscaling controller" >&2
   exit 1
 fi
@@ -110,8 +122,8 @@ done
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.autoscaling.enabled=false >"$HPA_DISABLED_RENDERED"
 if grep -q '^kind: HorizontalPodAutoscaler$' "$HPA_DISABLED_RENDERED" || \
-   [[ "$(grep -c '^  replicas:' "$HPA_DISABLED_RENDERED")" -ne 3 ]]; then
-  echo "HPA-disabled render must keep three statically sized Deployments and no HPA" >&2
+   [[ "$(grep -c '^  replicas:' "$HPA_DISABLED_RENDERED")" -ne 4 ]]; then
+  echo "HPA-disabled render must keep four statically sized Deployments and no HPA" >&2
   exit 1
 fi
 
@@ -143,6 +155,14 @@ negative_cases=(
   'backend.service.port=80'
   'frontend.image=nginx:latest'
   'backend.image=backend:latest'
+  'aiGateway.enabled=false'
+  'aiGateway.replicaCount=0'
+  'aiGateway.replicaCount=2'
+  'aiGateway.image=ai-gateway:latest'
+  'aiGateway.service.type=LoadBalancer'
+  'aiGateway.service.port=443'
+  'aiGateway.serviceAccountName=asklake-backend'
+  'aiGateway.mcpServerUrl=http://external.example/internal/mcp'
   'placement.nodeSelector.kubernetes\.io/arch=arm64'
 )
 for override in "${negative_cases[@]}"; do
@@ -154,6 +174,31 @@ done
 
 if grep -Eq '^kind: (Ingress|Secret|ConfigMap)$' "$RENDERED_FILE"; then
   echo "Phase 14 web chart crossed the workload-only ownership boundary" >&2
+  exit 1
+fi
+
+gateway_block="$(awk '
+  /^kind: Deployment$/ { deployment = 1; block = $0 ORS; next }
+  deployment { block = block $0 ORS }
+  deployment && /^---$/ {
+    if (block ~ /name: ai-gateway/) { printf "%s", block; exit }
+    deployment = 0; block = ""
+  }
+' "$RENDERED_FILE")"
+for contract in \
+  'replicas: 1' \
+  'automountServiceAccountToken: false' \
+  'readOnlyRootFilesystem: true' \
+  'runAsNonRoot: true' \
+  'path: /health' \
+  'tcpSocket:'; do
+  grep -Fq "$contract" <<<"$gateway_block" || {
+    echo "AI Gateway workload is missing contract: $contract" >&2
+    exit 1
+  }
+done
+if grep -Fq 'OPENAI_API_KEY' "$RENDERED_FILE"; then
+  echo "FastAPI/web render must not expose the provider key name" >&2
   exit 1
 fi
 
@@ -180,5 +225,18 @@ if grep -q 'kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE"' \
   echo "web workload upgrade preflight must preserve Helm field ownership" >&2
   exit 1
 fi
+
+for deploy_guard in \
+  'Backend runtime Secret is not the exact provider-key-free Gateway profile' \
+  'AI Gateway runtime Secret does not have the exact three-key profile' \
+  'for shared_key in AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN' \
+  '.data.AI_QUERY_PROVIDER == "gateway"' \
+  '.data.AI_GATEWAY_BASE_URL == "http://ai-gateway:8090"' \
+  '/api/health/ai'; do
+  grep -Fq "$deploy_guard" "$DEPLOY_SCRIPT" || {
+    echo "web deployment script is missing fail-closed Gateway guard: $deploy_guard" >&2
+    exit 1
+  }
+done
 
 echo "EKS Phase 14 web workload contract verification passed."

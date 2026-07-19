@@ -29,14 +29,17 @@ const actualImage = String(config.data?.ASKLAKE_SPARK_KUBERNETES_IMAGE || '');
 const selection = selectedOwner ? 'selected' : 'unresolved';
 const ownershipReady = Boolean(selectedOwner) && managedByHelm && actualOwner === selectedOwner;
 const imageReady = Boolean(expectedImage) && actualImage === expectedImage;
+const aiRuntimeReady = config.data?.AI_QUERY_PROVIDER === 'gateway' &&
+  config.data?.AI_GATEWAY_BASE_URL === 'http://ai-gateway:8090';
 const keyCount = Object.keys(config.data ?? {}).length;
-const status = ownershipReady && imageReady && keyCount > 0 ? 'ready' : 'blocked';
+const status = ownershipReady && imageReady && aiRuntimeReady && keyCount > 0 ? 'ready' : 'blocked';
 
 console.log(JSON.stringify({
   status,
   selection,
   ownership: ownershipReady ? 'ready' : 'blocked',
   image: imageReady ? 'ready' : 'blocked',
+  aiRuntime: aiRuntimeReady ? 'ready' : 'blocked',
   keyCount,
 }));
 

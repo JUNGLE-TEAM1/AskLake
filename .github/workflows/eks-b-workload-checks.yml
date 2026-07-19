@@ -8,7 +8,9 @@ on:
       - pair1
     paths:
       - ".github/workflows/eks-b-workload-checks.yml"
+      - ".github/workflows/eks-image-delivery.yml"
       - "airflow/**"
+      - "ai-server/**"
       - "backend/**"
       - "frontend/**"
       - "infra/eks/helm/asklake-web/**"
@@ -64,6 +66,11 @@ jobs:
           npm ci
           python -m pip install -r requirements.txt
 
+      - name: Install and verify AI Gateway
+        run: |
+          python -m pip install -r ai-server/requirements.txt
+          python -m pytest -q ai-server/tests
+
       - name: Verify Helm and AWS workload boundaries
         run: |
           scripts/verify-eks-workloads.sh
@@ -91,6 +98,7 @@ jobs:
         env:
           PYTHONPATH: .
         run: |
+          python -m pytest -q tests/test_ai_health_api.py tests/test_ai_gateway_mcp.py
           python -m unittest \
             tests.test_object_storage_mode \
             tests.test_etl_job_delete \
@@ -116,6 +124,10 @@ jobs:
             context: ./backend
             file: ./backend/Dockerfile
             target: backend-runtime
+          - name: ai-gateway
+            context: ./ai-server
+            file: ./ai-server/Dockerfile
+            target: ""
           - name: spark-runtime
             context: ./backend
             file: ./backend/Dockerfile

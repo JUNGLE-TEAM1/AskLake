@@ -13,6 +13,7 @@ grep -q '^  id-token: write$' "$ROOT_DIR/.github/workflows/eks-image-delivery.ym
 grep -q -- '--platform linux/amd64' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q -- '--push frontend' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q -- '--push backend' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
+grep -q -- '--push ai-server' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q -- '--file airflow/Dockerfile' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q -- '--push airflow' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q 'node scripts/verify-eks-image-receipt.mjs' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
@@ -20,7 +21,7 @@ grep -q 'mask-aws-account-id: true' "$ROOT_DIR/.github/workflows/eks-image-deliv
 grep -q 'timeout-minutes: 60' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q 'FROM apache/airflow:3.3.0' "$ROOT_DIR/airflow/Dockerfile"
 grep -q 'trinodb/trino:482' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
-grep -q 'const defaultApiBaseUrl = ""' "$ROOT_DIR/frontend/src/services/apiClient.ts"
+grep -q 'const defaultApiBaseUrl = ""' "$ROOT_DIR/frontend/src/services/apiOrigin.ts"
 
 if grep -q 'VITE_API_BASE_URL=' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"; then
   echo "EKS frontend image must not bake a public API hostname or /api prefix" >&2
@@ -33,14 +34,14 @@ if grep -q 'mirror_image apache/airflow' "$ROOT_DIR/.github/workflows/eks-image-
 fi
 
 platform_count="$(grep -c -- '--platform linux/amd64' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml")"
-if [[ "$platform_count" -ne 5 ]]; then
-  echo "expected four AMD64 builds and one AMD64 mirror pull, found $platform_count platform declarations" >&2
+if [[ "$platform_count" -ne 6 ]]; then
+  echo "expected five AMD64 builds and one AMD64 mirror pull, found $platform_count platform declarations" >&2
   exit 1
 fi
 
 provenance_count="$(grep -c -- '--provenance=false' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml")"
-if [[ "$provenance_count" -ne 4 ]]; then
-  echo "expected four single-platform builds with provenance disabled, found $provenance_count" >&2
+if [[ "$provenance_count" -ne 5 ]]; then
+  echo "expected five single-platform builds with provenance disabled, found $provenance_count" >&2
   exit 1
 fi
 
