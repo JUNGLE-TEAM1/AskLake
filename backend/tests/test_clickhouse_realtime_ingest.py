@@ -173,6 +173,21 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
             access_control,
         )
 
+    def test_observer_can_see_replica_metadata_without_reading_user_tables(self) -> None:
+        access_control = (
+            Path(__file__).parents[2]
+            / "deploy/clickhouse-v2/initdb/01-access-control.sh"
+        ).read_text()
+
+        self.assertIn(
+            "GRANT SHOW TABLES ON \\`${database}\\`.* TO asklake_v2_observer_role;",
+            access_control,
+        )
+        self.assertNotIn(
+            "GRANT SELECT ON \\`${database}\\`.* TO asklake_v2_observer_role;",
+            access_control,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,7 @@ Production ClickHouse의 최종 process는 plaintext listener를 제거한다. A
 | `asklake_v2_materializer` | V2 database의 `SELECT`, `INSERT` |
 | `asklake_v2_reader` | V2 database `SELECT`, readonly 및 row/time/memory 한도 |
 | `asklake_v2_migration` | V2 database의 `SELECT`, `INSERT`, `CREATE TABLE`, `CREATE VIEW`, `ALTER TABLE`, `DROP TABLE`, `DROP VIEW`, `TRUNCATE`. schema 변경 시에만 사용 |
-| `asklake_v2_observer` | allowlist된 `system.metrics`, `system.events`, `system.asynchronous_metrics`, `system.parts`, `system.merges`, `system.replicas`의 readonly 조회 |
+| `asklake_v2_observer` | allowlist된 `system.metrics`, `system.events`, `system.asynchronous_metrics`, `system.parts`, `system.merges`, `system.replicas`의 readonly 조회. replica row 가시성에 필요한 V2 table metadata만 볼 수 있고 사용자 table `SELECT`는 없음 |
 
 여섯 password는 `CLICKHOUSE_V2_ADMIN_PASSWORD`, `CLICKHOUSE_V2_INGEST_PASSWORD`, `CLICKHOUSE_V2_MATERIALIZER_PASSWORD`, `CLICKHOUSE_V2_READER_PASSWORD`, `CLICKHOUSE_V2_MIGRATION_PASSWORD`, `CLICKHOUSE_V2_OBSERVER_PASSWORD`로 주입한다. 각각 16자 이상, 서로 다른 non-placeholder 값이어야 하며 초기화 script가 위반 시 실패한다. connector password는 repository 밖의 mode `0600` properties file에서 Kafka Connect FileConfigProvider로 읽는다. API와 health response는 password, connector URL, raw env를 반환하지 않는다.
 
