@@ -27,13 +27,23 @@ class CatalogRepository:
         ensure_catalog_schema(self.db)
         return self.db.get(CatalogDatasetModel, dataset_id)
 
-    def get_dataset_model_for_update(self, dataset_id: str) -> CatalogDatasetModel | None:
+    def get_dataset_model_for_update(
+        self,
+        dataset_id: str,
+        *,
+        allow_deletion_fence: bool = False,
+    ) -> CatalogDatasetModel | None:
         ensure_catalog_schema(self.db)
-        return self.db.scalar(
+        model = self.db.scalar(
             select(CatalogDatasetModel)
             .where(CatalogDatasetModel.id == dataset_id)
             .with_for_update()
         )
+        if not allow_deletion_fence:
+            from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+
+            ensure_catalog_publication_allowed(self.db, dataset_id)
+        return model
 
     def get_dataset_payload(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.get_dataset_model(dataset_id)
@@ -43,7 +53,7 @@ class CatalogRepository:
         return dataset_model_to_payload(model)
 
     def get_dataset_payload_for_update(self, dataset_id: str) -> dict[str, Any] | None:
-        model = self.get_dataset_model_for_update(dataset_id)
+        model = self.get_dataset_model_for_update(dataset_id, allow_deletion_fence=True)
         return dataset_model_to_payload(model) if model else None
 
     def get_dataset_payload_by_name(self, dataset_name: str) -> dict[str, Any] | None:
@@ -61,17 +71,7 @@ class CatalogRepository:
     def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         ensure_catalog_schema(self.db)
         dataset_id = str(payload["id"])
-        from app.repositories.catalog_deletion_repository import CatalogDeletionRepository
-        from app.core.errors import ApiError
-
-        if CatalogDeletionRepository(self.db).has_fence(dataset_id):
-            raise ApiError(
-                "DATASET_DELETION_FENCED",
-                "Dataset publication is blocked because deletion has already been requested.",
-                409,
-                {"datasetId": dataset_id},
-            )
-        model = self.get_dataset_model(dataset_id)
+        model = self.get_dataset_model_for_update(dataset_id)
 
         if model is None:
             self.db.add(CatalogDatasetModel(id=dataset_id, **dataset_payload_to_model_values(payload)))

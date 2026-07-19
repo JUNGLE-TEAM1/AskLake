@@ -1,5 +1,5 @@
 import { BarChart3, BookOpen, Database, Settings, TerminalSquare } from "lucide-react";
-import type { CatalogDataset, FlowId, JobDagStep, JobRowData, JobRunSummary, JobStats, NavItem, PermissionDraft, ResourcePermissions, RetryPolicyDraft, TransformStepDraft } from "../types";
+import type { CatalogDataset, FlowId, JobDagStep, JobRowData, JobRunSummary, JobStats, NavItem, PermissionDraft, RetryPolicyDraft, TransformStepDraft } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
 
@@ -705,17 +705,6 @@ function commerceChannelRoiLineageGraph() {
   };
 }
 
-const mockCatalogDatasetPermissions = {
-  canDelete: true,
-  canManage: true,
-  canQuery: true,
-  canRun: true,
-  canShare: true,
-  canView: true,
-  computedFor: "mock-admin",
-  enforced: false,
-} satisfies ResourcePermissions;
-
 const commerceDemoDatasets: CatalogDataset[] = [
   {
     description: "채널/카테고리/일자 기준 주문 수, 순매출, 환불 금액을 담은 커머스 주문 분석 원본 데이터셋",
@@ -840,7 +829,7 @@ const commerceDemoDatasets: CatalogDataset[] = [
   },
 ];
 
-export const catalogDatasets: CatalogDataset[] = ([
+export const catalogDatasets: CatalogDataset[] = [
   ...commerceDemoDatasets,
   {
     description: "전체 채널 통합 고객 주문 정제 데이터",
@@ -1166,10 +1155,7 @@ export const catalogDatasets: CatalogDataset[] = ([
     tags: ["#finance", "#growth", "#dw"],
     upstream: ["sales_daily_summary", "finance_plan_sheet"],
   },
-] satisfies CatalogDataset[]).map((dataset) => ({
-  ...dataset,
-  permissions: { ...mockCatalogDatasetPermissions },
-}));
+];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [

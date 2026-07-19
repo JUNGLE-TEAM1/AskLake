@@ -14,10 +14,10 @@ test("Catalog list owns the direct Dataset delete action", () => {
 });
 
 test("Mock catalog datasets explicitly grant the demo admin delete permission", () => {
-  const mockData = read("src/data/mockData.ts");
-  assert.match(mockData, /const mockCatalogDatasetPermissions = \{/);
-  assert.match(mockData, /canDelete: true/);
-  assert.match(mockData, /permissions: \{ \.\.\.mockCatalogDatasetPermissions \}/);
+  const catalogState = read("src/state/asklake/catalogState.ts");
+  assert.match(catalogState, /const mockCatalogDatasetPermissions = \{/);
+  assert.match(catalogState, /canDelete: true/);
+  assert.match(catalogState, /apiConfig\.useMock \? dataset\.permissions \?\? \{ \.\.\.mockCatalogDatasetPermissions \}/);
 });
 
 test("Dataset delete waits for durable backend success before removing the row", () => {

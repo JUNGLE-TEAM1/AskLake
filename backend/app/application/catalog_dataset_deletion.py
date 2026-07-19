@@ -86,17 +86,11 @@ class CatalogDatasetDeletionService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 {"datasetId": dataset_id},
             )
-        existing = self.deletion_repository.latest_for_dataset(dataset_id)
-        if existing is not None and existing.status != "failed":
-            raise ApiError(
-                "CATALOG_DATASET_DELETION_EXISTS",
-                "A deletion request already exists for this dataset.",
-                status.HTTP_409_CONFLICT,
-                {"datasetId": dataset_id, "deletionId": existing.id, "status": existing.status},
-            )
+        self._raise_if_existing_deletion(dataset_id)
         locked_payload = self.catalog_repository.get_dataset_payload_for_update(dataset_id)
         if locked_payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        self._raise_if_existing_deletion(dataset_id)
         locked_dataset = CatalogDatasetResponse.model_validate(locked_payload)
         impact = build_deletion_impact(self.db, locked_dataset, locked_payload)
         if impact.blockers:
@@ -108,15 +102,26 @@ class CatalogDatasetDeletionService:
             )
         row = self.deletion_repository.create_or_retry(
             actor_snapshot=actor_snapshot(actor),
-            dataset_id=dataset.id,
-            dataset_name=dataset.name,
-            dataset_snapshot=payload,
+            dataset_id=locked_dataset.id,
+            dataset_name=locked_dataset.name,
+            dataset_snapshot=locked_payload,
             impact_snapshot=impact.model_dump(by_alias=True),
         )
         return CatalogDatasetDeletionAcceptedResponse(
-            dataset_id=dataset.id,
+            dataset_id=locked_dataset.id,
             deletion_id=row.id,
             status=row.status,
+        )
+
+    def _raise_if_existing_deletion(self, dataset_id: str) -> None:
+        existing = self.deletion_repository.latest_for_dataset(dataset_id)
+        if existing is None or existing.status == "failed":
+            return
+        raise ApiError(
+            "CATALOG_DATASET_DELETION_EXISTS",
+            "A deletion request already exists for this dataset.",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "deletionId": existing.id, "status": existing.status},
         )
 
     def status(self, deletion_id: str, actor: ActorContext) -> CatalogDatasetDeletionStatusResponse:
@@ -261,12 +266,21 @@ def add_dependency_blockers(
         model = db.get(SemanticModelModel, model_id)
         blockers.append(blocker("semantic_model", model_id, model.name if model else model_id, "Semantic model이 데이터셋을 참조합니다."))
 
-    downstream_ids = {str(item) for item in payload.get("downstream") or [] if item}
-    for other in db.scalars(select(CatalogDatasetModel)):
+    catalog_datasets = list(db.scalars(select(CatalogDatasetModel)))
+    by_id = {str(item.id): item for item in catalog_datasets}
+    by_name = {str(item.name): item for item in catalog_datasets if item.name}
+    downstream_ids: set[str] = set()
+    for item in payload.get("downstream") or []:
+        downstream = by_id.get(str(item)) or by_name.get(str(item))
+        if downstream is not None and downstream.id != dataset_id:
+            downstream_ids.add(str(downstream.id))
+    dataset_name = str(payload.get("name") or "")
+    for other in catalog_datasets:
         if other.id == dataset_id:
             continue
         other_payload = dataset_model_to_payload(other)
-        if dataset_id in {str(item) for item in other_payload.get("upstream") or []}:
+        upstream_references = {str(item) for item in other_payload.get("upstream") or []}
+        if dataset_id in upstream_references or (dataset_name and dataset_name in upstream_references):
             downstream_ids.add(other.id)
     for downstream_id in sorted(downstream_ids):
         downstream = db.get(CatalogDatasetModel, downstream_id)
@@ -325,9 +339,6 @@ class CatalogPhysicalPurger:
     def purge(self, db: Session, row: CatalogDatasetDeletionModel) -> None:
         payload = row.dataset_snapshot or {}
         dataset = CatalogDatasetResponse.model_validate(payload)
-        clickhouse_table = payload.get("clickhouseTable") or {}
-        if isinstance(clickhouse_table, dict) and clickhouse_table.get("table"):
-            self._drop_clickhouse_table(clickhouse_table)
 
         impact = CatalogDatasetDeletionImpact.model_validate(row.impact_snapshot)
         for artifact in impact.artifacts:
@@ -335,6 +346,8 @@ class CatalogPhysicalPurger:
                 self._purge_storage(artifact.location, dataset)
             elif artifact.kind == "iceberg_table":
                 self._drop_rag_table(artifact.location)
+            elif artifact.kind == "clickhouse_table":
+                self._drop_clickhouse_artifact(artifact.location)
             elif artifact.kind == "opensearch_index":
                 self._delete_opensearch_index(artifact.location)
             elif artifact.kind in {"rag_parent_table", "rag_chunk_table"}:
@@ -365,6 +378,12 @@ class CatalogPhysicalPurger:
         finally:
             client.close()
 
+    def _drop_clickhouse_artifact(self, location: str) -> None:
+        database, separator, table = location.partition(".")
+        if not separator or not database or not table:
+            raise RuntimeError("CATALOG_DATASET_INVALID_CLICKHOUSE_TABLE")
+        self._drop_clickhouse_table({"database": database, "table": table})
+
     def _drop_rag_table(self, location: str) -> None:
         parts = [item.strip('`" ') for item in location.split(".") if item.strip('`" ')]
         if len(parts) == 3:
@@ -384,13 +403,16 @@ class CatalogPhysicalPurger:
             return
         local_root = LocalLakeStorageService().storage_root.resolve()
         path = Path(location).resolve()
-        target = path if path.is_dir() else path.parent
-        for candidate in (target, *target.parents):
-            if candidate == local_root:
-                break
-            if is_dataset_scope_segment(candidate.name, dataset):
-                target = candidate
-                break
+        target = next(
+            (
+                candidate
+                for candidate in (path, *path.parents)
+                if candidate != local_root and is_dataset_scope_segment(candidate.name, dataset)
+            ),
+            None,
+        )
+        if target is None or not target.is_relative_to(local_root):
+            raise RuntimeError("CATALOG_DATASET_UNMANAGED_STORAGE")
         if target.exists():
             shutil.rmtree(target) if target.is_dir() else target.unlink()
 
@@ -431,10 +453,12 @@ def process_claimed_deletion(
         dataset_model = db.get(CatalogDatasetModel, row.dataset_id)
         if dataset_model is None:
             raise RuntimeError("CATALOG_DATASET_NOT_FOUND_DURING_DELETE")
-        dataset = CatalogDatasetResponse.model_validate(dataset_model_to_payload(dataset_model))
-        fresh_impact = build_deletion_impact(db, dataset, dataset_model_to_payload(dataset_model))
+        fresh_payload = dataset_model_to_payload(dataset_model)
+        dataset = CatalogDatasetResponse.model_validate(fresh_payload)
+        fresh_impact = build_deletion_impact(db, dataset, fresh_payload)
         if fresh_impact.blockers:
             raise RuntimeError("CATALOG_DATASET_DELETE_BLOCKED")
+        row.dataset_snapshot = fresh_payload
         row.impact_snapshot = fresh_impact.model_dump(by_alias=True)
         repository.update_status(row, "purging", commit=False)
         (purger or CatalogPhysicalPurger()).purge(db, row)

@@ -5,6 +5,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.catalog_deletion import CatalogDatasetDeletionModel
 
@@ -19,6 +20,16 @@ def ensure_catalog_deletion_schema(db: Session) -> None:
         return
     Base.metadata.create_all(bind=db.get_bind(), tables=[CatalogDatasetDeletionModel.__table__])
     _schema_ready_bind_ids.add(bind_key)
+
+
+def ensure_catalog_publication_allowed(db: Session, dataset_id: str) -> None:
+    if CatalogDeletionRepository(db).has_fence(dataset_id):
+        raise ApiError(
+            "DATASET_DELETION_FENCED",
+            "Dataset publication is blocked because deletion has already been requested.",
+            409,
+            {"datasetId": dataset_id},
+        )
 
 
 class CatalogDeletionRepository:

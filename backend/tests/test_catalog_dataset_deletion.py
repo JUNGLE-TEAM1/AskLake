@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.application.catalog_dataset_deletion import (
     CatalogDatasetDeletionService,
     CatalogPhysicalPurger,
+    add_dependency_blockers,
     build_deletion_impact,
     is_managed_storage_location,
     nested_contains,
@@ -21,6 +22,9 @@ from app.models.catalog import CatalogDatasetModel
 from app.models.catalog_deletion import CatalogDatasetDeletionModel
 from app.models.etl import ETLJobModel
 from app.repositories.catalog_deletion_repository import CatalogDeletionRepository
+from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+from app.repositories.catalog_repository import CatalogRepository
+from app.repositories import etl_repository
 from app.schemas.catalog import CatalogDatasetDeletionImpact, CatalogDatasetResponse
 
 
@@ -92,6 +96,27 @@ class CatalogDeletionRepositoryTest(unittest.TestCase):
             self.assertEqual(retried.id, row.id)
             self.assertEqual(retried.status, "queued")
             self.assertIsNone(retried.error_code)
+            with self.assertRaises(ApiError) as raised:
+                ensure_catalog_publication_allowed(db, "ds_orders")
+            self.assertEqual(raised.exception.code, "DATASET_DELETION_FENCED")
+
+
+class CatalogPublicationFenceTest(unittest.TestCase):
+    def test_catalog_and_etl_publication_locks_check_the_deletion_fence(self) -> None:
+        db = MagicMock()
+        with (
+            patch("app.repositories.catalog_repository.ensure_catalog_schema"),
+            patch("app.repositories.catalog_deletion_repository.ensure_catalog_publication_allowed") as catalog_fence,
+        ):
+            CatalogRepository(db).get_dataset_model_for_update("ds_orders")
+        catalog_fence.assert_called_once_with(db, "ds_orders")
+
+        with (
+            patch("app.repositories.etl_repository.ensure_schema"),
+            patch("app.repositories.catalog_deletion_repository.ensure_catalog_publication_allowed") as etl_fence,
+        ):
+            etl_repository.get_dataset_by_id_for_update(db, "ds_orders")
+        etl_fence.assert_called_once_with(db, "ds_orders")
 
 
 class CatalogDeletionWorkerTest(unittest.TestCase):
@@ -116,10 +141,14 @@ class CatalogDeletionWorkerTest(unittest.TestCase):
 
     def test_physical_purge_precedes_metadata_cleanup_and_success(self) -> None:
         events: list[str] = []
+        self.row.dataset_snapshot = {"name": "stale"}
         repository = MagicMock()
         repository.update_status.side_effect = lambda _row, state, **_kwargs: events.append(state)
         purger = MagicMock(spec=CatalogPhysicalPurger)
-        purger.purge.side_effect = lambda _db, _row: events.append("physical_purge")
+        purger.purge.side_effect = lambda _db, claimed: (
+            self.assertEqual(claimed.dataset_snapshot["name"], "orders"),
+            events.append("physical_purge"),
+        )
         with (
             patch("app.application.catalog_dataset_deletion.CatalogDeletionRepository", return_value=repository),
             patch("app.application.catalog_dataset_deletion.build_deletion_impact", return_value=self.impact),
@@ -161,6 +190,22 @@ class CatalogDeletionRequestTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "CATALOG_DATASET_DELETE_CONFIRMATION_MISMATCH")
         latest_deletion.assert_not_called()
 
+    def test_concurrent_request_is_rechecked_after_dataset_lock(self) -> None:
+        service = CatalogDatasetDeletionService(MagicMock())
+        payload = dataset_payload()
+        dataset = CatalogDatasetResponse.model_validate(payload)
+        existing = SimpleNamespace(id="catalog_delete_existing", status="queued")
+        with (
+            patch.object(service, "_authorized_dataset", return_value=(dataset, payload)),
+            patch.object(service.catalog_repository, "get_dataset_payload_for_update", return_value=payload),
+            patch.object(service.deletion_repository, "latest_for_dataset", side_effect=[None, existing]),
+            patch.object(service.deletion_repository, "create_or_retry") as create_or_retry,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                service.request(dataset.id, ActorContext(name=dataset.owner), confirm_name=dataset.name)
+        self.assertEqual(raised.exception.code, "CATALOG_DATASET_DELETION_EXISTS")
+        create_or_retry.assert_not_called()
+
 
 class CatalogDeletionSafetyTest(unittest.TestCase):
     def test_nested_dataset_reference_is_detected(self) -> None:
@@ -194,6 +239,49 @@ class CatalogDeletionSafetyTest(unittest.TestCase):
                 CatalogPhysicalPurger()._purge_storage(str(data_path), dataset)
             self.assertFalse(dataset_dir.exists())
             self.assertTrue(unrelated.exists())
+
+    def test_missing_dataset_directory_never_removes_the_storage_root(self) -> None:
+        dataset = CatalogDatasetResponse.model_validate(dataset_payload())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unrelated = root / "keep.txt"
+            unrelated.write_text("keep", encoding="utf-8")
+            missing_dataset_dir = root / dataset.id
+            with patch("app.application.catalog_dataset_deletion.LocalLakeStorageService") as storage:
+                storage.return_value.storage_root = root
+                CatalogPhysicalPurger()._purge_storage(str(missing_dataset_dir), dataset)
+            self.assertTrue(root.exists())
+            self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep")
+
+    def test_clickhouse_artifact_is_purged_from_the_fresh_impact_snapshot(self) -> None:
+        row = deletion_row()
+        row.impact_snapshot = CatalogDatasetDeletionImpact(
+            artifacts=[{"kind": "clickhouse_table", "location": "asklake.ds_orders"}],
+            blockers=[],
+            can_delete=True,
+            dataset_id="ds_orders",
+            dataset_name="orders",
+            retained_resources=[],
+        ).model_dump(by_alias=True)
+        purger = CatalogPhysicalPurger()
+        with patch.object(purger, "_drop_clickhouse_table") as drop_table:
+            purger.purge(MagicMock(), row)
+        drop_table.assert_called_once_with({"database": "asklake", "table": "ds_orders"})
+
+    def test_downstream_summary_labels_are_not_phantom_dataset_blockers(self) -> None:
+        payload = dataset_payload()
+        payload["downstream"] = ["SQL 분석", "대시보드"]
+        dataset = SimpleNamespace(id=payload["id"], name=payload["name"], payload=payload)
+        db = MagicMock()
+
+        def rows(statement):
+            entities = {item.get("entity") for item in statement.column_descriptions}
+            return iter([dataset]) if CatalogDatasetModel in entities else iter([])
+
+        db.scalars.side_effect = rows
+        blockers = []
+        add_dependency_blockers(db, payload["id"], payload, blockers)
+        self.assertEqual(blockers, [])
 
     def test_scheduled_producer_is_reported_as_a_delete_blocker(self) -> None:
         dataset = CatalogDatasetResponse.model_validate(dataset_payload())
