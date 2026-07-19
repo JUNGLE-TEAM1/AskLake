@@ -115,7 +115,7 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
-Production startup은 기본적으로 알려진 legacy demo 계정을 `disabled`로 바꾸고 해당 세션을 폐기합니다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시할 수 있습니다. `scripts/verify-deploy-env.sh`는 두 값의 lowercase boolean 및 일치를 검증하고, backend startup은 이전 deploy에서 disabled된 demo 계정을 active로 복구합니다. 폐기된 세션은 복구하지 않으므로 다시 로그인해야 합니다. 운영 인증은 `BOOTSTRAP_ADMIN_*`, Secure session cookie, client header fallback 차단 계약을 계속 유지합니다.
+Production startup은 기존 `auth_users.status`와 `auth_sessions`를 변경하지 않으며 재배포만으로 legacy demo 계정을 비활성화하지 않습니다. `AUTH_LEGACY_DEMO_USERS_ENABLED=false` 또는 미설정이면 알려진 demo identity를 새로 만들거나 disabled 계정을 복구하지 않고 `BOOTSTRAP_ADMIN_*` 계정만 보장합니다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시해 누락 demo 계정을 생성하고 기존 demo 계정을 active로 동기화합니다. `scripts/verify-deploy-env.sh`는 두 값의 lowercase boolean 및 일치를 검증합니다. 운영 인증은 Secure session cookie와 client header fallback 차단 계약을 계속 유지하며 계정 status 변경은 명시적인 관리 작업이 소유합니다.
 
 운영 세션 쿠키는 기본적으로 `Secure`, `HttpOnly`, `SameSite=Lax`를 사용합니다. HTTPS가 아직 없는 제한된 dev HTTP ALB는 `AUTH_SESSION_COOKIE_SECURE=false`를 명시할 수 있지만 `HttpOnly`와 `SameSite=Lax`는 유지되며, 이 예외는 header-auth fallback, public signup, legacy demo 계정 정책을 변경하지 않습니다. HTTPS 전환 뒤에는 반드시 `true`로 복구합니다.
 
@@ -4066,8 +4066,8 @@ type PermissionGrant = {
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
-| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. 기본 false |
-| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink opt-in의 effective 값. 기본 false |
+| clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
+| kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
 | clickhouseRealtimeConsumerOwner | disabled \| kafka_engine_v1 \| kafka_connect_v2 | deployment의 단일 consumer owner 설정. readiness나 실제 claim을 뜻하지 않음 |
 | latestStaticPerBatchEnabled | boolean | Continuous SQL이 켜진 경우에만 true |
 | staticChangeBackfillEnabled | boolean | Continuous SQL이 켜진 경우에만 true |

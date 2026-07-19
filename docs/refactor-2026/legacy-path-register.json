@@ -169,13 +169,13 @@
       "telemetry": "environment_guard"
     },
     {
-      "activation": "AUTH_LEGACY_DEMO_USERS_ENABLED=true in an environment that already permits local auth",
+      "activation": "AUTH_LEGACY_DEMO_USERS_ENABLED=true with matching frontend opt-in, or an existing active durable account",
       "classification": "dev_demo",
       "id": "auth.legacy-demo-users",
       "marker": "auth_legacy_demo_users_enabled",
       "owner": "identity",
       "paths": ["backend/app/core/config.py", "backend/app/services/auth_service.py"],
-      "reachability": "local_test_only",
+      "reachability": "explicit_demo_deployment",
       "removalCondition": "Seeded local accounts replace embedded demo identities",
       "targetRelease": "backlog",
       "telemetry": "environment_guard"

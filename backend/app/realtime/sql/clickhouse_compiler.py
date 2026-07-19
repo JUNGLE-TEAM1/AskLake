@@ -76,7 +76,14 @@ class ClickHouseRealtimeCompiler:
             raise ValueError("validated realtime runtime SQL is not a SELECT")
         fact_alias = self._fact_alias(runtime)
         output_names = {name.casefold() for name, _type in plan.output_schema}
-        for metadata in ("kafka_topic", "event_key", "payload_hash"):
+        for metadata in (
+            "kafka_topic",
+            "kafka_partition",
+            "kafka_offset",
+            "kafka_timestamp",
+            "event_key",
+            "payload_hash",
+        ):
             if metadata not in output_names:
                 runtime.select(exp.column(metadata, table=fact_alias).as_(metadata), append=True, copy=False)
         self._inject_temporal_predicates(runtime, plan, fact_alias)

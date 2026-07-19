@@ -87,13 +87,38 @@ def clickhouse_v2_query_binding(
     columns: set[str] = set()
     for item in schema:
         name = item[0] if isinstance(item, (list, tuple)) and item else None
+        type_name = (
+            str(item[1])
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+            else "string"
+        )
         identifier = validate_clickhouse_identifier(name)
         if identifier.casefold().startswith("_asklake_"):
             continue
         columns.add(identifier)
         path = quote_clickhouse_string(f"$.{identifier}")
+        raw_value = f"JSON_VALUE(payload, {path})"
+        normalized_type = type_name.strip().casefold().replace(" ", "")
+        if normalized_type in {
+            "byte", "short", "smallint", "int", "integer", "int32",
+            "long", "bigint", "int64",
+        }:
+            value = f"toInt64OrNull({raw_value})"
+        elif normalized_type in {
+            "float", "real", "double", "decimal", "number", "numeric",
+            "float32", "float64",
+        } or normalized_type.startswith("decimal("):
+            value = f"toFloat64OrNull({raw_value})"
+        elif normalized_type in {"boolean", "bool"}:
+            value = f"accurateCastOrNull({raw_value}, 'Bool')"
+        elif normalized_type in {
+            "timestamp", "datetime", "timestampwithtimezone", "date",
+        }:
+            value = f"parseDateTime64BestEffortOrNull({raw_value}, 3)"
+        else:
+            value = raw_value
         projections.append(
-            f"JSON_VALUE(payload, {path}) AS {quote_clickhouse_identifier(identifier)}"
+            f"{value} AS {quote_clickhouse_identifier(identifier)}"
         )
     if not projections or len(projections) > 200:
         raise ValueError("V2 serving binding exposes an invalid number of Catalog columns")

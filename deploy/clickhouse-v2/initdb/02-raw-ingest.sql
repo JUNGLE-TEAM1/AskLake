@@ -1,3 +1,13 @@
+CREATE TABLE IF NOT EXISTS asklake_realtime_v2.connect_state
+(
+    `key` String,
+    minOffset Int64,
+    maxOffset Int64,
+    state String
+)
+ENGINE = KeeperMap('/asklake/realtime-v2/connect-state')
+PRIMARY KEY `key`;
+
 CREATE TABLE IF NOT EXISTS asklake_realtime_v2.raw_events_v2
 (
     scope_id LowCardinality(String) DEFAULT 'deployment',

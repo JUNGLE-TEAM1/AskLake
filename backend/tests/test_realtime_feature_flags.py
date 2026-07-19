@@ -1,7 +1,7 @@
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi import Response
 
@@ -27,6 +27,13 @@ REALTIME_ENV_KEYS = {
     "CLICKHOUSE_REALTIME_CONSUMER_OWNER",
     "KAFKA_CONNECT_URL",
     "KAFKA_CONNECT_CONNECTOR_NAME",
+    "CLICKHOUSE_V2_URL",
+    "CLICKHOUSE_V2_DATABASE",
+    "CLICKHOUSE_V2_MATERIALIZER_USER",
+    "CLICKHOUSE_V2_MATERIALIZER_PASSWORD",
+    "CLICKHOUSE_V2_READER_USER",
+    "CLICKHOUSE_V2_READER_PASSWORD",
+    "CLICKHOUSE_V2_TLS_CA_FILE",
     "LATEST_STATIC_PER_BATCH_ENABLED",
     "STATIC_CHANGE_BACKFILL_ENABLED",
 }
@@ -170,12 +177,18 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             CLICKHOUSE_PASSWORD="never-return-this-clickhouse-secret",
         )
         response = Response()
+        clickhouse = Mock()
+        clickhouse.ping.return_value = True
 
         with (
             patch("app.api.health.settings", configured),
             patch(
                 "app.api.health.RealtimeIngestService.probe",
                 return_value=ConnectorProbe(True, False, "UNREGISTERED", ()),
+            ),
+            patch(
+                "app.api.health.ClickHouseClient.realtime_v2_reader",
+                return_value=clickhouse,
             ),
         ):
             payload = realtime_health_check(response)
@@ -187,17 +200,20 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             payload["v2"],
             {
                 "enabled": True,
-                "ready": False,
-                "status": "degraded",
+                "ready": True,
+                "status": "ready",
                 "consumerOwner": "kafka_connect_v2",
                 "connector": {
                     "enabled": True,
                     "configured": True,
                     "state": "UNREGISTERED",
                     "taskStates": [],
+                    "workerReady": True,
                 },
+                "clickhouse": {"ready": True},
             },
         )
+        clickhouse.close.assert_called_once_with()
         encoded = json.dumps(payload)
         self.assertNotIn("connect.internal", encoded)
         self.assertNotIn("asklake-orders-v2", encoded)

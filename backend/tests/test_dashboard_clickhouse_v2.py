@@ -98,6 +98,7 @@ class DashboardClickHouseV2QueryTests(unittest.TestCase):
         self.assertIn("serving_dataset_id = 'joined'", query)
         self.assertIn("pipeline_version_id = 'pipeline-v7'", query)
         self.assertIn("JSON_VALUE(payload", query)
+        self.assertIn("toFloat64OrNull", query)
         self.assertIn("LIMIT 25", query)
         self.assertNotIn(" FINAL", query)
         self.assertEqual(options["timeout_seconds"], 3)

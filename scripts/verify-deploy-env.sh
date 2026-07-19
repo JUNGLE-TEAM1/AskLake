@@ -336,10 +336,14 @@ if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
     CLICKHOUSE_V2_IMAGE
     CLICKHOUSE_V2_INGEST_PASSWORD
     CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+    CLICKHOUSE_V2_MATERIALIZER_USER
     CLICKHOUSE_V2_MIGRATION_PASSWORD
     CLICKHOUSE_V2_OBSERVER_PASSWORD
     CLICKHOUSE_V2_READER_PASSWORD
+    CLICKHOUSE_V2_READER_USER
+    CLICKHOUSE_V2_URL
     CLICKHOUSE_V2_TLS_CA_FILE
+    CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE
     CLICKHOUSE_V2_TLS_CERT_FILE
     CLICKHOUSE_V2_TLS_KEY_FILE
     COMPOSE_PROFILES
@@ -394,6 +398,22 @@ if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
       exit 1
     }
   done
+  [[ "$(env_value_for CLICKHOUSE_V2_URL)" == "https://clickhouse-v2:8443" ]] || {
+    printf 'error: CLICKHOUSE_V2_URL must be the private https://clickhouse-v2:8443 origin\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_MATERIALIZER_USER)" == "asklake_v2_materializer" ]] || {
+    printf 'error: CLICKHOUSE_V2_MATERIALIZER_USER must use the fixed materializer identity\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_READER_USER)" == "asklake_v2_reader" ]] || {
+    printf 'error: CLICKHOUSE_V2_READER_USER must use the fixed reader identity\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE)" == "/run/secrets/clickhouse-v2-ca.crt" ]] || {
+    printf 'error: CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE must use the fixed backend trust path\n' >&2
+    exit 1
+  }
 
   clickhouse_v2_secrets=(
     "$(env_value_for CLICKHOUSE_V2_ADMIN_PASSWORD)"
@@ -777,6 +797,7 @@ export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED="$kafka_connect_enabled"
 export ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER="$clickhouse_consumer_owner"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL="$(env_value_for KAFKA_CONNECT_URL)"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME="$kafka_connect_connector_name"
+export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE="$(env_value_for CLICKHOUSE_V2_DATABASE)"
 export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE="$(env_value_for CLICKHOUSE_V2_IMAGE)"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE="$(env_value_for KAFKA_CONNECT_V2_IMAGE)"
 
@@ -920,6 +941,16 @@ try:
         == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL"]
         and runtime_service.get("environment", {}).get("KAFKA_CONNECT_CONNECTOR_NAME")
         == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_URL")
+        == "https://clickhouse-v2:8443"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_DATABASE")
+        == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_MATERIALIZER_USER")
+        == "asklake_v2_materializer"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_READER_USER")
+        == "asklake_v2_reader"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_TLS_CA_FILE")
+        == "/run/secrets/clickhouse-v2-ca.crt"
         for runtime_service in backend_runtime_services
     )
     if clickhouse_v2_infra_enabled:
@@ -940,7 +971,17 @@ try:
         }
         backend_networks = set(services["backend"].get("networks", {}))
         redpanda_networks = set(services["redpanda"].get("networks", {}))
+        backend_ca_mounted = all(
+            any(
+                volume.get("target") == "/run/secrets/clickhouse-v2-ca.crt"
+                and volume.get("type") == "bind"
+                and volume.get("read_only") is True
+                for volume in runtime_service.get("volumes", [])
+            )
+            for runtime_service in backend_runtime_services
+        )
         valid = valid and all((
+            backend_ca_mounted,
             clickhouse_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE"],
             kafka_connect_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE"],
             "build" not in kafka_connect_v2,
@@ -1006,6 +1047,7 @@ unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED
 unset ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME
+unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE
 unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE
 

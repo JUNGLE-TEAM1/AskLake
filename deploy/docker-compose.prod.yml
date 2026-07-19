@@ -79,7 +79,6 @@ services:
       interval: 15s
       timeout: 10s
       retries: 20
-
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
@@ -102,7 +101,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
   frontend:
     build:
       context: ../frontend
@@ -123,7 +121,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
   backend:
     build:
       context: ../backend
@@ -212,7 +209,7 @@ services:
       ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS:-30}
       AIRFLOW_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:?AIRFLOW_EXECUTION_API_TOKEN is required}
       AIRFLOW_INTERNAL_TOKEN: ${AIRFLOW_INTERNAL_TOKEN:?AIRFLOW_INTERNAL_TOKEN is required}
-      TRINO_ENABLED: ${TRINO_ENABLED:-false}
+      TRINO_ENABLED: ${TRINO_ENABLED:-true}
       TRINO_BASE_URL: ${TRINO_BASE_URL:-https://trino:8443}
       TRINO_CATALOG: ${TRINO_CATALOG:-iceberg}
       TRINO_SCHEMA: ${TRINO_SCHEMA:-asklake}
@@ -261,9 +258,9 @@ services:
       ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS: ${ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS:-8000}
       ASKLAKE_REPLAY_INPUT_DIR: ${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}
       CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS: ${CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS:-1}
-      DASHBOARD_SYNC_MODE: ${DASHBOARD_SYNC_MODE:-polling}
-      REALTIME_EVENTS_ENABLED: ${REALTIME_EVENTS_ENABLED:-false}
-      CONTINUOUS_SQL_JOIN_ENABLED: ${CONTINUOUS_SQL_JOIN_ENABLED:-false}
+      DASHBOARD_SYNC_MODE: ${DASHBOARD_SYNC_MODE:-sse}
+      REALTIME_EVENTS_ENABLED: ${REALTIME_EVENTS_ENABLED:-true}
+      CONTINUOUS_SQL_JOIN_ENABLED: ${CONTINUOUS_SQL_JOIN_ENABLED:-true}
       LATEST_STATIC_PER_BATCH_ENABLED: ${LATEST_STATIC_PER_BATCH_ENABLED:-false}
       STATIC_CHANGE_BACKFILL_ENABLED: ${STATIC_CHANGE_BACKFILL_ENABLED:-false}
       CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS: ${CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS:-100000}
@@ -277,11 +274,19 @@ services:
       CLICKHOUSE_QUERY_TIMEOUT_SECONDS: ${CLICKHOUSE_QUERY_TIMEOUT_SECONDS:-60}
       CLICKHOUSE_STATIC_LOAD_MAX_ROWS: ${CLICKHOUSE_STATIC_LOAD_MAX_ROWS:-15000000}
       CLICKHOUSE_INSERT_BATCH_ROWS: ${CLICKHOUSE_INSERT_BATCH_ROWS:-20000}
-      CLICKHOUSE_REALTIME_V2_ENABLED: ${CLICKHOUSE_REALTIME_V2_ENABLED:-false}
-      KAFKA_CONNECT_SINK_ENABLED: ${KAFKA_CONNECT_SINK_ENABLED:-false}
-      CLICKHOUSE_REALTIME_CONSUMER_OWNER: ${CLICKHOUSE_REALTIME_CONSUMER_OWNER:-disabled}
-      KAFKA_CONNECT_URL: ${KAFKA_CONNECT_URL:-}
+      CLICKHOUSE_REALTIME_V2_ENABLED: ${CLICKHOUSE_REALTIME_V2_ENABLED:-true}
+      KAFKA_CONNECT_SINK_ENABLED: ${KAFKA_CONNECT_SINK_ENABLED:-true}
+      CLICKHOUSE_REALTIME_CONSUMER_OWNER: ${CLICKHOUSE_REALTIME_CONSUMER_OWNER:-kafka_connect_v2}
+      KAFKA_CONNECT_URL: ${KAFKA_CONNECT_URL-http://kafka-connect-v2:8083}
       KAFKA_CONNECT_CONNECTOR_NAME: ${KAFKA_CONNECT_CONNECTOR_NAME:-asklake-clickhouse-realtime-v2}
+      CLICKHOUSE_V2_URL: ${CLICKHOUSE_V2_URL:-https://clickhouse-v2:8443}
+      CLICKHOUSE_V2_DATABASE: ${CLICKHOUSE_V2_DATABASE:-asklake_realtime_v2}
+      CLICKHOUSE_V2_MATERIALIZER_USER: ${CLICKHOUSE_V2_MATERIALIZER_USER:-asklake_v2_materializer}
+      CLICKHOUSE_V2_MATERIALIZER_PASSWORD: ${CLICKHOUSE_V2_MATERIALIZER_PASSWORD:-}
+      CLICKHOUSE_V2_READER_USER: ${CLICKHOUSE_V2_READER_USER:-asklake_v2_reader}
+      CLICKHOUSE_V2_READER_PASSWORD: ${CLICKHOUSE_V2_READER_PASSWORD:-}
+      CLICKHOUSE_V2_TLS_CA_FILE: ${CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE:-/run/secrets/clickhouse-v2-ca.crt}
+      CLICKHOUSE_REALTIME_V2_BATCH_MAX_POSITIONS: ${CLICKHOUSE_REALTIME_V2_BATCH_MAX_POSITIONS:-10000}
       REALTIME_EVENT_RETENTION_SECONDS: ${REALTIME_EVENT_RETENTION_SECONDS:-86400}
       REALTIME_EVENT_PAYLOAD_MAX_BYTES: ${REALTIME_EVENT_PAYLOAD_MAX_BYTES:-8192}
       REALTIME_REPLAY_LIMIT: ${REALTIME_REPLAY_LIMIT:-500}
@@ -357,6 +362,7 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/review-text-models:/var/lib/asklake/review-text-models:ro
       - ${ASKLAKE_REPLAY_HOST_INPUT_DIR:-/var/lib/asklake/replay-input}:${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}:ro
       - ${TRINO_TLS_CA_FILE:-/dev/null}:${TRINO_TLS_CA_CONTAINER_FILE:-/run/secrets/trino-ca.pem}:ro
+      - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:${CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE:-/run/secrets/clickhouse-v2-ca.crt}:ro
     networks:
       - default
       - clickhouse_v2_internal
@@ -401,7 +407,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-
   continuous-worker:
     extends:
       service: backend
@@ -411,7 +416,6 @@ services:
       STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
     healthcheck:
       disable: true
-
   ai-server:
     build:
       context: ../ai-server
@@ -441,7 +445,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
   embedding-worker:
     build:
       context: ../embedding-worker
@@ -475,7 +478,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
-
   rag-artifact-cleanup:
     extends:
       service: backend
@@ -483,7 +485,6 @@ services:
     command: ["python", "scripts/cleanup-rag-artifacts.py", "--apply", "--loop"]
     healthcheck:
       disable: true
-
   aws-s3-readiness:
     build:
       context: ../backend
@@ -495,7 +496,6 @@ services:
       ASKLAKE_S3_READINESS_READ_BUCKETS: ${ASKLAKE_S3_READINESS_READ_BUCKETS:?ASKLAKE_S3_READINESS_READ_BUCKETS is required}
       ASKLAKE_S3_READINESS_WRITE_BUCKETS: ${ASKLAKE_S3_READINESS_WRITE_BUCKETS:?ASKLAKE_S3_READINESS_WRITE_BUCKETS is required}
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-
   spark-runtime-guard:
     <<: *spark-runtime
     restart: unless-stopped
@@ -523,7 +523,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 5s
-
   spark-master:
     <<: *spark-runtime
     restart: unless-stopped

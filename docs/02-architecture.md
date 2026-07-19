@@ -314,7 +314,7 @@ Frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query 
 
 프로필/관리 화면은 Phase 0 기준에서 별도 Identity/Admin resource로 취급한다. 프로필 페이지는 `GET /api/users/me`로 현재 actor의 표시 프로필, role, group, 권한 요약을 읽고, 관리 페이지는 `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs` API를 사용한다. 로그인/회원가입은 `/api/auth/login`, `/api/auth/signup`, `/api/auth/session`, `/api/auth/logout`의 로컬 session API로 제공하며, backend는 httpOnly `asklake_session` 쿠키를 actor context로 변환한다. 기존 smoke와 수동 검증 호환을 위해 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback을 유지한다. 이 header fallback은 로컬/검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client가 보낸 header만으로 admin actor를 허용하면 안 된다. 프론트는 `/login`의 로그인/회원가입 화면만 공개 route로 취급하고, 그 외 앱 route는 `/api/auth/session` 확인 전에는 앱 shell을 렌더링하지 않는다. 세션이 없으면 직접 URL 진입도 `/login`으로 대체하며, 로그인 후에만 사이드바/상단바와 업무 화면을 표시한다. `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔은 사용자 탭에서 user 차단/해제, 그룹 탭에서 group 차단/해제, 권한 탭에서 permission grant 추가/수정/삭제와 resource lock/unlock을 지원한다. 초기 hydrate는 users, groups, permissions, governance, audit 요청을 section별 settled 상태로 소유한다. 한 endpoint가 실패해도 성공한 section과 metric을 유지하고 실패한 metric은 `0`이 아닌 미확인 상태로 표시하며, 해당 탭의 안전한 렌더링에 필요한 dependency가 모두 성공한 경우에만 관리 action을 노출한다. 모든 endpoint가 `403`일 때만 화면 전체를 관리자 권한 오류로 처리한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며, 일반 사용자-facing 메시지에는 노출하지 않는다. ETL Job의 owner 권한은 backend fallback으로 계산하고 table grant로 저장하지 않는다. 이전 payload의 `permissionRoles`는 최초 권한 조회 시 `legacy_permission_roles` source의 table grant로 한 번만 이관한다. 서버 감사 로그는 `audit_events` table에 저장하며, admin permission grant 생성/수정/삭제, governance control 변경, auth login/logout/login 실패, Dataset/Job/Dashboard의 직접 접근 또는 실행 403 이벤트를 저장한다. 감사 대상 타입의 단일 계약은 `app.domain.audit.AuditTargetType`이 소유하고 저장 정규화, 조회 필터, admin 응답 스키마가 이 계약을 공유한다. 계약 밖의 저장값은 읽기 경계에서 `unknown`으로 투영하고 `metadata.rawTargetType`에 원본을 보존하므로 한 레거시 행이 전체 관리자 조회를 실패시키지 않는다. `/api/admin/audit-logs`는 actor/resource/result/text/date/limit 필터로 조회한다. Topbar 최근 API 호출 로그는 frontend local/localStorage 상태로 유지하며 서버 감사 로그와 합치지 않는다.
 
-Production startup은 기본적으로 알려진 legacy demo 계정(`admin.user@asklake.local`, `demo.user@asklake.local`)을 `disabled`로 만들고 기존 세션을 폐기한다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시할 수 있으며, deploy preflight는 두 값의 lowercase boolean 및 일치를 강제한다. 이 opt-in은 이전 배포에서 `disabled`가 된 demo 계정을 startup 시 `active`로 복구하지만 폐기된 세션은 되살리지 않으므로 다시 로그인해야 한다. 플래그가 없거나 `false`이면 기본 차단으로 돌아가며, bootstrap admin 요구사항과 client header fallback 차단은 항상 유지한다.
+Production startup은 `auth_users.status`를 계정 활성 상태의 source of truth로 취급하며 재배포만으로 기존 legacy demo 계정(`admin.user@asklake.local`, `demo.user@asklake.local`)이나 세션을 변경하지 않는다. `AUTH_LEGACY_DEMO_USERS_ENABLED=false` 또는 미설정이면 누락된 demo identity를 생성하거나 기존 `disabled`를 복구하지 않고 bootstrap admin만 보장한다. 공개 demo 배포에서 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 명시하면 누락 계정을 만들고 기존 demo 계정을 `active`로 동기화하며 frontend도 로그인 안내를 표시한다. deploy preflight는 두 값의 lowercase boolean 및 일치를 강제한다. 계정 차단·해제는 DB를 쓰는 명시적 관리 작업이 소유하고, bootstrap admin 요구사항과 client header fallback 차단은 항상 유지한다.
 
 세션 쿠키의 `Secure` 속성은 운영 환경에서 기본 활성화된다. HTTPS 인증서가 아직 없는 제한된 dev HTTP ALB만 `AUTH_SESSION_COOKIE_SECURE=false`를 명시해 로그인 세션을 유지할 수 있으며, 이 예외는 header-auth fallback, public signup, legacy demo 계정을 활성화하지 않는다. HTTPS 전환 시 해당 override를 제거하거나 `true`로 복구한다.
 
@@ -546,7 +546,7 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 ## 14) Realtime 2026 전환 아키텍처
 
-Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. STACK-02에서 Dashboard SSE 경로까지 구현됐고 운영 기본값은 계속 polling/disabled다.
+Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. Production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE 경로를 기본 활성화하고, 같은 generation의 중복 소비를 막기 위해 Kafka Engine V1은 비활성화한다.
 
 ```text
 Spark/Iceberg commit
@@ -565,7 +565,7 @@ Spark/Iceberg commit
 - 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
 - Dataset revision과 `dataset.revision.committed`, Dashboard published revision과 `dashboard.published`는 각각 같은 transaction에서 기록한다. event insert 실패 시 canonical 변경도 rollback한다.
 - frontend는 Dataset별 최고 revision만 coalesce하고 affected widget REST endpoint만 재조회한다. Dashboard publish와 resync는 snapshot을 다시 읽으며 offline/stream 장애에서는 adaptive polling으로 복귀한다.
-- DASHBOARD_SYNC_MODE 기본값은 polling이다. REALTIME_EVENTS_ENABLED=false이면 hybrid/sse 설정도 polling으로 fail closed한다.
+- Production Compose의 DASHBOARD_SYNC_MODE 기본값은 `sse`이고 REALTIME_EVENTS_ENABLED 기본값은 `true`다. event backbone이 비활성화되거나 연결이 실패하면 기존 adaptive polling으로 fail closed한다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
 - 새 Continuous SQL request의 `triggerIntervalSeconds` 기본값은 5초다. 이는 micro-batch 시작 주기이며, 실제 end-to-end 반영 시간은 Spark JOIN, Iceberg commit, exact Trino 검증, Catalog/Dashboard publication 시간을 더한 값이다. 기존 Job은 DB에 저장된 주기를 유지하고 일반 Kafka Continuous Job의 기본값은 바꾸지 않는다.
@@ -697,11 +697,11 @@ ClickHouse serving commit
 - 현재 저장소에는 tenant model이 없으므로 V2도 `scope_id="deployment"`와 기존 resource ACL을 사용한다. tenant isolation은 별도 foundation 없이 암묵적으로 추가하지 않는다.
 - `streaming_required` SQL은 이 프로그램에서 분류만 하고 자동 배포하지 않는다. 현재 Spark V1이 stream-stream/window/retraction을 지원한다고 간주하지 않는다.
 
-### PR02 기반시설 경계
+### ClickHouse Realtime V2 운영 경계
 
-PR02는 기존 V1 옆에 기본 비활성 `clickhouse-realtime-v2` Compose profile을 추가한다. 이 profile은 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 기동한다. local은 loopback HTTP 포트로 개발하고 production Compose는 ClickHouse final server를 HTTPS 8443/secure native 9440으로 제한하며 Connect worker에 CA를 mount한다. 실제 connector endpoint/TLS 설정과 등록은 PR03 범위다. 현재 단일 Keeper/ClickHouse/Connect topology는 demo/staging이며 HA가 아니다.
+Production Compose는 exact digest로 고정한 ClickHouse 26.3.17.4 LTS, 단일 Keeper와 공식 ClickHouse Sink plugin이 설치된 Kafka Connect worker를 `clickhouse-realtime-v2` 기본 profile로 기동한다. local root Compose에서는 명시적으로 profile을 선택한다. Production ClickHouse final server는 HTTPS 8443, secure native 9440, interserver HTTPS 9010만 사용하고 Connect entrypoint는 같은 CA로 JVM PKCS12 truststore를 만든 뒤 strict JDBC TLS를 사용한다. 현재 단일 Keeper/ClickHouse/Connect topology는 사용 가능한 단일 EC2 배포 형태지만 HA는 아니다.
 
-Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`을 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. 다만 PR02에는 실제 consumer adapter가 없으므로 이 guard를 claim 직전에 호출하고 connector를 등록하는 책임은 PR03에 있다. `/api/health/realtime`의 `v2.ready`는 configuration-only 기반 단계에서 항상 `false`이고, V2 flag를 켜면 live probe가 추가될 때까지 endpoint 전체가 HTTP 503으로 fail closed한다.
+Backend는 `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER`, `KAFKA_CONNECT_URL`, `KAFKA_CONNECT_CONNECTOR_NAME`과 V2 전용 URL·database·materializer/reader credential·CA 경로를 검증한다. V1/V2 flag와 owner 조합이 모순되면 startup에서 실패하며 Job generation별 claim guard도 제공한다. Continuous SQL ClickHouse Job을 시작하면 pinned Iceberg dimension을 적재하고, 토픽 단위 connector를 자동 등록·재개한 뒤 raw receipt/checkpoint, JOIN materialization, Catalog revision과 SSE event를 순서대로 발행한다. `/api/health/realtime`은 worker plugin과 V2 reader 연결을 확인하므로 아직 Job connector가 하나도 없는 fresh deployment도 준비 상태가 될 수 있고, 개별 connector task 장애는 Job reconcile에서 재시작한다.
 
 Alembic `0016_clickhouse_realtime_v2_foundation`은 최신 `0015_ai_generation_evidence_audit` 다음에 pipeline/version/deployment/checkpoint/materialization/receipt/exception/dimension/unmatched/routing 10개 table만 expand한다. 기존 `dataset_freshness`, `dataset_revision_commits`, `realtime_event_log` publication table은 PR06 전까지 변경하지 않는다. 상세 image provenance, account, migration과 rollback 명령은 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.
 
