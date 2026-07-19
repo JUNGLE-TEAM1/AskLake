@@ -104,6 +104,7 @@ try {
   const environment = {
     ...process.env,
     APP_ENV: "production",
+    ASKLAKE_OBJECT_STORAGE_PROVIDER: "aws",
     ASKLAKE_CONTINUOUS_MAINTENANCE_TIMEOUT_MS: "5000",
     ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL: "ERROR",
     ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS: "3",
@@ -183,6 +184,16 @@ try {
   );
   assert(firstContinuousSubmission);
   assert.equal(firstContinuousSubmission.sparkProperties["spark.sql.shuffle.partitions"], "3");
+  assert.equal(
+    firstContinuousSubmission.sparkProperties["spark.hadoop.mapreduce.outputcommitter.factory.scheme.s3a"],
+    "org.apache.hadoop.fs.s3a.commit.S3ACommitterFactory",
+  );
+  assert.equal(firstContinuousSubmission.sparkProperties["spark.hadoop.fs.s3a.committer.name"], "magic");
+  assert.equal(firstContinuousSubmission.sparkProperties["spark.hadoop.fs.s3a.committer.magic.enabled"], "true");
+  assert.equal(
+    firstContinuousSubmission.sparkProperties["spark.hadoop.fs.s3a.committer.magic.track.commits.in.memory.enabled"],
+    "true",
+  );
   assert.equal(
     firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS,
     "3",

@@ -813,6 +813,8 @@ kubectl -n "$ASKLAKE_K8S_NAMESPACE" auth can-i create sparkapplications.sparkope
 
 작은 Kafka Continuous micro-batch는 일반 batch workload와 별도로 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS`(기본 4)와 `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL`(기본 `WARN`)을 사용한다. 기존 checkpoint의 `OffsetSeqMetadata`가 과거 shuffle 값을 복원하더라도 worker는 각 `foreachBatch` 시작에서 Continuous 값을 다시 적용한다. Catalog ACK가 전진할 때 worker는 전체 manifest 이력을 다시 스캔하지 않고 메모리의 bounded publication window를 이동한 뒤 부족한 다음 구간만 한 번에 읽는다. 이 설정은 오래 실행된 stream에서 ACK 처리 비용이 누적 batch 수에 비례해 증가하는 것을 막는다.
 
+AWS S3를 사용하는 Kafka Continuous Spark REST 제출은 S3A committer factory와 `magic` committer를 명시하고 작은 micro-batch의 commit 목록은 메모리에서 추적한다. Amazon S3에서 기본 `file` committer의 rename/copy 비용을 반복하지 않도록 하는 설정이며, MinIO 호환 경로는 기존 committer를 유지한다. `backend`, `continuous-worker`, `spark-worker`는 반드시 같은 `ASKLAKE_HOST_DATA_DIR/spark-runs`를 mount해야 하며, partial recreate 뒤 running container의 mount source가 Compose render와 다르면 worker report가 PostgreSQL에 반영되지 않는다.
+
 ```bash
 cd backend
 ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true \

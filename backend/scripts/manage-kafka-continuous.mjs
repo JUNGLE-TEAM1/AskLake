@@ -55,6 +55,13 @@ const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backe
 const network = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
 const image = process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1";
 const masterUrl = process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077";
+const AWS_S3A_COMMITTER_SPARK_PROPERTIES = Object.freeze({
+  "spark.hadoop.fs.s3a.committer.magic.enabled": "true",
+  "spark.hadoop.fs.s3a.committer.magic.track.commits.in.memory.enabled": "true",
+  "spark.hadoop.fs.s3a.committer.name": "magic",
+  "spark.hadoop.mapreduce.outputcommitter.factory.scheme.s3a":
+    "org.apache.hadoop.fs.s3a.commit.S3ACommitterFactory",
+});
 if (isEntrypoint()) {
   try {
     const result = await manage(readPayload());
@@ -113,6 +120,10 @@ function continuousExecutionMode() {
     throw new Error("Development Docker continuous execution requires ASKLAKE_SPARK_RUNNER=docker.");
   }
   return mode;
+}
+
+function continuousS3aCommitterSparkProperties() {
+  return isMinioProvider() ? {} : AWS_S3A_COMMITTER_SPARK_PROPERTIES;
 }
 
 async function startWorkerKubernetes(request, containerName) {
@@ -311,6 +322,7 @@ async function startWorkerRest(request, containerName) {
     scriptPath: runtime.scriptPath,
     sparkProperties: {
       "spark.sql.streaming.stopGracefullyOnShutdown": "true",
+      ...continuousS3aCommitterSparkProperties(),
     },
   }, {
     ...process.env,
