@@ -1085,6 +1085,30 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             self.assertEqual(run.failed_stage, "Airflow submission")
             self.assertEqual(run.task_states["airflowReservation"]["missingCount"], 3)
 
+    def test_fast_airflow_404_polling_does_not_fail_a_fresh_reservation(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-EVENTUAL"
+        run_id = "RUN-SQLITE-AIRFLOW-EVENTUAL"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        missing = ApiError(
+            "AIRFLOW_API_ERROR",
+            "Airflow DAG Run was not found",
+            502,
+            {"airflowStatus": 404},
+        )
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            record_airflow_sync_error(run, missing, "2026-07-12T11:00:02Z")
+            record_airflow_sync_error(run, missing, "2026-07-12T11:00:04Z")
+            record_airflow_sync_error(run, missing, "2026-07-12T11:00:06Z")
+
+            self.assertEqual(run.status, "queued")
+            self.assertEqual(
+                run.task_states["airflowReservation"]["missingCount"],
+                3,
+            )
+
     def test_airflow_submit_finalization_preserves_worker_completion(self) -> None:
         job_id = "JOB-SQLITE-AIRFLOW-WORKER-WINS"
         self.insert_job(job_id)
