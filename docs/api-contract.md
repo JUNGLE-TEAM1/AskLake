@@ -1867,7 +1867,7 @@ type CatalogDatasetResponse = {
 };
 ```
 
-`queryEngineTable`은 `queryEngineStatus=available`일 때만 응답한다. `queryEngineRequired`는 현재 API runtime이 Trino physical mapping을 요구하는지 나타내며 `TRINO_ENABLED`와 같다. SQL 결과 Dataset 생성은 Catalog `pending` 저장, Iceberg CTAS, `DESCRIBE` 물리 확인, `available` 전환 순서로 처리하며 사용자가 physical mapping을 입력하지 않는다. CTAS continuation은 `trino-result-collector`가 처리하고 materialization GET은 persisted state만 읽는다. CTAS는 성공했지만 확인이 실패하면 `registration_failed`와 안전한 오류 코드만 남기고 mapping을 제거하며, terminal run GET은 같은 table 확인만 안전하게 재시도할 수 있다. `TRINO_ENABLED=true`에서는 `available` mapping이 없는 Dataset의 `permissions.canQuery`를 false로 응답하고 backend compiler도 동일 Dataset을 `422 VALIDATION_ERROR`로 차단한다.
+`queryEngineTable`은 `queryEngineStatus=available`일 때만 응답한다. `queryEngineRequired`는 현재 API runtime이 해당 Dataset에 Trino physical mapping을 요구하는지 나타낸다. `storageFormat=clickhouse` Dataset은 Trino mapping을 요구하지 않으며 V2 reader로 실제 행을 조회하므로 `TRINO_ENABLED=true`여도 이 조건만으로 `permissions.canQuery`를 false로 만들지 않는다. SQL 결과 Dataset 생성은 Catalog `pending` 저장, Iceberg CTAS, `DESCRIBE` 물리 확인, `available` 전환 순서로 처리하며 사용자가 physical mapping을 입력하지 않는다. CTAS continuation은 `trino-result-collector`가 처리하고 materialization GET은 persisted state만 읽는다. CTAS는 성공했지만 확인이 실패하면 `registration_failed`와 안전한 오류 코드만 남기고 mapping을 제거하며, terminal run GET은 같은 table 확인만 안전하게 재시도할 수 있다. 그 외 Dataset은 `TRINO_ENABLED=true`에서 `available` mapping이 없으면 `permissions.canQuery`를 false로 응답하고 backend compiler도 동일 Dataset을 `422 VALIDATION_ERROR`로 차단한다.
 
 Materialization 제출과 조회는 source run submitter ID 또는 admin 여부뿐 아니라 base/reference Dataset의 현재 `query` grant, user/group block, resource lock을 다시 검사합니다. 저장된 user ID가 있는 run은 동일 display name으로 소유권을 우회할 수 없고 ID 없는 legacy run에만 name fallback을 허용합니다.
 

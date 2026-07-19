@@ -699,15 +699,19 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
+    query_engine_required = (
+        settings.trino_enabled
+        and str(dataset.storage_format or "").strip().casefold() != "clickhouse"
+    )
     if (
         permissions is not None
-        and settings.trino_enabled
+        and query_engine_required
         and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
     ):
         permissions = permissions.model_copy(update={"can_query": False})
     return dataset.model_copy(update={
         "permissions": permissions,
-        "query_engine_required": settings.trino_enabled,
+        "query_engine_required": query_engine_required,
     })
 
 

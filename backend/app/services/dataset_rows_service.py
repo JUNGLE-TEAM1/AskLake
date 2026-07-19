@@ -141,7 +141,7 @@ def read_clickhouse_dataset_rows(
             "Catalog ClickHouse dataset schema is unavailable",
             {"datasetId": dataset.id},
         )
-    resolved_client = client or ClickHouseClient()
+    resolved_client = client or ClickHouseClient.realtime_v2_reader()
     owns_client = client is None
     projection = ", ".join(quote_clickhouse_identifier(item) for item in columns)
     try:
