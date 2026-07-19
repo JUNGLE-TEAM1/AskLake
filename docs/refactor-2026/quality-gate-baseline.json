@@ -4,10 +4,10 @@
       "expiresAt": "2026-08-31",
       "id": "pair1-dev-runtime-integration-2026-07-18",
       "oversizedFiles": {
-        "backend/app/repositories/etl_repository.py": 1136,
+        "backend/app/repositories/etl_repository.py": 1144,
         "backend/app/services/catalog_service.py": 1239,
-        "backend/app/services/dashboard_runtime_service.py": 1180,
-        "backend/app/services/etl_service.py": 2271,
+        "backend/app/services/dashboard_runtime_service.py": 1192,
+        "backend/app/services/etl_service.py": 2276,
         "backend/scripts/run_eks_day17_hpa_race.py": 1303,
         "backend/scripts/runtime/spark_job_runtime.py": 1772,
         "backend/src/sparkRunner.mjs": 1641
@@ -43,7 +43,7 @@
         "backend/scripts/verify_eks_phase5_bounded_evidence.py::main": 129
       },
       "owner": "data-platform",
-      "reason": "Temporary exact ceilings for the current dev runtime recovery, pair1 EKS execution-contract integration, and issue #926 Spark read/action optimization. Split the listed files and functions before expiry; any further growth remains blocked."
+      "reason": "Temporary exact ceilings for the pair1 EKS execution-contract work and the merged dev Catalog deletion, ClickHouse binding-epoch, Kafka V2, and Spark runtime changes. Split the listed files and functions before expiry; any further growth remains blocked."
     }
   ],
   "fileLimit": 1000,

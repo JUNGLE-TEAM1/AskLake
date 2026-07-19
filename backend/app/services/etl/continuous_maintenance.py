@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 RUNTIME_NAMES = {
+    'AuditTargetType',
     'ApiError',
     'ContinuousQuarantineResponse',
     'ContinuousWorkerLogsResponse',
@@ -10,6 +11,7 @@ RUNTIME_NAMES = {
     'IcebergWriterError',
     'IcebergWriterService',
     'IcebergWriterTarget',
+    'clickhouse_kafka_ingest_v2_enabled',
     'UTC',
     'ValueError',
     'apply_continuous_replay_runtime_counters',
@@ -49,9 +51,11 @@ RUNTIME_NAMES = {
     'require_no_active_continuous_maintenance',
     'reversed',
     'run_kafka_continuous_maintenance',
+    'run_clickhouse_kafka_ingest_v2',
     'run_kafka_continuous_worker',
     'run_node_bridge',
     'safe_record_audit_event',
+    'settings',
     'spark_rest_mode_enabled',
     'stable_id',
     'status',
@@ -66,6 +70,14 @@ def run_kafka_continuous_worker(
     action: str,
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if clickhouse_kafka_ingest_v2_enabled(job, settings):
+        return run_clickhouse_kafka_ingest_v2(
+            job,
+            runtime,
+            action,
+            options,
+            runtime_settings=settings,
+        )
     config = job.continuous_config or {}
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
@@ -415,7 +427,7 @@ def record_continuous_replay_override_audit(
         status_code=status.HTTP_200_OK if result == "success" else status.HTTP_502_BAD_GATEWAY,
         target_id=job.id,
         target_name=job.name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
 
 

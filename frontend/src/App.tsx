@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import { wizardFlows } from "./data/appShellData";
+import { navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
@@ -46,6 +46,11 @@ function isContinuousKafkaDraft(draft: DraftPipeline) {
 }
 const emptyDatasetId = "dataset_not_selected";
 const emptyJobId = "JOB-NONE";
+const topbarNavIdByFlow: Partial<Record<FlowId, NavId>> = {
+  catalog: "catalog",
+  jobs: "ingest",
+  sql: "sql",
+};
 
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
@@ -66,6 +71,13 @@ type FlowPathContext = {
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
 };
+
+function resolveTopbarSection(flow: FlowId, dashboardEntry: DashboardEntry) {
+  const navId = flow === "dashboard" && dashboardEntry.view === "list"
+    ? "dashboard"
+    : topbarNavIdByFlow[flow];
+  return navItems.find((item) => item.id === navId) ?? null;
+}
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
 const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
@@ -255,7 +267,8 @@ export function App() {
     catalogError,
     catalogLoading,
     createPipeline,
-    dataRequirements,
+    dataRequirements, datasetDeletionPendingById,
+    deleteDataset, loadDatasetDeletionImpact,
     deleteMaterializationRun,
     datasets,
     draftPipeline,
@@ -299,7 +312,7 @@ export function App() {
   const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
   const selectedJobCatalogDataset = datasets.find((dataset) => dataset.name === selectedJob.target);
   const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns";
-  const requiresSelectedDataset = activeFlow === "catalogDetail" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const requiresSelectedDataset = activeFlow === "catalogDetail";
   const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
   const sqlInitialDataset = useMemo(
     () => sqlInitialDatasetId
@@ -568,7 +581,7 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar />
+        <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
@@ -607,7 +620,7 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => completeWizardFlowAndMove("target", "review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => completeWizardFlowAndMove("permission", "target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={catalogError} loading={catalogLoading} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasetDeletionPendingById={datasetDeletionPendingById} datasets={datasets} error={catalogError} loading={catalogLoading} onDeleteDataset={deleteDataset} onLoadDeletionImpact={loadDatasetDeletionImpact} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} currentUser={currentUser} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}

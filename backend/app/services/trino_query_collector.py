@@ -7,6 +7,7 @@ from time import monotonic
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.trino import TrinoClientPage, TrinoQueryRunResponse
@@ -255,5 +256,5 @@ class TrinoQueryCollectorService:
             },
             result="success" if response.status == "succeeded" else "failed",
             target_id=response.run_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )

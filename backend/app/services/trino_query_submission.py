@@ -7,6 +7,7 @@ from fastapi import status
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
@@ -320,7 +321,7 @@ class TrinoQuerySubmissionService:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             target_id=failed.base_dataset_id,
             target_name=prepared.context_datasets[0].name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
 
     def _record_submission(
@@ -340,7 +341,7 @@ class TrinoQuerySubmissionService:
             status_code=status.HTTP_202_ACCEPTED,
             target_id=request.base_dataset_id,
             target_name=prepared.context_datasets[0].name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
 
     def _require_enabled(self) -> None:

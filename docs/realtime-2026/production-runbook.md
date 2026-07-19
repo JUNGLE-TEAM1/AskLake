@@ -1,25 +1,46 @@
 # Realtime production runbook
 
-## 운영 기본값
+## 운영 기본값과 rollback
 
-production 최초 배포와 모든 비상 rollback의 기본값은 polling/disabled다.
+production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE Dashboard 경로를 기본 활성화하고 Kafka Engine V1을 비활성화한다.
+
+```dotenv
+COMPOSE_PROFILES=trino,clickhouse-realtime-v2
+TRINO_ENABLED=true
+DASHBOARD_SYNC_MODE=sse
+REALTIME_EVENTS_ENABLED=true
+CONTINUOUS_SQL_JOIN_ENABLED=true
+CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false
+CLICKHOUSE_REALTIME_V2_ENABLED=true
+KAFKA_CONNECT_SINK_ENABLED=true
+CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2
+KAFKA_CONNECT_URL=http://kafka-connect-v2:8083
+```
+
+비상 rollback은 다음 값으로 수행한다.
 
 ```dotenv
 DASHBOARD_SYNC_MODE=polling
 REALTIME_EVENTS_ENABLED=false
 CONTINUOUS_SQL_JOIN_ENABLED=false
+CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false
+CLICKHOUSE_REALTIME_V2_ENABLED=false
+KAFKA_CONNECT_SINK_ENABLED=false
+CLICKHOUSE_REALTIME_CONSUMER_OWNER=disabled
 LATEST_STATIC_PER_BATCH_ENABLED=false
 STATIC_CHANGE_BACKFILL_ENABLED=false
 ```
 
-활성화는 [runbooks/canary-rollout.md](runbooks/canary-rollout.md)를 통과한 환경에서만 수행한다.
+rollback 시 `COMPOSE_PROFILES`에서 `clickhouse-realtime-v2`를 제거하며, 실행 중인 generation을 V1 consumer owner로 자동 전환하지 않는다.
+
+정상 사용 흐름은 `Source에서 Kafka 수집 시작 → Continuous SQL에서 servingMode=clickhouse Job 생성·시작 → 자동 connector 등록 → raw receipt/checkpoint → pinned dimension JOIN → Catalog revision/SSE → Dashboard targeted refetch`다. 운영자가 Keeper, ClickHouse, Kafka Connect와 JOIN worker를 Job마다 수동으로 기동하지 않는다.
 
 ## 상태 확인
 
 | 대상 | 확인 경로 | 정상 신호 |
 |---|---|---|
 | API/DB | `GET /api/health` | HTTP 200, DB ready |
-| realtime | `GET /api/health/realtime` | enabled일 때 dispatcher/listener ready |
+| realtime | `GET /api/health/realtime` | dispatcher/listener, Kafka Connect plugin과 V2 reader ready |
 | cursor/capacity | `GET /api/realtime/status` | cursor 전진, bounded connection/queue, 설명 가능한 error count |
 | config | `GET /api/realtime/config` | 요청한 flag와 effective mode 일치 |
 | Continuous SQL | `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{id}` | desired/observed state 수렴, generation/plan hash 유지 |

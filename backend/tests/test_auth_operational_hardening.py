@@ -53,7 +53,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
-    def test_legacy_demo_accounts_are_disabled_and_sessions_revoked(self) -> None:
+    def test_production_startup_preserves_existing_legacy_account_status_and_sessions(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
@@ -61,6 +61,10 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None
             session = local_service.create_session(admin)
+            viewer = self.db.get(AuthUserModel, "demo-user")
+            assert viewer is not None
+            viewer.status = "disabled"
+            self.db.commit()
 
         production = SimpleNamespace(
             allows_header_auth_fallback=False,
@@ -70,17 +74,28 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         )
         with patch.object(auth_service, "settings", production):
             initialize_auth(self.db)
-
-        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
-        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "disabled")
-        self.assertIsNone(self.db.get(AuthSessionModel, str(session["token"])))
-
-        with (
-            patch.object(auth_service, "settings", production),
-            patch.object(self.db, "commit", wraps=self.db.commit) as commit,
-        ):
             initialize_auth(self.db)
-        commit.assert_not_called()
+
+        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "active")
+        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "disabled")
+        self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
+
+    def test_production_startup_does_not_seed_legacy_demo_accounts_without_opt_in(self) -> None:
+        production = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            bootstrap_admin_display_name="Production Owner",
+        )
+        with patch.object(auth_service, "settings", production):
+            initialize_auth(self.db)
+
+        self.assertIsNone(self.db.get(AuthUserModel, "admin-user"))
+        self.assertIsNone(self.db.get(AuthUserModel, "demo-user"))
+        bootstrap = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "owner@example.com"))
+        assert bootstrap is not None
+        self.assertEqual(bootstrap.role, "admin")
+        self.assertEqual(bootstrap.status, "active")
 
     def test_production_demo_opt_in_preserves_active_accounts_and_sessions_across_restart(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
@@ -105,7 +120,7 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "active")
         self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
 
-    def test_production_demo_opt_in_preserves_an_explicitly_disabled_account(self) -> None:
+    def test_production_demo_opt_in_reactivates_accounts_disabled_by_a_previous_deploy(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
@@ -124,9 +139,14 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         )
         with patch.object(auth_service, "settings", production_demo):
             initialize_auth(self.db)
+            session = AuthService(self.db).login(
+                email="admin.user@asklake.local",
+                password="asklake-admin",
+            )
 
-        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
+        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "active")
         self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "active")
+        self.assertEqual(session["actor"]["id"], "admin-user")
 
     def test_request_time_service_construction_skips_initialization_work(self) -> None:
         for allows_header_auth_fallback in (True, False):
@@ -136,7 +156,6 @@ class OperationalAuthHardeningTests(unittest.TestCase):
                     patch.object(auth_service, "settings", configured),
                     patch.object(AuthService, "_ensure_tables") as ensure_tables,
                     patch.object(AuthService, "_ensure_demo_users") as ensure_demo_users,
-                    patch.object(AuthService, "_disable_legacy_demo_users") as disable_demo_users,
                     patch.object(AuthService, "_ensure_bootstrap_admin") as ensure_bootstrap_admin,
                     patch.object(auth_service, "hash_password") as hash_password,
                 ):
@@ -147,7 +166,6 @@ class OperationalAuthHardeningTests(unittest.TestCase):
                 self.assertIsInstance(second, AuthService)
                 ensure_tables.assert_not_called()
                 ensure_demo_users.assert_not_called()
-                disable_demo_users.assert_not_called()
                 ensure_bootstrap_admin.assert_not_called()
                 hash_password.assert_not_called()
 
@@ -308,7 +326,7 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
         self.assertTrue(cookie_options["httponly"])
         self.assertEqual(cookie_options["samesite"], "lax")
 
-    def test_legacy_demo_users_are_restricted_to_test_runtime(self) -> None:
+    def test_legacy_demo_users_require_an_explicit_runtime_opt_in(self) -> None:
         default_settings = Settings(
             app_env="production",
             bootstrap_admin_email="owner@example.com",
@@ -316,14 +334,14 @@ class ProductionConfigurationHardeningTests(unittest.TestCase):
             backend_cors_origins=[],
         )
         self.assertFalse(default_settings.auth_legacy_demo_users_enabled)
-        with self.assertRaises(ValueError):
-            Settings(
-                app_env="production",
-                auth_legacy_demo_users_enabled=True,
-                bootstrap_admin_email="owner@example.com",
-                bootstrap_admin_password="strong-bootstrap-password",
-                backend_cors_origins=[],
-            )
+        demo_settings = Settings(
+            app_env="production",
+            auth_legacy_demo_users_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+        )
+        self.assertTrue(demo_settings.auth_legacy_demo_users_enabled)
         test_settings = Settings(
             app_env="test",
             auth_legacy_demo_users_enabled=True,

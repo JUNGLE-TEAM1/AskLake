@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 
-import { Activity, AlertCircle, Check, Database, Filter, ListChecks, Plus, Search, X } from "lucide-react";
+import { Activity, AlertCircle, Check, Filter, ListChecks, Plus, Search, X } from "lucide-react";
 
 import { SourceBrandIcon } from "../../../components/source/SourceBrand";
 
@@ -18,7 +18,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadio
 import { FilterToolbar, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 
-import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -114,20 +113,12 @@ export function JobsLandingPage({
 
   return (
     <div className="jobs-landing">
-      <PageHeader
-        actions={(
-          <Button type="button" onClick={onCreate}>
-            <Plus size={16} />
-            새 수집/처리 생성
-          </Button>
-        )}
-        icon={<Database size={30} />}
-        iconClassName="mt-0 size-16 rounded-xl"
-        leadingAlign="center"
-        size="lg"
-        title="수집/처리"
-        titleClassName="text-4xl"
-      />
+      <div className="flex min-h-10 items-center justify-end" data-page-actions="jobs">
+        <Button type="button" onClick={onCreate}>
+          <Plus size={16} />
+          새 수집/처리 생성
+        </Button>
+      </div>
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">
           <PanelHeader

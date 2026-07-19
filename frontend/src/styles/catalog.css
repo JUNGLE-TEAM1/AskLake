@@ -31,14 +31,6 @@
   font-family: var(--jobs-font-family);
 }
 
-.catalog-page-header > div > div:first-child {
-  align-items: center;
-}
-
-.catalog-page-header > div > div:first-child > span {
-  margin-top: 0;
-}
-
 .catalog-view-switcher {
   display: inline-flex;
   align-items: center;

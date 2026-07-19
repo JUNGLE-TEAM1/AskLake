@@ -51,6 +51,7 @@ class RealtimeEventRepository:
         invalidations: list[str],
         payload: dict[str, Any],
         occurred_at: datetime | None = None,
+        schema_version: int = REALTIME_EVENT_SCHEMA_VERSION,
     ) -> tuple[RealtimeEventEnvelope, bool]:
         validate_realtime_event(
             event_type=event_type,
@@ -60,6 +61,7 @@ class RealtimeEventRepository:
             correlation_id=correlation_id,
             invalidations=invalidations,
             payload=payload,
+            schema_version=schema_version,
         )
         normalized_idempotency_key = str(idempotency_key or "").strip()
         if not normalized_idempotency_key or len(normalized_idempotency_key) > 256:
@@ -72,7 +74,7 @@ class RealtimeEventRepository:
         model = RealtimeEventModel(
             scope_id=REALTIME_SCOPE_ID,
             event_type=event_type,
-            schema_version=REALTIME_EVENT_SCHEMA_VERSION,
+            schema_version=schema_version,
             resource_type=resource_type,
             resource_id=resource_id,
             aggregate_revision=aggregate_revision,
@@ -191,8 +193,8 @@ class RealtimeEventRepository:
         return RealtimeEventEnvelope(
             event_id=int(model.id),
             event_type=model.event_type,
-            schema_version=1,
-            scope_id="deployment",
+            schema_version=int(model.schema_version),
+            scope_id=str(model.scope_id),
             resource_type=model.resource_type,
             resource_id=model.resource_id,
             aggregate_revision=int(model.aggregate_revision),

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.auth_context import ActorContext
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.trino import TrinoQueryRunResponse
@@ -78,7 +79,7 @@ class TrinoResultCleanupService:
                     result="success",
                     status_code=200,
                     target_id=response.run_id,
-                    target_type="query_run",
+                    target_type=AuditTargetType.QUERY_RUN,
                 )
                 expired_runs += 1
 

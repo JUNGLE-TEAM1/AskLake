@@ -14,8 +14,8 @@ from uuid import uuid4
 
 import duckdb
 from fastapi import status
-
 from app.core.auth_context import ActorContext, require_permission
+from app.domain.audit import AuditTargetType
 from app.core.compatibility import CompatibilityPath, record_compatibility_path
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
@@ -294,7 +294,7 @@ class SqlService:
                     status_code=exc.status_code,
                     target_id=dataset.id,
                     target_name=dataset.name,
-                    target_type="dataset",
+                    target_type=AuditTargetType.DATASET,
                 )
             raise
 

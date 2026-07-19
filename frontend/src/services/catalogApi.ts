@@ -1,4 +1,4 @@
-import type { CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact } from "../types";
+import type { CatalogDataset, CatalogDatasetDeletionAcceptedResponse, CatalogDatasetDeletionImpact, CatalogDatasetDeletionStatusResponse, CatalogDatasetRowsResponse, CatalogModelArtifact } from "../types";
 import { apiClient } from "./apiClient";
 
 type DeleteMaterializationRunResponse = {
@@ -9,6 +9,24 @@ type DeleteMaterializationRunResponse = {
 export async function deleteDatasetMaterializationRun(datasetId: string, runId: string): Promise<DeleteMaterializationRunResponse> {
   return apiClient.delete<DeleteMaterializationRunResponse>(
     `/api/catalog/datasets/${encodeURIComponent(datasetId)}/materialization-runs/${encodeURIComponent(runId)}`,
+  );
+}
+
+export async function getCatalogDatasetDeletionImpact(datasetId: string): Promise<CatalogDatasetDeletionImpact> {
+  return apiClient.get<CatalogDatasetDeletionImpact>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/deletion-impact`,
+  );
+}
+
+export async function deleteCatalogDataset(datasetId: string, confirmName: string): Promise<CatalogDatasetDeletionAcceptedResponse> {
+  return apiClient.delete<CatalogDatasetDeletionAcceptedResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}?confirmName=${encodeURIComponent(confirmName)}`,
+  );
+}
+
+export async function getCatalogDatasetDeletionStatus(deletionId: string): Promise<CatalogDatasetDeletionStatusResponse> {
+  return apiClient.get<CatalogDatasetDeletionStatusResponse>(
+    `/api/catalog/dataset-deletions/${encodeURIComponent(deletionId)}`,
   );
 }
 

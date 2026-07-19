@@ -25,8 +25,7 @@ from app.mcp.context import issue_ai_context_token
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
     build_dataset_context_map,
-    extract_cte_names,
-    extract_referenced_table_names,
+    normalize_sql_identifier,
     unique_dataset_ids,
     validate_read_only_query,
 )
@@ -34,6 +33,9 @@ from app.services.semantic_rag_context import build_semantic_rag_context
 
 PREVIEW_LIMIT = 100
 QUERY_AI_SAMPLE_ROW_LIMIT = 5
+QUERY_AI_RETRY_BUDGET = 1
+QUERY_AI_PROMPT_VERSION = "cost-aware-v2"
+QUERY_AI_GENERATOR_VERSION = "query-ai-service-v2"
 
 
 class QueryAiService:
@@ -49,7 +51,8 @@ class QueryAiService:
         prompt, context_dataset_ids = self._validated_context(request)
         datasets = self._authorized_datasets(context_dataset_ids, actor_context)
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
-        request_id, rag_context, raw_suggestion = self._generate_suggestion(
+        validate_prompt_is_actionable(prompt)
+        request_id, rag_context, raw_suggestion, generation_attempts = self._generate_suggestion(
             request,
             actor_context,
             prompt,
@@ -67,6 +70,7 @@ class QueryAiService:
             request_id=request_id,
             rag_context=rag_context,
             raw_suggestion=raw_suggestion,
+            generation_attempts=generation_attempts,
         )
 
     @staticmethod
@@ -138,7 +142,7 @@ class QueryAiService:
         context_dataset_ids: list[str],
         datasets: list[CatalogDatasetResponse],
         base_dataset: CatalogDatasetResponse,
-    ) -> tuple[str, dict[str, Any], dict[str, object]]:
+    ) -> tuple[str, dict[str, Any], dict[str, object], int]:
         rag_context = build_semantic_rag_context(
             db=self.catalog_repository.db,
             settings=settings,
@@ -148,7 +152,7 @@ class QueryAiService:
             semantic_model_id=request.semantic_model_id,
         )
         generation_prompt = _build_query_generation_prompt(prompt, datasets)
-        for attempt in range(2):
+        for attempt in range(QUERY_AI_RETRY_BUDGET + 1):
             request_id = str(uuid4())
             context_token = issue_ai_context_token(
                 request_id=request_id,
@@ -174,20 +178,25 @@ class QueryAiService:
 
             sql = ensure_preview_limit(raw_suggestion.get("sql", ""))
             statement = validate_read_only_query(sql)
-            validate_selected_dataset_scope(statement, datasets)
-            try:
-                validate_query_intent_contract(prompt, statement, datasets)
-            except ApiError as exc:
-                violations = list((exc.details or {}).get("violations") or [])
-                if attempt > 0 or not violations:
-                    raise
+            violations = collect_query_ai_violations(prompt, statement, datasets)
+            if violations:
+                if attempt >= QUERY_AI_RETRY_BUDGET:
+                    # Preserve the existing public scope error shape after the
+                    # bounded correction attempt is exhausted.
+                    validate_selected_dataset_scope(statement, datasets)
+                    raise ApiError(
+                        ErrorCode.VALIDATION_ERROR,
+                        "AI SQL did not satisfy the query generation contract",
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        {"violations": violations},
+                    )
                 generation_prompt = _build_query_generation_prompt(
                     prompt,
                     datasets,
                     failed_violations=violations,
                 )
                 continue
-            return request_id, rag_context, raw_suggestion
+            return request_id, rag_context, raw_suggestion, attempt + 1
 
         raise ApiError(
             ErrorCode.INTERNAL_ERROR,
@@ -207,6 +216,7 @@ class QueryAiService:
         request_id: str,
         rag_context: dict[str, Any],
         raw_suggestion: dict[str, object],
+        generation_attempts: int,
     ) -> QueryAiSuggestionResponse:
         if not isinstance(raw_suggestion, dict):
             raise ApiError(
@@ -217,8 +227,14 @@ class QueryAiService:
         suggestion = raw_suggestion
         sql = ensure_preview_limit(suggestion.get("sql", ""))
         statement = validate_read_only_query(sql)
-        validate_selected_dataset_scope(statement, datasets)
-        validate_query_intent_contract(prompt, statement, datasets)
+        violations = collect_query_ai_violations(prompt, statement, datasets)
+        if violations:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "AI SQL did not satisfy the query generation contract",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"violations": violations},
+            )
         used_evidence_ids = [str(item) for item in suggestion.get("usedEvidenceIds") or []]
         used_rag_context = retain_used_rag_evidence(rag_context, used_evidence_ids) or {
             "sources": [],
@@ -258,6 +274,10 @@ class QueryAiService:
             sql=sql,
             title=suggestion.get("title") or "SQL draft",
             used_evidence_ids=verified_evidence_ids,
+            generation_attempts=generation_attempts,
+            regeneration_count=generation_attempts - 1,
+            generator_version=QUERY_AI_GENERATOR_VERSION,
+            prompt_version=QUERY_AI_PROMPT_VERSION,
         )
 
     def get_catalog_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
@@ -431,10 +451,7 @@ def _build_query_generation_prompt(
     *,
     failed_violations: list[str] | None = None,
 ) -> str:
-    dataset_labels = ", ".join(
-        f"{dataset.id} ({dataset.name}; source={dataset.source})"
-        for dataset in datasets
-    )
+    dataset_labels = ", ".join(f"{dataset.id} ({dataset.name}; source={dataset.source})" for dataset in datasets)
     lines = [
         prompt,
         "",
@@ -443,6 +460,16 @@ def _build_query_generation_prompt(
         "- 데이터셋명·출처명은 사용자가 열 조건을 명시하지 않은 한 행 필터 값이 아닙니다.",
         "- 요청한 집계(평균·개수)와 그룹 기준을 SQL에 빠짐없이 반영하세요.",
         "- 선택 데이터셋만 참조하는 읽기 전용 SQL 한 개를 반환하세요.",
+        "- Trino SQL dialect를 사용하고 table은 아래의 허용된 Dataset ID 또는 이름을 schema 없이 참조하세요.",
+        "- SELECT * 대신 질문에 필요한 column만 projection하세요. COUNT(*)는 허용됩니다.",
+        "- 날짜 범위는 typed DATE/TIMESTAMP literal과 half-open range를 사용하고 partition column에 year(), month(), date_format() 같은 함수를 씌우지 마세요.",
+        "- JOIN은 명시된 key로만 연결하고 CROSS JOIN, ON TRUE, key 없는 큰 table JOIN을 만들지 마세요.",
+        "- LIMIT은 결과 행만 제한하며 scan 절감으로 간주하지 마세요. 가능한 filter를 각 큰 table scan 전에 적용하세요.",
+        "- 사용자가 근사치를 명시적으로 허용한 경우에만 approx_distinct 등 approximate aggregation을 사용하세요.",
+        f"- 실행 전 scan 경고 기준: {settings.trino_query_warning_bytes} bytes. 경계를 넘길 가능성이 있으면 projection과 partition predicate를 우선 개선하세요.",
+        "",
+        f"Cost-aware context version: {QUERY_AI_PROMPT_VERSION}",
+        *_dataset_cost_context_lines(datasets),
     ]
     if failed_violations:
         lines.extend((
@@ -458,20 +485,27 @@ def validate_selected_dataset_scope(
     datasets: list[CatalogDatasetResponse],
 ) -> None:
     dataset_by_table_name = build_dataset_context_map(datasets)
-    referenced_table_names = extract_referenced_table_names(statement)
-    cte_names = extract_cte_names(statement)
-    physical_table_names = [
-        table_name
-        for table_name in referenced_table_names
-        if table_name not in cte_names
-    ]
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError as exc:
+        raise ApiError(ErrorCode.SQL_SYNTAX_ERROR, "AI returned SQL that could not be parsed", status.HTTP_502_BAD_GATEWAY) from exc
+    cte_names = {normalize_sql_identifier(cte.alias_or_name) for cte in expression.find_all(exp.CTE)}
+    physical_table_names: list[str] = []
+    for table in expression.find_all(exp.Table):
+        table_name = normalize_sql_identifier(table.name)
+        if not table.db and not table.catalog and table_name in cte_names:
+            continue
+        if table.db or table.catalog:
+            qualifier = ".".join(filter(None, (table.catalog, table.db, table.name)))
+            physical_table_names.append(normalize_sql_identifier(qualifier))
+        elif table_name:
+            physical_table_names.append(table_name)
     if not physical_table_names:
         raise ApiError(
             ErrorCode.VALIDATION_ERROR,
             "AI SQL must reference at least one selected dataset",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
-
     unknown_table_names = [
         table_name
         for table_name in physical_table_names
@@ -484,6 +518,126 @@ def validate_selected_dataset_scope(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             {"tables": unknown_table_names},
         )
+
+
+def collect_query_ai_violations(
+    prompt: str,
+    statement: str,
+    datasets: list[CatalogDatasetResponse],
+) -> list[str]:
+    violations: list[str] = []
+    try:
+        validate_selected_dataset_scope(statement, datasets)
+    except ApiError as exc:
+        unknown = list((exc.details or {}).get("tables") or [])
+        violations.extend(f"out_of_scope_table:{table}" for table in unknown)
+        if not unknown:
+            violations.append("missing_selected_dataset")
+    try:
+        validate_query_intent_contract(prompt, statement, datasets)
+    except ApiError as exc:
+        violations.extend(str(item) for item in (exc.details or {}).get("violations") or [])
+    violations.extend(validate_cost_aware_sql(statement, prompt=prompt, datasets=datasets))
+    return list(dict.fromkeys(violations))
+
+
+def validate_prompt_is_actionable(prompt: str) -> None:
+    normalized = " ".join(prompt.casefold().split())
+    if re.search(r"선택하지\s+않은.+(?:데이터셋|dataset)", normalized):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "The request explicitly references a Dataset outside the selected scope",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"violations": ["out_of_scope_dataset_request"]},
+        )
+    ambiguous_patterns = (
+        r"^(좋은|중요한|괜찮은)\s+(고객|상품|주문)(을|를)?\s*(보여줘|알려줘)[.!]?$",
+        r"^show\s+(me\s+)?(good|important)\s+(customers|products|orders)[.!]?$",
+    )
+    if any(re.fullmatch(pattern, normalized) for pattern in ambiguous_patterns):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "The analysis request needs a measurable definition before SQL can be generated",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"violations": ["ambiguous_analysis_intent"]},
+        )
+
+
+def validate_cost_aware_sql(
+    statement: str,
+    *,
+    prompt: str,
+    datasets: list[CatalogDatasetResponse],
+) -> list[str]:
+    try:
+        expression = parse_one(statement, read="trino")
+    except ParseError:
+        return ["invalid_trino_sql"]
+    violations: list[str] = []
+    if any(not isinstance(star.parent, exp.Count) for star in expression.find_all(exp.Star)):
+        violations.append("select_star")
+    for join in expression.find_all(exp.Join):
+        kind = str(join.args.get("kind") or "").casefold()
+        if kind == "cross":
+            violations.append("cross_join")
+        elif join.args.get("on") is None and join.args.get("using") is None:
+            violations.append("join_without_key")
+
+    partition_columns = {
+        column.casefold()
+        for dataset in datasets
+        for column in (dataset.partition_columns or [])
+    }
+    expensive_partition_functions = {"year", "month", "date_format", "date_trunc"}
+    for function in expression.find_all(exp.Func):
+        function_name = function.sql_name().casefold()
+        if function_name not in expensive_partition_functions:
+            continue
+        if any(column.name.casefold() in partition_columns for column in function.find_all(exp.Column)):
+            violations.append("partition_function_predicate")
+
+    column_types = {
+        name.casefold(): type_name.casefold()
+        for dataset in datasets
+        for name, type_name in dataset.schema_
+    }
+    for comparison_type in (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE):
+        for comparison in expression.find_all(comparison_type):
+            sides = (comparison.left, comparison.right)
+            for column, literal in (sides, tuple(reversed(sides))):
+                if not isinstance(column, exp.Column) or not isinstance(literal, exp.Literal) or not literal.is_string:
+                    continue
+                column_type = column_types.get(column.name.casefold(), "")
+                if column_type.startswith(("date", "timestamp")):
+                    violations.append("untyped_temporal_literal")
+
+    normalized_prompt = prompt.casefold()
+    uses_approximate = any(function.sql_name().casefold().startswith("approx") for function in expression.find_all(exp.Func))
+    approximate_allowed = bool(re.search(r"근사|오차|approx", normalized_prompt))
+    exact_required = bool(re.search(r"정확|근사치.+(?:쓰지|금지)|exact", normalized_prompt))
+    if uses_approximate and (not approximate_allowed or exact_required):
+        violations.append("approximate_aggregation_not_allowed")
+
+    table_names = [table.name.casefold() for table in expression.find_all(exp.Table)]
+    if len(table_names) != len(set(table_names)) and not list(expression.find_all(exp.CTE)):
+        violations.append("duplicate_table_scan")
+    return list(dict.fromkeys(violations))
+
+
+def _dataset_cost_context_lines(datasets: list[CatalogDatasetResponse]) -> list[str]:
+    lines = ["Dataset cost metadata:"]
+    for dataset in datasets:
+        schema = ", ".join(f"{name}:{type_name}" for name, type_name in dataset.schema_)
+        storage = dataset.storage_size_bytes if dataset.storage_size_bytes is not None else "unknown"
+        row_count = dataset.estimated_row_count if dataset.estimated_row_count is not None else "unknown"
+        partitions = ", ".join(dataset.partition_columns or []) or "none"
+        keys = ", ".join(dataset.unique_key_columns or dataset.index_columns or []) or "unknown"
+        role = "fact-like" if (dataset.estimated_row_count or 0) >= 100_000 else "dimension-like"
+        lines.append(
+            f"- {dataset.id} / {dataset.name}: roleHint={role}; rows={row_count}; storageBytes={storage}; "
+            f"partitionColumns={partitions}; keyColumns={keys}; columns=[{schema}]"
+        )
+    return lines
 
 
 def normalize_notices(value: object) -> list[str]:

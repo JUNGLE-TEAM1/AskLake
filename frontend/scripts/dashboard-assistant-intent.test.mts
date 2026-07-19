@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildDashboardAssistantRequestPrompt,
   classifyDashboardAssistantMode,
+  isContextualVisualizationFollowUp,
   isWidgetMutationPrompt,
 } from "../src/pages/dashboard/runtime/dashboardAssistantIntent.ts";
 
@@ -33,4 +35,32 @@ test("explanations and summaries remain non-mutating dashboard questions", () =>
 
 test("an ambiguous edit without a selected widget stays non-mutating", () => {
   assert.equal(classifyDashboardAssistantMode("색상을 빨간색으로 바꿔줘"), "dashboard_question");
+});
+
+test("a bounded field-selection follow-up becomes a contextual visualization request", () => {
+  const previousUserPrompts = ["아무거나", "field_1 event_id"];
+  assert.equal(isContextualVisualizationFollowUp("랜덤으로 진행해줘", previousUserPrompts), true);
+  assert.equal(
+    classifyDashboardAssistantMode("랜덤으로 진행해줘", { previousUserPrompts }),
+    "visualization_request",
+  );
+  assert.equal(
+    buildDashboardAssistantRequestPrompt("랜덤으로 진행해줘", previousUserPrompts),
+    "이전 사용자 요청:\n- 아무거나\n- field_1 event_id\n\n현재 사용자 요청:\n랜덤으로 진행해줘",
+  );
+});
+
+test("a standalone vague follow-up stays non-mutating and does not invent context", () => {
+  assert.equal(isContextualVisualizationFollowUp("랜덤으로 진행해줘"), false);
+  assert.equal(classifyDashboardAssistantMode("랜덤으로 진행해줘"), "dashboard_question");
+  assert.equal(buildDashboardAssistantRequestPrompt("랜덤으로 진행해줘"), "랜덤으로 진행해줘");
+});
+
+test("explanation follow-ups do not inherit a prior field as a mutation", () => {
+  assert.equal(
+    classifyDashboardAssistantMode("그 필드가 왜 중요한지 설명해줘", {
+      previousUserPrompts: ["field_1 event_id"],
+    }),
+    "dashboard_question",
+  );
 });
