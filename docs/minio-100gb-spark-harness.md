@@ -257,6 +257,12 @@ Snapshot schema contract를 변경한 뒤에는 `npm run verify:spark-schema-con
 
 Snapshot Rule runtime은 transform-only Job에서 빈 Quality 단계를 별도 Spark action으로 평가하지 않는다. Job runner는 확정 schema projection과 지원되는 row-preserving transform 선두 prefix를 run 전용 Parquet materialization 경로에 먼저 쓴 뒤, 그 Parquet를 새 DataFrame으로 읽어 schema count/null, Rule, Quality, sample과 target write를 수행한다. 전체 projected/output frame을 `MEMORY_AND_DISK`로 persist하지 않으며 `sparkResources.cacheStorageLevel=NONE`, `materializationMode=run_scoped_parquet_staging`, `outputFrameCacheMode=staged_parquet_reuse`를 남긴다. 같은 Spark type의 `String`/`Long`/`Boolean` identity cast·copy·rename과 승인된 row-preserving SQL로만 된 canonical transform 선두 prefix는 staging 전에 적용하고 그 수를 `transform.preMaterializedTransformCount`로 남긴다. 직접 컬럼 복사와 `TRIM(CAST(<input> AS STRING))`으로 제한한 total·row-preserving SQL subset은 rule별 `count()` 없이 typed Column으로 컴파일하고 `transform.rowPreservingSqlExpressionCount`에 그 수를 남긴다. type-changing transform, 임의 SQL expression과 `SELECT`는 기존 validation action 및 오류 처리를 유지한다. legacy Quality rule은 전체 행·규칙별 실패·union 실패 수를 하나의 aggregate action으로 계산한다. `npm run verify:snapshot-rule-conformance`와 `npm run verify:spark-schema-contract`는 rule/필수 컬럼 수가 늘어도 action 수가 증가하지 않는지 확인한다. `npm run verify:snapshot-spark-pipeline`은 실제 JSONL 원본 물리 read가 정확히 1회인지, staged Parquet가 생성되는지, success·quality failure·schema exception에서 staging이 정리되는지 검증한다.
 
+실제 dev EKS의 10GB/100GB cache before와 staging after 결과, JVM heap·GC·spill·
+cleanup 및 성능 trade-off는 [Spark cache-independent staging EKS
+experiment](spark-cache-independent-staging-eks-experiment-2026-07-20.md)에
+기록한다. 이 scale receipt는 고유 S3 Parquet output을 사용하며 공유
+Iceberg/Catalog를 변경하지 않는다.
+
 실제 AWS S3 경로까지 확인할 때는 개발용 output bucket만 명시하고 아래 opt-in smoke를 실행한다. 이 검증은 3행 fixture를 `asklake-validation/issue-931/<고유 run>/`에 올린 뒤 같은 Spark runtime으로 S3A source read, run 전용 Parquet materialization, 정식 Parquet publish를 수행한다. 원본 물리 read 1회, staging 정리, 정식 Parquet 존재를 확인하고 `finally`에서 해당 run prefix의 현재 객체와 version/delete marker를 모두 삭제해 각각 residue 0을 검증한다. 공유 EKS 설정이나 SparkApplication은 변경하지 않는다.
 
 ```bash
