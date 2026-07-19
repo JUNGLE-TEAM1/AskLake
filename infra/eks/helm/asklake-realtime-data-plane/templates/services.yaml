@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: asklake-clickhouse-keeper-v2-headless
+  name: clickhouse-keeper-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
@@ -11,7 +11,9 @@ spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    {{- include "asklake-realtime.selectorLabels" (dict "component" "keeper" "release" .Release.Name) | nindent 4 }}
+    app.kubernetes.io/name: asklake-workloads
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: realtime-v2-keeper
   ports:
     - name: keeper-client
       port: 9181
@@ -23,7 +25,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: asklake-clickhouse-v2-headless
+  name: clickhouse-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
@@ -32,7 +34,9 @@ spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 4 }}
+    app.kubernetes.io/name: asklake-workloads
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: realtime-v2-clickhouse
   ports:
     - name: https
       port: 8443
@@ -47,27 +51,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: asklake-clickhouse-v2
-  namespace: {{ .Values.namespace }}
-  labels:
-    {{- include "asklake-realtime.labels" . | nindent 4 }}
-    app.kubernetes.io/component: clickhouse
-spec:
-  type: ClusterIP
-  selector:
-    {{- include "asklake-realtime.selectorLabels" (dict "component" "clickhouse" "release" .Release.Name) | nindent 4 }}
-  ports:
-    - name: https
-      port: 8443
-      targetPort: https
-    - name: native-secure
-      port: 9440
-      targetPort: native-secure
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: asklake-kafka-connect-v2
+  name: kafka-connect-v2
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-realtime.labels" . | nindent 4 }}
@@ -75,7 +59,9 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "asklake-realtime.selectorLabels" (dict "component" "kafka-connect" "release" .Release.Name) | nindent 4 }}
+    app.kubernetes.io/name: asklake-workloads
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: realtime-v2-connect
   ports:
     - name: rest
       port: 8083

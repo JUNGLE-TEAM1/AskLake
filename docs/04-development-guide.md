@@ -795,7 +795,11 @@ worker service account에는 Spark Operator의 `sparkapplications`에 대한 `ge
 
 ### EKS Continuous worker 렌더와 사전 점검
 
-`asklake-workloads`의 `realtimeV1` component는 전용 `asklake-realtime-v1-worker`와 `asklake-realtime-v1-spark` ServiceAccount를 사용하는 단일 replica worker package다. 기존 web release와 독립적으로 foundation의 `asklake-runtime` ConfigMap을 참조한다. 기본값은 disabled이고 EC2 owner를 중지하거나 `deploy/control-plane-ownership.json`을 자동으로 바꾸지 않는다. exact identity의 owner transfer 승인 전에는 apply하지 않는다.
+`asklake-workloads`의 `realtimeV1` component는 전용 `asklake-realtime-v1-worker`와
+`asklake-realtime-v1-spark` ServiceAccount를 사용하는 단일 replica worker package다.
+기존 web release와 독립적으로 foundation의 `asklake-runtime` ConfigMap을 참조하고
+`kafka` scope를 소유한다. Issue #1072 V2 cutover는 이 V1 owner를 보존하며 EC2 control
+loop quiesce와 V2 `continuous_sql` owner transfer 승인 전에는 apply하지 않는다.
 
 ```bash
 cd backend
@@ -811,7 +815,10 @@ kubectl -n "$ASKLAKE_K8S_NAMESPACE" auth can-i create sparkapplications.sparkope
   --as=system:serviceaccount:"$ASKLAKE_K8S_NAMESPACE":asklake-backend
 ```
 
-사전 점검은 Helm render와 RBAC만 확인한다. 실제 S3 runtime document read/write, SparkApplication 생성, start/pause/stop/restart E2E는 owner transfer 승인 이후 canary에서 별도로 확인해야 한다. apply 전에 EC2 Kafka scope를 유지한 채 EKS worker를 기동하면 owner가 둘이 된다. 실제 전환은 EC2 scope 분리·Kafka fence, ownership manifest/evidence 변경, EKS worker canary, Kafka job start/pause/stop 및 S3 report 확인을 하나의 승인된 rollout으로 처리한다.
+사전 점검은 Helm render와 RBAC만 확인한다. 실제 S3 runtime document read/write,
+SparkApplication 생성, start/pause/stop/restart E2E는 owner transfer 승인 이후 canary에서
+별도로 확인한다. 현재 V1은 EKS `kafka` owner이며 Issue #1072의 V2 cutover에서도 이를
+보존한다. V2 worker가 Kafka scope를 claim하거나 EC2 Kafka process를 병행하면 실패다.
 
 Issue #1044는 읽기 전용 live inventory로 V1을 단일 EKS MVP 경로로 선택했다. canonical package는 `infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml`이며 기본적으로 render하지 않는다. `realtimeV1.enabled=true`만 주면 실패하고 `ownerTransfer.approved=true`, `previousOwnerFenced=true`, exact generation을 모두 제공해야 render된다. EKS worker는 Kafka scope만 claim하며 Continuous SQL은 EC2에 남긴다. 다음 read-only 검증으로 [`deploy/eks-realtime-kafka-mvp.json`](../deploy/eks-realtime-kafka-mvp.json)의 selected-but-disabled 상태, EC2 단일 claim, transfer에서만 할당되는 generation, S3 checkpoint authority, 격리 fixture와 수동 rollback 불변식을 확인한다.
 
@@ -2342,7 +2349,12 @@ npm run verify:control-plane-ownership
 
 ### EKS ClickHouse Realtime data plane 검증
 
-EKS의 ClickHouse/Keeper PVC는 stateless `asklake-workloads`에 추가하지 않고 별도 `asklake-realtime-data-plane` release가 소유한다. 기본 mode는 `disabled`이고 Kubernetes object를 만들지 않는다. `shadow`는 data service만 렌더하며 Continuous Worker replica를 0으로 고정한다. `cutover`는 기존 EC2 `all` quiesce, 대체 EC2 `kafka` owner 준비, Realtime V1 fence, transfer 승인, `eks-continuous-worker-v2` Continuous SQL owner와 새 generation이 모두 있을 때만 `continuous_sql` scope worker를 렌더한다.
+EKS의 ClickHouse/Keeper PVC는 stateless `asklake-workloads`에 추가하지 않고 별도
+`asklake-realtime-data-plane` release가 소유한다. 기본 mode는 `disabled`이고 Kubernetes
+object를 만들지 않는다. `shadow`는 data service만 렌더하며 Continuous Worker replica를
+0으로 고정한다. `cutover`는 기존 EC2 control loop quiesce, EKS Realtime V1 Kafka owner
+보존, transfer 승인, `eks-continuous-worker-v2` Continuous SQL owner와 새 generation이
+모두 있을 때만 `continuous_sql` scope worker를 렌더한다.
 
 ```bash
 scripts/verify-eks-realtime-data-plane.sh
@@ -2560,3 +2572,51 @@ docker compose --profile clickhouse-realtime-v2 config --quiet
 ```
 
 실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
+
+### Issue #1072 EKS FastAPI V2 연결
+
+EKS의 canonical FastAPI release는 `asklake-web`, stateful V2 release는
+`asklake-realtime-v2`다. `asklake-web`의 `backend.realtime.enabled` 기본값은 false이며
+opt-in render만 private ClickHouse/Kafka Connect URL과 별도 runtime Secret/CA를
+FastAPI에 주입한다. data-plane chart는 retained PVC 이름을 유지하기 위해 StatefulSet
+`clickhouse-v2`, `clickhouse-keeper-v2`와 claim template `clickhouse-data`,
+`keeper-data`를 바꾸지 않는다. revision 17~19에서 생성된 리소스를 in-place
+이전하려면 이름뿐 아니라 `asklake-workloads`/
+`realtime-v2-{keeper,clickhouse,connect}` immutable selector도 보존해야 한다. preflight는
+live/render selector exact match와 desired `kafka`/`all` scope loop가 V1 하나인지를
+Secret/Helm 전에 검사한다.
+
+ClickHouse ESO target은 image init/re-init가 소비하는 admin/ingest/materializer/reader/
+migration/observer password 6개, TLS/Keeper config와 certificate key를 exact set으로 제공한다.
+password는 서로 달라야 하며 `users.xml`에 hash를 넣지 않는다. Kafka Connect는
+MSK IAM, internal topic/group, converter/ConfigProvider/REST/plugin/source·DLQ key 전체를
+명시적 `secretKeyRef`로 소비하고 file property/CA는 tmpfs에 stage한다.
+
+```bash
+bash scripts/verify-eks-web-workloads.sh
+bash scripts/verify-eks-realtime-data-plane.sh
+bash scripts/verify-eks-workloads.sh
+node scripts/verify-eks-realtime-v2-image-receipt.mjs \
+  infra/eks/delivery/realtime-v2-image-receipt.example.json
+bash scripts/test-eks-realtime-v2-secrets.sh
+ASKLAKE_CLICKHOUSE_V2_TEST_IMAGE='<clickhouse-ecr>@sha256:<digest>' \
+  bash scripts/test-clickhouse-v2-local-redeploy.sh
+cd backend
+.venv/bin/python -m pytest -q \
+  tests/test_realtime_feature_flags.py \
+  tests/test_continuous_sql_runtime_contract.py \
+  tests/test_clickhouse_continuous_sql.py \
+  tests/test_clickhouse_realtime_ingest.py \
+  tests/test_kafka_ingest_v2.py
+cd ../frontend
+npm run test:continuous-sql-ui
+npm run test:dashboard-realtime-v2
+npm run build
+```
+
+Terraform CLI가 없으면 verifier는 저장소를 read-only mount한 고정
+`hashicorp/terraform:1.9.8` Docker 환경에서 `fmt -check`, `init -backend=false`,
+`validate`를 실행한다. CLI와 Docker가 모두 없어 SKIP이면 CI 또는 승인된 운영 환경에서
+별도로 통과해야 한다. 실제 Helm upgrade, Kafka fixture produce, Pod scale/delete,
+owner 전환과 rollback은 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의
+승인 경계를 따른다.

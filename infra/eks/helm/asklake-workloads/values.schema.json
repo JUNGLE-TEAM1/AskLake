@@ -203,8 +203,8 @@
               "clickhouseRealtimeV2Enabled": {"const": true},
               "kafkaConnectSinkEnabled": {"const": true},
               "consumerOwner": {"const": "kafka_connect_v2"},
-              "kafkaConnectUrl": {"const": "http://asklake-kafka-connect-v2:8083"},
-              "clickhouseV2Url": {"const": "https://asklake-clickhouse-v2:8443"}
+              "kafkaConnectUrl": {"const": "http://kafka-connect-v2:8083"},
+              "clickhouseV2Url": {"const": "https://clickhouse-v2:8443"}
             }
           }
         }
