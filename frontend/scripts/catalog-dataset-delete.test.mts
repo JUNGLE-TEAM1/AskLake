@@ -13,6 +13,13 @@ test("Catalog list owns the direct Dataset delete action", () => {
   assert.match(action, /confirmation !== dataset\.name/);
 });
 
+test("Mock catalog datasets explicitly grant the demo admin delete permission", () => {
+  const mockData = read("src/data/mockData.ts");
+  assert.match(mockData, /const mockCatalogDatasetPermissions = \{/);
+  assert.match(mockData, /canDelete: true/);
+  assert.match(mockData, /permissions: \{ \.\.\.mockCatalogDatasetPermissions \}/);
+});
+
 test("Dataset delete waits for durable backend success before removing the row", () => {
   const api = read("src/services/catalogApi.ts");
   const controller = read("src/state/asklake/useCatalogController.ts");
