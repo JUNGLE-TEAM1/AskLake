@@ -1250,8 +1250,8 @@ script와 EKS `external_ec2` process 0을 함께 검증한다. 이 audit은 현�
 Phase 6 운영 대응은 [EKS Day 18 운영 runbook](eks-day18-operations-runbook.md)을 따른다.
 초기 `kubectl`·ALB·Continuous·CloudWatch 조회, 격리 Pod/Node 복구, immutable digest
 preflight/rollout, 보존 EC2 fallback과 비용·cleanup을 한 순서로 사용하되 조회·조정·변경을
-구분한다. Phase 6에서는 runbook과 preflight만 고정하고 실제 새 digest rolling update는
-Pair B 변경이 합쳐진 뒤 Phase 7 confirmation으로 실행한다. static 계약은
+구분한다. 최초 진행에서는 Phase 6에서 runbook과 preflight를 고정하고 Pair B 변경이
+합쳐진 뒤 Phase 7 confirmation으로 실제 새 digest rolling update를 실행했다. static 계약은
 `bash scripts/verify-eks-day18-operations-runbook.sh`, 안전·위험 fixture는
 `bash scripts/test-eks-day18-operations-runbook.sh`로 검사한다. Phase 7의 성공 candidate
 → 의도적 이전 revision rollback → 동일 candidate 재승격 순서는
@@ -1305,8 +1305,13 @@ node scripts/run-eks-day18-phase8.mjs --cleanup
 runner는 완료된 MSK probe, driver delete와 Airflow submit을 반복하지 않는다. binding이
 달라지거나 live state가 모호하면 새 state로 덮어쓰지 말고 blocker를 해소해 다시
 preflight한다. cleanup은 Run A/B/C 전에도 호출할 수 있지만 runner 소유 temporary
-Job만 UID precondition으로 삭제하며 durable RDS/S3/Iceberg/Catalog/SparkApplication
-evidence는 남긴다.
+Job과 아래 조건을 만족하는 terminal Spark child Pod만 UID precondition으로 삭제하며
+durable RDS/S3/Iceberg/Catalog/SparkApplication evidence는 남긴다. 완료 Spark child
+Pod가 `WhenEmpty` Node scale-in을 막으면 current
+campaign Run D/E와 검증된 A/B/C receipt의 run ID, terminal phase, driver/executor role,
+SparkApplication controller owner name/UID와 terminal state를 모두 대조한 Pod만 UID
+precondition으로 정리한다. in-cluster 명령은 Ready/Running/non-terminating FastAPI Pod를
+선택하며, Run E CloudWatch marker는 Pod 이름이 아니라 durable run ID를 사용한다.
 
 ```bash
 node --test scripts/test-eks-day18-phase8.mjs
@@ -1318,7 +1323,8 @@ python3 -m py_compile \
 
 위 검증은 sanitizer/Event 집계, private state binding, exact Describe-only deny,
 driver owner UID, restart/no-redelete, ambiguous checkpoint 차단과 실패 후 cleanup을
-검사하며 live 리소스를 만들지 않는다. 세부 성공 기준과 현재 blocker는
+검사하며 live 리소스를 만들지 않는다. 최초 live Phase 7·8은 2026-07-19에 통과했다.
+세부 성공 기준과 실제 결과는
 [EKS Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)과
 [Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
 

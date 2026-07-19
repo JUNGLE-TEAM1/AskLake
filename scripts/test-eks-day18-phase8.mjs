@@ -14,6 +14,7 @@ import test from "node:test";
 import {
   Phase8BlockedError,
   classifyPersistedFaultCheckpoint,
+  cleanupCampaignTerminalSparkPods,
   countActiveJobs,
   countActiveSparkApplications,
   executeMode,
@@ -21,8 +22,10 @@ import {
   parseDenyProbeLog,
   renderDenyProbeJob,
   runCleanup,
+  runECloudWatchMarker,
   runFaultE,
   runPreflight,
+  selectReadyFastApiPod,
   stateArtifactPaths,
   summarizeFaultObservability,
   validateAbcReceipt,
@@ -37,6 +40,64 @@ import {
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE = `example.invalid/asklake/backend@${DIGEST}`;
+
+
+test("Run E CloudWatch evidence is correlated by durable run id", () => {
+  assert.equal(
+    runECloudWatchMarker({
+      runs: { "Run E": { identity: { runId: "run-fault-e" } } },
+    }),
+    "run-fault-e",
+  );
+  assert.throws(
+    () => runECloudWatchMarker({ runs: { "Run E": {} } }),
+    (error) =>
+      error instanceof Phase8BlockedError
+      && error.code === "run_e_fault_evidence_checkpoint_missing",
+  );
+});
+
+
+test("in-cluster execution selects an oldest Ready non-terminating FastAPI Pod", () => {
+  assert.equal(
+    selectReadyFastApiPod({
+      items: [
+        {
+          metadata: {
+            name: "terminating",
+            creationTimestamp: "2026-07-19T00:00:00Z",
+            deletionTimestamp: "2026-07-19T00:01:00Z",
+          },
+          status: {
+            phase: "Running",
+            containerStatuses: [{ name: "fastapi", ready: true }],
+          },
+        },
+        {
+          metadata: {
+            name: "ready-new",
+            creationTimestamp: "2026-07-19T00:02:00Z",
+          },
+          status: {
+            phase: "Running",
+            containerStatuses: [{ name: "fastapi", ready: true }],
+          },
+        },
+        {
+          metadata: {
+            name: "ready-old",
+            creationTimestamp: "2026-07-19T00:01:00Z",
+          },
+          status: {
+            phase: "Running",
+            containerStatuses: [{ name: "fastapi", ready: true }],
+          },
+        },
+      ],
+    }),
+    "ready-old",
+  );
+});
 
 
 function exactDescribeOnlyDocument() {
@@ -494,6 +555,19 @@ test("A/B/C receipt is exact-bound to all three approved targets", () => {
     () => validateAbcReceipt(drifted, approvedTargets),
     Phase8BlockedError,
   );
+  const missingRunId = structuredClone(receipt);
+  delete missingRunId.privateIdentity[1].runId;
+  assert.throws(
+    () => validateAbcReceipt(missingRunId, approvedTargets),
+    Phase8BlockedError,
+  );
+  const duplicateRunId = structuredClone(receipt);
+  duplicateRunId.privateIdentity[1].runId =
+    duplicateRunId.privateIdentity[0].runId;
+  assert.throws(
+    () => validateAbcReceipt(duplicateRunId, approvedTargets),
+    Phase8BlockedError,
+  );
 });
 
 
@@ -779,6 +853,176 @@ test("bounded cleanup remains available before A/B/C success", async () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test("cleanup deletes only terminal Spark Pods owned by the current campaign runs", () => {
+  const runId = "run-current-campaign";
+  const applicationUid = "application-uid";
+  const calls = [];
+  const runner = {
+    json(command, args) {
+      const joined = args.join(" ");
+      if (joined.includes("get pods")) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: "terminal-driver",
+                uid: "terminal-pod-uid",
+                labels: {
+                  "asklake.io/run-id": runId,
+                  "spark-role": "driver",
+                },
+                ownerReferences: [{
+                  kind: "SparkApplication",
+                  name: "current-application",
+                  uid: applicationUid,
+                  controller: true,
+                }],
+              },
+              status: { phase: "Succeeded" },
+            },
+            {
+              metadata: {
+                name: "foreign-driver",
+                uid: "foreign-pod-uid",
+                labels: {
+                  "asklake.io/run-id": "run-foreign",
+                  "spark-role": "driver",
+                },
+              },
+              status: { phase: "Succeeded" },
+            },
+          ],
+        };
+      }
+      if (joined.includes("get sparkapplications.sparkoperator.k8s.io")) {
+        return {
+          items: [{
+            metadata: {
+              name: "current-application",
+              uid: applicationUid,
+              labels: { "asklake.io/run-id": runId },
+            },
+            status: { applicationState: { state: "COMPLETED" } },
+          }],
+        };
+      }
+      throw new Error(`unexpected command: ${command} ${joined}`);
+    },
+    run(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  };
+  const deleted = cleanupCampaignTerminalSparkPods(
+    { liveInput: { targets: { bounded: [] } } },
+    runner,
+    {
+      artifacts: {},
+      runs: { "Run D": { identity: { runId } } },
+    },
+  );
+  assert.equal(deleted, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(0, 3), [
+    "delete",
+    "--raw",
+    "/api/v1/namespaces/asklake-dev/pods/terminal-driver",
+  ]);
+  assert.equal(
+    JSON.parse(calls[0].options.input).preconditions.uid,
+    "terminal-pod-uid",
+  );
+});
+
+
+test("cleanup fails closed when a campaign Spark Pod owner UID is ambiguous", () => {
+  const runId = "run-current-campaign";
+  const deletionCalls = [];
+  const runner = {
+    json(_command, args) {
+      const joined = args.join(" ");
+      if (joined.includes("get pods")) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: "valid-driver",
+                uid: "valid-pod-uid",
+                labels: {
+                  "asklake.io/run-id": runId,
+                  "spark-role": "driver",
+                },
+                ownerReferences: [{
+                  kind: "SparkApplication",
+                  name: "valid-application",
+                  uid: "valid-owner-uid",
+                  controller: true,
+                }],
+              },
+              status: { phase: "Succeeded" },
+            },
+            {
+              metadata: {
+                name: "terminal-driver",
+                uid: "terminal-pod-uid",
+                labels: {
+                  "asklake.io/run-id": runId,
+                  "spark-role": "driver",
+                },
+                ownerReferences: [{
+                  kind: "SparkApplication",
+                  name: "current-application",
+                  uid: "stale-owner-uid",
+                  controller: true,
+                }],
+              },
+              status: { phase: "Succeeded" },
+            },
+          ],
+        };
+      }
+      return {
+        items: [
+          {
+            metadata: {
+              name: "valid-application",
+              uid: "valid-owner-uid",
+              labels: { "asklake.io/run-id": runId },
+            },
+            status: { applicationState: { state: "COMPLETED" } },
+          },
+          {
+            metadata: {
+              name: "current-application",
+              uid: "current-owner-uid",
+              labels: { "asklake.io/run-id": runId },
+            },
+            status: { applicationState: { state: "COMPLETED" } },
+          },
+        ],
+      };
+    },
+    run(...args) {
+      deletionCalls.push(args);
+    },
+  };
+  assert.throws(
+    () => cleanupCampaignTerminalSparkPods(
+      { liveInput: { targets: { bounded: [] } } },
+      runner,
+      {
+        artifacts: {},
+        runs: { "Run D": { identity: { runId } } },
+      },
+    ),
+    (error) =>
+      error instanceof Phase8BlockedError
+      && error.code === "phase8_terminal_spark_pod_identity_ambiguous",
+  );
+  assert.equal(deletionCalls.length, 0);
 });
 
 

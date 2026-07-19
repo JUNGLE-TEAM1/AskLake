@@ -781,12 +781,13 @@ export class SystemCommandRunner {
   }
 
   incluster(payload, { allowFailure = false, timeout = 120_000 } = {}) {
+    const podName = this.fastApiPodName();
     const result = this.run(
       "kubectl",
       [
         "exec",
         "-i",
-        "deployment/fastapi",
+        podName,
         "-n",
         NAMESPACE,
         "-c",
@@ -815,12 +816,13 @@ export class SystemCommandRunner {
   }
 
   inclusterAsync(payload) {
+    const podName = this.fastApiPodName();
     const child = spawn(
       "kubectl",
       [
         "exec",
         "-i",
-        "deployment/fastapi",
+        podName,
         "-n",
         NAMESPACE,
         "-c",
@@ -857,6 +859,39 @@ export class SystemCommandRunner {
     });
     return { child, completed };
   }
+
+  fastApiPodName() {
+    return selectReadyFastApiPod(this.json("kubectl", [
+      "get",
+      "pods",
+      "-n",
+      NAMESPACE,
+      "-l",
+      "app.kubernetes.io/name=asklake,app.kubernetes.io/component=backend",
+      "-o",
+      "json",
+    ]));
+  }
+}
+
+
+export function selectReadyFastApiPod(pods) {
+  const candidates = (pods?.items ?? [])
+    .filter((pod) =>
+      !pod?.metadata?.deletionTimestamp
+      && pod?.status?.phase === "Running"
+      && (pod?.status?.containerStatuses ?? []).some(
+        (container) => container?.name === "fastapi" && container?.ready === true,
+      ))
+    .sort((left, right) =>
+      String(left?.metadata?.creationTimestamp ?? "").localeCompare(
+        String(right?.metadata?.creationTimestamp ?? ""),
+      ));
+  const name = candidates[0]?.metadata?.name;
+  if (typeof name !== "string" || name.length === 0) {
+    block("fastapi_ready_pod_unavailable");
+  }
+  return name;
 }
 
 
@@ -1965,7 +2000,7 @@ async function submitAndVerifyRunE(inputs, runner, initial) {
     state,
     "Run E",
     {
-      cloudWatchMarker: fault.podName,
+      cloudWatchMarker: runECloudWatchMarker(state),
       completedAt: state.runs["Run E"].firstAttemptFailedAt,
       resourceIdentities: [
         fault.applicationName,
@@ -2016,6 +2051,15 @@ async function submitAndVerifyRunE(inputs, runner, initial) {
       },
     }),
   });
+}
+
+
+export function runECloudWatchMarker(state) {
+  const runId = state?.runs?.["Run E"]?.identity?.runId;
+  if (typeof runId !== "string" || runId.length === 0) {
+    block("run_e_fault_evidence_checkpoint_missing", "run_e");
+  }
+  return runId;
 }
 
 
@@ -2161,6 +2205,9 @@ export function validateAbcReceipt(receipt, approvedTargets) {
   const checkpoints = new Set(
     identityList.map((identity) => identity?.checkpointPath),
   );
+  const runIds = new Set(
+    identityList.map((identity) => identity?.runId),
+  );
   const exactTargetKeys = [
     "jobId",
     "datasetId",
@@ -2181,6 +2228,13 @@ export function validateAbcReceipt(receipt, approvedTargets) {
     expected:
       Array.isArray(identities)
       && identities.every((identity) => identity.expectedCount === 100),
+    runIds:
+      runIds.size === 3
+      && identityList.every(
+        (identity) =>
+          typeof identity?.runId === "string"
+          && identity.runId.trim() !== "",
+      ),
     approvedTargetsExact:
       approved.size === 3
       && Array.isArray(identities)
@@ -2345,6 +2399,88 @@ function cleanupCampaignTemporaryJobs(inputs, runner, state) {
 }
 
 
+function campaignRunIds(inputs, state) {
+  const runIds = new Set(
+    [state.runs?.["Run D"]?.identity?.runId,
+      state.runs?.["Run E"]?.identity?.runId]
+      .filter((value) => typeof value === "string" && value.length > 0),
+  );
+  const receiptPath = state.artifacts?.abcReceipt;
+  if (typeof receiptPath === "string" && existsSync(receiptPath)) {
+    const receipt = validateAbcReceipt(
+      readPrivateJson(receiptPath, "abc_receipt").value,
+      inputs.liveInput.targets.bounded,
+    );
+    for (const identity of receipt.privateIdentity) {
+      if (typeof identity.runId !== "string" || identity.runId.trim() === "") {
+        block("abc_private_receipt_invalid", "cleanup");
+      }
+      runIds.add(identity.runId);
+    }
+  }
+  return runIds;
+}
+
+
+export function cleanupCampaignTerminalSparkPods(inputs, runner, state) {
+  const runIds = campaignRunIds(inputs, state);
+  if (runIds.size === 0) return 0;
+  const pods = runner.json("kubectl", [
+    "get", "pods", "-n", NAMESPACE, "-o", "json",
+  ]);
+  const applications = runner.json("kubectl", [
+    "get",
+    "sparkapplications.sparkoperator.k8s.io",
+    "-n",
+    NAMESPACE,
+    "-o",
+    "json",
+  ]);
+  const applicationsByName = new Map(
+    (applications.items ?? []).map((application) => [
+      application?.metadata?.name,
+      application,
+    ]),
+  );
+  const candidates = [];
+  for (const pod of pods.items ?? []) {
+    const runId = pod?.metadata?.labels?.["asklake.io/run-id"];
+    if (!runIds.has(runId)) continue;
+    if (!["Succeeded", "Failed"].includes(pod?.status?.phase)) continue;
+    const role = pod?.metadata?.labels?.["spark-role"];
+    const owners = (pod?.metadata?.ownerReferences ?? []).filter(
+      (owner) => owner?.kind === "SparkApplication" && owner?.controller === true,
+    );
+    const owner = owners[0];
+    const application = owner ? applicationsByName.get(owner.name) : undefined;
+    const applicationState = application?.status?.applicationState?.state;
+    if (
+      owners.length !== 1
+      || !["driver", "executor"].includes(role)
+      || typeof pod?.metadata?.name !== "string"
+      || typeof pod?.metadata?.uid !== "string"
+      || !application
+      || application?.metadata?.uid !== owner.uid
+      || application?.metadata?.labels?.["asklake.io/run-id"] !== runId
+      || !["COMPLETED", "FAILED", "SUBMISSION_FAILED"].includes(applicationState)
+    ) {
+      block("phase8_terminal_spark_pod_identity_ambiguous", "cleanup");
+    }
+    candidates.push(pod);
+  }
+  for (const pod of candidates) {
+    deleteNamespacedWithUidPrecondition(
+      runner,
+      "api/v1",
+      "pods",
+      pod.metadata.name,
+      pod.metadata.uid,
+    );
+  }
+  return candidates.length;
+}
+
+
 function globalCleanupSnapshot(runner) {
   const pods = runner.json("kubectl", [
     "get", "pods", "-n", NAMESPACE, "-o", "json",
@@ -2402,6 +2538,8 @@ export async function runCleanup(inputs, runner, initial) {
   let state = initial;
   const explicitlyDeletedJobs =
     cleanupCampaignTemporaryJobs(inputs, runner, state);
+  const terminalSparkPodsDeleted =
+    cleanupCampaignTerminalSparkPods(inputs, runner, state);
   const remote = await poll({
     timeoutMs: positiveInteger(
       process.env.ASKLAKE_DAY18_PHASE8_CLEANUP_TIMEOUT_MS,
@@ -2448,6 +2586,7 @@ export async function runCleanup(inputs, runner, initial) {
       temporaryJobs: remote.local.temporaryPhase8Jobs,
       temporaryPods: remote.local.temporaryPhase8Pods,
       explicitlyDeletedJobs,
+      terminalSparkPodsDeleted,
       fastApiReady: remote.local.fastApiReady,
       collectorReady: remote.local.collectorReady,
       hpa: `${remote.local.hpaCurrent}/${remote.local.hpaDesired}`,
