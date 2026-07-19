@@ -36,6 +36,7 @@ DASHBOARD_CHART_ROW_LIMIT = 500
 DASHBOARD_TABLE_ROW_LIMIT = 500
 DASHBOARD_VALUE_ALIAS = "__asklake_widget_value"
 MAX_DASHBOARD_INCREMENTAL_GROUPS = 10_000
+DASHBOARD_TIME_BUCKET_UNITS = {"minute", "hour", "day", "month", "year"}
 DEFAULT_DASHBOARD_DUCKDB_MEMORY_BYTES = 256 * 1024 * 1024
 DEFAULT_DASHBOARD_DUCKDB_TEMP_BYTES = 256 * 1024 * 1024
 DEFAULT_DASHBOARD_DUCKDB_THREADS = 2
@@ -414,13 +415,15 @@ def dashboard_aggregation_query(
     select_parts: list[str] = []
     group_expressions: list[str] = []
     dimension_aliases: list[str] = []
+    time_dimension_filters: list[str] = []
     for column, date_unit in dimension_specs:
         if not column:
             continue
         require_dashboard_column(column, columns)
         expression = quote_duckdb_identifier(column)
-        if date_unit in {"day", "month", "year"}:
+        if date_unit in DASHBOARD_TIME_BUCKET_UNITS:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
+            time_dimension_filters.append(f"{expression} IS NOT NULL")
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
         dimension_aliases.append(column)
         group_expressions.append(expression)
@@ -447,8 +450,24 @@ def dashboard_aggregation_query(
     if value_alias != configured_value_key:
         runtime_config[value_config_key] = value_alias
 
+    where_sql = f" WHERE {' AND '.join(time_dimension_filters)}" if time_dimension_filters else ""
     group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
-    if widget_type in {"line_chart", "area_chart", "heatmap_chart"} and dimension_aliases:
+    base_query = f"SELECT {', '.join(select_parts)} FROM {table}{where_sql}{group_sql}"
+    if widget_type in {"line_chart", "area_chart"} and dimension_aliases:
+        latest_order_sql = " ORDER BY " + ", ".join(
+            f"{quote_duckdb_identifier(alias)} {'DESC' if index == 0 else 'ASC'} NULLS LAST"
+            for index, alias in enumerate(dimension_aliases)
+        )
+        visible_order_sql = " ORDER BY " + ", ".join(
+            f"{quote_duckdb_identifier(alias)} ASC NULLS LAST" for alias in dimension_aliases
+        )
+        recent_alias = quote_duckdb_identifier("__asklake_recent_time_series")
+        return (
+            f"SELECT * FROM ({base_query}{latest_order_sql} LIMIT {DASHBOARD_CHART_ROW_LIMIT}) "
+            f"AS {recent_alias}{visible_order_sql}",
+            runtime_config,
+        )
+    if widget_type == "heatmap_chart" and dimension_aliases:
         order_sql = " ORDER BY " + ", ".join(
             f"{quote_duckdb_identifier(alias)} ASC NULLS LAST" for alias in dimension_aliases
         )
@@ -457,7 +476,7 @@ def dashboard_aggregation_query(
     else:
         order_sql = ""
     limit_sql = f" LIMIT {DASHBOARD_CHART_ROW_LIMIT}" if dimension_aliases else ""
-    return f"SELECT {', '.join(select_parts)} FROM {table}{group_sql}{order_sql}{limit_sql}", runtime_config
+    return f"{base_query}{order_sql}{limit_sql}", runtime_config
 
 
 def dashboard_aggregate_state_query(
@@ -476,13 +495,15 @@ def dashboard_aggregate_state_query(
     select_parts: list[str] = []
     group_expressions: list[str] = []
     dimension_keys: list[str] = []
+    time_dimension_filters: list[str] = []
     for column, date_unit in dimension_specs:
         if not column:
             continue
         require_dashboard_column(column, columns)
         expression = quote_duckdb_identifier(column)
-        if date_unit in {"day", "month", "year"}:
+        if date_unit in DASHBOARD_TIME_BUCKET_UNITS:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
+            time_dimension_filters.append(f"{expression} IS NOT NULL")
         select_parts.append(f"{expression} AS {quote_duckdb_identifier(column)}")
         group_expressions.append(expression)
         dimension_keys.append(column)
@@ -513,9 +534,17 @@ def dashboard_aggregate_state_query(
             f"MIN({numeric_value}) AS __asklake_state_min",
             f"MAX({numeric_value}) AS __asklake_state_max",
         ])
+    filter_parts: list[str] = []
+    normalized_where_sql = where_sql.strip()
+    if normalized_where_sql:
+        if not normalized_where_sql.upper().startswith("WHERE "):
+            raise ValueError("Dashboard aggregate-state filter must start with WHERE")
+        filter_parts.append(normalized_where_sql[6:].strip())
+    filter_parts.extend(time_dimension_filters)
+    resolved_where_sql = f" WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
     group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
     query = (
-        f"SELECT {', '.join(select_parts)} FROM {table}{where_sql}{group_sql} "
+        f"SELECT {', '.join(select_parts)} FROM {table}{resolved_where_sql}{group_sql} "
         f"LIMIT {MAX_DASHBOARD_INCREMENTAL_GROUPS + 1}"
     )
     return query, {

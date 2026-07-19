@@ -91,6 +91,7 @@ def test_sql_ai_api_returns_editor_sql_and_only_action_used_evidence() -> None:
     assert payload["usedEvidenceIds"] == ["doc-used"]
     assert [source["documentId"] for source in payload["sources"]] == ["doc-used"]
     assert payload["retrieval"]["evidenceStatus"] == "used"
+    assert payload["joinEvidence"] == []
 
 
 def test_sql_ai_api_rejects_provider_sql_outside_selected_dataset_scope() -> None:

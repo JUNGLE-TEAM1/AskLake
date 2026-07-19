@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -40,6 +41,11 @@ CONFIG_MODEL_BY_TYPE = {
     DashboardRuntimeWidgetType.HEATMAP_CHART: HeatmapChartWidgetConfig,
     DashboardRuntimeWidgetType.TREEMAP_CHART: TreemapChartWidgetConfig,
 }
+
+JOIN_TITLE_PATTERN = re.compile(
+    "(?:join|merge|\uC870\uC778|\uACB0\uD569|\uD569\uCE58|\uD569\uCCD0|\uBB36\uC5B4)",
+    re.IGNORECASE,
+)
 
 NUMERIC_TYPE_HINTS = {
     "bigint",
@@ -252,6 +258,9 @@ def _guard_create_widget_action(
         return None, warnings
     config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
     action.widget.config = config_payload
+    if _title_claims_unverified_join(action.widget.title, dataset):
+        warnings.append("단일 데이터셋 위젯이 JOIN 결과라고 주장한 제목을 실제 집계 기준 제목으로 교체했습니다.")
+        action.widget.title = ""
     action.widget.title = _ensure_korean_widget_title(action.widget.title, widget_type, config_payload, dataset)
     return action, warnings
 
@@ -293,18 +302,69 @@ def _guard_update_widget_action(
         if config is None:
             return None, warnings
         config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
+        requested_title = patch.title or widget.title
+        if _title_claims_unverified_join(requested_title, dataset):
+            warnings.append(
+                "단일 데이터셋 위젯의 검증되지 않은 JOIN 제목을 실제 집계 기준 제목으로 교체했습니다."
+            )
+            requested_title = ""
         next_title = patch.title
-        if patch.title is not None or widget.config.get("placeholderKind") == "visualization_request":
-            next_title = _ensure_korean_widget_title(patch.title or widget.title, target_type, config_payload, dataset)
+        if (
+            patch.title is not None
+            or widget.config.get("placeholderKind") == "visualization_request"
+            or not requested_title
+        ):
+            next_title = _ensure_korean_widget_title(requested_title, target_type, config_payload, dataset)
         action.patch = DashboardAssistantWidgetPatch(
             title=next_title,
             type=patch.type,
             dataset_id=patch.dataset_id,
             config=config_payload,
         )
+        if not _patch_changes_widget(action.patch, widget):
+            return None, [f"update_widget {action.widget_id!r}에 실제 변경사항이 없어 제외했습니다."]
         return action, warnings
 
-    return action, []
+    title_warnings: list[str] = []
+    if patch.title is not None and JOIN_TITLE_PATTERN.search(patch.title):
+        dataset = datasets.get(dataset_id) if dataset_id is not None else None
+        if dataset is None:
+            return None, [f"update_widget {action.widget_id!r}의 JOIN 제목을 데이터셋과 검증할 수 없습니다."]
+        if _title_claims_unverified_join(patch.title, dataset):
+            action.patch = DashboardAssistantWidgetPatch(
+                title=_ensure_korean_widget_title(
+                    "",
+                    target_type,
+                    _config_to_dict(widget.config),
+                    dataset,
+                ),
+                type=patch.type,
+                dataset_id=patch.dataset_id,
+                config=patch.config,
+            )
+            patch = action.patch
+            title_warnings.append(
+                "단일 데이터셋 위젯의 검증되지 않은 JOIN 제목을 실제 집계 기준 제목으로 교체했습니다."
+            )
+
+    if not _patch_changes_widget(patch, widget):
+        return None, [f"update_widget {action.widget_id!r}에 실제 변경사항이 없어 제외했습니다."]
+    return action, title_warnings
+
+
+def _patch_changes_widget(
+    patch: DashboardAssistantWidgetPatch,
+    widget: AssistantWidgetContext,
+) -> bool:
+    if patch.title is not None and patch.title != widget.title:
+        return True
+    if patch.type is not None and _widget_type_enum(patch.type) != widget.type:
+        return True
+    if patch.dataset_id is not None and patch.dataset_id != widget.dataset_id:
+        return True
+    if patch.config is not None and _config_to_dict(patch.config) != _config_to_dict(widget.config):
+        return True
+    return False
 
 
 def _ensure_korean_widget_title(
@@ -320,6 +380,8 @@ def _ensure_korean_widget_title(
 
 
 def _title_needs_korean_normalization(title: str, dataset: AssistantDatasetContext) -> bool:
+    if re.fullmatch(r"[\s?\ufffd]+", title):
+        return True
     normalized_title = _normalize_title_text(title)
     if not normalized_title or normalized_title in PLACEHOLDER_TITLES:
         return True
@@ -329,6 +391,18 @@ def _title_needs_korean_normalization(title: str, dataset: AssistantDatasetConte
     if not _contains_hangul(title):
         return True
     return _contains_known_english_data_term(normalized_title)
+
+
+def _title_claims_unverified_join(title: str, dataset: AssistantDatasetContext) -> bool:
+    if not JOIN_TITLE_PATTERN.search(title):
+        return False
+    dataset_identity = " ".join((
+        dataset.id,
+        dataset.name,
+        dataset.description,
+        *dataset.tags,
+    ))
+    return not JOIN_TITLE_PATTERN.search(dataset_identity)
 
 
 def _normalize_title_text(value: str) -> str:

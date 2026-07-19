@@ -5,6 +5,7 @@ import {
   catalogDatasetToDashboardOption,
   isUsableDashboardDataset,
 } from "./dashboardDatasetAdapters";
+import { onCatalogDatasetDeleted } from "../../../services/catalogEvents";
 
 export function useDashboardDatasets(enabled = true) {
   const [datasets, setDatasets] = useState<DashboardDatasetOption[]>([]);
@@ -20,28 +21,34 @@ export function useDashboardDatasets(enabled = true) {
 
     let ignore = false;
 
-    setIsLoading(true);
-    setError(null);
-    void getDashboardCatalogDatasets()
-      .then((catalogDatasets) => {
-        if (ignore) return;
-        setDatasets(
-          catalogDatasets
-            .filter(isUsableDashboardDataset)
-            .map(catalogDatasetToDashboardOption),
-        );
-      })
-      .catch((unknownError) => {
-        if (ignore) return;
-        setError(unknownError instanceof Error ? unknownError : new Error("Dataset request failed."));
-        setDatasets([]);
-      })
-      .finally(() => {
-        if (!ignore) setIsLoading(false);
-      });
+    const loadDatasets = () => {
+      setIsLoading(true);
+      setError(null);
+      void getDashboardCatalogDatasets()
+        .then((catalogDatasets) => {
+          if (ignore) return;
+          setDatasets(
+            catalogDatasets
+              .filter(isUsableDashboardDataset)
+              .map(catalogDatasetToDashboardOption),
+          );
+        })
+        .catch((unknownError) => {
+          if (ignore) return;
+          setError(unknownError instanceof Error ? unknownError : new Error("Dataset request failed."));
+          setDatasets([]);
+        })
+        .finally(() => {
+          if (!ignore) setIsLoading(false);
+        });
+    };
+
+    loadDatasets();
+    const removeDatasetDeletedListener = onCatalogDatasetDeleted(loadDatasets);
 
     return () => {
       ignore = true;
+      removeDatasetDeletedListener();
     };
   }, [enabled]);
 

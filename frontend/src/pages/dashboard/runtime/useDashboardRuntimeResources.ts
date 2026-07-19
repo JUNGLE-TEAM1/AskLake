@@ -4,6 +4,7 @@ import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
 import { usePreparedPublishedDashboard } from "./usePreparedPublishedDashboard";
 import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
 import { useDashboardWidgetData } from "./useDashboardWidgetData";
+import { onCatalogDatasetDeleted } from "../../../services/catalogEvents";
 
 export function useDashboardRuntimeResources({
   active,
@@ -61,6 +62,18 @@ export function useDashboardRuntimeResources({
       setSelectedPageId(pages[0]?.id ?? null);
     }
   }, [active, pages, selectedPageId]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+
+    return onCatalogDatasetDeleted(() => {
+      if (mode === "published") {
+        void loadPublishedRuntime(dashboardId, { silent: true });
+      } else {
+        void loadDraftRuntime(dashboardId, { silent: true });
+      }
+    });
+  }, [active, dashboardId, loadDraftRuntime, loadPublishedRuntime, mode]);
 
   const activeRuntime = mode === "published" ? publishedRuntime : draftRuntime;
   const setActiveRuntime = useCallback(

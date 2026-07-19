@@ -15,6 +15,7 @@ export type AuthUserResponse = {
 
 export type AuthSessionResponse = {
   authenticated: boolean;
+  publicSignupEnabled: boolean;
   user: CurrentUserResponse | null;
 };
 

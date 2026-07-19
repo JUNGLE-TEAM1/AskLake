@@ -1,10 +1,22 @@
 from enum import Enum
+import re
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
+
+
+def _reject_corrupt_dashboard_title(value: str | None) -> str | None:
+    if value is None:
+        return value
+    # Reject titles made entirely from whitespace, punctuation, or Unicode
+    # replacement characters. This catches mojibake such as "???? (??)"
+    # while still allowing a valid title that happens to contain punctuation.
+    if value.strip() and not re.search(r"[^\W_\ufffd]", value, re.UNICODE):
+        raise ValueError("Dashboard title contains only replacement characters.")
+    return value
 
 
 class DashboardStatus(str, Enum):
@@ -58,6 +70,8 @@ class DashboardWidgetAggregation(str, Enum):
 
 
 class DashboardWidgetDateUnit(str, Enum):
+    MINUTE = "minute"
+    HOUR = "hour"
     DAY = "day"
     MONTH = "month"
     YEAR = "year"
@@ -154,6 +168,8 @@ class CreateDashboardRequest(CamelModel):
     owner: str | None = None
     sql_run_id: str | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardCardResponse(CamelModel):
     dashboard: DashboardCard
@@ -161,6 +177,8 @@ class DashboardCardResponse(CamelModel):
 
 class UpdateDashboardRequest(CamelModel):
     title: str
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DeleteDashboardResponse(CamelModel):
@@ -382,6 +400,8 @@ class DashboardWidgetQueryResponse(CamelModel):
 class CreateDraftPageRequest(CamelModel):
     title: str
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardPageResponse(CamelModel):
     id: str
@@ -392,6 +412,8 @@ class DashboardPageResponse(CamelModel):
 class UpdateDraftPageRequest(CamelModel):
     title: str
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class CreateDraftWidgetRequest(CamelModel):
     type: DashboardRuntimeWidgetType
@@ -401,6 +423,8 @@ class CreateDraftWidgetRequest(CamelModel):
     config: DashboardRuntimeWidgetConfig | None = None
     data: list[dict[str, Any]] | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class UpdateDraftWidgetRequest(CamelModel):
     type: DashboardRuntimeWidgetType | None = None
@@ -408,6 +432,8 @@ class UpdateDraftWidgetRequest(CamelModel):
     dataset_id: str | None = None
     config: DashboardRuntimeWidgetConfig | None = None
     data: list[dict[str, Any]] | None = None
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DashboardWidgetMutationResponse(CamelModel):
@@ -464,6 +490,7 @@ class DashboardAssistantRequest(CamelModel):
     widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list, max_length=100)
     semantic_model_id: str | None = Field(default=None, max_length=255)
     current_dataset_id: str | None = Field(default=None, max_length=255)
+    selected_dataset_ids: list[str] = Field(default_factory=list, max_length=20)
     surface: Literal["dashboard", "catalog", "semantic"] = "dashboard"
 
 
@@ -473,12 +500,16 @@ class DashboardAssistantWidgetPatch(CamelModel):
     dataset_id: str | None = Field(default=None, max_length=255)
     config: dict[str, Any] | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardAssistantCreateWidgetInput(CamelModel):
     title: str = Field(max_length=255)
     type: DashboardRuntimeWidgetType
     dataset_id: str = Field(max_length=255)
     config: dict[str, Any]
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DashboardAssistantCreateWidgetAction(CamelModel):

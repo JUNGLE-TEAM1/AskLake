@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,8 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import Text, delete, or_, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.application.etl_schedule import has_scheduled_execution
@@ -21,6 +23,8 @@ from app.models import (
     CatalogDatasetModel,
     ContinuousSqlJobModel,
     DashboardBatchWidgetResult,
+    DashboardPage,
+    DashboardRevision,
     DashboardWidget,
     DashboardWidgetResultModel,
     DatasetFreshnessModel,
@@ -41,6 +45,7 @@ from app.models import (
     SemanticModelModel,
     SemanticRelationshipModel,
     SqlRunModel,
+    SqlRunResultPageModel,
 )
 from app.models.catalog_deletion import CatalogDatasetDeletionModel
 from app.repositories.audit_repository import add_audit_event
@@ -247,6 +252,17 @@ def add_workload_blockers(
 
 
 def add_dependency_blockers(
+    db: Session,
+    dataset_id: str,
+    payload: dict[str, Any],
+    blockers: list[CatalogDatasetDeletionBlocker],
+) -> None:
+    collected: list[CatalogDatasetDeletionBlocker] = []
+    _add_dependency_blockers_with_dashboard_widgets(db, dataset_id, payload, collected)
+    blockers.extend(item for item in collected if item.resource_type != "dashboard_widget")
+
+
+def _add_dependency_blockers_with_dashboard_widgets(
     db: Session,
     dataset_id: str,
     payload: dict[str, Any],
@@ -493,6 +509,8 @@ def process_claimed_deletion(
 
 
 def delete_dataset_metadata(db: Session, dataset_id: str) -> None:
+    sql_run_ids = delete_dataset_sql_metadata(db, dataset_id)
+    delete_dataset_dashboards(db, dataset_id, sql_run_ids)
     for model in (DashboardBatchWidgetResult, DashboardWidgetResultModel, DatasetFreshnessModel, DatasetRevisionCommitModel, DatasetKafkaPartitionCursorModel):
         db.execute(delete(model).where(model.dataset_id == dataset_id))
     for model in (RagColumnRecommendationModel, RagClassificationRunModel, RagIndexJobModel, RagIndexManifestModel):
@@ -508,6 +526,92 @@ def delete_dataset_metadata(db: Session, dataset_id: str) -> None:
     ))
     db.execute(delete(CatalogDatasetModel).where(CatalogDatasetModel.id == dataset_id))
     db.flush()
+
+
+def delete_dataset_sql_metadata(db: Session, dataset_id: str) -> set[str]:
+    """Remove SQL analysis history and result pages for a deleted dataset."""
+    candidate_runs = list(
+        db.scalars(
+            select(SqlRunModel).where(
+                or_(
+                    SqlRunModel.dataset_id == dataset_id,
+                    SqlRunModel.payload.cast(Text).contains(dataset_id),
+                )
+            )
+        ).all()
+    )
+    matching_runs = [
+        run
+        for run in candidate_runs
+        if str(run.dataset_id) == dataset_id or nested_contains(run.payload, dataset_id)
+    ]
+    run_ids = {str(run.id) for run in matching_runs}
+    if run_ids:
+        db.execute(delete(SqlRunResultPageModel).where(SqlRunResultPageModel.run_id.in_(run_ids)))
+        db.execute(delete(SqlRunModel).where(SqlRunModel.id.in_(run_ids)))
+    return run_ids
+
+
+def delete_dataset_dashboards(db: Session, dataset_id: str, sql_run_ids: set[str] | None = None) -> None:
+    """Remove dashboard cards and runtime rows backed by a deleted dataset."""
+    sql_run_ids = sql_run_ids or set()
+    dashboard_ids: set[str] = set()
+    try:
+        rows = db.execute(text("SELECT id, dataset_id, source_run_id, payload FROM dashboards")).mappings()
+    except SQLAlchemyError:
+        try:
+            rows = db.execute(text("SELECT id, dataset_id, payload FROM dashboards")).mappings()
+        except SQLAlchemyError:
+            rows = []
+    for row in rows:
+        raw_payload = row.get("payload")
+        if isinstance(raw_payload, dict):
+            payload = raw_payload
+        elif isinstance(raw_payload, str):
+            try:
+                payload = json.loads(raw_payload)
+            except json.JSONDecodeError:
+                payload = {}
+        else:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if (
+            str(row.get("dataset_id") or "") == dataset_id
+            or str(row.get("source_run_id") or "") in sql_run_ids
+            or str(payload.get("datasetId") or "") == dataset_id
+            or str(payload.get("sourceRunId") or "") in sql_run_ids
+            or nested_contains(payload, dataset_id)
+        ):
+            dashboard_ids.add(str(row["id"]))
+
+    widget_rows = list(db.scalars(select(DashboardWidget).where(DashboardWidget.dataset_id == dataset_id)))
+    page_ids = {str(widget.page_id) for widget in widget_rows}
+    if page_ids:
+        revision_ids = set(db.scalars(select(DashboardPage.revision_id).where(DashboardPage.id.in_(page_ids))))
+        dashboard_ids.update(
+            str(dashboard_id)
+            for dashboard_id in db.scalars(
+                select(DashboardRevision.dashboard_id).where(DashboardRevision.id.in_(revision_ids))
+            )
+        )
+
+    revision_ids = set(db.scalars(select(DashboardRevision.id).where(DashboardRevision.dashboard_id.in_(dashboard_ids))))
+    page_ids = set(db.scalars(select(DashboardPage.id).where(DashboardPage.revision_id.in_(revision_ids)))) if revision_ids else set()
+    if page_ids:
+        db.execute(delete(DashboardWidget).where(DashboardWidget.page_id.in_(page_ids)))
+        db.execute(delete(DashboardPage).where(DashboardPage.id.in_(page_ids)))
+    if revision_ids:
+        db.execute(delete(DashboardRevision).where(DashboardRevision.id.in_(revision_ids)))
+
+    for dashboard_id in dashboard_ids:
+        try:
+            db.execute(text("DELETE FROM dashboard_tags WHERE dashboard_id = :dashboard_id"), {"dashboard_id": dashboard_id})
+        except SQLAlchemyError:
+            # Older deployments may not have the optional tag table yet; the
+            # dashboard row itself must still be deleted consistently.
+            pass
+        db.execute(text("DELETE FROM dashboards WHERE id = :dashboard_id"), {"dashboard_id": dashboard_id})
 
 
 def add_dataset_artifacts(artifacts: list[CatalogDatasetDeletionArtifact], payload: dict[str, Any]) -> None:
@@ -541,6 +645,7 @@ def add_dataset_artifacts(artifacts: list[CatalogDatasetDeletionArtifact], paylo
 def is_managed_storage_location(location: str, dataset: CatalogDatasetResponse) -> bool:
     normalized = location.replace("s3a://", "s3://", 1)
     parsed = urlparse(normalized)
+    is_windows_path = len(normalized) >= 2 and normalized[1] == ":"
     path_segments = [item for item in parsed.path.split("/") if item]
     token_match = any(is_dataset_scope_segment(item, dataset) for item in path_segments)
     if parsed.scheme == "s3":
@@ -549,7 +654,7 @@ def is_managed_storage_location(location: str, dataset: CatalogDatasetResponse) 
             parsed.netloc == settings.asklake_spark_output_bucket
             or normalized.rstrip("/").startswith(rag_staging + "/")
         )
-    if parsed.scheme:
+    if parsed.scheme and not is_windows_path:
         return False
     try:
         root = LocalLakeStorageService().storage_root.resolve()

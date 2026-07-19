@@ -14,6 +14,8 @@ const ANALYTICAL_SHAPE_PATTERN = /(별|추이|분포|비교|현황|상위|하위
 const ANALYTICAL_VALUE_PATTERN = /(매출|수익|주문|비용|고객|재고|배송|수량|건수|비율|평균|합계|revenue|sales|order|cost|customer|inventory|shipment|count|rate|average|total)/i;
 const FOLLOW_UP_EXECUTION_PATTERN = /(랜덤(?:으로)?\s*(?:진행|해|만들)|그걸로|그대로|이걸로|저걸로|계속\s*(?:진행|해)|진행해\s*줘|만들어\s*줘|해\s*줘|go ahead|proceed|use (?:that|it)|continue)/i;
 const PREVIOUS_DATA_TARGET_PATTERN = /(필드|컬럼|열|데이터셋|dataset|field|column|[\p{L}\p{N}]+_[\p{L}\p{N}_-]+)/iu;
+const EXPLICIT_CREATE_PATTERN = /((새(?:로운)?|별도(?:의)?)\s*(?:위젯|차트|그래프|시각화)|(?:새로|하나\s*더|한\s*개\s*더)\s*(?:추가|생성|만들|그려)|(?:위젯|차트|그래프|시각화).*(?:추가|생성|만들|그려)|(?:추가|생성|만들|그려).*(?:위젯|차트|그래프|시각화)|(?:create|add|make|draw)\s+(?:a\s+)?(?:new\s+)?(?:widget|chart|graph|visualization))/i;
+const EXPLICIT_UPDATE_PATTERN = /(선택한|현재|기존|이\s*(?:위젯|차트|그래프)|색(?:상|깔)?|빨간|파란|초록|제목|축|범례|크기|누적|스택|(?:막대|선|영역|도넛|원형|파이|표|테이블)(?:\s*차트)?로\s*(?:만들|바꿔|변경|전환)|바꿔|변경|수정|업데이트|전환|고쳐|colou?r|red|blue|green|title|axis|legend|size|stack|edit|change|update|modify|convert)/i;
 
 function recentUserPrompts(previousUserPrompts: readonly string[] = []) {
   return previousUserPrompts
@@ -71,4 +73,15 @@ export function classifyDashboardAssistantMode(
     return "visualization_request";
   }
   return isWidgetMutationPrompt(prompt, context) ? "visualization_request" : "dashboard_question";
+}
+
+export function resolveDashboardAssistantMutationTarget(
+  prompt: string,
+  selectedWidgetId: string | null | undefined,
+) {
+  if (!selectedWidgetId) return null;
+  const normalizedPrompt = prompt.trim();
+  if (EXPLICIT_UPDATE_PATTERN.test(normalizedPrompt)) return selectedWidgetId;
+  if (EXPLICIT_CREATE_PATTERN.test(normalizedPrompt)) return null;
+  return selectedWidgetId;
 }

@@ -8,6 +8,10 @@ import {
   serializeEtlDraft,
 } from "../src/state/etlDraftState.ts";
 import type { DraftPipeline } from "../src/types/etl.ts";
+import {
+  sanitizeSourceConnectorFields,
+  shouldReplaceSourceRuntimeDefault,
+} from "../src/utils/sourceConnectorFields.ts";
 
 function draftFixture(): DraftPipeline {
   return {
@@ -73,4 +77,23 @@ test("future draft versions fail closed to the supplied fallback", () => {
     version: 99,
   });
   assert.deepEqual(hydrateEtlDraft(future, fallback), hydrateEtlDraft(null, fallback));
+});
+
+test("masked object-storage credentials are never sent back to the connector", () => {
+  const fields: Array<[string, string]> = [
+    ["Storage Provider", "MinIO"],
+    ["Access Key", ETL_DRAFT_REDACTED_VALUE],
+    ["Secret Key", "[REDACTED]"],
+    ["Bucket / Stage Name", "m3-raw"],
+  ];
+  const sanitized = sanitizeSourceConnectorFields("File / S3", fields);
+  assert.equal(sanitized.find(([label]) => label === "Access Key")?.[1], "");
+  assert.equal(sanitized.find(([label]) => label === "Secret Key")?.[1], "");
+  assert.equal(sanitized.find(([label]) => label === "Bucket / Stage Name")?.[1], "m3-raw");
+});
+
+test("empty and example object-storage defaults are replaceable", () => {
+  assert.equal(shouldReplaceSourceRuntimeDefault(""), true);
+  assert.equal(shouldReplaceSourceRuntimeDefault("replace-with-asklake-raw-bucket"), true);
+  assert.equal(shouldReplaceSourceRuntimeDefault("m3-raw"), false);
 });
