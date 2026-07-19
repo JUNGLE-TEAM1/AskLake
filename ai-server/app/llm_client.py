@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import math
 import re
@@ -51,6 +52,9 @@ class ProviderUnavailableError(ProviderError):
 
 class ProviderResponseError(ProviderError):
     pass
+
+
+EVIDENCE_NORMALIZATION_WARNING = "Provider가 제공한 미확인 evidence ID를 제거했습니다."
 
 
 @dataclass(frozen=True)
@@ -224,7 +228,11 @@ class OpenAICompatibleClient:
                         payload = strict_json_loads(raw_payload)
                     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                         raise ProviderResponseError("Provider returned invalid JSON") from exc
-                    output = parse_chat_completion(payload, request.mode)
+                    output = parse_chat_completion(
+                        payload,
+                        request.mode,
+                        allowed_evidence_ids=evidence_ids_for_request(request),
+                    )
                     validate_used_evidence_scope(request, output)
                     return ProviderGeneration(
                         output=output,
@@ -515,6 +523,11 @@ def build_chat_completion_request(
         "rag_query_plan": "rag_query_plan_output",
         "rag_relevance": "rag_relevance_output",
     }[request.mode]
+    output_json_schema = output_schema.model_json_schema()
+    constrain_evidence_ids_in_schema(
+        output_json_schema,
+        evidence_ids_for_request(request),
+    )
     return {
         "model": model or settings.model_for_mode(request.mode),
         "messages": [
@@ -534,13 +547,18 @@ def build_chat_completion_request(
             "json_schema": {
                     "name": output_name,
                     "strict": True,
-                    "schema": output_schema.model_json_schema(),
+                    "schema": output_json_schema,
             },
         },
     }
 
 
-def parse_chat_completion(payload: Any, mode: str = "query_sql") -> GenerationOutput:
+def parse_chat_completion(
+    payload: Any,
+    mode: str = "query_sql",
+    *,
+    allowed_evidence_ids: list[str] | None = None,
+) -> GenerationOutput:
     if not isinstance(payload, dict):
         raise ProviderResponseError("Provider returned an unexpected response shape")
     choices = payload.get("choices")
@@ -552,6 +570,7 @@ def parse_chat_completion(payload: Any, mode: str = "query_sql") -> GenerationOu
     content = extract_message_content(message.get("content"))
     try:
         decoded = strict_json_loads(strip_json_fence(content))
+        decoded = normalize_evidence_payload(decoded, mode, allowed_evidence_ids or [])
         output_schema = {
             "query_sql": QuerySqlOutput,
             "classify_dataset": DatasetClassificationOutput,
@@ -568,6 +587,81 @@ def parse_chat_completion(payload: Any, mode: str = "query_sql") -> GenerationOu
         return output_schema.model_validate(decoded)
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise ProviderResponseError(f"Provider output did not match the {mode} contract") from exc
+
+
+def evidence_ids_for_request(request: GenerateRequest) -> list[str]:
+    rag_context = request.context.get("ragContext") if isinstance(request.context, dict) else None
+    sources = rag_context.get("sources") if isinstance(rag_context, dict) else None
+    return list(dict.fromkeys(
+        document_id
+        for source in sources or []
+        if isinstance(source, dict)
+        and (document_id := str(source.get("documentId") or "").strip())
+    ))
+
+
+def constrain_evidence_ids_in_schema(schema: dict[str, Any], allowed_ids: list[str]) -> None:
+    """Constrain every evidence array to the request-scoped RAG document IDs."""
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        evidence_schema = properties.get("usedEvidenceIds")
+        if isinstance(evidence_schema, dict):
+            if allowed_ids:
+                items = evidence_schema.get("items")
+                if not isinstance(items, dict):
+                    items = {"type": "string"}
+                    evidence_schema["items"] = items
+                items["enum"] = allowed_ids
+            else:
+                evidence_schema["maxItems"] = 0
+    for value in schema.values():
+        if isinstance(value, dict):
+            constrain_evidence_ids_in_schema(value, allowed_ids)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    constrain_evidence_ids_in_schema(item, allowed_ids)
+
+
+def normalize_evidence_payload(decoded: Any, mode: str, allowed_ids: list[str]) -> Any:
+    """Drop only untrusted citation metadata before strict output validation."""
+
+    if mode not in {"query_sql", "dashboard_assistant"} or not isinstance(decoded, dict):
+        return decoded
+    normalized = copy.deepcopy(decoded)
+    allowed = set(allowed_ids)
+    changed = False
+
+    if mode == "query_sql":
+        evidence_ids = normalized.get("usedEvidenceIds")
+        if not isinstance(evidence_ids, list) or not all(isinstance(item, str) for item in evidence_ids):
+            return normalized
+        filtered_ids = [item for item in evidence_ids if item in allowed]
+        changed = filtered_ids != evidence_ids
+        normalized["usedEvidenceIds"] = filtered_ids
+    else:
+        actions = normalized.get("actions")
+        if not isinstance(actions, list) or not all(isinstance(action, dict) for action in actions):
+            return normalized
+        scoped_ids: list[str] = []
+        for action in actions:
+            evidence_ids = action.get("usedEvidenceIds")
+            if not isinstance(evidence_ids, list) or not all(isinstance(item, str) for item in evidence_ids):
+                return normalized
+            filtered_ids = [item for item in evidence_ids if item in allowed]
+            changed = changed or filtered_ids != evidence_ids
+            action["usedEvidenceIds"] = filtered_ids
+            scoped_ids.extend(filtered_ids)
+        derived_ids = list(dict.fromkeys(scoped_ids))
+        changed = changed or normalized.get("usedEvidenceIds") != derived_ids
+        normalized["usedEvidenceIds"] = derived_ids
+
+    warnings = normalized.get("warnings")
+    if changed and isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
+        if EVIDENCE_NORMALIZATION_WARNING not in warnings and len(warnings) < 16:
+            warnings.append(EVIDENCE_NORMALIZATION_WARNING)
+    return normalized
 
 
 def validate_used_evidence_scope(request: GenerateRequest, output: GenerationOutput) -> None:

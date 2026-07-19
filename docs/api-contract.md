@@ -3392,6 +3392,7 @@ Provider key는 `ai-server`에만 주입하고 FastAPI는 Gateway service token�
 그 다음 actor의 dataset `query` permission과 governance를 통과한 available catalog dataset, 그 dataset에 연결된 현재 page widget, 지원 가능한 widget type/config option만 Gateway 컨텍스트로 전달한다. 제외된 dataset의 `sampleRows`와 연결 widget의 `dataSample`은 provider request에 포함하지 않는다.
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
 Gateway 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
+SQL Query AI와 Dashboard Assistant는 요청별 RAG source `documentId` allowlist를 provider schema에 적용한다. Source가 없으면 `usedEvidenceIds`는 빈 배열만 허용하며, provider가 범위 밖 ID를 반환하면 해당 citation만 제거하고 경고를 추가한다. Dashboard 최상위 목록은 검증된 action별 evidence의 합집합으로 다시 계산한다. 이 정규화는 SQL read-only/scope 또는 widget action의 dataset, column, type, config 검증을 완화하지 않는다.
 Private AI Gateway 설정이 없거나 provider 호출이 실패하면 명시적인 unavailable/error 응답과 빈 action을 반환한다.
 프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 미설정이거나 빈 Docker build arg이면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
 값을 지정하면 해당 경로로 요청하며, `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
