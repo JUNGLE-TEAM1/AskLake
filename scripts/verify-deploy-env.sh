@@ -596,8 +596,15 @@ app_env="$(env_value_for APP_ENV)"
 backend_legacy_demo_users="$(env_value_for AUTH_LEGACY_DEMO_USERS_ENABLED)"
 frontend_legacy_demo_users="$(env_value_for VITE_AUTH_LEGACY_DEMO_USERS_ENABLED)"
 backend_legacy_demo_users="${backend_legacy_demo_users:-false}"
-if [[ "$backend_legacy_demo_users" != "false" || -n "$frontend_legacy_demo_users" ]]; then
-  printf 'error: legacy demo identities are test-only and must not be configured in %s\n' "$ENV_FILE" >&2
+frontend_legacy_demo_users="${frontend_legacy_demo_users:-false}"
+for value in "$backend_legacy_demo_users" "$frontend_legacy_demo_users"; do
+  if [[ "$value" != "true" && "$value" != "false" ]]; then
+    printf 'error: legacy demo user flags must be lowercase true or false in %s\n' "$ENV_FILE" >&2
+    exit 1
+  fi
+done
+if [[ "$backend_legacy_demo_users" != "$frontend_legacy_demo_users" ]]; then
+  printf 'error: AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match in %s\n' "$ENV_FILE" >&2
   exit 1
 fi
 frontend_mock_mode="$(env_value_for VITE_USE_MOCK_API)"

@@ -283,7 +283,7 @@ def initialize_auth(db: Session) -> None:
         if settings.allows_header_auth_fallback:
             service._ensure_demo_users()
         elif getattr(settings, "auth_legacy_demo_users_enabled", False):
-            service._ensure_demo_users(preserve_existing_status=True)
+            service._ensure_demo_users()
             service._ensure_bootstrap_admin()
         else:
             service._disable_legacy_demo_users()

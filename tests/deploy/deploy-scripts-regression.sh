@@ -67,6 +67,7 @@ write_valid_env() {
     printf '%s\n' \
       'APP_ENV=production' \
       'AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
+      'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
@@ -625,8 +626,20 @@ expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
 expect_preflight_failure \
-  'production rejects legacy demo identities' \
-  'legacy demo identities are test-only'
+  'legacy demo identity flags must match' \
+  'AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match'
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'TRUE'
+replace_env_value "$ENV_FILE" VITE_AUTH_LEGACY_DEMO_USERS_ENABLED 'TRUE'
+expect_preflight_failure \
+  'legacy demo identity flags require lowercase booleans' \
+  'legacy demo user flags must be lowercase true or false'
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
+replace_env_value "$ENV_FILE" VITE_AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
+expect_preflight_pass 'explicit demo deployment identity opt-in is accepted'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA*='
