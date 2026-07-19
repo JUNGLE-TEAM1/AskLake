@@ -1258,6 +1258,48 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             )
             self.assertEqual(run.task_states["faultAttempts"][0]["generation"], 1)
 
+    def test_failed_airflow_sync_uses_persisted_spark_failure(self) -> None:
+        job_id = "JOB-SQLITE-AIRFLOW-SPARK-FAILURE"
+        run_id = "RUN-SQLITE-AIRFLOW-SPARK-FAILURE"
+        self.insert_job(job_id)
+        self.insert_airflow_run(job_id, run_id)
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            run.task_states = {
+                "sparkResult": {
+                    "error": "quality rule failed",
+                    "failedStage": "Quality",
+                    "runId": run_id,
+                    "status": "failed",
+                },
+            }
+            db.commit()
+
+        airflow = BlockingAirflowClient()
+        airflow.get_dag_run = Mock(return_value=AirflowDagRun(
+            dag_id=airflow.config.dag_id,
+            dag_run_id=run_id,
+            state="failed",
+            asklake_status="failed",
+            conf={},
+            raw={},
+        ))
+        with (
+            patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            self.session_factory() as db,
+        ):
+            sync_airflow_run(
+                db,
+                db.get(ETLJobModel, job_id),
+                db.get(ETLRunModel, run_id),
+                airflow,
+            )
+
+        with self.session_factory() as db:
+            run = db.get(ETLRunModel, run_id)
+            self.assertEqual(run.failed_stage, "Quality")
+            self.assertEqual(run.error_summary, "quality rule failed")
+
     def test_task_instance_404_does_not_mark_dag_run_missing(self) -> None:
         job_id = "JOB-SQLITE-AIRFLOW-TASKS-MISSING"
         run_id = "RUN-SQLITE-AIRFLOW-TASKS-MISSING"

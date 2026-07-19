@@ -57,6 +57,13 @@ def main() -> None:
             assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "1"
             assert trino_current_snapshot(table) == second_snapshot
             assert_spark_file_evidence(second, table, second_snapshot)
+            assert_quality_failure_preserves_snapshot(
+                runtime,
+                network,
+                target,
+                table,
+                second_snapshot,
+            )
 
             failed = run_spark(
                 runtime,
@@ -109,6 +116,41 @@ def main() -> None:
     print("verify-spark-iceberg-batch: ok")
 
 
+def assert_quality_failure_preserves_snapshot(
+    runtime: Path,
+    network: str,
+    target: dict,
+    table: str,
+    expected_snapshot: str,
+) -> None:
+    snapshot_count = int(trino_snapshot_count(table))
+    failed = run_spark(
+        runtime,
+        network,
+        target,
+        "run-phase2-quality-failure",
+        [{"id": -1}],
+        quality_rules=[{
+            "enabled": True,
+            "failureAction": "Fail Run",
+            "id": "positive-id",
+            "kind": "range",
+            "severity": "Error",
+            "targetColumn": "id",
+            "validationType": "Range Check",
+        }],
+        expect_success=False,
+    )
+    assert failed["status"] == "failed"
+    assert failed["failedStage"] == "Quality"
+    assert failed.get("icebergCommit") is None
+    assert (failed.get("outputCleanup") or {}).get("status") == "success"
+    assert (failed.get("sparkResources") or {}).get("materializationCleanupStatus") == "success"
+    assert trino_current_snapshot(table) == expected_snapshot
+    assert int(trino_snapshot_count(table)) == snapshot_count
+    assert trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}"') == "1"
+
+
 def assert_spark_file_evidence(result: dict, table: str, snapshot_id: str) -> None:
     exact_file_count = int(trino_snapshot_file_count(table, snapshot_id))
     assert exact_file_count > 0
@@ -141,6 +183,7 @@ def run_spark(
     *,
     fail_after_commit: bool = False,
     expect_success: bool = True,
+    quality_rules: list[dict] | None = None,
 ) -> dict:
     source = runtime / f"{run_id}.jsonl"
     report = runtime / f"{run_id}.report.json"
@@ -150,7 +193,7 @@ def run_spark(
         "icebergTarget": target,
         "jobId": "JOB-PHASE2-LIVE",
         "partitionColumns": [],
-        "qualityRules": [],
+        "qualityRules": quality_rules or [],
         "ruleFingerprint": "rules-phase2-live",
         "schemaColumns": [{
             "included": True,
@@ -226,6 +269,10 @@ def trino_snapshot_file_count(table: str, snapshot_id: str) -> str:
 
 def trino_snapshot_file_size(table: str, snapshot_id: str) -> str:
     return trino_snapshot_summary_metric(table, snapshot_id, "total-files-size")
+
+
+def trino_snapshot_count(table: str) -> str:
+    return trino_scalar(f'SELECT count(*) FROM iceberg.asklake."{table}$snapshots"')
 
 
 def trino_snapshot_summary_metric(table: str, snapshot_id: str, metric: str) -> str:
