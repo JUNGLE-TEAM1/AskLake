@@ -936,13 +936,14 @@ run "mvp_data_plane_contract" {
       query_results = "asklake-dev-111122223333-query-results"
     }
     storage_prefixes = {
-      raw           = "*"
-      output        = "*"
-      warehouse     = "warehouse"
-      query_results = "query-results"
-      checkpoint    = "checkpoints"
-      quarantine    = "quarantine"
-      evidence      = "evidence"
+      raw                = "*"
+      output             = "*"
+      warehouse          = "warehouse"
+      query_results      = "query-results"
+      checkpoint         = "checkpoints"
+      quarantine         = "quarantine"
+      evidence           = "evidence"
+      continuous_runtime = "continuous-runtime"
     }
   }
 
@@ -1002,13 +1003,14 @@ run "managed_existing_storage_contract" {
       query_results = "asklake-dev-111122223333-query-results"
     }
     storage_prefixes = {
-      raw           = "*"
-      output        = "*"
-      warehouse     = "warehouse"
-      query_results = "query-results"
-      checkpoint    = "checkpoints"
-      quarantine    = "quarantine"
-      evidence      = "evidence"
+      raw                = "*"
+      output             = "*"
+      warehouse          = "warehouse"
+      query_results      = "query-results"
+      checkpoint         = "checkpoints"
+      quarantine         = "quarantine"
+      evidence           = "evidence"
+      continuous_runtime = "continuous-runtime"
     }
   }
 
@@ -1052,7 +1054,7 @@ run "managed_existing_storage_contract" {
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
-      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*", "continuous-runtime", "continuous-runtime/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Resource == [local.storage_bucket_arns.query_results] &&
@@ -1139,6 +1141,12 @@ run "irsa_workload_identity_contract" {
       "asklake-eks-mvp-spark-scale17-02",
       "asklake-eks-mvp-spark-scale17-03",
     ]
+    msk_realtime_consumer_groups = [
+      "asklake-eks-realtime-v1-contract-g1",
+    ]
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.contract-g1",
+    ]
 
     storage_mode = "existing"
     storage_bucket_names = {
@@ -1182,8 +1190,11 @@ run "irsa_workload_identity_contract" {
     condition = contains(
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
       local.storage_object_arns.evidence,
+      ) && contains(
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
+      local.storage_object_arns.continuous_runtime,
     )
-    error_message = "Backend must be able to read its exact evidence prefix."
+    error_message = "Backend must be able to read its exact evidence and Continuous runtime-document prefixes."
   }
 
   assert {
@@ -1191,7 +1202,7 @@ run "irsa_workload_identity_contract" {
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Condition.StringLike["s3:prefix"] == ["raw", "raw/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*", "continuous-runtime", "continuous-runtime/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"]
     )
@@ -1200,13 +1211,15 @@ run "irsa_workload_identity_contract" {
 
   assert {
     condition = (
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == [local.msk_topic_arn] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == local.msk_topic_arns &&
+      length(local.msk_topic_arns) == 2 &&
+      alltrue([for arn in local.msk_topic_arns : !strcontains(arn, "*")]) &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == local.msk_group_arns &&
-      length(local.msk_group_arns) == 4 &&
+      length(local.msk_group_arns) == 5 &&
       alltrue([for arn in local.msk_group_arns : !strcontains(arn, "*")]) &&
-      one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == [local.msk_topic_arn]
+      one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == local.msk_topic_arns
     )
-    error_message = "Spark and MSK smoke policies must stay on the isolated test topic and exact approved consumer groups."
+    error_message = "Spark and MSK smoke policies must stay on exact isolated test/Realtime topics and approved consumer groups."
   }
 
   assert {
@@ -1229,6 +1242,45 @@ run "irsa_workload_identity_contract" {
     )
     error_message = "IRSA trust must bind the exact provider, audience, namespace, and Spark service account."
   }
+}
+
+run "reject_unpaired_realtime_topic" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.orphan-g1",
+    ]
+  }
+
+  expect_failures = [check.realtime_msk_identity_contract]
+}
+
+run "reject_mismatched_realtime_topic_group_generation" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.topic-g1",
+    ]
+    msk_realtime_consumer_groups = [
+      "asklake-eks-realtime-v1-group-g2",
+    ]
+  }
+
+  expect_failures = [check.realtime_msk_identity_contract]
 }
 
 run "create_mode_irsa_has_static_identity_keys" {

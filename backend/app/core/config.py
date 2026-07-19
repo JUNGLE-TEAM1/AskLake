@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # ``external_ec2`` is accepted while existing dev manifests are migrated;
     # it has the same web/API behaviour as ``disabled``.
     continuous_control_plane: Literal["embedded", "disabled", "worker", "external_ec2"] = "embedded"
+    # The deployed EC2 worker keeps both scopes by default. An approved
+    # EC2/EKS transfer may split Kafka and Continuous SQL into separate workers.
+    continuous_worker_scope: Literal["all", "kafka", "continuous_sql"] = "all"
+    continuous_worker_owner: Literal["ec2-continuous-worker", "eks-continuous-worker-v1"] = "ec2-continuous-worker"
+    continuous_worker_generation: str | None = None
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
@@ -345,6 +350,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":
+        generation = str(self.continuous_worker_generation or "").strip()
+        if generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", generation) is None:
+            raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
+        if self.continuous_worker_owner == "eks-continuous-worker-v1" and (
+            self.continuous_worker_scope != "kafka" or not generation
+        ):
+            raise ValueError("EKS Continuous owner requires Kafka scope and an explicit generation")
+        self.continuous_worker_generation = generation or None
         self._validate_auth_runtime()
         self._validate_trino_runtime()
         self._validate_clickhouse_runtime()

@@ -17,7 +17,7 @@ Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Contin
 
 `eks-web-finite-batch`는 현재 배포 topology에 존재하지만 위 두 장기 control plane을 claim하지 않는다. EKS/EC2의 실제 rollout 또는 역할 이동은 manifest 한 줄만 바꾸는 작업이 아니며, 대상 runtime 설정과 배포 증거를 같은 PR에 포함해야 한다.
 
-EKS Continuous gateway와 worker template은 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `deploy/kubernetes/continuous-worker.yaml.template`은 `asklake-backend` service account의 SparkApplication RBAC를 재사용하는 future rollout artifact이며, apply 전에 EC2 worker를 제거하고 canonical ownership manifest를 같은 release에서 바꿔야 한다.
+EKS Continuous gateway와 worker package는 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `asklake-workloads`의 disabled `realtimeV1` component는 `asklake-backend` service account의 SparkApplication RBAC를 재사용하며, apply 전에 EC2 Kafka scope를 fence하고 canonical ownership manifest를 같은 release에서 바꿔야 한다. approval, previous-owner fence와 generation이 없으면 Helm render가 실패한다.
 
 ## 실패 조건
 

@@ -89,6 +89,11 @@ msk_test_consumer_group = "asklake-eks-mvp-spark-v1"
 # select only the exact scale17 groups required by the test; never use a prefix
 # or wildcard.
 msk_scale_consumer_groups = []
+# Keep empty until the exact-one owner transfer is approved. Add one exact
+# generation-scoped V1 topic/group pair for canary and at most one rollback
+# rehearsal pair. Topic and group suffixes must be the same generation.
+msk_realtime_topics         = []
+msk_realtime_consumer_groups = []
 
 # For rds_mode = "create", select the instance class and optional engine
 # version only after workload/cost review. Terraform creates asklake_app;
@@ -121,13 +126,14 @@ storage_prefixes = {
   # Dedicated Raw/Output buckets may use "*" when existing Dataset paths span
   # multiple top-level prefixes. The IAM resource boundary remains that exact
   # bucket; Warehouse and Query Result stay on explicit prefixes.
-  raw           = "raw"
-  output        = "output"
-  warehouse     = "warehouse"
-  query_results = "query-results"
-  checkpoint    = "checkpoints"
-  quarantine    = "quarantine"
-  evidence      = "evidence"
+  raw                = "raw"
+  output             = "output"
+  warehouse          = "warehouse"
+  query_results      = "query-results"
+  checkpoint         = "checkpoints"
+  quarantine         = "quarantine"
+  evidence           = "evidence"
+  continuous_runtime = "continuous-runtime"
 }
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
