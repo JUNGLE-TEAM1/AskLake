@@ -79,7 +79,6 @@ services:
       interval: 15s
       timeout: 10s
       retries: 20
-
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
@@ -102,7 +101,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
   frontend:
     build:
       context: ../frontend
@@ -123,7 +121,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
   backend:
     build:
       context: ../backend
@@ -410,7 +407,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-
   continuous-worker:
     extends:
       service: backend
@@ -420,7 +416,6 @@ services:
       STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
     healthcheck:
       disable: true
-
   ai-server:
     build:
       context: ../ai-server
@@ -450,7 +445,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
   embedding-worker:
     build:
       context: ../embedding-worker
@@ -484,7 +478,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
-
   rag-artifact-cleanup:
     extends:
       service: backend
@@ -492,7 +485,6 @@ services:
     command: ["python", "scripts/cleanup-rag-artifacts.py", "--apply", "--loop"]
     healthcheck:
       disable: true
-
   aws-s3-readiness:
     build:
       context: ../backend
@@ -504,7 +496,6 @@ services:
       ASKLAKE_S3_READINESS_READ_BUCKETS: ${ASKLAKE_S3_READINESS_READ_BUCKETS:?ASKLAKE_S3_READINESS_READ_BUCKETS is required}
       ASKLAKE_S3_READINESS_WRITE_BUCKETS: ${ASKLAKE_S3_READINESS_WRITE_BUCKETS:?ASKLAKE_S3_READINESS_WRITE_BUCKETS is required}
       AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-
   spark-runtime-guard:
     <<: *spark-runtime
     restart: unless-stopped
@@ -532,7 +523,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 5s
-
   spark-master:
     <<: *spark-runtime
     restart: unless-stopped
