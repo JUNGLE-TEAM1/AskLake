@@ -7,6 +7,7 @@ This chart renders the Tuesday MVP application layer:
 - Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service; optional explicit distributed workers
 - references to foundation-owned least-privilege RBAC for FastAPI `SparkApplication` submission and Spark driver executor management
 - opt-in MSK IAM metadata smoke Job and opt-in bounded Kafka-to-S3 `SparkApplication` smoke
+- disabled-by-default Realtime V1 worker package with explicit owner-transfer, previous-owner fence, generation, Kafka-only scope, private S3 runtime document and Spark/MSK IAM contracts
 - shared non-secret settings in ConfigMaps and exact references to contract-defined runtime Secrets
 - every workload image pinned by `repository@sha256:digest`
 
@@ -53,7 +54,21 @@ helm upgrade --install asklake-workloads \
   --set-string sparkApplication.kafka.fixtureBatchId=eks-smoke-batch-001
 ```
 
-The static Spark smoke reads a bounded Kafka snapshot (`earliest` through the captured `latest` offsets), filters `raw.fixture_batch_id` to the producer receipt supplied as `sparkApplication.kafka.fixtureBatchId`, and replaces the dedicated `iceberg.asklake.eks_mvp_fixture` table in the configured S3 warehouse. Compare its Trino row count with `sparkApplication.kafka.expectedCount` (default 100). It is a deployment fixture, not a long-running consumer. Kafka Continuous remains EC2-owned in this MVP, and EKS FastAPI rejects Continuous control and read paths.
+The static Spark smoke reads a bounded Kafka snapshot (`earliest` through the captured `latest` offsets), filters `raw.fixture_batch_id` to the producer receipt supplied as `sparkApplication.kafka.fixtureBatchId`, and replaces the dedicated `iceberg.asklake.eks_mvp_fixture` table in the configured S3 warehouse. Compare its Trino row count with `sparkApplication.kafka.expectedCount` (default 100). It is a deployment fixture, not a long-running consumer. Kafka Continuous remains EC2-owned until the Realtime V1 transfer gates below pass, and EKS FastAPI rejects Continuous control and read paths.
+
+Issue #1044 selected Spark Structured Streaming for the EKS Realtime MVP. The chart keeps `realtimeV1.enabled=false`. Rendering it requires all three explicit transfer inputs; missing any one fails closed:
+
+```bash
+helm template asklake-workloads \
+  infra/eks/helm/asklake-workloads \
+  --values /path/to/non-secret-values.yaml \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true \
+  --set realtimeV1.ownerTransfer.previousOwnerFenced=true \
+  --set-string realtimeV1.ownerTransfer.generation='<approved-generation>'
+```
+
+This command is a render example, not authorization to apply. Before an actual upgrade, follow `docs/eks-realtime-kafka-v1-rollout.md`: fence the previous owner for the exact identity, write the matching PostgreSQL durable owner claim, approve one exact generation-scoped topic/group pair, and verify the Backend and Spark `continuous-runtime` plus Spark output/checkpoint prefixes. The Realtime Deployment is an independent release, consumes the foundation-owned `asklake-runtime` ConfigMap, uses dedicated worker/Spark ServiceAccounts, passes the owner/generation to the worker, and explicitly disables V2 flags/consumer ownership. Kafka Connect, ClickHouse, and Keeper are not rendered by this V1 component.
 
 FastAPI's normal batch path uses the in-cluster Kubernetes API to create a deterministic `SparkApplication` per `runId`, recover the same object after a duplicate create or lost response, poll terminal state, read the driver result marker, and delete a timed-out application. Chart rendering and unit tests verify that contract; the final live proof still requires A's AWS resources.
 

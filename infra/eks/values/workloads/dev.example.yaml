@@ -186,6 +186,34 @@ sparkApplication:
       requests: {cpu: "2", memory: 5Gi}
       limits: {cpu: "3", memory: 5Gi}
 
+realtimeV1:
+  enabled: false
+  replicas: 1
+  serviceAccountName: asklake-realtime-v1-worker
+  runtimeConfigMapName: asklake-runtime
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  runtimeDocument:
+    bucket: asklake-dev-output-example
+    prefix: continuous-runtime
+  spark:
+    serviceAccountName: asklake-realtime-v1-spark
+    runtimeSecretName: asklake-spark-runtime
+    mainApplicationFile: local:///opt/asklake/scripts/kafka_continuous_stream.py
+  kafka:
+    authMode: iam
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
+    topicPrefix: asklake.eks-realtime.fixture
+    consumerGroupPrefix: asklake-eks-realtime-v1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
 trino:
   enabled: true
   replicas: 1
