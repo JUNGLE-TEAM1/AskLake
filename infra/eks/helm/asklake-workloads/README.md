@@ -123,6 +123,9 @@ the safe rollback target. Apply also requires the worktree `HEAD`, fetched
 `origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
 If creating or querying that single baseline fails, apply restores and verifies
 the exact pre-deployment revision before it stops; it never proceeds to five workers.
+The apply campaign also holds the namespace-scoped `asklake-trino-deploy-lock`
+ConfigMap, rechecks the Helm revision before each mutation, and removes only its
+own lock UID. A foreign revision observed during the live gate is never rolled back.
 Active registration of all five workers plus a non-empty Iceberg read is only the
 deployment gate: promotion additionally requires a non-empty Iceberg worker task,
 exact-UID replacement, and successful safe rollback evidence bound to the merged

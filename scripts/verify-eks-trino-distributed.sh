@@ -185,6 +185,10 @@ test "$(grep -Fc -- '-f "$BASE_VALUES" -f "$single_values"' "$deploy_script")" -
 grep -Fq 'safe single-coordinator candidate contains distributed resources' "$deploy_script"
 test "$(grep -Fc 'restore_observed_revision "' "$deploy_script")" -eq 2
 grep -Fq '[[ "$EXPECTED_WORKERS" == "5" ]]' "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
+grep -Fq 'LOCK_NAME="asklake-trino-deploy-lock"' "$deploy_script"
+grep -Fq "'{apiVersion:\"v1\",kind:\"DeleteOptions\",preconditions:{uid:\$uid}}'" "$deploy_script"
+test "$(grep -Fc 'verify_campaign_lock' "$deploy_script")" -ge 5
+grep -Fq 'refusing to roll back a foreign revision' "$deploy_script"
 jq -n '{sentinel:"preserved",trino:{distributed:{enabled:true,workerReplicas:5,includeCoordinator:false}}}' >"$SINGLE_VALUES_SAMPLE"
 jq -eS '.trino.distributed = {enabled:false}' "$SINGLE_VALUES_SAMPLE" >"$SINGLE_VALUES_RESULT"
 jq -e '.sentinel == "preserved" and .trino.distributed == {enabled:false}' "$SINGLE_VALUES_RESULT" >/dev/null

@@ -10,6 +10,7 @@ NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 CONTEXT="${ASKLAKE_EKS_CONTEXT:-asklake-dev}"
 CLUSTER="${ASKLAKE_EKS_CLUSTER_NAME:-asklake-dev}"
 RELEASE="asklake-trino"
+LOCK_NAME="asklake-trino-deploy-lock"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-workloads"
 BASE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 
@@ -82,7 +83,20 @@ single_values="$(mktemp)"
 single_rendered="$(mktemp)"
 live_without_distributed="$(mktemp)"
 candidate_without_distributed="$(mktemp)"
-trap 'rm -f "$rendered" "$live_values" "$single_values" "$single_rendered" "$live_without_distributed" "$candidate_without_distributed"' EXIT
+lock_uid=""
+cleanup() {
+  rm -f "$rendered" "$live_values" "$single_values" "$single_rendered" "$live_without_distributed" "$candidate_without_distributed"
+  if [[ -n "$lock_uid" ]]; then
+    if ! jq -cn --arg uid "$lock_uid" \
+      '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}' | \
+      kubectl delete --raw "/api/v1/namespaces/$NAMESPACE/configmaps/$LOCK_NAME" -f - >/dev/null 2>&1; then
+      echo "warning: failed to release the Trino deployment lock with its UID precondition" >&2
+    fi
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 helm get values "$RELEASE" -n "$NAMESPACE" --revision "$observed_revision" -o json >"$live_values"
 observed_distributed="$(jq -r '.trino.distributed.enabled // false' "$live_values")"
@@ -143,6 +157,27 @@ deployment_commit="${ASKLAKE_TRINO_DEPLOYMENT_COMMIT:-}"
   fail "ASKLAKE_TRINO_DEPLOYMENT_COMMIT is not the fetched origin/pair1 tip"
 git -C "$ROOT_DIR" diff --quiet || fail "the deployment worktree has unstaged tracked changes"
 git -C "$ROOT_DIR" diff --cached --quiet || fail "the deployment worktree has staged changes"
+
+lock_object=""
+if ! lock_object="$(kubectl create configmap "$LOCK_NAME" -n "$NAMESPACE" \
+  --from-literal="deploymentCommit=$deployment_commit" \
+  --from-literal="observedRevision=$observed_revision" -o json 2>/dev/null)"; then
+  fail "another Trino deployment campaign holds the Kubernetes release lock"
+fi
+lock_uid="$(jq -er '.metadata.uid' <<<"$lock_object")" || fail "the Trino deployment lock has no UID"
+
+verify_campaign_lock() {
+  [[ "$(kubectl get configmap "$LOCK_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null)" == "$lock_uid" ]] || \
+    fail "the Trino deployment campaign lost its Kubernetes release lock"
+}
+
+current_revision() {
+  helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version'
+}
+
+verify_campaign_lock
+[[ "$(current_revision)" == "$observed_revision" ]] || \
+  fail "asklake-trino changed after preflight and before the campaign lock was acquired"
 
 verify_single_mode() {
   local backend_pod single_query_ready
@@ -209,6 +244,7 @@ verify_observed_mode() {
 
 restore_observed_revision() {
   local reason="$1"
+  verify_campaign_lock
   echo "$reason; restoring observed revision $observed_revision" >&2
   if ! helm rollback "$RELEASE" "$observed_revision" -n "$NAMESPACE" \
     --cleanup-on-fail --wait=watcher --timeout=15m; then
@@ -221,6 +257,8 @@ restore_observed_revision() {
 # Always create a fresh safe rollback target from the observed live values with
 # distributed mode removed. This is required both for first enablement and for
 # an already-distributed release changing its fixed worker policy.
+verify_campaign_lock
+[[ "$(current_revision)" == "$observed_revision" ]] || fail "asklake-trino changed before the single baseline upgrade"
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" \
   --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
@@ -231,15 +269,21 @@ if ! verify_single_mode; then
 fi
 baseline_revision="$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version')"
 
+verify_campaign_lock
+[[ "$(current_revision)" == "$baseline_revision" ]] || fail "asklake-trino changed before the fixed five-worker upgrade"
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
   --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
   verify_single_mode || fail "distributed Trino upgrade failed and the safe single baseline could not be verified; manual recovery is required"
   fail "distributed Trino Helm upgrade failed; the safe single-coordinator baseline was restored"
 fi
+candidate_revision="$(current_revision)"
 
 if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers"; then
   echo "distributed Trino live gate failed; rolling back revision $baseline_revision" >&2
+  verify_campaign_lock
+  [[ "$(current_revision)" == "$candidate_revision" ]] || \
+    fail "asklake-trino changed during the live gate; refusing to roll back a foreign revision"
   if ! helm rollback "$RELEASE" "$baseline_revision" -n "$NAMESPACE" \
     --cleanup-on-fail --wait=watcher --timeout=15m; then
     fail "distributed Trino live gate and automatic rollback both failed; manual recovery is required"

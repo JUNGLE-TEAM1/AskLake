@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { validateDistributedTrinoEvidence } from './verify-eks-trino-distributed-evidence.mjs';
+import {
+  validateDistributedTrinoEvidence,
+  validateHistoricalDistributedTrinoEvidenceV2,
+} from './verify-eks-trino-distributed-evidence.mjs';
 
 const h = (character) => `sha256:${character.repeat(64)}`;
 const deploymentCommit = '1'.repeat(40);
@@ -34,6 +37,19 @@ const valid = () => ({
 });
 
 assert.equal(validateDistributedTrinoEvidence(valid(), deploymentCommit).status, 'passed');
+
+const historicalTwoWorkers = valid();
+historicalTwoWorkers.schemaVersion = 2;
+historicalTwoWorkers.deployment.declaredWorkerReplicas = 2;
+historicalTwoWorkers.nodes.activeWorkerCount = 2;
+historicalTwoWorkers.nodes.workerNodeHashes = [h('b'), h('c')];
+historicalTwoWorkers.failure.recoveredWorkerNodeHashes = [h('c'), h('0')];
+historicalTwoWorkers.failure.recoveredActiveWorkerCount = 2;
+assert.equal(validateHistoricalDistributedTrinoEvidenceV2(historicalTwoWorkers, deploymentCommit).status, 'passed');
+assert.throws(
+  () => validateDistributedTrinoEvidence(historicalTwoWorkers, deploymentCommit),
+  /schemaVersion must be 3/,
+);
 
 const legacyTwoWorkers = valid();
 legacyTwoWorkers.deployment.declaredWorkerReplicas = 2;

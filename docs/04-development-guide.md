@@ -2036,7 +2036,7 @@ worker 성능 sizing이 아니며 다른 workload와 부하가 달라지면 다�
 values에서 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도 values를 baseline에
 사용하며 기존 distributed 값을 그대로 재사용하지 않는다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
 query를 먼저 검증하고 그 Helm revision을 안전 rollback 기준으로 고정한다. apply 뒤
-`verify-eks-trino-distributed-live.sh <worker-count>`가 Deployment Ready뿐 아니라
+`verify-eks-trino-distributed-live.sh 5`가 Deployment Ready뿐 아니라
 FastAPI의 materializer identity로 `system.runtime.nodes`를 조회해 coordinator 1개와 active worker
 수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 이 조회 권한은 distributed
 mode의 materializer에만 `system_information: read`, system catalog
@@ -2047,6 +2047,9 @@ exact-UID 장애 복구와 안전 rollback까지 같은 campaign에서 검증해
 campaign의 `2→1→2` 기록은 역사적 scale evidence이며 현재 fixed-5 운영 명령으로 사용하지 않는다.
 single baseline 생성 또는 query 검증이 실패하면 fixed-5 후보를 적용하지 않고 배포 전 관찰한
 revision을 복구해 기존 worker 수와 Iceberg query가 다시 정상인지 확인한다.
+apply 전체에서는 namespace-scoped `asklake-trino-deploy-lock` ConfigMap을 원자적으로 획득하고
+UID precondition으로만 해제한다. lock을 얻은 직후와 각 Helm mutation 직전에 revision을 다시
+확인하며, live gate 사이 foreign revision이 보이면 해당 revision을 덮거나 rollback하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 

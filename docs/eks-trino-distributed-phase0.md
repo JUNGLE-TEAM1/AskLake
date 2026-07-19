@@ -8,7 +8,7 @@
 
 > 2026-07-19 후속 운영 결정으로 dev live의 distributed 모드는 worker `5`개 고정으로
 > 전환했다. 아래의 최초 worker `2`개와 `2→1→2` 내용은 Phase 0 역사 evidence이며 현재
-> 운영 명령이 아니다. 현재 정책은 12절이 우선한다.
+> 운영 명령이 아니다. 현재 정책은 11절이 우선한다.
 
 ## 1. 현재 기준선
 
@@ -181,7 +181,7 @@ trino:
   distributed:
     enabled: true
     includeCoordinator: false
-    workerReplicas: <measured-integer-from-1-to-5>
+    workerReplicas: 5
     workerNodeSelector: <approved-general-placement>
     workerTerminationGracePeriodSeconds: <measured-value>
     workerResources:
@@ -270,6 +270,15 @@ v3에서 declared/active/recovered worker가 모두 5인지, Iceberg worker task
 불변 계약과 안전 단일 coordinator rollback을 검증한다. `2→1→2` scale 단계는 역사적 operator
 증거로만 남긴다.
 
+역사 v2 receipt를 재검증할 때만 명시적 flag를 사용한다. 이 flag는 current promotion에 사용할
+수 없고 기본 검증 경로는 항상 fixed-5 schema v3다.
+
+```bash
+ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<historical-deployed-pair1-full-sha> \
+  node scripts/verify-eks-trino-distributed-evidence.mjs \
+  --historical-v2 /path/to/historical-redacted-receipt.json
+```
+
 ## 10. 보류 결정
 
 구현은 HPA, PDB, topology spread, 전용 NodePool, fault-tolerant execution과 인증된 graceful
@@ -285,6 +294,11 @@ dev live에서 distributed mode를 켜는 private values는 `workerReplicas: 5`�
 query request와 Frontend/Backend API에는 worker count 필드가 없으며 HPA도 만들지 않는다.
 Trino scheduler는 현재 Ready인 공용 worker 5개에 query task를 분배한다. 유휴 상태에서도 다섯
 worker Pod는 유지되므로 배포 전 General NodePool capacity와 비용을 확인한다.
+
+apply는 namespace에 `asklake-trino-deploy-lock` ConfigMap을 원자적으로 생성하고 lock UID와
+Helm revision을 다시 확인한 뒤에만 baseline을 변경한다. 다른 campaign이 lock을 보유하면 즉시
+중단한다. 종료 시 자신이 만든 UID에만 precondition delete를 수행하며, live gate 중 다른 revision이
+관찰되면 foreign revision을 rollback하지 않는다.
 
 재배포는 현재 live values의 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도
 single values를 먼저 적용한다. worker/discovery 부재, coordinator `Recreate`와 non-empty Iceberg
