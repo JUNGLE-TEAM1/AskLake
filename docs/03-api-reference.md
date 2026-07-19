@@ -613,7 +613,7 @@ type DashboardRuntimeWidgetType =
   | "heatmap_chart"
   | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
-type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 

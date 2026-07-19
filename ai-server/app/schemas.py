@@ -131,7 +131,7 @@ class DashboardWidgetConfigOutput(BaseModel):
     color: DashboardColorOutput | None
     columns: list[str] | None = Field(max_length=64)
     curve: Literal["smooth", "straight", "stepline"] | None
-    date_unit: Literal["day", "month", "year"] | None = Field(alias="dateUnit")
+    date_unit: Literal["minute", "hour", "day", "month", "year"] | None = Field(alias="dateUnit")
     description: str | None = Field(max_length=2_000)
     error: str | None = Field(max_length=1_000)
     error_message: str | None = Field(alias="errorMessage", max_length=1_000)

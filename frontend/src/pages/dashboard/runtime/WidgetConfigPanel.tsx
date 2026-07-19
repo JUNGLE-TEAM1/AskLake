@@ -57,6 +57,7 @@ import type {
   UpdateDraftWidgetFormInput,
 } from "./dashboardRuntimeTypes";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
+import { defaultTimeBucketForColumn } from "./timeSeries";
 
 type WidgetConfigDraft = {
   aggregation?: DashboardWidgetAggregation;
@@ -95,7 +96,10 @@ const formatOptions: Array<{ label: string; value: DashboardWidgetFormat }> = [
   { label: "퍼센트", value: "percent" },
 ];
 
-const dateUnitOptions: Array<{ label: string; value: DashboardWidgetDateUnit }> = [
+const dateUnitOptions: Array<{ label: string; value: DashboardWidgetDateUnit | "" }> = [
+  { label: "원본 시각", value: "" },
+  { label: "1분", value: "minute" },
+  { label: "1시간", value: "hour" },
   { label: "일", value: "day" },
   { label: "월", value: "month" },
   { label: "년", value: "year" },
@@ -266,6 +270,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   const categoricalColumns = allColumns.filter((column) => column.type === "string");
   const timeColumns = allColumns.filter((column) => column.type === "date");
   const lineXAxisColumns = timeColumns.length ? timeColumns : dimensionColumns;
+  const defaultTimeBucket = defaultTimeBucketForColumn(timeColumns[0]);
   const tableColumns = columnNames(allColumns.slice(0, 5));
   const dimensionFallback = firstName(dimensionColumns);
   const numericFallback = firstName(numericColumns);
@@ -274,7 +279,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   return {
     area_chart: {
       aggregation: "sum",
-      dateUnit: timeColumns.length ? "month" : undefined,
+      dateUnit: defaultTimeBucket,
       seriesKey: "",
       stacked: false,
       xKey: firstName(lineXAxisColumns),
@@ -301,7 +306,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     line_chart: {
       aggregation: "sum",
       curve: "smooth",
-      dateUnit: timeColumns.length ? "month" : undefined,
+      dateUnit: defaultTimeBucket,
       seriesKey: "",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
@@ -1049,7 +1054,7 @@ export function WidgetConfigPanel({
                       <option key={column.name} value={column.name}>{column.name}</option>
                     ))}
                 </WidgetSelectField>
-              <WidgetSelectField label="날짜 단위" value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
+              <WidgetSelectField label="시간 묶음" value={currentConfig.dateUnit ?? ""} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value ? event.target.value as DashboardWidgetDateUnit : undefined })}>
                   {dateUnitOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}

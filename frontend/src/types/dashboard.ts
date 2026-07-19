@@ -17,7 +17,7 @@ export type DashboardRuntimeWidgetType =
   | "heatmap_chart"
   | "treemap_chart";
 export type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
-export type DashboardWidgetDateUnit = "day" | "month" | "year";
+export type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";

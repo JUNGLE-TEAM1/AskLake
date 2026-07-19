@@ -58,6 +58,8 @@ class DashboardWidgetAggregation(str, Enum):
 
 
 class DashboardWidgetDateUnit(str, Enum):
+    MINUTE = "minute"
+    HOUR = "hour"
     DAY = "day"
     MONTH = "month"
     YEAR = "year"

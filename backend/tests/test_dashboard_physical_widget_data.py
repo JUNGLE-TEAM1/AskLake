@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -16,7 +17,12 @@ from app.core.errors import ApiError
 from app.core.observability import metrics_snapshot, reset_metrics_for_test
 from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.schemas.common import ErrorCode
-from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
+from app.schemas.dashboard import (
+    AreaChartWidgetConfig,
+    DashboardRuntimeWidgetType,
+    DonutChartWidgetConfig,
+    LineChartWidgetConfig,
+)
 from app.schemas.trino import TrinoClientPage
 from app.services import dashboard_physical_data
 from app.services.dashboard_physical_data import (
@@ -500,6 +506,64 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(result["data"][0], {"id": 505, "value": "value-505"})
         self.assertEqual(result["data"][-1], {"id": 6, "value": "value-6"})
         self.assertEqual(result["config"]["dataMode"], "server_preview")
+
+    def test_time_series_supports_minute_and_hour_buckets_and_keeps_latest_window(self) -> None:
+        line_config = LineChartWidgetConfig.model_validate({
+            "aggregation": "sum",
+            "color": {"colors": ["#2563eb"]},
+            "dateUnit": "minute",
+            "xKey": "event_time",
+            "yKey": "amount",
+        })
+        area_config = AreaChartWidgetConfig.model_validate({
+            "aggregation": "sum",
+            "color": {"colors": ["#2563eb"]},
+            "dateUnit": "hour",
+            "xKey": "event_time",
+            "yKey": "amount",
+        })
+        self.assertEqual(line_config.date_unit, "minute")
+        self.assertEqual(area_config.date_unit, "hour")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            start = datetime(2026, 7, 19)
+            rows = "\n".join(
+                f"{(start + timedelta(minutes=index)).isoformat()},1"
+                for index in range(505)
+            )
+            (root / "part.csv").write_text(
+                f"event_time,amount\nnot-a-timestamp,1\n{rows}\n",
+                encoding="utf-8",
+            )
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_time_series",
+                sample_rows=[],
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                minute_result = session.read_widget(
+                    "line_chart",
+                    line_config.model_dump(by_alias=True, mode="json"),
+                )
+                hour_result = session.read_widget(
+                    "area_chart",
+                    area_config.model_dump(by_alias=True, mode="json"),
+                )
+            finally:
+                session.close()
+
+        self.assertEqual(len(minute_result["data"]), 500)
+        self.assertEqual(minute_result["data"][0]["event_time"], "2026-07-19T00:05:00")
+        self.assertEqual(minute_result["data"][-1]["event_time"], "2026-07-19T08:24:00")
+        self.assertTrue(all(row["event_time"] is not None for row in minute_result["data"]))
+        self.assertEqual(len(hour_result["data"]), 9)
+        self.assertEqual(hour_result["data"][0]["amount"], 60.0)
+        self.assertEqual(hour_result["data"][-1]["amount"], 25.0)
 
     def test_catalog_widgets_ignore_client_rows_but_bounded_query_snapshots_remain_supported(self) -> None:
         service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository())

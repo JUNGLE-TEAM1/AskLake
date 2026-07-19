@@ -29,6 +29,13 @@ import {
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import type { RequestLease } from "../../../state/requestOwnership";
 import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
+import {
+  boundedTimeSeriesSlice,
+  bucketTimeLabel,
+  formatTimeAxisLabel,
+  TIME_SERIES_POINT_LIMIT,
+  timeSeriesCategoryTimestamps,
+} from "./timeSeries";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type SimpleRow = Record<string, unknown>;
@@ -132,7 +139,7 @@ function numericValue(row: SimpleRow, key: string | null) {
 function labelValue(row: SimpleRow, key: string | null, fallback: string, dateUnit?: DashboardWidgetDateUnit) {
   const value = key ? row[key] : undefined;
   if (value === null || value === undefined || value === "") return fallback;
-  if (dateUnit) return bucketDateLabel(value, dateUnit) ?? String(value);
+  if (dateUnit) return bucketTimeLabel(value, dateUnit) ?? String(value);
   return String(value);
 }
 
@@ -177,17 +184,6 @@ function sortRows(rows: SimpleRow[], sortKey: string | undefined, sortDirection:
   if (!sortKey) return rows;
   const direction = sortDirection === "desc" ? -1 : 1;
   return [...rows].sort((a, b) => compareValues(a[sortKey], b[sortKey]) * direction);
-}
-
-function bucketDateLabel(value: unknown, dateUnit: DashboardWidgetDateUnit) {
-  const date = value instanceof Date ? value : new Date(String(value));
-  if (!Number.isFinite(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  if (dateUnit === "year") return String(year);
-  if (dateUnit === "month") return `${year}-${month}`;
-  return `${year}-${month}-${day}`;
 }
 
 function groupedChartPoints({
@@ -250,6 +246,7 @@ function groupedSeriesChartPoints({
   rows,
   seriesKey,
   sortByLabel = false,
+  takeLatest = false,
   valueKey,
 }: {
   aggregation: DashboardWidgetAggregation;
@@ -260,6 +257,7 @@ function groupedSeriesChartPoints({
   rows: SimpleRow[];
   seriesKey?: string;
   sortByLabel?: boolean;
+  takeLatest?: boolean;
   valueKey: string | null;
 }) {
   const labelGroups = new Map<string, {
@@ -296,7 +294,9 @@ function groupedSeriesChartPoints({
     return a.order - b.order;
   });
 
-  const visibleLabels = labels.slice(0, limit);
+  const visibleLabels = takeLatest
+    ? boundedTimeSeriesSlice(labels, labels.map((group) => group.label), limit)
+    : labels.slice(0, limit);
   const categories = visibleLabels.map((group) => group.label);
   const series = seriesLabels.map((seriesLabel) => ({
     data: visibleLabels.map((group) => {
@@ -530,6 +530,43 @@ function buildBaseChartOptions(color: string): ApexOptions {
         },
       },
     },
+  };
+}
+
+function timeSeriesAxisOptions(
+  baseOptions: ApexOptions,
+  categories: string[],
+  dateUnit?: DashboardWidgetDateUnit,
+) {
+  const timestamps = timeSeriesCategoryTimestamps(categories);
+  if (!timestamps) {
+    return {
+      tooltip: baseOptions.tooltip,
+      xaxis: {
+        ...baseOptions.xaxis,
+        categories,
+      } satisfies ApexOptions["xaxis"],
+    };
+  }
+
+  return {
+    tooltip: {
+      ...baseOptions.tooltip,
+      x: {
+        formatter: (value: number) => formatTimeAxisLabel(value, dateUnit, true),
+      },
+    } satisfies ApexOptions["tooltip"],
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories: timestamps,
+      labels: {
+        ...baseOptions.xaxis?.labels,
+        datetimeUTC: false,
+        formatter: (value, timestamp) => formatTimeAxisLabel(timestamp ?? value, dateUnit),
+      },
+      tickAmount: Math.min(6, Math.max(2, timestamps.length - 1)),
+      type: "datetime",
+    } satisfies ApexOptions["xaxis"],
   };
 }
 
@@ -1074,10 +1111,11 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     dateUnit: widget.config.dateUnit,
     defaultSeriesName: aggregationLabels[aggregation],
     labelKey,
-    limit: 12,
+    limit: TIME_SERIES_POINT_LIMIT,
     rows,
     seriesKey: widget.config.seriesKey,
     sortByLabel: true,
+    takeLatest: true,
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
@@ -1085,6 +1123,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1102,10 +1141,8 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
       ...baseOptions.stroke,
       curve: widget.config.curve ?? "smooth",
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-    },
+    tooltip: timeAxis.tooltip,
+    xaxis: timeAxis.xaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="line" widget={widget} />;
@@ -1122,10 +1159,11 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     dateUnit: widget.config.dateUnit,
     defaultSeriesName: aggregationLabels[aggregation],
     labelKey,
-    limit: 12,
+    limit: TIME_SERIES_POINT_LIMIT,
     rows,
     seriesKey: widget.config.seriesKey,
     sortByLabel: true,
+    takeLatest: true,
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
@@ -1133,6 +1171,7 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1160,10 +1199,8 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
       curve: "smooth",
       width: 2,
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-    },
+    tooltip: timeAxis.tooltip,
+    xaxis: timeAxis.xaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="area" widget={widget} />;
