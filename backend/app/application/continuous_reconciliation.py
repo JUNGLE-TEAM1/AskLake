@@ -290,12 +290,18 @@ def _apply_deferred_terminal_signal(
     container_state: str,
 ) -> tuple[dict[str, Any], str, bool]:
     """Let the lease owner apply a terminal intent persisted by the web API."""
-    should_signal = runtime.status in {"pausing", "stopping"} and container_state in {
+    contract = runtime_contract_projection(
+        runtime.metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
+    desired_state = contract["desiredState"]
+    should_signal = desired_state in {"paused", "stopped"} and container_state in {
         "running", "starting", "created", "healthy",
     }
     if not should_signal:
         return worker_status, container_state, True
-    action = "pause" if runtime.status == "pausing" else "stop"
+    action = "pause" if desired_state == "paused" else "stop"
     try:
         worker.command(job, runtime, action)
         worker_status = hooks.worker_status(job, runtime)

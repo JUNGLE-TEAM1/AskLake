@@ -351,6 +351,59 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         )
         self.assertIn("Kafka Connect", current_job.last_state)
 
+    def test_v2_applies_durable_pause_even_after_public_status_raced_to_running(self) -> None:
+        events = []
+        current_runtime = runtime(status="running")
+        current_runtime.metrics = record_runtime_command(
+            {},
+            command_transition("running", "pauseContinuous"),
+        )
+        current_job = job()
+        current_job.status = "running"
+        observations = iter((
+            {"containerState": "running", "worker": "kafka_connect_clickhouse_v2"},
+            {
+                "containerState": "exited",
+                "worker": "kafka_connect_clickhouse_v2",
+                "requestedAction": "pause",
+            },
+        ))
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(state=JsonDocumentState.MISSING),
+            worker_status=lambda _job, _runtime: next(observations),
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: None,
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: None,
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=FakeWorker(events),
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(events, ["worker:pause", "save"])
+        self.assertEqual(current_runtime.status, "paused")
+        self.assertEqual(current_job.status, "paused")
+
 
 if __name__ == "__main__":
     unittest.main()
