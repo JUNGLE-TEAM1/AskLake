@@ -418,6 +418,7 @@ def activate_realtime_v2_serving_binding(
         db,
         job,
         plan,
+        published=int(freshness.latest_revision or 0) > 0,
         version_id=version_id,
         binding_epoch=int(freshness.binding_epoch),
         updated_at=updated_at,
@@ -452,6 +453,7 @@ def upsert_realtime_v2_catalog_dataset(
     job: ContinuousSqlJobModel,
     plan: RealtimeSqlPlan,
     *,
+    published: bool,
     version_id: str,
     binding_epoch: int,
     updated_at: str,
@@ -472,7 +474,7 @@ def upsert_realtime_v2_catalog_dataset(
     bindings.append({
         "role": "serving",
         "engine": "clickhouse",
-        "status": "active",
+        "status": "active" if published else "pending",
         "bindingEpoch": binding_epoch,
         "versionId": version_id,
         "pipelineVersionId": version_id,
@@ -497,7 +499,11 @@ def upsert_realtime_v2_catalog_dataset(
         or permission_grants_from_roles(job.owner, default_actions=["view", "query"]),
         "permissions": previous.get("permissions") or resource_permissions(can_query=True),
         "physicalBindings": bindings,
-        "quality": "Realtime V2 serving binding ready",
+        "quality": (
+            "Realtime V2 offset publication verified"
+            if published
+            else "Realtime V2 waiting for first Kafka publication"
+        ),
         "queryEngineStatus": "unavailable",
         "rag": bool(previous.get("rag")),
         "relationMode": "static",
@@ -506,7 +512,7 @@ def upsert_realtime_v2_catalog_dataset(
         "schema": [list(item) for item in plan.output_schema],
         "size": previous.get("size") or "ClickHouse managed",
         "source": job.name,
-        "status": "available",
+        "status": "available" if published else "preparing",
         "storageFormat": "clickhouse",
         "storageLocation": f"clickhouse://{database}/{serving_view}",
         "tags": previous.get("tags") or ["continuous-sql", "clickhouse", "realtime-v2"],

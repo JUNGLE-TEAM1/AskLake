@@ -48,9 +48,11 @@ class CatalogRealtimePublicationTests(unittest.TestCase):
             session.add(CatalogDatasetModel(
                 id="joined",
                 name="joined",
+                status="preparing",
                 payload={
                     "id": "joined",
                     "name": "joined",
+                    "status": "preparing",
                     "physicalBindings": [{
                         "role": "archive", "engine": "trino", "status": "active",
                         "bindingEpoch": 3, "catalog": "iceberg", "schema": "gold",
@@ -166,6 +168,8 @@ class CatalogRealtimePublicationTests(unittest.TestCase):
         self.assertEqual(checkpoint, 2)
         self.assertEqual(tuple(materialization), ("published", 5))
         bindings = dataset_model_to_payload(catalog)["physicalBindings"]
+        self.assertEqual(dataset_model_to_payload(catalog)["status"], "available")
+        self.assertEqual(catalog.status, "available")
         self.assertEqual({item["role"] for item in bindings if item["status"] == "active"}, {"archive", "serving"})
 
     def test_stale_binding_fails_without_partial_publication(self) -> None:

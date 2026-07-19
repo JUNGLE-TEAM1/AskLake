@@ -66,7 +66,7 @@ export type CatalogDataset = {
   size: string;
   source: string;
   sourceRunId?: string;
-  status: "available" | "approval_required";
+  status: "preparing" | "available" | "approval_required";
   storageFormat?: string;
   storageLocation?: string;
   storageSizeBytes?: number;
