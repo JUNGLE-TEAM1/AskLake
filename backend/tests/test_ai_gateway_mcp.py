@@ -362,6 +362,7 @@ class AiContextSecurityTests(unittest.TestCase):
                         headers={
                             "Authorization": "Bearer expected",
                             "Accept": "application/json, text/event-stream",
+                            "Host": "fastapi:8080",
                             "X-AskLake-AI-Context": context_token(),
                         },
                         json={
