@@ -40,6 +40,7 @@ class RealtimeIngestService:
         dlq_topic: str,
         generation: int,
         connector_name: str | None = None,
+        consumer_group: str | None = None,
         state_path: str = "/asklake/realtime-v2/connect-state",
     ) -> dict[str, object]:
         validate_clickhouse_consumer_ownership(
@@ -49,11 +50,12 @@ class RealtimeIngestService:
             claimed_owners=("kafka_connect_v2",),
         )
         resolved_connector_name = connector_name or self.settings.kafka_connect_connector_name
+        resolved_consumer_group = consumer_group or resolved_connector_name
         config = build_raw_sink_config(
             topic=topic,
             table=table,
             dlq_topic=dlq_topic,
-            consumer_group=resolved_connector_name,
+            consumer_group=resolved_consumer_group,
             database=self.settings.clickhouse_v2_database,
             state_path=state_path,
         )

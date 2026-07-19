@@ -246,6 +246,10 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(result["containerState"], "running")
         self.assertTrue(self.connector.resumed)
         self.assertEqual(self.ingest.register_calls[0]["table"], "raw_events_v2")
+        self.assertEqual(
+            self.ingest.register_calls[0]["consumer_group"],
+            "asklake-kafka-v2",
+        )
         with Session(self.engine) as db:
             catalog = db.get(CatalogDatasetModel, "ds_kafka_v2_events")
             payload = dataset_model_to_payload(catalog)

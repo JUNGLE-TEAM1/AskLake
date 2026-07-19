@@ -16,7 +16,7 @@ Issue #1073은 사용자에게 내부 V1/V2 선택을 노출하지 않고 Kafka 
 - V2 marker Job은 `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`가 모두 충족될 때만 시작·재개한다.
 - 위 조건이 없으면 `CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE`로 실패한다. 같은 Job을 Spark V1으로 자동 실행하지 않는다.
 - 시작·재개는 `(broker, topic, consumerGroup)`의 active Continuous/Snapshot 충돌을 먼저 검사한다.
-- connector identity와 Keeper state path는 Job에 대해 결정적이며 persisted `runtimeGeneration`을 connector 등록과 owner 검증에 사용한다.
+- connector identity와 Keeper state path는 Job에 대해 결정적이며 persisted `runtimeGeneration`을 connector 등록과 owner 검증에 사용한다. connector name은 운영 object identity이고 Kafka `consumer.override.group.id`는 Job에 저장된 exact consumer group이므로 서로 대체하지 않는다.
 - command revision과 worker-attempt fencing이 이전 observation을 거부한다. 기존 V1 checkpoint는 삭제하거나 V2 state로 재사용하지 않는다.
 
 ## Lifecycle과 rollback

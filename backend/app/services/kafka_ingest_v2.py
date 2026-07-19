@@ -257,6 +257,7 @@ class ClickHouseKafkaIngestV2Gateway:
             dlq_topic=realtime_v2_dlq_topic(runtime.topic),
             generation=generation,
             connector_name=connector_name,
+            consumer_group=runtime.consumer_group_id,
             state_path=self._state_path(job),
         )
         connector = self.connector_factory(connector_name)
