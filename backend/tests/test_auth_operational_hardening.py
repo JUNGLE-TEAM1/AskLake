@@ -53,6 +53,44 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
+    def test_local_signup_creates_a_viewer_and_session(self) -> None:
+        local = SimpleNamespace(allows_public_signup=True)
+        with patch.object(auth_service, "settings", local):
+            session = AuthService(self.db).signup(
+                email=" New.User@Example.com ",
+                password="strong-local-password",
+                display_name="New User",
+            )
+
+        user = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "new.user@example.com"))
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user.role, "viewer")
+        self.assertEqual(user.groups, ["analytics"])
+        self.assertEqual(session["actor"]["id"], user.id)
+        self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
+
+    def test_session_contract_reports_the_runtime_signup_policy(self) -> None:
+        service = SimpleNamespace(actor_for_session=lambda _token: None)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), patch.object(
+                auth,
+                "settings",
+                SimpleNamespace(allows_public_signup=enabled),
+            ):
+                response = auth.get_session(
+                    service=service,
+                    db=self.db,
+                    session_token=None,
+                )
+
+            self.assertFalse(response.authenticated)
+            self.assertEqual(response.public_signup_enabled, enabled)
+            self.assertEqual(
+                response.model_dump(by_alias=True)["publicSignupEnabled"],
+                enabled,
+            )
+
     def test_legacy_demo_accounts_are_disabled_and_sessions_revoked(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
@@ -284,6 +322,28 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
+    def test_public_signup_is_local_by_default_and_requires_production_opt_in(self) -> None:
+        local = Settings(app_env="local", backend_cors_origins=[], _env_file=None)
+        production = Settings(
+            app_env="production",
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+        production_opt_in = Settings(
+            app_env="production",
+            auth_public_signup_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+
+        self.assertTrue(local.allows_public_signup)
+        self.assertFalse(production.allows_public_signup)
+        self.assertTrue(production_opt_in.allows_public_signup)
+
     def test_session_cookie_is_secure_by_default_when_header_auth_is_disabled(self) -> None:
         production = Settings(
             app_env="production",

@@ -205,15 +205,17 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
+    name: "Authentication UI uses the backend signup policy and hides demo credentials by default",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
       /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
-      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /publicSignupEnabled: boolean;/,
       /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
+      /data-testid="auth-signup-tab"/,
       /demoDefaultsEnabled\s*\? <small>Admin/,
     ],
+    forbiddenPatterns: [/VITE_AUTH_PUBLIC_SIGNUP/],
   },
   {
     name: "Authentication failures stay server-side instead of creating browser-local users",

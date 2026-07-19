@@ -10,6 +10,7 @@ import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
 import { AuthPage } from "./pages/auth/AuthPage";
+import { authModeFromPath, authPath, type AuthMode } from "./pages/auth/authRoute";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage } from "./pages/ingest/jobs/JobDetailPage";
 import { JobRunsPage } from "./pages/ingest/jobs/JobRunsPage";
@@ -57,6 +58,7 @@ type DashboardRouteState =
   | { view: "list" };
 
 type AppRouteState = {
+  authMode?: AuthMode;
   catalogView?: CatalogView;
   dashboardRoute: DashboardRouteState | null;
   datasetId?: string;
@@ -130,6 +132,9 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const dashboardRoute = parseDashboardRoute(pathname);
   if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
 
+  const authMode = authModeFromPath(pathname);
+  if (authMode) return { authMode, dashboardRoute: null, flow: "login" };
+
   const segments = pathname.split("/").filter(Boolean);
   const [area, id, action] = segments;
 
@@ -155,7 +160,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (semanticCatalogCompatibilityPaths.has(pathname)) return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
-  if (area === "login") return { dashboardRoute: null, flow: "login" };
 
   return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
 }
@@ -239,6 +243,7 @@ export function App() {
   const [completedWizardFlows, setCompletedWizardFlows] = useState<Set<FlowId>>(() => new Set());
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [publicSignupEnabled, setPublicSignupEnabled] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
@@ -360,10 +365,16 @@ export function App() {
     let active = true;
     fetchAuthSession()
       .then((session) => {
-        if (active) setCurrentUser(session.user);
+        if (active) {
+          setCurrentUser(session.user);
+          setPublicSignupEnabled(session.publicSignupEnabled);
+        }
       })
       .catch(() => {
-        if (active) setCurrentUser(null);
+        if (active) {
+          setCurrentUser(null);
+          setPublicSignupEnabled(false);
+        }
       })
       .finally(() => {
         if (active) setAuthChecked(true);
@@ -372,6 +383,11 @@ export function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authChecked || routeState.authMode !== "signup" || publicSignupEnabled) return;
+    navigate("/login", { replace: true });
+  }, [authChecked, navigate, publicSignupEnabled, routeState.authMode]);
 
   useEffect(() => {
     if (!authChecked || currentUser || activeFlow === "login") return;
@@ -529,6 +545,11 @@ export function App() {
     moveToFlow("jobs");
   };
 
+  const changeAuthMode = (mode: AuthMode) => {
+    const nextPath = authPath(mode);
+    if (location.pathname !== nextPath) navigate(nextPath);
+  };
+
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
     setSelectedDataset(dataset);
@@ -559,12 +580,20 @@ export function App() {
     writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
     moveToFlow("jobRuns", { selectedJob: job });
   };
-  if (!authChecked && activeFlow !== "login") {
+  if (!authChecked) {
     return <div className="workspace-route-loading" role="status">로그인 상태를 확인하는 중...</div>;
   }
 
   if (!currentUser || activeFlow === "login") {
-    return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
+    return (
+      <AuthPage
+        initialMode={routeState.authMode ?? "login"}
+        onAction={writeAuditLog}
+        onAuthenticated={handleAuthenticated}
+        onModeChange={changeAuthMode}
+        publicSignupEnabled={publicSignupEnabled}
+      />
+    );
   }
 
   return (
