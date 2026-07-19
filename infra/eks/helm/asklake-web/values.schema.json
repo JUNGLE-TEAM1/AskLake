@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend", "collector"],
+  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend", "aiGateway", "collector"],
   "properties": {
     "enabled": { "type": "boolean" },
     "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
@@ -38,6 +38,7 @@
     },
     "frontend": { "$ref": "#/$defs/frontend" },
     "backend": { "$ref": "#/$defs/backend" },
+    "aiGateway": { "$ref": "#/$defs/aiGateway" },
     "collector": { "$ref": "#/$defs/collector" }
   },
   "allOf": [
@@ -66,6 +67,14 @@
             "properties": {
               "image": { "$ref": "#/$defs/digestImage" },
               "replicaCount": { "minimum": 2 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          },
+          "aiGateway": {
+            "properties": {
+              "enabled": { "const": true },
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "const": 1 },
               "resources": { "$ref": "#/$defs/resources" }
             }
           },
@@ -99,6 +108,14 @@
               "resources": { "maxProperties": 0 }
             }
           },
+          "aiGateway": {
+            "properties": {
+              "enabled": { "const": false },
+              "image": { "maxLength": 0 },
+              "replicaCount": { "const": 0 },
+              "resources": { "maxProperties": 0 }
+            }
+          },
           "collector": { "properties": { "resources": { "maxProperties": 0 } } }
         }
       }
@@ -129,6 +146,12 @@
       "allOf": [
         { "$ref": "#/$defs/service" },
         { "properties": { "name": { "const": "fastapi" }, "port": { "const": 8080 } } }
+      ]
+    },
+    "aiGatewayService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "ai-gateway" }, "port": { "const": 8090 } } }
       ]
     },
     "resources": {
@@ -199,6 +222,35 @@
           }
         }
       ]
+    },
+    "aiGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "replicaCount", "serviceAccountName", "service", "runtimeSecretName", "runtimeSecretKeys", "provider", "providerBaseUrl", "providerModel", "mcpServerUrl", "requestTimeoutSeconds", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "serviceAccountName": { "type": "string", "const": "asklake-ai-gateway" },
+        "service": { "$ref": "#/$defs/aiGatewayService" },
+        "runtimeSecretName": { "type": "string", "const": "asklake-ai-gateway-runtime" },
+        "runtimeSecretKeys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["internalAuthToken", "mcpServiceToken", "providerApiKey"],
+          "properties": {
+            "internalAuthToken": { "type": "string", "const": "AI_GATEWAY_SERVICE_TOKEN" },
+            "mcpServiceToken": { "type": "string", "const": "AI_MCP_SERVICE_TOKEN" },
+            "providerApiKey": { "type": "string", "const": "AI_PROVIDER_API_KEY" }
+          }
+        },
+        "provider": { "type": "string", "const": "openai_compatible" },
+        "providerBaseUrl": { "type": "string", "pattern": "^https://[^?#]+$" },
+        "providerModel": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "mcpServerUrl": { "type": "string", "const": "http://fastapi:8080/internal/mcp" },
+        "requestTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "resources": { "type": "object" }
+      }
     },
     "autoscaling": {
       "type": "object",

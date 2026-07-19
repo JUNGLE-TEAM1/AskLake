@@ -245,6 +245,11 @@ realtimeV1:
 trino:
   enabled: true
   replicas: 1
+  # The default remains the proven single coordinator that also runs tasks.
+  # Distributed mode has no sizing defaults. Every worker input must be
+  # supplied explicitly by an approved deployment overlay.
+  distributed:
+    enabled: false
   nodeSelector:
     asklake.io/workload-class: general
     kubernetes.io/arch: amd64

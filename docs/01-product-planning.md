@@ -165,6 +165,25 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 7. Iceberg mode는 exact snapshot·행 수 검증 후, ClickHouse mode는 raw offset boundary와 query 가능한 output count 확인 후에만 Catalog revision과 Dashboard change event를 공개한다. publication 재시도는 같은 source range를 다시 올리지 않는다.
 8. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`와 `docs/clickhouse-dashboard-join-plan.md`를 따른다.
 
+### EKS Trino 분산 운영 도입 gate
+
+EKS Trino는 기존 단일 coordinator/task 실행을 기본값으로 유지한다. coordinator 1개와
+worker N 분리는 명시적 opt-in이며 worker replica, CPU/memory, placement와 termination
+grace를 private deployment input으로 모두 제공한 경우에만 허용한다. MVP worker replica는
+비용·오입력 방지용 안전 상한으로 1~5만 허용하되, 이 상한을 성능 보장이나 기본 worker 수로
+해석하지 않는다. 실제 기본 worker 수, HPA, PDB, 전용 NodePool, graceful scale-in과 처리량/SLO는
+부하·장애 evidence 없이 제품 기본값으로 확정하지 않는다. 첫 live 후보만 Git 제외 private
+overlay에서 worker `2`개로 시작하며, `2` 또한 제품 기본값이나 성능 sizing 결론이 아니다.
+
+분산 promotion 전에는 worker 등록 수, non-empty Iceberg scan의 worker task, exact-UID
+worker 장애와 replacement 등록, 복구 후 query, 단일 coordinator rollback을 같은 campaign에서
+증명해야 한다. `2→1→2` scale-down/복원 결과도 별도 operator evidence로 남겨야 하며 인증된
+graceful shutdown이 없는 상태에서 무중단 scale-in으로 해석하지 않는다. rollback 기준은
+distributed 직전에 `Recreate`로 검증한 안전한 단일 coordinator Helm revision이다. RDS Iceberg
+catalog, S3 Warehouse/Query Result 위치, TLS client 이름과 EKS Pod
+Identity는 전환 전후 동일해야 한다. 상세 계약과 evidence 형식은
+[EKS Trino 분산 Phase 0](eks-trino-distributed-phase0.md)을 따른다.
+
 ## 7) 성공 기준
 
 - `npm run build`가 통과한다.

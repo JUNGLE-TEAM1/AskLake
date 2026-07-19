@@ -2,17 +2,19 @@
 
 ## 1. 목적과 현재 완료 범위
 
-Phase 8은 FastAPI, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본값은 계속 `disabled`지만 dev 환경은 2026-07-15에 AWS Secrets Manager와 External Secrets Operator(ESO) 2.7.0을 실제 전달 기반으로 선택하고 검증했다.
+Phase 8은 FastAPI, AI Gateway, Airflow, Spark, Trino가 참조할 Kubernetes Secret의 **이름, key, 공유 관계, 환경변수 주입과 파일 mount 위치**를 고정한다. `infra/eks/secrets/runtime-secret-contract.example.json`이 정적 계약의 단일 기준이며 Terraform은 이 JSON을 직접 읽어 handoff output을 만든다. 저장소 기본 delivery는 `disabled`이고, 실제 전환은 AWS Secrets Manager와 External Secrets Operator의 별도 검증을 거친다.
 
 같은 JSON의 `runtimeProfiles.backend`는 현재 live 범위를 `bounded`로 고정하고 12-key 집합을 제공한다. 전체 17-key 집합은 `secrets.backend.keys`가 full-service 기준이다. shell verifier가 자체 배열을 복사하지 않고 이 두 profile을 읽으며, 정적 verifier는 bounded exact set, active profile과 full-service 부분집합 관계를 검사한다.
 
-ESO controller, 전용 Pod Identity, `asklake/dev/*` 읽기 정책과 namespaced `SecretStore`를 적용했다. 임시 source를 사용한 최초 동기화와 값 갱신도 hash 비교로 검증했으며, 값 자체는 출력하지 않고 더미 AWS/Kubernetes Secret을 검증 직후 삭제했다. 15일차에는 FastAPI와 Airflow source/target을 연결했고, 16일차에는 Spark 3-key와 Trino 7-key source/ExternalSecret/target을 적용했다. 최종 통합에서는 Backend source와 ExternalSecret을 실제 bounded runtime이 소비하는 12-key 계약으로 확장하고 Trino 인증 6개 key와 CA를 canonical `asklake-backend-runtime`에 수렴시켰다. 임시 `asklake-backend-trino-runtime`은 Backend rollout과 ALB/RDS/Trino 검증 뒤 삭제했다. 네 workload ExternalSecret은 모두 `Ready=True`이며 source/target byte 일치와 owner reference를 확인했다. AI 4개 key와 현재 dev가 사용하지 않는 `AIRFLOW_API_TOKEN`은 임의 값으로 추가하지 않고 full-service 선택 gate에 남긴다.
+기존 dev는 Backend/Airflow/Spark/Trino 네 ExternalSecret을 검증했다. Issue #1045의 tracked target은 다섯 번째 `asklake-ai-gateway-runtime`을 추가하고 Backend를 exact 15-key Gateway profile로 전환한다. Backend에는 Gateway service/MCP/context secret만 두며 provider key를 넣지 않는다. Gateway Secret은 service token, MCP token, provider key의 exact 3-key profile이다. source/target 전환과 workload rollout은 값 노출 없는 hash·owner·readiness 검증을 통과하기 전까지 live 완료로 간주하지 않는다.
 
 이 단계가 필요한 이유는 A가 만든 namespace·ServiceAccount·data-plane 경계와 B가 만드는 workload manifest가 서로 다른 Secret 이름이나 key를 가정하는 문제를 배포 전에 잡기 위해서다. 계약이 통과해도 Secret이 cluster에 존재하거나 application이 정상 기동한다는 뜻은 아니다.
 
 ## 2. 고정된 workload 계약
 
-FastAPI는 정식 상태에서 `asklake-backend-runtime` 하나를 사용한다. 현재 bounded runtime의 canonical target은 application DB URL, bootstrap administrator password, Airflow password와 공유 token 두 개, Trino query/materializer 인증 정보, query result cursor 서명 key, destructive query confirmation 서명 key와 Trino CA 파일을 포함한 12개 key다. 전체 planning 계약은 AI gateway/MCP 공유 token, context signing secret, OpenAI key와 호환용 `AIRFLOW_API_TOKEN`도 열거하지만, AI runtime 선택 전에는 이 다섯 key를 빈 값이나 placeholder로 live target에 넣지 않는다. 관리자 email, AI gateway URL과 mode는 비밀값이 아니므로 ConfigMap 계약에서 전달한다. staged migration 중에는 web chart의 `backend.trinoRuntimeSecretName`으로 Trino key/CA만 가진 별도 Secret을 추가 참조할 수 있지만 기본값은 main Secret과 같으며 장기 이중 소유 모델이 아니다.
+FastAPI는 `asklake-backend-runtime` 하나를 사용한다. 기존 bounded profile은 12-key rollback 기준이다. Gateway full-service profile은 공통 11개, 선택한 Airflow 인증 1개와 `AI_GATEWAY_SERVICE_TOKEN`, `AI_MCP_SERVICE_TOKEN`, `AI_CONTEXT_SIGNING_SECRET`을 합성한 exact 15-key다. direct rollback의 `OPENAI_API_KEY`나 `AI_PROVIDER_API_KEY`는 Gateway profile에 포함하지 않는다. Gateway URL과 mode는 ConfigMap으로 전달한다.
+
+AI Gateway는 별도 `asklake-ai-gateway-runtime`만 사용한다. `AI_GATEWAY_SERVICE_TOKEN`은 `INTERNAL_AUTH_TOKEN`, `AI_MCP_SERVICE_TOKEN`은 `MCP_SERVICE_TOKEN`, `AI_PROVIDER_API_KEY`는 `PROVIDER_API_KEY`로 주입한다. service/MCP token의 Backend/Gateway payload 동일성은 값을 출력하지 않고 검증한다.
 
 Airflow API server, scheduler, DAG processor와 DB migration은 `asklake-airflow-runtime`을 사용한다. Airflow DB connection, FAB API password, Backend와 동일한 execution/internal token, Fernet key와 API auth JWT secret이 필요하다. API password도 FastAPI가 `/auth/token`을 요청할 때 사용하므로 Backend와 Airflow에 동일한 논리값이 전달되어야 한다. 공유값은 이름만 같은 별도 생성물이 아니며 실제 target의 encoded payload 동일성을 값 노출 없이 검증한다.
 
@@ -44,7 +46,7 @@ IAM policy는 현재 AWS account와 `ap-northeast-2`의 `asklake/dev/*`, 그리�
 
 dev Airflow API 인증은 FAB username/password를 선택했다. username은 비밀이 아닌 ConfigMap 값 `airflow`, password는 `AIRFLOW_PASSWORD` Secret key로 전달한다. migration hook이 FAB AuthManager를 명시하고 사용자를 멱등 생성한 뒤 password를 reset하므로 Secret rotation 후 같은 hook으로 동기화할 수 있다. Airflow API는 ClusterIP로만 제공하며 public Ingress를 만들지 않는다. Backend의 고정 API token 지원은 호환 경로로 남지만 dev에는 별도 `AIRFLOW_API_TOKEN` 값을 만들지 않는다.
 
-또한 이 계약은 현재 foundation에 포함된 네 core workload의 Secret 계약이다. `runtimeDecisions.aiRuntime`은 gateway/direct 선택을, gateway 선택 시 `aiProviderWorkload`는 별도 provider image·ServiceAccount·network·provider-key 계약 승인을 나타낸다. 이를 임의로 선택하지 않는다.
+이 계약은 다섯 core workload의 Secret 계약이다. tracked example은 `gateway`와 별도 provider workload 계약을 선택하지만 delivery mode는 `disabled`이므로 live sync를 의미하지 않는다. `direct`는 rollback 호환 profile로만 남는다.
 
 `ready_for_sync`는 Secret 전달 방식과 owner/source 정보가 완전하다는 뜻이다. `full_service_secret_contract_ready`는 여기에 Airflow API 인증과 AI runtime 계약까지 선택됐다는 뜻이다. 둘 다 Secret이 cluster에 존재하거나 workload가 기동했다는 뜻은 아니며 전체 서비스 production-ready와 구분한다.
 

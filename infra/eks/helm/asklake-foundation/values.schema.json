@@ -31,10 +31,11 @@
     "serviceAccounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["frontend", "backend", "airflow", "trino", "mskSmoke", "spark", "replayProducer"],
+      "required": ["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "replayProducer"],
       "properties": {
         "frontend": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "backend": { "$ref": "#/$defs/kubernetesApiServiceAccount" },
+        "aiGateway": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "airflow": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "trino": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },
         "mskSmoke": { "$ref": "#/$defs/nonKubernetesApiServiceAccount" },

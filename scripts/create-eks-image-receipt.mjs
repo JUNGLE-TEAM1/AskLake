@@ -35,7 +35,7 @@ if (!output || !environment || !revision) {
 }
 
 const receipt = {
-  contractVersion: '1.0',
+  contractVersion: '1.1',
   environment,
   gitRevision: revision,
   platform: 'linux/amd64',

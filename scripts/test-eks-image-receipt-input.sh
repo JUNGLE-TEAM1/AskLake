@@ -29,6 +29,23 @@ fi
 
 chmod 600 "$RECEIPT"
 ASKLAKE_IMAGE_RECEIPT="$RECEIPT" asklake_require_image_receipt "$ROOT_DIR" >/dev/null
+node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" --require-ai-gateway "$RECEIPT" >/dev/null
+
+jq '.contractVersion="1.0" | del(.images.aiGateway)' "$RECEIPT" >"$RECEIPT.tmp"
+mv "$RECEIPT.tmp" "$RECEIPT"
+chmod 600 "$RECEIPT"
+node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT" >/dev/null
+if node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" --require-ai-gateway "$RECEIPT" >/dev/null 2>&1; then
+  echo "Gateway deployment accepted a legacy receipt" >&2
+  exit 1
+fi
+
+jq '.images.aiGateway=.images.backend' "$RECEIPT" >"$RECEIPT.tmp"
+mv "$RECEIPT.tmp" "$RECEIPT"
+if node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$RECEIPT" >/dev/null 2>&1; then
+  echo "legacy receipt accepted an unapproved AI Gateway image" >&2
+  exit 1
+fi
 
 printf '{"contractVersion":"broken"}\n' >"$RECEIPT"
 if ASKLAKE_IMAGE_RECEIPT="$RECEIPT" asklake_require_image_receipt "$ROOT_DIR" >/dev/null 2>&1; then

@@ -57,9 +57,33 @@ def observability_metrics() -> dict[str, object]:
 def ai_health_check(response: Response) -> dict[str, object]:
     if settings.ai_query_provider != "gateway":
         return {"ok": True, "status": "disabled", "provider": "direct"}
-    ready = AiGatewayClient().health_check()
+    gateway_status = AiGatewayClient().health_status()
+    ready = bool(gateway_status.get("ok"))
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}
+    safe_gateway_status: dict[str, object] = {}
+    for key in ("service", "provider", "model", "mcp"):
+        value = gateway_status.get(key)
+        if isinstance(value, str):
+            safe_gateway_status[key] = value
+    checks = gateway_status.get("checks")
+    if isinstance(checks, dict):
+        safe_gateway_status["checks"] = {
+            key: value
+            for key in ("internalAuth", "provider", "mcp")
+            if isinstance((value := checks.get(key)), str)
+        }
+    capabilities = gateway_status.get("capabilities")
+    safe_gateway_status["capabilities"] = (
+        [value for value in capabilities if isinstance(value, str)]
+        if isinstance(capabilities, list)
+        else []
+    )
+    return {
+        "ok": ready,
+        "status": "ready" if ready else str(gateway_status.get("status") or "unavailable"),
+        "provider": "gateway",
+        "gateway": safe_gateway_status,
+    }
 
 
 @router.get("/health/realtime")

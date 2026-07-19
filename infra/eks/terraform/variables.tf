@@ -148,6 +148,7 @@ variable "ecr_repository_names" {
   default = [
     "frontend",
     "backend",
+    "ai-gateway",
     "airflow",
     "trino",
     "spark-runtime",
@@ -155,10 +156,10 @@ variable "ecr_repository_names" {
 
   validation {
     condition = alltrue([
-      for component in ["frontend", "backend", "airflow", "trino", "spark-runtime"] :
+      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime"] :
       contains(var.ecr_repository_names, component)
     ])
-    error_message = "ecr_repository_names must include frontend, backend, airflow, trino, and spark-runtime."
+    error_message = "ecr_repository_names must include frontend, backend, ai-gateway, airflow, trino, and spark-runtime."
   }
 }
 
@@ -201,23 +202,24 @@ variable "service_account_names" {
   description = "Stable workload service account names. IAM roles are attached only after B supplies least-privilege actions."
   type        = map(string)
   default = {
-    frontend = "asklake-frontend"
-    backend  = "asklake-backend"
-    airflow  = "asklake-airflow"
-    trino    = "asklake-trino"
-    mskSmoke = "asklake-msk-smoke"
-    spark    = "asklake-spark"
+    frontend  = "asklake-frontend"
+    backend   = "asklake-backend"
+    aiGateway = "asklake-ai-gateway"
+    airflow   = "asklake-airflow"
+    trino     = "asklake-trino"
+    mskSmoke  = "asklake-msk-smoke"
+    spark     = "asklake-spark"
   }
 
   validation {
     condition = (
-      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "airflow", "trino", "mskSmoke", "spark"]) &&
+      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark"]) &&
       alltrue([
         for name in values(var.service_account_names) :
         can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name))
       ])
     )
-    error_message = "service_account_names must define DNS-compatible frontend, backend, airflow, trino, mskSmoke, and spark names."
+    error_message = "service_account_names must define DNS-compatible frontend, backend, aiGateway, airflow, trino, mskSmoke, and spark names."
   }
 }
 

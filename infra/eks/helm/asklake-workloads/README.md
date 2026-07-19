@@ -4,7 +4,7 @@ This chart renders the Tuesday MVP application layer:
 
 - Frontend and FastAPI: two replicas each with internal `ClusterIP` Services
 - Airflow 3 API server, scheduler, DAG processor, migration hook, and internal Service
-- Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service
+- Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service; optional explicit distributed workers
 - references to foundation-owned least-privilege RBAC for FastAPI `SparkApplication` submission and Spark driver executor management
 - opt-in MSK IAM metadata smoke Job and opt-in bounded Kafka-to-S3 `SparkApplication` smoke
 - disabled-by-default Realtime V1 worker package with explicit owner-transfer, previous-owner fence, generation, Kafka-only scope, private S3 runtime document and Spark/MSK IAM contracts
@@ -83,3 +83,44 @@ rejects Spark/ARM64 overrides, and `scripts/verify-eks-workloads.sh` checks ever
 rendered Pod template. A chart change does not mutate the live release by itself:
 use a server-side dry-run and verify actual Pod placement during the next
 authorized Helm upgrade.
+
+## Trino distributed opt-in
+
+The default remains the proven single Trino process: one coordinator that also
+runs tasks. `trino.distributed.enabled=true` is accepted only when the private
+overlay also supplies `includeCoordinator=false`, a worker replica count from 1 to 5,
+complete worker requests/limits, the approved General node selector, and
+a worker termination grace value. No worker sizing or autoscaling value is
+present in chart defaults or the checked-in dev example. The first live
+candidate uses two workers in a Git-ignored private overlay; two is an initial
+validation value, while five is only the input/cost ceiling.
+
+An accepted opt-in renders `asklake-trino-worker` separately. The existing
+`asklake-trino` Service selects only the coordinator role, while both roles use
+the same digest-pinned image, `asklake-trino` ServiceAccount/Pod Identity,
+`asklake-trino-runtime` Secret files and JDBC Iceberg/S3 settings. HTTPS
+discovery uses the coordinator-only headless `asklake-trino-discovery` Service.
+Trino resolves that DNS name to the real coordinator Pod IP before its automatic
+internal TLS hostname conversion; the virtual client Service ClusterIP is never
+used for discovery. The coordinator Deployment uses `Recreate` so two
+coordinators cannot overlap during rollout. The Iceberg data ACL is unchanged;
+distributed mode grants the internal materializer read-only system information
+access solely for node/task evidence, never write or graceful-shutdown access.
+
+```bash
+scripts/verify-eks-trino-distributed.sh
+node scripts/test-eks-trino-distributed-evidence.mjs
+scripts/verify-eks-trino-distributed-live.sh <expected-workers>
+```
+
+Do not add HPA, PDB, topology spread, a worker NodePool, graceful shutdown
+credentials, or production sizing until an approved load/failure campaign has
+produced evidence. The authorized live and rollback procedure is
+`docs/eks-trino-distributed-phase0.md`; normal development and CI never apply it.
+The operator first records a healthy single-coordinator `Recreate` revision as
+the safe rollback target. Apply also requires the worktree `HEAD`, fetched
+`origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
+Active worker registration plus a non-empty Iceberg read is only the deployment
+gate: promotion additionally requires a non-empty Iceberg worker task, exact-UID
+replacement, a `2→1→2` scale observation, and successful safe rollback evidence
+bound to the merged `pair1` commit.

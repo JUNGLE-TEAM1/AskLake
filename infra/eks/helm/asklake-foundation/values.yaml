@@ -23,6 +23,11 @@ serviceAccounts:
     name: asklake-backend
     annotations: {}
     automountServiceAccountToken: true
+  aiGateway:
+    create: true
+    name: asklake-ai-gateway
+    annotations: {}
+    automountServiceAccountToken: false
   airflow:
     create: true
     name: asklake-airflow

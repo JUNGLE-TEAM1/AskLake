@@ -1,35 +1,34 @@
-{{- if .Values.trino.enabled }}
+{{- if and .Values.trino.enabled .Values.trino.distributed.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: asklake-trino
+  name: asklake-trino-worker
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
-    app.kubernetes.io/component: trino
+    app.kubernetes.io/component: trino-worker
 spec:
-  replicas: {{ .Values.trino.replicas }}
-  strategy:
-    type: Recreate
+  replicas: {{ .Values.trino.distributed.workerReplicas }}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
-      {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 6 }}
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "trino-worker" "release" .Release.Name) | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/trino-configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 8 }}
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "trino-worker" "release" .Release.Name) | nindent 8 }}
+        asklake.io/trino-role: worker
     spec:
       serviceAccountName: {{ .Values.trino.serviceAccountName }}
       automountServiceAccountToken: false
       nodeSelector:
-        {{- toYaml .Values.trino.nodeSelector | nindent 8 }}
+        {{- toYaml .Values.trino.distributed.workerNodeSelector | nindent 8 }}
       securityContext:
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.trino.distributed.workerTerminationGracePeriodSeconds }}
       containers:
         - name: trino
           image: "{{ required "Trino image repository is required" .Values.trino.image.repository }}@{{ required "Trino image digest is required" .Values.trino.image.digest }}"
@@ -57,11 +56,11 @@ spec:
               valueFrom:
                 secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.internalSharedSecret }}}
           volumeMounts:
-            - {name: trino-config, mountPath: /etc/trino/config.properties, subPath: config.properties, readOnly: true}
-            - {name: trino-config, mountPath: /etc/trino/password-authenticator.properties, subPath: password-authenticator.properties, readOnly: true}
-            - {name: trino-config, mountPath: /etc/trino/access-control.properties, subPath: access-control.properties, readOnly: true}
-            - {name: trino-config, mountPath: /etc/trino/access-control/rules.json, subPath: rules.json, readOnly: true}
-            - {name: trino-config, mountPath: /etc/trino/catalog/iceberg.properties, subPath: iceberg.properties, readOnly: true}
+            - {name: trino-worker-config, mountPath: /etc/trino/config.properties, subPath: config.properties, readOnly: true}
+            - {name: trino-shared-config, mountPath: /etc/trino/password-authenticator.properties, subPath: password-authenticator.properties, readOnly: true}
+            - {name: trino-shared-config, mountPath: /etc/trino/access-control.properties, subPath: access-control.properties, readOnly: true}
+            - {name: trino-shared-config, mountPath: /etc/trino/access-control/rules.json, subPath: rules.json, readOnly: true}
+            - {name: trino-shared-config, mountPath: /etc/trino/catalog/iceberg.properties, subPath: iceberg.properties, readOnly: true}
             - {name: trino-runtime-files, mountPath: /etc/trino/tls/keystore.jks, subPath: trino-keystore.jks, readOnly: true}
             - {name: trino-runtime-files, mountPath: /etc/trino/auth/password.db, subPath: trino-password.db, readOnly: true}
           startupProbe:
@@ -80,9 +79,12 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
-            {{- toYaml .Values.trino.resources | nindent 12 }}
+            {{- toYaml .Values.trino.distributed.workerResources | nindent 12 }}
       volumes:
-        - name: trino-config
+        - name: trino-worker-config
+          configMap:
+            name: asklake-trino-worker-config
+        - name: trino-shared-config
           configMap:
             name: asklake-trino-config
         - name: trino-runtime-files

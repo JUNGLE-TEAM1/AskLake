@@ -41,7 +41,12 @@ required_files=(
   "$CHART_DIR/templates/sparkapplication.yaml"
   "$CHART_DIR/templates/trino-configmap.yaml"
   "$CHART_DIR/templates/trino-deployment.yaml"
+  "$CHART_DIR/templates/trino-discovery-service.yaml"
   "$CHART_DIR/templates/trino-service.yaml"
+  "$CHART_DIR/templates/trino-worker-deployment.yaml"
+  "$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
+  "$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py"
+  "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
   "$VALUES_FILE"
 )
 
@@ -431,4 +436,5 @@ bash -n "$ROOT_DIR/scripts/verify-eks-workloads.sh"
 node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
+"$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 echo "EKS workload contract verification passed."
