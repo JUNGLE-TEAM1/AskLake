@@ -479,6 +479,27 @@ def task_state_snapshot(task_instances: list[AirflowTaskInstance]) -> dict[str, 
         if task.task_id
     }
 
+def merge_airflow_task_state_snapshot(
+    previous: dict[str, Any],
+    current: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(current)
+    for key in (
+        "sparkExecution",
+        "sparkResult",
+        "catalogResult",
+        "airflowReservation",
+        "eksMvpFixture",
+        "day18Phase8",
+    ):
+        value = previous.get(key)
+        if isinstance(value, dict):
+            merged[key] = value
+    fault_attempts = previous.get("faultAttempts")
+    if isinstance(fault_attempts, list):
+        merged["faultAttempts"] = fault_attempts
+    return merged
+
 def first_problem_task(task_instances: list[AirflowTaskInstance]) -> AirflowTaskInstance | None:
     for task in task_instances:
         if task.asklake_status in {"failed", "blocked"}:

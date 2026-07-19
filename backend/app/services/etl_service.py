@@ -215,6 +215,7 @@ from app.application.etl_run_projection import (
     mark_airflow_catalog_reconciliation_failure,
     mark_airflow_submission_unknown,
     mark_airflow_success_without_catalog_reconciliation,
+    merge_airflow_task_state_snapshot,
     record_airflow_sync_error,
     repair_incomplete_airflow_successes,
     run_from_airflow_submit,
@@ -1436,28 +1437,11 @@ def sync_airflow_run(
     run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
     run.airflow_state = dag_run.state
     previous_task_states = dict(run.task_states or {})
-    spark_execution = previous_task_states.get("sparkExecution")
-    spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
-    airflow_reservation = previous_task_states.get("airflowReservation")
-    eks_mvp_fixture = previous_task_states.get("eksMvpFixture")
-    day18_phase8 = previous_task_states.get("day18Phase8")
-    fault_attempts = previous_task_states.get("faultAttempts")
-    run.task_states = task_state_snapshot(task_instances)
-    if isinstance(spark_execution, dict):
-        run.task_states["sparkExecution"] = spark_execution
-    if isinstance(spark_result, dict):
-        run.task_states["sparkResult"] = spark_result
-    if isinstance(catalog_result, dict):
-        run.task_states["catalogResult"] = catalog_result
-    if isinstance(airflow_reservation, dict):
-        run.task_states["airflowReservation"] = airflow_reservation
-    if isinstance(eks_mvp_fixture, dict):
-        run.task_states["eksMvpFixture"] = eks_mvp_fixture
-    if isinstance(day18_phase8, dict):
-        run.task_states["day18Phase8"] = day18_phase8
-    if isinstance(fault_attempts, list):
-        run.task_states["faultAttempts"] = fault_attempts
+    run.task_states = merge_airflow_task_state_snapshot(
+        previous_task_states,
+        task_state_snapshot(task_instances),
+    )
     run.last_synced_at = synced_at
     run.sync_error = None
 

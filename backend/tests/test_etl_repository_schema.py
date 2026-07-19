@@ -1,6 +1,6 @@
 from sqlalchemy import String, Text
 
-from app.repositories.etl_repository import column_requires_text_migration
+from app.repositories.etl_schema_migrations import column_requires_text_migration
 
 
 def test_text_columns_do_not_repeat_destructive_type_ddl() -> None:
