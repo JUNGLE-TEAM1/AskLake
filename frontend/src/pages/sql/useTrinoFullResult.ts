@@ -5,7 +5,7 @@ import { getTrinoQueryRun, getTrinoQueryRunResultPage, requestTrinoFullResults }
 import type { AuditResult, CatalogDataset, SqlResultDraft, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
 import type { SqlRemoteResultPagination } from "./SqlResultsPanel";
 
-type FullResultIntent = "csv" | "view" | null;
+type FullResultIntent = "chart" | "csv" | "view" | null;
 
 type FullResultState = {
   cursors: Array<string | null>;
@@ -351,8 +351,9 @@ function useFullResultRequestActions({
     }
     void start("csv");
   };
+  const prepareChart = () => void start("chart");
   const openView = () => void start("view");
-  return { downloadCsv, openView, triggerCsvDownload };
+  return { downloadCsv, openView, prepareChart, triggerCsvDownload };
 }
 
 function useFullResultCsvIntent(
@@ -437,8 +438,10 @@ export function useTrinoFullResult({
     pagePending: state.pagePending,
     pagination,
     preparing,
+    prepareChart: requestActions.prepareChart,
     reset,
     retryPage: pageActions.retry,
+    run: state.run,
     viewResult: state.intent === "view" ? displayResult : null,
   };
 }

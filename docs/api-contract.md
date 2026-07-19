@@ -35,7 +35,8 @@ Catalog terminal publication은 `datasetId`, materialization version, storage lo
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | Trino 최대 100행 preview Query Run 접수 또는 DuckDB compatibility 실행 |
 | 3b | P0 | `GET /api/query/runs/{runId}` | Query Run lifecycle 또는 compatibility snapshot 조회 |
-| 3c | P0 | `POST /api/query/runs/{previewRunId}/full-results` | 전체 보기/CSV용 원본 SQL 전체 결과 run 시작 또는 재사용 |
+| 3c | P0 | `POST /api/query/runs/{previewRunId}/full-results` | 전체 보기/CSV/차트용 원본 SQL 전체 결과 run 시작 또는 재사용 |
+| 3d | P0 | `POST /api/query/runs/{runId}/chart` | 완료된 전체 결과 run의 bounded server chart aggregation |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
@@ -199,6 +200,7 @@ Resource/action 기준:
 | `GET /api/query/runs/{runId}` | `query` | 저장된 run의 base/reference dataset 모두 다시 검사 |
 | `GET /api/query/runs/{runId}/results` | `query` | submitter/admin과 base/reference dataset 권한·governance 재검사 |
 | `GET /api/query/runs/{runId}/exports/csv` | `query` | result page와 같은 ownership·retention·권한 검사 |
+| `POST /api/query/runs/{runId}/chart` | `query` | 완료된 full result에 대해 result page와 같은 ownership·retention·권한 검사 |
 | `POST /api/query/runs/{runId}/cancel` | `query` 또는 base Dataset `manage` | queued/running run만 취소 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
@@ -2037,6 +2039,40 @@ type QueryRunResultPage = {
 - requested page가 아직 수집되지 않았으면 `409 RESULT_PAGE_NOT_READY`, retention 만료면 `410 RESULT_EXPIRED`, storage 장애면 `503 RESULT_STORAGE_UNAVAILABLE`을 반환합니다.
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 - cleanup worker는 terminal run을 keyset batch로 끝까지 순회하므로 최근 N건만 정리하지 않습니다. 실행 중 run과 durable materialized Dataset은 cleanup 대상이 아닙니다.
+
+`POST /api/query/runs/{runId}/chart`는 `mode=run`, `status=succeeded`, `storageStatus=available`인 전체 결과만 집계한다. Preview run에 직접 요청하면 `409 RESULT_PAGE_NOT_READY`다.
+
+```ts
+type TrinoQueryRunChartRequest = {
+  type:
+    | "metric"
+    | "table"
+    | "bar_chart"
+    | "line_chart"
+    | "area_chart"
+    | "donut_chart"
+    | "pie_chart"
+    | "radial_bar_chart"
+    | "heatmap_chart"
+    | "treemap_chart";
+  config: DashboardRuntimeWidgetConfig;
+};
+
+type TrinoQueryRunChartResponse = {
+  runId: string;
+  sourceRowCount: number;
+  groupCount: number;
+  config: DashboardRuntimeWidgetConfig;
+  data: Array<Record<string, unknown>>;
+};
+```
+
+- Backend는 private result object page를 한 번에 하나씩 읽고 `sum`/`avg`/`count`/`min`/`max` 상태만 메모리에 유지한다. 원본 전체 행을 browser로 전송하지 않는다.
+- chart/metric은 집계 group 10,000개를 넘으면 `422 VALIDATION_ERROR`로 거절하고 날짜 단위 또는 그룹 컬럼을 조정하도록 안내한다. 응답은 Dashboard runtime과 같은 최대 500개 group이다.
+- table widget은 전체 결과에서 설정된 첫 최대 500행만 `dataMode="server_preview"`로 반환한다. 나머지 widget은 `dataMode="server_aggregated"`를 반환한다.
+- 집계 제한 시간은 15초다. 초과하면 부분 집계를 성공처럼 반환하지 않고 `504 BACKEND_TIMEOUT`을 반환한다.
+- current cursor page 변경은 이 endpoint의 입력이 아니다. 같은 full result run과 chart config의 결과는 현재 화면 page와 독립적이다.
+- 권한, governance, retention, storage integrity 검사는 result page/CSV와 같다. 만료는 `410 RESULT_EXPIRED`, 저장소 장애는 `503 RESULT_STORAGE_UNAVAILABLE`이다.
 
 `GET /api/query/runs/{runId}/exports/csv`는 `mode=run`, `status=succeeded`, `storageStatus=available`인 전체 결과만 stream한다. preview run에 직접 요청하면 `409 RESULT_PAGE_NOT_READY`다.
 

@@ -18,6 +18,8 @@ from app.schemas.trino import (
     TrinoClientPage,
     TrinoQueryEstimate,
     TrinoQueryEstimateRequest,
+    TrinoQueryRunChartRequest,
+    TrinoQueryRunChartResponse,
     TrinoQueryRunListResponse,
     TrinoQueryRunResponse,
     TrinoQueryRunResultPage,
@@ -203,6 +205,14 @@ class TrinoQueryRunService:
 
     def prepare_csv_export(self, run_id: str, actor: ActorContext | None = None) -> Iterator[bytes]:
         return self.result_service.prepare_csv_export(run_id, actor)
+
+    def prepare_chart_data(
+        self,
+        run_id: str,
+        request: TrinoQueryRunChartRequest,
+        actor: ActorContext | None = None,
+    ) -> TrinoQueryRunChartResponse:
+        return self.result_service.prepare_chart_data(run_id, request, actor)
 
     # Compatibility wrappers keep existing internal callers and focused tests
     # working while all canonical logic lives in the collaborators above.

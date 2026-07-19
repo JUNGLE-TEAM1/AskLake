@@ -19,7 +19,7 @@ from app.schemas.sql import (
     QueryRunResponse,
 )
 from app.schemas.common import ErrorCode
-from app.schemas.trino import CreateTrinoFullResultRequest, QueryRunSubmitRequest, TrinoQueryEstimate, TrinoQueryEstimateRequest, TrinoQueryRunListResponse, TrinoQueryRunResponse, TrinoQueryRunResultPage, TrinoQueryValidationRequest, TrinoQueryValidationResponse
+from app.schemas.trino import CreateTrinoFullResultRequest, QueryRunSubmitRequest, TrinoQueryEstimate, TrinoQueryEstimateRequest, TrinoQueryRunChartRequest, TrinoQueryRunChartResponse, TrinoQueryRunListResponse, TrinoQueryRunResponse, TrinoQueryRunResultPage, TrinoQueryValidationRequest, TrinoQueryValidationResponse
 from app.services.query_ai_service import QueryAiService
 from app.services.sql_service import SqlService
 from app.services.trino_query_run_service import TrinoQueryRunService
@@ -143,6 +143,16 @@ def download_trino_query_run_csv(
         headers={"Content-Disposition": f'attachment; filename="{run_id}.csv"'},
         media_type="text/csv; charset=utf-8",
     )
+
+
+@router.post("/runs/{run_id}/chart", response_model=TrinoQueryRunChartResponse)
+def create_trino_query_run_chart(
+    run_id: str,
+    request: TrinoQueryRunChartRequest,
+    trino_service: Annotated[TrinoQueryRunService, Depends(get_trino_query_run_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> TrinoQueryRunChartResponse:
+    return trino_service.prepare_chart_data(run_id, request, actor)
 
 
 @router.post("/runs/{run_id}/cancel", response_model=TrinoQueryRunResponse)

@@ -1,11 +1,11 @@
 # Trino Query Result Storage Contract
 
-이 문서는 Trino preview와 사용자 요청형 전체 결과의 저장 lifecycle을 정의한다. 기본 `preview` Query Run은 최대 100행만 실행해 PostgreSQL JSONB inline page에 저장한다. `전체 보기` 또는 `CSV 다운로드`로 생성한 `run` Query Run만 private S3-compatible page object에 전체 결과를 저장한다. 로컬 root Compose는 MinIO를 사용하고 production은 사전 생성한 AWS S3 Query Result bucket과 EC2 instance profile default credential chain을 사용한다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
+이 문서는 Trino preview와 사용자 요청형 전체 결과의 저장 lifecycle을 정의한다. 기본 `preview` Query Run은 최대 100행만 실행해 PostgreSQL JSONB inline page에 저장한다. `전체 보기`, `CSV 다운로드`, 또는 SQL 결과 차트로 생성한 `run` Query Run만 private S3-compatible page object에 전체 결과를 저장한다. 로컬 root Compose는 MinIO를 사용하고 production은 사전 생성한 AWS S3 Query Result bucket과 EC2 instance profile default credential chain을 사용한다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
 
 ## 1. 핵심 결정
 
 - 기본 실행은 원본 read-only SQL을 최대 100행 subquery로 감싼 `mode=preview`다. 결과 행은 PostgreSQL에 inline으로 저장하고 S3에는 쓰지 않는다.
-- `전체 보기` 또는 `CSV 다운로드`는 성공한 preview를 source로 `mode=run`을 시작하거나 보관 중인 같은 full run을 재사용한다. 이 run만 원본 SQL 전체를 실행한다.
+- `전체 보기`, `CSV 다운로드`, 또는 SQL 결과 차트는 성공한 preview를 source로 `mode=run`을 시작하거나 보관 중인 같은 full run을 재사용한다. 이 run만 원본 SQL 전체를 실행한다.
 - PostgreSQL은 두 mode의 Query Run metadata와 manifest를 저장한다. Preview에는 최대 100행 inline page도 저장하고, full run에는 페이지 순서, object reference, 접근 상태, checksum, retention 정보만 저장한다.
 - backend는 full run 결과 페이지를 private Query Result bucket의 `query-results/<runId>/pages/<pageIndex>[.<attempt>].json.gz`에 저장한다. Collector page의 attempt는 lease generation에 묶이며 최초 request page는 suffix가 없을 수 있다.
 - 압축 페이지에는 versioned JSON의 `columns`, `rows`를 넣는다. object upload가 끝난 뒤 현재 worker/generation을 DB row lock으로 다시 확인하고 metadata가 commit된 page만 조회 가능 상태로 만든다.
@@ -20,14 +20,14 @@
 default execute
   -> Trino preview (max 100 rows)
   -> PostgreSQL inline page / manifest
-  -> preview table and chart
+  -> preview table
 
-full view or CSV
+full view, CSV, or chart
   -> linked Trino full run
   -> backend result collector
   -> private S3-compatible page objects
   -> PostgreSQL page metadata / manifest
-  -> permission-checked cursor API or CSV stream
+  -> permission-checked cursor API, CSV stream, or bounded server chart aggregation
 ```
 
 ### 2.1 PostgreSQL metadata
@@ -118,6 +118,7 @@ type QueryRunResultPage = {
 - 만료된 결과는 `410 RESULT_EXPIRED`를 반환한다.
 - Full result object가 없거나 손상되면 `503 RESULT_STORAGE_UNAVAILABLE`을 반환한다. Run은 감사 가능 상태로 남기며 운영자가 recovery를 다시 시도할 수 있다.
 - 모든 result page read는 PostgreSQL inline page 또는 object storage를 읽기 전에 Dataset `query` 권한, user/group block, resource lock, submitter/admin ownership, retention state를 다시 검사한다.
+- `POST /api/query/runs/{runId}/chart`는 완료된 full run page를 순차적으로 읽어 서버에서 집계한다. 최대 10,000개 집계 상태만 유지하고 최대 500개 chart group을 반환하며, 부분 page 또는 원본 전체 행을 browser에 전달하지 않는다. 현재 cursor page 이동은 차트 결과에 영향을 주지 않는다.
 
 ## 5. 용량, 보존, guardrail
 
@@ -125,12 +126,13 @@ type QueryRunResultPage = {
 - Result retention은 deployment별로 설정한다. Phase 1의 기본 목표는 24시간(`TRINO_RESULT_RETENTION_SECONDS=86400`)이며, 배포 환경은 더 짧게 설정할 수 있다.
 - Storage quota, concurrent run quota, timeout, estimate 기반 확인은 organization policy다. 실행 전에 경고하거나 거절할 수 있지만, 완료된 결과를 조용히 truncate해서는 안 된다.
 - `GET /api/query/runs/{runId}/exports/csv`는 완료된 `mode=run`의 object page를 다시 읽어 CSV를 server-side stream으로 반환한다. Preview에 직접 요청하면 `409 RESULT_PAGE_NOT_READY`다. SQL을 다시 실행하거나 browser memory에서 전체 파일을 만들지 않으며, 같은 permission과 retention check를 사용하고 raw object storage credential을 노출하지 않는다.
+- `POST /api/query/runs/{runId}/chart`도 완료된 `mode=run`만 허용한다. 집계가 15초를 넘거나 group limit을 초과하면 부분 결과를 성공으로 표시하지 않고 명시적 오류를 반환한다.
 
 ## 6. 보안과 감사
 
 - Query execution은 `asklake-api` Trino service identity를 유지한다. 로컬 Result collection은 warehouse/root와 분리된 MinIO query-result credential을 사용하고, production은 static key 없이 EC2 instance profile에 Query Result bucket 최소 권한을 부여한다.
 - CTAS materialization은 `asklake-materializer`를 유지하며 temporary result page retention과 독립적이다.
-- AskLake audit event는 submit, collector start/recovery, result persistence failure, cancel, terminal state, result page access, expiry, cleanup을 기록한다.
+- AskLake audit event는 submit, collector start/recovery, result persistence failure, cancel, terminal state, result page access, 전체 결과 chart aggregation, expiry, cleanup을 기록한다.
 - 실제 사용자 identity는 AskLake audit actor로 남는다. Trino service account identity로 대체하지 않는다.
 
 ## 7. Phase 경계

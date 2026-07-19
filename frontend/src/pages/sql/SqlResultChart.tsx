@@ -25,6 +25,8 @@ export type SqlChartSource = {
   id: string;
   kind: "dataset" | "sql_result";
   label: string;
+  scope?: "full_result";
+  sourceRowCount?: number;
 };
 
 export type SqlChartConfig = {
@@ -147,6 +149,11 @@ export function SqlResultChart({
       <div className="sql-result-chart-header flex min-w-0 items-center gap-2">
         <strong className="text-base">{resolvedConfig.title || resolvedSource.label}</strong>
         <span className="shrink-0 text-sm text-muted-foreground">{widgetDefinition.label}</span>
+        {resolvedSource.scope === "full_result" ? (
+          <span className="shrink-0 text-sm text-muted-foreground">
+            전체 {(resolvedSource.sourceRowCount ?? 0).toLocaleString()}행 서버 집계
+          </span>
+        ) : null}
       </div>
       <div className="h-[280px] min-h-0 overflow-hidden rounded-lg border bg-background">
         <WidgetRenderer widget={widget} />
