@@ -141,6 +141,33 @@ def test_non_visualization_request_stays_report_only_without_openai_key() -> Non
     assert "AI Gateway를 사용할 수 없어" in response.message
 
 
+def test_standalone_vague_follow_up_is_clarified_without_calling_gateway() -> None:
+    context = AssistantDashboardContext(id="dashboard-vague-follow-up")
+    service = DashboardAssistantService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        runtime_settings(
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="test-token",
+        ),
+    )
+    request = DashboardAssistantRequest.model_validate({
+        "mode": "dashboard_question",
+        "prompt": "랜덤으로 진행해줘",
+    })
+
+    with (
+        patch("app.services.dashboard_assistant_service.build_assistant_context", return_value=context),
+        patch("app.services.dashboard_assistant_service.AiGatewayClient.generate_dashboard_response") as generate,
+    ):
+        response = service.generate_response(request, ActorContext(name="analyst", role="admin"))
+
+    generate.assert_not_called()
+    assert response.actions == []
+    assert response.provider == "local-input-guard"
+    assert "구체적으로" in response.message
+
+
 def test_visualization_request_does_not_synthesize_a_local_chart() -> None:
     context = AssistantDashboardContext(
         id="dashboard-1",

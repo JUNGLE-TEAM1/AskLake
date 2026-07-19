@@ -411,7 +411,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
-| Dashboard Assistant | DB runtime/catalog 권한 context와 Semantic RAG를 private Gateway에 전달한다. 현재 Dataset을 고정하고 명시적인 시각화 의도만 create/update로 분류하며, 검증된 action도 draft persistence가 실제 성공해야 적용 성공으로 표시한다. 실패 시 편집 상태를 보존한다. 모델이 실제 사용한 evidence만 반환하며 Gateway/RAG 실패 시 빈 action의 unavailable/error를 반환한다. | `POST /api/dashboards/assistant` |
+| Dashboard Assistant | DB runtime/catalog 권한 context와 Semantic RAG를 private Gateway에 전달한다. 현재 Dataset을 고정하고 명시적인 시각화 의도 또는 최근 사용자 field/dataset 단서를 참조하는 bounded 후속 실행만 create/update로 분류한다. 502 contract 오류는 mode별 지침으로 한 번 교정 재시도한다. 검증된 action도 draft persistence가 실제 성공해야 적용 성공으로 표시하며, 실패 시 편집 상태를 보존한다. 모델이 실제 사용한 evidence만 반환하고 Gateway/RAG 재실패 시 빈 action의 unavailable/error를 반환한다. | `POST /api/dashboards/assistant` |
 | Review analysis | frontend는 deprecated cellphones alias 대신 canonical latest/run/preview endpoint를 사용한다. Gateway schema/row preview, persisted bounded run, provenance·holdout quality gate를 통과한 portable model publication을 제공한다. | `POST /api/review-analysis/schema-suggestion`, `POST /api/review-analysis/preview`, `POST /api/review-analysis/runs`, `GET /api/review-analysis/runs/latest`, `GET /api/catalog/models` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
