@@ -71,14 +71,14 @@ authorized Helm upgrade.
 
 ## Trino distributed opt-in
 
-The default remains the proven single Trino process: one coordinator that also
-runs tasks. `trino.distributed.enabled=true` is accepted only when the private
-overlay also supplies `includeCoordinator=false`, a worker replica count from 1 to 5,
-complete worker requests/limits, the approved General node selector, and
-a worker termination grace value. No worker sizing or autoscaling value is
-present in chart defaults or the checked-in dev example. The first live
-candidate uses two workers in a Git-ignored private overlay; two is an initial
-validation value, while five is only the input/cost ceiling.
+The disabled default remains the proven single Trino process and is the rollback
+path. When `trino.distributed.enabled=true`, the private overlay must supply
+`includeCoordinator=false`, exactly five worker replicas, complete worker
+requests/limits, the approved General node selector, and a worker termination
+grace value. SQL requests, the UI, and HPA cannot override this count. Five means
+Pod replicas, not five physical servers or a throughput guarantee. No worker
+resource sizing or autoscaling value is present in chart defaults or the checked-in
+dev example.
 
 An accepted opt-in renders `asklake-trino-worker` separately. The existing
 `asklake-trino` Service selects only the coordinator role, while both roles use
@@ -96,7 +96,7 @@ never other system tables, write, or graceful-shutdown access.
 ```bash
 scripts/verify-eks-trino-distributed.sh
 node scripts/test-eks-trino-distributed-evidence.mjs
-scripts/verify-eks-trino-distributed-live.sh <expected-workers>
+scripts/verify-eks-trino-distributed-live.sh 5
 ```
 
 Do not add HPA, PDB, topology spread, a worker NodePool, graceful shutdown
@@ -106,7 +106,8 @@ produced evidence. The authorized live and rollback procedure is
 The operator first records a healthy single-coordinator `Recreate` revision as
 the safe rollback target. Apply also requires the worktree `HEAD`, fetched
 `origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
-Active worker registration plus a non-empty Iceberg read is only the deployment
-gate: promotion additionally requires a non-empty Iceberg worker task, exact-UID
-replacement, a `2→1→2` scale observation, and successful safe rollback evidence
-bound to the merged `pair1` commit.
+Active registration of all five workers plus a non-empty Iceberg read is only the
+deployment gate: promotion additionally requires a non-empty Iceberg worker task,
+exact-UID replacement, and successful safe rollback evidence bound to the merged
+`pair1` commit. The initial two-worker campaign's `2→1→2` observation remains
+historical evidence, not a current scaling procedure.

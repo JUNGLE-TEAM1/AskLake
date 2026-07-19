@@ -42,8 +42,8 @@ expected_workers="$(jq -er '
   select(.trino.distributed.enabled == true) |
   select(.trino.distributed.includeCoordinator == false) |
   .trino.distributed.workerReplicas |
-  select(type == "number" and floor == . and . >= 1 and . <= 5)
-' "$VALUES")" || fail "distributed Trino private values are incomplete"
+  select(type == "number" and floor == . and . == 5)
+' "$VALUES")" || fail "distributed Trino private values must declare the fixed five-worker policy"
 
 if jq -e '.. | objects | has("password") or has("token") or has("secretValue") or has("data") or has("stringData")' "$VALUES" >/dev/null; then
   fail "private Trino values contain a Secret-shaped property"
@@ -78,11 +78,14 @@ component_overrides=(
 )
 rendered="$(mktemp)"
 live_values="$(mktemp)"
+single_values="$(mktemp)"
+single_rendered="$(mktemp)"
 live_without_distributed="$(mktemp)"
 candidate_without_distributed="$(mktemp)"
-trap 'rm -f "$rendered" "$live_values" "$live_without_distributed" "$candidate_without_distributed"' EXIT
+trap 'rm -f "$rendered" "$live_values" "$single_values" "$single_rendered" "$live_without_distributed" "$candidate_without_distributed"' EXIT
 
-helm get values "$RELEASE" -n "$NAMESPACE" -o json >"$live_values"
+helm get values "$RELEASE" -n "$NAMESPACE" --revision "$observed_revision" -o json >"$live_values"
+jq -eS '.trino.distributed = {enabled:false}' "$live_values" >"$single_values"
 jq -S 'del(.trino.distributed)' "$live_values" >"$live_without_distributed"
 jq -S 'del(.trino.distributed)' "$VALUES" >"$candidate_without_distributed"
 cmp -s "$live_without_distributed" "$candidate_without_distributed" || \
@@ -90,11 +93,19 @@ cmp -s "$live_without_distributed" "$candidate_without_distributed" || \
 
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh" >/dev/null
 helm lint "$CHART" -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" >/dev/null
+helm lint "$CHART" -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" >/dev/null
 helm template "$RELEASE" "$CHART" -f "$BASE_VALUES" -f "$VALUES" \
   "${component_overrides[@]}" >"$rendered"
+helm template "$RELEASE" "$CHART" -f "$BASE_VALUES" -f "$single_values" \
+  "${component_overrides[@]}" >"$single_rendered"
 grep -q '^  name: asklake-trino-discovery$' "$rendered" || fail "headless discovery Service is missing"
 grep -q '^    type: Recreate$' "$rendered" || fail "single-coordinator rollout strategy is missing"
 grep -q "^  replicas: $expected_workers$" "$rendered" || fail "worker replica render does not match private values"
+if grep -q '^  name: asklake-trino-worker$\|^  name: asklake-trino-discovery$' "$single_rendered"; then
+  fail "safe single-coordinator candidate contains distributed resources"
+fi
+grep -q 'discovery.uri=https://127.0.0.1:8443' "$single_rendered" || \
+  fail "safe single-coordinator candidate does not restore localhost discovery"
 
 current_image="$(kubectl get deployment asklake-trino -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')"
 candidate_image="$(grep '^          image: ".*/trino@sha256:' "$rendered" | head -n 1 | sed -E 's/^ *image: "(.*)"$/\1/')"
@@ -102,8 +113,11 @@ candidate_image="$(grep '^          image: ".*/trino@sha256:' "$rendered" | head
   fail "distributed rollout must preserve the current immutable Trino image"
 
 helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
+  -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" \
+  --reset-values --dry-run=server --hide-secret >/dev/null
+helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
-  --dry-run=server --hide-secret >/dev/null
+  --reset-values --dry-run=server --hide-secret >/dev/null
 [[ "$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version')" == "$observed_revision" ]] || \
   fail "asklake-trino changed during preflight"
 
@@ -153,11 +167,12 @@ verify_single_mode() {
   [[ "$single_query_ready" == "true" ]] || fail "single coordinator Iceberg query did not recover before the 90-second deadline"
 }
 
-# First create a safe rollback target: single mode with Recreate. The previous
-# live revision used RollingUpdate and is not safe as a distributed rollback target.
+# Always create a fresh safe rollback target from the observed live values with
+# distributed mode removed. This is required both for first enablement and for
+# an already-distributed release changing its fixed worker policy.
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
-  -f "$BASE_VALUES" -f "$live_values" "${component_overrides[@]}" \
-  --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
+  -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" \
+  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
   fail "failed to create the safe single-coordinator Recreate baseline; distributed rollout was not attempted"
 fi
 verify_single_mode
@@ -165,7 +180,7 @@ baseline_revision="$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.v
 
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
-  --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
+  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
   verify_single_mode
   fail "distributed Trino Helm upgrade failed; the safe single-coordinator baseline was restored"
 fi
