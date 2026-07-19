@@ -388,6 +388,32 @@ class ClickHouseKafkaIngestV2Gateway:
             .with_for_update()
         ).first()
         previous = dataset_model_to_payload(model) if model is not None else {}
+        version_id, binding_epoch = self._bind_catalog_freshness(db, job, dataset_id)
+        payload = self._catalog_payload(
+            job,
+            runtime,
+            previous,
+            dataset_id=dataset_id,
+            version_id=version_id,
+            binding_epoch=binding_epoch,
+            published=published,
+            total_rows=total_rows,
+        )
+        values = dataset_payload_to_model_values(payload)
+        if model is None:
+            model = CatalogDatasetModel(id=dataset_id, **values)
+        else:
+            for key, value in values.items():
+                setattr(model, key, value)
+        db.add(model)
+        return dataset_id, binding_epoch
+
+    def _bind_catalog_freshness(
+        self,
+        db: Session,
+        job: ETLJobModel,
+        dataset_id: str,
+    ) -> tuple[str, int]:
         freshness = db.get(DatasetFreshnessModel, dataset_id)
         version_id = self._version_id(job)
         if freshness is None:
@@ -408,7 +434,20 @@ class ClickHouseKafkaIngestV2Gateway:
         freshness.updated_at = datetime.now(UTC)
         binding_epoch = int(freshness.binding_epoch or 1)
         db.add(freshness)
+        return version_id, binding_epoch
 
+    def _catalog_payload(
+        self,
+        job: ETLJobModel,
+        runtime: KafkaContinuousRuntimeModel,
+        previous: dict[str, Any],
+        *,
+        dataset_id: str,
+        version_id: str,
+        binding_epoch: int,
+        published: bool,
+        total_rows: int,
+    ) -> dict[str, Any]:
         bindings = [
             dict(item)
             for item in previous.get("physicalBindings") or []
@@ -426,7 +465,7 @@ class ClickHouseKafkaIngestV2Gateway:
         })
         now = datetime.now(UTC).isoformat()
         schema = self._schema(job)
-        payload = {
+        return {
             **previous,
             "clickhouseTable": {
                 "database": self.settings.clickhouse_v2_database,
@@ -477,14 +516,6 @@ class ClickHouseKafkaIngestV2Gateway:
             "tags": previous.get("tags") or ["kafka", "clickhouse", "realtime-v2"],
             "upstream": previous.get("upstream") or [job.source_label, job.name],
         }
-        values = dataset_payload_to_model_values(payload)
-        if model is None:
-            model = CatalogDatasetModel(id=dataset_id, **values)
-        else:
-            for key, value in values.items():
-                setattr(model, key, value)
-        db.add(model)
-        return dataset_id, binding_epoch
 
     def _connector_name(
         self,
