@@ -907,7 +907,7 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
 
-Production 배포 템플릿은 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse-realtime-v2`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`, `KAFKA_CONNECT_URL=http://kafka-connect-v2:8083`, `DASHBOARD_SYNC_MODE=sse`, `REALTIME_EVENTS_ENABLED=true`를 기본값으로 사용한다. V2 ClickHouse 계정 비밀번호, TLS 파일, connector properties와 immutable Kafka Connect image digest는 server `deploy/.env` 또는 secret storage에만 둔다. ClickHouse와 Kafka Connect port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/credential/TLS/image/backend-service wiring 불일치를 배포 전에 차단한다.
+Production 배포 템플릿은 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CONTINUOUS_SQL_SERVING_MODE=iceberg`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=false`, `KAFKA_CONNECT_SINK_ENABLED=false`, `COMPOSE_PROFILES=trino`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=disabled`, `DASHBOARD_SYNC_MODE=sse`, `REALTIME_EVENTS_ENABLED=true`를 기본값으로 사용한다. 이 모드에서 SQL Continuous JOIN은 Spark/Iceberg를 사용하며 ClickHouse v1/v2 profile을 기동하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/backend-service wiring 불일치를 배포 전에 차단한다.
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 

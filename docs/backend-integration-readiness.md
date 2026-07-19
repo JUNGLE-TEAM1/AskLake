@@ -5,6 +5,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
+현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다.
+
 ## 1. 현재 연결 상태
 
 | 영역 | 현재 상태 | 남은 범위 |

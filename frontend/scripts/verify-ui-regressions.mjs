@@ -542,7 +542,7 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor exposes the governed ClickHouse continuous JOIN action before existing actions",
+    name: "SQL editor exposes the governed continuous JOIN action before existing actions",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
       /data-testid="continuous-sql-join-button"/,

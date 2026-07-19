@@ -21,6 +21,7 @@ REALTIME_ENV_KEYS = {
     "DASHBOARD_SYNC_MODE",
     "REALTIME_EVENTS_ENABLED",
     "CONTINUOUS_SQL_JOIN_ENABLED",
+    "CONTINUOUS_SQL_SERVING_MODE",
     "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED",
     "CLICKHOUSE_REALTIME_V2_ENABLED",
     "KAFKA_CONNECT_SINK_ENABLED",
@@ -53,6 +54,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         self.assertEqual(state.dashboard_sync_mode, "polling")
         self.assertFalse(state.realtime_events_enabled)
         self.assertFalse(state.continuous_sql_join_enabled)
+        self.assertEqual(state.continuous_sql_serving_mode, "iceberg")
         self.assertFalse(state.clickhouse_continuous_join_enabled)
         self.assertFalse(state.clickhouse_realtime_v2_enabled)
         self.assertFalse(state.kafka_connect_sink_enabled)
@@ -279,6 +281,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         self.assertEqual(response.dashboard_sync_mode, "hybrid")
         self.assertTrue(response.realtime_events_enabled)
         self.assertTrue(response.continuous_sql_join_enabled)
+        self.assertEqual(response.continuous_sql_serving_mode, "iceberg")
         self.assertTrue(response.clickhouse_continuous_join_enabled)
         self.assertFalse(response.clickhouse_realtime_v2_enabled)
         self.assertFalse(response.kafka_connect_sink_enabled)

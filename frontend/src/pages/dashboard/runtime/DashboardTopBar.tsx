@@ -10,7 +10,7 @@ const REALTIME_STATUS: Record<RealtimeConnectionState, {
   label: string;
   tone: "default" | "muted" | "success" | "warning";
 }> = {
-  closed: { label: "폴링", tone: "muted" },
+  closed: { label: "수동 새로고침", tone: "muted" },
   connecting: { label: "실시간 연결 중", tone: "default" },
   degraded: { label: "재연결 중", tone: "warning" },
   fallback_polling: { label: "폴링 복구", tone: "warning" },

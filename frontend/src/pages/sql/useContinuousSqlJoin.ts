@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiConfig } from "../../services/apiClient";
 import {
   commandContinuousSqlJob,
-  createClickHouseContinuousSqlJob,
+  createContinuousSqlJob,
   getContinuousSqlJob,
   type ContinuousSqlJob,
   validateContinuousSqlPlan,
@@ -36,7 +36,7 @@ export function useContinuousSqlJoin({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [featureConfig, setFeatureConfig] = useState<RealtimeFeatureConfig | null>(null);
   const [outputName, setOutputName] = useState("");
-  const [triggerIntervalSeconds, setTriggerIntervalSeconds] = useState(1);
+  const [triggerIntervalSeconds, setTriggerIntervalSeconds] = useState(5);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ContinuousSqlJob | null>(null);
@@ -48,9 +48,14 @@ export function useContinuousSqlJoin({
       && featureConfig.kafkaConnectSinkEnabled
       && featureConfig.clickhouseRealtimeConsumerOwner === "kafka_connect_v2",
   );
+  const servingMode = featureConfig?.continuousSqlServingMode ?? "iceberg";
   const featureEnabled = Boolean(
     featureConfig?.continuousSqlJoinEnabled
-      && (featureConfig.clickhouseContinuousJoinEnabled || v2Enabled),
+      && (
+        servingMode === "iceberg"
+        || featureConfig.clickhouseContinuousJoinEnabled
+        || v2Enabled
+      ),
   );
 
   useEffect(() => {
@@ -79,12 +84,12 @@ export function useContinuousSqlJoin({
         if (!active) return;
         setResult(latest);
         if (latest.observedState === "failed") {
-          setError(latest.lastErrorMessage || "ClickHouse 실시간 JOIN 실행에 실패했습니다.");
+          setError(latest.lastErrorMessage || "실시간 JOIN 실행에 실패했습니다.");
           setProgressMessage(null);
           return;
         }
         if (latest.observedState !== "running") {
-          setProgressMessage("ClickHouse Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.");
+          setProgressMessage("Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.");
         } else {
           try {
             const published = await getCatalogDataset(latest.outputDatasetId);
@@ -121,7 +126,7 @@ export function useContinuousSqlJoin({
   const open = () => {
     if (!relationMix) return;
     setOutputName(buildContinuousSqlOutputName(relationMix.streamingDataset));
-    setTriggerIntervalSeconds(1);
+    setTriggerIntervalSeconds(5);
     setError(null);
     setResult(null);
     setCatalogDataset(null);
@@ -161,34 +166,55 @@ export function useContinuousSqlJoin({
           setProgressMessage("유일키 등록이 완료되어 JOIN SQL을 다시 검증하고 있습니다.");
         }
       }
-      setProgressMessage("정적 스냅샷을 ClickHouse에 준비하고 실시간 JOIN 경로를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.");
-      const job = await createClickHouseContinuousSqlJob({
+      setProgressMessage(
+        servingMode === "iceberg"
+          ? "정적 Iceberg 스냅샷을 고정하고 Spark 실시간 JOIN 경로를 시작하고 있습니다."
+          : "정적 스냅샷을 ClickHouse에 준비하고 실시간 JOIN 경로를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.",
+      );
+      const commonCreateRequest = {
         ...planRequest,
         clientRequestId: createClientRequestId(),
         name: `${outputName.trim()} Continuous SQL`,
-        output: {
-          clickhouseTarget: v2Enabled
-            ? {
-                database: "asklake_realtime_v2",
-                engine: "clickhouse",
-                table: "serving_events_v2",
-              }
-            : { database: "asklake", engine: "clickhouse", table: outputIdentity.table },
-          datasetId: outputIdentity.datasetId,
-          datasetName: outputName.trim(),
-          layer: "GOLD",
-          servingMode: "clickhouse",
-        },
-      });
+      };
+      const job = servingMode === "iceberg"
+        ? await createContinuousSqlJob({
+          ...commonCreateRequest,
+          output: {
+            datasetId: outputIdentity.datasetId,
+            datasetName: outputName.trim(),
+            layer: "GOLD",
+            servingMode: "iceberg",
+          },
+        })
+        : await createContinuousSqlJob({
+          ...commonCreateRequest,
+          output: {
+            clickhouseTarget: v2Enabled
+              ? {
+                  database: "asklake_realtime_v2",
+                  engine: "clickhouse",
+                  table: "serving_events_v2",
+                }
+              : {
+                  database: "asklake",
+                  engine: "clickhouse",
+                  table: outputIdentity.table,
+                },
+            datasetId: outputIdentity.datasetId,
+            datasetName: outputName.trim(),
+            layer: "GOLD",
+            servingMode: "clickhouse",
+          },
+        });
       const started = await commandContinuousSqlJob(job.id, "start", createClientRequestId());
       setResult(started.job);
       if (started.job.observedState === "failed") {
-        throw new Error(started.job.lastErrorMessage || "ClickHouse 실시간 JOIN 실행에 실패했습니다.");
+        throw new Error(started.job.lastErrorMessage || "실시간 JOIN 실행에 실패했습니다.");
       }
       setProgressMessage(
         started.job.observedState === "running"
           ? "Kafka 소비 준비 완료 · 첫 실제 이벤트를 기다리고 있습니다."
-          : "ClickHouse Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
+          : "Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
       );
       onAction(
         "analysis.continuous_sql.started",
@@ -216,6 +242,7 @@ export function useContinuousSqlJoin({
     progressMessage,
     relationMix,
     result,
+    servingMode,
     setDialogOpen,
     setOutputName,
     setTriggerIntervalSeconds,

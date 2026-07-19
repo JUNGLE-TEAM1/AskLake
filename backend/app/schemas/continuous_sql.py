@@ -78,11 +78,11 @@ class ContinuousSqlOutput(CamelModel):
     @model_validator(mode="after")
     def require_mode_target(self) -> "ContinuousSqlOutput":
         if self.serving_mode == "iceberg":
-            if self.storage_path is None or self.iceberg_target is None:
+            if (self.storage_path is None) != (self.iceberg_target is None):
                 raise ValueError(
-                    "Iceberg Continuous SQL output requires storagePath and icebergTarget"
+                    "Iceberg Continuous SQL output must provide both storagePath and icebergTarget or let the backend derive both"
                 )
-            if self.iceberg_target.write_mode != "append":
+            if self.iceberg_target is not None and self.iceberg_target.write_mode != "append":
                 raise ValueError("Continuous SQL output requires an append Iceberg target")
             if self.clickhouse_target is not None:
                 raise ValueError("Iceberg Continuous SQL output cannot include clickhouseTarget")
