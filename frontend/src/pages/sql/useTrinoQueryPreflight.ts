@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { apiConfig } from "../../services/apiClient";
 import { estimateSqlQueryRun, validateSqlQueryRun } from "../../services/sqlQueryApi";
 import type { CatalogDataset, TrinoQueryEstimate } from "../../types";
+import {
+  describeSqlValidationFailure,
+  type SqlValidationFailureKind,
+} from "./sqlPreflightErrors";
 
 type QueryPreflightState = {
   estimate: TrinoQueryEstimate | null;
@@ -11,6 +15,7 @@ type QueryPreflightState = {
   estimateKey: string | null;
   estimatePending: boolean;
   validationError: string | null;
+  validationFailureKind: SqlValidationFailureKind | null;
   validationKey: string | null;
   validationPending: boolean;
 };
@@ -26,6 +31,7 @@ const INITIAL_QUERY_PREFLIGHT_STATE: QueryPreflightState = {
   estimateKey: null,
   estimatePending: false,
   validationError: null,
+  validationFailureKind: null,
   validationKey: null,
   validationPending: false,
 };
@@ -51,20 +57,31 @@ function useTrinoValidation({
 }, dispatch: (action: QueryPreflightAction) => void) {
   useEffect(() => {
     if (!enabled || !baseDataset || !localCanExecute) {
-      dispatch({ type: "patch", value: { validationError: null, validationKey: null, validationPending: false } });
+      dispatch({ type: "patch", value: {
+        validationError: null,
+        validationFailureKind: null,
+        validationKey: null,
+        validationPending: false,
+      } });
       return;
     }
     let disposed = false;
     const timeoutId = window.setTimeout(() => {
-      dispatch({ type: "patch", value: { validationError: null, validationPending: true } });
+      dispatch({ type: "patch", value: {
+        validationError: null,
+        validationFailureKind: null,
+        validationPending: true,
+      } });
       void validateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort())
         .then(() => {
           if (!disposed) dispatch({ type: "patch", value: { validationKey: queryValidationKey } });
         })
         .catch((error) => {
           if (disposed) return;
+          const failure = describeSqlValidationFailure(error);
           dispatch({ type: "patch", value: {
-            validationError: error instanceof Error ? error.message : "Trino SQL 검증에 실패했습니다.",
+            validationError: failure.message,
+            validationFailureKind: failure.kind,
             validationKey: null,
           } });
         })
@@ -171,6 +188,7 @@ export function useTrinoQueryPreflight({
     reset,
     setEstimateDialogOpen: (open: boolean) => dispatch({ type: "patch", value: { estimateDialogOpen: open } }),
     validationError: state.validationError,
+    validationFailureKind: state.validationFailureKind,
     validationPending: state.validationPending,
   };
 }

@@ -219,6 +219,7 @@ export function SqlAnalysisPage({
     reset: resetTrinoPreflight,
     setEstimateDialogOpen,
     validationError: trinoValidationError,
+    validationFailureKind: trinoValidationFailureKind,
     validationPending: trinoValidationPending,
   } = trinoPreflight;
   const lineNumbers = useMemo(() => {
@@ -865,6 +866,7 @@ export function SqlAnalysisPage({
               submissionError={trinoSubmissionError ?? trinoRunActionError}
               submissionPending={trinoSubmissionPending}
               validationError={trinoValidationError}
+              validationFailureKind={trinoValidationFailureKind}
               validationPending={trinoValidationPending}
             />
           }

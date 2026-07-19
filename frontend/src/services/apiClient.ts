@@ -1,10 +1,13 @@
-import { ApiError } from "../types";
-import type { ApiErrorResponse } from "../types";
+import { ApiError } from "../types/audit.ts";
+import type { ApiErrorResponse } from "../types/audit.ts";
 import { resolveMockApiMode } from "./apiRuntimeMode.ts";
 import { apiBaseUrl } from "./apiOrigin.ts";
 
-const mockApiRequested = String(import.meta.env.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
-const useMockApi = resolveMockApiMode(mockApiRequested, import.meta.env.DEV);
+const environment = (import.meta as ImportMeta & {
+  env?: Record<string, boolean | string | undefined>;
+}).env ?? {};
+const mockApiRequested = String(environment.VITE_USE_MOCK_API ?? "false").toLowerCase() === "true";
+const useMockApi = resolveMockApiMode(mockApiRequested, Boolean(environment.DEV));
 
 export const apiConfig = {
   baseUrl: apiBaseUrl,
@@ -100,6 +103,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     return await response.json() as T;
   } catch (error) {
     if (didTimeout) throw new ApiRequestTimeoutError(timeoutMs as number);
+    if (error instanceof TypeError) {
+      throw new ApiError({
+        code: "API_NETWORK_ERROR",
+        details: { path },
+        message: "API 서버에 연결할 수 없습니다. 현재 서비스 주소와 네트워크 상태를 확인해 주세요.",
+        retryable: true,
+        stage: "transport",
+        status: 0,
+      });
+    }
     throw error;
   } finally {
     if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
