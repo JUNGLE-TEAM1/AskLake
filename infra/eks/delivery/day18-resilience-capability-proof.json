@@ -1,7 +1,7 @@
 {
   "contractVersion": "1.0",
   "campaign": "eks-day18-resilience",
-  "implementationRevision": "e793924239b0cea5fe0e69a00a0220031936692a",
+  "implementationRevision": "db62f3dcc4ec49ae6ce7c2bf72ed61b8ad2c2dd7",
   "capabilities": {
     "mskFaultUsesPersistedRun": true,
     "sparkTerminalRetrySupported": true
@@ -35,7 +35,7 @@
   "regressionProofs": [
     {
       "path": "backend/tests/test_etl_job_delete.py",
-      "sha256": "63a64473d4340e7122021047ae9e766c97cf36282fc4eccdea4bbedd1b9957dd"
+      "sha256": "cf7fc535f02401f11dd24591ddd617136c9c59919c024036668ec24f51982558"
     },
     {
       "path": "backend/tests/test_eks_execution_contract.py",
@@ -49,6 +49,6 @@
   "validation": {
     "pullRequest": 978,
     "requiredChecksPassed": true,
-    "imageDeliveryRun": 29673693994
+    "imageDeliveryRun": 29675062847
   }
 }
