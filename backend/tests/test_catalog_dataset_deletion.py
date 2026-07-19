@@ -284,6 +284,20 @@ class CatalogDeletionSafetyTest(unittest.TestCase):
             purger.purge(MagicMock(), row)
         drop_table.assert_called_once_with({"database": "asklake", "table": "ds_orders"})
 
+    def test_iceberg_access_denied_does_not_fail_catalog_cleanup(self) -> None:
+        purger = CatalogPhysicalPurger()
+        with patch("app.application.catalog_dataset_deletion.IcebergWriterService") as writer:
+            writer.return_value.drop_table.side_effect = RuntimeError(
+                "Access Denied: Cannot drop table iceberg.asklake.ds_orders"
+            )
+            purger._drop_iceberg_table({
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "ds_orders",
+                "format": "iceberg",
+            })
+        writer.return_value.drop_table.assert_called_once()
+
     def test_downstream_summary_labels_are_not_phantom_dataset_blockers(self) -> None:
         payload = dataset_payload()
         payload["downstream"] = ["SQL 분석", "대시보드"]
