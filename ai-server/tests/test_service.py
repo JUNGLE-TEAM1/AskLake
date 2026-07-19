@@ -9,6 +9,7 @@ from app.llm_client import (
     OpenAICompatibleClient,
     ProviderResponseError,
     ProviderTimeoutError,
+    build_chat_completion_request,
     parse_chat_completion,
     validate_used_evidence_scope,
 )
@@ -174,6 +175,135 @@ def test_generation_evidence_ids_must_match_supplied_rag_sources() -> None:
     invented = allowed.model_copy(update={"used_evidence_ids": ["doc-invented"]})
     with pytest.raises(ProviderResponseError, match="outside"):
         validate_used_evidence_scope(request, invented)
+
+
+def test_dashboard_generation_evidence_scope_remains_strict_after_normalization() -> None:
+    request = GenerateRequest.model_validate({
+        "mode": "dashboard_assistant",
+        "prompt": "아무거나 만들어줘",
+        "context": {
+            "ragContext": {
+                "sources": [{"documentId": "doc-allowed", "body": "relevant fact"}],
+            },
+        },
+    })
+    output = DashboardAssistantOutput.model_validate({
+        "message": "차트를 만들었습니다.",
+        "actions": [{
+            "type": "report",
+            "widgetId": None,
+            "markdown": "매출 요약",
+            "widget": None,
+            "patch": None,
+            "usedEvidenceIds": ["dataset-invented", "doc-allowed"],
+        }],
+        "warnings": [],
+        "usedEvidenceIds": ["dataset-invented", "doc-allowed"],
+    })
+
+    with pytest.raises(ProviderResponseError, match="outside"):
+        validate_used_evidence_scope(request, output)
+
+
+def test_provider_schema_constrains_evidence_ids_to_request_sources() -> None:
+    settings = make_settings()
+    request = GenerateRequest.model_validate({
+        "mode": "dashboard_assistant",
+        "prompt": "차트를 만들어줘",
+        "context": {
+            "ragContext": {
+                "sources": [
+                    {"documentId": "doc-a", "body": "first"},
+                    {"documentId": "doc-b", "body": "second"},
+                ],
+            },
+        },
+    })
+
+    schema = build_chat_completion_request(settings, request)["response_format"]["json_schema"]["schema"]
+    evidence_schemas: list[dict[str, object]] = []
+
+    def collect_evidence_schemas(value: object) -> None:
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict) and isinstance(properties.get("usedEvidenceIds"), dict):
+                evidence_schemas.append(properties["usedEvidenceIds"])
+            for child in value.values():
+                collect_evidence_schemas(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_evidence_schemas(child)
+
+    collect_evidence_schemas(schema)
+
+    assert len(evidence_schemas) == 2
+    assert all(item["items"]["enum"] == ["doc-a", "doc-b"] for item in evidence_schemas)
+
+
+def test_provider_schema_requires_empty_evidence_without_rag_sources() -> None:
+    request = GenerateRequest.model_validate({"prompt": "count rows"})
+
+    schema = build_chat_completion_request(make_settings(), request)["response_format"]["json_schema"]["schema"]
+    evidence_schema = schema["properties"]["usedEvidenceIds"]
+
+    assert evidence_schema["maxItems"] == 0
+    assert "enum" not in evidence_schema["items"]
+
+
+def test_query_provider_output_discards_only_unknown_evidence() -> None:
+    output = parse_chat_completion(
+        {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "query_sql": "SELECT count(*) FROM reviews",
+                        "explanation": "uses supplied evidence",
+                        "warnings": [],
+                        "usedEvidenceIds": ["dataset-invented", "doc-allowed"],
+                    }),
+                },
+            }],
+        },
+        "query_sql",
+        allowed_evidence_ids=["doc-allowed"],
+    )
+
+    assert isinstance(output, QuerySqlOutput)
+    assert output.query_sql == "SELECT count(*) FROM reviews"
+    assert output.used_evidence_ids == ["doc-allowed"]
+    assert output.warnings == ["Provider가 제공한 미확인 evidence ID를 제거했습니다."]
+
+
+def test_dashboard_provider_output_repairs_evidence_union_without_dropping_action() -> None:
+    output = parse_chat_completion(
+        {
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "message": "완료",
+                        "actions": [{
+                            "type": "report",
+                            "widgetId": None,
+                            "markdown": "매출 요약",
+                            "widget": None,
+                            "patch": None,
+                            "usedEvidenceIds": ["dataset-invented", "doc-allowed"],
+                        }],
+                        "warnings": [],
+                        "usedEvidenceIds": ["dataset-invented"],
+                    }),
+                },
+            }],
+        },
+        "dashboard_assistant",
+        allowed_evidence_ids=["doc-allowed"],
+    )
+
+    assert isinstance(output, DashboardAssistantOutput)
+    assert len(output.actions) == 1
+    assert output.actions[0].used_evidence_ids == ["doc-allowed"]
+    assert output.used_evidence_ids == ["doc-allowed"]
+    assert output.warnings == ["Provider가 제공한 미확인 evidence ID를 제거했습니다."]
 
 
 def test_request_limits_reject_large_context_and_body() -> None:
