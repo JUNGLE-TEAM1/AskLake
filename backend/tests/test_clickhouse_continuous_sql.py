@@ -38,10 +38,13 @@ from app.services.clickhouse_continuous_sql import (
     clickhouse_type,
 )
 from app.services.clickhouse_realtime_v2 import (
+    ClickHouseRealtimeV2WorkerGateway,
     build_realtime_v2_plan,
     realtime_v2_connector_name,
+    realtime_v2_dimension_version_id,
     realtime_v2_dimension_versions,
     realtime_v2_dlq_topic,
+    realtime_v2_schema_fingerprint,
 )
 from app.services.continuous_sql_gateway import RoutedContinuousSqlWorkerGateway
 from app.services.dashboard_physical_data import DashboardDatasetQuerySession
@@ -209,6 +212,54 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertLessEqual(len(first), 128)
         self.assertLessEqual(len(dlq), 249)
         self.assertTrue(dlq.endswith(".dlq"))
+
+    def test_v2_long_schema_descriptor_is_stored_as_bounded_fingerprint(self) -> None:
+        descriptor = "|".join(
+            f"field_{index}:String:nullable:included" for index in range(20)
+        )
+
+        fingerprint = realtime_v2_schema_fingerprint(descriptor)
+        version_id = realtime_v2_dimension_version_id("products", "77", descriptor)
+
+        self.assertEqual(len(fingerprint), 64)
+        self.assertTrue(all(character in "0123456789abcdef" for character in fingerprint))
+        self.assertEqual(
+            version_id,
+            realtime_v2_dimension_version_id("products", "77", fingerprint),
+        )
+
+    def test_v2_status_repairs_a_missing_control_plane_before_materializing(self) -> None:
+        class RepairingGateway(ClickHouseRealtimeV2WorkerGateway):
+            def __init__(self) -> None:
+                super().__init__(Settings(_env_file=None, app_env="test"))
+                self.provisioned = False
+
+            def _control_plane_ready(self, _job, _run) -> bool:
+                return self.provisioned
+
+            def _provision(self, _job, _run) -> None:
+                self.provisioned = True
+
+            def _status(self, _job, _run):
+                return {"containerState": "running"}
+
+        job = self._job()
+        run = ContinuousSqlRunModel(
+            run_id="v2-repair-run",
+            job_id=job.id,
+            generation=1,
+            fencing_token="repair-fence",
+            plan_hash=job.plan_hash,
+            status="starting",
+            static_bindings=[],
+            checkpoint_path="clickhouse://asklake/v2-repair",
+        )
+        gateway = RepairingGateway()
+
+        result = gateway.manage(job, run, "status")
+
+        self.assertTrue(gateway.provisioned)
+        self.assertEqual(result["containerState"], "running")
 
     def test_output_contract_is_additive_and_keeps_iceberg_default(self) -> None:
         iceberg = ContinuousSqlOutput.model_validate({
