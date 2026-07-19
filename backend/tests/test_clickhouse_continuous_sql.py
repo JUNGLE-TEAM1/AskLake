@@ -48,6 +48,7 @@ from app.services.clickhouse_realtime_v2 import (
     realtime_v2_dlq_topic,
     realtime_v2_schema_fingerprint,
 )
+from app.services.clickhouse_realtime_v2_support import upsert_realtime_v2_catalog_dataset
 from app.services.continuous_sql_gateway import RoutedContinuousSqlWorkerGateway
 from app.services.dashboard_physical_data import DashboardDatasetQuerySession
 
@@ -133,6 +134,45 @@ class FakeRoutedGateway:
 
 
 class ClickHouseContinuousSqlTests(unittest.TestCase):
+    def test_v2_catalog_waits_for_first_publication(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        job = self._job()
+        run = ContinuousSqlRunModel(
+            run_id="v2-run",
+            job_id=job.id,
+            generation=1,
+            fencing_token="fence",
+            plan_hash=job.plan_hash,
+            status="running",
+            static_bindings=[{"datasetId": "dataset-users", "snapshotId": "77"}],
+            checkpoint_path="clickhouse://asklake/v2",
+        )
+        plan = build_realtime_v2_plan(
+            job,
+            run,
+            dimension_version_ids=realtime_v2_dimension_versions(job, run),
+            database="asklake_realtime_v2",
+        )
+        with Session(engine) as db:
+            upsert_realtime_v2_catalog_dataset(
+                db,
+                job,
+                plan,
+                published=False,
+                version_id="pipeline-v2",
+                binding_epoch=1,
+                updated_at="2026-07-19T00:00:00+00:00",
+                database="asklake_realtime_v2",
+                serving_view="serving_current_v2",
+            )
+            db.flush()
+            payload = CatalogRepository(db).get_dataset_payload(job.output_dataset_id)
+
+        self.assertEqual(payload["status"], "preparing")
+        self.assertEqual(payload["physicalBindings"][0]["status"], "pending")
+        engine.dispose()
+
     def test_v2_owner_routes_clickhouse_jobs_to_v2_gateway(self) -> None:
         v1 = FakeRoutedGateway("v1")
         v2 = FakeRoutedGateway("v2")
