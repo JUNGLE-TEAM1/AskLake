@@ -1,5 +1,5 @@
 export type AuditResult = "success" | "failed" | "forbidden";
-export type AuditTargetType = "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
+export type AuditTargetType = "etl_job" | "dataset" | "dashboard" | "query_run" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group" | "unknown";
 
 export type AuditEntry = {
   action: string;

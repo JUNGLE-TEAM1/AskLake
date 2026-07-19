@@ -6,6 +6,7 @@ from fastapi import status
 
 from app.core.auth_context import ActorContext, can, require_permission
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
@@ -130,7 +131,7 @@ class TrinoQueryAccessService:
             result="forbidden",
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=response.run_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,
@@ -158,5 +159,5 @@ class TrinoQueryAccessService:
             status_code=error.status_code,
             target_id=dataset.id,
             target_name=dataset.name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )

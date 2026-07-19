@@ -3850,7 +3850,8 @@ Query:
 
 - `q?: string`: action, actor, api path, target, metadata text 검색.
 - `actorId?: string`: actor id/name 부분 검색.
-- `resourceType?: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group"`.
+- `resourceType?: "etl_job" | "dataset" | "dashboard" | "query_run" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group" | "unknown"`.
+  - `unknown`은 현재 계약에 없는 레거시 저장 타입과 명시적인 `unknown` 행을 함께 조회합니다.
 - `result?: "success" | "failed" | "forbidden"`.
 - `from?: ISO datetime`.
 - `to?: ISO datetime`.
@@ -3979,9 +3980,11 @@ type AuditEntry = {
   request_id: string;
   result: "success" | "failed" | "forbidden";
   target_id: string;
-  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
+  target_type: "etl_job" | "dataset" | "dashboard" | "query_run" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group" | "unknown";
 };
 ```
+
+계약 밖의 레거시 `target_type`은 응답에서 `unknown`으로 투영하고 원래 값은 해당 로그의 `metadata.rawTargetType`에 보존합니다. 신규 감사 이벤트 writer는 `AuditTargetType`의 알려진 enum member만 전달해야 하며 문자열이나 `unknown` 쓰기는 거부합니다. `unknown`은 레거시 읽기 호환 전용이고 신규 오타를 숨기는 저장값으로 사용하지 않습니다.
 
 ## 10. 백엔드 구현 체크리스트
 

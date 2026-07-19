@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.governance_repository import require_actor_not_blocked, require_resource_not_locked
 
@@ -37,6 +38,6 @@ def require_governed_access(
             status_code=exc.status_code or status.HTTP_403_FORBIDDEN,
             target_id=resource_id,
             target_name=resource_name,
-            target_type=resource_type,
+            target_type=AuditTargetType(resource_type),
         )
         raise

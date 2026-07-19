@@ -1,15 +1,11 @@
 import { Activity, AlertCircle, Boxes, Check, CircleUser, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type React from "react";
 import { InfoBox, PageTitle } from "../../components/common";
 import {
   createAdminPermissionGrant,
   deleteAdminPermissionGrant,
   fetchAdminAuditLogs,
-  fetchAdminGovernanceControls,
-  fetchAdminGroups,
-  fetchAdminPermissions,
-  fetchAdminUsers,
   updateAdminPrincipalControl,
   updateAdminPermissionGrant,
   updateAdminResourceLock,
@@ -30,11 +26,18 @@ import type {
   PermissionGrant,
   PermissionPrincipalType,
 } from "../../types";
+import { deriveAdminConsoleViewState } from "./adminConsoleLoadState";
+import type {
+  AdminConsoleTab,
+} from "./adminConsoleLoadState";
+import { useAdminAuditRefresh } from "./useAdminAuditRefresh";
+import { useAdminConsoleInitialLoad } from "./useAdminConsoleInitialLoad";
+import type { AdminConsoleActionHandler } from "./useAdminConsoleInitialLoad";
 
-type AdminTab = "users" | "groups" | "permissions" | "audit";
+type AdminTab = AdminConsoleTab;
 
 type AdminConsolePageProps = {
-  onAction: (action: string, apiPath: string, targetId: string, result?: "success" | "failed", options?: { targetType?: "admin_module" }) => void;
+  onAction: AdminConsoleActionHandler;
   onNotify: (message: string, tone?: "success" | "info") => void;
 };
 
@@ -48,21 +51,17 @@ const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
 const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "delete", "share"];
 const principalTypeOptions: PermissionPrincipalType[] = ["group", "user"];
 const resourceTypeFilters: Array<"all" | AdminResourceType> = ["all", "dataset", "etl_job", "dashboard"];
-
 type ActivitySubject =
   | { type: "user"; user: AdminUser }
   | { type: "group"; group: IdentityGroup };
 
 export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [groups, setGroups] = useState<IdentityGroup[]>([]);
-  const [permissions, setPermissions] = useState<AdminPermissionSummary[]>([]);
-  const [principalControls, setPrincipalControls] = useState<AdminPrincipalControl[]>([]);
-  const [resourceLocks, setResourceLocks] = useState<AdminResourceLock[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    auditLogs, groups, loadErrors, loading, onActionRef, permissions,
+    principalControls, resourceLocks, setAuditLogs, setLoadErrors,
+    setPermissions, setPrincipalControls, setResourceLocks, users,
+  } = useAdminConsoleInitialLoad(onAction);
   const [permissionDraft, setPermissionDraft] = useState({
     actions: ["view"] as PermissionAction[],
     principalId: "analytics",
@@ -73,75 +72,30 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
   const [controlPending, setControlPending] = useState<string | null>(null);
   const [deletingGrantId, setDeletingGrantId] = useState<string | null>(null);
   const [savingGrantId, setSavingGrantId] = useState<string | null>(null);
-  const [auditQuery, setAuditQuery] = useState<AdminAuditLogQuery>({ limit: 100 });
-  const [auditPending, setAuditPending] = useState(false);
+  const { auditPending, auditQuery, auditRefreshFailure, refreshAuditLogs } = useAdminAuditRefresh({
+    onNotify,
+    setAuditLogs,
+    setLoadErrors,
+  });
   const [activitySubject, setActivitySubject] = useState<ActivitySubject | null>(null);
   const [activityLogs, setActivityLogs] = useState<AdminAuditLogEntry[]>([]);
   const [activityPending, setActivityPending] = useState(false);
-  const onActionRef = useRef(onAction);
-
   useEffect(() => {
-    onActionRef.current = onAction;
-  }, [onAction]);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    Promise.all([
-      fetchAdminUsers(),
-      fetchAdminGroups(),
-      fetchAdminPermissions(),
-      fetchAdminGovernanceControls(),
-      fetchAdminAuditLogs(),
-    ])
-      .then(([userResponse, groupResponse, permissionResponse, controlResponse, auditResponse]) => {
-        if (!active) return;
-        setUsers(userResponse.users);
-        setGroups(groupResponse.groups);
-        setPermissions(permissionResponse.resources);
-        setPrincipalControls(controlResponse.principalControls);
-        setResourceLocks(controlResponse.resourceLocks);
-        setPermissionDraft((draft) => ({
-          ...draft,
-          resourceKey: draft.resourceKey || resourceKey(permissionResponse.resources[0]),
-        }));
-        setAuditLogs(auditResponse.logs);
-        setError(null);
-        onActionRef.current("admin.console.loaded", "/api/admin", "admin-console", "success", { targetType: "admin_module" });
-      })
-      .catch((unknownError) => {
-        if (!active) return;
-        const message = unknownError instanceof ApiError && unknownError.status === 403
-          ? "관리자 권한이 필요합니다. admin 계정으로 로그인한 뒤 다시 시도해주세요."
-          : unknownError instanceof ApiError ? unknownError.message : "관리 데이터를 불러오지 못했습니다.";
-        setError(message);
-        onActionRef.current("admin.console.load_failed", "/api/admin", "admin-console", "failed", { targetType: "admin_module" });
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    setPermissionDraft((draft) => ({
+      ...draft,
+      resourceKey: draft.resourceKey || resourceKey(permissions[0]),
+    }));
+  }, [permissions]);
 
   const totalPermissionGrants = permissions.reduce((sum, resource) => sum + resource.grants.length, 0);
   const blockedPrincipalCount = principalControls.filter((control) => control.status === "blocked").length;
   const lockedResourceCount = resourceLocks.filter((lockItem) => lockItem.locked).length;
-
-  const refreshAuditLogs = (query: AdminAuditLogQuery = auditQuery) => {
-    setAuditPending(true);
-    fetchAdminAuditLogs(query)
-      .then((response) => {
-        setAuditLogs(response.logs);
-        setAuditQuery(query);
-      })
-      .catch((unknownError) => {
-        const message = unknownError instanceof ApiError ? unknownError.message : "감사 로그를 불러오지 못했습니다.";
-        onNotify(message, "info");
-      })
-      .finally(() => setAuditPending(false));
-  };
+  const { activeLoadFailures, canRenderActiveTab, permissionDenied, showAuditStaleWarning } = deriveAdminConsoleViewState({
+    activeTab,
+    auditRefreshFailure,
+    errors: loadErrors,
+    loading,
+  });
 
   const refreshActivityLogs = () => {
     setActivityPending(true);
@@ -320,10 +274,10 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
         />
 
         <div className="admin-console-metric-grid">
-          <AdminMetric label="사용자" value={`${users.length}`} />
-          <AdminMetric label="그룹" value={`${groups.length}`} />
-          <AdminMetric label="권한 항목" value={`${totalPermissionGrants}`} />
-          <AdminMetric label="제한 항목" value={`${blockedPrincipalCount + lockedResourceCount}`} />
+          <AdminMetric label="사용자" value={loading || loadErrors.users ? "—" : `${users.length}`} />
+          <AdminMetric label="그룹" value={loading || loadErrors.groups ? "—" : `${groups.length}`} />
+          <AdminMetric label="권한 항목" value={loading || loadErrors.permissions ? "—" : `${totalPermissionGrants}`} />
+          <AdminMetric label="제한 항목" value={loading || loadErrors.governance ? "—" : `${blockedPrincipalCount + lockedResourceCount}`} />
         </div>
 
         <section className="xflow-review-card admin-console-panel">
@@ -351,8 +305,14 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
           </div>
 
           {loading && <InfoBox title="관리 데이터 로딩 중" body="관리 API에서 사용자, 그룹, 권한, 감사 로그를 가져오고 있습니다." />}
-          {!loading && error && <InfoBox title={error.includes("관리자 권한") ? "관리자 권한 필요" : "관리 API 요청 실패"} body={error} />}
-          {!loading && !error && (
+          {!loading && permissionDenied && <InfoBox title="관리자 권한 필요" body="관리자 권한이 필요합니다. admin 계정으로 로그인한 뒤 다시 시도해주세요." />}
+          {!loading && !permissionDenied && activeLoadFailures.length > 0 && (
+            <InfoBox title="현재 탭의 관리 API 요청 실패" body={activeLoadFailures.map((failure) => failure.message).join(" ")} />
+          )}
+          {showAuditStaleWarning && auditRefreshFailure && (
+            <InfoBox title="감사 로그 갱신 실패" body={`${auditRefreshFailure.message} 아래 결과는 마지막으로 정상 조회된 데이터입니다.`} />
+          )}
+          {canRenderActiveTab && (
             <>
               {activeTab === "users" && (
                 <UsersTable

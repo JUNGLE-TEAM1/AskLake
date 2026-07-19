@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.ports.catalog import CatalogWriterPort
@@ -147,7 +148,7 @@ class TrinoMaterializationService:
         persisted_payload = {"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted}
         self.repository.save_run_payload(persisted_payload)
         response = self._sync_catalog_registration(persisted_payload, response, actor, page.error)
-        safe_record_audit_event(self.repository.db, action="trino_materialization.submit", actor=actor, api_path=f"/api/catalog/trino-runs/{source_run_id}/materializations", http_method="POST", metadata={"materializationId": materialization_id, "trinoQueryId": response.trino_query_id}, target_id=materialization_id, target_type="dataset")
+        safe_record_audit_event(self.repository.db, action="trino_materialization.submit", actor=actor, api_path=f"/api/catalog/trino-runs/{source_run_id}/materializations", http_method="POST", metadata={"materializationId": materialization_id, "trinoQueryId": response.trino_query_id}, target_id=materialization_id, target_type=AuditTargetType.DATASET)
         return response
 
     def refresh(self, materialization_id: str, actor: ActorContext) -> TrinoMaterializationRunResponse:
@@ -224,7 +225,7 @@ class TrinoMaterializationService:
                     metadata={"trinoQueryId": finalized.trino_query_id},
                     result="success" if finalized.status == "succeeded" else "failed",
                     target_id=materialization_id,
-                    target_type="dataset",
+                    target_type=AuditTargetType.DATASET,
                 )
                 return finalized
             response = updated

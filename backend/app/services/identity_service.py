@@ -9,6 +9,7 @@ from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import dedupe_grants
+from app.domain.audit import AuditTargetType
 from app.models.identity import AuthUserModel
 from app.repositories.audit_repository import list_audit_events, record_audit_event
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -171,7 +172,7 @@ class IdentityService:
             },
             status_code=201,
             target_id=request.resource_id,
-            target_type=request.resource_type,
+            target_type=AuditTargetType(request.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -202,7 +203,7 @@ class IdentityService:
                 "principalType": grant.principal_type,
             },
             target_id=grant.resource_id,
-            target_type=grant.resource_type,
+            target_type=AuditTargetType(grant.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -226,7 +227,7 @@ class IdentityService:
                 "principalType": grant.principal_type,
             },
             target_id=grant.resource_id,
-            target_type=grant.resource_type,
+            target_type=AuditTargetType(grant.resource_type),
         )
         return self.list_admin_permissions(actor)
 
@@ -270,7 +271,7 @@ class IdentityService:
                 "status": row.status,
             },
             target_id=row.principal_id,
-            target_type=row.principal_type,
+            target_type=AuditTargetType(row.principal_type),
         )
         return self.list_admin_governance_controls(actor)
 
@@ -302,7 +303,7 @@ class IdentityService:
                 "resourceType": row.resource_type,
             },
             target_id=row.resource_id,
-            target_type=row.resource_type,
+            target_type=AuditTargetType(row.resource_type),
         )
         return self.list_admin_governance_controls(actor)
 
@@ -331,7 +332,7 @@ class IdentityService:
         from_at: datetime | None = None,
         limit: int = 100,
         query: str | None = None,
-        resource_type: str | None = None,
+        resource_type: AuditTargetType | None = None,
         result: str | None = None,
         to_at: datetime | None = None,
     ) -> AdminAuditLogsResponse:

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, can
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import (
     delete_dashboard_card,
@@ -216,7 +217,7 @@ def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateD
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=dashboard.id,
             target_name=dashboard.name,
-            target_type="dashboard",
+            target_type=AuditTargetType.DASHBOARD,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,
@@ -276,7 +277,7 @@ def delete_dashboard_card_with_permission(
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=dashboard.id,
             target_name=dashboard.name,
-            target_type="dashboard",
+            target_type=AuditTargetType.DASHBOARD,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,

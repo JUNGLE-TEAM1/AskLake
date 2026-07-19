@@ -35,6 +35,7 @@
     "verify:materialization-projection": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_materialization_run_projection tests.test_sql_storage_formats",
     "verify:etl-lineage": "node scripts/verify-etl-text-lineage.mjs",
     "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
+    "verify:admin-audit-contract": "PYTHONPATH=.:${PYTHONPATH:-} ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m pytest -q tests/test_audit_target_contract.py tests/test_admin_audit_api_contract.py",
     "verify:auth-session": "node scripts/verify-auth-session.mjs",
     "verify:auth-password": "node scripts/verify-auth-password-compat.mjs",
     "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",

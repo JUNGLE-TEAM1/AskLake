@@ -121,8 +121,8 @@ async function runSmoke() {
     "Admin audit logs should include the persisted permission grant creation event.",
   );
   assert(
-    adminAuditLogs.logs.every((log) => log.requestId && log.createdAt && log.actorId),
-    "Admin audit logs should include requestId, createdAt, and actorId.",
+    adminAuditLogs.logs.every((log) => log.requestId && log.createdAt && log.actorId) && haveCanonicalAuditTargetTypes(adminAuditLogs.logs),
+    "Admin audit logs should include required identity fields and canonical target types.",
   );
 
   const filteredAuditLogs = await get(`/api/admin/audit-logs?resourceType=${encodeURIComponent(editableResource.resourceType)}&q=${encodeURIComponent("temporary.editor")}&limit=10`);
@@ -278,6 +278,14 @@ function findGrant(permissions, resource, principalId) {
   return permissions.resources
     .find((item) => item.resourceType === resource.resourceType && item.resourceId === resource.resourceId)
     ?.grants.find((grant) => grant.principalId === principalId);
+}
+
+function haveCanonicalAuditTargetTypes(logs) {
+  const supported = new Set([
+    "etl_job", "dataset", "dashboard", "query_run", "ai_module", "admin_module",
+    "ui", "auth", "user", "group", "unknown",
+  ]);
+  return logs.every((log) => supported.has(log.targetType));
 }
 
 async function readResponse(response) {
