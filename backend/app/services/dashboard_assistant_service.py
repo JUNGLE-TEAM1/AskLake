@@ -56,14 +56,14 @@ class DashboardAssistantService:
             self.runtime_repository,
             self.catalog_repository,
             actor=actor,
-            max_sample_rows=self.settings.ai_assistant_max_sample_rows,
+            max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
         rag_context = self._build_rag_context(request, actor)
 
         if _is_low_signal_prompt(request.prompt):
             return _build_low_signal_prompt_response()
 
-        if not getattr(self.settings, "ai_assistant_enabled", True):
+        if not self.settings.openai_assistant_enabled:
             return self._attach_rag(
                 self._unavailable_response(context, "AI Gateway 대시보드 기능이 비활성화되어 요청을 실행하지 않았습니다."),
                 rag_context,

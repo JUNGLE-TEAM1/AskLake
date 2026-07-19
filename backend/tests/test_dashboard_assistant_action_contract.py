@@ -190,8 +190,8 @@ def test_assistant_api_enforces_question_mode_without_counting_provider_stub_as_
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(
-            ai_assistant_enabled=True,
-            ai_assistant_max_sample_rows=5,
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
             ai_gateway_base_url="http://contract-stub.invalid",
             ai_gateway_service_token="contract-only",
         ),
@@ -264,8 +264,8 @@ def test_amazon_visualization_retries_gateway_contract_failure_and_returns_creat
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(
-            ai_assistant_enabled=True,
-            ai_assistant_max_sample_rows=5,
+            openai_assistant_enabled=True,
+            openai_assistant_max_sample_rows=5,
             ai_gateway_base_url="http://ai-server:8090",
             ai_gateway_service_token="test-token",
         ),

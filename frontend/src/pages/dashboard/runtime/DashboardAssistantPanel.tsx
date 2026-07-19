@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { cn } from "@/lib/utils";
 import type { DashboardRuntimeWidget } from "../../../types";
+import { createResourceQueryKey, LatestRequestGate } from "../../../state/requestOwnership";
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
@@ -111,6 +112,7 @@ export function DashboardAssistantPanel({
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
+  const requests = useRef(new LatestRequestGate());
   const isConfigured = isDashboardAssistantConfigured();
   const shouldReduceMotion = useReducedMotion();
   const targetWidgets = useMemo(() => {
@@ -141,10 +143,21 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
+    const mode = classifyDashboardAssistantMode(nextPrompt, {
+      hasSelectedWidget: Boolean(selectedWidget),
+    });
+    const lease = requests.current.begin(createResourceQueryKey({
+      resource: "dashboard-assistant",
+      version: pageId,
+      params: {
+        currentDatasetId,
+        dashboardId,
+        mode,
+        prompt: nextPrompt,
+        selectedWidgetId: selectedWidget?.id ?? null,
+      },
+    }));
     try {
-      const mode = classifyDashboardAssistantMode(nextPrompt, {
-        hasSelectedWidget: Boolean(selectedWidget),
-      });
       const response = await requestDashboardAssistant({
         dashboardId,
         currentDatasetId,
@@ -153,7 +166,8 @@ export function DashboardAssistantPanel({
         prompt: nextPrompt,
         selectedWidgetId: selectedWidget?.id ?? null,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
-      });
+      }, { signal: lease.signal });
+      if (!requests.current.isCurrent(lease)) return;
       if (mode === "visualization_request" && !hasWidgetMutationAction(response)) {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
@@ -164,6 +178,7 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
+      if (!requests.current.isCurrent(lease)) return;
       setMessages((current) => [
         ...current,
         {
@@ -173,10 +188,11 @@ export function DashboardAssistantPanel({
         },
       ]);
     } catch (requestError) {
+      if (!requests.current.isCurrent(lease)) return;
       const message = requestError instanceof Error ? requestError.message : "Assistant 요청에 실패했습니다.";
       setError(message);
     } finally {
-      setIsSubmitting(false);
+      if (requests.current.complete(lease)) setIsSubmitting(false);
     }
   };
 
@@ -185,6 +201,12 @@ export function DashboardAssistantPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
+
+  useEffect(() => {
+    requests.current.invalidate();
+    setIsSubmitting(false);
+    return () => requests.current.invalidate();
+  }, [currentDatasetId, dashboardId, pageId, selectedWidget?.id]);
 
   useEffect(() => {
     if (!promptInsertion) return;

@@ -27,6 +27,7 @@ import {
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
+import { createResourceQueryKey, LatestRequestGate, type RequestLease } from "../../../state/requestOwnership";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type SimpleRow = Record<string, unknown>;
@@ -711,6 +712,7 @@ function VisualizationRequestWidget({
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
+  const requests = useRef(new LatestRequestGate());
 
   useEffect(() => {
     setPrompt(savedPrompt);
@@ -720,6 +722,12 @@ function VisualizationRequestWidget({
   useEffect(() => {
     setMessage(null);
     setRequestTone(null);
+    requests.current.invalidate();
+    setIsSaving(false);
+    return () => {
+      requests.current.invalidate();
+      assistantContext?.onWorkingWidgetChange?.(null);
+    };
   }, [widget.id]);
 
   useEffect(() => {
@@ -741,6 +749,7 @@ function VisualizationRequestWidget({
     setRequestTone(null);
     setIsSaving(true);
     assistantContext?.onWorkingWidgetChange?.(widget.id);
+    let lease: RequestLease | null = null;
     try {
       if (!isDashboardAssistantConfigured()) {
         const applied = await onPatchConfig({ prompt: nextPrompt });
@@ -752,6 +761,16 @@ function VisualizationRequestWidget({
       }
 
       const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+      lease = requests.current.begin(createResourceQueryKey({
+        resource: "dashboard-widget-assistant",
+        version: assistantContext?.pageId ?? widget.pageId,
+        params: {
+          currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
+          dashboardId: assistantContext?.dashboardId,
+          prompt: nextPrompt,
+          widgetId: widget.id,
+        },
+      }));
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
         currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
@@ -761,7 +780,8 @@ function VisualizationRequestWidget({
         selectedWidgetId: widget.id,
         widgetId: widget.id,
         widgets: widgets.map(buildDashboardAssistantWidgetContext),
-      });
+      }, { signal: lease.signal });
+      if (!requests.current.isCurrent(lease)) return;
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
       const configPatch = widgetPatch?.config ?? response.configPatch;
       if (widgetPatch && onApplyWidgetPatch) {
@@ -785,6 +805,7 @@ function VisualizationRequestWidget({
       } else {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
+      if (!requests.current.isCurrent(lease)) return;
       setRequestTone("success");
       setMessage([
         "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
@@ -792,11 +813,14 @@ function VisualizationRequestWidget({
       ].filter(Boolean).join(" "));
       setIsPromptEditing(false);
     } catch (error) {
+      if (lease && !requests.current.isCurrent(lease)) return;
       setRequestTone("error");
       setMessage(error instanceof Error ? error.message : "Assistant 요청에 실패했습니다.");
     } finally {
-      setIsSaving(false);
-      assistantContext?.onWorkingWidgetChange?.(null);
+      if (!lease || requests.current.complete(lease)) {
+        setIsSaving(false);
+        assistantContext?.onWorkingWidgetChange?.(null);
+      }
     }
   };
 
