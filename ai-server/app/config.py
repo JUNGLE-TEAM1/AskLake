@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     provider: ProviderName = "openai_compatible"
     provider_base_url: str = "https://api.openai.com/v1"
     provider_api_key: SecretStr | None = None
-    provider_model: str = "gpt-4.1-mini"
+    provider_model: str = "gpt-4.1"
     provider_model_query_sql: str | None = None
     provider_model_dashboard_assistant: str | None = None
     provider_model_etl_transform: str | None = None

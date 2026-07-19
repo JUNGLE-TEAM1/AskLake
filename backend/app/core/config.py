@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     local_lake_storage_dir: str | None = None
     openai_api_key: str | None = None
     openai_assistant_enabled: bool = True
-    openai_assistant_model: str = "gpt-4o-mini"
+    openai_assistant_model: str = "gpt-4.1"
     openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
-    openai_query_ai_model: str = "gpt-4.1-mini"
+    openai_query_ai_model: str = "gpt-4.1"
     ai_query_provider: Literal["direct", "gateway"] = "direct"
     ai_gateway_base_url: str | None = None
     ai_gateway_generate_path: str = "/v1/generate"
