@@ -40,9 +40,12 @@ const s3 = new S3Client({
 let createdJobId = "";
 let createdDatasetId = "";
 let outputPrefix = "";
+let outputBucketName = outputBucket;
 let completed = false;
+let sessionCookie = process.env.ASKLAKE_RECORD_PARSING_E2E_SESSION_COOKIE || "";
 
 try {
+  await authenticateIfConfigured();
   await verifyHealth();
   const sourceConfig = buildSourceConfig();
   const source = await post("/api/etl/sources/test", {
@@ -157,9 +160,15 @@ try {
     assert(catalogColumns.includes(name), `Catalog schema is missing parsed field: ${name}.`);
   }
   assert(dataset.sourceRunId === latestRun.runId, "Catalog dataset must point to the successful parsing run.");
-  assert(dataset.storageFormat === "parquet", `Expected parquet catalog output, got ${dataset.storageFormat}.`);
-  outputPrefix = s3Prefix(latestRun.outputPath);
-  await assertParquetOutput(outputPrefix);
+  assert(["iceberg", "parquet"].includes(dataset.storageFormat), `Expected an Iceberg/Parquet catalog output, got ${dataset.storageFormat}.`);
+  if (dataset.storageFormat === "iceberg") {
+    assert(dataset.queryEngineStatus === "available", `Iceberg query engine status must be available, got ${dataset.queryEngineStatus}.`);
+    assert(dataset.queryEngineTable?.format === "iceberg", "Iceberg catalog output must expose an Iceberg query-engine table.");
+  }
+  const physicalLocation = s3Location(dataset.storageLocation || latestRun.outputPath);
+  outputBucketName = physicalLocation.bucket;
+  outputPrefix = physicalLocation.prefix;
+  await assertParquetOutput(outputBucketName, outputPrefix);
 
   completed = true;
   console.log(JSON.stringify({
@@ -224,18 +233,18 @@ async function waitForTerminalJob(jobId) {
   throw new Error(`Timed out waiting for record parsing E2E: ${JSON.stringify(latestRun)}`);
 }
 
-async function assertParquetOutput(prefix) {
-  assert(prefix, "Spark output path is not an S3 path.");
-  const listed = await s3.send(new ListObjectsV2Command({ Bucket: outputBucket, Prefix: prefix }));
-  assert(listed.Contents?.some((entry) => entry.Key?.endsWith(".parquet")), `No Parquet object found at s3://${outputBucket}/${prefix}.`);
+async function assertParquetOutput(bucket, prefix) {
+  assert(bucket && prefix, "Spark output path is not an S3 path.");
+  const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }));
+  assert(listed.Contents?.some((entry) => entry.Key?.endsWith(".parquet")), `No Parquet data file found at s3://${bucket}/${prefix}.`);
 }
 
 async function cleanup() {
   if (outputPrefix) {
-    const listed = await s3.send(new ListObjectsV2Command({ Bucket: outputBucket, Prefix: outputPrefix }));
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: outputBucketName, Prefix: outputPrefix }));
     const objects = (listed.Contents ?? []).flatMap((entry) => entry.Key ? [{ Key: entry.Key }] : []);
     if (objects.length > 0) {
-      await s3.send(new DeleteObjectsCommand({ Bucket: outputBucket, Delete: { Objects: objects, Quiet: true } }));
+      await s3.send(new DeleteObjectsCommand({ Bucket: outputBucketName, Delete: { Objects: objects, Quiet: true } }));
     }
   }
   if (!createdJobId) return;
@@ -257,22 +266,44 @@ async function cleanup() {
   }
 }
 
-function s3Prefix(value) {
+function s3Location(value) {
   const match = String(value || "").match(/^s3a?:\/\/([^/]+)\/(.+)$/i);
-  if (!match || match[1] !== outputBucket) return "";
-  return match[2];
+  return match ? { bucket: match[1], prefix: match[2] } : { bucket: "", prefix: "" };
 }
 
 async function get(route) {
-  return readResponse(await fetch(`${baseUrl}${route}`));
+  return readResponse(await fetch(`${baseUrl}${route}`, {
+    headers: authHeaders(),
+  }));
 }
 
 async function post(route, body) {
   return readResponse(await fetch(`${baseUrl}${route}`, {
     body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     method: "POST",
   }));
+}
+
+async function authenticateIfConfigured() {
+  if (sessionCookie) return;
+  const email = process.env.ASKLAKE_RECORD_PARSING_E2E_EMAIL || "";
+  const password = process.env.ASKLAKE_RECORD_PARSING_E2E_PASSWORD || "";
+  if (!email && !password) return;
+  assert(email && password, "Set both ASKLAKE_RECORD_PARSING_E2E_EMAIL and ASKLAKE_RECORD_PARSING_E2E_PASSWORD.");
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    body: JSON.stringify({ email, password }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(`E2E login failed (${response.status}): ${await response.text()}`);
+  const setCookie = response.headers.get("set-cookie") || "";
+  sessionCookie = setCookie.split(";", 1)[0];
+  assert(sessionCookie.includes("="), "E2E login did not return a session cookie.");
+}
+
+function authHeaders() {
+  return sessionCookie ? { Cookie: sessionCookie } : {};
 }
 
 async function readResponse(response) {

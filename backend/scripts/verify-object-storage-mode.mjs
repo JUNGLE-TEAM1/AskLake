@@ -58,6 +58,9 @@ try {
   ]);
   assert.equal(minioWithMaskedDraftCredentials.accessKeyId, "local-access");
   assert.equal(minioWithMaskedDraftCredentials.secretAccessKey, "local-secret");
+  assert.equal(resolveObjectStorageConfig([
+    ["Storage Provider", "MinIO / S3 compatible"],
+  ]).provider, "minio");
   assert.ok(objectStorageDockerEnv().some(([name, value]) => name === "MINIO_ENDPOINT" && value === "http://m3-minio:9000"));
   const loopbackFields = [
     ["Storage Provider", "MinIO"],

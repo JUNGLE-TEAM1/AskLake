@@ -13,6 +13,24 @@ x-local-object-storage-env: &local-object-storage-env
   S3_ENDPOINT: "http://minio:9000"
   S3_FORCE_PATH_STYLE: "true"
 
+x-local-app-runtime-env: &local-app-runtime-env
+  <<: *local-object-storage-env
+  APP_ENV: "local"
+  BOOTSTRAP_ADMIN_EMAIL: "codex.test@asklake.local"
+  BOOTSTRAP_ADMIN_PASSWORD: "AskLake-Codex-Local-2026!"
+  CLICKHOUSE_REALTIME_CONSUMER_OWNER: "disabled"
+  CLICKHOUSE_REALTIME_V2_ENABLED: "false"
+  KAFKA_CONNECT_SINK_ENABLED: "false"
+  OPENSEARCH_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
+  TRINO_AUTH_PASSWORD: ""
+  TRINO_AUTH_USERNAME: ""
+  TRINO_BASE_URL: "http://trino:8080"
+  TRINO_ICEBERG_WAREHOUSE_BUCKET: "asklake-warehouse"
+  TRINO_MATERIALIZER_PASSWORD: ""
+  TRINO_MATERIALIZER_USERNAME: ""
+  TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: "true"
+  TRINO_RESULT_STORAGE_BUCKET: "asklake-query-results"
+
 services:
   frontend:
     build:
@@ -33,15 +51,11 @@ services:
     ports:
       - "127.0.0.1:${ASKLAKE_BACKEND_HOST_PORT:-18080}:8080"
     environment:
-      <<: *local-object-storage-env
-      APP_ENV: "local"
+      <<: *local-app-runtime-env
       AUTH_PUBLIC_SIGNUP_ENABLED: "true"
       AUTH_SESSION_COOKIE_SECURE: "false"
       ASKLAKE_SOURCE_DEFAULT_S3_BUCKET: ${ASKLAKE_LOCAL_SOURCE_DEFAULT_S3_BUCKET:-m3-raw}
       S3_ALLOWED_BUCKETS: ${ASKLAKE_LOCAL_S3_ALLOWED_BUCKETS:-m3-raw,asklake-output,asklake-query-results}
-      TRINO_BASE_URL: "http://trino:8080"
-      TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: "true"
-      TRINO_RESULT_STORAGE_BUCKET: "asklake-query-results"
       # Local Trino is plain HTTP on the private Compose network. Do not inherit
       # production Basic-auth credentials into this explicit local override.
       TRINO_AUTH_USERNAME: ""
@@ -67,6 +81,22 @@ services:
   spark-worker:
     environment:
       <<: *local-object-storage-env
+
+  opensearch:
+    environment:
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
+
+  embedding-worker:
+    environment:
+      OPENSEARCH_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
+
+  continuous-worker:
+    environment:
+      <<: *local-app-runtime-env
+
+  rag-artifact-cleanup:
+    environment:
+      <<: *local-app-runtime-env
 
   minio:
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z
@@ -124,7 +154,7 @@ services:
 
   trino-result-collector:
     environment:
-      <<: *local-object-storage-env
+      <<: *local-app-runtime-env
       TRINO_AUTH_PASSWORD: ""
       TRINO_AUTH_USERNAME: ""
       TRINO_MATERIALIZER_PASSWORD: ""
@@ -135,7 +165,7 @@ services:
 
   trino-result-cleanup:
     environment:
-      <<: *local-object-storage-env
+      <<: *local-app-runtime-env
       TRINO_AUTH_PASSWORD: ""
       TRINO_AUTH_USERNAME: ""
       TRINO_MATERIALIZER_PASSWORD: ""

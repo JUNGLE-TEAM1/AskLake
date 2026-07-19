@@ -35,7 +35,12 @@ export function objectStorageProvider(fields = []) {
     || MINIO_PROVIDER;
   const normalized = configured.trim().toLowerCase();
   if (["aws", "amazon s3", "s3"].includes(normalized)) return AWS_PROVIDER;
-  if (["minio", "minio/s3"].includes(normalized)) return MINIO_PROVIDER;
+  if ([
+    "minio",
+    "minio/s3",
+    "minio / s3 compatible",
+    "minio/s3 compatible",
+  ].includes(normalized)) return MINIO_PROVIDER;
   throw new Error(`Unsupported object storage provider: ${configured}`);
 }
 
