@@ -96,10 +96,11 @@ ClickHouse/Keeper StatefulSets, PVCs, Kafka Connect and the worker are not part 
 
 The disabled default remains the proven single Trino process and is the rollback
 path. When `trino.distributed.enabled=true`, the private overlay must supply
-`includeCoordinator=false`, exactly five worker replicas, complete worker
+`includeCoordinator=false`, exactly two worker replicas, complete worker
 requests/limits, the approved General node selector, and a worker termination
-grace value. SQL requests, the UI, and HPA cannot override this count. Five means
-Pod replicas, not five physical servers or a throughput guarantee. No worker
+grace value. SQL requests, the UI, and HPA cannot override this count. Two means
+Pod replicas, not two physical servers or a throughput guarantee. Existing General
+node CPU sizing is unchanged. No worker
 resource sizing or autoscaling value is present in chart defaults or the checked-in
 dev example.
 
@@ -119,7 +120,7 @@ never other system tables, write, or graceful-shutdown access.
 ```bash
 scripts/verify-eks-trino-distributed.sh
 node scripts/test-eks-trino-distributed-evidence.mjs
-scripts/verify-eks-trino-distributed-live.sh 5
+scripts/verify-eks-trino-distributed-live.sh 2
 ```
 
 Do not add HPA, PDB, topology spread, a worker NodePool, graceful shutdown
@@ -130,7 +131,7 @@ The operator first records a healthy single-coordinator `Recreate` revision as
 the safe rollback target. Apply also requires the worktree `HEAD`, fetched
 `origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
 If creating or querying that single baseline fails, apply restores and verifies
-the exact pre-deployment revision before it stops; it never proceeds to five workers.
+the exact pre-deployment revision before it stops; it never proceeds to two workers.
 The apply campaign also holds the namespace-scoped `asklake-trino-deploy-lock`
 ConfigMap, rechecks the Helm revision before each mutation, and removes only its
 own lock UID. A foreign revision observed during the live gate is never rolled back.
@@ -139,7 +140,7 @@ delete it by name. First inspect its `acquiredAt`, `deploymentCommit`,
 `observedRevision`, and UID, confirm no campaign is running and Helm is not in a
 pending state, then use the UID-precondition break-glass procedure in
 `docs/eks-trino-distributed-phase0.md`.
-Active registration of all five workers plus a non-empty Iceberg read is only the
+Active registration of both workers plus a non-empty Iceberg read is only the
 deployment gate: promotion additionally requires a non-empty Iceberg worker task,
 exact-UID replacement, and successful safe rollback evidence bound to the merged
 `pair1` commit. The initial two-worker campaign's `2→1→2` observation remains

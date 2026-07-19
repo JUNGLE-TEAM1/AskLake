@@ -649,15 +649,15 @@ JDBC Iceberg catalog, Warehouse 설정과 `asklake-trino` ServiceAccount/Pod Ide
 기존 Iceberg data privilege는 유지하고 분산 live evidence를 위해 내부 materializer에만 read-only
 system information과 `system.runtime.nodes|tasks` SELECT만 허용한다. 다른 system table,
 	write/graceful-shutdown 권한은 허용하지 않는다. dev live의 분산 모드는 worker replica를 정확히
-	`5`개로 고정하며 SQL 요청·UI와 HPA가 이를 바꾸지 않는다. chart의 비활성 기본값은 rollback용
-	단일 process를 유지한다. worker `5`개는 Pod 수이지 물리 서버 수나 성능 보장이 아니다. resources,
+	`2`개로 고정하며 SQL 요청·UI와 HPA가 이를 바꾸지 않는다. chart의 비활성 기본값은 rollback용
+	단일 process를 유지한다. worker `2`개는 기존 General node의 4 vCPU 사양을 바꾸지 않는 Pod 수이며 물리 서버 수나 성능 보장이 아니다. resources,
 placement와 Kubernetes termination grace도 opt-in private input이고 HPA/PDB/PVC/별도 NodePool은
 근거가 생기기 전 chart가 만들지 않는다. 상세 수용·rollback 경계는
 [EKS Trino 분산 Phase 0](eks-trino-distributed-phase0.md)을 따른다.
 
 coordinator Deployment는 `Recreate` 전략으로 old/new coordinator가 동시에 Service 뒤에 서는 것을
 금지한다. coordinator 변경 중 짧은 query downtime을 수용하며, 배포 후 FastAPI의 인증된
-	`system.runtime.nodes` 조회가 coordinator 1개와 worker 5개를 확인하기 전에는 promotion을
+	`system.runtime.nodes` 조회가 coordinator 1개와 worker 2개를 확인하기 전에는 promotion을
 진행하지 않는다. distributed apply 전에 같은 chart의 단일 coordinator `Recreate` 상태를 먼저
 검증해 안전 rollback revision으로 기록한다. active-node gate만으로 promotion을 완료하지 않으며
 	non-empty Iceberg worker task, exact-UID 장애 복구와 안전 rollback evidence가 모두 필요하다.

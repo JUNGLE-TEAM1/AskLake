@@ -133,7 +133,7 @@ function validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentComm
 }
 
 export function validateDistributedTrinoEvidence(receipt, expectedDeploymentCommit = null) {
-  return validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentCommit, 3, 5);
+  return validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentCommit, 3, 2);
 }
 
 export function validateHistoricalDistributedTrinoEvidenceV2(receipt, expectedDeploymentCommit = null) {
