@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { continuousSparkApplication } from "./manage-kafka-continuous.mjs";
+import { continuousSparkApplication, ensureOutputBucket } from "./manage-kafka-continuous.mjs";
 import { sparkApplicationState } from "./spark-kubernetes-client.mjs";
 
 const request = {
@@ -70,6 +70,29 @@ test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret re
   } finally {
     restoreEnvironment(saved);
   }
+});
+
+test("AWS Continuous startup does not require bucket-wide ListBucket permission", async () => {
+  let calls = 0;
+  await ensureOutputBucket("s3a://provisioned-output/prefix", {
+    minio: false,
+    client: { async send() { calls += 1; } },
+  });
+  assert.equal(calls, 0);
+});
+
+test("MinIO Continuous startup still creates a missing local bucket", async () => {
+  const commands = [];
+  await ensureOutputBucket("s3a://local-output/prefix", {
+    minio: true,
+    client: {
+      async send(command) {
+        commands.push(command.constructor.name);
+        if (commands.length === 1) throw new Error("missing");
+      },
+    },
+  });
+  assert.deepEqual(commands, ["HeadBucketCommand", "CreateBucketCommand"]);
 });
 
 test("Kubernetes completed state is the shared exited terminal state", () => {

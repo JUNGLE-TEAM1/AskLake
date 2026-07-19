@@ -708,16 +708,20 @@ async function startWorkerDocker(request, containerName) {
   };
 }
 
-async function ensureOutputBucket(outputPath) {
+export async function ensureOutputBucket(outputPath, options = {}) {
   const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
   if (!bucket) return;
+  const minio = options.minio ?? isMinioProvider();
+  // AWS buckets are provisioned outside this runtime. HeadBucket requires
+  // bucket-wide ListBucket permission and would defeat the prefix-scoped
+  // Pod Identity contract merely to prove that an existing bucket exists.
+  if (!minio) return;
   // This preflight runs in the Node control-plane process. Spark receives the
   // Docker endpoint separately through continuousEnvironment().
-  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
+  const client = options.client || new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch (error) {
-    if (!isMinioProvider()) throw error;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }

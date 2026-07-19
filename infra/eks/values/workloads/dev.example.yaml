@@ -189,7 +189,8 @@ sparkApplication:
 realtimeV1:
   enabled: false
   replicas: 1
-  serviceAccountName: asklake-backend
+  serviceAccountName: asklake-realtime-v1-worker
+  runtimeConfigMapName: asklake-runtime
   ownerTransfer:
     approved: false
     previousOwnerFenced: false
@@ -201,7 +202,7 @@ realtimeV1:
     bucket: asklake-dev-output-example
     prefix: continuous-runtime
   spark:
-    serviceAccountName: asklake-spark
+    serviceAccountName: asklake-realtime-v1-spark
     runtimeSecretName: asklake-spark-runtime
     mainApplicationFile: /opt/asklake/scripts/kafka_continuous_stream.py
   kafka:

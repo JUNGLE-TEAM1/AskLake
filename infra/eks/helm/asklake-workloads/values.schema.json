@@ -334,11 +334,12 @@
     "realtimeV1": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "serviceAccountName", "ownerTransfer", "nodeSelector", "runtimeDocument", "spark", "kafka", "resources"],
+      "required": ["enabled", "replicas", "serviceAccountName", "runtimeConfigMapName", "ownerTransfer", "nodeSelector", "runtimeDocument", "spark", "kafka", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
         "replicas": {"type": "integer", "const": 1},
-        "serviceAccountName": {"type": "string", "const": "asklake-backend"},
+        "serviceAccountName": {"type": "string", "const": "asklake-realtime-v1-worker"},
+        "runtimeConfigMapName": {"type": "string", "const": "asklake-runtime"},
         "ownerTransfer": {
           "type": "object",
           "additionalProperties": false,
@@ -359,7 +360,7 @@
           "additionalProperties": false,
           "required": ["serviceAccountName", "runtimeSecretName", "mainApplicationFile"],
           "properties": {
-            "serviceAccountName": {"type": "string", "const": "asklake-spark"},
+            "serviceAccountName": {"type": "string", "const": "asklake-realtime-v1-spark"},
             "runtimeSecretName": {"type": "string", "const": "asklake-spark-runtime"},
             "mainApplicationFile": {"type": "string", "const": "/opt/asklake/scripts/kafka_continuous_stream.py"}
           }

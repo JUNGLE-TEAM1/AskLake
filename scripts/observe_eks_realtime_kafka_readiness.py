@@ -289,14 +289,16 @@ def main() -> int:
     parser.add_argument("--require-ready", action="store_true")
     parser.add_argument("--expected-generation")
     parser.add_argument("--expected-runtime-object-arn")
+    parser.add_argument("--spark-service-account", default="asklake-spark")
+    parser.add_argument("--backend-service-account", default="asklake-backend")
     args = parser.parse_args()
     try:
         reader = AwsReader(args.region)
         cluster = reader.cluster_name(args.cluster_name)
         if args.require_ready and (not args.expected_generation or not args.expected_runtime_object_arn):
             raise ObservationError("ready mode requires exact generation and runtime object ARN")
-        spark_count, spark_docs, spark_boundary, spark_target = reader.service_account_policies(cluster, args.namespace, "asklake-spark")
-        backend_count, backend_docs, backend_boundary, backend_target = reader.service_account_policies(cluster, args.namespace, "asklake-backend")
+        spark_count, spark_docs, spark_boundary, spark_target = reader.service_account_policies(cluster, args.namespace, args.spark_service_account)
+        backend_count, backend_docs, backend_boundary, backend_target = reader.service_account_policies(cluster, args.namespace, args.backend_service_account)
         report = summarize_readiness(
             spark_associations=spark_count, backend_associations=backend_count,
             spark_documents=spark_docs, backend_documents=backend_docs,

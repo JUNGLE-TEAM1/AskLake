@@ -5,9 +5,6 @@
 {{- if not .Values.realtimeV1.ownerTransfer.previousOwnerFenced }}
 {{- fail "realtimeV1 requires proof that the previous EC2 Kafka owner is fenced" }}
 {{- end }}
-{{- if not .Values.backend.enabled }}
-{{- fail "realtimeV1 requires backend.enabled=true because it consumes asklake-backend-config" }}
-{{- end }}
 {{- $generation := required "realtimeV1.ownerTransfer.generation is required" .Values.realtimeV1.ownerTransfer.generation }}
 {{- $runtimePrefix := printf "s3a://%s/%s" .Values.realtimeV1.runtimeDocument.bucket (.Values.realtimeV1.runtimeDocument.prefix | trimAll "/") }}
 apiVersion: apps/v1
@@ -55,7 +52,7 @@ spec:
           command: ["python", "-m", "app.continuous_worker"]
           envFrom:
             - configMapRef:
-                name: asklake-backend-config
+                name: {{ .Values.realtimeV1.runtimeConfigMapName }}
             - secretRef:
                 name: {{ .Values.backend.runtimeSecret.name }}
           env:

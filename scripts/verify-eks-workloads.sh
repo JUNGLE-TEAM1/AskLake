@@ -91,13 +91,13 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
-if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+if ! "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set realtimeV1.enabled=true \
   --set realtimeV1.ownerTransfer.approved=true \
   --set realtimeV1.ownerTransfer.previousOwnerFenced=true \
   --set-string realtimeV1.ownerTransfer.generation=eks-v1-contract-g1 \
   --set backend.enabled=false >/dev/null 2>&1; then
-  echo "Realtime V1 rendered without its Backend ConfigMap owner" >&2
+  echo "Realtime V1 could not render as an independent release with the foundation runtime ConfigMap" >&2
   exit 1
 fi
 
@@ -331,6 +331,9 @@ grep -q 'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "disabled"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX' "$REALTIME_V1_RENDERED_FILE"
 grep -q 's3a://asklake-dev-output-example/continuous-runtime' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'serviceAccountName: asklake-realtime-v1-worker' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: asklake-runtime' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "asklake-realtime-v1-spark"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: ASKLAKE_KAFKA_AUTH_MODE' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$REALTIME_V1_RENDERED_FILE"
 if grep -Eq 'app.kubernetes.io/component: (kafka-connect|clickhouse|keeper)' "$REALTIME_V1_RENDERED_FILE"; then
