@@ -69,6 +69,7 @@ class ContinuousCommandHooks:
     fail_session: Callable[[KafkaContinuousSessionModel | None, str, str], None]
     mark_session_stopping: Callable[[Session | None, KafkaContinuousRuntimeModel, str], None]
     with_permissions: Callable[[Session, Any, ActorContext], Any]
+    worker_kind: Callable[[ETLJobModel], str] = lambda _job: "spark_structured_streaming"
 
 
 def execute_continuous_command(
@@ -137,6 +138,9 @@ def execute_continuous_command(
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
         ) or requested_attempt_id
+        if worker_result.get("worker") == "kafka_connect_clickhouse_v2":
+            job.last_state = "Kafka Connect → ClickHouse V2 수집 시작 요청"
+            job.progress = {"label": "Kafka Connect V2 시작 요청", "value": 5}
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
         runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)
@@ -167,7 +171,7 @@ def execute_continuous_command(
         # response is reconciled from the deterministic worker identity.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
         worker_result = _dispatch_terminal(
-            db, job, runtime, command, verb, worker, dispatch_worker
+            db, job, runtime, command, verb, worker, hooks, dispatch_worker
         )
         runtime.metrics = record_runtime_observation(
             runtime.metrics,
@@ -183,7 +187,7 @@ def execute_continuous_command(
         processing_result={
             "controlPlaneOnly": not dispatch_worker,
             "runtimeStatus": runtime.status,
-            "worker": "spark_structured_streaming",
+            "worker": str(worker_result.get("worker") or "spark_structured_streaming"),
             "workerResult": worker_result,
         },
     )
@@ -200,7 +204,11 @@ def _dispatch_start(
     dispatch_worker: bool,
 ) -> dict[str, Any]:
     if not dispatch_worker:
-        return {"deferred": True, "owner": "continuous-worker"}
+        return {
+            "deferred": True,
+            "owner": "continuous-worker",
+            "worker": hooks.worker_kind(job),
+        }
     try:
         return worker.command(job, runtime, "start")
     except ApiError as exc:
@@ -218,10 +226,15 @@ def _dispatch_terminal(
     command: str,
     verb: str,
     worker: KafkaRuntimeGateway,
+    hooks: ContinuousCommandHooks,
     dispatch_worker: bool,
 ) -> dict[str, Any]:
     if not dispatch_worker:
-        return {"deferred": True, "owner": "continuous-worker"}
+        return {
+            "deferred": True,
+            "owner": "continuous-worker",
+            "worker": hooks.worker_kind(job),
+        }
     try:
         return worker.command(job, runtime, verb)
     except ApiError as exc:
