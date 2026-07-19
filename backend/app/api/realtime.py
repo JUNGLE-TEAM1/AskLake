@@ -19,10 +19,16 @@ from app.repositories.realtime_event_repository import RealtimeEventRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.realtime import (
+    RealtimeAuditedSkipRequest,
     RealtimeEventEnvelope,
     RealtimeFeatureConfigResponse,
+    RealtimeIngestConnectorRequest,
     RealtimeStatusResponse,
 )
+from app.realtime.application.ingest_service import RealtimeIngestService
+from app.realtime.domain.source_position import SourcePosition
+from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+from app.realtime.repositories.receipt_repository import ReceiptRepository
 from app.services.auth_service import SESSION_COOKIE_NAME
 from app.services.dashboard_card_service import with_dashboard_permissions
 from app.services.realtime_event_contract import REALTIME_SCOPE_ID
@@ -71,6 +77,11 @@ def get_realtime_feature_config(
         realtime_events_enabled=state.realtime_events_enabled,
         continuous_sql_join_enabled=state.continuous_sql_join_enabled,
         clickhouse_continuous_join_enabled=state.clickhouse_continuous_join_enabled,
+        clickhouse_realtime_v2_enabled=state.clickhouse_realtime_v2_enabled,
+        kafka_connect_sink_enabled=state.kafka_connect_sink_enabled,
+        clickhouse_realtime_consumer_owner=(
+            state.clickhouse_realtime_consumer_owner
+        ),
         latest_static_per_batch_enabled=state.latest_static_per_batch_enabled,
         static_change_backfill_enabled=state.static_change_backfill_enabled,
         fallback_reason=state.fallback_reason,
@@ -96,6 +107,94 @@ def get_realtime_status(
         min_available_cursor=min_cursor,
         metrics=metrics,
     )
+
+
+def _require_realtime_operator(actor: ActorContext) -> None:
+    if not actor.is_admin:
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Realtime ingest operations require an administrator.",
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+@router.get("/ingest/status")
+def get_realtime_ingest_status(
+    actor: ActorContext = Depends(get_actor_context),
+) -> dict[str, object]:
+    _require_realtime_operator(actor)
+    state = resolve_realtime_feature_state(settings)
+    if not state.clickhouse_realtime_v2_enabled:
+        return {"enabled": False, "ready": False, "status": "disabled"}
+    try:
+        probe = RealtimeIngestService().probe()
+    except (KafkaConnectError, ValueError):
+        return {"enabled": True, "ready": False, "status": "unavailable"}
+    return {
+        "enabled": True,
+        "ready": probe.ready,
+        "status": "ready" if probe.ready else "degraded",
+        "connectorState": probe.connector_state,
+        "taskStates": list(probe.task_states),
+    }
+
+
+@router.put("/ingest/connector")
+def register_realtime_ingest_connector(
+    request: RealtimeIngestConnectorRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> dict[str, object]:
+    _require_realtime_operator(actor)
+    if not settings.clickhouse_realtime_v2_enabled:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "ClickHouse Realtime V2 is disabled.",
+            status.HTTP_409_CONFLICT,
+        )
+    try:
+        return RealtimeIngestService().register(
+            topic=request.topic,
+            table=request.table,
+            dlq_topic=request.dlq_topic,
+            generation=request.generation,
+        )
+    except (KafkaConnectError, ValueError) as exc:
+        raise ApiError(
+            ErrorCode.SERVICE_UNAVAILABLE,
+            "Kafka Connect connector registration failed.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        ) from exc
+
+
+@router.post("/ingest/exceptions/{pipeline_version_id}/{topic}/{partition}/{offset}/audited-skip")
+def approve_realtime_ingest_skip(
+    pipeline_version_id: str,
+    topic: str,
+    partition: int,
+    offset: int,
+    request: RealtimeAuditedSkipRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> dict[str, object]:
+    _require_realtime_operator(actor)
+    position = SourcePosition(topic, partition, offset)
+    with SessionLocal() as db:
+        approved = ReceiptRepository(db).approve_skip(
+            pipeline_version_id=pipeline_version_id,
+            position=position,
+            actor=actor.name,
+            reason=request.reason,
+        )
+        if approved:
+            db.commit()
+        else:
+            db.rollback()
+    if not approved:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "The ingest exception is not eligible for audited skip.",
+            status.HTTP_409_CONFLICT,
+        )
+    return {"approved": True, "sourcePosition": position.document()}
 
 
 @router.get(
@@ -244,52 +343,91 @@ async def _event_stream(
         for event in replay_events:
             if event.event_id <= last_cursor:
                 continue
+            if not await asyncio.to_thread(
+                _stream_identity_is_authorized,
+                identity,
+                dashboard_id,
+                dataset_ids,
+            ):
+                realtime_metrics.increment("authRejections")
+                yield _system_event(
+                    "system.authorization_changed",
+                    {"reason": "session_or_permission_changed"},
+                )
+                return
             yield _domain_event(event)
             last_cursor = event.event_id
             realtime_metrics.increment("eventsReplayed")
 
-        while not await request.is_disconnected():
-            try:
-                item = await asyncio.wait_for(
-                    subscription.get(),
-                    timeout=settings.realtime_heartbeat_seconds,
-                )
-            except TimeoutError:
-                is_authorized = await asyncio.to_thread(
-                    _stream_identity_is_authorized,
-                    identity,
-                    dashboard_id,
-                    dataset_ids,
-                )
-                if not is_authorized:
-                    realtime_metrics.increment("authRejections")
-                    yield _system_event(
-                        "system.authorization_changed",
-                        {"reason": "session_or_permission_changed"},
-                    )
-                    return
-                yield _system_event(
-                    "system.heartbeat",
-                    {
-                        "currentCursor": last_cursor,
-                        "serverTime": datetime.now(UTC).isoformat(),
-                    },
-                )
-                continue
-
-            if isinstance(item, RealtimeQueueOverflow):
-                realtime_metrics.increment("resyncRequired")
-                yield _system_event(
-                    "system.resync_required",
-                    {"reason": item.reason, "currentCursor": last_cursor},
-                )
-                return
-            if item.event_id <= last_cursor:
-                continue
-            yield _domain_event(item)
-            last_cursor = item.event_id
+        async for item in _live_events(
+            request, subscription, identity, dashboard_id, dataset_ids, last_cursor
+        ):
+            yield item
     finally:
         subscription.close()
+
+
+async def _live_events(
+    request: Request,
+    subscription: RealtimeSubscription,
+    identity: StreamIdentity,
+    dashboard_id: str,
+    dataset_ids: set[str],
+    last_cursor: int,
+):
+    while not await request.is_disconnected():
+        try:
+            item = await asyncio.wait_for(
+                subscription.get(),
+                timeout=settings.realtime_heartbeat_seconds,
+            )
+        except TimeoutError:
+            is_authorized = await asyncio.to_thread(
+                _stream_identity_is_authorized,
+                identity,
+                dashboard_id,
+                dataset_ids,
+            )
+            if not is_authorized:
+                realtime_metrics.increment("authRejections")
+                yield _system_event(
+                    "system.authorization_changed",
+                    {"reason": "session_or_permission_changed"},
+                )
+                return
+            yield _system_event(
+                "system.heartbeat",
+                {
+                    "currentCursor": last_cursor,
+                    "serverTime": datetime.now(UTC).isoformat(),
+                },
+            )
+            continue
+
+        if isinstance(item, RealtimeQueueOverflow):
+            realtime_metrics.increment("resyncRequired")
+            yield _system_event(
+                "system.resync_required",
+                {"reason": item.reason, "currentCursor": last_cursor},
+            )
+            return
+        if item.event_id <= last_cursor:
+            continue
+        is_authorized = await asyncio.to_thread(
+            _stream_identity_is_authorized,
+            identity,
+            dashboard_id,
+            dataset_ids,
+        )
+        if not is_authorized:
+            realtime_metrics.increment("authRejections")
+            yield _system_event(
+                "system.authorization_changed",
+                {"reason": "session_or_permission_changed"},
+            )
+            return
+        yield _domain_event(item)
+        last_cursor = item.event_id
 
 
 def _load_replay_snapshot(

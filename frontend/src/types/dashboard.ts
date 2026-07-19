@@ -2,7 +2,7 @@ import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type DashboardRuntimeMode = "published" | "draft";
-export type DashboardView = "list" | "builder" | "detail" | "runtime";
+export type DashboardView = "list" | "runtime";
 export type DashboardStatus = "draft" | "published";
 export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
 export type DashboardRuntimeWidgetType =

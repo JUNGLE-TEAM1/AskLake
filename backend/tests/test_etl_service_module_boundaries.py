@@ -200,15 +200,15 @@ EXTRACTED_EXPORTS = {
 }
 
 REVIEWED_FUNCTION_DIGESTS = {
-    etl_airflow_projection: "4f93125a9f35f22d65eedabd19d0a84cf42ab3d85bd4ed24b39d6d9d5422652a",
-    etl_schedule: "a60c3f1d406e711f459652bae1e1a36bb0747086ab75a0371ea991d96d4f28d1",
-    etl_job_projection: "1a899dc6356446a3a434309111d3ce9e60faae872b8f1e525a3724cbd60c1c05",
-    etl_record_parsing: "f83831544eeb6ea5f6c2dd70fb432affd87a36af647a834d5b6d809a3e3b993b",
-    etl_runtime_support: "2930775e49a12cf20a82a8c1fa58e4fd0891dc178fdb9e1a055181a42fbc4ad8",
-    etl_source_window: "4002bc295053f657e696c40158e6773b567b83913e63b6585f85e42b9ea308c9",
-    etl_run_projection: "b420423753b9537bc87c7b82b5a9831ce12ef87e78df915f198a396133ea5776",
-    etl_catalog_projection: "ebb140d6fbc27163ee37e70e441fb4b38714748f48d2f58db58453328fb7fb87",
-    etl_pipeline_policy: "dc2e6e17bd8a2eca553c2079fd2b910f53ed761f45ec401a0a0e76693f5f90c3",
+    etl_airflow_projection: "561e59a5d2ce87eb2400c9031a0bf992d1da4d7f15b3d43db38e243afb76c4ad",
+    etl_schedule: "26c08d45a62467ca65e335f5fb96ceb2d013409d27036f506b08e504def07265",
+    etl_job_projection: "bc2e0c68fdd9c06207e4e926c4dd325c4fb69c99adc4ebeea9205ea59a990a02",
+    etl_record_parsing: "77381844dca157f2f2ac362bd993944e5ce44d5e395ed8d228d45bb75c463400",
+    etl_runtime_support: "ace274c30f459fbbe213acff0a5a2335fb529aa83d90d382c361e3d3f4f69d65",
+    etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
+    etl_run_projection: "646cef24d3503ec04423acc4346b9e0a210facdd6444cb47db1d436c6b415ad5",
+    etl_catalog_projection: "8b7af995d75bb825f1bb436288dc064de9bd0fb886c527a441f2fa07741a7176",
+    etl_pipeline_policy: "17bc003374c35536a33bf94817000da788a92989631d8aad5139fd7d0abbd2f7",
 }
 
 RUNTIME_FACADE_MODULES = (
@@ -224,15 +224,15 @@ RUNTIME_FACADE_MODULES = (
 )
 
 RUNTIME_FACADE_DIGESTS = {
-    api_job_operations: "75e6bd3df869cca9e2bda400cde9a7a064c46011b5af93a61550aba108ff01c0",
-    api_review_operations: "2be232ab29999cf95de561949640ac487ce10c8a3837132c0d3a74779c66ebab",
-    snapshot_operations: "a810d372db02d45cb3b2b55cdf8fcdcef22ae7301dded7cc663bb3d33d49f1bc",
-    airflow_operations: "567b788d1e346458c21a677bd7d2c8ad21a4784e355c4fb01bf1af2a8a8eea6a",
-    source_runtime: "22a2c6dbc4bc1381fab573d847985c674c02775023b5d0adf3ddfa06a14b5417",
-    continuous_maintenance: "8adaf231c1e8f7c4e3c839be8d9f5ecdc34b1b567e0bda7f03cf8e7025fcf75a",
-    continuous_session: "38179b3174532a806441c973e20f3ebd16806194750e513ce44657f32c4fd9ee",
-    continuous_publication: "c931caacd76029934f696b626c76b329bd9338e30f63abcf1bb918c62a1daab9",
-    replay_schedule: "02df7315c31da09c0b2505f40c19dd5a153272d52342851a70e5a3db2aafc69d",
+    api_job_operations: "8f6d08b8809e12ebd3e51abca619394f0626820546e55b7780d6239cb9ad0ac6",
+    api_review_operations: "73cdb622d8015c72d595c814f860ff98ff73b3956fbd5de6842de8d75e58350e",
+    snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
+    airflow_operations: "0013244d083c763ceb97e4a42d02f072a0455e232820ede3fb238c27b8af6c4f",
+    source_runtime: "515fab302fa25e7d025379c9abde06e07594fa9f55628361389e7a5fe7d8727e",
+    continuous_maintenance: "250e43bfe5ef4e4250b5d8767c63b6abe463c8708319102910fd9d0282d9497c",
+    continuous_session: "c2a9fcc15e5e3f9dc7a338890f86511a274987f9dce5febd1744694072c97bb7",
+    continuous_publication: "c19c098f2079a418a0159107f492981061ad41884517194624966afc7d46cae0",
+    replay_schedule: "34427dad1a14a6d8fcb2ae2f264476fd2b7f8c23a0c85f7ba9d9f747dbac6155",
 }
 
 
@@ -268,7 +268,7 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
             etl_record_parsing: 170,
             etl_runtime_support: 120,
             etl_source_window: 270,
-            etl_run_projection: 620,
+            etl_run_projection: 646,
             etl_catalog_projection: 800,
             etl_pipeline_policy: 460,
         }

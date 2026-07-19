@@ -16,6 +16,18 @@ REPLAY_INPUT_DIR="$TMP_DIR/replay-input"
 TRINO_CA_FILE="$TMP_DIR/trino-ca.pem"
 TRINO_KEYSTORE_FILE="$TMP_DIR/trino-keystore.jks"
 TRINO_PASSWORD_FILE="$TMP_DIR/trino-password.db"
+CLICKHOUSE_V2_CA_FILE="$TMP_DIR/clickhouse-v2-ca.crt"
+CLICKHOUSE_V2_CA_KEY_FILE="$TMP_DIR/clickhouse-v2-ca.key"
+CLICKHOUSE_V2_CA_CONFIG_FILE="$TMP_DIR/clickhouse-v2-ca.cnf"
+CLICKHOUSE_V2_CERT_FILE="$TMP_DIR/clickhouse-v2-server.crt"
+CLICKHOUSE_V2_KEY_FILE="$TMP_DIR/clickhouse-v2-server.key"
+CLICKHOUSE_V2_CSR_FILE="$TMP_DIR/clickhouse-v2-server.csr"
+CLICKHOUSE_V2_EXT_FILE="$TMP_DIR/clickhouse-v2-server.ext"
+KAFKA_CONNECT_V2_SECRETS_FILE="$TMP_DIR/clickhouse-v2-connect.properties"
+KEYTOOL_STUB_FILE="$TMP_DIR/keytool-stub"
+STAGING_PASSWD_FILE="$TMP_DIR/staging-passwd"
+STAGING_GROUP_FILE="$TMP_DIR/staging-group"
+STAGING_TEST_IMAGE="debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818"
 SECRET_SENTINEL="MinioAppSecret_DO_NOT_PRINT_7uQ"
 
 pass_count=0
@@ -56,6 +68,7 @@ write_valid_env() {
     printf '%s\n' \
       'APP_ENV=production' \
       'AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
+      'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
@@ -84,6 +97,20 @@ write_valid_env() {
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
       'RAG_WORKER_TOKEN=RagWorkerToken_123456789012345678901234' \
+      'COMPOSE_PROFILES=' \
+      'TRINO_ENABLED=false' \
+      'CONTINUOUS_SQL_JOIN_ENABLED=false' \
+      'CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false' \
+      'CLICKHOUSE_REALTIME_V2_ENABLED=false' \
+      'KAFKA_CONNECT_SINK_ENABLED=false' \
+      'CLICKHOUSE_REALTIME_CONSUMER_OWNER=disabled' \
+      'KAFKA_CONNECT_URL=' \
+      'KAFKA_CONNECT_CONNECTOR_NAME=asklake-clickhouse-realtime-v2' \
+      'CLICKHOUSE_V2_URL=https://clickhouse-v2:8443' \
+      'CLICKHOUSE_V2_DATABASE=asklake_realtime_v2' \
+      'CLICKHOUSE_V2_MATERIALIZER_USER=asklake_v2_materializer' \
+      'CLICKHOUSE_V2_READER_USER=asklake_v2_reader' \
+      'CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE=/run/secrets/clickhouse-v2-ca.crt' \
       "ASKLAKE_HOST_DATA_DIR=$SPARK_DATA_DIR" \
       "ASKLAKE_REPLAY_HOST_INPUT_DIR=$REPLAY_INPUT_DIR"
   } > "$target"
@@ -118,10 +145,10 @@ write_valid_trino_aws_env() {
     "$target" \
     ASKLAKE_S3_READINESS_WRITE_BUCKETS \
     'asklake-test-output,asklake-test-warehouse,asklake-test-query-results'
+  replace_env_value "$target" COMPOSE_PROFILES 'trino'
+  replace_env_value "$target" TRINO_ENABLED 'true'
   {
     printf '%s\n' \
-      'COMPOSE_PROFILES=trino' \
-      'TRINO_ENABLED=true' \
       'TRINO_BASE_URL=https://trino:8443' \
       'TRINO_CATALOG=iceberg' \
       'TRINO_SCHEMA=asklake' \
@@ -149,15 +176,47 @@ write_valid_clickhouse_trino_aws_env() {
   local target="$1"
   write_valid_trino_aws_env "$target"
   replace_env_value "$target" COMPOSE_PROFILES 'trino,clickhouse'
+  replace_env_value "$target" CONTINUOUS_SQL_JOIN_ENABLED 'true'
+  replace_env_value "$target" CLICKHOUSE_CONTINUOUS_JOIN_ENABLED 'true'
+  replace_env_value "$target" CLICKHOUSE_REALTIME_CONSUMER_OWNER 'kafka_engine_v1'
   {
     printf '%s\n' \
-      'CONTINUOUS_SQL_JOIN_ENABLED=true' \
-      'CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true' \
       'CLICKHOUSE_URL=http://clickhouse:8123' \
       'CLICKHOUSE_USER=asklake' \
       'CLICKHOUSE_PASSWORD=ClickHousePassword_123' \
       'CLICKHOUSE_DATABASE=asklake'
   } >> "$target"
+}
+
+append_clickhouse_v2_infra_env() {
+  local target="$1"
+  {
+    printf '%s\n' \
+      'CLICKHOUSE_V2_IMAGE=clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49' \
+      'CLICKHOUSE_V2_ADMIN_USER=asklake_v2_admin' \
+      'CLICKHOUSE_V2_ADMIN_PASSWORD=ClickHouseV2Admin_123' \
+      'CLICKHOUSE_V2_INGEST_PASSWORD=ClickHouseV2Ingest_123' \
+      'CLICKHOUSE_V2_MATERIALIZER_PASSWORD=ClickHouseV2Materializer_123' \
+      'CLICKHOUSE_V2_READER_PASSWORD=ClickHouseV2Reader_123' \
+      'CLICKHOUSE_V2_MIGRATION_PASSWORD=ClickHouseV2Migration_123' \
+      'CLICKHOUSE_V2_OBSERVER_PASSWORD=ClickHouseV2Observer_123' \
+      "CLICKHOUSE_V2_TLS_CERT_FILE=$CLICKHOUSE_V2_CERT_FILE" \
+      "CLICKHOUSE_V2_TLS_KEY_FILE=$CLICKHOUSE_V2_KEY_FILE" \
+      "CLICKHOUSE_V2_TLS_CA_FILE=$CLICKHOUSE_V2_CA_FILE" \
+      'KAFKA_CONNECT_V2_IMAGE=registry.asklake.test/kafka-connect-clickhouse@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      "KAFKA_CONNECT_V2_SECRETS_FILE=$KAFKA_CONNECT_V2_SECRETS_FILE"
+  } >> "$target"
+}
+
+write_valid_clickhouse_v2_aws_env() {
+  local target="$1"
+  write_valid_aws_env "$target"
+  replace_env_value "$target" COMPOSE_PROFILES 'clickhouse-realtime-v2'
+  replace_env_value "$target" CLICKHOUSE_REALTIME_V2_ENABLED 'true'
+  replace_env_value "$target" KAFKA_CONNECT_SINK_ENABLED 'true'
+  replace_env_value "$target" CLICKHOUSE_REALTIME_CONSUMER_OWNER 'kafka_connect_v2'
+  replace_env_value "$target" KAFKA_CONNECT_URL 'http://kafka-connect-v2:8083'
+  append_clickhouse_v2_infra_env "$target"
 }
 
 replace_env_value() {
@@ -180,16 +239,18 @@ run_preflight() {
 
 expect_preflight_pass() {
   local name="$1"
+  local compose_file="${2:-$VALID_COMPOSE}"
   local output
 
-  if output="$(run_preflight 2>&1)"; then
+  if output="$(run_preflight "$compose_file" 2>&1)"; then
     if [[ "$output" == *"$SECRET_SENTINEL"* ]]; then
       record_fail "$name (secret appeared in output)"
     else
       record_pass "$name"
     fi
   else
-    record_fail "$name (unexpected failure)"
+    output="${output//$SECRET_SENTINEL/[REDACTED]}"
+    record_fail "$name (unexpected failure: $output)"
   fi
 }
 
@@ -224,9 +285,100 @@ mkdir -p \
 printf '%s\n' 'test certificate' > "$TRINO_CA_FILE"
 printf '%s\n' 'test keystore' > "$TRINO_KEYSTORE_FILE"
 printf '%s\n' 'asklake-api:test' 'asklake-materializer:test' > "$TRINO_PASSWORD_FILE"
+printf '%s\n' \
+  '[req]' \
+  'distinguished_name=dn' \
+  'x509_extensions=v3_ca' \
+  'prompt=no' \
+  '[dn]' \
+  'CN=AskLake ClickHouse V2 Test CA' \
+  '[v3_ca]' \
+  'basicConstraints=critical,CA:TRUE' \
+  'keyUsage=critical,keyCertSign,cRLSign' \
+  'subjectKeyIdentifier=hash' \
+  'authorityKeyIdentifier=keyid:always,issuer' > "$CLICKHOUSE_V2_CA_CONFIG_FILE"
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$CLICKHOUSE_V2_CA_KEY_FILE" \
+  -out "$CLICKHOUSE_V2_CA_FILE" \
+  -days 1 \
+  -config "$CLICKHOUSE_V2_CA_CONFIG_FILE" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$CLICKHOUSE_V2_KEY_FILE" \
+  -out "$CLICKHOUSE_V2_CSR_FILE" \
+  -subj '/CN=clickhouse-v2' >/dev/null 2>&1
+printf '%s\n' \
+  '[server_cert]' \
+  'basicConstraints=critical,CA:FALSE' \
+  'keyUsage=critical,digitalSignature,keyEncipherment' \
+  'subjectAltName=DNS:clickhouse-v2' \
+  'extendedKeyUsage=serverAuth' > "$CLICKHOUSE_V2_EXT_FILE"
+openssl x509 -req \
+  -in "$CLICKHOUSE_V2_CSR_FILE" \
+  -CA "$CLICKHOUSE_V2_CA_FILE" \
+  -CAkey "$CLICKHOUSE_V2_CA_KEY_FILE" \
+  -CAcreateserial \
+  -out "$CLICKHOUSE_V2_CERT_FILE" \
+  -days 1 \
+  -sha256 \
+  -extfile "$CLICKHOUSE_V2_EXT_FILE" \
+  -extensions server_cert >/dev/null 2>&1
+printf '%s\n' 'clickhouse.ingest.password=ClickHouseV2Ingest_123' > "$KAFKA_CONNECT_V2_SECRETS_FILE"
+printf '%s\n' \
+  '#!/bin/sh' \
+  ': > /run/secrets/clickhouse-v2-truststore.p12' > "$KEYTOOL_STUB_FILE"
+chmod 755 "$KEYTOOL_STUB_FILE"
+chmod 600 "$CLICKHOUSE_V2_CA_KEY_FILE" "$CLICKHOUSE_V2_KEY_FILE" "$KAFKA_CONNECT_V2_SECRETS_FILE"
+printf '%s\n' \
+  'root:x:0:0:root:/root:/bin/bash' \
+  'clickhouse:x:101:101:clickhouse:/nonexistent:/usr/sbin/nologin' \
+  'appuser:x:1000:1000:appuser:/nonexistent:/usr/sbin/nologin' > "$STAGING_PASSWD_FILE"
+printf '%s\n' \
+  'root:x:0:' \
+  'clickhouse:x:101:' \
+  'appuser:x:1000:' > "$STAGING_GROUP_FILE"
 
 write_valid_env "$ENV_FILE"
 expect_preflight_pass 'valid production environment passes'
+
+local_v2_wiring_status=0
+docker compose \
+  -f "$ROOT_DIR/docker-compose.yml" \
+  --profile clickhouse-realtime-v2 \
+  config --format json \
+  | python3 -c '
+import json
+import sys
+
+services = json.load(sys.stdin)["services"]
+clickhouse = services["clickhouse-v2"]
+connect = services["kafka-connect-v2"]
+connect_targets = {
+    volume.get("target")
+    for volume in connect.get("volumes", [])
+    if volume.get("type") == "bind" and volume.get("read_only") is True
+}
+valid = all((
+    clickhouse.get("user") == "0:0",
+    clickhouse.get("entrypoint") == [
+        "/bin/bash", "/usr/local/bin/asklake-clickhouse-v2-entrypoint.sh"
+    ],
+    connect.get("user") == "0:0",
+    connect.get("entrypoint") == [
+        "/usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh"
+    ],
+    connect.get("tmpfs") == [
+        "/run/secrets:rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000"
+    ],
+    "/run/asklake-secrets-source/kafka-connect/asklake-clickhouse-v2.properties"
+        in connect_targets,
+))
+raise SystemExit(0 if valid else 1)
+' || local_v2_wiring_status=$?
+if (( local_v2_wiring_status == 0 )); then
+  record_pass 'local V2 Compose keeps root bootstrap, tmpfs staging, and non-root entrypoints explicit'
+else
+  record_fail 'local V2 Compose keeps root bootstrap, tmpfs staging, and non-root entrypoints explicit'
+fi
 
 if ! python3 -c 'import os; raise SystemExit(0 if hasattr(os, "geteuid") else 1)'; then
   record_skip 'Spark runtime paths survive restart repair without data loss' 'requires a POSIX Python runtime'
@@ -263,6 +415,19 @@ else
 fi
 
 write_valid_clickhouse_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CONTINUOUS_SQL_JOIN_ENABLED 'false'
+expect_preflight_failure \
+  'Kafka Engine V1 rejects a disabled Continuous SQL parent flag' \
+  'Kafka Engine V1 requires CONTINUOUS_SQL_JOIN_ENABLED=true and CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CONTINUOUS_SQL_JOIN_ENABLED 'maybe'
+expect_preflight_failure \
+  'Continuous SQL parent flag rejects non-boolean values' \
+  'CONTINUOUS_SQL_JOIN_ENABLED must be true or false'
+
+write_valid_clickhouse_trino_aws_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino'
 expect_preflight_failure \
   'ClickHouse-enabled deployment requires its Compose profile' \
@@ -278,10 +443,158 @@ expect_preflight_failure \
 
 write_valid_trino_aws_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino,clickhouse'
-printf '%s\n' 'CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false' >> "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_CONTINUOUS_JOIN_ENABLED 'false'
 expect_preflight_failure \
   'ClickHouse-disabled deployment rejects a stale ClickHouse Compose profile' \
   'COMPOSE_PROFILES must not include clickhouse' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+expect_preflight_pass \
+  'ClickHouse V2 production Compose passes strict TLS and immutable-image preflight without repurposing V1 backend credentials' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+if docker run --rm \
+      --user 0:0 \
+      --security-opt no-new-privileges:true \
+      --env CLICKHOUSE_V2_TLS_STAGING_REQUIRED=true \
+      --volume "$ROOT_DIR/deploy/clickhouse-v2/entrypoint.sh:/opt/asklake/clickhouse-entrypoint.sh:ro" \
+      --volume "$STAGING_PASSWD_FILE:/etc/passwd:ro" \
+      --volume "$STAGING_GROUP_FILE:/etc/group:ro" \
+      --volume "$CLICKHOUSE_V2_CERT_FILE:/run/asklake-secrets-source/clickhouse-v2/server.crt:ro" \
+      --volume "$CLICKHOUSE_V2_KEY_FILE:/run/asklake-secrets-source/clickhouse-v2/server.key:ro" \
+      --volume "$CLICKHOUSE_V2_CA_FILE:/run/asklake-secrets-source/clickhouse-v2/ca.crt:ro" \
+      --tmpfs /run/asklake-clickhouse-v2-secrets:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=0,gid=0 \
+      "$STAGING_TEST_IMAGE" \
+      /bin/bash -eu -c '
+        source /opt/asklake/clickhouse-entrypoint.sh
+        stage_clickhouse_v2_tls
+        exec /usr/sbin/chroot --userspec=101:101 / /bin/sh -eu -c '\''
+          test "$(id -u):$(id -g)" = "101:101"
+          for file in server.crt server.key ca.crt; do
+            test -r "/run/asklake-clickhouse-v2-secrets/$file"
+            test "$(stat -c %u:%g:%a "/run/asklake-clickhouse-v2-secrets/$file")" = "101:101:400"
+          done
+        '\''
+      ' >/dev/null 2>&1; then
+  record_pass 'root-bootstrap source mounts are staged for ClickHouse UID 101'
+else
+  record_fail 'root-bootstrap source mounts are staged for ClickHouse UID 101'
+fi
+
+if docker run --rm \
+      --user 0:0 \
+      --security-opt no-new-privileges:true \
+      --env KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED=true \
+      --env KAFKA_CONNECT_V2_KEYTOOL_BIN=/opt/asklake/keytool-stub \
+      --volume "$ROOT_DIR/deploy/kafka-connect/entrypoint.sh:/opt/asklake/kafka-connect-entrypoint.sh:ro" \
+      --volume "$KEYTOOL_STUB_FILE:/opt/asklake/keytool-stub:ro" \
+      --volume "$STAGING_PASSWD_FILE:/etc/passwd:ro" \
+      --volume "$STAGING_GROUP_FILE:/etc/group:ro" \
+      --volume "$KAFKA_CONNECT_V2_SECRETS_FILE:/run/asklake-secrets-source/kafka-connect/asklake-clickhouse-v2.properties:ro" \
+      --volume "$CLICKHOUSE_V2_CA_FILE:/run/asklake-secrets-source/kafka-connect/clickhouse-v2-ca.crt:ro" \
+      --tmpfs /run/secrets:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=0,gid=0 \
+      "$STAGING_TEST_IMAGE" \
+      /bin/bash -eu -c '
+        source /opt/asklake/kafka-connect-entrypoint.sh
+        main /bin/sh -eu -c '\''
+          test "$(id -u):$(id -g)" = "1000:1000"
+          for file in asklake-clickhouse-v2.properties clickhouse-v2-ca.crt clickhouse-v2-truststore.p12; do
+            test -r "/run/secrets/$file"
+            test "$(stat -c %u:%g:%a "/run/secrets/$file")" = "1000:1000:400"
+          done
+        '\''
+      ' >/dev/null 2>&1; then
+  record_pass 'root-bootstrap source mounts are staged before Kafka worker UID 1000 exec'
+else
+  record_fail 'root-bootstrap source mounts are staged before Kafka worker UID 1000 exec'
+fi
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_REALTIME_V2_ENABLED 'false'
+replace_env_value "$ENV_FILE" KAFKA_CONNECT_SINK_ENABLED 'false'
+replace_env_value "$ENV_FILE" CLICKHOUSE_REALTIME_CONSUMER_OWNER 'disabled'
+replace_env_value "$ENV_FILE" KAFKA_CONNECT_URL ''
+expect_preflight_pass \
+  'ClickHouse V2 profile supports infra-only shadow deployment with consumer ownership disabled' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_trino_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino,clickhouse,clickhouse-realtime-v2'
+replace_env_value "$ENV_FILE" CLICKHOUSE_REALTIME_V2_ENABLED 'false'
+replace_env_value "$ENV_FILE" KAFKA_CONNECT_SINK_ENABLED 'false'
+replace_env_value "$ENV_FILE" CLICKHOUSE_REALTIME_CONSUMER_OWNER 'kafka_engine_v1'
+replace_env_value "$ENV_FILE" KAFKA_CONNECT_URL ''
+printf '%s\n' 'KAFKA_CONNECT_CONNECTOR_NAME=asklake-clickhouse-realtime-v2' >> "$ENV_FILE"
+append_clickhouse_v2_infra_env "$ENV_FILE"
+expect_preflight_pass \
+  'ClickHouse V2 shadow infrastructure can run while Kafka Engine V1 retains ownership' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" KAFKA_CONNECT_V2_IMAGE 'registry.asklake.test/kafka-connect-clickhouse:1.4.0'
+expect_preflight_failure \
+  'ClickHouse V2 rejects a mutable Kafka Connect image tag' \
+  'KAFKA_CONNECT_V2_IMAGE must be an immutable image reference' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_V2_OBSERVER_PASSWORD 'ClickHouseV2Migration_123'
+expect_preflight_failure \
+  'ClickHouse V2 requires pairwise-distinct account credentials' \
+  'ClickHouse V2 account passwords must be pairwise distinct' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_V2_ADMIN_USER 'asklake_v2_ingest'
+expect_preflight_failure \
+  'ClickHouse V2 admin cannot collide with a fixed runtime user' \
+  'CLICKHOUSE_V2_ADMIN_USER must be distinct from fixed runtime users and roles' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_V2_ADMIN_USER 'ASKLAKE_V2_READER_ROLE'
+expect_preflight_failure \
+  'ClickHouse V2 admin cannot collide case-insensitively with a fixed runtime role' \
+  'CLICKHOUSE_V2_ADMIN_USER must be distinct from fixed runtime users and roles' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_V2_DATABASE 'INFORMATION_SCHEMA'
+expect_preflight_failure \
+  'ClickHouse V2 rejects built-in database names case-insensitively' \
+  'CLICKHOUSE_V2_DATABASE must not use a built-in or reserved database name' \
+  "$ROOT_DIR/deploy/docker-compose.prod.yml"
+
+if output="$(
+  CLICKHOUSE_DB=asklake_realtime_v2 \
+  CLICKHOUSE_USER=asklake_v2_materializer \
+  bash "$ROOT_DIR/deploy/clickhouse-v2/initdb/01-access-control.sh" 2>&1
+)"; then
+  record_fail 'ClickHouse initdb rejects runtime identity collision without relying on preflight'
+elif [[ "$output" == *'CLICKHOUSE_USER must be distinct from fixed runtime users and roles'* ]]; then
+  record_pass 'ClickHouse initdb rejects runtime identity collision without relying on preflight'
+else
+  record_fail 'ClickHouse initdb rejects runtime identity collision without relying on preflight (diagnostic missing)'
+fi
+
+if output="$(
+  CLICKHOUSE_DB=system \
+  CLICKHOUSE_USER=asklake_v2_admin \
+  bash "$ROOT_DIR/deploy/clickhouse-v2/initdb/01-access-control.sh" 2>&1
+)"; then
+  record_fail 'ClickHouse initdb rejects built-in database without relying on preflight'
+elif [[ "$output" == *'CLICKHOUSE_DB must not use a built-in or reserved database name'* ]]; then
+  record_pass 'ClickHouse initdb rejects built-in database without relying on preflight'
+else
+  record_fail 'ClickHouse initdb rejects built-in database without relying on preflight (diagnostic missing)'
+fi
+
+write_valid_clickhouse_v2_aws_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" CLICKHOUSE_V2_TLS_KEY_FILE "$TMP_DIR/missing-clickhouse-v2.key"
+expect_preflight_failure \
+  'ClickHouse V2 requires readable TLS key material' \
+  'CLICKHOUSE_V2_TLS_KEY_FILE file does not exist or is not readable' \
   "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_trino_aws_env "$ENV_FILE"
@@ -292,7 +605,8 @@ expect_preflight_failure \
   "$ROOT_DIR/deploy/docker-compose.prod.yml"
 
 write_valid_aws_env "$ENV_FILE"
-printf '%s\n' 'COMPOSE_PROFILES=trino' 'TRINO_ENABLED=false' >> "$ENV_FILE"
+replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino'
+replace_env_value "$ENV_FILE" TRINO_ENABLED 'false'
 expect_preflight_failure \
   'Trino-disabled deployment rejects a stale Trino Compose profile' \
   'COMPOSE_PROFILES must not include trino' \
@@ -326,8 +640,20 @@ expect_preflight_failure 'blank Fernet key is rejected' 'AIRFLOW_FERNET_KEY must
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
 expect_preflight_failure \
-  'production rejects legacy demo identities' \
-  'legacy demo identities are test-only'
+  'legacy demo identity flags must match' \
+  'AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match'
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'TRUE'
+replace_env_value "$ENV_FILE" VITE_AUTH_LEGACY_DEMO_USERS_ENABLED 'TRUE'
+expect_preflight_failure \
+  'legacy demo identity flags require lowercase booleans' \
+  'legacy demo user flags must be lowercase true or false'
+
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
+replace_env_value "$ENV_FILE" VITE_AUTH_LEGACY_DEMO_USERS_ENABLED 'true'
+expect_preflight_pass 'explicit demo deployment identity opt-in is accepted'
 
 write_valid_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" AIRFLOW_FERNET_KEY 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA*='
@@ -377,7 +703,7 @@ expect_preflight_failure 'missing replay host directory is rejected' 'ASKLAKE_RE
 write_valid_env "$ENV_FILE"
 expect_preflight_failure \
   'Compose wiring that reuses application credentials as root is rejected' \
-  'Compose object-storage wiring does not match the selected minio provider contract' \
+  'Compose wiring does not match the selected minio provider and feature-profile contract' \
   "$UNSAFE_COMPOSE"
 
 # Source without executing main so the real health_check function can be exercised
@@ -447,6 +773,36 @@ else
   record_fail 'deploy control starts and verifies ClickHouse when enabled'
 fi
 
+mock_clickhouse_v2_deploy_control() (
+  local enabled="$1"
+
+  remote_clickhouse_v2_enabled() {
+    printf '%s\n' "$enabled"
+  }
+  remote_compose() {
+    printf 'compose:%s\n' "$1"
+  }
+
+  prepare_clickhouse_v2_runtime
+  verify_clickhouse_v2_runtime
+)
+
+if output="$(mock_clickhouse_v2_deploy_control false 2>&1)" \
+  && [[ "$output" == *'compose:rm -sf kafka-connect-v2 clickhouse-v2 clickhouse-keeper-v2'* ]] \
+  && [[ "$output" != *'RealtimeIngestService'* ]]; then
+  record_pass 'deploy control removes stale ClickHouse V2 services and skips readiness when disabled'
+else
+  record_fail 'deploy control removes stale ClickHouse V2 services and skips readiness when disabled'
+fi
+
+if output="$(mock_clickhouse_v2_deploy_control true 2>&1)" \
+  && [[ "$output" == *'compose:up -d --wait redpanda clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2'* ]] \
+  && [[ "$output" == *'RealtimeIngestService'* ]]; then
+  record_pass 'deploy control starts and verifies ClickHouse V2 when enabled'
+else
+  record_fail 'deploy control starts and verifies ClickHouse V2 when enabled'
+fi
+
 mock_stack_metadata_bootstrap() (
   local stack_name="$1"
 
@@ -456,10 +812,12 @@ mock_stack_metadata_bootstrap() (
   bootstrap_metadata_schema() { printf 'metadata_bootstrap\n'; }
   bootstrap_trino_dependencies() { printf 'trino_bootstrap\n'; }
   prepare_clickhouse_runtime() { printf 'clickhouse_prepare\n'; }
+  prepare_clickhouse_v2_runtime() { printf 'clickhouse_v2_prepare\n'; }
   remote_compose() { printf 'compose:%s\n' "$1"; }
   health_check() { printf 'health_check\n'; }
   verify_trino_runtime() { printf 'trino_verify\n'; }
   verify_clickhouse_runtime() { printf 'clickhouse_verify\n'; }
+  verify_clickhouse_v2_runtime() { printf 'clickhouse_v2_verify\n'; }
 
   "${stack_name}_stack"
 )
@@ -467,7 +825,7 @@ mock_stack_metadata_bootstrap() (
 for stack_name in start deploy restart; do
   if output="$(mock_stack_metadata_bootstrap "$stack_name" 2>&1)" \
     && [[ "$output" == *$'preflight\nmetadata_bootstrap\ntrino_bootstrap'* ]] \
-    && [[ "$output" == *$'metadata_bootstrap\ntrino_bootstrap\nclickhouse_prepare\ncompose:'* ]]; then
+    && [[ "$output" == *$'metadata_bootstrap\ntrino_bootstrap\nclickhouse_prepare\nclickhouse_v2_prepare\ncompose:'* ]]; then
     record_pass "$stack_name bootstraps metadata schema before application services"
   else
     record_fail "$stack_name bootstraps metadata schema before application services"

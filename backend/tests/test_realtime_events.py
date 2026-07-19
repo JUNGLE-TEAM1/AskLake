@@ -328,7 +328,10 @@ class RealtimeEventHubTests(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(is_disconnected=lambda: asyncio.sleep(0, result=False))
         snapshot = ReplaySnapshot(min_cursor=5, max_cursor=7, events=[])
 
-        with patch("app.api.realtime._load_replay_snapshot", return_value=snapshot):
+        with (
+            patch("app.api.realtime._load_replay_snapshot", return_value=snapshot),
+            patch("app.api.realtime._stream_identity_is_authorized", return_value=True),
+        ):
             frames = [
                 frame
                 async for frame in _event_stream(
@@ -459,7 +462,10 @@ class RealtimeEventHubTests(unittest.IsolatedAsyncioTestCase):
             max_cursor=2,
             events=[event_envelope(1), event_envelope(2)],
         )
-        with patch("app.api.realtime._load_replay_snapshot", return_value=snapshot):
+        with (
+            patch("app.api.realtime._load_replay_snapshot", return_value=snapshot),
+            patch("app.api.realtime._stream_identity_is_authorized", return_value=True),
+        ):
             frames = [
                 frame
                 async for frame in _event_stream(

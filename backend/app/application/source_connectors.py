@@ -23,6 +23,11 @@ def test_source_connector(
     return SourceConnectorAnalysis.model_validate(result)
 
 
+# This is an application use case, not a pytest test. Some unittest modules
+# import it at module scope, where pytest would otherwise collect it by name.
+test_source_connector.__test__ = False
+
+
 def list_source_assets(
     request: SourceAssetsRequest,
     *,

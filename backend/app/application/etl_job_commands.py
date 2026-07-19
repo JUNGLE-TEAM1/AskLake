@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.application.pipeline_mapping import CreatePipelineMappingContext
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.models import (
     ETLJobModel,
     ETLRunModel,
@@ -427,7 +428,7 @@ def _authorize_delete(
             status_code=exc.status_code,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
         raise
     return actor_context
@@ -527,7 +528,7 @@ def _persist_delete(
         status_code=status.HTTP_200_OK,
         target_id=requested_job_id,
         target_name=job_name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
     try:
         db.commit()

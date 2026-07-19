@@ -11,6 +11,9 @@ from app.services.realtime_event_service import realtime_event_dispatcher, realt
 from app.services.realtime_feature_flags import resolve_realtime_feature_state
 from app.services.realtime_metrics import realtime_metrics
 from app.core.observability import metrics_snapshot
+from app.realtime.application.ingest_service import RealtimeIngestService
+from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
 
 router = APIRouter()
 
@@ -62,11 +65,64 @@ def ai_health_check(response: Response) -> dict[str, object]:
 @router.get("/health/realtime")
 def realtime_health_check(response: Response) -> dict[str, object]:
     state = resolve_realtime_feature_state(settings)
+    v2_ready = False
+    v2_status = "disabled"
+    connector_state = "DISABLED"
+    task_states: list[str] = []
+    clickhouse_ready = False
+    worker_ready = False
+    if state.clickhouse_realtime_v2_enabled:
+        try:
+            probe = RealtimeIngestService().probe()
+            worker_ready = probe.runtime_ready
+            connector_state = probe.connector_state
+            task_states = list(probe.task_states)
+        except (KafkaConnectError, ValueError):
+            connector_state = "UNAVAILABLE"
+        client: ClickHouseClient | None = None
+        try:
+            client = ClickHouseClient.realtime_v2_reader()
+            clickhouse_ready = client.ping()
+        except (ClickHouseError, ValueError):
+            clickhouse_ready = False
+        finally:
+            if client is not None:
+                client.close()
+        # A fresh deployment has no connector until a Continuous SQL Job is
+        # started. Readiness must verify the worker and ClickHouse, not require
+        # a connector that cannot exist yet.
+        v2_ready = worker_ready and clickhouse_ready
+        v2_status = "ready" if v2_ready else "unavailable"
+    realtime_v2 = {
+        "enabled": state.clickhouse_realtime_v2_enabled,
+        "ready": v2_ready,
+        "status": v2_status,
+        "consumerOwner": state.clickhouse_realtime_consumer_owner,
+        "connector": {
+            "enabled": state.kafka_connect_sink_enabled,
+            "configured": bool(
+                state.kafka_connect_sink_enabled
+                and settings.kafka_connect_url
+                and settings.kafka_connect_connector_name
+            ),
+            "state": connector_state,
+            "taskStates": task_states,
+            "workerReady": worker_ready,
+        },
+        "clickhouse": {"ready": clickhouse_ready},
+    }
     if not state.realtime_events_enabled:
+        if state.clickhouse_realtime_v2_enabled:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
-            "ok": True,
-            "status": "disabled",
+            "ok": not state.clickhouse_realtime_v2_enabled,
+            "status": (
+                "not_ready"
+                if state.clickhouse_realtime_v2_enabled
+                else "disabled"
+            ),
             "effectiveMode": state.dashboard_sync_mode,
+            "v2": realtime_v2,
         }
     database_ok = True
     event_cursor = 0
@@ -75,7 +131,11 @@ def realtime_health_check(response: Response) -> dict[str, object]:
             event_cursor = RealtimeEventRepository(session).max_cursor()
     except SQLAlchemyError:
         database_ok = False
-    ready = database_ok and realtime_event_dispatcher.ready
+    ready = (
+        database_ok
+        and realtime_event_dispatcher.ready
+        and (not state.clickhouse_realtime_v2_enabled or v2_ready)
+    )
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
     metrics = realtime_metrics.snapshot()
     return {
@@ -87,4 +147,5 @@ def realtime_health_check(response: Response) -> dict[str, object]:
         "listener": {"ready": bool(metrics.get("listenerReady"))},
         "capacity": realtime_event_hub.capacity_snapshot(),
         "eventCursor": event_cursor,
+        "v2": realtime_v2,
     }
