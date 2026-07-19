@@ -117,6 +117,20 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
             terminal_status=terminal_status,
         )
     if (
+        evidence.desired_state == "running"
+        and evidence.contract_initialized
+        and evidence.container_state in {"exited", "missing"}
+        and evidence.report_status in {"failed", "paused", "stopped"}
+        and evidence.observed_worker_attempt_id
+        and evidence.expected_worker_attempt_id
+        and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id
+    ):
+        return ReconciliationDecision(
+            ReconciliationAction.RESTART_WORKER,
+            ReconciliationCertainty.CONFIRMED,
+            "new running intent supersedes the terminal report from the previous worker attempt",
+        )
+    if (
         evidence.observed_worker_attempt_id
         and evidence.expected_worker_attempt_id
         and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id

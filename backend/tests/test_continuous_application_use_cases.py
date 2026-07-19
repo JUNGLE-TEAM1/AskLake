@@ -257,6 +257,18 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         ))
         self.assertEqual(decision.action, ReconciliationAction.IGNORE_STALE_REPORT)
 
+    def test_new_running_intent_restarts_after_previous_attempt_failed(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            container_state="exited",
+            report_state=JsonDocumentState.FOUND,
+            report_status="failed",
+            expected_worker_attempt_id="new",
+            observed_worker_attempt_id="old",
+        ))
+
+        self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
+        self.assertEqual(decision.certainty, ReconciliationCertainty.CONFIRMED)
+
     def test_partial_publication_uses_current_report_for_resume(self) -> None:
         decision = decide_reconciliation(self.evidence(
             container_state="exited",
