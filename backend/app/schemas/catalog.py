@@ -6,7 +6,7 @@ from app.schemas.common import CamelModel, CursorPageMeta
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
-DatasetFreshness = Literal["latest", "stale", "approval"]
+DatasetFreshness = Literal["latest", "stale", "approval", "realtime"]
 DatasetStatus = Literal["available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]

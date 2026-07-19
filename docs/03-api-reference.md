@@ -245,7 +245,7 @@ Canonical status values:
 | Job | `status` | persisted legacy 값은 `scheduled`, `running`, `failed`, `paused`, `canceled`, `stopped`; 목록 UI는 `scheduled`, `running`, `stopped` 중심으로 표시하고 실패·취소는 최신 Run 결과로 표시 |
 | Run | `status` | `queued`, `running`, `success`, `failed`, `canceled` |
 | Dataset | `status` | `available`, `approval_required` |
-| Dataset | `freshness` | `latest`, `stale`, `approval` |
+| Dataset | `freshness` | `latest`, `stale`, `approval`, `realtime` |
 | Dataset | `queryEngineStatus` | `pending`, `available`, `registration_failed`, `unavailable` |
 | Dashboard | `status` | `draft`, `published` |
 

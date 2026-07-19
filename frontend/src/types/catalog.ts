@@ -33,7 +33,7 @@ export type LineageGraph = {
 export type CatalogDataset = {
   description: string;
   downstream: string[];
-  freshness: "latest" | "stale" | "approval";
+  freshness: "latest" | "stale" | "approval" | "realtime";
   id: string;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   lastUpdated: string;
