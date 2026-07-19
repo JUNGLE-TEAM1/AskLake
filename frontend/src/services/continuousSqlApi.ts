@@ -44,6 +44,21 @@ export type CreateClickHouseContinuousSqlRequest = ContinuousSqlPlanRequest & {
   };
 };
 
+export type CreateIcebergContinuousSqlRequest = ContinuousSqlPlanRequest & {
+  clientRequestId: string;
+  name: string;
+  output: {
+    datasetId: string;
+    datasetName: string;
+    layer: "GOLD";
+    servingMode: "iceberg";
+  };
+};
+
+export type CreateContinuousSqlRequest =
+  | CreateClickHouseContinuousSqlRequest
+  | CreateIcebergContinuousSqlRequest;
+
 export type ContinuousSqlCommandResponse = {
   command: "start" | "pause" | "resume" | "stop" | "recover";
   commandId: string;
@@ -72,6 +87,10 @@ export function verifyAndRegisterCatalogUniqueKey(datasetId: string, columns: st
 }
 
 export function createClickHouseContinuousSqlJob(request: CreateClickHouseContinuousSqlRequest) {
+  return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
+}
+
+export function createContinuousSqlJob(request: CreateContinuousSqlRequest) {
   return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
 }
 

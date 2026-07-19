@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     dashboard_sync_mode: str = "polling"
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False
+    continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"
     latest_static_per_batch_enabled: bool = False
     static_change_backfill_enabled: bool = False
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)

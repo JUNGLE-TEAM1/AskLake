@@ -76,6 +76,7 @@ def get_realtime_feature_config(
         dashboard_sync_mode=state.dashboard_sync_mode,
         realtime_events_enabled=state.realtime_events_enabled,
         continuous_sql_join_enabled=state.continuous_sql_join_enabled,
+        continuous_sql_serving_mode=state.continuous_sql_serving_mode,
         clickhouse_continuous_join_enabled=state.clickhouse_continuous_join_enabled,
         clickhouse_realtime_v2_enabled=state.clickhouse_realtime_v2_enabled,
         kafka_connect_sink_enabled=state.kafka_connect_sink_enabled,

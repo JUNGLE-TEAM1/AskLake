@@ -10,6 +10,7 @@ ClickHouseRealtimeConsumerOwner = Literal[
     "kafka_engine_v1",
     "kafka_connect_v2",
 ]
+ContinuousSqlServingMode = Literal["iceberg", "clickhouse"]
 VALID_DASHBOARD_SYNC_MODES = frozenset({"polling", "hybrid", "sse"})
 VALID_CLICKHOUSE_REALTIME_CONSUMER_OWNERS = frozenset(
     {"disabled", "kafka_engine_v1", "kafka_connect_v2"}
@@ -25,6 +26,7 @@ class RealtimeFeatureState:
     dashboard_sync_mode: DashboardSyncMode
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
+    continuous_sql_serving_mode: ContinuousSqlServingMode
     clickhouse_continuous_join_enabled: bool
     clickhouse_realtime_v2_enabled: bool
     kafka_connect_sink_enabled: bool
@@ -56,6 +58,10 @@ def resolve_realtime_feature_state(settings: Settings) -> RealtimeFeatureState:
         dashboard_sync_mode=effective_mode,
         realtime_events_enabled=realtime_events_enabled,
         continuous_sql_join_enabled=continuous_sql_join_enabled,
+        continuous_sql_serving_mode=cast(
+            ContinuousSqlServingMode,
+            settings.continuous_sql_serving_mode,
+        ),
         clickhouse_continuous_join_enabled=(
             continuous_sql_join_enabled
             and bool(settings.clickhouse_continuous_join_enabled)

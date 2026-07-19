@@ -7,6 +7,7 @@ export type RealtimeFeatureConfig = {
   clickhouseRealtimeConsumerOwner: "disabled" | "kafka_engine_v1" | "kafka_connect_v2";
   clickhouseRealtimeV2Enabled: boolean;
   continuousSqlJoinEnabled: boolean;
+  continuousSqlServingMode: "iceberg" | "clickhouse";
   dashboardSyncMode: DashboardSyncMode;
   fallbackReason: string | null;
   featureScope: "deployment";

@@ -59,6 +59,7 @@ from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
 )
+from app.services.iceberg_writer_service import build_iceberg_writer_target
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,16 @@ class ContinuousSqlService:
         actor: ActorContext,
     ) -> ContinuousSqlJob:
         self._require_enabled()
+        if request.output.serving_mode != self.settings.continuous_sql_serving_mode:
+            raise ApiError(
+                "CONTINUOUS_SQL_SERVING_MODE_DISABLED",
+                "The requested Continuous SQL serving mode is disabled for this deployment.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {
+                    "configuredServingMode": self.settings.continuous_sql_serving_mode,
+                    "requestedServingMode": request.output.serving_mode,
+                },
+            )
         if request.output.serving_mode == "clickhouse":
             self._require_clickhouse_enabled()
             if request.static_binding_policy != "PINNED_AT_START":
@@ -220,12 +231,18 @@ class ContinuousSqlService:
                 f"{output_target.table_uri}/_consumer/{job_id}"
             )
         else:
-            if request.output.iceberg_target is None or request.output.storage_path is None:
-                raise RuntimeError("Validated Iceberg output target is missing")
-            output_target = request.output.iceberg_target
-            output_storage_path = request.output.storage_path
+            output_target = request.output.iceberg_target or build_iceberg_writer_target(
+                request.output.dataset_name,
+                request.output.dataset_id,
+                write_mode="append",
+                runtime_settings=self.settings,
+            )
+            output_storage_path = request.output.storage_path or (
+                f"s3a://{self.settings.asklake_spark_output_bucket}/"
+                f"continuous-sql/{output_target.table}"
+            )
             checkpoint_path = request.checkpoint_path or (
-                f"{request.output.storage_path}/_checkpoints/{job_id}"
+                f"{output_storage_path}/_checkpoints/{job_id}"
             )
         return output_target, output_storage_path, checkpoint_path
 

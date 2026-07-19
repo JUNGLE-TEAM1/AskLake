@@ -368,7 +368,7 @@ Production profile은 아래 경계만 제공한다.
 
 Kafka Connect production image는 [Dockerfile](../deploy/kafka-connect/Dockerfile)로 build/publish한 뒤 server `deploy/.env`의 `KAFKA_CONNECT_V2_IMAGE`를 immutable `name@sha256:...`로 바꿔야 한다. example의 invalid registry/digest placeholder로 실제 profile을 배포하지 않는다. ClickHouse certificate/key/CA는 repository 밖의 readable host path에 준비하고 connector properties secret은 mode `0600`으로 제한한다.
 
-Production Compose는 누적 PR09의 connector registration과 live probe를 사용해 아래 값을 기본 활성화한다.
+ClickHouse Realtime V2를 명시적으로 선택하는 배포만 누적 PR09의 connector registration과 live probe를 사용해 아래 값을 활성화한다. 기본 Production Compose는 `COMPOSE_PROFILES=trino`, `CONTINUOUS_SQL_SERVING_MODE=iceberg`이며 이 profile을 기동하지 않는다.
 
 ```dotenv
 CLICKHOUSE_REALTIME_V2_ENABLED=true

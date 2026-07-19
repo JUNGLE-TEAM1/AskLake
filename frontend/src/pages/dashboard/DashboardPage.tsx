@@ -428,7 +428,10 @@ export function DashboardPage({
   const refreshRuntimeDashboard = async () => {
     setIsRefreshingRuntime(true);
     const runtime = runtimeSelection.mode === "published"
-      ? await loadPublishedRuntime(runtimeSelection.dashboardId)
+      ? await loadPublishedRuntime(runtimeSelection.dashboardId, {
+        preferPrefetched: true,
+        silent: true,
+      })
       : await loadDraftRuntime(runtimeSelection.dashboardId);
     setIsRefreshingRuntime(false);
     setRuntimeNotice(runtime

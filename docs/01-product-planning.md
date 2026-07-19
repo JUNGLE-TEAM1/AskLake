@@ -140,7 +140,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe만 저장하고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.
 10. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 전환한다. Trino page 차트는 현재 표시 범위만 임시로 시각화한다.
 11. DuckDB compatibility 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결한다.
-12. 선택 관계가 Kafka streaming Dataset 1개와 static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. 사용자가 출력 카탈로그 이름과 시작 간격을 확인하면 ClickHouse GOLD output Job을 생성하고 즉시 start command를 보낸다. 출력 Dataset은 Catalog에 `preparing`으로 즉시 나타나고, 첫 batch publication 뒤 `available`로 전환되어 Dashboard source에 나타난다. 일반 `실행`으로 만든 Trino preview와 반복 SQL Job은 이 연속 처리 경로로 자동 승격하지 않는다.
+12. 선택 관계가 Kafka streaming Dataset 1개와 static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. 사용자가 출력 카탈로그 이름과 시작 간격을 확인하면 deployment serving mode에 맞는 GOLD output Job을 생성하고 즉시 start command를 보낸다. 기본 mode는 Spark/Iceberg이며 Kafka micro-batch와 고정된 정적 Iceberg snapshot을 JOIN해 Catalog revision을 게시한다. 출력 Dataset은 첫 batch publication 뒤 `available`로 전환되어 Dashboard source에 나타난다. 일반 `실행`으로 만든 Trino preview와 반복 SQL Job은 이 연속 처리 경로로 자동 승격하지 않는다.
 
 ### Flow C. FastAPI live backend 연결
 
@@ -206,7 +206,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ## 11) ClickHouse Realtime Serving V2 전환 프로그램
 
-현재 `dev`의 Realtime 2026 production 배포 템플릿은 Kafka Connect V2를 단일 consumer owner로 사용하고 durable SSE와 Dashboard targeted refetch를 기본 활성화한다. Kafka Engine V1은 동시 소비를 막기 위해 기본 비활성 상태로 둔다.
+현재 `dev`의 production 배포 템플릿은 Spark/Iceberg Continuous SQL을 기본 owner로 사용하고 ClickHouse v1/v2 consumer를 비활성화한다. durable event backbone은 유지하되 published Dashboard 값은 백그라운드에서 준비하고 사용자의 수동 새로고침에서만 교체한다. Realtime 2026 V2는 명시적으로 opt-in하는 전환 프로그램으로 남긴다.
 
 V2는 이 기준선을 다음 방향으로 단계 확장한다.
 

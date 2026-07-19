@@ -4074,6 +4074,7 @@ type PermissionGrant = {
 | dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
+| continuousSqlServingMode | iceberg \| clickhouse | 새 Continuous SQL Job에 허용되는 deployment serving mode |
 | clickhouseContinuousJoinEnabled | boolean | Continuous SQL과 ClickHouse flag가 모두 켜졌을 때만 true인 ClickHouse serving opt-in |
 | clickhouseRealtimeV2Enabled | boolean | V2 application kill switch의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
 | kafkaConnectSinkEnabled | boolean | Kafka Connect V2 sink의 effective 값. backend intrinsic 기본은 false이고 Production Compose는 true를 주입 |
@@ -4139,7 +4140,7 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
 
-`output.servingMode`의 기본값은 `iceberg`다. 기존 mode는 `storagePath`, append `icebergTarget`, optional S3 `checkpointPath`를 그대로 요구한다. `clickhouse` mode는 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`일 때만 허용하며 output shape는 다음과 같다.
+`output.servingMode`의 기본값은 `iceberg`다. Iceberg mode는 `storagePath`와 append `icebergTarget`을 함께 보내거나 둘 다 생략하며, 생략 시 backend가 `ASKLAKE_SPARK_OUTPUT_BUCKET`, Trino catalog/schema와 Dataset identity에서 target·checkpoint를 생성한다. 요청 mode가 `CONTINUOUS_SQL_SERVING_MODE`와 다르면 `422 CONTINUOUS_SQL_SERVING_MODE_DISABLED`다. `clickhouse` mode는 배포 mode와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`가 모두 맞을 때만 허용하며 output shape는 다음과 같다.
 
 ```json
 {

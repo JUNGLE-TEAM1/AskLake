@@ -9,6 +9,7 @@ class RealtimeFeatureConfigResponse(CamelModel):
     dashboard_sync_mode: Literal["polling", "hybrid", "sse"]
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
+    continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"
     clickhouse_continuous_join_enabled: bool
     clickhouse_realtime_v2_enabled: bool = False
     kafka_connect_sink_enabled: bool = False
