@@ -13,8 +13,12 @@ const exactKeys = (value, keys, label) => {
 const positiveInteger = (value, label) => {
   if (!Number.isInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
 };
-const workerReplicaCount = (value, label) => {
-  if (!Number.isInteger(value) || value < 1 || value > 5) throw new Error(`${label} must be an integer between 1 and 5`);
+const workerReplicaCount = (value, label, expectedWorkerCount) => {
+  if (expectedWorkerCount === null) {
+    if (!Number.isInteger(value) || value < 1 || value > 5) throw new Error(`${label} must be an integer between 1 and 5`);
+    return;
+  }
+  if (value !== expectedWorkerCount) throw new Error(`${label} must be exactly ${expectedWorkerCount}`);
 };
 const nonNegativeInteger = (value, label) => {
   if (!Number.isInteger(value) || value < 0) throw new Error(`${label} must be a non-negative integer`);
@@ -44,9 +48,9 @@ const unchangedHashPair = (value, beforeKey, afterKey, label) => {
   if (value[beforeKey] !== value[afterKey]) throw new Error(`${label} changed during the campaign`);
 };
 
-export function validateDistributedTrinoEvidence(receipt, expectedDeploymentCommit = null) {
+function validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentCommit, schemaVersion, expectedWorkerCount) {
   exactKeys(receipt, ['schemaVersion', 'baselineCommit', 'deploymentCommit', 'status', 'deployment', 'nodes', 'query', 'failure', 'contracts', 'rollback', 'cleanup'], 'receipt');
-  if (receipt.schemaVersion !== 2) throw new Error('schemaVersion must be 2');
+  if (receipt.schemaVersion !== schemaVersion) throw new Error(`schemaVersion must be ${schemaVersion}`);
   if (receipt.baselineCommit !== ISSUE_BASELINE_COMMIT) throw new Error('baselineCommit does not match the Issue baseline');
   commit(receipt.deploymentCommit, 'deploymentCommit');
   if (expectedDeploymentCommit !== null && receipt.deploymentCommit !== expectedDeploymentCommit) {
@@ -58,7 +62,7 @@ export function validateDistributedTrinoEvidence(receipt, expectedDeploymentComm
   if (receipt.deployment.namespace !== 'asklake-dev') throw new Error('deployment.namespace must be asklake-dev');
   if (receipt.deployment.release !== 'asklake-trino') throw new Error('deployment.release must be asklake-trino');
   positiveInteger(receipt.deployment.helmRevision, 'deployment.helmRevision');
-  workerReplicaCount(receipt.deployment.declaredWorkerReplicas, 'deployment.declaredWorkerReplicas');
+  workerReplicaCount(receipt.deployment.declaredWorkerReplicas, 'deployment.declaredWorkerReplicas', expectedWorkerCount);
   hash(receipt.deployment.imageDigest, 'deployment.imageDigest');
   hash(receipt.deployment.chartSha256, 'deployment.chartSha256');
   hash(receipt.deployment.valuesSha256, 'deployment.valuesSha256');
@@ -128,17 +132,31 @@ export function validateDistributedTrinoEvidence(receipt, expectedDeploymentComm
   return receipt;
 }
 
+export function validateDistributedTrinoEvidence(receipt, expectedDeploymentCommit = null) {
+  return validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentCommit, 3, 5);
+}
+
+export function validateHistoricalDistributedTrinoEvidenceV2(receipt, expectedDeploymentCommit = null) {
+  return validateDistributedTrinoEvidenceVersion(receipt, expectedDeploymentCommit, 2, null);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const path = process.argv[2];
+  const historicalV2 = process.argv[2] === '--historical-v2';
+  const path = process.argv[historicalV2 ? 3 : 2];
   const expectedDeploymentCommit = process.env.ASKLAKE_TRINO_DEPLOYMENT_COMMIT;
   if (!path || !expectedDeploymentCommit) {
-    console.error('usage: ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-sha> verify-eks-trino-distributed-evidence.mjs <redacted-receipt.json>');
+    console.error('usage: ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-sha> verify-eks-trino-distributed-evidence.mjs [--historical-v2] <redacted-receipt.json>');
     process.exit(2);
   }
   try {
     commit(expectedDeploymentCommit, 'ASKLAKE_TRINO_DEPLOYMENT_COMMIT');
-    validateDistributedTrinoEvidence(JSON.parse(readFileSync(path, 'utf8')), expectedDeploymentCommit);
-    console.log(JSON.stringify({ contract: 'eks-trino-distributed-evidence-v2', status: 'passed' }));
+    const receipt = JSON.parse(readFileSync(path, 'utf8'));
+    if (historicalV2) {
+      validateHistoricalDistributedTrinoEvidenceV2(receipt, expectedDeploymentCommit);
+    } else {
+      validateDistributedTrinoEvidence(receipt, expectedDeploymentCommit);
+    }
+    console.log(JSON.stringify({ contract: historicalV2 ? 'eks-trino-distributed-evidence-v2-historical' : 'eks-trino-distributed-evidence-v3', status: 'passed' }));
   } catch (error) {
     console.error(`distributed Trino evidence rejected: ${error.message}`);
     process.exit(1);

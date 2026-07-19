@@ -1992,11 +1992,10 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 Trino distributed mode는 기본 비활성이다. 활성화할 때는 private values에
-`includeCoordinator=false`, 1~5 범위의 `workerReplicas`, worker General node selector, 완전한 CPU/memory
-request/limit와 termination grace를 모두 명시한다. 5는 비용·오입력 방지용 MVP 안전 상한이며 기본
-worker 수나 성능 보장이 아니다. 첫 live 후보는 Git 제외 private values에서 worker `2`개로
-시작하지만 checked-in values와 example에 실제 worker sizing을 추가하지 않는다.
-정적 검증은 기본 single render, 완전한 opt-in render, 0·6을 포함한 누락/범위 밖 입력 거부,
+`includeCoordinator=false`, 정확히 `5`인 `workerReplicas`, worker General node selector, 완전한 CPU/memory
+request/limit와 termination grace를 모두 명시한다. 5는 dev live의 고정 Pod replica이며 물리 서버
+수나 성능 보장이 아니다. checked-in values와 example에는 실제 worker sizing을 추가하지 않는다.
+정적 검증은 기본 single render, 완전한 opt-in render, 4·6을 포함한 고정값 밖 입력 거부,
 coordinator-only Service, 동일 image/Secret/ServiceAccount, Airflow-only 격리와 HPA/PDB/PVC/RBAC/Secret
 부재를 확인한다.
 
@@ -2024,23 +2023,36 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
   /path/to/redacted-trino-distributed-receipt.json
 ```
 
-실제 component release는 Git 제외 mode `0600` private values를 사용해 먼저 server-side dry-run한다.
+실제 component release는 Git 제외 mode `0600` private values에서
+`trino.distributed.workerReplicas=5`를 고정하고 먼저 server-side dry-run한다. SQL 요청·UI와 HPA는
+worker 수를 변경하지 않으며 다른 수는 chart schema와 배포 preflight가 거부한다.
 General NodePool의 live CPU/memory 상한도 실제 cluster-wide requests와 새 node system overhead를
 수용해야 한다. 2026-07-19 검증에서는 기존 8 CPU·32Gi 상한이 이미 사용 중인 6 CPU 때문에 새
 x86 node를 만들지 못해 private live 상한을 12 CPU·48Gi로 조정했다. 이 값은 상시 node 수나
 worker 성능 sizing이 아니며 다른 workload와 부하가 달라지면 다시 계산한다.
 승인된 적용은 배포 worktree의 `HEAD`와 fetched `origin/pair1`을 동일한 full SHA로 고정하고
 `ASKLAKE_TRINO_DEPLOYMENT_COMMIT`에 그 값을 전달해 `deploy-eks-trino-distributed.sh --apply`로
-수행하며 현재 immutable Trino image를 보존한다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
+수행하며 현재 immutable Trino image를 보존한다. 이미 분산 모드인 release를 재적용할 때도 live
+values에서 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도 values를 baseline에
+사용하며 기존 distributed 값을 그대로 재사용하지 않는다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
 query를 먼저 검증하고 그 Helm revision을 안전 rollback 기준으로 고정한다. apply 뒤
-`verify-eks-trino-distributed-live.sh <worker-count>`가 Deployment Ready뿐 아니라
+`verify-eks-trino-distributed-live.sh 5`가 Deployment Ready뿐 아니라
 FastAPI의 materializer identity로 `system.runtime.nodes`를 조회해 coordinator 1개와 active worker
 수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 이 조회 권한은 distributed
 mode의 materializer에만 `system_information: read`, system catalog
 read-only와 `system.runtime.nodes|tasks` SELECT를 함께 부여하며 일반 query identity에는 주지 않는다.
 실패하면 deploy script가 안전 단일 coordinator Helm revision으로 되돌린다. active-node gate는
 배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
-exact-UID 장애 복구, `2→1→2` scale-down/복원과 안전 rollback까지 같은 campaign에서 검증해야 한다.
+exact-UID 장애 복구와 안전 rollback까지 같은 campaign에서 검증해야 한다. 최초 2-worker
+campaign의 `2→1→2` 기록은 역사적 scale evidence이며 현재 fixed-5 운영 명령으로 사용하지 않는다.
+single baseline 생성 또는 query 검증이 실패하면 fixed-5 후보를 적용하지 않고 배포 전 관찰한
+revision을 복구해 기존 worker 수와 Iceberg query가 다시 정상인지 확인한다.
+apply 전체에서는 namespace-scoped `asklake-trino-deploy-lock` ConfigMap을 원자적으로 획득하고
+lock에는 획득 시각, 병합 commit, 관찰 revision을 기록한다. 비정상 종료로 lock이 남으면 이름 기반
+강제 삭제를 하지 않고 [Trino distributed runbook](eks-trino-distributed-phase0.md)의 상태 확인과
+UID-precondition break-glass 절차를 따른다. 각 Helm mutation은 command 결과의 revision을 즉시
+기록하고 query gate 뒤에도 같은 revision인지 확인하므로 foreign revision을 성공으로 인정하거나
+rollback하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 

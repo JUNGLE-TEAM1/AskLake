@@ -648,20 +648,20 @@ client용 `Service/asklake-trino`는 기존 `component=trino` coordinator만 선
 JDBC Iceberg catalog, Warehouse 설정과 `asklake-trino` ServiceAccount/Pod Identity를 사용한다.
 기존 Iceberg data privilege는 유지하고 분산 live evidence를 위해 내부 materializer에만 read-only
 system information과 `system.runtime.nodes|tasks` SELECT만 허용한다. 다른 system table,
-write/graceful-shutdown 권한은 허용하지 않는다. worker replicas는
-MVP 안전 상한인 1~5 범위의 opt-in private input이며 이 범위에 기본 sizing 의미는 없다. 첫 live
-후보는 private input에서 worker `2`개로 시작하지만 chart default와 운영 sizing은 계속 미정이다. resources,
+	write/graceful-shutdown 권한은 허용하지 않는다. dev live의 분산 모드는 worker replica를 정확히
+	`5`개로 고정하며 SQL 요청·UI와 HPA가 이를 바꾸지 않는다. chart의 비활성 기본값은 rollback용
+	단일 process를 유지한다. worker `5`개는 Pod 수이지 물리 서버 수나 성능 보장이 아니다. resources,
 placement와 Kubernetes termination grace도 opt-in private input이고 HPA/PDB/PVC/별도 NodePool은
 근거가 생기기 전 chart가 만들지 않는다. 상세 수용·rollback 경계는
 [EKS Trino 분산 Phase 0](eks-trino-distributed-phase0.md)을 따른다.
 
 coordinator Deployment는 `Recreate` 전략으로 old/new coordinator가 동시에 Service 뒤에 서는 것을
 금지한다. coordinator 변경 중 짧은 query downtime을 수용하며, 배포 후 FastAPI의 인증된
-`system.runtime.nodes` 조회가 coordinator 1개와 선언 worker 수를 확인하기 전에는 promotion을
+	`system.runtime.nodes` 조회가 coordinator 1개와 worker 5개를 확인하기 전에는 promotion을
 진행하지 않는다. distributed apply 전에 같은 chart의 단일 coordinator `Recreate` 상태를 먼저
 검증해 안전 rollback revision으로 기록한다. active-node gate만으로 promotion을 완료하지 않으며
-non-empty Iceberg worker task, exact-UID 장애 복구, `2→1→2` scale 동작과 안전 rollback evidence가
-모두 필요하다.
+	non-empty Iceberg worker task, exact-UID 장애 복구와 안전 rollback evidence가 모두 필요하다.
+	최초 2-worker campaign의 `2→1→2` 결과는 역사적 scale evidence로만 보존한다.
 
 Airflow MVP는 `LocalExecutor`와 image에 bake한 DAG를 사용하고 metadata를 RDS `airflow_metadata`에 저장한다. API server, scheduler, DAG processor는 각각 1 replica이며 EFS/PVC와 shared DAG/log volume은 만들지 않는다. RDS URL은 `sslmode=verify-full`과 region CA ConfigMap mount를 사용한다. pre-install/pre-upgrade migration hook은 FAB AuthManager를 명시해 API 사용자를 멱등 생성/reset한다. dev API 인증은 ClusterIP 내부 username/password이며 password·execution/internal token은 Backend와 Airflow target Secret의 공유 binding이다. 따라서 Pod-local task log의 재시작 후 보존이나 cross-Pod 공유는 보장하지 않는다. 이 제한은 MVP에서 수용하고 durable log, scheduler HA 또는 동적 DAG 배포가 필요할 때 storage/executor 설계를 다시 연다. 실제 revision 2와 양방향 smoke는 [목요일 Pair B Airflow 실환경 검증 기록](eks-day16-b-airflow-live-evidence.md)을 따른다.
 
