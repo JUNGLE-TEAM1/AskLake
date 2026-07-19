@@ -20,8 +20,9 @@ for heading in \
   '## 4. Pod와 Node 복구' \
   '## 5. immutable digest rollout과 rollback' \
   '## 6. 보존 EC2 fallback' \
-  '## 7. 비용과 cleanup' \
-  '## 8. 완료와 인계 기준'; do
+  '## 7. ALB 기반 수동 인수' \
+  '## 8. 비용과 cleanup' \
+  '## 9. 완료와 인계 기준'; do
   grep -Fqx "$heading" "$RUNBOOK" || fail "runbook heading is missing: $heading"
 done
 

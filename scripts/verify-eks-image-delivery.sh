@@ -6,7 +6,7 @@ EXAMPLE="$ROOT_DIR/infra/eks/delivery/image-receipt.example.json"
 
 node --check "$ROOT_DIR/scripts/create-eks-image-receipt.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs"
-node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$EXAMPLE"
+node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" --require-ai-gateway "$EXAMPLE"
 
 grep -q '^  workflow_dispatch:' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"
 grep -q '^  id-token: write$' "$ROOT_DIR/.github/workflows/eks-image-delivery.yml"

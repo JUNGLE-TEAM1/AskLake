@@ -1,7 +1,7 @@
 output "phase8_runtime_secret_handoff" {
   description = "Secret names and key names only; values and rendered Kubernetes Secret data are forbidden."
   value = {
-    contract_version = "1.0"
+    contract_version = local.runtime_secret_static_contract.contractVersion
     namespace        = var.namespace
     delivery = {
       mode             = var.secret_delivery_mode

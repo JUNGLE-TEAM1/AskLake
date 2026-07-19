@@ -167,7 +167,7 @@ jobs:
             --image "sparkRuntime=$spark_image" \
             --image "trino=$trino_image"
 
-          node scripts/verify-eks-image-receipt.mjs \
+          node scripts/verify-eks-image-receipt.mjs --require-ai-gateway \
             "$RUNNER_TEMP/eks-image-receipt.json"
 
       - name: Upload digest receipt

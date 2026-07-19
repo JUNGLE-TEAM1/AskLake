@@ -190,6 +190,9 @@ for contract in \
   'automountServiceAccountToken: false' \
   'readOnlyRootFilesystem: true' \
   'runAsNonRoot: true' \
+  'runAsUser: 10001' \
+  'runAsGroup: 10001' \
+  'type: RuntimeDefault' \
   'path: /health' \
   'tcpSocket:'; do
   grep -Fq "$contract" <<<"$gateway_block" || {
@@ -197,6 +200,18 @@ for contract in \
     exit 1
   }
 done
+[[ "$(grep -c 'runAsUser: 10001' <<<"$gateway_block")" -eq 2 ]] || {
+  echo "AI Gateway must pin numeric UID 10001 at Pod and container scope" >&2
+  exit 1
+}
+[[ "$(grep -c 'runAsGroup: 10001' <<<"$gateway_block")" -eq 2 ]] || {
+  echo "AI Gateway must pin numeric GID 10001 at Pod and container scope" >&2
+  exit 1
+}
+grep -Fq 'USER 10001:10001' "$ROOT_DIR/ai-server/Dockerfile" || {
+  echo "AI Gateway image must use the same numeric UID/GID as Helm" >&2
+  exit 1
+}
 if grep -Fq 'OPENAI_API_KEY' "$RENDERED_FILE"; then
   echo "FastAPI/web render must not expose the provider key name" >&2
   exit 1
@@ -227,14 +242,25 @@ if grep -q 'kubectl apply --server-side --dry-run=server -f "$RENDERED_FILE"' \
 fi
 
 for deploy_guard in \
-  'Backend runtime Secret is not the exact provider-key-free Gateway profile' \
-  'AI Gateway runtime Secret does not have the exact three-key profile' \
-  'for shared_key in AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN' \
-  '.data.AI_QUERY_PROVIDER == "gateway"' \
-  '.data.AI_GATEWAY_BASE_URL == "http://ai-gateway:8090"' \
+  'externalsecret asklake-backend-runtime' \
+  'externalsecret asklake-ai-gateway-runtime' \
+  'verify-eks-ai-gateway-runtime.mjs' \
   '/api/health/ai'; do
   grep -Fq "$deploy_guard" "$DEPLOY_SCRIPT" || {
     echo "web deployment script is missing fail-closed Gateway guard: $deploy_guard" >&2
+    exit 1
+  }
+done
+for runtime_guard in \
+  'ExternalSecret is not Ready' \
+  'Secret is not controller-owned by its ExternalSecret' \
+  'AI_GATEWAY_SERVICE_TOKEN' \
+  'AI_MCP_SERVICE_TOKEN' \
+  'AI_PROVIDER_API_KEY' \
+  'AI_QUERY_PROVIDER' \
+  'AI_GATEWAY_BASE_URL'; do
+  grep -Fq "$runtime_guard" "$ROOT_DIR/scripts/verify-eks-ai-gateway-runtime.mjs" || {
+    echo "Gateway runtime verifier is missing guard: $runtime_guard" >&2
     exit 1
   }
 done

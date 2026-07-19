@@ -2,7 +2,12 @@
 
 import { readFileSync } from 'node:fs';
 
-const [mode = '--audit', configPath, receiptPath] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const mode = args.find((arg) => ['--audit', '--ready'].includes(arg)) ?? '--audit';
+const runtimeArg = args.find((arg) => arg.startsWith('--ai-runtime='));
+const expectedAiRuntime = runtimeArg?.split('=')[1] ?? 'gateway';
+const paths = args.filter((arg) => !arg.startsWith('--'));
+const [configPath, receiptPath] = paths;
 const selectedOwner = String(process.env.ASKLAKE_RUNTIME_CONFIG_RELEASE || '').trim();
 const allowedOwners = new Set(['asklake-web', 'asklake-foundation', 'asklake-runtime-config']);
 
@@ -11,8 +16,8 @@ function fail(message) {
   process.exit(1);
 }
 
-if (!['--audit', '--ready'].includes(mode) || !configPath || !receiptPath) {
-  fail('usage: verify-eks-runtime-config-contract.mjs --audit|--ready <configmap.json> <receipt.json>');
+if (!configPath || !receiptPath || !['gateway', 'direct-rollback'].includes(expectedAiRuntime)) {
+  fail('usage: verify-eks-runtime-config-contract.mjs --audit|--ready [--ai-runtime=gateway|direct-rollback] <configmap.json> <receipt.json>');
 }
 if (selectedOwner && !allowedOwners.has(selectedOwner)) {
   fail('ASKLAKE_RUNTIME_CONFIG_RELEASE is not an approved runtime ConfigMap owner');
@@ -29,8 +34,9 @@ const actualImage = String(config.data?.ASKLAKE_SPARK_KUBERNETES_IMAGE || '');
 const selection = selectedOwner ? 'selected' : 'unresolved';
 const ownershipReady = Boolean(selectedOwner) && managedByHelm && actualOwner === selectedOwner;
 const imageReady = Boolean(expectedImage) && actualImage === expectedImage;
-const aiRuntimeReady = config.data?.AI_QUERY_PROVIDER === 'gateway' &&
-  config.data?.AI_GATEWAY_BASE_URL === 'http://ai-gateway:8090';
+const aiRuntimeReady = expectedAiRuntime === 'gateway'
+  ? config.data?.AI_QUERY_PROVIDER === 'gateway' && config.data?.AI_GATEWAY_BASE_URL === 'http://ai-gateway:8090'
+  : config.data?.AI_QUERY_PROVIDER === 'direct' && !String(config.data?.AI_GATEWAY_BASE_URL ?? '').trim();
 const keyCount = Object.keys(config.data ?? {}).length;
 const status = ownershipReady && imageReady && aiRuntimeReady && keyCount > 0 ? 'ready' : 'blocked';
 
@@ -40,6 +46,7 @@ console.log(JSON.stringify({
   ownership: ownershipReady ? 'ready' : 'blocked',
   image: imageReady ? 'ready' : 'blocked',
   aiRuntime: aiRuntimeReady ? 'ready' : 'blocked',
+  expectedAiRuntime,
   keyCount,
 }));
 

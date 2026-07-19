@@ -15,12 +15,15 @@ on:
       - "frontend/**"
       - "infra/eks/helm/asklake-web/**"
       - "infra/eks/helm/asklake-workloads/**"
+      - "infra/eks/terraform/**"
       - "infra/eks/secrets/**"
       - "infra/eks/values/workloads/**"
       - "scripts/test-eks-runtime-secrets.mjs"
       - "scripts/verify-eks-runtime-secrets.mjs"
       - "scripts/verify-eks-runtime-secrets.sh"
       - "scripts/verify-eks-web-workloads.sh"
+      - "scripts/verify-eks-ai-gateway-runtime.mjs"
+      - "scripts/test-eks-ai-gateway-runtime.mjs"
       - "scripts/verify-eks-workloads.sh"
       - "docs/02-architecture.md"
       - "docs/03-api-reference.md"
@@ -83,7 +86,9 @@ jobs:
         run: python -m unittest tests.test_trino_result_storage_aws_contract -v
 
       - name: Verify runtime Secret contracts and dev mappings
-        run: scripts/verify-eks-runtime-secrets.sh
+        run: |
+          scripts/verify-eks-runtime-secrets.sh
+          node scripts/test-eks-ai-gateway-runtime.mjs
 
       - name: Verify Kubernetes Spark recovery and MSK IAM adapter
         working-directory: backend
@@ -152,6 +157,45 @@ jobs:
           target: ${{ matrix.target }}
           platforms: linux/amd64
           push: false
+          load: ${{ matrix.name == 'ai-gateway' }}
+          tags: asklake-ci/${{ matrix.name }}:test
           provenance: false
           cache-from: type=gha,scope=eks-b-${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=eks-b-${{ matrix.name }}
+
+      - name: Smoke AI Gateway as Kubernetes numeric non-root user
+        if: matrix.name == 'ai-gateway'
+        run: |
+          test "$(docker image inspect asklake-ci/ai-gateway:test --format '{{.Config.User}}')" = "10001:10001"
+          container_id="$(docker run -d --read-only --tmpfs /tmp --user 10001:10001 \
+            -e APP_ENV=test -e PROVIDER=mock -e INTERNAL_AUTH_TOKEN=ci-internal-token \
+            -p 127.0.0.1:8090:8090 asklake-ci/ai-gateway:test)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8090/health | jq -e '.status=="ok" and .checks.internalAuth=="ready" and .checks.provider=="ready"' >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container_id"
+          exit 1
+
+  terraform-contract:
+    name: Terraform foundation contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.3
+
+      - name: Verify Terraform formatting and tests
+        working-directory: infra/eks/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+          terraform test

@@ -32,6 +32,8 @@ Collector의 상태 원본은 RDS `sql_runs`다. `nextUri`는 Collector만 소�
 
 Phase 6 artifact의 image receipt와 저장소 밖의 private values를 준비한다. private values의 Frontend/Backend image는 receipt와 정확히 같아야 하고 Collector는 같은 Backend digest를 재사용해야 한다.
 
+현재 Gateway 배포에는 `contractVersion=1.1`이며 `images.aiGateway`가 있는 receipt가 필수다. v1.0 receipt는 과거 Day 16–18 rollback 도구에서만 읽을 수 있고 이 배포 스크립트는 `--require-ai-gateway`로 거부한다. AI Gateway container는 numeric `10001:10001`, `runAsNonRoot`, `RuntimeDefault` seccomp로 실행한다.
+
 ```bash
 bash scripts/verify-eks-web-workloads.sh
 bash scripts/deploy-eks-web-workloads.sh --render /private/web-values.yaml /private/image-receipt.json
@@ -46,13 +48,34 @@ export ASKLAKE_WEB_APPLY_CONFIRM=deploy-reviewed-web-workloads
 bash scripts/deploy-eks-web-workloads.sh --apply /private/web-values.yaml /private/image-receipt.json
 ```
 
-스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, 세 ServiceAccount·runtime ConfigMap·두 exact Secret·Ready AMD64 General node label을 확인한다. Backend Secret은 provider key 없는 exact 15-key Gateway profile, Gateway Secret은 exact 3-key여야 한다. API server preflight를 같은 release의 `helm upgrade --install --dry-run=server`로 수행한 뒤 Helm atomic rollout을 실행하고 네 Deployment rollout을 기다린다. 별도 `kubectl apply --server-side` manager로 Deployment image field를 인수하지 않는다. candidate의 Frontend/FastAPI/Gateway/Collector image와 runtime revision이 승인된 live 상태와 다르면 먼저 reconcile한다.
+스크립트는 repository 안의 values 적용을 거부하고 AWS cluster endpoint와 현재 kubectl context, 세 ServiceAccount·runtime ConfigMap·두 exact Secret·Ready AMD64 General node label을 확인한다. 두 ExternalSecret은 `Ready=True`이고 canonical target을 `creationPolicy=Owner`로 소유해야 하며 target Secret의 controller ownerReference도 일치해야 한다. Backend Secret은 provider key 없는 exact 15-key Gateway profile, Gateway Secret은 exact 3-key이고 두 공유 token의 encoded binding이 같아야 한다. `asklake-runtime`은 선택한 Helm release 소유이며 Gateway endpoint가 정확해야 한다. 이 검증은 값을 출력하지 않는다. API server preflight를 같은 release의 `helm upgrade --install --dry-run=server`로 수행한 뒤 Helm atomic rollout을 실행하고 네 Deployment rollout을 기다린다. 별도 `kubectl apply --server-side` manager로 Deployment image field를 인수하지 않는다. candidate의 Frontend/FastAPI/Gateway/Collector image와 runtime revision이 승인된 live 상태와 다르면 먼저 reconcile한다.
+
+Secret과 runtime ConfigMap 전환은 workload rollout과 분리한다. `promote-eks-ai-gateway-runtime.sh --preflight`는 두 Secrets Manager source의 exact 15/3 key, provider key 격리, 공유 token 일치, 두 server dry-run과 별도 13-key direct rollback source를 검사한다. `--apply`는 임시 ExternalSecret 두 개의 전체 canonical hash가 source와 같을 때만 canonical target과 Gateway runtime values를 적용한다. 중간 실패 시 Backend Secrets Manager source를 검증된 direct 13-key JSON으로 되돌리고 저장한 두 ExternalSecret spec과 direct runtime values를 복원한 뒤 FastAPI를 재검증한다. 기존 `promote-eks-backend-full-service-secret.sh`는 `runtimeDecisions.aiRuntime.selected=direct`인 rollback 계약에서만 사용할 수 있다.
+
+```bash
+bash scripts/promote-eks-ai-gateway-runtime.sh --preflight \
+  /private/runtime-gateway.yaml /private/runtime-direct-rollback.yaml \
+  /private/backend-direct-rollback-source.json
+
+export ASKLAKE_AI_GATEWAY_PROMOTION_CONFIRM=promote-staged-ai-gateway-runtime
+bash scripts/promote-eks-ai-gateway-runtime.sh --apply \
+  /private/runtime-gateway.yaml /private/runtime-direct-rollback.yaml \
+  /private/backend-direct-rollback-source.json
+```
 
 ## 완료 기준
 
 코드 기준 완료는 disabled render가 비어 있고 enabled fixture가 정확히 네 Deployment, 세 Service, Gateway NetworkPolicy와 FastAPI HPA 하나를 만들며 mutable tag, Frontend/FastAPI 1 replica, HPA `2..6` drift, Gateway/Collector replica·활성화·ServiceAccount·port drift와 ARM64 selector가 모두 실패하는 것이다. HPA 활성 render에서는 FastAPI `spec.replicas`가 없어야 하고 HPA 비활성 render에서는 네 Deployment가 모두 명시적인 replica를 가져야 한다. Gateway는 provider key의 Backend 노출, public Service, 다중 replica, Kubernetes API token과 과도한 network 경로를 허용하지 않는다. Collector는 Backend와 exact digest가 같고 HTTP/Service/Ingress가 없어야 한다. Gateway 실환경 완료는 별도 배포 검증으로 판정한다.
 
 실환경 완료는 별도다. Frontend/FastAPI 2/2, Gateway/Collector 1/1, `/`, `/api/health`, `/api/health/ai`의 `status=ready`, Dashboard Assistant 실제 응답과 EKS FastAPI의 EC2 Continuous 격리를 확인한다. HPA 완료를 주장할 때는 기존 exact-one 실행 증거가 추가로 필요하다. Collector 부재 중 Run은 삭제하지 않고 인증된 cancel API 또는 Collector 재배포로 복구한다.
+
+배포 성공과 제품 AI smoke 성공은 별도 상태로 기록한다. Git 제외·`0600` JSON에 base URL, bearer token, 실제 Dataset을 사용하는 Query AI/Dashboard Assistant request body를 넣고 먼저 `--verify-input`으로 검사한다. `--run`은 비용이 발생하는 provider 호출이므로 별도 confirmation이 필요하며 응답 본문이나 token은 출력하지 않는다.
+
+```bash
+bash scripts/run-eks-ai-gateway-live-smoke.sh --verify-input /private/ai-gateway-smoke.json
+ASKLAKE_AI_GATEWAY_SMOKE_CONFIRM=run-reviewed-ai-gateway-smoke \
+  bash scripts/run-eks-ai-gateway-live-smoke.sh --run /private/ai-gateway-smoke.json
+```
 
 2026-07-17 dev 환경에서 위 조건을 모두 통과했다. FastAPI/Collector 동일 digest rollout, 외부 health 318표본 non-200 0개, 연속 count query scalar 100, active slot 0, Collector `0 -> 1` 교체 뒤 같은 `runId` terminal 복구와 result page 1개를 [Day 17 Collector live evidence](eks-day17-trino-result-collector-evidence.md)에 기록한다.
 

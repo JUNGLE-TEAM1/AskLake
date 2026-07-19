@@ -7,7 +7,8 @@ MODE="${1:-}"
 VALUES_FILE="${2:-}"
 IMAGE_RECEIPT="${3:-}"
 RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE"' EXIT
+PREFLIGHT_DIR="$(mktemp -d)"
+trap 'rm -f "$RENDERED_FILE"; rm -rf "$PREFLIGHT_DIR"' EXIT
 
 usage() {
   echo "usage: $0 --render|--apply <private-values.yaml> <image-receipt.json>" >&2
@@ -19,7 +20,7 @@ if [[ ! "$MODE" =~ ^--(render|apply)$ ]] || [[ ! -s "$VALUES_FILE" ]] || [[ ! -s
 fi
 
 bash "$ROOT_DIR/scripts/verify-eks-web-workloads.sh" >&2
-node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" "$IMAGE_RECEIPT" >&2
+node "$ROOT_DIR/scripts/verify-eks-image-receipt.mjs" --require-ai-gateway "$IMAGE_RECEIPT" >&2
 helm lint "$CHART_DIR" -f "$VALUES_FILE" >&2
 helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 
@@ -76,40 +77,14 @@ rendered_namespaces="$(awk '/^  namespace:/ {print $2}' "$RENDERED_FILE" | sort 
 kubectl get serviceaccount asklake-frontend asklake-backend -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
 kubectl get serviceaccount asklake-ai-gateway -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
 kubectl get configmap asklake-runtime asklake-runtime-boundary -n "$ASKLAKE_EKS_NAMESPACE" >/dev/null
-backend_secret_json="$(kubectl get secret asklake-backend-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json)"
-gateway_secret_json="$(kubectl get secret asklake-ai-gateway-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json)"
-jq -e '
-  (.data | keys | sort) == ([
-    "AI_CONTEXT_SIGNING_SECRET", "AI_GATEWAY_SERVICE_TOKEN", "AI_MCP_SERVICE_TOKEN",
-    "AIRFLOW_EXECUTION_API_TOKEN", "AIRFLOW_INTERNAL_TOKEN", "AIRFLOW_PASSWORD",
-    "BOOTSTRAP_ADMIN_PASSWORD", "DATABASE_URL", "TRINO_AUTH_PASSWORD",
-    "TRINO_AUTH_USERNAME", "TRINO_MATERIALIZER_PASSWORD", "TRINO_MATERIALIZER_USERNAME",
-    "TRINO_QUERY_CONFIRMATION_SECRET", "TRINO_RESULT_CURSOR_SECRET", "trino-ca.pem"
-  ] | sort)
-' <<<"$backend_secret_json" >/dev/null || {
-  echo "Backend runtime Secret is not the exact provider-key-free Gateway profile" >&2
-  exit 1
-}
-jq -e '
-  (.data | keys | sort) == ([
-    "AI_GATEWAY_SERVICE_TOKEN", "AI_MCP_SERVICE_TOKEN", "AI_PROVIDER_API_KEY"
-  ] | sort)
-' <<<"$gateway_secret_json" >/dev/null || {
-  echo "AI Gateway runtime Secret does not have the exact three-key profile" >&2
-  exit 1
-}
-for shared_key in AI_GATEWAY_SERVICE_TOKEN AI_MCP_SERVICE_TOKEN; do
-  backend_value="$(jq -r --arg key "$shared_key" '.data[$key] // empty' <<<"$backend_secret_json")"
-  gateway_value="$(jq -r --arg key "$shared_key" '.data[$key] // empty' <<<"$gateway_secret_json")"
-  [[ -n "$backend_value" && "$backend_value" == "$gateway_value" ]] || {
-    echo "Backend and AI Gateway $shared_key bindings do not match" >&2
-    exit 1
-  }
-done
-kubectl get configmap asklake-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json | jq -e '
-  .data.AI_QUERY_PROVIDER == "gateway"
-  and .data.AI_GATEWAY_BASE_URL == "http://ai-gateway:8090"
-' >/dev/null || { echo "runtime ConfigMap is not configured for the private AI Gateway" >&2; exit 1; }
+kubectl get externalsecret asklake-backend-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$PREFLIGHT_DIR/backend-es.json"
+kubectl get externalsecret asklake-ai-gateway-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$PREFLIGHT_DIR/gateway-es.json"
+kubectl get secret asklake-backend-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$PREFLIGHT_DIR/backend-secret.json"
+kubectl get secret asklake-ai-gateway-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$PREFLIGHT_DIR/gateway-secret.json"
+kubectl get configmap asklake-runtime -n "$ASKLAKE_EKS_NAMESPACE" -o json >"$PREFLIGHT_DIR/configmap.json"
+chmod 600 "$PREFLIGHT_DIR"/*.json
+node "$ROOT_DIR/scripts/verify-eks-ai-gateway-runtime.mjs" "$PREFLIGHT_DIR/backend-es.json" "$PREFLIGHT_DIR/gateway-es.json" \
+  "$PREFLIGHT_DIR/backend-secret.json" "$PREFLIGHT_DIR/gateway-secret.json" "$PREFLIGHT_DIR/configmap.json"
 kubectl wait --for=condition=Ready node -l 'asklake.io/workload-class=general,kubernetes.io/arch=amd64' --timeout=30s >/dev/null || { echo "no Ready AMD64 node has the General placement label" >&2; exit 1; }
 helm upgrade --install asklake-web "$CHART_DIR" \
   --namespace "$ASKLAKE_EKS_NAMESPACE" --create-namespace=false \

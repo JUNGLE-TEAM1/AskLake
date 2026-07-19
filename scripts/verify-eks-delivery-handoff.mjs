@@ -96,7 +96,7 @@ requireExactKeys(contract, new Set([
   'decisions',
 ]), 'handoff');
 
-if (contract.contractVersion !== '1.0') fail('contractVersion must be 1.0');
+if (contract.contractVersion !== '1.1') fail('contractVersion must be 1.1');
 if (contract.environment !== 'dev') fail('environment must be dev for this handoff');
 if (!['planning', 'ready-for-deploy'].includes(contract.readiness)) fail('readiness must be planning or ready-for-deploy');
 

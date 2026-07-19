@@ -26,6 +26,12 @@ spec:
       serviceAccountName: {{ .Values.aiGateway.serviceAccountName }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       nodeSelector:
         {{- toYaml .Values.placement.nodeSelector | nindent 8 }}
       containers:
@@ -38,6 +44,8 @@ spec:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
           env:
             - name: APP_ENV
               value: production
