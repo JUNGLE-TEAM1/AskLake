@@ -67,7 +67,10 @@ def build_raw_sink_config(
         raise ValueError("state_path must be a safe dedicated Keeper path")
     return {
         "connector.class": CONNECTOR_CLASS,
-        "tasks.max": "2",
+        # The isolated MVP has one Connect worker and one sink task. A single
+        # task can own every partition while keeping the 2 GiB canary budget
+        # deterministic; production parallelism remains a separate HA gate.
+        "tasks.max": "1",
         "topics": topic,
         "hostname": "clickhouse-v2",
         "port": "8443",
@@ -100,6 +103,18 @@ def build_raw_sink_config(
         "consumer.override.enable.auto.commit": "false",
         "consumer.override.auto.offset.reset": "earliest",
         "consumer.override.group.id": consumer_group,
+        "consumer.override.security.protocol": "SASL_SSL",
+        "consumer.override.sasl.mechanism": "AWS_MSK_IAM",
+        "consumer.override.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+        "consumer.override.sasl.client.callback.handler.class": "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+        "producer.override.security.protocol": "SASL_SSL",
+        "producer.override.sasl.mechanism": "AWS_MSK_IAM",
+        "producer.override.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+        "producer.override.sasl.client.callback.handler.class": "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+        "admin.override.security.protocol": "SASL_SSL",
+        "admin.override.sasl.mechanism": "AWS_MSK_IAM",
+        "admin.override.sasl.jaas.config": "software.amazon.msk.auth.iam.IAMLoginModule required;",
+        "admin.override.sasl.client.callback.handler.class": "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
     }
 
 
@@ -208,5 +223,15 @@ def _validate_raw_sink_config(config: dict[str, str]) -> None:
         raise ValueError("connector password must use FileConfigProvider")
     if config.get("jdbcConnectionProperties") != "?ssl=true&sslmode=strict":
         raise ValueError("connector must enforce strict ClickHouse TLS verification")
+    for client in ("consumer", "producer", "admin"):
+        if (
+            config.get(f"{client}.override.security.protocol") != "SASL_SSL"
+            or config.get(f"{client}.override.sasl.mechanism") != "AWS_MSK_IAM"
+            or config.get(f"{client}.override.sasl.jaas.config")
+            != "software.amazon.msk.auth.iam.IAMLoginModule required;"
+            or config.get(f"{client}.override.sasl.client.callback.handler.class")
+            != "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+        ):
+            raise ValueError("connector clients must enforce MSK IAM authentication")
     if not config.get("errors.deadletterqueue.topic.name"):
         raise ValueError("connector DLQ must be configured")

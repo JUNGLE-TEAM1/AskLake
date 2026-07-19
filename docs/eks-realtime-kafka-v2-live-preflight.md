@@ -39,3 +39,11 @@
 7. ingest, restart, paired snapshot, isolated restore, rollback receipt까지 통과한 뒤에만 `liveCanaryReady` 변경을 검토한다.
 
 중간 실패 시 이미 생성된 durable state와 evidence는 보존하고 consumer activation을 진행하지 않는다. V1 중지, production identity 재사용, Connect offset reset, V1 checkpoint 또는 V2 PVC/snapshot 삭제는 이 preflight의 승인 범위가 아니다.
+
+## 승인 후 Phase 4B~5 결과
+
+위 NO-GO는 2026-07-19 Phase 4A 시점의 역사적 판정이다. 이후 사용자가 격리 canary 변경을 승인했고, 결손 항목을 generation `v2-canary-20260719-01` 범위에서 적용했다. snapshot-controller/CRD, encrypted Auto Mode gp3 StorageClass, Retain VolumeSnapshotClass, immutable ECR image, 전용 ServiceAccount와 Pod Identity association 1개를 확인했다. IAM은 source/DLQ/internal topic 5개와 sink/worker group 2개만 허용하고 wildcard resource는 0개다.
+
+live 실행은 Connect/ClickHouse/Keeper/worker Ready, ClickHouse Sink v1.4.0, MSK IAM source ingest, restart 후 offset `59`·60행·checksum 보존, paired snapshot 2개, 별도 namespace restore의 consumer 0개와 동일 checksum을 검증했다. rollback은 connector를 STOPPED/tasks 0으로 만든 뒤 원본 V2 resource를 0개로 내리고 PVC 2개·snapshot 2개·internal topic을 보존했다. 기존 V1 worker UID와 Ready 상태는 유지됐다. 비밀 없는 최종 증거는 `deploy/eks-realtime-kafka-v2-receipt.json`이다.
+
+따라서 `liveCanaryReady`는 true지만 `productionTransferAllowed`와 HA claim은 false다. 이 canary는 production topic/group 인수, 다중 노드 장애조치 또는 자동 cross-engine fallback 승인이 아니다.

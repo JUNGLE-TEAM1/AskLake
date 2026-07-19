@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "issue": 1062,
+  "generation": "v2-canary-20260719-01",
+  "runtime": {
+    "clusterArnSha256": "76adc1d1f437d6d95671a19ef81cb62812b9b69ee3e17259c1c4e38ccf0ce7d5",
+    "namespace": "asklake-dev",
+    "release": "asklake-realtime-v2",
+    "connectImageDigest": "sha256:6a4a33b0df2e19094623d99c25018f006235d23f5af03713cd02cf929685d828",
+    "clickhouseImageDigest": "sha256:85054a0abf8623e57f479dce6ace730115194a34b60912a10672d42f07a7a66a"
+  },
+  "ownership": {
+    "sourceTopic": "asklake.eks-realtime.v2.fixture.v2-canary-20260719-01",
+    "consumerGroup": "asklake-eks-realtime-v2-v2-canary-20260719-01",
+    "workerGroup": "asklake-eks-realtime-v2-worker-v2-canary-20260719-01",
+    "connector": "asklake-eks-realtime-v2-v2-canary-20260719-01",
+    "previousExactOwnerRunningTasks": 0,
+    "concurrentV1Claims": 0
+  },
+  "iam": {
+    "serviceAccount": "asklake-realtime-v2-connect",
+    "associationCount": 1,
+    "topicResourceCount": 5,
+    "groupResourceCount": 2,
+    "wildcardResourceCount": 0,
+    "credentialSource": "pod_identity"
+  },
+  "boundaries": {
+    "beforeRestart": {
+      "partitionOffsets": {"0": 39},
+      "rowCount": 40,
+      "rowChecksum": "3bccd225484f7c1a6db23c44516ae0834c013d9a63fe2e9770be0abc271eef1d"
+    },
+    "afterRestart": {
+      "partitionOffsets": {"0": 59},
+      "rowCount": 60,
+      "rowChecksum": "a822dc7f315cfcac767b56ddd196738bbb7cc0595303a57edeafc0cf42a3c2e3"
+    },
+    "afterRestore": {
+      "partitionOffsets": {"0": 59},
+      "rowCount": 60,
+      "rowChecksum": "a822dc7f315cfcac767b56ddd196738bbb7cc0595303a57edeafc0cf42a3c2e3"
+    }
+  },
+  "restart": {
+    "connectPodUidChanged": true,
+    "clickhousePodUidChanged": true,
+    "keeperPodUidChanged": true,
+    "offsetRegressions": 0,
+    "missingRows": 0,
+    "duplicateBoundaries": 0
+  },
+  "snapshots": [
+    {
+      "component": "clickhouse",
+      "name": "clickhouse-v2-snap-v2-canary-20260719-01",
+      "sourcePvcUid": "9f1022b4-6297-485b-971b-6df27f41d132",
+      "snapshotContentUid": "b5827c7a-9ec6-4fcc-af59-ea565ad4c709",
+      "readyToUse": true
+    },
+    {
+      "component": "keeper",
+      "name": "keeper-v2-snap-v2-canary-20260719-01",
+      "sourcePvcUid": "96dd1352-fea4-4d35-ac78-cfcdccdd62db",
+      "snapshotContentUid": "8e520d5f-d18d-4a58-b81f-190dee8f0cd7",
+      "readyToUse": true
+    }
+  ],
+  "isolatedRestore": {
+    "namespace": "asklake-v2-restore-1062",
+    "release": "asklake-realtime-v2-restore",
+    "consumerResourcesRendered": 0,
+    "sourcePvcReused": false,
+    "restoredPvcCount": 2
+  },
+  "rollback": {
+    "v2RunningTasks": 0,
+    "v2OwnerClaims": 0,
+    "statePreserved": true,
+    "v1GenerationReused": false
+  },
+  "result": "pass"
+}

@@ -487,6 +487,7 @@ if docker run --rm \
       --security-opt no-new-privileges:true \
       --env KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED=true \
       --env KAFKA_CONNECT_V2_KEYTOOL_BIN=/opt/asklake/keytool-stub \
+      --env KAFKA_CONNECT_DEFAULT_TRUSTSTORE_PATH=/run/asklake-secrets-source/kafka-connect/clickhouse-v2-ca.crt \
       --volume "$ROOT_DIR/deploy/kafka-connect/entrypoint.sh:/opt/asklake/kafka-connect-entrypoint.sh:ro" \
       --volume "$KEYTOOL_STUB_FILE:/opt/asklake/keytool-stub:ro" \
       --volume "$STAGING_PASSWD_FILE:/etc/passwd:ro" \

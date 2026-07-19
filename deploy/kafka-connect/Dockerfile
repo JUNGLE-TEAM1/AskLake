@@ -23,10 +23,13 @@ ADD --checksum=sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11
 ENV CLASSPATH=/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
 
 USER root
-RUN confluent-hub install --no-prompt /tmp/clickhouse-kafka-connect-v1.4.0.zip \
-    && rm -f /tmp/clickhouse-kafka-connect-v1.4.0.zip
+RUN chmod 0444 /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar \
+    && confluent-hub install --no-prompt /tmp/clickhouse-kafka-connect-v1.4.0.zip \
+    && rm -f /tmp/clickhouse-kafka-connect-v1.4.0.zip \
+    && mv /etc/confluent/docker/ensure /etc/confluent/docker/ensure.upstream
 
 COPY --chown=0:0 --chmod=0755 entrypoint.sh /usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh
+COPY --chown=0:0 --chmod=0755 ensure.sh /etc/confluent/docker/ensure
 
 # The wrapper starts as root only long enough to copy root-readable bind mounts
 # into tmpfs. It then execs the canonical worker as numeric appuser 1000:1000.

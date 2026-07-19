@@ -85,10 +85,14 @@ class ClickHouseRealtimeIngestTests(unittest.TestCase):
         )
 
         self.assertEqual(config["connector.class"], CONNECTOR_CLASS)
+        self.assertEqual(config["tasks.max"], "1")
         self.assertEqual(config["value.converter"], "org.apache.kafka.connect.storage.StringConverter")
         self.assertEqual(config["exactlyOnce"], "true")
         self.assertEqual(config["consumer.override.isolation.level"], "read_committed")
         self.assertEqual(config["consumer.override.group.id"], "asklake-eks-realtime-v2-test-g1")
+        for client in ("consumer", "producer", "admin"):
+            self.assertEqual(config[f"{client}.override.security.protocol"], "SASL_SSL")
+            self.assertEqual(config[f"{client}.override.sasl.mechanism"], "AWS_MSK_IAM")
         self.assertEqual(config["errors.deadletterqueue.topic.replication.factor"], "1")
         self.assertEqual(config["jdbcConnectionProperties"], "?ssl=true&sslmode=strict")
         self.assertEqual(config["zkPath"], "/asklake/realtime-v2/connect-state")

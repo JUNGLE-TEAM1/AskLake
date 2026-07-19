@@ -75,7 +75,11 @@ def build_runtime_owner_claim(
     fencing_token: str,
     state_revision: int,
 ) -> dict[str, Any]:
-    if owner not in {"ec2-continuous-worker", "eks-continuous-worker-v1"}:
+    if owner not in {
+        "ec2-continuous-worker",
+        "eks-continuous-worker-v1",
+        "eks-kafka-connect-clickhouse-v2",
+    }:
         raise ValueError("unsupported Continuous runtime owner")
     if not generation or not fencing_token or state_revision < 1:
         raise ValueError("owner claim requires generation, fencing token, and positive state revision")

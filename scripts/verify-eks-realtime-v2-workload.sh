@@ -41,6 +41,20 @@ render_args=(
 )
 "$HELM_BIN" template asklake-v2 "$CHART_DIR" -f "$VALUES_FILE" "${render_args[@]}" >"$ENABLED_RENDER"
 
+if "$HELM_BIN" template asklake-v2 "$CHART_DIR" -f "$VALUES_FILE" "${render_args[@]}" \
+  --set-string namespace=asklake-v2-restore-g1 >/dev/null 2>&1; then
+  echo "Realtime V2 active mode accepted an isolated restore namespace" >&2
+  exit 1
+fi
+if "$HELM_BIN" template asklake-v2-restore "$CHART_DIR" -f "$VALUES_FILE" "${render_args[@]}" \
+  --set realtimeV2.recoveryMode=true \
+  --set-string realtimeV2.storage.restoreSnapshots.clickhouse=clickhouse-v2-snapshot-g1 \
+  --set-string realtimeV2.storage.restoreSnapshots.keeper=keeper-v2-snapshot-g1 \
+  >/dev/null 2>&1; then
+  echo "Realtime V2 recovery accepted the active namespace" >&2
+  exit 1
+fi
+
 if "$HELM_BIN" template asklake-v2-restore "$CHART_DIR" -f "$VALUES_FILE" "${render_args[@]}" \
   --set realtimeV2.recoveryMode=true \
   --set-string realtimeV2.storage.restoreSnapshots.clickhouse=clickhouse-v2-snapshot-g1 \
@@ -56,19 +70,24 @@ if "$HELM_BIN" template asklake-v2 "$CHART_DIR" -f "$VALUES_FILE" "${render_args
   exit 1
 fi
 "$HELM_BIN" template asklake-v2-restore "$CHART_DIR" -f "$VALUES_FILE" "${render_args[@]}" \
+  --set-string namespace=asklake-v2-restore-g1 \
   --set realtimeV2.recoveryMode=true \
   --set-string realtimeV2.storage.restoreSnapshots.clickhouse=clickhouse-v2-snapshot-g1 \
   --set-string realtimeV2.storage.restoreSnapshots.keeper=keeper-v2-snapshot-g1 \
   >"$RECOVERY_RENDER"
+grep -q 'namespace: asklake-v2-restore-g1' "$RECOVERY_RENDER"
 
 for name in clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2 asklake-realtime-v2-worker; do
   grep -q "name: $name" "$ENABLED_RENDER"
 done
 test "$(grep -c '^kind: StatefulSet$' "$ENABLED_RENDER")" -eq 2
 test "$(grep -c 'persistentVolumeClaimRetentionPolicy:' "$ENABLED_RENDER")" -eq 2
+test "$(grep -c 'publishNotReadyAddresses: true' "$ENABLED_RENDER")" -eq 2
 test "$(grep -c 'whenDeleted: Retain' "$ENABLED_RENDER")" -eq 2
 test "$(grep -c 'storageClassName: \"gp3-encrypted\"' "$ENABLED_RENDER")" -eq 2
 grep -q 'serviceAccountName: asklake-realtime-v2-connect' "$ENABLED_RENDER"
+grep -q 'securityContext: {fsGroup: 1000, fsGroupChangePolicy: OnRootMismatch}' \
+  "$ROOT_DIR/infra/eks/helm/asklake-workloads/templates/realtime-v2.yaml"
 grep -q 'serviceAccountName: asklake-realtime-v2-worker' "$ENABLED_RENDER"
 grep -q 'value: "asklake.eks-realtime.v2.fixture.v2-canary-g1"' "$ENABLED_RENDER"
 grep -q 'value: "asklake.eks-realtime.v2.dlq.v2-canary-g1"' "$ENABLED_RENDER"
@@ -76,11 +95,23 @@ grep -q 'value: "asklake-connect-v2-v2-canary-g1-offset"' "$ENABLED_RENDER"
 grep -q 'value: "asklake-eks-realtime-v2-worker-v2-canary-g1"' "$ENABLED_RENDER"
 grep -q 'value: AWS_MSK_IAM' "$ENABLED_RENDER"
 grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ENABLED_RENDER"
+grep -q 'name: CONNECT_CUB_KAFKA_TIMEOUT' "$ENABLED_RENDER"
+grep -q 'value: "120"' "$ENABLED_RENDER"
+grep -q 'name: KAFKA_HEAP_OPTS' "$ENABLED_RENDER"
+grep -q 'value: "-Xms256M -Xmx1G"' "$ENABLED_RENDER"
 grep -q 'name: ASKLAKE_MSK_IAM_AUTH_JAR' "$ENABLED_RENDER"
 grep -q 'value: "/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar"' "$ENABLED_RENDER"
 grep -q 'value: "/usr/share/java,/usr/share/confluent-hub-components"' "$ENABLED_RENDER"
+grep -q 'SYS_CHROOT' "$ENABLED_RENDER"
 grep -q 'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER' "$ENABLED_RENDER"
 grep -q 'value: kafka_connect_v2' "$ENABLED_RENDER"
+grep -q 'value: eks-kafka-connect-clickhouse-v2' "$ENABLED_RENDER"
+grep -q 'name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD' "$ENABLED_RENDER"
+grep -q 'key: materializerPassword' "$ENABLED_RENDER"
+grep -q 'name: CLICKHOUSE_V2_READER_PASSWORD' "$ENABLED_RENDER"
+grep -q 'key: readerPassword' "$ENABLED_RENDER"
+grep -q 'value: /run/asklake-v2/clickhouse-v2-ca.crt' "$ENABLED_RENDER"
+grep -q 'key: ca.crt' "$ENABLED_RENDER"
 grep -q 'secretKeyRef:' "$ENABLED_RENDER"
 
 test "$(grep -c '^kind: StatefulSet$' "$RECOVERY_RENDER")" -eq 2
@@ -109,5 +140,13 @@ grep -q 'ADD --checksum=sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d09
   "$ROOT_DIR/deploy/kafka-connect/Dockerfile"
 grep -q 'ENV CLASSPATH=/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar' \
   "$ROOT_DIR/deploy/kafka-connect/Dockerfile"
+grep -q 'chmod 0444 /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar' \
+  "$ROOT_DIR/deploy/kafka-connect/Dockerfile"
+grep -q 'kafka-topics' "$ROOT_DIR/deploy/kafka-connect/ensure.sh"
+grep -q 'AWS_MSK_IAM' "$ROOT_DIR/deploy/kafka-connect/ensure.sh"
+grep -q 'CONNECT_KAFKA_PROBE_TIMEOUT:-15' "$ROOT_DIR/deploy/kafka-connect/ensure.sh"
+grep -q -- '-importkeystore' "$ROOT_DIR/deploy/kafka-connect/entrypoint.sh"
+grep -q 'lib/security/cacerts' "$ROOT_DIR/deploy/kafka-connect/entrypoint.sh"
+grep -q 'KILL' "$ENABLED_RENDER"
 
 echo "EKS Realtime V2 workload contract verification passed."

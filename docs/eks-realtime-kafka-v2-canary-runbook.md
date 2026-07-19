@@ -57,3 +57,9 @@ restore는 별도 namespace와 별도 Helm release에서만 수행한다. `realt
 5. V1/V2가 같은 broker/topic/group/generation을 동시에 claim하지 않는 것을 확인한 뒤에만 새 owner를 시작한다.
 
 자동 cross-engine fallback, Connect offset reset, V1 checkpoint 삭제, V2 PVC/snapshot 삭제는 rollback이 아니다. 이 runbook의 canary pass도 production HA 또는 production owner transfer 승인이 아니다.
+
+## 6. Issue #1062 실행 결과
+
+generation `v2-canary-20260719-01`의 최종 receipt는 `deploy/eks-realtime-kafka-v2-receipt.json`이다. restart 전 boundary는 offset 39/40행, restart 후와 isolated restore boundary는 offset 59/60행이며 후자의 checksum이 일치했다. 세 runtime Pod UID는 바뀌고 원본 PVC UID는 유지됐다. paired snapshot은 모두 ready였고 restore namespace에는 Connect/worker가 렌더되지 않았다. rollback 후 source consumer task와 V2 owner claim은 0이며 원본 PVC, snapshot, MSK internal topic은 보존됐다.
+
+live 과정에서 확인한 필수 runtime 보완은 UID 1000의 Pod Identity token용 `fsGroup`, 각 IAM probe의 bounded timeout, JVM 기본 CA와 ClickHouse CA를 합친 truststore, 1 GiB heap/단일 sink task, connector consumer·DLQ producer·admin의 명시적 MSK IAM override다. 이 조건 중 하나라도 빠지면 Ready 또는 ingest를 성공으로 판정하지 않는다.

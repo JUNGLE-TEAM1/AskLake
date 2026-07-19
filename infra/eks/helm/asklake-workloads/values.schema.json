@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["namespace", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "realtimeV2", "trino"],
   "properties": {
-    "namespace": {"type": "string", "const": "asklake-dev"},
+    "namespace": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
     "global": {
       "type": "object",
       "additionalProperties": false,
@@ -23,6 +23,25 @@
     "realtimeV2": {"$ref": "#/$defs/realtimeV2"},
     "trino": {"$ref": "#/$defs/trino"}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "realtimeV2": {
+            "properties": {"recoveryMode": {"const": true}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "namespace": {"pattern": "^asklake-v2-restore-[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+        }
+      },
+      "else": {
+        "properties": {"namespace": {"const": "asklake-dev"}}
+      }
+    }
+  ],
   "$defs": {
     "image": {
       "type": "object",

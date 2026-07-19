@@ -73,13 +73,13 @@ V1 checkpoint 삭제, Connect offset reset, generation 재사용, 같은 identit
 
 ## 7. 현재 완료 범위와 검증
 
-Phase 0 topology 결정 뒤 Phase 1 canonical Helm package, Phase 2 static runtime contract와 Phase 4A read-only live preflight까지 완료했다. `realtimeV2.enabled=false`가 기본이며 activation에는 승인, previous exact owner fence, generation, storage class와 Backend/Connect/ClickHouse immutable digest가 모두 필요하다. package는 worker와 Kafka Connect Deployment 각 1개, ClickHouse와 Keeper StatefulSet 각 1개, 삭제·축소 Retain PVC 2개를 렌더한다. V1/V2 동시 enable과 Secret·mutable image·local authoritative state는 거부한다.
+Phase 0 topology 결정 뒤 Phase 1 canonical Helm package, Phase 2 static runtime contract, Phase 4A read-only preflight와 승인된 Phase 4B~5 live canary/rollback까지 완료했다. `realtimeV2.enabled=false`가 기본이며 activation에는 승인, previous exact owner fence, generation, storage class와 Backend/Connect/ClickHouse immutable digest가 모두 필요하다. package는 worker와 Kafka Connect Deployment 각 1개, ClickHouse와 Keeper StatefulSet 각 1개, 삭제·축소 Retain PVC 2개를 렌더한다. V1/V2 동시 enable과 Secret·mutable image·local authoritative state는 거부한다. 격리 MVP sink는 2 GiB Pod limit 안에서 단일 task로 모든 partition을 소유한다.
 
 Terraform은 generation 하나에서 source/DLQ/internal topic 5개와 source consumer/Connect worker group 2개를 파생하고 전용 Connect identity만 추가한다. worker coordination group과 sink task group은 protocol 충돌을 막기 위해 분리한다. MSK IAM auth 2.3.6 uber JAR은 검증된 checksum으로 Connect image classpath에 포함하며 Kafka Connect plugin path에서는 제외한다. Helm `recoveryMode`는 paired CSI snapshot을 새 PVC로 복원하면서 Connect/worker를 0개 렌더한다. receipt schema와 실제 순서는 [V2 canary runbook](eks-realtime-kafka-v2-canary-runbook.md)에 고정했다.
 
 Phase 4A는 공유 환경을 변경하지 않고 current cluster를 조회했다. V1 owner는 실행 중이지만 V2 전용 ServiceAccount/Pod Identity/ECR repository, Auto Mode encrypted StorageClass, VolumeSnapshot CRD와 snapshot-controller가 없어서 live V2 apply는 NO-GO다. repository에는 exact-version snapshot-controller 소유 계약, Auto Mode encrypted gp3/Retain snapshot class, V2 ServiceAccount와 ECR repository 계약을 추가했다. 상세 sanitized 증거는 [V2 live preflight](eks-realtime-kafka-v2-live-preflight.md)에 있다.
 
-MSK IAM/Pod Identity 실제 apply, image push/ECR digest receipt, PVC restart, snapshot/restore와 live canary는 아직 완료되지 않았다. machine contract는 `deploy/eks-realtime-kafka-v2-mvp.json`이며 다음 명령으로 검증한다.
+MSK IAM/Pod Identity apply, immutable image push, PVC restart, paired snapshot, 별도 namespace restore와 rollback은 `deploy/eks-realtime-kafka-v2-receipt.json`으로 완료 증명했다. machine contract는 `deploy/eks-realtime-kafka-v2-mvp.json`이며 다음 명령으로 검증한다.
 
 ```bash
 python3 -m unittest scripts.test_verify_eks_realtime_kafka_v2_mvp
@@ -88,7 +88,7 @@ bash scripts/verify-eks-realtime-v2-workload.sh
 python3 scripts/verify-eks-realtime-v2-storage.py
 ```
 
-validator 통과는 EKS V2 runtime 완료나 공유 AWS apply 승인이 아니다. IAM·restart·backup/restore의 정적 계약만 ready이며 실제 apply, live canary와 production transfer gate는 계속 false다.
+validator와 receipt 통과는 이 격리 generation의 live canary 완료를 뜻한다. production identity transfer와 HA gate는 계속 false이며, 전환에는 별도 승인·새 generation·다중 노드 failover 증거가 필요하다.
 
 ## 8. commit 전 전체 diff 감사
 
@@ -116,3 +116,15 @@ validator 통과는 EKS V2 runtime 완료나 공유 AWS apply 승인이 아니�
 - `pair1` 직접 수정, PR/merge, 공유 AWS/EKS mutation: 0
 
 `git diff --check`와 V2 machine contract `11 tests`, storage/Helm/foundation/delivery verifier, Terraform `55 passed, 0 failed`를 통과했다. 이 follow-up에도 image push, Terraform/Kubernetes apply, Pod/PVC/snapshot 생성, live offset/row 증거는 포함되지 않는다.
+
+### Phase 5 live 완료 diff 감사
+
+2026-07-20에 원격을 다시 fetch하고 `origin/feat-#1062@43bb5d8bc88b1d2cbb10adcdcfde57bc8753d11b`와 working tree 전체를 대조했다. HEAD와 origin feature commit은 일치했고 그 위 working tree 변경은 tracked 19개와 신규 2개, 합계 21개다. 신규 파일은 최종 receipt와 canonical Connect IAM ensure script뿐이며, 각각 repository 안 동일 blob이 자기 자신 1개뿐이라 중복 산출물은 0개다. V2 workload를 렌더하는 canonical Helm template도 1개다.
+
+- Issue #1062 범위 밖 변경: 0
+- 동일 blob의 신규 중복 산출물: 0
+- canonical Helm 외 중복 V2 workload template: 0
+- 추가된 credential/access key/private key/account ECR·ARN marker: 0
+- `pair1` 직접 수정, PR/merge: 0
+
+live 검증은 사용자가 승인한 격리 generation 범위에서만 수행했고 rollback까지 완료했다. 최종 회귀는 Backend owner/connector 21 tests, deploy regression 62 tests, ClickHouse V2 release 60 tests, continuous runtime 40 tests, Kubernetes contract 4 tests, machine contract 11 tests, Terraform 55 tests, receipt JSON Schema, Helm lint/render, storage verifier와 `git diff --check`를 통과했다. EKS 최종 상태는 원본 V2 runtime resource 0, V2 PVC 2개와 ready snapshot 2개 보존, isolated restore consumer 0, 기존 V1 worker 동일 UID·Ready다.

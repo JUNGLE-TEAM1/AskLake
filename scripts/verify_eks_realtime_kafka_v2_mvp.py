@@ -23,6 +23,7 @@ def verify(contract: dict[str, Any]) -> list[str]:
     durable = contract.get("durableState") or {}
     implementation = contract.get("implementation") or {}
     preflight = contract.get("livePreflight") or {}
+    live = contract.get("liveValidation") or {}
     rollback = contract.get("rollback") or {}
     gates = contract.get("gates") or {}
 
@@ -32,8 +33,8 @@ def verify(contract: dict[str, Any]) -> list[str]:
         errors.append("selected path must be Kafka Connect to ClickHouse V2")
     if decision.get("selectedTopology") != "single-connect-single-clickhouse-single-keeper-ebs-canary":
         errors.append("Phase 0 must select the bounded single-node EBS canary topology")
-    if decision.get("activationAllowed") is not False or decision.get("productionHaClaimAllowed") is not False:
-        errors.append("Phase 0 must block activation and production HA claims")
+    if decision.get("activationAllowed") is not True or decision.get("productionHaClaimAllowed") is not False:
+        errors.append("validated isolated activation must be recorded without a production HA claim")
     if ownership.get("policy") != "exactly-one" or ownership.get("productionOwnerUnchanged") is not True:
         errors.append("exact-one ownership and unchanged production ownership are required")
     if identity.get("sharedProductionIdentityAllowed") is not False:
@@ -50,6 +51,8 @@ def verify(contract: dict[str, Any]) -> list[str]:
         errors.append("every Kafka and connector identity must be generation scoped")
     if [topology.get(key) for key in ("kafkaConnectReplicas", "clickhouseReplicas", "keeperReplicas")] != [1, 1, 1]:
         errors.append("canary topology must render exactly one Connect, ClickHouse and Keeper replica")
+    if topology.get("sinkTasksMax") != 1:
+        errors.append("bounded canary must use exactly one sink task")
     if topology.get("localFilesystemAuthoritative") is not False or topology.get("ha") is not False:
         errors.append("local state and HA claims must remain disabled")
     if topology.get("clickhouseState") != "encrypted-ebs-pvc" or topology.get("keeperState") != "encrypted-ebs-pvc":
@@ -59,13 +62,13 @@ def verify(contract: dict[str, Any]) -> list[str]:
     plugin = iam.get("imagePlugin") or {}
     if (
         iam.get("contractReady") is not True
-        or iam.get("applied") is not False
+        or iam.get("applied") is not True
         or iam.get("plannedPodIdentityAssociationCount") != 1
-        or iam.get("appliedPodIdentityAssociationCount") != 0
+        or iam.get("appliedPodIdentityAssociationCount") != 1
         or iam.get("topicResourceCount") != 5
         or iam.get("groupResourceCount") != 2
     ):
-        errors.append("Phase 2 IAM must be exact and statically ready while remaining unapplied")
+        errors.append("live IAM must retain the exact planned counts and one applied association")
     if (
         plugin.get("version") != "2.3.6"
         or plugin.get("sha256") != "de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08"
@@ -77,19 +80,19 @@ def verify(contract: dict[str, Any]) -> list[str]:
         errors.append("durable source boundary must be topic, partition and offset")
     if (
         durable.get("contractReady") is not True
-        or durable.get("liveRestartProven") is not False
-        or durable.get("liveRestoreProven") is not False
+        or durable.get("liveRestartProven") is not True
+        or durable.get("liveRestoreProven") is not True
         or durable.get("restoreTargetMustBeIsolated") is not True
         or durable.get("recoveryModeConsumerResources") != 0
         or durable.get("backupAuthority") != "paired-csi-volume-snapshot-receipt"
     ):
-        errors.append("durable recovery must be statically ready, isolated and live-unproven")
+        errors.append("durable recovery must be isolated and proven by live restart and restore")
     if (
-        implementation.get("status") != "static-runtime-contract"
+        implementation.get("status") != "live-canary-validated-and-rolled-back"
         or implementation.get("workloadCount") != 4
         or implementation.get("isolatedRecoveryWorkloadCount") != 2
     ):
-        errors.append("Phase 2 must record four active workloads and two isolated recovery workloads")
+        errors.append("implementation must record the validated active and recovery workload counts")
     if implementation.get("workloadTemplate") != "infra/eks/helm/asklake-workloads/templates/realtime-v2.yaml":
         errors.append("Phase 1 must use the canonical Helm V2 template")
     if (
@@ -124,9 +127,25 @@ def verify(contract: dict[str, Any]) -> list[str]:
     for gate in ("mskIamContractReady", "durableRestartContractReady", "backupRestoreContractReady"):
         if gates.get(gate) is not True:
             errors.append(f"Phase 2 static gate {gate} must be ready")
-    for gate in ("sharedAwsApplyAllowed", "liveCanaryReady", "productionTransferAllowed"):
-        if gates.get(gate) is not False:
-            errors.append(f"live gate {gate} must remain false")
+    for gate in ("sharedAwsApplyAllowed", "liveCanaryReady"):
+        if gates.get(gate) is not True:
+            errors.append(f"validated live gate {gate} must be true")
+    if gates.get("productionTransferAllowed") is not False:
+        errors.append("production transfer must remain blocked after an isolated canary")
+
+    if (
+        live.get("result") != "pass"
+        or live.get("receipt") != "deploy/eks-realtime-kafka-v2-receipt.json"
+        or any(live.get(key) is not True for key in (
+            "ingestProven",
+            "restartProven",
+            "pairedSnapshotReady",
+            "isolatedRestoreProven",
+            "rollbackProven",
+        ))
+        or live.get("productionTransferClaimed") is not False
+    ):
+        errors.append("live validation must bind a passing receipt without claiming production transfer")
 
     required_evidence = [
         ROOT / "deploy" / "docker-compose.prod.yml",
@@ -137,6 +156,7 @@ def verify(contract: dict[str, Any]) -> list[str]:
         ROOT / "scripts" / "verify-eks-realtime-v2-workload.sh",
         ROOT / "infra" / "eks" / "terraform" / "workload-identity.tf",
         ROOT / "deploy" / "eks-realtime-kafka-v2-receipt.schema.json",
+        ROOT / "deploy" / "eks-realtime-kafka-v2-receipt.json",
         ROOT / "docs" / "eks-realtime-kafka-v2-canary-runbook.md",
         ROOT / "docs" / "eks-realtime-kafka-v2-live-preflight.md",
         ROOT / "infra" / "eks" / "storage" / "realtime-v2-auto-mode.yaml",
@@ -164,6 +184,23 @@ def verify(contract: dict[str, Any]) -> list[str]:
         dockerfile = dockerfile_path.read_text(encoding="utf-8")
         if plugin.get("sha256") not in dockerfile or f"ENV CLASSPATH={plugin.get('classpath')}" not in dockerfile:
             errors.append("Connect Dockerfile must bind the contracted IAM plugin checksum and classpath")
+
+    receipt_path = ROOT / "deploy" / "eks-realtime-kafka-v2-receipt.json"
+    if receipt_path.is_file():
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        snapshots = receipt.get("snapshots") or []
+        if (
+            receipt.get("result") != "pass"
+            or receipt.get("generation") != live.get("generation")
+            or (receipt.get("iam") or {}).get("associationCount") != 1
+            or (receipt.get("restart") or {}).get("offsetRegressions") != 0
+            or len(snapshots) != 2
+            or any(item.get("readyToUse") is not True for item in snapshots)
+            or (receipt.get("isolatedRestore") or {}).get("consumerResourcesRendered") != 0
+            or (receipt.get("rollback") or {}).get("v2RunningTasks") != 0
+            or (receipt.get("rollback") or {}).get("v2OwnerClaims") != 0
+        ):
+            errors.append("live receipt must prove IAM, restart, paired restore and zero-owner rollback")
     return errors
 
 

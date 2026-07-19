@@ -18,9 +18,9 @@ class EksRealtimeKafkaV2MvpContractTests(unittest.TestCase):
     def test_repository_contract_passes(self) -> None:
         self.assertEqual(verify(self.contract), [])
 
-    def test_activation_cannot_be_claimed_in_phase0(self) -> None:
+    def test_validated_activation_cannot_be_removed(self) -> None:
         candidate = deepcopy(self.contract)
-        candidate["decision"]["activationAllowed"] = True
+        candidate["decision"]["activationAllowed"] = False
         self.assertTrue(verify(candidate))
 
     def test_v1_and_v2_concurrency_cannot_be_removed_from_rollback(self) -> None:
@@ -43,10 +43,10 @@ class EksRealtimeKafkaV2MvpContractTests(unittest.TestCase):
         candidate["gates"]["productionTransferAllowed"] = True
         self.assertTrue(verify(candidate))
 
-    def test_iam_cannot_be_claimed_as_applied(self) -> None:
+    def test_applied_iam_evidence_cannot_be_removed(self) -> None:
         candidate = deepcopy(self.contract)
-        candidate["iam"]["applied"] = True
-        candidate["iam"]["appliedPodIdentityAssociationCount"] = 1
+        candidate["iam"]["applied"] = False
+        candidate["iam"]["appliedPodIdentityAssociationCount"] = 0
         self.assertTrue(verify(candidate))
 
     def test_restore_cannot_render_a_consumer(self) -> None:
@@ -54,9 +54,9 @@ class EksRealtimeKafkaV2MvpContractTests(unittest.TestCase):
         candidate["durableState"]["recoveryModeConsumerResources"] = 1
         self.assertTrue(verify(candidate))
 
-    def test_live_restore_cannot_be_claimed_by_static_contract(self) -> None:
+    def test_live_restore_receipt_cannot_be_removed(self) -> None:
         candidate = deepcopy(self.contract)
-        candidate["durableState"]["liveRestoreProven"] = True
+        candidate["durableState"]["liveRestoreProven"] = False
         self.assertTrue(verify(candidate))
 
     def test_preflight_cannot_claim_shared_mutation(self) -> None:
