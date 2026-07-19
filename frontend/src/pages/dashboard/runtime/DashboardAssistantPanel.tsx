@@ -3,7 +3,6 @@ import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { cn } from "@/lib/utils";
 import type { DashboardRuntimeWidget } from "../../../types";
-import { createResourceQueryKey, LatestRequestGate } from "../../../state/requestOwnership";
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
@@ -16,6 +15,7 @@ import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 import { applyAssistantWidgetActions, hasWidgetMutationAction } from "./dashboardAssistantActions";
 import { classifyDashboardAssistantMode } from "./dashboardAssistantIntent";
+import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
@@ -112,7 +112,7 @@ export function DashboardAssistantPanel({
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useRef(new LatestRequestGate());
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([currentDatasetId, dashboardId, pageId, selectedWidget?.id]), () => setIsSubmitting(false));
   const isConfigured = isDashboardAssistantConfigured();
   const shouldReduceMotion = useReducedMotion();
   const targetWidgets = useMemo(() => {
@@ -146,17 +146,7 @@ export function DashboardAssistantPanel({
     const mode = classifyDashboardAssistantMode(nextPrompt, {
       hasSelectedWidget: Boolean(selectedWidget),
     });
-    const lease = requests.current.begin(createResourceQueryKey({
-      resource: "dashboard-assistant",
-      version: pageId,
-      params: {
-        currentDatasetId,
-        dashboardId,
-        mode,
-        prompt: nextPrompt,
-        selectedWidgetId: selectedWidget?.id ?? null,
-      },
-    }));
+    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: nextPrompt, selectedWidgetId: selectedWidget?.id ?? null } });
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
@@ -201,12 +191,6 @@ export function DashboardAssistantPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
-
-  useEffect(() => {
-    requests.current.invalidate();
-    setIsSubmitting(false);
-    return () => requests.current.invalidate();
-  }, [currentDatasetId, dashboardId, pageId, selectedWidget?.id]);
 
   useEffect(() => {
     if (!promptInsertion) return;

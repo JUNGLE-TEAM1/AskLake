@@ -121,12 +121,17 @@ test("dashboard assistant surfaces reject stale responses before persistence", (
   const service = readFileSync(new URL("../src/services/dashboardAssistantService.ts", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../src/pages/dashboard/runtime/DashboardAssistantPanel.tsx", import.meta.url), "utf8");
   const widget = readFileSync(new URL("../src/pages/dashboard/runtime/WidgetRenderer.tsx", import.meta.url), "utf8");
+  const ownership = readFileSync(new URL("../src/pages/dashboard/runtime/useDashboardAssistantRequestGate.ts", import.meta.url), "utf8");
 
   assert.match(service, /options: ApiRequestOptions = \{\}/);
   assert.match(service, /signal: options\.signal/);
   assert.match(service, /apiClient\.post<DashboardAssistantResponse>\([\s\S]*body, options\)/);
+  assert.match(ownership, /new LatestRequestGate\(\)/);
+  assert.match(ownership, /requests\.current\.invalidate\(\)/);
+  assert.match(ownership, /requests\.begin\(createResourceQueryKey\(input\)\)/);
   for (const source of [panel, widget]) {
-    assert.match(source, /new LatestRequestGate\(\)/);
+    assert.match(source, /useDashboardAssistantRequestGate\(/);
+    assert.match(source, /beginDashboardAssistantRequest\(/);
     assert.match(source, /signal: lease\.signal/);
     assert.match(source, /isCurrent\(lease\)/);
     assert.match(source, /complete\(lease\)/);

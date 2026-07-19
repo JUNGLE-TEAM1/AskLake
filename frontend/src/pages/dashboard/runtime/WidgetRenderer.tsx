@@ -27,7 +27,8 @@ import {
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
-import { createResourceQueryKey, LatestRequestGate, type RequestLease } from "../../../state/requestOwnership";
+import type { RequestLease } from "../../../state/requestOwnership";
+import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type SimpleRow = Record<string, unknown>;
@@ -712,7 +713,7 @@ function VisualizationRequestWidget({
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useRef(new LatestRequestGate());
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([assistantContext?.activeDatasetId, assistantContext?.dashboardId, assistantContext?.pageId, widget.id]), () => { setIsSaving(false); assistantContext?.onWorkingWidgetChange?.(null); });
 
   useEffect(() => {
     setPrompt(savedPrompt);
@@ -722,12 +723,7 @@ function VisualizationRequestWidget({
   useEffect(() => {
     setMessage(null);
     setRequestTone(null);
-    requests.current.invalidate();
-    setIsSaving(false);
-    return () => {
-      requests.current.invalidate();
-      assistantContext?.onWorkingWidgetChange?.(null);
-    };
+    return () => assistantContext?.onWorkingWidgetChange?.(null);
   }, [widget.id]);
 
   useEffect(() => {
@@ -761,16 +757,7 @@ function VisualizationRequestWidget({
       }
 
       const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
-      lease = requests.current.begin(createResourceQueryKey({
-        resource: "dashboard-widget-assistant",
-        version: assistantContext?.pageId ?? widget.pageId,
-        params: {
-          currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
-          dashboardId: assistantContext?.dashboardId,
-          prompt: nextPrompt,
-          widgetId: widget.id,
-        },
-      }));
+      lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-widget-assistant", version: assistantContext?.pageId ?? widget.pageId, params: { currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null, dashboardId: assistantContext?.dashboardId, prompt: nextPrompt, widgetId: widget.id } });
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
         currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null,
