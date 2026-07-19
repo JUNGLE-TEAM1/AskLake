@@ -20,6 +20,7 @@ required_files=(
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
+  "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
   "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
@@ -293,8 +294,8 @@ if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
   exit 1
 fi
 grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
-grep -q 'option("kafka.sasl.mechanism", "AWS_MSK_IAM")' "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
-grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
+grep -q 'option("kafka.sasl.mechanism", "AWS_MSK_IAM")' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
+grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
 grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
 grep -q '<shadedPattern>com.asklake.spark.msk.shadow.software.amazon.awssdk</shadedPattern>' \
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
