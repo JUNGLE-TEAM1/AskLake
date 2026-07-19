@@ -106,6 +106,16 @@ def job():
         dataset_id="ds_kafka_v2_events",
         rag=False,
         execution_mode="continuous",
+        record_parsing={
+            "enabled": True,
+            "delimiterKind": "whitespace",
+            "delimiterPattern": r"\s+",
+            "expectedFieldCount": 2,
+            "columns": [
+                {"name": "event_id", "position": 0},
+                {"name": "region", "position": 1},
+            ],
+        },
         source_config=[["TOPIC / QUEUE NAME", "events.v2"]],
     )
 
@@ -175,6 +185,7 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(CatalogDatasetResponse.model_validate(payload).freshness, "realtime")
         self.assertEqual(payload["physicalBindings"][0]["status"], "pending")
         self.assertEqual(payload["streamingSource"]["topic"], "events.v2")
+        self.assertTrue(payload["streamingSource"]["recordParsing"]["enabled"])
 
     def test_first_raw_offset_publishes_catalog_and_sse_revision(self) -> None:
         self.gateway.manage(job(), runtime(), "start")

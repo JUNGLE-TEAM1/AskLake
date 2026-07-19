@@ -11,6 +11,7 @@ from app.services.clickhouse_client import (
     qualified_clickhouse_table,
     quote_clickhouse_identifier,
 )
+from app.services.dashboard_clickhouse_binding import clickhouse_v2_query_binding
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
     iceberg_dataset_table,
@@ -124,13 +125,18 @@ def read_clickhouse_dataset_rows(
     offset: int,
     client: ClickHouseClient | None = None,
 ) -> CatalogDatasetRowsResponse:
+    v2_binding = clickhouse_v2_query_binding(dataset, expected_binding_epoch=None)
     target = dataset.clickhouse_table
-    if target is None:
+    if v2_binding is None and target is None:
         raise sql_storage_error(
             "Catalog ClickHouse dataset mapping is unavailable",
             {"datasetId": dataset.id},
         )
-    table = qualified_clickhouse_table(target.database, target.table)
+    table = (
+        v2_binding[1]
+        if v2_binding is not None
+        else f"{qualified_clickhouse_table(target.database, target.table)} FINAL"
+    )
     columns = [
         str(item[0])
         for item in dataset.schema_
@@ -141,14 +147,18 @@ def read_clickhouse_dataset_rows(
             "Catalog ClickHouse dataset schema is unavailable",
             {"datasetId": dataset.id},
         )
-    resolved_client = client or ClickHouseClient.realtime_v2_reader()
+    resolved_client = client or (
+        ClickHouseClient.realtime_v2_reader()
+        if v2_binding is not None
+        else ClickHouseClient()
+    )
     owns_client = client is None
     projection = ", ".join(quote_clickhouse_identifier(item) for item in columns)
     try:
-        count_result = resolved_client.query(f"SELECT count() AS row_count FROM {table} FINAL")
+        count_result = resolved_client.query(f"SELECT count() AS row_count FROM {table}")
         row_count = int(count_result.rows[0][0]) if count_result.rows else 0
         page = resolved_client.query(
-            f"SELECT {projection} FROM {table} FINAL LIMIT {int(limit)} OFFSET {int(offset)}"
+            f"SELECT {projection} FROM {table} LIMIT {int(limit)} OFFSET {int(offset)}"
         )
     except (ClickHouseError, RuntimeError, TypeError, ValueError) as error:
         raise sql_storage_error(

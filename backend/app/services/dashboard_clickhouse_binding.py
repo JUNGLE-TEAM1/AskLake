@@ -82,7 +82,10 @@ def _active_clickhouse_v2_binding(
 
 def _v2_value_expression(identifier: str, type_name: str) -> str:
     path = quote_clickhouse_string(f"$.{identifier}")
-    raw_value = f"JSON_VALUE(payload, {path})"
+    return _v2_cast_expression(f"JSON_VALUE(payload, {path})", type_name)
+
+
+def _v2_cast_expression(raw_value: str, type_name: str) -> str:
     normalized_type = type_name.strip().casefold().replace(" ", "")
     if normalized_type in {
         "byte", "short", "smallint", "int", "integer", "int32",
@@ -101,8 +104,41 @@ def _v2_value_expression(identifier: str, type_name: str) -> str:
     return raw_value
 
 
+def _v2_record_positions(dataset: Any) -> dict[str, int] | None:
+    streaming_source = _dataset_value(dataset, "streaming_source", "streamingSource")
+    if not isinstance(streaming_source, Mapping):
+        return None
+    record_parsing = streaming_source.get("recordParsing") or streaming_source.get("record_parsing")
+    if not isinstance(record_parsing, Mapping) or record_parsing.get("enabled") is not True:
+        return None
+    if str(record_parsing.get("delimiterKind") or "whitespace") != "whitespace":
+        raise ValueError("V2 raw ingest supports only whitespace record parsing")
+    if record_parsing.get("header") is True:
+        raise ValueError("V2 raw ingest does not support header rows")
+    delimiter = str(record_parsing.get("delimiterPattern") or r"\s+")
+    if delimiter != r"\s+":
+        raise ValueError("V2 raw ingest requires the \\s+ delimiter pattern")
+    columns = sorted(
+        [item for item in record_parsing.get("columns") or [] if isinstance(item, Mapping)],
+        key=lambda item: int(item.get("position") or 0),
+    )
+    expected = int(record_parsing.get("expectedFieldCount") or 0)
+    positions = [int(item.get("position") or 0) for item in columns]
+    names = [str(item.get("name") or "").strip() for item in columns]
+    if (
+        expected <= 0
+        or len(columns) != expected
+        or positions != list(range(expected))
+        or any(not name for name in names)
+        or len(set(names)) != expected
+    ):
+        raise ValueError("V2 raw ingest record parsing contract is invalid")
+    return {name.casefold(): position + 1 for name, position in zip(names, positions)}
+
+
 def _v2_projection_columns(dataset: Any) -> tuple[list[str], set[str]]:
     schema = _dataset_value(dataset, "schema_", "schema", default=[]) or []
+    record_positions = _v2_record_positions(dataset)
     projections: list[str] = []
     columns: set[str] = set()
     for item in schema:
@@ -112,7 +148,17 @@ def _v2_projection_columns(dataset: Any) -> tuple[list[str], set[str]]:
         if identifier.casefold().startswith("_asklake_"):
             continue
         columns.add(identifier)
-        value = _v2_value_expression(identifier, type_name)
+        if record_positions is None:
+            value = _v2_value_expression(identifier, type_name)
+        else:
+            position = record_positions.get(identifier.casefold())
+            if position is None:
+                raise ValueError(f"V2 record parsing column is missing: {identifier}")
+            raw_value = (
+                f"splitByRegexp({quote_clickhouse_string(r'\s+')}, trimBoth(payload))"
+                f"[{position}]"
+            )
+            value = _v2_cast_expression(raw_value, type_name)
         projections.append(f"{value} AS {quote_clickhouse_identifier(identifier)}")
     if not projections or len(projections) > 200:
         raise ValueError("V2 serving binding exposes an invalid number of Catalog columns")
