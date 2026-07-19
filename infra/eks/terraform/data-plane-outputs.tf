@@ -9,6 +9,9 @@ output "msk_contract" {
     test_topic                 = var.msk_test_topic
     test_consumer_group        = var.msk_test_consumer_group
     scale_consumer_groups      = sort(tolist(var.msk_scale_consumer_groups))
+    realtime_topics            = sort(tolist(var.msk_realtime_topics))
+    realtime_consumer_groups   = sort(tolist(var.msk_realtime_consumer_groups))
+    realtime_v2_identity       = local.msk_realtime_v2_identity
   }
 }
 

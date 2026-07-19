@@ -16,11 +16,11 @@ from fastapi import status
 import sqlglot
 
 from app.core.errors import ApiError
-from app.services.clickhouse_client import (
-    ClickHouseClient,
-    ClickHouseError,
-    qualified_clickhouse_table,
-    validate_clickhouse_identifier,
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
+from app.services.dashboard_clickhouse_binding import (
+    clickhouse_dataset_table,
+    clickhouse_dataset_user_columns,
+    clickhouse_v2_query_binding,
 )
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
@@ -113,6 +113,7 @@ class DashboardDatasetQuerySession:
         trino_client: TrinoClient | None = None,
         clickhouse_client: ClickHouseClient | None = None,
         iceberg_run_id: str | None = None,
+        expected_binding_epoch: int | None = None,
     ) -> None:
         self.dataset = dataset
         self.query_timeout_seconds = (
@@ -124,28 +125,12 @@ class DashboardDatasetQuerySession:
         self.trino_client: TrinoClient | None = None
         self.clickhouse_client: ClickHouseClient | None = None
         self._aggregate_where_sql = ""
+        self.binding_epoch: int | None = None
         self.revision_delta_available = iceberg_run_id is None
         try:
-            clickhouse_table = clickhouse_dataset_table(dataset)
-            if clickhouse_table is not None:
-                self.table = clickhouse_table
-                self.query_table = f"{self.table} FINAL"
-                self.clickhouse_client = clickhouse_client or ClickHouseClient()
-                description = self.clickhouse_client.query(
-                    f"DESCRIBE TABLE {self.table}",
-                    timeout_seconds=self.query_timeout_seconds,
-                )
-                physical_columns = {
-                    str(row[0])
-                    for row in description.rows
-                    if row and str(row[0]).strip()
-                }
-                self.columns = set(clickhouse_dataset_user_columns(dataset)).intersection(
-                    physical_columns
-                )
-                if not self.columns:
-                    raise ValueError("ClickHouse dataset does not expose Catalog user columns")
-                self.revision_delta_available = False
+            if self._initialize_clickhouse(
+                dataset, clickhouse_client, expected_binding_epoch
+            ):
                 return
 
             iceberg_table = iceberg_dataset_table(dataset)
@@ -215,6 +200,46 @@ class DashboardDatasetQuerySession:
                 self.clickhouse_client.close()
             raise dashboard_storage_error(dataset, iceberg_read_reason(error)) from error
 
+    def _initialize_clickhouse(
+        self,
+        dataset: Any,
+        clickhouse_client: ClickHouseClient | None,
+        expected_binding_epoch: int | None,
+    ) -> bool:
+        v2_binding = clickhouse_v2_query_binding(
+            dataset,
+            expected_binding_epoch=expected_binding_epoch,
+        )
+        if v2_binding is not None:
+            self.table, self.query_table, self.columns, self.binding_epoch = v2_binding
+            self.clickhouse_client = (
+                clickhouse_client or ClickHouseClient.realtime_v2_reader()
+            )
+            self.revision_delta_available = False
+            return True
+        clickhouse_table = clickhouse_dataset_table(dataset)
+        if clickhouse_table is None:
+            return False
+        self.table = clickhouse_table
+        self.query_table = f"{self.table} FINAL"
+        self.clickhouse_client = clickhouse_client or ClickHouseClient()
+        description = self.clickhouse_client.query(
+            f"DESCRIBE TABLE {self.table}",
+            timeout_seconds=self.query_timeout_seconds,
+        )
+        physical_columns = {
+            str(row[0])
+            for row in description.rows
+            if row and str(row[0]).strip()
+        }
+        self.columns = set(clickhouse_dataset_user_columns(dataset)).intersection(
+            physical_columns
+        )
+        if not self.columns:
+            raise ValueError("ClickHouse dataset does not expose Catalog user columns")
+        self.revision_delta_available = False
+        return True
+
     def close(self) -> None:
         if self.connection is not None:
             self.connection.close()
@@ -271,6 +296,8 @@ class DashboardDatasetQuerySession:
                 )
                 column_names = [str(description[0]) for description in (cursor.description or [])]
                 raw_rows = cursor.fetchall()
+            if len(raw_rows) > DASHBOARD_TABLE_ROW_LIMIT:
+                raise ValueError("Dashboard query exceeded the bounded result-row limit")
             rows = [
                 {
                     column_name: dashboard_json_cell(row[index])
@@ -336,33 +363,6 @@ def dashboard_source_config(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in config.items()
         if key not in {"dataMode", "data_mode", "sourceConfig", "source_config"}
     }
-
-
-def clickhouse_dataset_table(dataset: Any) -> str | None:
-    storage_format = str(
-        dataset_value(dataset, "storage_format", "storageFormat", default="") or ""
-    ).strip().casefold()
-    if storage_format != "clickhouse":
-        return None
-    mapping = dataset_value(dataset, "clickhouse_table", "clickhouseTable")
-    if hasattr(mapping, "model_dump"):
-        mapping = mapping.model_dump(mode="json", by_alias=True)
-    if not isinstance(mapping, Mapping):
-        raise ValueError("ClickHouse dataset does not have a physical table mapping")
-    database = validate_clickhouse_identifier(mapping.get("database"))
-    table = validate_clickhouse_identifier(mapping.get("table"))
-    return qualified_clickhouse_table(database, table)
-
-
-def clickhouse_dataset_user_columns(dataset: Any) -> list[str]:
-    schema = dataset_value(dataset, "schema_", "schema", default=[]) or []
-    columns: list[str] = []
-    for item in schema:
-        name = item[0] if isinstance(item, (list, tuple)) and item else None
-        normalized = str(name or "").strip()
-        if normalized and not normalized.casefold().startswith("_asklake_") and normalized not in columns:
-            columns.append(normalized)
-    return columns
 
 
 def dashboard_iceberg_snapshot_version(dataset: Any) -> str | None:

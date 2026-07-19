@@ -83,7 +83,7 @@ def job():
     )
 
 
-def hooks():
+def hooks(worker_kind=None):
     return ContinuousCommandHooks(
         is_kafka_job=lambda _job: True,
         runtime_from_job=lambda _job: runtime(),
@@ -96,11 +96,12 @@ def hooks():
         fail_session=lambda *_args: None,
         mark_session_stopping=lambda *_args: None,
         with_permissions=lambda _db, saved, _actor: saved,
+        worker_kind=worker_kind or (lambda _job: "spark_structured_streaming"),
     )
 
 
 class ContinuousCommandUseCaseTests(unittest.TestCase):
-    def execute(self, *, lose_start_response=False, dispatch_worker=True):
+    def execute(self, *, lose_start_response=False, dispatch_worker=True, worker_kind=None):
         events = []
         current_runtime = runtime()
 
@@ -121,7 +122,7 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
                 ContinuousCommandRequest(command="startContinuous", job_id="job-1"),
                 SimpleNamespace(),
                 worker=FakeWorker(events, lose_start_response=lose_start_response),
-                hooks=hooks(),
+                hooks=hooks(worker_kind),
                 dispatch_worker=dispatch_worker,
             )
         return events, current_runtime, result
@@ -150,6 +151,21 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
         contract = current_runtime.metrics["runtimeContract"]
         self.assertEqual(contract["desiredState"], "running")
         self.assertTrue(contract["activeWorkerAttemptId"].startswith("start-"))
+
+    def test_external_v2_control_plane_reports_the_v2_worker_before_dispatch(self) -> None:
+        _events, _runtime, result = self.execute(
+            dispatch_worker=False,
+            worker_kind=lambda _job: "kafka_connect_clickhouse_v2",
+        )
+
+        self.assertEqual(
+            result["processing_result"]["worker"],
+            "kafka_connect_clickhouse_v2",
+        )
+        self.assertEqual(
+            result["processing_result"]["workerResult"]["worker"],
+            "kafka_connect_clickhouse_v2",
+        )
 
 
 class ContinuousReconciliationPolicyTests(unittest.TestCase):
@@ -272,6 +288,121 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
     def test_same_evidence_produces_the_same_decision(self) -> None:
         evidence = self.evidence(container_state="running")
         self.assertEqual(decide_reconciliation(evidence), decide_reconciliation(evidence))
+
+    def test_v2_connector_status_becomes_running_without_a_spark_report(self) -> None:
+        events = []
+        synced = []
+        current_runtime = runtime(status="starting")
+        current_runtime.metrics = record_runtime_command(
+            {},
+            command_transition("stopped", "startContinuous"),
+            worker_attempt_id="kafka-connect-v2:attempt-1",
+        )
+        current_job = job()
+        current_job.status = "running"
+
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(state=JsonDocumentState.MISSING),
+            worker_status=lambda _job, _runtime: {
+                "containerState": "running",
+                "worker": "kafka_connect_clickhouse_v2",
+                "workerAttemptId": "kafka-connect-v2:attempt-1",
+                "consumedCount": 3,
+                "storedCount": 3,
+                "publicationRevision": 1,
+                "clickhouseOffsets": [{"partition": 0, "maxOffset": 2}],
+            },
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: synced.append("sync"),
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: self.fail("V2 must not wait for Spark report"),
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=FakeWorker(events),
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(events, ["save"])
+        self.assertEqual(synced, ["sync"])
+        self.assertEqual(current_runtime.status, "running")
+        self.assertEqual(current_runtime.stored_count, 3)
+        self.assertEqual(
+            current_runtime.metrics["clickhouseKafkaIngestV2"]["publicationRevision"],
+            1,
+        )
+        self.assertIn("Kafka Connect", current_job.last_state)
+
+    def test_v2_applies_durable_pause_even_after_public_status_raced_to_running(self) -> None:
+        events = []
+        current_runtime = runtime(status="running")
+        current_runtime.metrics = record_runtime_command(
+            {},
+            command_transition("running", "pauseContinuous"),
+        )
+        current_job = job()
+        current_job.status = "running"
+        observations = iter((
+            {"containerState": "running", "worker": "kafka_connect_clickhouse_v2"},
+            {
+                "containerState": "exited",
+                "worker": "kafka_connect_clickhouse_v2",
+                "requestedAction": "pause",
+            },
+        ))
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(state=JsonDocumentState.MISSING),
+            worker_status=lambda _job, _runtime: next(observations),
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: None,
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: None,
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=FakeWorker(events),
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(events, ["worker:pause", "save"])
+        self.assertEqual(current_runtime.status, "paused")
+        self.assertEqual(current_job.status, "paused")
 
 
 if __name__ == "__main__":

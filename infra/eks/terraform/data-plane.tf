@@ -15,20 +15,57 @@ locals {
     aws_msk_serverless_cluster.mvp[0].bootstrap_brokers_sasl_iam,
     null,
   ) : var.existing_msk_bootstrap_brokers_sasl_iam
-  msk_topic_arn = local.msk_cluster_arn == null ? null : format(
-    "%s/%s",
-    replace(local.msk_cluster_arn, ":cluster/", ":topic/"),
-    var.msk_test_topic,
-  )
+  msk_topic_arns = local.msk_cluster_arn == null ? [] : [
+    for topic in concat(
+      [var.msk_test_topic],
+      sort(tolist(var.msk_realtime_topics)),
+      ) : format(
+      "%s/%s",
+      replace(local.msk_cluster_arn, ":cluster/", ":topic/"),
+      topic,
+    )
+  ]
   msk_group_arns = local.msk_cluster_arn == null ? [] : [
     for consumer_group in concat(
       [var.msk_test_consumer_group],
       sort(tolist(var.msk_scale_consumer_groups)),
+      sort(tolist(var.msk_realtime_consumer_groups)),
     ) :
     format(
       "%s/%s",
       replace(local.msk_cluster_arn, ":cluster/", ":group/"),
       consumer_group,
+    )
+  ]
+
+  msk_realtime_v2_identity = var.msk_realtime_v2_generation == null ? null : {
+    generation     = var.msk_realtime_v2_generation
+    source_topic   = "asklake.eks-realtime.v2.fixture.${var.msk_realtime_v2_generation}"
+    dlq_topic      = "asklake.eks-realtime.v2.dlq.${var.msk_realtime_v2_generation}"
+    config_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-config"
+    offset_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-offset"
+    status_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-status"
+    consumer_group = "asklake-eks-realtime-v2-${var.msk_realtime_v2_generation}"
+    worker_group   = "asklake-eks-realtime-v2-worker-${var.msk_realtime_v2_generation}"
+  }
+  msk_realtime_v2_topic_arns = local.msk_cluster_arn == null || local.msk_realtime_v2_identity == null ? [] : [
+    for topic in [
+      local.msk_realtime_v2_identity.source_topic,
+      local.msk_realtime_v2_identity.dlq_topic,
+      local.msk_realtime_v2_identity.config_topic,
+      local.msk_realtime_v2_identity.offset_topic,
+      local.msk_realtime_v2_identity.status_topic,
+      ] : format(
+      "%s/%s",
+      replace(local.msk_cluster_arn, ":cluster/", ":topic/"),
+      topic,
+    )
+  ]
+  msk_realtime_v2_group_arns = local.msk_cluster_arn == null || local.msk_realtime_v2_identity == null ? [] : [
+    for group in [local.msk_realtime_v2_identity.consumer_group, local.msk_realtime_v2_identity.worker_group] : format(
+      "%s/%s",
+      replace(local.msk_cluster_arn, ":cluster/", ":group/"),
+      group,
     )
   ]
 
@@ -51,13 +88,14 @@ locals {
   } : {}
 
   storage_object_arns = local.use_storage ? {
-    raw           = var.storage_prefixes.raw == "*" ? "${local.storage_bucket_arns.raw}/*" : "${local.storage_bucket_arns.raw}/${var.storage_prefixes.raw}/*"
-    output        = var.storage_prefixes.output == "*" ? "${local.storage_bucket_arns.output}/*" : "${local.storage_bucket_arns.output}/${var.storage_prefixes.output}/*"
-    warehouse     = "${local.storage_bucket_arns.warehouse}/${var.storage_prefixes.warehouse}/*"
-    query_results = "${local.storage_bucket_arns.query_results}/${var.storage_prefixes.query_results}/*"
-    checkpoint    = "${local.storage_bucket_arns.output}/${var.storage_prefixes.checkpoint}/*"
-    quarantine    = "${local.storage_bucket_arns.output}/${var.storage_prefixes.quarantine}/*"
-    evidence      = "${local.storage_bucket_arns.output}/${var.storage_prefixes.evidence}/*"
+    raw                = var.storage_prefixes.raw == "*" ? "${local.storage_bucket_arns.raw}/*" : "${local.storage_bucket_arns.raw}/${var.storage_prefixes.raw}/*"
+    output             = var.storage_prefixes.output == "*" ? "${local.storage_bucket_arns.output}/*" : "${local.storage_bucket_arns.output}/${var.storage_prefixes.output}/*"
+    warehouse          = "${local.storage_bucket_arns.warehouse}/${var.storage_prefixes.warehouse}/*"
+    query_results      = "${local.storage_bucket_arns.query_results}/${var.storage_prefixes.query_results}/*"
+    checkpoint         = "${local.storage_bucket_arns.output}/${var.storage_prefixes.checkpoint}/*"
+    quarantine         = "${local.storage_bucket_arns.output}/${var.storage_prefixes.quarantine}/*"
+    evidence           = "${local.storage_bucket_arns.output}/${var.storage_prefixes.evidence}/*"
+    continuous_runtime = "${local.storage_bucket_arns.output}/${var.storage_prefixes.continuous_runtime}/*"
   } : {}
 }
 
@@ -109,9 +147,26 @@ check "storage_prefix_contract" {
         var.storage_prefixes.checkpoint,
         var.storage_prefixes.quarantine,
         var.storage_prefixes.evidence,
-      ])) == 3
+        var.storage_prefixes.continuous_runtime,
+      ])) == 4
     )
-    error_message = "storage prefixes must be non-empty, and checkpoint/quarantine/evidence prefixes in the shared output bucket must be distinct."
+    error_message = "storage prefixes must be non-empty, and checkpoint/quarantine/evidence/continuous-runtime prefixes in the shared output bucket must be distinct."
+  }
+}
+
+check "realtime_msk_identity_contract" {
+  assert {
+    condition = (
+      length(var.msk_realtime_topics) == length(var.msk_realtime_consumer_groups) &&
+      toset([
+        for topic in var.msk_realtime_topics :
+        trimprefix(topic, "asklake.eks-realtime.fixture.")
+        ]) == toset([
+        for group in var.msk_realtime_consumer_groups :
+        trimprefix(group, "asklake-eks-realtime-v1-")
+      ])
+    )
+    error_message = "Each EKS Realtime V1 topic must have one exact consumer group with the same generation, and neither may exist alone."
   }
 }
 

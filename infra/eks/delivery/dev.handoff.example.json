@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0",
+  "contractVersion": "1.1",
   "environment": "dev",
   "readiness": "planning",
   "runtimeBoundary": {
@@ -17,15 +17,19 @@
     "serviceAccounts": {
       "frontend": "asklake-frontend",
       "backend": "asklake-backend",
+      "aiGateway": "asklake-ai-gateway",
       "airflow": "asklake-airflow",
       "trino": "asklake-trino",
       "mskSmoke": "asklake-msk-smoke",
-      "spark": "asklake-spark"
+      "spark": "asklake-spark",
+      "realtimeV2Worker": "asklake-realtime-v2-worker",
+      "realtimeV2Connect": "asklake-realtime-v2-connect"
     }
   },
   "images": {
     "frontend": null,
     "backend": null,
+    "aiGateway": null,
     "airflow": null,
     "sparkRuntime": null,
     "trino": null
@@ -33,6 +37,7 @@
   "configReferences": {
     "runtimeConfigMap": "asklake-runtime",
     "backendSecret": "asklake-backend-runtime",
+    "aiGatewaySecret": "asklake-ai-gateway-runtime",
     "airflowSecret": "asklake-airflow-runtime",
     "sparkSecret": "asklake-spark-runtime",
     "trinoSecret": "asklake-trino-runtime"
@@ -60,6 +65,9 @@
     "backend-to-kubernetes-api:tcp:443",
     "backend-to-rds:tcp:5432",
     "backend-to-trino:tcp:8443",
+    "backend-to-ai-gateway:tcp:8090",
+    "ai-gateway-to-backend-mcp:tcp:8080",
+    "ai-gateway-to-provider:tcp:443",
     "trino-to-rds:tcp:5432",
     "trino-to-s3-sts:tcp:443",
     "backend-spark-to-s3-sts:tcp:443",

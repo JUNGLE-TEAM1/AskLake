@@ -50,6 +50,24 @@ backend:
     trinoWarehouseBucket: asklake-dev-warehouse-example
     trinoWarehousePrefix: warehouse
     trinoResultStorageBucket: asklake-dev-query-results-example
+  realtime:
+    enabled: false
+    apiControlPlane: external_ec2
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    connectorName: asklake-clickhouse-realtime-v2
+    clickhouseV2Url: ""
+    clickhouseV2Database: asklake_realtime_v2
+    runtimeSecret:
+      name: asklake-realtime-runtime
+      materializerPasswordKey: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+      readerPasswordKey: CLICKHOUSE_V2_READER_PASSWORD
+      caKey: clickhouse-v2-ca.crt
   runtimeSecret:
     name: asklake-backend-runtime
     trinoCaKey: trino-ca.pem
@@ -186,9 +204,39 @@ sparkApplication:
       requests: {cpu: "2", memory: 5Gi}
       limits: {cpu: "3", memory: 5Gi}
 
+realtimeV1:
+  enabled: false
+  replicas: 1
+  serviceAccountName: asklake-realtime-v1-worker
+  runtimeConfigMapName: asklake-runtime
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  runtimeDocument:
+    bucket: asklake-dev-output-example
+    prefix: continuous-runtime
+  spark:
+    serviceAccountName: asklake-realtime-v1-spark
+    runtimeSecretName: asklake-spark-runtime
+    mainApplicationFile: local:///opt/asklake/scripts/kafka_continuous_stream.py
+  kafka:
+    authMode: iam
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
+    topicPrefix: asklake.eks-realtime.fixture
+    consumerGroupPrefix: asklake-eks-realtime-v1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
 trino:
   enabled: true
   replicas: 1
+  distributed:
+    enabled: false
   nodeSelector:
     asklake.io/workload-class: general
     kubernetes.io/arch: amd64

@@ -62,6 +62,24 @@ backend:
     trinoWarehouseBucket: ""
     trinoWarehousePrefix: warehouse
     trinoResultStorageBucket: ""
+  realtime:
+    enabled: false
+    apiControlPlane: external_ec2
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    connectorName: asklake-clickhouse-realtime-v2
+    clickhouseV2Url: ""
+    clickhouseV2Database: asklake_realtime_v2
+    runtimeSecret:
+      name: asklake-realtime-runtime
+      materializerPasswordKey: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+      readerPasswordKey: CLICKHOUSE_V2_READER_PASSWORD
+      caKey: clickhouse-v2-ca.crt
   runtimeSecret:
     name: asklake-backend-runtime
     trinoCaKey: trino-ca.pem
@@ -214,9 +232,95 @@ sparkApplication:
       requests: {cpu: "2", memory: 5Gi}
       limits: {cpu: "3", memory: 5Gi}
 
+realtimeV1:
+  enabled: false
+  replicas: 1
+  serviceAccountName: asklake-realtime-v1-worker
+  runtimeConfigMapName: asklake-runtime
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  runtimeDocument:
+    bucket: ""
+    prefix: continuous-runtime
+  spark:
+    serviceAccountName: asklake-realtime-v1-spark
+    runtimeSecretName: asklake-spark-runtime
+    mainApplicationFile: local:///opt/asklake/scripts/kafka_continuous_stream.py
+  kafka:
+    authMode: iam
+    iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
+    topicPrefix: asklake.eks-realtime.fixture
+    consumerGroupPrefix: asklake-eks-realtime-v1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+realtimeV2:
+  enabled: false
+  recoveryMode: false
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+  serviceAccounts:
+    worker: asklake-realtime-v2-worker
+    connect: asklake-realtime-v2-connect
+  images:
+    clickhouse: {repository: "", digest: "", pullPolicy: IfNotPresent}
+    connect: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  nodeSelector:
+    asklake.io/workload-class: general
+    kubernetes.io/arch: amd64
+  storage:
+    storageClassName: ""
+    clickhouseSize: 20Gi
+    keeperSize: 10Gi
+    restoreSnapshots:
+      clickhouse: ""
+      keeper: ""
+  runtimeSecret:
+    name: asklake-realtime-v2-runtime
+  msk:
+    bootstrapSecretName: asklake-msk-runtime
+    bootstrapSecretKey: bootstrapBrokersSaslIam
+    iamAuthJar: /usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar
+    sourceTopicPrefix: asklake.eks-realtime.v2.fixture
+    dlqTopicPrefix: asklake.eks-realtime.v2.dlq
+    consumerGroupPrefix: asklake-eks-realtime-v2
+    workerGroupPrefix: asklake-eks-realtime-v2-worker
+    internalTopicPrefix: asklake-connect-v2
+  clickhouse:
+    database: asklake_realtime_v2
+    serviceName: clickhouse-v2
+  connect:
+    serviceName: kafka-connect-v2
+  resources:
+    worker:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    connect:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    clickhouse:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {cpu: "2", memory: 4Gi}
+    keeper:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+
 trino:
   enabled: true
   replicas: 1
+  # The default remains the proven single coordinator that also runs tasks.
+  # Distributed mode has no sizing defaults. Every worker input must be
+  # supplied explicitly by an approved deployment overlay.
+  distributed:
+    enabled: false
   nodeSelector:
     asklake.io/workload-class: general
     kubernetes.io/arch: amd64

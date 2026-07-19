@@ -1,0 +1,35 @@
+{
+  "evidenceVersion": "1",
+  "fixtureId": "asklake-commerce",
+  "fixtureVersion": "1.0.0",
+  "generatorVersion": "trino-ctas-v1",
+  "seed": 9610718,
+  "manifestHash": "ba27a2cb561af5c2a2586c643c214cb80f8b5f913a3c3a08f2d64944cf35d175",
+  "runtimeProfile": "local-trino-482-minio-bounded-v1",
+  "catalog": "iceberg",
+  "schema": "asklake_benchmark",
+  "tables": [
+    {
+      "name": "customers_v1",
+      "snapshotId": "3459961781471188946",
+      "rowCount": 10000,
+      "fileCount": 1,
+      "storageBytes": 24291
+    },
+    {
+      "name": "products_v1",
+      "snapshotId": "6754913570344550171",
+      "rowCount": 1000,
+      "fileCount": 1,
+      "storageBytes": 3576
+    },
+    {
+      "name": "orders_v1",
+      "snapshotId": "4300252038280755665",
+      "rowCount": 1000000,
+      "fileCount": 24,
+      "storageBytes": 5690924
+    }
+  ],
+  "redaction": "synthetic fixture metadata only; no endpoint, credential, private dataset ID, or result row"
+}

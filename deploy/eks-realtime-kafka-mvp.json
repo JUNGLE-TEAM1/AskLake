@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "issue": 1044,
+  "baseline": {
+    "branch": "pair1",
+    "commit": "a782ab7aee560df8c68b4e64452a8d00e415d8ab"
+  },
+  "phase": "v1-static-foundation-complete",
+  "decision": {
+    "status": "decided",
+    "selectedPath": "v1-spark-structured-streaming",
+    "activationAllowed": false,
+    "decidedAt": "2026-07-19",
+    "reason": "V1 reuses the live EKS Spark Operator, Spark Pod Identity, bounded SparkApplication path, S3 runtime document and checkpoint implementation. V2 has no EKS Kafka Connect, ClickHouse, or Keeper workload and lacks EKS MSK IAM and durable storage recovery evidence."
+  },
+  "decisionEvidence": {
+    "observationMode": "read-only-sanitized-inventory",
+    "region": "ap-northeast-2",
+    "eksClusterCount": 1,
+    "mskServerlessClusterCount": 1,
+    "runningEc2InstanceCount": 1,
+    "runtimeBoundary": "external_ec2",
+    "eksContinuousWorkerCount": 0,
+    "eksKafkaConnectClickHouseKeeperCount": 0,
+    "sparkApplicationCrdPresent": true,
+    "sparkPodIdentityAssociationCount": 1,
+    "mskSmokePodIdentityAssociationCount": 1,
+    "completedBoundedSparkApplicationCount": 3,
+    "continuousSparkApplicationCount": 0,
+    "containsSensitiveIdentifiers": false
+  },
+  "candidates": [
+    {
+      "id": "v1-spark-structured-streaming",
+      "enabled": false,
+      "recommendation": "selected-mvp",
+      "eksReadiness": "partial",
+      "durableState": [
+        "postgres-continuous-runtime",
+        "s3-runtime-documents",
+        "s3-structured-streaming-checkpoint",
+        "iceberg-snapshot-and-manifest"
+      ],
+      "evidence": [
+        "backend/scripts/kafka-continuous-kubernetes.mjs::buildContinuousSparkApplication",
+        "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::ASKLAKE_CONTINUOUS_SPARK_RUNNER",
+        "backend/scripts/verify-kubernetes-continuous-contract.mjs::Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret refs",
+        "docs/04-development-guide.md::EKS Continuous worker 렌더와 사전 점검"
+      ],
+      "openGates": [
+        "live MSK Serverless IAM consume from the Continuous SparkApplication",
+        "isolated restart and checkpoint recovery evidence",
+        "approved EC2-to-EKS owner transfer and rollback rehearsal evidence"
+      ]
+    },
+    {
+      "id": "v2-kafka-connect-clickhouse",
+      "enabled": false,
+      "recommendation": "deferred-from-eks-mvp",
+      "eksReadiness": "insufficient",
+      "durableState": [
+        "postgres-receipt-cutover-and-publication",
+        "kafka-connect-offset-state",
+        "clickhouse-keeper-and-raw-offset-boundary"
+      ],
+      "evidence": [
+        "deploy/kafka-connect/Dockerfile::clickhouse-kafka-connect",
+        "deploy/docker-compose.prod.yml::kafka-connect-v2:",
+        "backend/app/realtime/infrastructure/kafka_connect_gateway.py::KafkaConnectGateway",
+        "docs/clickhouse-realtime-v2-foundation.md::Production Compose"
+      ],
+      "openGates": [
+        "EKS workload or Helm package for Kafka Connect and ClickHouse",
+        "Kafka Connect MSK Serverless IAM authentication proof",
+        "EKS durable ClickHouse and Keeper volume ownership, backup, restore, and HA decision",
+        "EKS service accounts, least-privilege IAM, network policy, and immutable image receipt"
+      ]
+    }
+  ],
+  "ownership": {
+    "policy": "exactly-one",
+    "identityFields": [
+      "brokerIdentity",
+      "topic",
+      "consumerGroup",
+      "generation",
+      "checkpointIdentity"
+    ],
+    "currentOwner": "ec2-continuous-worker",
+    "proposedOwner": "eks-continuous-worker-v1",
+    "transferState": "blocked",
+    "activeClaims": [
+      "ec2-continuous-worker"
+    ],
+    "fenceRule": "No EKS runtime may start, register, resume, or reconcile the same identity while the EC2 claim is active."
+  },
+  "runtimeIdentity": {
+    "brokerKind": "msk-serverless",
+    "authentication": "iam",
+    "brokerIdentity": "deployment-secret-reference-required",
+    "topicTemplate": "asklake.eks-realtime.fixture.<generation>",
+    "consumerGroupTemplate": "asklake-eks-realtime-<path>-<generation>",
+    "generation": "assigned-only-at-approved-owner-transfer",
+    "checkpointIdentity": "s3-prefix-derived-from-job-target-and-generation",
+    "isolationRequired": true,
+    "sharedProductionIdentityAllowed": false
+  },
+  "durableState": {
+    "controlPlane": "postgresql",
+    "runtimeDocuments": "private-s3-prefix",
+    "selectedCheckpointAuthority": "s3-structured-streaming-checkpoint",
+    "localFilesystemAuthoritative": false,
+    "requiredKeys": [
+      "jobId",
+      "runOrSessionId",
+      "owner",
+      "generation",
+      "brokerIdentity",
+      "topic",
+      "consumerGroup",
+      "checkpointIdentity",
+      "fencingToken",
+      "stateRevision",
+      "heartbeatAt",
+      "sourceOffsets",
+      "evidenceReference"
+    ]
+  },
+  "implementation": {
+    "status": "static-foundation",
+    "workloadPackage": "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml",
+    "defaultEnabled": false,
+    "controlPlaneScope": "kafka",
+    "legacyEc2DefaultScope": "all",
+    "ownerClaimAuthority": "postgresql-kafka-continuous-runtime-metrics",
+    "ownerClaimKey": "ownerClaim",
+    "ownerClaimRequiredForEks": true,
+    "runtimeDocumentPrefix": "continuous-runtime",
+    "checkpointPrefix": "checkpoints",
+    "sparkServiceAccount": "asklake-spark",
+    "workerServiceAccount": "asklake-backend",
+    "mskIamActions": [
+      "kafka-cluster:Connect",
+      "kafka-cluster:DescribeTopic",
+      "kafka-cluster:ReadData",
+      "kafka-cluster:DescribeGroup",
+      "kafka-cluster:AlterGroup"
+    ],
+    "evidence": [
+      "backend/app/continuous_worker.py::continuous_worker_scope",
+      "backend/app/services/continuous_runtime_sync.py::build_runtime_owner_claim",
+      "deploy/docker-compose.prod.yml::${CONTINUOUS_WORKER_SCOPE:-all}",
+      "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::CONTINUOUS_WORKER_SCOPE",
+      "infra/eks/terraform/data-plane.tf::realtime_msk_identity_contract",
+      "infra/eks/terraform/modules/workload-iam-policies/main.tf::UseFixtureConsumerGroup",
+      "scripts/verify-eks-workloads.sh::Realtime V1 rendered without owner-transfer approval"
+    ]
+  },
+  "liveReadiness": {
+    "observationMode": "read-only-sanitized-iam-policy",
+    "sparkPodIdentityAssociationCount": 1,
+    "backendPodIdentityAssociationCount": 1,
+    "sparkHasExactConsumerActions": true,
+    "sparkRealtimeIdentityActionsReady": false,
+    "sparkHasBroadActionOrResource": true,
+    "sparkRealtimeTopicResourceCount": 0,
+    "sparkRealtimeGroupResourceCount": 0,
+    "backendHasBroadActionOrResource": true,
+    "backendContinuousRuntimeResourceCount": 0,
+    "backendRuntimeListPrefixReady": false,
+    "permissionsBoundaryPresent": false,
+    "targetRolePresent": false,
+    "relatedExplicitDenyPresent": false,
+    "activationReady": false,
+    "blockingReasons": [
+      "Spark policy has broad action or resource",
+      "missing exact generation-scoped MSK topic resource",
+      "missing exact generation-scoped MSK consumer-group resource",
+      "Backend policy has broad action or resource",
+      "missing Backend continuous-runtime S3 resource"
+    ],
+    "containsSensitiveIdentifiers": false
+  },
+  "rolloutPlan": {
+    "status": "blocked-on-shared-infrastructure-and-owner-transfer",
+    "executionMode": "approved-manual-only",
+    "receiptAuthority": "private-s3-continuous-runtime-prefix",
+    "canary": {
+      "sharedProductionIdentityAllowed": false,
+      "topicTemplate": "asklake.eks-realtime.fixture.<generation>",
+      "consumerGroupTemplate": "asklake-eks-realtime-v1-<generation>",
+      "checkpointTemplate": "checkpoints/<jobId>/<targetId>/<generation>",
+      "newGenerationRequired": true
+    },
+    "orderedStages": [
+      "record-preflight-inventory-and-current-ec2-claim",
+      "apply-exact-msk-group-and-runtime-document-iam",
+      "prove-isolated-canary-consume-checkpoint-and-restart",
+      "approve-owner-transfer-and-assign-new-generation",
+      "set-ec2-worker-scope-to-continuous-sql-and-prove-zero-kafka-claim",
+      "activate-single-eks-kafka-worker-and-record-claim",
+      "compare-offset-count-checkpoint-and-publication-evidence",
+      "close-transfer-receipt-or-run-ordered-rollback"
+    ],
+    "requiredReceipts": [
+      "sanitized-workload-inventory",
+      "immutable-image-digests",
+      "service-account-and-pod-identity-policy-hashes",
+      "owner-generation-and-fencing-token",
+      "topic-group-and-checkpoint-identity-hashes",
+      "source-offsets-before-and-after-restart",
+      "input-stored-quarantine-counts",
+      "sparkapplication-driver-and-executor-terminal-state",
+      "iceberg-snapshot-manifest-and-catalog-ack-reference"
+    ],
+    "successCriteria": [
+      "exactly-one-active-owner-claim",
+      "no-offset-regression-after-restart",
+      "no-duplicate-publication-for-the-same-source-boundary",
+      "input-equals-stored-plus-quarantine",
+      "durable-receipt-readable-after-pod-replacement"
+    ]
+  },
+  "rollback": {
+    "targetOwner": "ec2-continuous-worker",
+    "automatic": false,
+    "preserve": [
+      "postgres-run-and-session-state",
+      "source-offset-evidence",
+      "s3-runtime-documents-and-checkpoints",
+      "iceberg-or-clickhouse-publication-evidence",
+      "previous-ec2-deployment-and-secret-references"
+    ],
+    "orderedInvariants": [
+      "stop-and-fence-eks-owner",
+      "prove-zero-active-eks-claim",
+      "record-final-source-offsets-and-durable-state",
+      "activate-ec2-owner-with-new-generation",
+      "resume-only-from-verified-checkpoint-authority",
+      "compare-offsets-counts-and-publication-evidence"
+    ],
+    "forbidden": [
+      "delete-or-rewind-checkpoint-to-force-recovery",
+      "reuse-generation-across-owner-transfer",
+      "run-ec2-and-eks-owners-concurrently",
+      "automatic-cross-engine-fallback-for-the-same-run"
+    ]
+  },
+  "gates": {
+    "pathDecisionRecorded": true,
+    "ownerTransferApproved": false,
+    "mskIamLiveEvidence": false,
+    "durableRestartEvidence": false,
+    "rollbackRehearsalEvidence": false,
+    "sharedAwsApplyAllowed": false
+  }
+}

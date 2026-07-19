@@ -20,8 +20,9 @@ for heading in \
   '## 4. Pod와 Node 복구' \
   '## 5. immutable digest rollout과 rollback' \
   '## 6. 보존 EC2 fallback' \
-  '## 7. 비용과 cleanup' \
-  '## 8. 완료와 인계 기준'; do
+  '## 7. ALB 기반 수동 인수' \
+  '## 8. 비용과 cleanup' \
+  '## 9. 완료와 인계 기준'; do
   grep -Fqx "$heading" "$RUNBOOK" || fail "runbook heading is missing: $heading"
 done
 
@@ -35,6 +36,7 @@ required_scripts=(
   run-eks-day18-isolated-recovery-smoke.sh
   preflight-eks-backend-image-rollout.sh
   rollout-eks-backend-image.sh
+  run-eks-day18-backend-rollout-round-trip.sh
   verify-eks-day18-ec2-rollback-contract.sh
   verify-eks-day18-ec2-rollback.sh
   deploy.sh
@@ -55,7 +57,8 @@ for contract in \
   'git check-ignore -q -- "$ASKLAKE_IMAGE_RECEIPT"' \
   'deploy/ec2.env must use mode 0600' \
   'backend_rollout_rollback=completed_and_steady' \
-  '성공 뒤 의도적 rollback·재승격 기능이 없으므로' \
+  'ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend' \
+  'backend_round_trip_additional_mutation=stopped' \
   '추가 mutation을 중단한다' \
   'start` 성공은 cutover가 아니다' \
   '관측 불완전' \
@@ -96,6 +99,7 @@ fi
 
 bash -n "$ROOT_DIR/scripts/run-eks-day18-isolated-recovery-smoke.sh"
 bash -n "$ROOT_DIR/scripts/rollout-eks-backend-image.sh"
+bash -n "$ROOT_DIR/scripts/run-eks-day18-backend-rollout-round-trip.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-day18-ec2-rollback.sh"
 
 echo "EKS Day 18 operations runbook contract passed."

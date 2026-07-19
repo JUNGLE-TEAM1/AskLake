@@ -180,6 +180,11 @@ run "new_cluster_contract" {
   }
 
   assert {
+    condition     = output.service_account_names["aiGateway"] == "asklake-ai-gateway"
+    error_message = "AI Gateway service account must remain stable and separate from Backend."
+  }
+
+  assert {
     condition = (
       aws_eks_cluster.this[0].access_config[0].authentication_mode == "API" &&
       !aws_eks_cluster.this[0].access_config[0].bootstrap_cluster_creator_admin_permissions
@@ -677,7 +682,7 @@ run "workload_repository_contract" {
 
   assert {
     condition = alltrue([
-      for component in ["frontend", "backend", "airflow", "trino", "spark-runtime"] :
+      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime", "kafka-connect-v2", "clickhouse-v2"] :
       contains(keys(output.ecr_repository_urls), component)
     ])
     error_message = "ECR outputs must expose every EKS workload image component."
@@ -931,13 +936,14 @@ run "mvp_data_plane_contract" {
       query_results = "asklake-dev-111122223333-query-results"
     }
     storage_prefixes = {
-      raw           = "*"
-      output        = "*"
-      warehouse     = "warehouse"
-      query_results = "query-results"
-      checkpoint    = "checkpoints"
-      quarantine    = "quarantine"
-      evidence      = "evidence"
+      raw                = "*"
+      output             = "*"
+      warehouse          = "warehouse"
+      query_results      = "query-results"
+      checkpoint         = "checkpoints"
+      quarantine         = "quarantine"
+      evidence           = "evidence"
+      continuous_runtime = "continuous-runtime"
     }
   }
 
@@ -997,13 +1003,14 @@ run "managed_existing_storage_contract" {
       query_results = "asklake-dev-111122223333-query-results"
     }
     storage_prefixes = {
-      raw           = "*"
-      output        = "*"
-      warehouse     = "warehouse"
-      query_results = "query-results"
-      checkpoint    = "checkpoints"
-      quarantine    = "quarantine"
-      evidence      = "evidence"
+      raw                = "*"
+      output             = "*"
+      warehouse          = "warehouse"
+      query_results      = "query-results"
+      checkpoint         = "checkpoints"
+      quarantine         = "quarantine"
+      evidence           = "evidence"
+      continuous_runtime = "continuous-runtime"
     }
   }
 
@@ -1047,7 +1054,7 @@ run "managed_existing_storage_contract" {
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendRawBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
-      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendOutputBucket"]).Condition.StringLike["s3:prefix"] == ["*", "*/*", "evidence", "evidence/*", "continuous-runtime", "continuous-runtime/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"] &&
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ListBackendQueryResultBucket"]).Resource == [local.storage_bucket_arns.query_results] &&
@@ -1134,6 +1141,12 @@ run "irsa_workload_identity_contract" {
       "asklake-eks-mvp-spark-scale17-02",
       "asklake-eks-mvp-spark-scale17-03",
     ]
+    msk_realtime_consumer_groups = [
+      "asklake-eks-realtime-v1-contract-g1",
+    ]
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.contract-g1",
+    ]
 
     storage_mode = "existing"
     storage_bucket_names = {
@@ -1177,8 +1190,11 @@ run "irsa_workload_identity_contract" {
     condition = contains(
       one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
       local.storage_object_arns.evidence,
+      ) && contains(
+      one([for statement in module.workload_iam_policies.contracts.backend.Statement : statement if statement.Sid == "ReadBackendObjects"]).Resource,
+      local.storage_object_arns.continuous_runtime,
     )
-    error_message = "Backend must be able to read its exact evidence prefix."
+    error_message = "Backend must be able to read its exact evidence and Continuous runtime-document prefixes."
   }
 
   assert {
@@ -1186,7 +1202,7 @@ run "irsa_workload_identity_contract" {
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Resource == [local.storage_bucket_arns.raw] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkRawBucket"]).Condition.StringLike["s3:prefix"] == ["raw", "raw/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Resource == [local.storage_bucket_arns.output] &&
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*"] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkOutputBucket"]).Condition.StringLike["s3:prefix"] == ["output", "output/*", "checkpoints", "checkpoints/*", "quarantine", "quarantine/*", "continuous-runtime", "continuous-runtime/*"] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Resource == [local.storage_bucket_arns.warehouse] &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ListSparkWarehouseBucket"]).Condition.StringLike["s3:prefix"] == ["warehouse", "warehouse/*"]
     )
@@ -1195,13 +1211,15 @@ run "irsa_workload_identity_contract" {
 
   assert {
     condition = (
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == [local.msk_topic_arn] &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == local.msk_topic_arns &&
+      length(local.msk_topic_arns) == 2 &&
+      alltrue([for arn in local.msk_topic_arns : !strcontains(arn, "*")]) &&
       one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == local.msk_group_arns &&
-      length(local.msk_group_arns) == 4 &&
+      length(local.msk_group_arns) == 5 &&
       alltrue([for arn in local.msk_group_arns : !strcontains(arn, "*")]) &&
-      one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == [local.msk_topic_arn]
+      one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == local.msk_topic_arns
     )
-    error_message = "Spark and MSK smoke policies must stay on the isolated test topic and exact approved consumer groups."
+    error_message = "Spark and MSK smoke policies must stay on exact isolated test/Realtime topics and approved consumer groups."
   }
 
   assert {
@@ -1224,6 +1242,127 @@ run "irsa_workload_identity_contract" {
     )
     error_message = "IRSA trust must bind the exact provider, audience, namespace, and Spark service account."
   }
+}
+
+run "realtime_v2_connect_has_exact_generation_identity" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "mvp-owned"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+
+    msk_mode                                = "existing"
+    existing_msk_cluster_arn                = "arn:aws:kafka:ap-northeast-2:111122223333:cluster/shared-dev/mock-uuid"
+    existing_msk_bootstrap_brokers_sasl_iam = "mock-broker.example.invalid:9098"
+    msk_realtime_v2_generation              = "contract-v2-g1"
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    workload_identity_mode = "irsa"
+    irsa_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.example.invalid/existing"
+  }
+
+  assert {
+    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV2Connect"])
+    error_message = "A configured V2 generation must add exactly one dedicated Connect workload identity."
+  }
+
+  assert {
+    condition = (
+      length(local.msk_realtime_v2_topic_arns) == 5 &&
+      length(local.msk_realtime_v2_group_arns) == 2 &&
+      alltrue([for arn in concat(local.msk_realtime_v2_topic_arns, local.msk_realtime_v2_group_arns) : !strcontains(arn, "*")]) &&
+      one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedTopics"]).Resource == local.msk_realtime_v2_topic_arns &&
+      one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedConsumerGroup"]).Resource == local.msk_realtime_v2_group_arns
+    )
+    error_message = "V2 Connect IAM must bind exactly five derived topics and two derived sink/worker groups without wildcard resources."
+  }
+
+  assert {
+    condition = (
+      output.msk_contract.realtime_v2_identity.source_topic == "asklake.eks-realtime.v2.fixture.contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.dlq_topic == "asklake.eks-realtime.v2.dlq.contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.config_topic == "asklake-connect-v2-contract-v2-g1-config" &&
+      output.msk_contract.realtime_v2_identity.offset_topic == "asklake-connect-v2-contract-v2-g1-offset" &&
+      output.msk_contract.realtime_v2_identity.status_topic == "asklake-connect-v2-contract-v2-g1-status" &&
+      output.msk_contract.realtime_v2_identity.consumer_group == "asklake-eks-realtime-v2-contract-v2-g1" &&
+      output.msk_contract.realtime_v2_identity.worker_group == "asklake-eks-realtime-v2-worker-contract-v2-g1"
+    )
+    error_message = "V2 runtime identities must be derived deterministically from one generation."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.workload["realtimeV2Connect"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:sub"] == "system:serviceaccount:${var.namespace}:asklake-realtime-v2-connect" &&
+      length(one([for statement in module.workload_iam_policies.contracts.realtime_v2_connect.Statement : statement if statement.Sid == "UseGenerationScopedTopics"]).Action) == 4
+    )
+    error_message = "V2 Connect trust must bind the dedicated service account and expose only its reviewed topic actions."
+  }
+}
+
+run "reject_invalid_realtime_v2_generation" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "external"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    create_ecr_repositories    = false
+    msk_realtime_v2_generation = "bad*generation"
+  }
+
+  expect_failures = [var.msk_realtime_v2_generation]
+}
+
+run "reject_unpaired_realtime_topic" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.orphan-g1",
+    ]
+  }
+
+  expect_failures = [check.realtime_msk_identity_contract]
+}
+
+run "reject_mismatched_realtime_topic_group_generation" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+    msk_realtime_topics = [
+      "asklake.eks-realtime.fixture.topic-g1",
+    ]
+    msk_realtime_consumer_groups = [
+      "asklake-eks-realtime-v1-group-g2",
+    ]
+  }
+
+  expect_failures = [check.realtime_msk_identity_contract]
 }
 
 run "create_mode_irsa_has_static_identity_keys" {
@@ -1588,10 +1727,16 @@ run "phase14_web_workload_handoff_is_fail_closed" {
 
   assert {
     condition = (
+      output.phase14_web_workload_handoff.contract_version == "1.1" &&
       output.phase14_web_workload_handoff.workloads.frontend.service == "frontend" &&
       output.phase14_web_workload_handoff.workloads.frontend.service_port == 80 &&
       output.phase14_web_workload_handoff.workloads.backend.service == "fastapi" &&
-      output.phase14_web_workload_handoff.workloads.backend.service_port == 8080
+      output.phase14_web_workload_handoff.workloads.backend.service_port == 8080 &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service == "ai-gateway" &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service_port == 8090 &&
+      output.phase14_web_workload_handoff.workloads.ai_gateway.service_account == "asklake-ai-gateway" &&
+      !output.phase14_web_workload_handoff.workloads.ai_gateway.public_ingress &&
+      output.phase14_web_workload_handoff.required_references.ai_gateway_secret == "asklake-ai-gateway-runtime"
     )
     error_message = "Phase 14 Services must match the Phase 13 ALB routes."
   }
@@ -1599,6 +1744,14 @@ run "phase14_web_workload_handoff_is_fail_closed" {
   assert {
     condition     = contains(output.phase14_web_workload_handoff.apply_gates, "backend-runtime-boundary-ready")
     error_message = "FastAPI multi-replica deployment must remain gated by Pair B's runtime boundary."
+  }
+
+  assert {
+    condition = (
+      contains(output.phase14_web_workload_handoff.apply_gates, "ai-gateway-runtime-ready") &&
+      contains(output.phase14_web_workload_handoff.apply_gates, "ai-gateway-network-policy-ready")
+    )
+    error_message = "AI Gateway deployment must remain gated by runtime and NetworkPolicy readiness."
   }
 }
 
@@ -1660,4 +1813,69 @@ run "reject_partial_metrics_server_contract" {
   }
 
   expect_failures = [check.metrics_server_contract]
+}
+
+run "realtime_v2_snapshot_controller_defaults_fail_closed" {
+  command = plan
+
+  variables {
+    environment             = "dev"
+    owner                   = "pair-a"
+    resource_lifecycle      = "external"
+    cluster_mode            = "existing"
+    existing_cluster_name   = "shared-dev"
+    create_ecr_repositories = false
+  }
+
+  assert {
+    condition = (
+      output.realtime_v2_snapshot_controller_handoff.mode == "disabled" &&
+      !output.realtime_v2_snapshot_controller_handoff.ready_for_apply &&
+      length(aws_eks_addon.realtime_v2_snapshot_controller) == 0
+    )
+    error_message = "Realtime V2 snapshot controller must render no add-on before exact version and ownership review."
+  }
+}
+
+run "realtime_v2_snapshot_controller_addon_contract" {
+  command = plan
+
+  variables {
+    environment                                        = "dev"
+    owner                                              = "pair-a"
+    resource_lifecycle                                 = "mvp-owned"
+    cluster_mode                                       = "create"
+    control_plane_subnet_ids                           = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories                            = false
+    realtime_v2_snapshot_controller_mode               = "eks_addon"
+    realtime_v2_snapshot_controller_version            = "v8.6.0-eksbuild.2"
+    realtime_v2_snapshot_controller_owner              = "pair-a"
+    realtime_v2_external_snapshot_controller_confirmed = false
+  }
+
+  assert {
+    condition = (
+      aws_eks_addon.realtime_v2_snapshot_controller[0].addon_name == "snapshot-controller" &&
+      aws_eks_addon.realtime_v2_snapshot_controller[0].addon_version == "v8.6.0-eksbuild.2" &&
+      jsondecode(aws_eks_addon.realtime_v2_snapshot_controller[0].configuration_values).nodeSelector["karpenter.sh/nodepool"] == "asklake-general" &&
+      output.realtime_v2_snapshot_controller_handoff.ready_for_apply
+    )
+    error_message = "Reviewed Realtime V2 snapshot inputs must create the exact add-on on the canonical general pool."
+  }
+}
+
+run "reject_partial_realtime_v2_snapshot_controller_contract" {
+  command = plan
+
+  variables {
+    environment                          = "dev"
+    owner                                = "pair-a"
+    resource_lifecycle                   = "mvp-owned"
+    cluster_mode                         = "create"
+    control_plane_subnet_ids             = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories              = false
+    realtime_v2_snapshot_controller_mode = "eks_addon"
+  }
+
+  expect_failures = [check.realtime_v2_snapshot_controller_contract]
 }

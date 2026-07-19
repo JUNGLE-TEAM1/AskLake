@@ -54,6 +54,6 @@ test("production frontend defaults keep mock and legacy demo UI disabled", () =>
   assert.match(compose, /VITE_USE_MOCK_API: \$\{VITE_USE_MOCK_API:-false\}/);
   assert.match(compose, /VITE_AUTH_LEGACY_DEMO_USERS_ENABLED: \$\{VITE_AUTH_LEGACY_DEMO_USERS_ENABLED:-false\}/);
   assert.match(exampleEnv, /^VITE_USE_MOCK_API=false$/m);
-  assert.doesNotMatch(exampleEnv, /^VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=/m);
-  assert.doesNotMatch(exampleEnv, /^AUTH_LEGACY_DEMO_USERS_ENABLED=/m);
+  assert.match(exampleEnv, /^VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false$/m);
+  assert.match(exampleEnv, /^AUTH_LEGACY_DEMO_USERS_ENABLED=false$/m);
 });

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-07-18",
+  "deploymentContract": {
+    "connectorPluginInstalled": true,
+    "connectorRegistered": false,
+    "registrationOwner": "PR03 raw-envelope ingest"
+  },
+  "artifacts": [
+    {
+      "kind": "oci-image",
+      "name": "clickhouse/clickhouse-server",
+      "version": "26.3.17.4",
+      "reference": "clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49",
+      "source": "https://hub.docker.com/r/clickhouse/clickhouse-server/tags?name=26.3.17.4"
+    },
+    {
+      "kind": "oci-image",
+      "name": "confluentinc/cp-kafka-connect",
+      "version": "8.2.2",
+      "reference": "confluentinc/cp-kafka-connect:8.2.2@sha256:8a29608d5b87fd1858e0e7307f98dc9ed43685541c3dc89358f71e80b348ebf9",
+      "source": "https://hub.docker.com/r/confluentinc/cp-kafka-connect/tags?name=8.2.2"
+    },
+    {
+      "kind": "github-release-asset",
+      "name": "clickhouse-kafka-connect-v1.4.0.zip",
+      "version": "1.4.0",
+      "sha256": "e146cf1205c3a15630fcdf667556da931cb3269e63b1f3f3bedf7dfd1ffc2cb0",
+      "source": "https://github.com/ClickHouse/clickhouse-kafka-connect/releases/download/v1.4.0/clickhouse-kafka-connect-v1.4.0.zip"
+    },
+    {
+      "kind": "github-release-asset",
+      "name": "aws-msk-iam-auth-2.3.6-all.jar",
+      "version": "2.3.6",
+      "sha256": "de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08",
+      "source": "https://github.com/aws/aws-msk-iam-auth/releases/download/v2.3.6/aws-msk-iam-auth-2.3.6-all.jar"
+    }
+  ]
+}

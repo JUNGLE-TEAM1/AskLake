@@ -231,6 +231,7 @@ jq \
   --arg digest "$digest" '
     .gitRevision=$revision
     | .images.backend=$image
+    | .images.aiGateway=(.images.aiGateway | sub("sha256:[a-f0-9]{64}$"; $digest))
     | .images.frontend=(.images.frontend | sub("sha256:[a-f0-9]{64}$"; $digest))
     | .images.airflow=(.images.airflow | sub("sha256:[a-f0-9]{64}$"; $digest))
     | .images.sparkRuntime=(.images.sparkRuntime | sub("sha256:[a-f0-9]{64}$"; $digest))

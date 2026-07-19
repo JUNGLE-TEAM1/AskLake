@@ -5,6 +5,7 @@ import process from "node:process";
 
 const TERMINAL_STATES = new Set(["COMPLETED", "FAILED", "SUBMISSION_FAILED", "FAILING", "INVALIDATING"]);
 const SUCCESS_STATE = "COMPLETED";
+const TERMINAL_FAILURE_STATES = new Set(["FAILED", "SUBMISSION_FAILED"]);
 const DEFAULT_TOKEN_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const DEFAULT_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
@@ -93,7 +94,7 @@ function applicationPath(namespace, name = "") {
   return name ? `${root}/${encodeURIComponent(name)}` : root;
 }
 
-function validateExistingApplication(application, existing) {
+function validateRunIdentity(application, existing) {
   const expectedAnnotations = application.metadata?.annotations || {};
   const actualAnnotations = existing?.metadata?.annotations || {};
   for (const key of ["asklake.io/run-id", "asklake.io/job-id", "asklake.io/image-digest"]) {
@@ -103,6 +104,19 @@ function validateExistingApplication(application, existing) {
   }
   if (String(existing?.spec?.image || "") !== String(application?.spec?.image || "")) {
     throw new Error("Existing SparkApplication image identity mismatch");
+  }
+}
+
+function validateExistingApplication(application, existing) {
+  validateRunIdentity(application, existing);
+  const expectedGeneration = String(
+    application?.metadata?.annotations?.["asklake.io/execution-generation"] || "1",
+  );
+  const actualGeneration = String(
+    existing?.metadata?.annotations?.["asklake.io/execution-generation"] || "1",
+  );
+  if (actualGeneration !== expectedGeneration) {
+    throw new Error("Existing SparkApplication execution generation mismatch");
   }
 }
 
@@ -121,24 +135,62 @@ export async function createOrRecoverApplication({ application, expectedKubernet
     const expectedNamespace = String(expectedKubernetesExecution.namespace || "").trim();
     const expectedName = String(expectedKubernetesExecution.applicationName || "").trim();
     const expectedUid = String(expectedKubernetesExecution.applicationUid || "").trim();
+    const expectedState = String(expectedKubernetesExecution.state || "").trim().toUpperCase();
+    const expectedGeneration = Number(expectedKubernetesExecution.attemptGeneration || 1);
+    const nextGeneration = Number(
+      application?.metadata?.annotations?.["asklake.io/execution-generation"] || 1,
+    );
     if (!expectedNamespace || !expectedName || !expectedUid) {
       throw new Error("Persisted SparkApplication namespace, name, and UID are required for recovery");
     }
-    if (expectedNamespace !== namespace || expectedName !== name) {
+    const terminalReplacement = (
+      expectedNamespace === namespace
+      && expectedName !== name
+      && TERMINAL_FAILURE_STATES.has(expectedState)
+      && Number.isSafeInteger(expectedGeneration)
+      && Number.isSafeInteger(nextGeneration)
+      && nextGeneration === expectedGeneration + 1
+    );
+    if (expectedNamespace !== namespace || (expectedName !== name && !terminalReplacement)) {
       throw new Error("Persisted SparkApplication name or namespace does not match the deterministic application identity");
     }
-    const existing = await getApplication(requestJson, namespace, name);
+    const existing = await getApplication(requestJson, namespace, expectedName);
     if (!existing) {
       throw new Error(
-        `Persisted SparkApplication ${namespace}/${name} with UID ${expectedUid} was not found; refusing to create a replacement`,
+        `Persisted SparkApplication ${namespace}/${expectedName} with UID ${expectedUid} was not found; refusing to create a replacement`,
       );
     }
-    validateExistingApplication(application, existing);
+    if (terminalReplacement) validateRunIdentity(application, existing);
+    else validateExistingApplication(application, existing);
     const actualUid = String(existing?.metadata?.uid || "").trim();
     if (actualUid !== expectedUid) {
       throw new Error(
-        `Persisted SparkApplication UID mismatch for ${namespace}/${name}: expected ${expectedUid}, observed ${actualUid || "missing"}`,
+        `Persisted SparkApplication UID mismatch for ${namespace}/${expectedName}: expected ${expectedUid}, observed ${actualUid || "missing"}`,
       );
+    }
+    if (terminalReplacement) {
+      const actualState = applicationState(existing);
+      if (!TERMINAL_FAILURE_STATES.has(actualState)) {
+        throw new Error(
+          `Persisted SparkApplication is not terminal failed; refusing attempt generation ${nextGeneration}`,
+        );
+      }
+      const replacement = await getApplication(requestJson, namespace, name);
+      if (replacement) {
+        validateExistingApplication(application, replacement);
+        return { application: replacement, recovered: true, replacement: true };
+      }
+      const response = await requestJson("POST", applicationPath(namespace), { body: application });
+      if (response.status === 200 || response.status === 201) {
+        return { application: response.body, recovered: false, replacement: true };
+      }
+      if (response.status !== 409) throw apiError("SparkApplication replacement create", response);
+      const conflicted = await getApplication(requestJson, namespace, name);
+      if (!conflicted) {
+        throw new Error("SparkApplication replacement conflicted but the object was not found");
+      }
+      validateExistingApplication(application, conflicted);
+      return { application: conflicted, recovered: true, replacement: true };
     }
     return { application: existing, recovered: true };
   }
@@ -218,12 +270,14 @@ function kubernetesExecutionIdentity(application, observed, recovered, extra = {
   return {
     applicationName: String(observed?.metadata?.name || application?.metadata?.name || ""),
     applicationUid: String(observed?.metadata?.uid || ""),
+    attemptGeneration: Number(annotations["asklake.io/execution-generation"] || 1),
     driverPodName: String(observed?.status?.driverInfo?.podName || "") || undefined,
     imageDigest: String(annotations["asklake.io/image-digest"] || ""),
     jobId: String(annotations["asklake.io/job-id"] || ""),
     namespace: String(observed?.metadata?.namespace || application?.metadata?.namespace || ""),
     observedAt: new Date().toISOString(),
     recovered,
+    replacement: extra.replacement === true,
     runId: String(annotations["asklake.io/run-id"] || ""),
     state: applicationState(observed),
     ...extra,
@@ -267,7 +321,9 @@ export async function submitAndWait({
     lastProgressFingerprint = fingerprint;
     await onProgress(execution);
   };
-  await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered));
+  await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered, {
+    replacement: created.replacement === true,
+  }));
   while (!TERMINAL_STATES.has(applicationState(observed))) {
     if (now() - startedAt >= timeoutMs) {
       await requestJson("DELETE", applicationPath(namespace, name), {
@@ -278,7 +334,9 @@ export async function submitAndWait({
     await delay(pollIntervalMs);
     observed = await getApplication(requestJson, namespace, name);
     if (!observed) throw new Error(`SparkApplication ${name} disappeared before reaching a terminal state`);
-    await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered));
+    await publishProgress(kubernetesExecutionIdentity(application, observed, created.recovered, {
+      replacement: created.replacement === true,
+    }));
   }
 
   const state = applicationState(observed);
@@ -303,6 +361,7 @@ export async function submitAndWait({
   };
   const kubernetesExecution = kubernetesExecutionIdentity(application, observed, created.recovered, {
     ...driverPodExecution(pod),
+    replacement: created.replacement === true,
     resultMarkerFound: reportedResult !== null,
   });
   await publishProgress(kubernetesExecution);

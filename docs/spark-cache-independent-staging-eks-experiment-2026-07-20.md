@@ -1,7 +1,7 @@
 # Spark Cache-Independent Staging EKS Experiment
 
-작성일: 2026-07-20  
-관련 이슈: #931  
+작성일: 2026-07-20
+관련 이슈: #931
 상태: executor cache OOM 수정과 격리 EKS scale 검증 완료
 
 ## 1. 목적과 범위

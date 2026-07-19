@@ -70,6 +70,15 @@ const expectedSecrets = {
       'trino-ca.pem',
     ]),
   },
+  aiGateway: {
+    name: 'asklake-ai-gateway-runtime',
+    consumers: new Set(['ai-gateway']),
+    keys: new Set([
+      'AI_GATEWAY_SERVICE_TOKEN',
+      'AI_MCP_SERVICE_TOKEN',
+      'AI_PROVIDER_API_KEY',
+    ]),
+  },
   airflow: {
     name: 'asklake-airflow-runtime',
     consumers: new Set([
@@ -112,6 +121,14 @@ const expectedSecrets = {
 };
 
 const expectedSharedBindings = {
+  'ai-gateway-service-token': new Set([
+    'backend:AI_GATEWAY_SERVICE_TOKEN',
+    'aiGateway:AI_GATEWAY_SERVICE_TOKEN',
+  ]),
+  'ai-mcp-service-token': new Set([
+    'backend:AI_MCP_SERVICE_TOKEN',
+    'aiGateway:AI_MCP_SERVICE_TOKEN',
+  ]),
   'airflow-api-password': new Set([
     'backend:AIRFLOW_PASSWORD',
     'airflow:AIRFLOW_PASSWORD',
@@ -169,7 +186,7 @@ exactKeys(contract, new Set([
   'forbiddenKeys',
   'runtimeDecisions',
 ]), 'contract');
-if (contract.contractVersion !== '1.0') fail('contractVersion must be 1.0');
+if (contract.contractVersion !== '1.1') fail('contractVersion must be 1.1');
 if (contract.namespace !== 'asklake-dev') fail('namespace must be asklake-dev');
 
 exactKeys(contract.delivery, new Set([
@@ -307,7 +324,6 @@ exactStringSet(fullServiceKeys?.aiRuntime?.gateway, new Set([
   'AI_GATEWAY_SERVICE_TOKEN',
   'AI_MCP_SERVICE_TOKEN',
   'AI_CONTEXT_SIGNING_SECRET',
-  'OPENAI_API_KEY',
 ]), 'Backend gateway AI keys');
 const declaredProfileKeys = new Set([
   ...(fullServiceKeys?.common ?? []),

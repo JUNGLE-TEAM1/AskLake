@@ -280,6 +280,8 @@ def run_node_bridge(
     error_marker: str,
     timeout_seconds: int,
     timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    progress_file: Path | None = None,
     bridge: NodeBridgePort | None = None,
 ) -> dict[str, Any]:
     runtime_bridge = bridge or SubprocessNodeBridge(
@@ -293,6 +295,8 @@ def run_node_bridge(
         error_marker=error_marker,
         timeout_seconds=timeout_seconds,
         timeout_recovery=timeout_recovery,
+        progress_callback=progress_callback,
+        progress_file=progress_file,
     )
 
 

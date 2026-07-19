@@ -89,6 +89,11 @@ msk_test_consumer_group = "asklake-eks-mvp-spark-v1"
 # select only the exact scale17 groups required by the test; never use a prefix
 # or wildcard.
 msk_scale_consumer_groups = []
+# Keep empty until the exact-one owner transfer is approved. Add one exact
+# generation-scoped V1 topic/group pair for canary and at most one rollback
+# rehearsal pair. Topic and group suffixes must be the same generation.
+msk_realtime_topics         = []
+msk_realtime_consumer_groups = []
 
 # For rds_mode = "create", select the instance class and optional engine
 # version only after workload/cost review. Terraform creates asklake_app;
@@ -121,16 +126,21 @@ storage_prefixes = {
   # Dedicated Raw/Output buckets may use "*" when existing Dataset paths span
   # multiple top-level prefixes. The IAM resource boundary remains that exact
   # bucket; Warehouse and Query Result stay on explicit prefixes.
-  raw           = "raw"
-  output        = "output"
-  warehouse     = "warehouse"
-  query_results = "query-results"
-  checkpoint    = "checkpoints"
-  quarantine    = "quarantine"
-  evidence      = "evidence"
+  raw                = "raw"
+  output             = "output"
+  warehouse          = "warehouse"
+  query_results      = "query-results"
+  checkpoint         = "checkpoints"
+  quarantine         = "quarantine"
+  evidence           = "evidence"
+  continuous_runtime = "continuous-runtime"
 }
 storage_sse_algorithm = "AES256"
 storage_kms_key_arn   = null
+
+# Null means no Kafka Connect V2 identity or IAM role. An approved isolated
+# canary sets one generation; all five topics and its group are then derived.
+msk_realtime_v2_generation = null
 
 # Phase 4 workload identity is another explicit selection gate. Leave disabled
 # until the team studies IRSA vs EKS Pod Identity in the actual cluster.
@@ -145,6 +155,14 @@ irsa_oidc_provider_arn = null
 # Pod Identity can be selected only after the platform owner confirms that the
 # EKS Pod Identity Agent is installed and managed.
 pod_identity_agent_ready = false
+
+# Realtime V2 recovery requires the snapshot-controller add-on before applying
+# the StorageClass/VolumeSnapshotClass foundation. Keep disabled until the exact
+# cluster-compatible version and lifecycle owner are reviewed.
+realtime_v2_snapshot_controller_mode              = "disabled"
+realtime_v2_snapshot_controller_version           = null
+realtime_v2_snapshot_controller_owner             = null
+realtime_v2_external_snapshot_controller_confirmed = false
 
 # Phase 13 uses the EKS Auto Mode managed ALB controller. Keep it disabled
 # until public/internal subnets, target/address type and listener protocol are
@@ -184,9 +202,9 @@ external_secrets_service_account = "asklake-external-secrets"
 # These remain separate learning/selection gates. Do not infer them from the
 # Secret delivery choice. Gateway mode also needs a separately approved AI
 # provider workload contract before the full-service Secret gate can open.
-airflow_api_auth_mode               = "undecided"
-ai_runtime_mode                     = "undecided"
-ai_provider_workload_contract_ready = false
+airflow_api_auth_mode               = "username_password"
+ai_runtime_mode                     = "gateway"
+ai_provider_workload_contract_ready = true
 
 # Day 14 Metrics Server is an EKS community add-on. Keep disabled until the
 # target cluster exists, then query its compatible versions and record the

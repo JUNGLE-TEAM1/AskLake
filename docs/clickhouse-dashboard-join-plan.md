@@ -1,5 +1,7 @@
 # ClickHouse Kafka JOIN 대시보드 작업 계획
 
+> 상태: 이 문서는 2026-07-18 `dev`에 병합된 Kafka Engine 기반 ClickHouse V1의 구현·호환 기준선이다. Kafka Connect, receipt audit, versioned dimension, dual binding과 archive parity를 다루는 V2 목표는 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md)와 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.
+
 이 문서는 **Kafka 실시간 데이터와 S3/Iceberg 기준 데이터를 JOIN한 결과를 ClickHouse에서 바로 조회하고, 그 결과로 기존 Dashboard 위젯을 만들고 실시간 갱신하는 작업**을 설명한다.
 
 연결된 이슈는 [#895](https://github.com/JUNGLE-TEAM1/AskLake/issues/895)다.

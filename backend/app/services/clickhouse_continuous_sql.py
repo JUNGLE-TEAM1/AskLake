@@ -197,7 +197,6 @@ class ClickHouseContinuousSqlWorkerGateway:
             for key in ("catalog", "schema", "table")
         )
         projection = ", ".join(quote_trino_identifier(item) for item in columns)
-        max_rows = int(self.settings.clickhouse_static_load_max_rows)
         count_result = execute_trino_rows(
             self.trino_client,
             f"SELECT count(*) FROM {source} FOR VERSION AS OF {int(snapshot_id)}",
@@ -206,10 +205,6 @@ class ClickHouseContinuousSqlWorkerGateway:
         if not count_result.rows or not count_result.rows[0]:
             raise ValueError("ClickHouse static snapshot count is unavailable")
         total_rows = int(count_result.rows[0][0])
-        if total_rows > max_rows:
-            raise ValueError(
-                "ClickHouse static snapshot exceeds CLICKHOUSE_STATIC_LOAD_MAX_ROWS"
-            )
         target = qualified_clickhouse_table(database, table)
         existing_count = client.query(f"SELECT count() AS row_count FROM {target}")
         loaded_rows = int(existing_count.rows[0][0]) if existing_count.rows else 0

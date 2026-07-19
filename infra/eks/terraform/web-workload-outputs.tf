@@ -1,7 +1,7 @@
 output "phase14_web_workload_handoff" {
-  description = "Non-secret Frontend/FastAPI workload manifest and dependency contract."
+  description = "Non-secret Frontend/FastAPI/AI Gateway workload manifest and dependency contract."
   value = {
-    contract_version = "1.0"
+    contract_version = "1.1"
     namespace        = var.namespace
     chart            = "infra/eks/helm/asklake-web"
     default_enabled  = false
@@ -20,6 +20,15 @@ output "phase14_web_workload_handoff" {
         health_path     = "/api/health"
         service_account = var.service_account_names["backend"]
       }
+      ai_gateway = {
+        deployment      = "ai-gateway"
+        service         = "ai-gateway"
+        service_port    = 8090
+        health_path     = "/health"
+        service_account = var.service_account_names["aiGateway"]
+        public_ingress  = false
+        replicas        = 1
+      }
     }
     placement = {
       node_selector = { "asklake.io/workload-class" = "general" }
@@ -29,6 +38,7 @@ output "phase14_web_workload_handoff" {
       runtime_config_map          = "asklake-runtime"
       runtime_boundary_config_map = "asklake-runtime-boundary"
       backend_secret              = "asklake-backend-runtime"
+      ai_gateway_secret           = "asklake-ai-gateway-runtime"
       image_receipt               = "immutable-linux-amd64-digests"
     }
     apply_gates = [
@@ -38,6 +48,8 @@ output "phase14_web_workload_handoff" {
       "runtime-config-ready",
       "runtime-secret-ready",
       "backend-runtime-boundary-ready",
+      "ai-gateway-runtime-ready",
+      "ai-gateway-network-policy-ready",
     ]
     ingress_dependency = "deploy-web-before-phase13-ingress"
     deletion_order     = ["phase13-ingress", "phase14-web", "foundation"]

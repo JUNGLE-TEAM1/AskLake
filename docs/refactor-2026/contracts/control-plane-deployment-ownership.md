@@ -17,7 +17,20 @@ Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Contin
 
 `eks-web-finite-batch`는 현재 배포 topology에 존재하지만 위 두 장기 control plane을 claim하지 않는다. EKS/EC2의 실제 rollout 또는 역할 이동은 manifest 한 줄만 바꾸는 작업이 아니며, 대상 runtime 설정과 배포 증거를 같은 PR에 포함해야 한다.
 
-EKS Continuous gateway와 worker template은 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `deploy/kubernetes/continuous-worker.yaml.template`은 `asklake-backend` service account의 SparkApplication RBAC를 재사용하는 future rollout artifact이며, apply 전에 EC2 worker를 제거하고 canonical ownership manifest를 같은 release에서 바꿔야 한다.
+EKS Continuous gateway와 worker package는 repository에 준비돼 있어도 live owner를
+자동으로 변경하지 않는다. `asklake-workloads`의 Realtime V1 component는
+`asklake-backend` service account의 SparkApplication RBAC를 사용하며 Kafka scope를
+소유한다. Issue #1072의 V2 cutover는 이 owner를 보존하고 EC2 control loop를 fence한 뒤
+canonical ownership manifest와 V2 generation을 같은 승인 release에서 전환한다.
+
+`infra/eks/helm/asklake-realtime-data-plane`도 같은 rollout 경계를 따른다. `disabled`와
+`shadow`는 V2 worker를 만들지 않는다. `cutover`는 기존 EC2 control loop quiesce,
+EKS Realtime V1 Kafka owner ready, 승인, `eks-continuous-worker-v2` owner와 새 generation을
+요구하고 V2 worker scope를 `continuous_sql`로 고정한다. canonical manifest는 Kafka
+owner를 EKS V1 하나, Continuous SQL owner를 EKS V2 하나로 선언하고 EC2를 rollback
+standby로 둔다. schema acknowledgement는 실제 workload나 lease를 증명하지 않으며,
+적용은 [EKS ClickHouse 실시간 GOLD 런북](../../eks-clickhouse-realtime-gold-runbook.md)의
+owner 대조와 rollback receipt를 필요로 한다.
 
 ## 실패 조건
 

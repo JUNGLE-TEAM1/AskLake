@@ -27,7 +27,7 @@ trap cleanup EXIT
 jq -n --slurpfile state "$STATE" --slurpfile receipt "$RECEIPT" --slurpfile example "$EXAMPLE" '
   ($state[0].outputs) as $o | ($receipt[0].images) as $images | ($example[0]) as $e |
   {
-    contractVersion:"1.0",environment:"dev",readiness:"planning",
+    contractVersion:"1.1",environment:"dev",readiness:"planning",
     runtimeBoundary:$e.runtimeBoundary,
     kubernetes:{clusterName:$o.cluster_name.value,namespace:$o.namespace.value,nodeArchitecture:"linux/amd64",serviceAccounts:$o.service_account_names.value},
     images:$images,

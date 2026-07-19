@@ -9,6 +9,8 @@ metadata:
     app.kubernetes.io/component: trino
 spec:
   replicas: {{ .Values.trino.replicas }}
+  strategy:
+    type: Recreate
   revisionHistoryLimit: 3
   selector:
     matchLabels:

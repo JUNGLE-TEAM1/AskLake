@@ -1,4 +1,42 @@
 locals {
+  realtime_v2_connect = var.reference_msk && length(var.msk_realtime_v2_topic_arns) == 5 && length(var.msk_realtime_v2_group_arns) == 2 ? {
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ConnectToMskServerless"
+        Effect   = "Allow"
+        Action   = ["kafka-cluster:Connect"]
+        Resource = [var.msk_cluster_arn]
+      },
+      {
+        Sid      = "WriteDataIdempotently"
+        Effect   = "Allow"
+        Action   = ["kafka-cluster:WriteDataIdempotently"]
+        Resource = [var.msk_cluster_arn]
+      },
+      {
+        Sid    = "UseGenerationScopedTopics"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:CreateTopic",
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:ReadData",
+          "kafka-cluster:WriteData",
+        ]
+        Resource = var.msk_realtime_v2_topic_arns
+      },
+      {
+        Sid    = "UseGenerationScopedConsumerGroup"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeGroup",
+          "kafka-cluster:AlterGroup",
+        ]
+        Resource = var.msk_realtime_v2_group_arns
+      },
+    ]
+  } : null
+
   external_fixture_producer = var.reference_msk ? {
     Version = "2012-10-17"
     Statement = [
@@ -21,7 +59,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:WriteData",
         ]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
     ]
   } : null
@@ -39,7 +77,7 @@ locals {
         Sid      = "DescribeFixtureTopic"
         Effect   = "Allow"
         Action   = ["kafka-cluster:DescribeTopic"]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
     ]
   } : null
@@ -60,7 +98,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:ReadData",
         ]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
       {
         Sid    = "UseFixtureConsumerGroup"
@@ -99,6 +137,8 @@ locals {
               "${var.storage_prefixes.checkpoint}/*",
               var.storage_prefixes.quarantine,
               "${var.storage_prefixes.quarantine}/*",
+              var.storage_prefixes.continuous_runtime,
+              "${var.storage_prefixes.continuous_runtime}/*",
             ]
           }
         }
@@ -127,6 +167,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.checkpoint,
           var.storage_object_arns.quarantine,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
       {
@@ -142,6 +183,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.checkpoint,
           var.storage_object_arns.quarantine,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
     ]
@@ -176,6 +218,8 @@ locals {
               "${var.storage_prefixes.output}/*",
               var.storage_prefixes.evidence,
               "${var.storage_prefixes.evidence}/*",
+              var.storage_prefixes.continuous_runtime,
+              "${var.storage_prefixes.continuous_runtime}/*",
             ]
           }
         }
@@ -218,6 +262,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.query_results,
           var.storage_object_arns.evidence,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
       {
@@ -231,6 +276,7 @@ locals {
         Resource = [
           var.storage_object_arns.query_results,
           var.storage_object_arns.evidence,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
     ]
@@ -290,5 +336,6 @@ locals {
     spark                     = local.spark
     backend                   = local.backend
     trino                     = local.trino
+    realtime_v2_connect       = local.realtime_v2_connect
   }
 }

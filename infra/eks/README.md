@@ -130,11 +130,11 @@ dev Backend의 S3 `ListBucket`은 Raw/Output의 bucket-wide prefix가 Warehouse/
 
 Phase 5는 실제 workload를 생성하지 않고 A의 infrastructure output과 B의 manifest 사이에 `delivery/dev.handoff.example.json` 계약을 둔다. planning 검증은 AWS 값 없이 통과하지만 실제 배포용 `--ready` 검증은 immutable ECR digest, data-plane reference와 중요한 platform 선택이 모두 채워지기 전까지 실패한다. 실제 값이 들어간 handoff는 Git에 커밋하지 않는다. 상세 기준은 [Phase 5 배포 Handoff](../../docs/eks-phase-5-delivery-handoff.md)를 따른다.
 
-Phase 6는 수동 GitHub workflow로 Frontend, Backend, image-baked DAG를 포함한 Airflow, Spark runtime을 단일 `linux/amd64` manifest로 build하고 Trino를 mirror해 ECR digest receipt를 만든다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
+Phase 6는 수동 GitHub workflow로 Frontend, Backend, AI Gateway, image-baked DAG를 포함한 Airflow, Spark runtime을 단일 `linux/amd64` manifest로 build하고 Trino를 mirror해 ECR digest receipt v1.1을 만든다. Terraform ECR 계약도 `ai-gateway`를 포함한다. Workflow는 ECR repository를 생성하지 않으며 보호된 environment의 OIDC role 없이는 실행되지 않는다. 실제 push 전 설정과 비용 경계는 [Phase 6 ECR Image Delivery](../../docs/eks-phase-6-image-delivery.md)를 따른다.
 
 Phase 7은 최초의 fail-closed ALB와 private network 선택 계약을 추가했다. Phase 13에서 controller 경계를 EKS Auto Mode managed ALB로 교체했으므로 현재 ingress 적용은 Phase 13 문서를 우선하고, Phase 7 문서는 선택 배경과 호환 output 설명으로 사용한다.
 
-Phase 8은 한 JSON을 기준으로 FastAPI, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. dev에는 네 workload 이름의 source/ExternalSecret/target이 있고 Spark 3-key와 Trino 7-key는 staged hash 검증을 통과했다. Backend Trino patch와 실제 Spark/Trino 주입은 아직 통합 gate다. 상세 기준과 증거는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md), [Backend runtime Secret 전환 기록](../../docs/eks-day15-backend-secret-runtime-evidence.md), [16일차 Phase 2 전달 기록](../../docs/eks-day16-a-runtime-secret-delivery.md)을 따른다.
+Phase 8은 한 JSON을 기준으로 FastAPI, AI Gateway, Airflow, Spark, Trino의 runtime Secret 이름·key·공유 binding·env injection·파일 mount를 값 없이 고정하고 Terraform이 같은 v1.1 계약을 output한다. delivery는 `disabled`가 기본이며 Phase 5 선택과 결합 검증한다. `ready_for_sync`와 Airflow/AI 선택까지 포함한 full-service Secret contract readiness는 구분한다. Gateway 전환은 Backend 15-key/Gateway 3-key source를 임시 ExternalSecret으로 검증한 뒤 canonical target과 전용 runtime ConfigMap Helm release를 함께 전환하며, direct 13-key는 명시적 rollback에만 사용한다. 상세 기준과 증거는 [Phase 8 런타임 Secret 전달 계약](../../docs/eks-phase-8-runtime-secrets.md), [Backend runtime Secret 전환 기록](../../docs/eks-day15-backend-secret-runtime-evidence.md), [16일차 Phase 2 전달 기록](../../docs/eks-day16-a-runtime-secret-delivery.md)을 따른다.
 
 16일차 Phase 3은 Terraform output과 immutable receipt로 Git 제외 Trino private values를 만들고, Trino 리소스만 server-side dry-run한다. `asklake-trino` Pod Identity의 실제 RDS/S3/DNS 경계는 임시 Job으로 검증하되 coordinator를 배포하지 않는다. 실행과 cleanup 기준은 [16일차 Phase 3 Trino data plane 검증](../../docs/eks-day16-a-trino-data-plane.md)을 따른다.
 
@@ -187,6 +187,19 @@ rollout 실패 자동 rollback은 성공 release의 의도적 rollback·재승�
 Phase 7/8 bounded E2E에서 닫는다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
+
+## ClickHouse Realtime V2 opt-in
+
+SQL 분석의 실시간 GOLD 경로는 기존 EKS web/finite-batch release에 StatefulSet이나 PVC를 추가하지 않는다. `infra/eks/helm/asklake-realtime-data-plane`이 Keeper, ClickHouse, Kafka Connect와 승인 후 Continuous Worker를 별도 release로 소유한다. 기본값은 resource 0, shadow는 worker 0이며 현재 EC2 owner를 바꾸지 않는다. cutover는 구형 EC2 `all`과 V1 fence, 대체 EC2 `kafka` owner, 새 generation을 요구하고 EKS V2 worker는 `continuous_sql` scope로만 실행된다.
+
+Kafka Connect 이미지는 ClickHouse Sink와 MSK IAM module을 checksum으로 고정하고, exact topic/group ARN의 전용 Pod Identity를 사용한다. ClickHouse TLS와 role credential은 ESO-owned Secret, storage/resource/grace/replica와 network CIDR은 Git-ignored private values에서만 확정한다. direct chart는 single-node staging topology이고 HA가 아니다.
+
+```bash
+scripts/verify-eks-realtime-data-plane.sh
+scripts/verify-eks-workloads.sh
+```
+
+실제 shadow, owner 전환, E2E, fault와 rollback은 [EKS ClickHouse 실시간 GOLD 런북](../../docs/eks-clickhouse-realtime-gold-runbook.md)을 따른다. 현재 `deploy/control-plane-ownership.json`의 EC2 owner는 변경하지 않는다.
 
 ## 설계 참고 자료
 

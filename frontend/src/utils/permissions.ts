@@ -22,6 +22,10 @@ export function canDeleteDatasetMaterializationRun(dataset: CatalogDataset | nul
   return canManageDataset(dataset) || permissionValue(dataset, "canDelete", false);
 }
 
+export function canDeleteDataset(dataset: CatalogDataset | null | undefined) {
+  return permissionValue(dataset, "canDelete", false);
+}
+
 export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard | null | undefined) {
   return permissionValue(dashboard, "canManage", true);
 }

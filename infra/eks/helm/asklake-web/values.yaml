@@ -55,6 +55,45 @@ backend:
   runtimeSecretName: asklake-backend-runtime
   trinoRuntimeSecretName: asklake-backend-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem
+  realtime:
+    enabled: false
+    apiControlPlane: external_ec2
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    connectorName: asklake-clickhouse-realtime-v2
+    clickhouseV2Url: ""
+    clickhouseV2Database: asklake_realtime_v2
+    runtimeSecret:
+      name: asklake-realtime-runtime
+      materializerPasswordKey: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+      readerPasswordKey: CLICKHOUSE_V2_READER_PASSWORD
+      caKey: clickhouse-v2-ca.crt
+  resources: {}
+
+aiGateway:
+  enabled: false
+  image: ""
+  replicaCount: 0
+  serviceAccountName: asklake-ai-gateway
+  service:
+    name: ai-gateway
+    type: ClusterIP
+    port: 8090
+  runtimeSecretName: asklake-ai-gateway-runtime
+  runtimeSecretKeys:
+    internalAuthToken: AI_GATEWAY_SERVICE_TOKEN
+    mcpServiceToken: AI_MCP_SERVICE_TOKEN
+    providerApiKey: AI_PROVIDER_API_KEY
+  provider: openai_compatible
+  providerBaseUrl: https://api.openai.com/v1
+  providerModel: gpt-4.1-mini
+  mcpServerUrl: http://fastapi:8080/internal/mcp
+  requestTimeoutSeconds: 30
   resources: {}
 
 collector:

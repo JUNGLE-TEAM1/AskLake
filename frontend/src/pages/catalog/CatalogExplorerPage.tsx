@@ -10,7 +10,6 @@ import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
 import { FilterToolbar, FilterToolbarActions, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,26 +18,33 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Skeleton } from "@/components/ui/skeleton";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AuditResult, CatalogDataset } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetDeletionImpact } from "../../types";
 import { permissionDeniedMessage } from "../../utils/permissions";
 import { cn } from "@/lib/utils";
 import { type CatalogSortMode, type CatalogStatusFilter, catalogSortOptions, catalogStatusFilterOptions, formatCatalogDateTime } from "./catalogModel";
 import { CatalogDatasetViewer, CatalogMiniMetric, CatalogSchemaTable, DatasetStatusBadge } from "./CatalogDetailPage";
 import { CatalogLineage } from "./CatalogLineage";
 import { useCatalogExplorerState } from "./useCatalogExplorerState";
+import { CatalogDatasetDeleteAction } from "./CatalogDatasetDeleteAction";
 export function CatalogPage({
+  datasetDeletionPendingById,
   datasets,
   error = null,
   loading = false,
   onAction,
+  onDeleteDataset,
+  onLoadDeletionImpact,
   onOpenSql,
   onRefresh,
   selectedDataset,
 }: {
+  datasetDeletionPendingById: Record<string, boolean>;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onDeleteDataset: (datasetId: string) => Promise<boolean>;
+  onLoadDeletionImpact: (datasetId: string) => Promise<CatalogDatasetDeletionImpact>;
   onOpenSql: (dataset: CatalogDataset) => void;
   onRefresh?: () => void;
   selectedDataset: CatalogDataset;
@@ -180,11 +186,6 @@ export function CatalogPage({
   return (
     <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
-      <PageHeader
-        className="catalog-page-header"
-        icon={<Search size={18} />}
-        title="검색/카탈로그"
-      />
       {error ? (
         <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
           <AlertCircle />
@@ -333,6 +334,13 @@ export function CatalogPage({
                           </div>
                         </div>
                       </Button>
+                      <CatalogDatasetDeleteAction
+                        dataset={dataset}
+                        onAction={onAction}
+                        onDeleteDataset={onDeleteDataset}
+                        onLoadDeletionImpact={onLoadDeletionImpact}
+                        pending={Boolean(datasetDeletionPendingById[dataset.id])}
+                      />
                     </Card>
                   </div>
                 );

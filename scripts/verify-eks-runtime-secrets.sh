@@ -28,9 +28,10 @@ if grep -Eq '^kind: Secret$|^[[:space:]]*stringData:|^[[:space:]]*value:' "$DEV_
   exit 1
 fi
 
-test "$(grep -c '^kind: ExternalSecret$' "$DEV_EXTERNAL_SECRETS")" -eq 4
+test "$(grep -c '^kind: ExternalSecret$' "$DEV_EXTERNAL_SECRETS")" -eq 5
 for name in \
   asklake-backend-runtime \
+  asklake-ai-gateway-runtime \
   asklake-airflow-runtime \
   asklake-spark-runtime \
   asklake-trino-runtime; do
@@ -38,6 +39,7 @@ for name in \
 done
 for source in \
   asklake/dev/backend/runtime \
+  asklake/dev/ai-gateway/runtime \
   asklake/dev/airflow/runtime \
   asklake/dev/spark/runtime \
   asklake/dev/trino/runtime; do
@@ -46,6 +48,10 @@ done
 for key in \
   DATABASE_URL \
   BOOTSTRAP_ADMIN_PASSWORD \
+  AI_GATEWAY_SERVICE_TOKEN \
+  AI_MCP_SERVICE_TOKEN \
+  AI_CONTEXT_SIGNING_SECRET \
+  AI_PROVIDER_API_KEY \
   AIRFLOW_PASSWORD \
   AIRFLOW_EXECUTION_API_TOKEN \
   AIRFLOW_INTERNAL_TOKEN \
@@ -78,6 +84,35 @@ manifest_backend_keys="$(awk '$1 == "-" && $2 == "secretKey:" { print $3 }' "$BA
   | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')"
 [[ "$manifest_backend_keys" == "$expected_backend_keys" ]] || {
   echo "Backend ExternalSecret differs from the bounded runtime profile" >&2
+  exit 1
+}
+
+external_secret_keys() {
+  local name="$1"
+  awk -v name="$name" '
+    /^kind: ExternalSecret$/ { block = $0 ORS; capture = 1; next }
+    capture { block = block $0 ORS }
+    capture && /^---$/ {
+      if (block ~ ("name: " name "([[:space:]]|$)")) printf "%s", block
+      capture = 0; block = ""
+    }
+    END {
+      if (capture && block ~ ("name: " name "([[:space:]]|$)")) printf "%s", block
+    }
+  ' "$DEV_EXTERNAL_SECRETS" | awk '$1 == "-" && $2 == "secretKey:" { print $3 }' \
+    | jq -Rsc 'split("\n") | map(select(length > 0)) | unique | sort'
+}
+
+expected_gateway_backend_keys="$(asklake_backend_runtime_profile "$ROOT_DIR" full-service)"
+manifest_gateway_backend_keys="$(external_secret_keys asklake-backend-runtime)"
+[[ "$manifest_gateway_backend_keys" == "$expected_gateway_backend_keys" ]] || {
+  echo "combined dev Backend ExternalSecret differs from the exact Gateway profile" >&2
+  exit 1
+}
+expected_ai_gateway_keys='["AI_GATEWAY_SERVICE_TOKEN","AI_MCP_SERVICE_TOKEN","AI_PROVIDER_API_KEY"]'
+manifest_ai_gateway_keys="$(external_secret_keys asklake-ai-gateway-runtime)"
+[[ "$manifest_ai_gateway_keys" == "$expected_ai_gateway_keys" ]] || {
+  echo "combined dev AI Gateway ExternalSecret differs from the exact three-key profile" >&2
   exit 1
 }
 

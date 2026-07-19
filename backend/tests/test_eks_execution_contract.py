@@ -28,6 +28,12 @@ class EksControlPlaneContractTests(unittest.TestCase):
             self.assertTrue(contract.external_continuous_control_plane_enabled())
             self.assertTrue(contract.job_visible_in_current_control_plane("snapshot"))
             self.assertFalse(contract.job_visible_in_current_control_plane("continuous"))
+            self.assertTrue(contract.job_visible_in_current_control_plane(
+                "continuous", {"runtimeEngine": "kafka_connect_clickhouse_v2"}
+            ))
+            contract.require_local_continuous_control_plane(
+                {"runtimeEngine": "kafka_connect_clickhouse_v2"}
+            )
             with self.assertRaises(ApiError) as raised:
                 contract.require_local_continuous_control_plane()
 
@@ -117,6 +123,7 @@ class SparkKubernetesExecutionIdentityTests(unittest.TestCase):
             "namespace": "asklake-dev",
             "applicationName": "asklake-run-1",
             "applicationUid": "application-uid",
+            "attemptGeneration": 1,
             "imageDigest": "sha256:" + "a" * 64,
             "state": "RUNNING",
         }
@@ -133,6 +140,7 @@ class SparkKubernetesExecutionIdentityTests(unittest.TestCase):
                 observedAt="2026-07-17T00:00:01Z",
                 driverExitCode=0,
                 recovered=True,
+                replacement=False,
                 resultMarkerFound=True,
             ),
             job_id="JOB-1",
@@ -141,8 +149,50 @@ class SparkKubernetesExecutionIdentityTests(unittest.TestCase):
 
         self.assertEqual(normalized["driverExitCode"], 0)
         self.assertTrue(normalized["recovered"])
+        self.assertFalse(normalized["replacement"])
         self.assertTrue(normalized["resultMarkerFound"])
         self.assertEqual(normalized["driverPodPhase"], "Succeeded")
+
+    def test_attempt_generation_is_bounded(self) -> None:
+        for value in (0, 4, True, "2"):
+            with self.subTest(value=value):
+                with self.assertRaises(ApiError) as raised:
+                    contract.normalize_spark_kubernetes_execution(
+                        self.identity(attemptGeneration=value),
+                        job_id="JOB-1",
+                        run_id="RUN-1",
+                    )
+                self.assertEqual(
+                    raised.exception.code,
+                    "SPARK_EXECUTION_IDENTITY_MISMATCH",
+                )
+
+    def test_terminal_failure_and_configured_attempt_limit(self) -> None:
+        self.assertTrue(
+            contract.spark_kubernetes_terminal_failure(
+                self.identity(state="FAILED"),
+            )
+        )
+        self.assertFalse(
+            contract.spark_kubernetes_terminal_failure(
+                self.identity(state="COMPLETED"),
+            )
+        )
+        self.assertFalse(
+            contract.spark_kubernetes_terminal_failure(
+                self.identity(state="FAILING"),
+            )
+        )
+        with patch.dict(
+            "os.environ",
+            {"ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS": "2"},
+        ):
+            self.assertEqual(contract.spark_kubernetes_max_attempts(), 2)
+        with patch.dict(
+            "os.environ",
+            {"ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS": "99"},
+        ):
+            self.assertEqual(contract.spark_kubernetes_max_attempts(), 3)
 
     def test_missing_required_identity_is_rejected(self) -> None:
         value = self.identity()

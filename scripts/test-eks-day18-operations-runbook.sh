@@ -44,9 +44,9 @@ sed 's#infra/eks/delivery/<private>\.image-receipt\.json#/private/tmp/image-rece
 expect_fail "non-contract image receipt location is rejected" "$missing_receipt"
 
 missing_round_trip="$TEMP_DIR/missing-round-trip.md"
-sed 's/성공 뒤 의도적 rollback·재승격 기능이 없으므로/성공 뒤 별도 검증 기능이 없으므로/' \
+sed 's/ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend/ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=unsafe/' \
   "$SOURCE" >"$missing_round_trip"
-expect_fail "automatic and intentional rollback drift is rejected" "$missing_round_trip"
+expect_fail "intentional rollback confirmation drift is rejected" "$missing_round_trip"
 
 unsafe_namespace="$TEMP_DIR/unsafe-namespace.md"
 cp "$SOURCE" "$unsafe_namespace"

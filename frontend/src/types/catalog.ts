@@ -33,7 +33,7 @@ export type LineageGraph = {
 export type CatalogDataset = {
   description: string;
   downstream: string[];
-  freshness: "latest" | "stale" | "approval";
+  freshness: "latest" | "realtime" | "stale" | "approval";
   id: string;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   lastUpdated: string;
@@ -66,7 +66,7 @@ export type CatalogDataset = {
   size: string;
   source: string;
   sourceRunId?: string;
-  status: "available" | "approval_required";
+  status: "preparing" | "available" | "approval_required";
   storageFormat?: string;
   storageLocation?: string;
   storageSizeBytes?: number;
@@ -157,6 +157,44 @@ export type CatalogDatasetRowsResponse = {
   returnedRows: number;
   rowCount: number;
   rows: string[][];
+};
+
+export type CatalogDatasetDeletionStatus = "queued" | "validating" | "purging" | "metadata_cleanup" | "succeeded" | "failed";
+
+export type CatalogDatasetDeletionBlocker = {
+  reason: string;
+  resourceId: string;
+  resourceName: string;
+  resourceType: string;
+};
+
+export type CatalogDatasetDeletionArtifact = {
+  kind: string;
+  location: string;
+};
+
+export type CatalogDatasetDeletionImpact = {
+  artifacts: CatalogDatasetDeletionArtifact[];
+  blockers: CatalogDatasetDeletionBlocker[];
+  canDelete: boolean;
+  datasetId: string;
+  datasetName: string;
+  estimatedSizeBytes: number;
+  retainedResources: string[];
+};
+
+export type CatalogDatasetDeletionAcceptedResponse = {
+  datasetId: string;
+  deletionId: string;
+  status: CatalogDatasetDeletionStatus;
+};
+
+export type CatalogDatasetDeletionStatusResponse = CatalogDatasetDeletionAcceptedResponse & {
+  createdAt: string;
+  datasetName: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  updatedAt: string;
 };
 
 export type CatalogModelArtifact = {

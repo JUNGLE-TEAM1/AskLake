@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
+from app.domain.audit import AuditTargetType
 from app.core.compatibility import (
     CompatibilityPath,
     record_compatibility_path,
@@ -215,6 +216,7 @@ from app.application.etl_run_projection import (
     mark_airflow_catalog_reconciliation_failure,
     mark_airflow_submission_unknown,
     mark_airflow_success_without_catalog_reconciliation,
+    merge_airflow_task_state_snapshot,
     record_airflow_sync_error,
     repair_incomplete_airflow_successes,
     run_from_airflow_submit,
@@ -253,6 +255,12 @@ from app.application.source_connectors import (
     test_source_connector as execute_test_source_connector,
 )
 from app.core.config import settings
+from app.services.kafka_ingest_v2 import (
+    kafka_ingest_v2_enabled as clickhouse_kafka_ingest_v2_enabled,
+    kafka_ingest_v2_selected as clickhouse_kafka_ingest_v2_selected,
+    require_kafka_ingest_v2_ready,
+    run_clickhouse_kafka_ingest_v2,
+)
 from app.core.errors import ApiError
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,
@@ -507,7 +515,7 @@ def create_trino_sql_job(
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=request.source_run_id,
             target_name=request.source_run_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,
@@ -685,7 +693,7 @@ def create_trino_sql_job(
         metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
         target_id=job.id,
         target_name=job.name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
     return CreatePipelineResponse(
         catalog_target={
@@ -699,7 +707,7 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    if external_continuous_control_plane_enabled():
+    if external_continuous_control_plane_enabled() and settings.continuous_control_plane != "worker":
         return
     sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
         reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,
@@ -725,8 +733,6 @@ def command_job(
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    if command in continuous_commands:
-        require_local_continuous_control_plane()
     job = (
         etl_repository.get_job_for_update(db, job_id)
         if command in {"run", "retry", "startContinuous", "resumeContinuous"}
@@ -735,7 +741,7 @@ def command_job(
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     if job.execution_mode == "continuous":
-        require_local_continuous_control_plane()
+        require_local_continuous_control_plane(getattr(job, "continuous_config", None))
     if (
         scheduled_due_at is not None
         and not scheduled_job_occurrence_is_claimable(job, scheduled_due_at)
@@ -775,7 +781,7 @@ def command_job(
             status_code=exc.status_code,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
         raise
     if job.execution_mode == "continuous" and command not in continuous_commands:
@@ -1436,22 +1442,11 @@ def sync_airflow_run(
     run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
     run.airflow_state = dag_run.state
     previous_task_states = dict(run.task_states or {})
-    spark_execution = previous_task_states.get("sparkExecution")
-    spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
-    airflow_reservation = previous_task_states.get("airflowReservation")
-    eks_mvp_fixture = previous_task_states.get("eksMvpFixture")
-    run.task_states = task_state_snapshot(task_instances)
-    if isinstance(spark_execution, dict):
-        run.task_states["sparkExecution"] = spark_execution
-    if isinstance(spark_result, dict):
-        run.task_states["sparkResult"] = spark_result
-    if isinstance(catalog_result, dict):
-        run.task_states["catalogResult"] = catalog_result
-    if isinstance(airflow_reservation, dict):
-        run.task_states["airflowReservation"] = airflow_reservation
-    if isinstance(eks_mvp_fixture, dict):
-        run.task_states["eksMvpFixture"] = eks_mvp_fixture
+    run.task_states = merge_airflow_task_state_snapshot(
+        previous_task_states,
+        task_state_snapshot(task_instances),
+    )
     run.last_synced_at = synced_at
     run.sync_error = None
 

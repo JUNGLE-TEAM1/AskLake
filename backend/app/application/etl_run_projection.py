@@ -1,5 +1,6 @@
 """Airflow, Spark, and Kafka run-state projections."""
 
+from datetime import datetime
 from typing import Any, Callable
 from fastapi import status
 from app.application.etl_airflow_projection import (
@@ -79,6 +80,7 @@ from app.application.etl_runtime_support import compact_storage_text, dag_step
 
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
+AIRFLOW_MISSING_RUN_FAILURE_GRACE_SECONDS = 60
 AIRFLOW_TASK_TITLES = {
     "receive_asklake_run": "1. Airflow DAG Run 접수",
     "validate_spark_request": "2. Spark 실행 요청 검증",
@@ -364,7 +366,22 @@ def record_airflow_sync_error(run: ETLRunModel, error: ApiError, synced_at: str)
     })
     task_states["airflowReservation"] = reservation
     run.task_states = task_states
-    if missing_count < AIRFLOW_MISSING_RUN_FAILURE_LIMIT:
+    reservation_started_at = str(
+        reservation.get("reservedAt") or run.started_at or ""
+    ).strip()
+    try:
+        elapsed_seconds = (
+            datetime.fromisoformat(synced_at.replace("Z", "+00:00"))
+            - datetime.fromisoformat(
+                reservation_started_at.replace("Z", "+00:00")
+            )
+        ).total_seconds()
+    except (TypeError, ValueError):
+        elapsed_seconds = 0
+    if (
+        missing_count < AIRFLOW_MISSING_RUN_FAILURE_LIMIT
+        or elapsed_seconds < AIRFLOW_MISSING_RUN_FAILURE_GRACE_SECONDS
+    ):
         return
 
     run.status = "failed"
@@ -461,6 +478,27 @@ def task_state_snapshot(task_instances: list[AirflowTaskInstance]) -> dict[str, 
         for task in task_instances
         if task.task_id
     }
+
+def merge_airflow_task_state_snapshot(
+    previous: dict[str, Any],
+    current: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(current)
+    for key in (
+        "sparkExecution",
+        "sparkResult",
+        "catalogResult",
+        "airflowReservation",
+        "eksMvpFixture",
+        "day18Phase8",
+    ):
+        value = previous.get(key)
+        if isinstance(value, dict):
+            merged[key] = value
+    fault_attempts = previous.get("faultAttempts")
+    if isinstance(fault_attempts, list):
+        merged["faultAttempts"] = fault_attempts
+    return merged
 
 def first_problem_task(task_instances: list[AirflowTaskInstance]) -> AirflowTaskInstance | None:
     for task in task_instances:

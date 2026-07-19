@@ -36,6 +36,7 @@ from app.services.eks_execution_contract import (
     spark_execution_lease_seconds,
     spark_kubernetes_execution_progress_callback,
 )
+from app.application.eks_spark_retry import prepare_eks_spark_attempt
 from app.services.etl.eks_fixture import (
     is_eks_mvp_bounded_fixture_job,
     persisted_eks_mvp_fixture_source_boundary,
@@ -116,33 +117,18 @@ def execute_eks_airflow_spark_run(
     if run is None:
         raise run_execution_lease_lost(job_id, run_id)
     try:
-        previous_execution = (run.task_states or {}).get("sparkExecution")
-        previous_kubernetes_execution = (
-            previous_execution.get("kubernetesExecution")
-            if isinstance(previous_execution, dict)
-            and isinstance(previous_execution.get("kubernetesExecution"), dict)
-            else None
+        (
+            run.task_states,
+            previous_kubernetes_execution,
+            spark_attempt_generation,
+        ) = prepare_eks_spark_attempt(
+            run.task_states or {},
+            attempt_id=attempt_id,
+            lease_generation=lease.generation,
+            job_id=job_id,
+            run_id=run_id,
+            started_at=iso_now(),
         )
-        if previous_kubernetes_execution is not None:
-            previous_kubernetes_execution = normalize_spark_kubernetes_execution(
-                previous_kubernetes_execution,
-                job_id=job_id,
-                run_id=run_id,
-            )
-        run.task_states = {
-            **(run.task_states or {}),
-            "sparkExecution": {
-                "attemptId": attempt_id,
-                "generation": lease.generation,
-                "startedAt": iso_now(),
-                "status": "running",
-                **(
-                    {"kubernetesExecution": previous_kubernetes_execution}
-                    if previous_kubernetes_execution is not None
-                    else {}
-                ),
-            },
-        }
         db.commit()
     except Exception:
         db.rollback()
@@ -172,6 +158,8 @@ def execute_eks_airflow_spark_run(
         spark_kwargs: dict[str, Any] = {
             "spark_progress_callback": progress_callback,
         }
+        if spark_attempt_generation > 1:
+            spark_kwargs["spark_attempt_generation"] = spark_attempt_generation
         if source_boundary is not None:
             spark_kwargs["source_boundary"] = source_boundary
         if previous_kubernetes_execution is not None:

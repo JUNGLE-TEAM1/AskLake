@@ -20,6 +20,10 @@ from app.models import (
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
 from app.repositories import etl_job_list_repository
+from app.repositories.etl_schema_migrations import (
+    columns_by_name,
+    migrate_columns_to_text,
+)
 from app.schemas.etl import (
     CatalogDataset,
     ContinuousMaintenanceRun,
@@ -56,8 +60,8 @@ def ensure_schema(db: Session) -> None:
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
-        existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
-        if "payload" in existing_columns:
+        existing_column_defs = columns_by_name(inspector, "etl_jobs")
+        if "payload" in existing_column_defs:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
@@ -121,7 +125,7 @@ def ensure_schema(db: Session) -> None:
             "transform_steps": "JSON",
         }
         for column_name, column_type in column_defs.items():
-            if column_name not in existing_columns:
+            if column_name not in existing_column_defs:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
 
         runtime_columns = {column["name"] for column in inspector.get_columns("kafka_continuous_runtimes")}
@@ -197,19 +201,11 @@ def ensure_schema(db: Session) -> None:
             else:
                 sql_value = f"'{default_value}'"
             connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
-        if "schema_fingerprint" in existing_columns:
-            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
-        if "last_state" in existing_columns:
-            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
+        migrate_columns_to_text(connection, "etl_jobs", existing_column_defs, ("schema_fingerprint", "last_state"))
 
-        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
-        if "failed_stage" in existing_run_columns:
-            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
-        if "error_summary" in existing_run_columns:
-            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
+        existing_run_column_defs = columns_by_name(inspector, "etl_runs")
+        migrate_columns_to_text(connection, "etl_runs", existing_run_column_defs, ("failed_stage", "error_summary"))
 
-
-        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
         run_column_defs = {
             "airflow_dag_id": "VARCHAR(255)",
             "airflow_dag_run_id": "VARCHAR(255)",
@@ -223,7 +219,7 @@ def ensure_schema(db: Session) -> None:
             "execution_generation": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in run_column_defs.items():
-            if column_name not in existing_run_columns:
+            if column_name not in existing_run_column_defs:
                 connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
         connection.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_etl_runs_execution_claim "
@@ -313,11 +309,15 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
 
 def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
-    return db.scalar(
+    model = db.scalar(
         select(CatalogDatasetModel)
         .where(CatalogDatasetModel.id == dataset_id)
         .with_for_update()
     )
+    from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+
+    ensure_catalog_publication_allowed(db, dataset_id)
+    return model
 
 
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
@@ -340,6 +340,7 @@ def get_dataset_schema_by_id(db: Session, dataset_id: str) -> CatalogDataset | N
 
 def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatasetModel) -> tuple[JobRowData, CatalogDataset]:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     db.add(dataset)
     db.add(job)
     db.commit()
@@ -350,6 +351,7 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
 
 def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     dataset = db.merge(dataset)
     try:
         db.commit()
@@ -367,6 +369,8 @@ def save_command_result(
     dataset: CatalogDatasetModel | None = None,
 ) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
     ensure_schema(db)
+    if dataset is not None:
+        get_dataset_by_id_for_update(db, dataset.id)
     merged_dataset = db.merge(dataset) if dataset is not None else None
     if run is not None:
         db.add(run)

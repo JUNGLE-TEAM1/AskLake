@@ -4,9 +4,9 @@
 
 이 문서는 AskLake EKS MVP에서 장애를 발견하고 복구 상태를 판정할 때 사용하는 Pair A
 운영 절차다. `kubectl`, CloudWatch, ALB, immutable image digest, 보존 EC2 rollback 원본과
-임시 resource cleanup을 한 흐름으로 연결한다. Phase 6은 절차를 고정하는 단계이며 새
-Backend digest의 실제 rolling update와 rollback 실행은 Pair B 결과가 합쳐진 뒤 Phase 7에서
-둘이 수행한다.
+임시 resource cleanup을 한 흐름으로 연결한다. 최초 Day 18 live image 왕복과 fault/E2E
+핵심 검증 결과는 [Phase 7·8 결과](eks-day18-phase7-8-result.md)에 남긴다. 이 문서의
+명령은 이후 같은 범위를 재검증하거나 수동 인수할 때 사용하는 절차다.
 
 명령은 다음 세 등급으로 구분한다.
 
@@ -158,8 +158,7 @@ CloudWatch marker 2개와 임시 resource 0개다.
 
 ## 5. immutable digest rollout과 rollback
 
-Phase 6에서는 preflight 절차만 고정하며 candidate receipt가 Pair B에게서 오기 전에는 실제
-preflight도 실행하지 않는다. receipt revision이 현재 branch에 포함되고, Backend image가
+receipt revision이 현재 branch에 포함되고, Backend image가
 `linux/amd64` immutable digest이며, Secret/RDS/ALB/EC2 rollback source가 모두 준비돼야 한다.
 현재 worktree에 private `deploy/ec2.env`가 없으면 다른 worktree에서 자동 복사하거나 새 값을
 추측하지 말고 준비 작업을 차단 상태로 보고한다.
@@ -186,33 +185,45 @@ export ASKLAKE_EXPECTED_EC2_INSTANCE_ID="${ASKLAKE_EC2_INSTANCE_ID:?}"
 bash scripts/preflight-eks-backend-image-rollout.sh "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
-다음 명령은 Phase 7의 공동 **변경** 중 첫 번째인 candidate rolling update다. Pair B의 최종
-digest와 fault/retry 변경이 `pair1`에 병합되고 실행 창을 확보한 뒤에만 사용한다.
+Phase 7 runner 자체의 조회 전용 gate는 다음과 같다. 이 명령은 receipt, 보존 EC2,
+현재 Helm revision, 이전/candidate immutable image, FastAPI `2/2`, Collector `1/1`,
+Frontend와 runtime Secret baseline을 private mode-`0600` evidence에 고정하지만 Helm
+revision이나 workload를 바꾸지 않는다.
+
+실행 전에 [Day 18 복원력 실행 계약](eks-day18-resilience-execution-contract.md)의
+candidate capability proof와 image binding을 통과해야 한다. bound contract의
+capability boolean을 수동으로 변경한 파일은 approval 입력으로 사용할 수 없다.
 
 ```bash
-export ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend
-bash scripts/rollout-eks-backend-image.sh "$ASKLAKE_IMAGE_RECEIPT"
+bash scripts/run-eks-day18-backend-rollout-round-trip.sh \
+  --preflight "$ASKLAKE_IMAGE_RECEIPT"
 ```
 
-runner는 Helm revision을 기록하고 rollout 후 ALB, Secret, RDS, Pod imageID, collector와
-Continuous 경계를 확인한다. upgrade 이후 postcheck가 실패하면 직전 Helm revision으로
+다음 명령은 Phase 7의 **변경**이다. 최종 digest와 fault/retry 변경이 base branch에
+포함되고, 위 preflight가 통과하고, 배타적 실행 창을 확보한 뒤에만 사용한다.
+
+```bash
+export ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend
+bash scripts/run-eks-day18-backend-rollout-round-trip.sh \
+  --run "$ASKLAKE_IMAGE_RECEIPT"
+```
+
+runner는 기존 `scripts/rollout-eks-backend-image.sh`를 candidate 배포와 재승격에
+`ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend` 계약으로 재사용하고
+그 사이에 시작 시 고정한 이전 revision으로 의도적 Helm rollback을 수행한다. 각 단계에서
+ALB/RDS steady, FastAPI `2/2`, Collector `1/1`, Deployment와 Pod imageID, Continuous 0,
+보존 EC2, Frontend와 runtime Secret 무변경을 확인한다. 이전/candidate image와 실제 Helm
+revision은 기본적으로 저장소 밖 `/private/tmp` private evidence에만 mode `0600`으로 남고
+화면에는 단계·건수·성공 여부만 출력된다.
+
+낮은 수준의 rollout script는 upgrade 이후 postcheck가 실패하면 직전 Helm revision으로
 자동 rollback을 시도한다. 출력이 `backend_rollout_rollback=completed_and_steady`가 아니면
-자동 복구 성공으로 선언하지 말고, Helm revision과 live digest를 조회한 뒤 변경을 멈춘다.
-mutable tag 재배포, `kubectl set image`와 source commit만으로 완료 처리하는 방식은 금지한다.
-
-이 자동 실패 rollback은 Phase 7이 요구하는 의도적 왕복 검증을 대신하지 않는다. Phase 7은
-별도 approval-gated runner 또는 검토된 명령으로 다음 순서를 구현해야 한다.
-
-1. 이전 Helm revision과 이전 FastAPI/Collector digest를 private evidence에 고정한다.
-2. 새 candidate digest로 rolling update하고 FastAPI `2/2`, Collector `1/1`, ALB/RDS/Secret,
-   Continuous와 외부 HTTP 무중단을 확인한다.
-3. 성공한 release를 의도적으로 이전 revision으로 rollback하고 같은 gate를 다시 확인한다.
-4. 새 digest로 재승격하고 formal receipt, Deployment와 Pod imageID가 다시 일치하는지 확인한다.
-5. 전 과정에서 Frontend image와 runtime Secret이 변하지 않았음을 확인한다.
-
-의도적 rollback 또는 재승격이 실패하면 추가 mutation을 중단한다. 현재
-`scripts/rollout-eks-backend-image.sh`에는 성공 뒤 의도적 rollback·재승격 기능이 없으므로
-Phase 6 완료를 해당 live 증거로 확대하지 않는다.
+자동 복구 성공으로 선언하지 않는다. 이 자동 실패 rollback은 성공 release의 의도적 왕복
+검증을 대신하지 않는다. 의도적 rollback 또는 재승격이 실패하면 round-trip runner는
+`backend_round_trip_additional_mutation=stopped`를 출력하고 추가 mutation을 중단한다.
+이때 Helm revision과 live digest를 private 조회한 뒤 수동 steady-state 복구 전까지 다음
+단계를 실행하지 않는다. mutable tag 재배포, `kubectl set image`와 source commit만으로 완료
+처리하는 방식은 금지한다.
 
 ## 6. 보존 EC2 fallback
 
@@ -259,7 +270,45 @@ bash scripts/verify-eks-day18-ec2-rollback.sh \
 현재 보존 원본에는 legacy-local-default 표시와 Trino collector/cleanup의 미적용 health check
 2개가 남아 있으므로 이를 숨기지 않고 인계한다.
 
-## 7. 비용과 cleanup
+## 7. ALB 기반 수동 인수
+
+장시간 자동 반복 검증을 기능 전환의 필수 선행 조건으로 두지 않는다. 자동 live 핵심 gate가
+통과했으면 기존 EC2, 기존 도메인과 실제 트래픽을 유지하고 EKS ALB 기본 주소에서 짧은
+수동 인수를 진행한다. 이 단계는 DNS cutover가 아니다.
+
+```text
+기존 EC2와 데이터 유지
+→ EKS ALB로만 접속
+→ 격리 fixture와 테스트 actor로 핵심 기능 확인
+→ Frontend/FastAPI Pod를 한 번에 하나씩 교체
+→ durable state와 중복 실행 확인
+→ 결과가 모두 통과한 뒤에만 별도 트래픽 전환 결정
+```
+
+확인 순서는 다음과 같다.
+
+1. Frontend 접속과 FastAPI `/api/health`
+2. 기존 RDS 데이터 및 Dataset 목록 조회
+3. Dataset이 참조하는 S3 object와 Trino 실제 쿼리
+4. SparkApplication 제출·완료·driver log
+5. 격리 MSK 입력과 Replay
+6. 실패·취소·재시작 뒤 같은 Run의 상태 복구
+7. Airflow DAG 실행과 Catalog materialization
+8. Frontend Pod 하나 삭제 뒤 다른 replica의 응답 유지, replacement Ready와 ALB 정상
+9. FastAPI Pod 하나 삭제 뒤 replacement Ready, RDS Run 유지, background 중복 실행 0
+
+Pod 삭제 전에는 Deployment owner, replica 2/2, immutable image, target Pod UID와 다른
+진행 중 workload가 없음을 확인한다. name만 믿고 삭제하지 않고 UID precondition을 사용한다.
+교체 중 외부 health, Ready floor 또는 Continuous 경계가 깨지면 다음 Pod를 삭제하지 않는다.
+결과는 원본 이름·UID·endpoint를 tracked 문서에 쓰지 않고 mode `0600` private receipt에
+before/after identity hash, Ready/health 집계와 완료 시각만 남긴다.
+
+수동 인수 중 쓰기 테스트는 전용 topic, consumer group, output/checkpoint prefix와 Dataset을
+사용한다. 실제 트래픽 전환 뒤 새 데이터가 RDS/S3에 기록되면 단순 DNS rollback만으로
+데이터 시점이 되돌아가지 않으므로, cutover 직전 backup·write freeze·rollback 기준은 별도
+승인을 받는다. 장시간 soak/load test는 이 기능 인수와 분리한 후속 성능 검증이다.
+
+## 8. 비용과 cleanup
 
 비용과 cleanup은 장애가 복구된 뒤 마지막으로 검사한다. 이전 Day 17 scale evidence를
 private 입력으로 전달한다.
@@ -276,12 +325,18 @@ bash scripts/capture-eks-day18-cost-cleanup-evidence.sh --capture
 Spark evidence와 EC2 rollback 원본은 cleanup 대상이 아니다. `kubectl delete namespace`,
 `terraform destroy`, Compose volume 삭제 같은 광역 정리 명령은 이 runbook에서 사용하지 않는다.
 
+완료 Spark child Pod 때문에 `WhenEmpty` scale-in이 멈추면 임의 label selector로 전체
+삭제하지 않는다. Phase 8 runner가 current campaign Run ID, terminal Pod phase,
+driver/executor role, SparkApplication controller owner name/UID와 terminal application
+state를 모두 대조한 뒤 child Pod만 UID precondition으로 정리한다. SparkApplication CR과
+durable evidence는 보존한다.
+
 CloudWatch 비용 판정은 5분 이상 관찰과 24시간 보정치를 사용한다. 24시간 실제 window가
 끝나기 전에는 full-window 완료가 아니며 `3 GiB/day`, `20 GiB stored`, 월 `75 USD` 경계를
 검토한다. 현재 alarm에는 notification action이 없으므로 경보 생성만으로 사람에게 전달됐다고
 간주하지 않는다.
 
-## 8. 완료와 인계 기준
+## 9. 완료와 인계 기준
 
 운영 대응 완료는 다음을 모두 만족할 때만 선언한다.
 
@@ -298,6 +353,7 @@ Phase 4의 격리 복구는 ALB/RDS/HPA/CloudWatch 복구만 증명한다. S3 ob
 materialization, Iceberg snapshot과 retry duplicate 부재는 Phase 7 또는 Phase 8의 bounded
 E2E에서 별도로 확인해야 하며, 이 증거 없이 Day 18 전체 데이터 경로 완료로 선언하지 않는다.
 
-Phase 7에서는 Pair B의 최종 immutable digest와 fault/retry 결과를 받은 뒤 5절의 rollout을
-공동 실행한다. Phase 8의 bounded E2E 3회와 최종 cleanup이 끝나기 전에는 Day 18 전체 완료로
-표시하지 않는다.
+최초 Phase 7 image 왕복과 Phase 8 Run D/E·bounded E2E 3회는 실제 live에서 통과했다.
+최종 cleanup과 7절의 Frontend/FastAPI 직접 Pod 교체 증거가 끝나기 전에는 Day 18 전체를
+`LIVE PASS`로 표시하지 않는다. 수동 제품 인수가 끝나도 DNS/route cutover, 기존 EC2 종료와
+장시간 부하 검증은 각각 별도 결정이다.

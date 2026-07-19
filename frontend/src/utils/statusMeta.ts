@@ -10,6 +10,7 @@ export const jobStatusMeta: Record<JobStatus, { className: string; label: string
 };
 
 export const datasetStatusMeta: Record<CatalogDataset["status"], { className: string; label: string }> = {
+  preparing: { className: "preparing", label: "준비 중" },
   available: { className: "available", label: "사용 가능" },
   approval_required: { className: "approval", label: "승인 필요" },
 };
@@ -48,6 +49,8 @@ export function normalizeJobStatus(status: string): JobStatus {
 
 export function normalizeDatasetStatus(status: string): CatalogDataset["status"] {
   const statusMap: Record<string, CatalogDataset["status"]> = {
+    preparing: "preparing",
+    "준비 중": "preparing",
     available: "available",
     "사용 가능": "available",
     approval_required: "approval_required",

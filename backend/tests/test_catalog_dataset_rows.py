@@ -15,12 +15,16 @@ from app.schemas.common import ErrorCode
 from app.schemas.catalog import (
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
+    ClickHouseTableRef,
     DatasetMaterializationRun,
 )
+from app.schemas.permissions import ResourcePermissions
+from app.services.clickhouse_client import ClickHouseRows
 from app.schemas.trino import TrinoClientPage
 from app.services.catalog_service import (
     CatalogService,
     dataset_for_latest_successful_materialization,
+    with_dataset_permissions,
 )
 from app.services.dataset_rows_service import read_dataset_rows
 
@@ -43,6 +47,24 @@ class FakeCatalogRowsTrinoClient:
 
     def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
         raise AssertionError("fixture query should fit in one Trino page")
+
+
+class FakeCatalogRowsClickHouseClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.closed = False
+
+    def query(self, query: str, **_kwargs) -> ClickHouseRows:
+        self.queries.append(query)
+        if "count()" in query:
+            return ClickHouseRows(columns=["row_count"], rows=[[3]])
+        return ClickHouseRows(
+            columns=["event_time", "level"],
+            rows=[["2026-07-19T07:30:00Z", "INFO"]],
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def build_dataset(storage_location: str) -> CatalogDatasetResponse:
@@ -339,6 +361,64 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertNotIn("private-query.example.internal", response.text)
         self.assertNotIn("do-not-expose", response.text)
 
+    def test_clickhouse_dataset_rows_use_the_realtime_v2_reader(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
+            "physical_bindings": [{
+                "role": "serving",
+                "engine": "clickhouse",
+                "status": "active",
+                "bindingEpoch": 1,
+                "versionId": "kiv2-job",
+                "pipelineVersionId": "kiv2-job",
+                "database": "asklake_v2",
+                "table": "raw_events_v2_current",
+            }],
+            "schema_": [["event_time", "Timestamp"], ["level", "String"]],
+            "storage_format": "clickhouse",
+            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
+            "streaming_source": {"topic": "events.v2"},
+        })
+        client = FakeCatalogRowsClickHouseClient()
+
+        with patch(
+            "app.services.dataset_rows_service.ClickHouseClient.realtime_v2_reader",
+            return_value=client,
+        ) as reader:
+            page = read_dataset_rows(dataset, limit=1, offset=0)
+
+        reader.assert_called_once_with()
+        self.assertEqual(page.row_count, 3)
+        self.assertEqual(page.rows, [["2026-07-19T07:30:00Z", "INFO"]])
+        self.assertTrue(client.closed)
+        self.assertTrue(all("kafka_topic = 'events.v2'" in query for query in client.queries))
+
+    def test_clickhouse_dataset_query_permission_does_not_require_trino_registration(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
+            "query_engine_status": "unavailable",
+            "query_engine_table": None,
+            "storage_format": "clickhouse",
+            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
+        })
+        permissions = ResourcePermissions(
+            canView=True,
+            canQuery=True,
+            computedFor="Admin User",
+            enforced=True,
+        )
+
+        with (
+            patch("app.services.catalog_service.settings.trino_enabled", True),
+            patch(
+                "app.services.catalog_service.permissions_for_actor_with_governance",
+                return_value=permissions,
+            ),
+        ):
+            projected = with_dataset_permissions(dataset, ActorContext(role="admin"), object())
+
+        self.assertTrue(projected.permissions.can_query)
+        self.assertFalse(projected.query_engine_required)
 
 if __name__ == "__main__":
     unittest.main()

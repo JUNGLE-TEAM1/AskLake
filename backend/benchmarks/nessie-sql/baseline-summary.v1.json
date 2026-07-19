@@ -1,0 +1,52 @@
+{
+  "summaryVersion": "1",
+  "campaignId": "nessie-baseline-current-v1",
+  "candidateRole": "baseline",
+  "suiteVersion": "1.0.0",
+  "fixtureVersion": "1.0.0",
+  "datasetSnapshotHash": "966289e2e1832948be889ff79f11f5b787a0aca62b74c87b0c587c3d3a507d48",
+  "runtimeProfile": "local-trino-482-minio-bounded-v1",
+  "provider": "openai_compatible",
+  "model": "gpt-4.1-mini",
+  "generatorVersion": "query-ai-service-b4329c8f",
+  "promptVersion": "query-ai-prompt-v1",
+  "providerCollections": 2,
+  "providerCasesCompared": 6,
+  "providerSqlIdenticalAcrossCollections": 6,
+  "repetitionsPerCaseAndCohort": 5,
+  "correctCases": [
+    "approx_distinct_customers",
+    "avoid_cross_join",
+    "customer_spend_rank",
+    "invalid_private_dataset"
+  ],
+  "correctnessRate": 0.3333333333333333,
+  "generationValidationSuccessRate": 0.5833333333333334,
+  "failureRate": 0.6666666666666666,
+  "timeoutRate": 0.0,
+  "regenerationRate": 0.0,
+  "warm": {
+    "wallMs": {"p50": 75, "p95": 255},
+    "processedBytes": {"average": 7311989, "p50": 5724391, "p95": 10494868},
+    "cpuMs": {"p50": 92, "p95": 440},
+    "peakMemoryBytes": {"p50": 213664, "p95": 6073472},
+    "spilledBytes": {"p50": 0, "p95": 0},
+    "estimateErrorRatioAverage": 0.1558248942345636
+  },
+  "coldLabelDiagnostic": {
+    "promotable": false,
+    "reason": "shared local Trino could not be restarted or have OS/object-store caches proven empty",
+    "wallMs": {"p50": 40, "p95": 105},
+    "processedBytes": {"average": 7311965, "p50": 5724391, "p95": 10494868},
+    "cpuMs": {"p50": 58, "p95": 79},
+    "peakMemoryBytes": {"p50": 213664, "p95": 6073472},
+    "spilledBytes": {"p50": 0, "p95": 0}
+  },
+  "knownFailures": {
+    "validQuestionRejectedByCurrentScopeOrIntentValidation": 5,
+    "dateComparedToVarcharAtTrino": 2,
+    "ambiguousQuestionIncorrectlyGenerated": 1
+  },
+  "metricPolicy": "latency and resource percentiles include only correct successful executions; failures remain in correctness/failure rates",
+  "redaction": "aggregated metrics and hashes only; no SQL, endpoint, credential, Dataset ID, request ID, or result row"
+}

@@ -77,6 +77,55 @@ variable "msk_scale_consumer_groups" {
   }
 }
 
+variable "msk_realtime_consumer_groups" {
+  description = "Exact generation-scoped EKS Realtime V1 consumer groups. Keep empty before approved owner transfer; wildcards are forbidden."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = (
+      length(var.msk_realtime_consumer_groups) <= 2 &&
+      alltrue([
+        for group in var.msk_realtime_consumer_groups :
+        can(regex("^asklake-eks-realtime-v1-[a-z0-9][a-z0-9.-]{0,40}$", group))
+      ])
+    )
+    error_message = "msk_realtime_consumer_groups accepts at most two exact generation-scoped asklake-eks-realtime-v1-* groups without wildcards."
+  }
+}
+
+variable "msk_realtime_topics" {
+  description = "Exact generation-scoped EKS Realtime V1 topics. Keep empty before an isolated canary or approved owner transfer; wildcards are forbidden."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = (
+      length(var.msk_realtime_topics) <= 2 &&
+      alltrue([
+        for topic in var.msk_realtime_topics :
+        can(regex("^asklake\\.eks-realtime\\.fixture\\.[a-z0-9][a-z0-9.-]{0,40}$", topic))
+      ])
+    )
+    error_message = "msk_realtime_topics accepts at most two exact generation-scoped asklake.eks-realtime.fixture.* topics without wildcards."
+  }
+}
+
+variable "msk_realtime_v2_generation" {
+  description = "Optional exact generation for the isolated EKS Kafka Connect to ClickHouse V2 canary. All source, DLQ, internal topic, and group identities are derived from it; null keeps the V2 identity absent."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.msk_realtime_v2_generation == null || can(regex(
+      "^[a-z0-9][a-z0-9.-]{0,40}$",
+      var.msk_realtime_v2_generation,
+    ))
+    error_message = "msk_realtime_v2_generation must be null or a lowercase generation of at most 41 characters without wildcards."
+  }
+}
+
 variable "rds_mode" {
   description = "Disable RDS wiring, reference an existing instance, or create an MVP-owned PostgreSQL instance."
   type        = string
@@ -246,22 +295,24 @@ variable "storage_bucket_names" {
 variable "storage_prefixes" {
   description = "Stable least-privilege prefixes consumed by workloads and IAM policy documents."
   type = object({
-    raw           = string
-    output        = string
-    warehouse     = string
-    query_results = string
-    checkpoint    = string
-    quarantine    = string
-    evidence      = string
+    raw                = string
+    output             = string
+    warehouse          = string
+    query_results      = string
+    checkpoint         = string
+    quarantine         = string
+    evidence           = string
+    continuous_runtime = string
   })
   default = {
-    raw           = "raw"
-    output        = "output"
-    warehouse     = "warehouse"
-    query_results = "query-results"
-    checkpoint    = "checkpoints"
-    quarantine    = "quarantine"
-    evidence      = "evidence"
+    raw                = "raw"
+    output             = "output"
+    warehouse          = "warehouse"
+    query_results      = "query-results"
+    checkpoint         = "checkpoints"
+    quarantine         = "quarantine"
+    evidence           = "evidence"
+    continuous_runtime = "continuous-runtime"
   }
 }
 

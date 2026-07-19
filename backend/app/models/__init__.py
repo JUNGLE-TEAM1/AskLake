@@ -1,6 +1,8 @@
 """SQLAlchemy model modules."""
 
 from app.models.catalog import CatalogDatasetModel
+from app.models.catalog_deletion import CatalogDatasetDeletionModel
+from app.models.benchmark import BenchmarkRunModel
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
@@ -38,7 +40,12 @@ from app.models.identity import (
     PrincipalControlModel,
     ResourceLockModel,
 )
-from app.models.realtime import RealtimeEventModel
+from app.models.realtime import (
+    RealtimeEventModel,
+    RealtimeParityCheckModel,
+    RealtimeRecoveryOperationModel,
+    RealtimeRoutingAssignmentModel,
+)
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
 from app.models.semantic_rag import (
     RagClassificationRunModel,
@@ -57,6 +64,8 @@ from app.models.semantic_rag import (
 
 __all__ = [
     "CatalogDatasetModel",
+    "CatalogDatasetDeletionModel",
+    "BenchmarkRunModel",
     "ContinuousSqlJobModel",
     "ContinuousSqlRunModel",
     "ContinuousSqlBatchModel",
@@ -85,6 +94,9 @@ __all__ = [
     "PrincipalControlModel",
     "ResourceLockModel",
     "RealtimeEventModel",
+    "RealtimeParityCheckModel",
+    "RealtimeRecoveryOperationModel",
+    "RealtimeRoutingAssignmentModel",
     "SqlRunModel",
     "SqlRunResultPageModel",
     "SemanticModelModel",

@@ -31,8 +31,8 @@ try {
     throw new Error('unresolved AI runtime opened the full-service profile');
   }
   result = resolve('full-service');
-  if (result.status !== 0 || result.keys.length !== 13 || !result.keys.includes('OPENAI_API_KEY') || result.keys.includes('AI_GATEWAY_SERVICE_TOKEN') || result.keys.includes('AIRFLOW_API_TOKEN')) {
-    throw new Error('direct username/password profile is not decision-aware');
+  if (result.status !== 0 || result.keys.length !== 15 || !result.keys.includes('AI_GATEWAY_SERVICE_TOKEN') || result.keys.includes('OPENAI_API_KEY') || result.keys.includes('AIRFLOW_API_TOKEN')) {
+    throw new Error('gateway username/password profile is not decision-aware');
   }
   result = resolve('full-service', (contract) => {
     contract.runtimeDecisions.airflowApiAuth = {...contract.runtimeDecisions.airflowApiAuth, selected: 'api_token'};
@@ -43,6 +43,7 @@ try {
   }
   result = resolve('full-service', (contract) => {
     contract.runtimeDecisions.aiRuntime = {...contract.runtimeDecisions.aiRuntime, status: 'selected', selected: 'gateway'};
+    contract.runtimeDecisions.aiProviderWorkload = {...contract.runtimeDecisions.aiProviderWorkload, status: 'learning-required', selected: null};
   });
   if (result.status === 0 || !result.error.includes('provider workload')) {
     throw new Error('gateway profile opened without provider workload approval');
@@ -51,7 +52,7 @@ try {
     contract.runtimeDecisions.aiRuntime = {...contract.runtimeDecisions.aiRuntime, status: 'selected', selected: 'gateway'};
     contract.runtimeDecisions.aiProviderWorkload = {...contract.runtimeDecisions.aiProviderWorkload, status: 'selected', selected: 'contract-approved'};
   });
-  if (result.status !== 0 || result.keys.length !== 16 || !result.keys.includes('AI_MCP_SERVICE_TOKEN') || !result.keys.includes('OPENAI_API_KEY')) {
+  if (result.status !== 0 || result.keys.length !== 15 || !result.keys.includes('AI_MCP_SERVICE_TOKEN') || result.keys.includes('OPENAI_API_KEY')) {
     throw new Error('approved gateway profile did not resolve its exact keys');
   }
   result = resolve('full-service', (contract) => {

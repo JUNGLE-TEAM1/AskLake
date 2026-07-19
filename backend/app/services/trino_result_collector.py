@@ -6,6 +6,7 @@ from fastapi import status
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
@@ -79,7 +80,7 @@ class TrinoResultCollector:
                 result="success",
                 status_code=status.HTTP_202_ACCEPTED,
                 target_id=claim.run_id,
-                target_type="etl_job" if is_sql_job else ("dataset" if is_materialization else "query_run"),
+                target_type=AuditTargetType.ETL_JOB if is_sql_job else (AuditTargetType.DATASET if is_materialization else AuditTargetType.QUERY_RUN),
             )
             try:
                 if is_sql_job:
@@ -113,7 +114,7 @@ class TrinoResultCollector:
                     result="failed",
                     status_code=exc.status_code,
                     target_id=claim.run_id,
-                    target_type="etl_job" if is_sql_job else ("dataset" if is_materialization else "query_run"),
+                    target_type=AuditTargetType.ETL_JOB if is_sql_job else (AuditTargetType.DATASET if is_materialization else AuditTargetType.QUERY_RUN),
                 )
 
         return TrinoCollectorSummary(

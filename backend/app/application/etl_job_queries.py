@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories import etl_repository
 from app.repositories import snapshot_status_repository
 from app.schemas.common import ErrorCode
@@ -162,7 +163,7 @@ def get_job(
             action="etl_job.view.forbidden",
             result="forbidden",
             target_id=job_id,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
             details={"reason": "missing_view_permission"},
         )
         raise ApiError(ErrorCode.FORBIDDEN, "Job access denied", status.HTTP_403_FORBIDDEN)

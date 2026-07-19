@@ -10,7 +10,11 @@ metadata:
 data:
   config.properties: |
     coordinator=true
+{{- if .Values.trino.distributed.enabled }}
+    node-scheduler.include-coordinator={{ .Values.trino.distributed.includeCoordinator }}
+{{- else }}
     node-scheduler.include-coordinator=true
+{{- end }}
     http-server.https.enabled=true
     http-server.https.port=8443
     http-server.https.keystore.path=/etc/trino/tls/keystore.jks
@@ -18,7 +22,11 @@ data:
     http-server.authentication.type=PASSWORD
     internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
     internal-communication.https.required=true
+{{- if .Values.trino.distributed.enabled }}
+    discovery.uri=https://{{ .Values.trino.service.name }}-discovery.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.trino.service.port }}
+{{- else }}
     discovery.uri=https://127.0.0.1:8443
+{{- end }}
   password-authenticator.properties: |
     password-authenticator.name=file
     file.password-file=/etc/trino/auth/password.db
@@ -30,10 +38,16 @@ data:
     {
       "catalogs": [
         {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "all"},
+{{- if .Values.trino.distributed.enabled }}
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": "system", "allow": "read-only"},
+{{- end }}
         {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "allow": "read-only"}
       ],
       "tables": [
         {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+{{- if .Values.trino.distributed.enabled }}
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "catalog": "system", "schema": "runtime", "table": "nodes|tasks", "privileges": ["SELECT"]},
+{{- end }}
         {"user": {{ .Values.trino.config.queryUser | quote }}, "catalog": {{ .Values.trino.config.catalogName | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "table": ".*", "privileges": ["SELECT"]}
       ],
       "schemas": [{"user": {{ .Values.trino.config.materializerUser | quote }}, "schema": {{ .Values.trino.config.schemaName | quote }}, "owner": true}],
@@ -41,6 +55,11 @@ data:
         {"user": {{ .Values.trino.config.materializerUser | quote }}, "allow": ["execute"]},
         {"user": {{ .Values.trino.config.queryUser | quote }}, "allow": ["execute"]}
       ],
+{{- if .Values.trino.distributed.enabled }}
+      "system_information": [
+        {"user": {{ .Values.trino.config.materializerUser | quote }}, "allow": ["read"]}
+      ],
+{{- end }}
       "functions": []
     }
   iceberg.properties: |
@@ -57,4 +76,26 @@ data:
     fs.s3.enabled=true
     s3.region=${ENV:TRINO_S3_REGION}
     s3.path-style-access=false
+{{- if .Values.trino.distributed.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asklake-trino-worker-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trino-worker
+data:
+  config.properties: |
+    coordinator=false
+    http-server.https.enabled=true
+    http-server.https.port=8443
+    http-server.https.keystore.path=/etc/trino/tls/keystore.jks
+    http-server.https.keystore.key=${ENV:TRINO_TLS_KEYSTORE_PASSWORD}
+    http-server.authentication.type=PASSWORD
+    internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
+    internal-communication.https.required=true
+    discovery.uri=https://{{ .Values.trino.service.name }}-discovery.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.trino.service.port }}
+{{- end }}
 {{- end }}

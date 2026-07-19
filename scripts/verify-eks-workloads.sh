@@ -9,7 +9,8 @@ OPT_IN_RENDERED_FILE="$(mktemp)"
 AIRFLOW_ONLY_RENDERED_FILE="$(mktemp)"
 GATEWAY_RENDERED_FILE="$(mktemp)"
 AIRFLOW_TOKEN_RENDERED_FILE="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FILE" "$GATEWAY_RENDERED_FILE" "$AIRFLOW_TOKEN_RENDERED_FILE"' EXIT
+REALTIME_V1_RENDERED_FILE="$(mktemp)"
+trap 'rm -f "$RENDERED_FILE" "$OPT_IN_RENDERED_FILE" "$AIRFLOW_ONLY_RENDERED_FILE" "$GATEWAY_RENDERED_FILE" "$AIRFLOW_TOKEN_RENDERED_FILE" "$REALTIME_V1_RENDERED_FILE"' EXIT
 
 required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
@@ -19,9 +20,11 @@ required_files=(
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
+  "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
   "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
+  "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -35,10 +38,16 @@ required_files=(
   "$CHART_DIR/templates/frontend-deployment.yaml"
   "$CHART_DIR/templates/frontend-service.yaml"
   "$CHART_DIR/templates/msk-smoke-job.yaml"
+  "$CHART_DIR/templates/realtime-v1-worker.yaml"
   "$CHART_DIR/templates/sparkapplication.yaml"
   "$CHART_DIR/templates/trino-configmap.yaml"
   "$CHART_DIR/templates/trino-deployment.yaml"
+  "$CHART_DIR/templates/trino-discovery-service.yaml"
   "$CHART_DIR/templates/trino-service.yaml"
+  "$CHART_DIR/templates/trino-worker-deployment.yaml"
+  "$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
+  "$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py"
+  "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
   "$VALUES_FILE"
 )
 
@@ -58,6 +67,12 @@ if [[ -z "$HELM_BIN" || ! -x "$HELM_BIN" ]]; then
   exit 1
 fi
 
+PYTHON_BIN="${ASKLAKE_FASTAPI_PYTHON:-}"
+if [[ -z "$PYTHON_BIN" && -x "$ROOT_DIR/backend/.venv/bin/python" ]]; then
+  PYTHON_BIN="$ROOT_DIR/backend/.venv/bin/python"
+fi
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
 "$HELM_BIN" lint "$CHART_DIR" -f "$VALUES_FILE"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
@@ -70,6 +85,42 @@ fi
   --set frontend.enabled=false \
   --set backend.enabled=false \
   --set trino.enabled=false >"$AIRFLOW_ONLY_RENDERED_FILE"
+"$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true \
+  --set realtimeV1.ownerTransfer.previousOwnerFenced=true \
+  --set-string realtimeV1.ownerTransfer.generation=eks-v1-contract-g1 >"$REALTIME_V1_RENDERED_FILE"
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set realtimeV1.enabled=true >/dev/null 2>&1; then
+  echo "Realtime V1 rendered without owner-transfer approval and EC2 fence" >&2
+  exit 1
+fi
+
+if ! "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true \
+  --set realtimeV1.ownerTransfer.previousOwnerFenced=true \
+  --set-string realtimeV1.ownerTransfer.generation=eks-v1-contract-g1 \
+  --set backend.enabled=false >/dev/null 2>&1; then
+  echo "Realtime V1 could not render as an independent release with the foundation runtime ConfigMap" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true >/dev/null 2>&1; then
+  echo "Realtime V1 rendered without proof that the previous EC2 owner is fenced" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true \
+  --set realtimeV1.ownerTransfer.previousOwnerFenced=true >/dev/null 2>&1; then
+  echo "Realtime V1 rendered without an owner generation" >&2
+  exit 1
+fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.config.sparkRunner=rest >/dev/null 2>&1; then
@@ -169,6 +220,10 @@ test "$(grep -c '^kind: Service$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: ConfigMap$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: Job$' "$AIRFLOW_ONLY_RENDERED_FILE")" -eq 1
 test "$(grep -c '^kind: SparkApplication$' "$AIRFLOW_ONLY_RENDERED_FILE" || true)" -eq 0
+test "$(grep -c '^kind: Deployment$' "$REALTIME_V1_RENDERED_FILE")" -eq 7
+test "$(grep -c '^kind: StatefulSet$' "$REALTIME_V1_RENDERED_FILE" || true)" -eq 0
+test "$(grep -c '^kind: PersistentVolumeClaim$' "$REALTIME_V1_RENDERED_FILE" || true)" -eq 0
+test "$(grep -c 'name: asklake-realtime-v1-worker$' "$REALTIME_V1_RENDERED_FILE")" -eq 1
 
 for resource_name in asklake-frontend asklake-backend asklake-trino frontend fastapi asklake-trino; do
   if grep -q "name: $resource_name" "$AIRFLOW_ONLY_RENDERED_FILE"; then
@@ -239,6 +294,8 @@ if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
   exit 1
 fi
 grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
+grep -q 'option("kafka.sasl.mechanism", "AWS_MSK_IAM")' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
+grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
 grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
 grep -q '<shadedPattern>com.asklake.spark.msk.shadow.software.amazon.awssdk</shadedPattern>' \
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
@@ -266,6 +323,32 @@ grep -q 'icebergTarget' "$OPT_IN_RENDERED_FILE"
 grep -q 'iceberg://iceberg/asklake/eks_mvp_fixture' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_ICEBERG_CATALOG_NAME' "$OPT_IN_RENDERED_FILE"
 grep -q 'software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider' "$OPT_IN_RENDERED_FILE"
+grep -q 'asklake.io/selected-path: v1-spark-structured-streaming' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'asklake.io/owner-generation: "eks-v1-contract-g1"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'asklake.io/previous-owner-fenced: "true"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'asklake.io/topic-prefix: "asklake.eks-realtime.fixture"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'asklake.io/consumer-group-prefix: "asklake-eks-realtime-v1"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: CONTINUOUS_WORKER_SCOPE' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "kafka"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: CONTINUOUS_WORKER_OWNER' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "eks-continuous-worker-v1"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: CONTINUOUS_WORKER_GENERATION' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: CLICKHOUSE_REALTIME_V2_ENABLED' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: KAFKA_CONNECT_SINK_ENABLED' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "disabled"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX' "$REALTIME_V1_RENDERED_FILE"
+grep -q 's3a://asklake-dev-output-example/continuous-runtime' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'serviceAccountName: asklake-realtime-v1-worker' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: asklake-runtime' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "asklake-realtime-v1-spark"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'name: ASKLAKE_KAFKA_AUTH_MODE' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "local:///opt/asklake/scripts/kafka_continuous_stream.py"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$REALTIME_V1_RENDERED_FILE"
+if grep -Eq 'app.kubernetes.io/component: (kafka-connect|clickhouse|keeper)' "$REALTIME_V1_RENDERED_FILE"; then
+  echo "selected V1 render unexpectedly contains a V2 workload" >&2
+  exit 1
+fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set sparkApplication.create=true \
@@ -352,5 +435,9 @@ fi
 
 bash -n "$ROOT_DIR/scripts/verify-eks-workloads.sh"
 node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
-PYTHONPATH="$ROOT_DIR/backend" python3 -m unittest tests.test_kafka_fixture_boundary
+PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
+PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
+"$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
+"$ROOT_DIR/scripts/verify-eks-realtime-v2-workload.sh"
+"$PYTHON_BIN" "$ROOT_DIR/scripts/verify-eks-realtime-v2-storage.py"
 echo "EKS workload contract verification passed."

@@ -6,8 +6,8 @@ from app.schemas.common import CamelModel, CursorPageMeta
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
-DatasetFreshness = Literal["latest", "stale", "approval"]
-DatasetStatus = Literal["available", "approval_required"]
+DatasetFreshness = Literal["latest", "realtime", "stale", "approval"]
+DatasetStatus = Literal["preparing", "available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "PROCESS", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
@@ -16,6 +16,10 @@ MaterializationSourceKind = Literal["etl", "sql", "kafka", "continuous_sql"]
 MaterializationMode = Literal["snapshot", "delta"]
 QueryEngineTableFormat = Literal["iceberg", "parquet"]
 QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
+CatalogDatasetDeletionStatus = Literal["queued", "validating", "purging", "metadata_cleanup", "succeeded", "failed"]
+PhysicalBindingRole = Literal["serving", "archive"]
+PhysicalBindingEngine = Literal["clickhouse", "trino"]
+PhysicalBindingStatus = Literal["pending", "active", "stale", "failed"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -56,6 +60,31 @@ class QueryEngineTableRef(CamelModel):
 class ClickHouseTableRef(CamelModel):
     database: str
     table: str
+
+
+class DatasetPhysicalBinding(CamelModel):
+    role: PhysicalBindingRole
+    engine: PhysicalBindingEngine
+    status: PhysicalBindingStatus
+    binding_epoch: int = Field(ge=0)
+    version_id: str | None = None
+    pipeline_version_id: str | None = None
+    database: str | None = None
+    table: str
+    catalog: str | None = None
+    schema_: str | None = Field(default=None, alias="schema")
+    snapshot_id: str | None = None
+    source_boundary: dict[str, Any] | None = None
+    checksum: str | None = None
+    dimension_version_ids: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_engine_location(self):
+        if self.engine == "clickhouse" and (self.role != "serving" or not self.database):
+            raise ValueError("ClickHouse physical binding requires serving role and database")
+        if self.engine == "trino" and (self.role != "archive" or not self.catalog or not self.schema_):
+            raise ValueError("Trino physical binding requires archive role, catalog, and schema")
+        return self
 
 
 class DatasetMaterializationRun(CamelModel):
@@ -120,6 +149,7 @@ class CatalogDatasetResponse(CamelModel):
     query_engine_status: QueryEngineStatus = "unavailable"
     query_engine_error: str | None = None
     clickhouse_table: ClickHouseTableRef | None = None
+    physical_bindings: list[DatasetPhysicalBinding] = Field(default_factory=list)
     query_engine_required: bool = False
     index_columns: list[str] | None = None
     index_columns_unique: bool = False
@@ -149,6 +179,13 @@ class CatalogDatasetResponse(CamelModel):
             payload.pop("queryEngineError", None)
             payload.pop("query_engine_error", None)
         return payload
+
+    @model_validator(mode="after")
+    def validate_active_physical_bindings(self):
+        active_roles = [item.role for item in self.physical_bindings if item.status == "active"]
+        if len(active_roles) != len(set(active_roles)):
+            raise ValueError("Dataset can have only one active physical binding per role")
+        return self
 
 
 class CatalogDatasetListResponse(CamelModel):
@@ -184,6 +221,45 @@ class VerifyCatalogUniqueKeyResponse(CamelModel):
 class DeleteMaterializationRunResponse(CamelModel):
     dataset: CatalogDatasetResponse
     deleted_run_id: str
+
+
+class CatalogDatasetDeletionBlocker(CamelModel):
+    resource_type: str
+    resource_id: str
+    resource_name: str
+    reason: str
+
+
+class CatalogDatasetDeletionArtifact(CamelModel):
+    kind: str
+    location: str
+
+
+class CatalogDatasetDeletionImpact(CamelModel):
+    artifacts: list[CatalogDatasetDeletionArtifact] = Field(default_factory=list)
+    blockers: list[CatalogDatasetDeletionBlocker] = Field(default_factory=list)
+    can_delete: bool
+    dataset_id: str
+    dataset_name: str
+    estimated_size_bytes: int = 0
+    retained_resources: list[str] = Field(default_factory=list)
+
+
+class CatalogDatasetDeletionAcceptedResponse(CamelModel):
+    dataset_id: str
+    deletion_id: str
+    status: CatalogDatasetDeletionStatus
+
+
+class CatalogDatasetDeletionStatusResponse(CamelModel):
+    created_at: str
+    dataset_id: str
+    dataset_name: str
+    deletion_id: str
+    error_code: str | None = None
+    error_message: str | None = None
+    status: CatalogDatasetDeletionStatus
+    updated_at: str
 
 
 class CreateDerivedDatasetMetadata(CamelModel):

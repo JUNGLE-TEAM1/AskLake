@@ -125,7 +125,7 @@ def candidate_fact(job: ETLJobModel) -> CandidateFact | None:
 
 def configured_runtime_slots() -> tuple[bool, list[tuple[str, str]]]:
     try:
-        from app.services.etl_service import EKS_MVP_FIXTURE_CONTRACT_VERSION
+        from app.services.etl.eks_fixture import EKS_MVP_FIXTURE_CONTRACT_VERSION
         from scripts.kafka_fixture_slots import load_eks_fixture_slots
 
         slots = load_eks_fixture_slots(os.environ)

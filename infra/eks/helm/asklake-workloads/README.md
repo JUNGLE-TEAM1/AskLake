@@ -4,9 +4,10 @@ This chart renders the Tuesday MVP application layer:
 
 - Frontend and FastAPI: two replicas each with internal `ClusterIP` Services
 - Airflow 3 API server, scheduler, DAG processor, migration hook, and internal Service
-- Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service
+- Trino coordinator with HTTPS/password auth, JDBC Iceberg catalog, and internal Service; optional explicit distributed workers
 - references to foundation-owned least-privilege RBAC for FastAPI `SparkApplication` submission and Spark driver executor management
 - opt-in MSK IAM metadata smoke Job and opt-in bounded Kafka-to-S3 `SparkApplication` smoke
+- disabled-by-default Realtime V1 worker package with explicit owner-transfer, previous-owner fence, generation, Kafka-only scope, private S3 runtime document and Spark/MSK IAM contracts
 - shared non-secret settings in ConfigMaps and exact references to contract-defined runtime Secrets
 - every workload image pinned by `repository@sha256:digest`
 
@@ -53,7 +54,21 @@ helm upgrade --install asklake-workloads \
   --set-string sparkApplication.kafka.fixtureBatchId=eks-smoke-batch-001
 ```
 
-The static Spark smoke reads a bounded Kafka snapshot (`earliest` through the captured `latest` offsets), filters `raw.fixture_batch_id` to the producer receipt supplied as `sparkApplication.kafka.fixtureBatchId`, and replaces the dedicated `iceberg.asklake.eks_mvp_fixture` table in the configured S3 warehouse. Compare its Trino row count with `sparkApplication.kafka.expectedCount` (default 100). It is a deployment fixture, not a long-running consumer. Kafka Continuous remains EC2-owned in this MVP, and EKS FastAPI rejects Continuous control and read paths.
+The static Spark smoke reads a bounded Kafka snapshot (`earliest` through the captured `latest` offsets), filters `raw.fixture_batch_id` to the producer receipt supplied as `sparkApplication.kafka.fixtureBatchId`, and replaces the dedicated `iceberg.asklake.eks_mvp_fixture` table in the configured S3 warehouse. Compare its Trino row count with `sparkApplication.kafka.expectedCount` (default 100). It is a deployment fixture, not a long-running consumer. Kafka Continuous remains EC2-owned until the Realtime V1 transfer gates below pass, and EKS FastAPI rejects Continuous control and read paths.
+
+Issue #1044 selected Spark Structured Streaming for the EKS Realtime MVP. The chart keeps `realtimeV1.enabled=false`. Rendering it requires all three explicit transfer inputs; missing any one fails closed:
+
+```bash
+helm template asklake-workloads \
+  infra/eks/helm/asklake-workloads \
+  --values /path/to/non-secret-values.yaml \
+  --set realtimeV1.enabled=true \
+  --set realtimeV1.ownerTransfer.approved=true \
+  --set realtimeV1.ownerTransfer.previousOwnerFenced=true \
+  --set-string realtimeV1.ownerTransfer.generation='<approved-generation>'
+```
+
+This command is a render example, not authorization to apply. Before an actual upgrade, follow `docs/eks-realtime-kafka-v1-rollout.md`: fence the previous owner for the exact identity, write the matching PostgreSQL durable owner claim, approve one exact generation-scoped topic/group pair, and verify the Backend and Spark `continuous-runtime` plus Spark output/checkpoint prefixes. The Realtime Deployment is an independent release, consumes the foundation-owned `asklake-runtime` ConfigMap, uses dedicated worker/Spark ServiceAccounts, passes the owner/generation to the worker, and explicitly disables V2 flags/consumer ownership. Kafka Connect, ClickHouse, and Keeper are not rendered by this V1 component.
 
 FastAPI's normal batch path uses the in-cluster Kubernetes API to create a deterministic `SparkApplication` per `runId`, recover the same object after a duplicate create or lost response, poll terminal state, read the driver result marker, and delete a timed-out application. Chart rendering and unit tests verify that contract; the final live proof still requires A's AWS resources.
 
@@ -68,3 +83,65 @@ rejects Spark/ARM64 overrides, and `scripts/verify-eks-workloads.sh` checks ever
 rendered Pod template. A chart change does not mutate the live release by itself:
 use a server-side dry-run and verify actual Pod placement during the next
 authorized Helm upgrade.
+
+## Realtime backend opt-in
+
+The default Backend still renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
+
+Only an approved owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker in `asklake-realtime-data-plane`.
+
+ClickHouse/Keeper StatefulSets, PVCs, Kafka Connect and the worker are not part of this chart. See [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
+
+## Trino distributed opt-in
+
+The disabled default remains the proven single Trino process and is the rollback
+path. When `trino.distributed.enabled=true`, the private overlay must supply
+`includeCoordinator=false`, exactly two worker replicas, complete worker
+requests/limits, the approved General node selector, and a worker termination
+grace value. SQL requests, the UI, and HPA cannot override this count. Two means
+Pod replicas, not two physical servers or a throughput guarantee. Existing General
+node CPU sizing is unchanged. No worker
+resource sizing or autoscaling value is present in chart defaults or the checked-in
+dev example.
+
+An accepted opt-in renders `asklake-trino-worker` separately. The existing
+`asklake-trino` Service selects only the coordinator role, while both roles use
+the same digest-pinned image, `asklake-trino` ServiceAccount/Pod Identity,
+`asklake-trino-runtime` Secret files and JDBC Iceberg/S3 settings. HTTPS
+discovery uses the coordinator-only headless `asklake-trino-discovery` Service.
+Trino resolves that DNS name to the real coordinator Pod IP before its automatic
+internal TLS hostname conversion; the virtual client Service ClusterIP is never
+used for discovery. The coordinator Deployment uses `Recreate` so two
+coordinators cannot overlap during rollout. The Iceberg data ACL is unchanged;
+distributed mode grants the internal materializer read-only system information
+and `system.runtime.nodes|tasks` table access solely for node/task evidence,
+never other system tables, write, or graceful-shutdown access.
+
+```bash
+scripts/verify-eks-trino-distributed.sh
+node scripts/test-eks-trino-distributed-evidence.mjs
+scripts/verify-eks-trino-distributed-live.sh 2
+```
+
+Do not add HPA, PDB, topology spread, a worker NodePool, graceful shutdown
+credentials, or production sizing until an approved load/failure campaign has
+produced evidence. The authorized live and rollback procedure is
+`docs/eks-trino-distributed-phase0.md`; normal development and CI never apply it.
+The operator first records a healthy single-coordinator `Recreate` revision as
+the safe rollback target. Apply also requires the worktree `HEAD`, fetched
+`origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
+If creating or querying that single baseline fails, apply restores and verifies
+the exact pre-deployment revision before it stops; it never proceeds to two workers.
+The apply campaign also holds the namespace-scoped `asklake-trino-deploy-lock`
+ConfigMap, rechecks the Helm revision before each mutation, and removes only its
+own lock UID. A foreign revision observed during the live gate is never rolled back.
+`SIGKILL` or an operator-host loss can leave this cooperative lock behind. Do not
+delete it by name. First inspect its `acquiredAt`, `deploymentCommit`,
+`observedRevision`, and UID, confirm no campaign is running and Helm is not in a
+pending state, then use the UID-precondition break-glass procedure in
+`docs/eks-trino-distributed-phase0.md`.
+Active registration of both workers plus a non-empty Iceberg read is only the
+deployment gate: promotion additionally requires a non-empty Iceberg worker task,
+exact-UID replacement, and successful safe rollback evidence bound to the merged
+`pair1` commit. The initial two-worker campaign's `2→1→2` observation remains
+historical evidence, not a current scaling procedure.

@@ -1,0 +1,17 @@
+{
+  "contractVersion": "1.0",
+  "environment": "dev",
+  "gitRevision": "0000000000000000000000000000000000000000",
+  "platform": "linux/amd64",
+  "images": {
+    "clickhouse": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/clickhouse-v2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "kafkaConnect": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/kafka-connect-v2@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "backend": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "artifacts": {
+    "clickhouseSinkVersion": "1.4.0",
+    "clickhouseSinkArchiveSha256": "de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c083",
+    "mskIamAuthVersion": "2.3.6"
+  },
+  "createdAt": "1970-01-01T00:00:00.000Z"
+}
