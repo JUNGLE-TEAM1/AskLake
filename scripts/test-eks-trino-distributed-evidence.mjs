@@ -21,15 +21,15 @@ const valid = () => ({
   status: 'passed',
   deployment: {
     namespace: 'asklake-dev', release: 'asklake-trino', helmRevision: 19,
-    declaredWorkerReplicas: 5, imageDigest: h('6'), chartSha256: h('7'), valuesSha256: h('8'),
+    declaredWorkerReplicas: 2, imageDigest: h('6'), chartSha256: h('7'), valuesSha256: h('8'),
     deployedAt: '2026-07-19T12:00:00Z',
   },
-  nodes: { coordinatorCount: 1, activeWorkerCount: 5, coordinatorNodeHash: h('a'), workerNodeHashes: [h('b'), h('c'), h('1'), h('2'), h('3')] },
+  nodes: { coordinatorCount: 1, activeWorkerCount: 2, coordinatorNodeHash: h('a'), workerNodeHashes: [h('b'), h('c')] },
   query: { queryIdHash: h('d'), catalog: 'iceberg', nonEmptyInput: true, processedRows: 10, workerTaskNodeHashes: [h('b')], status: 'succeeded' },
   failure: {
     removedWorkerPodUidHash: h('e'), removedWorkerOwnerDeploymentUidHash: h('f'), deletePreconditionUidHash: h('e'),
-    replacementWorkerPodUidHash: h('9'), replacementWorkerNodeHash: h('0'), recoveredWorkerNodeHashes: [h('b'), h('c'), h('1'), h('2'), h('0')],
-    recoveredActiveWorkerCount: 5, inFlightQueryOutcome: 'failed', postRecoveryQuerySucceeded: true,
+    replacementWorkerPodUidHash: h('9'), replacementWorkerNodeHash: h('0'), recoveredWorkerNodeHashes: [h('c'), h('0')],
+    recoveredActiveWorkerCount: 2, inFlightQueryOutcome: 'failed', postRecoveryQuerySucceeded: true,
   },
   contracts: unchangedContracts(),
   rollback: { targetMode: 'single-coordinator-recreate', previousHelmRevision: 18, backendHealthy: true, querySucceeded: true, workerResourcesAbsent: true },
@@ -51,18 +51,18 @@ assert.throws(
   /schemaVersion must be 3/,
 );
 
-const legacyTwoWorkers = valid();
-legacyTwoWorkers.deployment.declaredWorkerReplicas = 2;
+const undersizedWorkers = valid();
+undersizedWorkers.deployment.declaredWorkerReplicas = 1;
 assert.throws(
-  () => validateDistributedTrinoEvidence(legacyTwoWorkers, deploymentCommit),
-  /deployment\.declaredWorkerReplicas must be exactly 5/,
+  () => validateDistributedTrinoEvidence(undersizedWorkers, deploymentCommit),
+  /deployment\.declaredWorkerReplicas must be exactly 2/,
 );
 
 const excessiveWorkers = valid();
 excessiveWorkers.deployment.declaredWorkerReplicas = 6;
 assert.throws(
   () => validateDistributedTrinoEvidence(excessiveWorkers, deploymentCommit),
-  /deployment\.declaredWorkerReplicas must be exactly 5/,
+  /deployment\.declaredWorkerReplicas must be exactly 2/,
 );
 
 for (const mutate of [

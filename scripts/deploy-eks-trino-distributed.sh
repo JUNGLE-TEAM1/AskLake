@@ -43,8 +43,8 @@ expected_workers="$(jq -er '
   select(.trino.distributed.enabled == true) |
   select(.trino.distributed.includeCoordinator == false) |
   .trino.distributed.workerReplicas |
-  select(type == "number" and floor == . and . == 5)
-' "$VALUES")" || fail "distributed Trino private values must declare the fixed five-worker policy"
+  select(type == "number" and floor == . and . == 2)
+' "$VALUES")" || fail "distributed Trino private values must declare the fixed two-worker policy"
 
 if jq -e '.. | objects | has("password") or has("token") or has("secretValue") or has("data") or has("stringData")' "$VALUES" >/dev/null; then
   fail "private Trino values contain a Secret-shaped property"
@@ -292,7 +292,7 @@ fi
 assert_campaign_revision "$baseline_revision" "single baseline verification"
 
 verify_campaign_lock
-[[ "$(current_revision)" == "$baseline_revision" ]] || fail "asklake-trino changed before the fixed five-worker upgrade"
+[[ "$(current_revision)" == "$baseline_revision" ]] || fail "asklake-trino changed before the fixed two-worker upgrade"
 candidate_revision=""
 if ! candidate_revision="$(helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
@@ -300,10 +300,10 @@ if ! candidate_revision="$(helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -o json | jq -er '.version')"; then
   failed_candidate_revision="$(current_revision)"
   verify_single_mode || fail "distributed Trino upgrade failed and the safe single baseline could not be verified; manual recovery is required"
-  assert_campaign_revision "$failed_candidate_revision" "failed fixed five-worker upgrade recovery"
+  assert_campaign_revision "$failed_candidate_revision" "failed fixed two-worker upgrade recovery"
   fail "distributed Trino Helm upgrade failed; the safe single-coordinator baseline was restored"
 fi
-assert_campaign_revision "$candidate_revision" "fixed five-worker Helm response"
+assert_campaign_revision "$candidate_revision" "fixed two-worker Helm response"
 
 if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers"; then
   echo "distributed Trino live gate failed; rolling back revision $baseline_revision" >&2
@@ -319,6 +319,6 @@ if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers
   assert_campaign_revision "$rollback_revision" "safe single rollback verification"
   fail "distributed Trino rollout was rolled back"
 fi
-assert_campaign_revision "$candidate_revision" "fixed five-worker live verification"
+assert_campaign_revision "$candidate_revision" "fixed two-worker live verification"
 
 echo "EKS distributed Trino rollout passed revision, active-worker, and non-empty Iceberg query gates."
