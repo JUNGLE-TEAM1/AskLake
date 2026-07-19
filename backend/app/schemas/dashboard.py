@@ -65,6 +65,7 @@ class DashboardWidgetAggregation(str, Enum):
     SUM = "sum"
     AVG = "avg"
     COUNT = "count"
+    RATIO = "ratio"
     MIN = "min"
     MAX = "max"
 
@@ -193,6 +194,8 @@ class DashboardWidgetConfigBase(CamelModel):
     error_message: str | None = None
     placeholder_kind: str | None = None
     prompt: str | None = None
+    numerator_value: str | None = None
+    denominator_value: str | None = None
     source_config: dict[str, Any] | None = None
 
 
