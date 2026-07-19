@@ -31,6 +31,7 @@ RUNTIME_NAMES = {
     'execute_continuous_command',
     'execute_list_source_assets',
     'execute_test_source_connector',
+    'external_continuous_control_plane_enabled',
     'fail_kafka_continuous_session',
     'field_value',
     'has_pending_continuous_replay_catalog',
@@ -86,7 +87,12 @@ def command_kafka_continuous_job(
         ContinuousCommandRequest(command=command, job_id=job.id),
         actor,
         worker=CallableKafkaRuntimeGateway(run_kafka_continuous_worker),
-        dispatch_worker=settings.continuous_control_plane == "embedded",
+        # The EKS web/API process persists command intent only. Kafka Connect
+        # and ClickHouse credentials stay in the exact-generation V2 worker.
+        dispatch_worker=(
+            settings.continuous_control_plane == "embedded"
+            and not external_continuous_control_plane_enabled()
+        ),
         hooks=ContinuousCommandHooks(
             is_kafka_job=is_kafka_job,
             runtime_from_job=continuous_runtime_from_job,

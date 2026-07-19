@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import JSONB
@@ -208,6 +208,25 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(claim["topic"], "events.v2")
         self.assertEqual(claim["consumerGroup"], "asklake-stream-job-kafka-v2")
         self.assertEqual(claim["stateRevision"], 1)
+
+    def test_external_api_persists_start_intent_without_dispatching_worker_side_effect(self) -> None:
+        response = Mock()
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "external_ec2"),
+            patch.object(etl_service.settings, "kafka_continuous_v2_api_enabled", True),
+            patch.object(
+                etl_service.settings,
+                "kafka_continuous_v2_owner_generation",
+                "v2-job-1073-g1",
+            ),
+            patch.object(etl_service, "execute_continuous_command", return_value=response) as execute,
+        ):
+            result = etl_service.command_kafka_continuous_job(
+                None, job(), "startContinuous", ActorContext(name="owner")
+            )
+
+        self.assertIs(result, response)
+        self.assertFalse(execute.call_args.kwargs["dispatch_worker"])
 
     def test_etl_worker_facade_delegates_to_v2_before_spark_bridge(self) -> None:
         expected = {"containerState": "running", "worker": "kafka_connect_clickhouse_v2"}
