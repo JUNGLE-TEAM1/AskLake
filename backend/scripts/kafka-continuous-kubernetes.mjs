@@ -16,6 +16,7 @@ export function buildContinuousSparkApplication({
     "asklake.worker-attempt-id": workerAttemptId,
   };
   const env = kubernetesEnvironment(runtimeEnvironment, environment);
+  const iamAuthJar = requiredImageLocalJar(environment.ASKLAKE_SPARK_MSK_IAM_AUTH_JAR);
   const workload = {
     labels,
     env,
@@ -38,7 +39,7 @@ export function buildContinuousSparkApplication({
       mainApplicationFile: environment.ASKLAKE_SPARK_CONTINUOUS_SCRIPT || "/opt/asklake/scripts/kafka_continuous_stream.py",
       sparkVersion: environment.ASKLAKE_SPARK_KUBERNETES_VERSION || "4.0.1",
       restartPolicy: { type: "Never" },
-      deps: packages.length ? { packages } : undefined,
+      deps: { jars: [iamAuthJar], packages },
       hadoopConf: kubernetesHadoopConf(environment),
       sparkConf: {
         "spark.sql.shuffle.partitions": String(positiveInt(environment.ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS, 4)),
@@ -78,7 +79,26 @@ function kubernetesEnvironment(runtimeEnvironment, environment) {
     name,
     valueFrom: { secretKeyRef: { name: secretName, key } },
   }));
-  return [...publicEnvironment, ...secretEnvironment];
+  return [
+    ...publicEnvironment,
+    { name: "ASKLAKE_KAFKA_AUTH_MODE", value: requiredIamAuthMode(environment.ASKLAKE_KAFKA_AUTH_MODE) },
+    ...secretEnvironment,
+  ];
+}
+
+function requiredIamAuthMode(value) {
+  if (String(value || "").trim().toLowerCase() !== "iam") {
+    throw new Error("Kubernetes Continuous Kafka requires ASKLAKE_KAFKA_AUTH_MODE=iam");
+  }
+  return "iam";
+}
+
+function requiredImageLocalJar(value) {
+  const jar = String(value || "").trim();
+  if (!/^local:\/\/\/opt\/asklake\/jars\/[A-Za-z0-9._-]+\.jar$/.test(jar)) {
+    throw new Error("ASKLAKE_SPARK_MSK_IAM_AUTH_JAR must be an image-local jar below /opt/asklake/jars");
+  }
+  return jar;
 }
 
 function kubernetesHadoopConf(environment) {

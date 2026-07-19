@@ -99,6 +99,8 @@ locals {
               "${var.storage_prefixes.checkpoint}/*",
               var.storage_prefixes.quarantine,
               "${var.storage_prefixes.quarantine}/*",
+              var.storage_prefixes.continuous_runtime,
+              "${var.storage_prefixes.continuous_runtime}/*",
             ]
           }
         }
@@ -127,6 +129,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.checkpoint,
           var.storage_object_arns.quarantine,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
       {
@@ -142,6 +145,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.checkpoint,
           var.storage_object_arns.quarantine,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
     ]

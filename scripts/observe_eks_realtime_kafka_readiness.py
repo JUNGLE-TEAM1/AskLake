@@ -145,6 +145,7 @@ def summarize_readiness(
     topic_count = len({identity for identity in topic_identities if expected_generation is None or identity[1] == expected_generation})
     group_count = len({identity for identity in group_identities if expected_generation is None or identity[1] == expected_generation})
     runtime_resources = _action_resources(backend_all)
+    spark_runtime_resources = _action_resources(spark_all)
     runtime_candidates = (
         {expected_runtime_object_arn} if expected_runtime_object_arn else {resource for resource in backend_resources if RUNTIME_RE.match(resource)}
     )
@@ -155,6 +156,13 @@ def summarize_readiness(
         for resource in runtime_candidates
     )
     runtime_list_ready = _runtime_list_prefix_ready(backend_all, expected_runtime_object_arn)
+    spark_runtime_count = sum(
+        resource in spark_runtime_resources.get("s3:GetObject", set())
+        and resource in spark_runtime_resources.get("s3:PutObject", set())
+        and resource in spark_runtime_resources.get("s3:DeleteObject", set())
+        for resource in runtime_candidates
+    )
+    spark_runtime_list_ready = _runtime_list_prefix_ready(spark_all, expected_runtime_object_arn)
     explicit_deny = any(
         statement.get("Effect") == "Deny"
         and any(action == "*" or action.endswith(":*") or action in CONSUMER_ACTIONS or action.startswith("s3:") for action in _items(statement.get("Action")))
@@ -182,6 +190,10 @@ def summarize_readiness(
         blockers.append("MSK topic/group generation, cluster, or action-resource mapping mismatch")
     if backend_broad:
         blockers.append("Backend policy has broad action or resource")
+    if spark_runtime_count == 0:
+        blockers.append("missing Spark continuous-runtime S3 resource")
+    elif expected_runtime_object_arn is not None and not spark_runtime_list_ready:
+        blockers.append("missing exact Spark continuous-runtime ListBucket prefix")
     if runtime_count == 0:
         blockers.append("missing Backend continuous-runtime S3 resource")
     elif expected_runtime_object_arn is not None and not runtime_list_ready:
@@ -203,6 +215,8 @@ def summarize_readiness(
         "sparkRealtimeTopicResourceCount": topic_count,
         "sparkRealtimeGroupResourceCount": group_count,
         "backendHasBroadActionOrResource": backend_broad,
+        "sparkContinuousRuntimeResourceCount": spark_runtime_count,
+        "sparkRuntimeListPrefixReady": spark_runtime_list_ready,
         "backendContinuousRuntimeResourceCount": runtime_count,
         "backendRuntimeListPrefixReady": runtime_list_ready,
         "permissionsBoundaryPresent": spark_permissions_boundary or backend_permissions_boundary,

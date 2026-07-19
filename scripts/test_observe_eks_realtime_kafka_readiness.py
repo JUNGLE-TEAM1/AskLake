@@ -11,12 +11,17 @@ def policy(actions: list[str], resources: list[str]) -> dict[str, object]:
 
 class ReadinessObservationTests(unittest.TestCase):
     def test_ready_requires_exact_topic_group_runtime_and_associations(self) -> None:
-        spark = policy(list(CONSUMER_ACTIONS), [
-            "arn:aws:kafka:region:111122223333:cluster/cluster/id",
-            "arn:aws:kafka:region:111122223333:topic/cluster/id/asklake.eks-realtime.fixture.g1",
-            "arn:aws:kafka:region:111122223333:group/cluster/id/asklake-eks-realtime-v1-g1",
-        ])
         runtime_arn = "arn:aws:s3:::output/continuous-runtime/*"
+        spark = {"Statement": [
+            *policy(list(CONSUMER_ACTIONS), [
+                "arn:aws:kafka:region:111122223333:cluster/cluster/id",
+                "arn:aws:kafka:region:111122223333:topic/cluster/id/asklake.eks-realtime.fixture.g1",
+                "arn:aws:kafka:region:111122223333:group/cluster/id/asklake-eks-realtime-v1-g1",
+            ])["Statement"],
+            {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": [runtime_arn]},
+            {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::output"],
+             "Condition": {"StringLike": {"s3:prefix": ["continuous-runtime", "continuous-runtime/*"]}}},
+        ]}
         backend = {"Statement": [
             {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": [runtime_arn]},
             {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::output"],
@@ -29,6 +34,7 @@ class ReadinessObservationTests(unittest.TestCase):
         )
         self.assertTrue(report["activationReady"])
         self.assertTrue(report["backendRuntimeListPrefixReady"])
+        self.assertTrue(report["sparkRuntimeListPrefixReady"])
         self.assertEqual(report["blockingReasons"], [])
 
     def test_current_missing_resources_remain_fail_closed(self) -> None:
@@ -41,6 +47,7 @@ class ReadinessObservationTests(unittest.TestCase):
         self.assertEqual(report["sparkRealtimeTopicResourceCount"], 0)
         self.assertEqual(report["sparkRealtimeGroupResourceCount"], 0)
         self.assertEqual(report["backendContinuousRuntimeResourceCount"], 0)
+        self.assertEqual(report["sparkContinuousRuntimeResourceCount"], 0)
 
     def test_wildcard_or_duplicate_association_is_blocked(self) -> None:
         report = summarize_readiness(

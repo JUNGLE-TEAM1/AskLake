@@ -1361,13 +1361,25 @@ def main() -> None:
                 iceberg_commit=latest.get("icebergCommit") if isinstance(latest.get("icebergCommit"), dict) else {},
             )
         LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
-    source = (spark.readStream.format("kafka")
+    source_reader = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", config.broker)
         .option("subscribe", config.topic)
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
         .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
-        .option("kafka.group.id", config.consumer_group_id)
-        .load())
+        .option("kafka.group.id", config.consumer_group_id))
+    if os.environ.get("ASKLAKE_KAFKA_AUTH_MODE", "").strip().lower() == "iam":
+        source_reader = (source_reader
+            .option("kafka.security.protocol", "SASL_SSL")
+            .option("kafka.sasl.mechanism", "AWS_MSK_IAM")
+            .option(
+                "kafka.sasl.jaas.config",
+                "software.amazon.msk.auth.iam.IAMLoginModule required;",
+            )
+            .option(
+                "kafka.sasl.client.callback.handler.class",
+                "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
+            ))
+    source = source_reader.load()
     raw_payload = col("value").cast("string")
     payload = raw_record_payload(schema, raw_payload) if RECORD_PARSING_ENABLED else from_json(raw_payload, schema)
     raw_map = lit(None).cast(MapType(StringType(), StringType())) if RECORD_PARSING_ENABLED else from_json(raw_payload, MapType(StringType(), StringType()))

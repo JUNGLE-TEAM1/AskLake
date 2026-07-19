@@ -288,6 +288,8 @@ if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
   exit 1
 fi
 grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
+grep -q 'option("kafka.sasl.mechanism", "AWS_MSK_IAM")' "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
+grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/kafka_continuous_runtime.py"
 grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
 grep -q '<shadedPattern>com.asklake.spark.msk.shadow.software.amazon.awssdk</shadedPattern>' \
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
