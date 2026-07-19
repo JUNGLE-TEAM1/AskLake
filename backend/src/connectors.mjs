@@ -11,6 +11,7 @@ import {
   isMinioProvider,
   objectStorageDockerEnv,
   resolveObjectStorageConfig,
+  resolveInheritedObjectStorageCredentials,
   s3ClientOptions,
 } from "./objectStorageConfig.mjs";
 import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
@@ -1810,12 +1811,12 @@ function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }
     ["Endpoint URL", isMinioProvider(fields) ? endpointForDockerNetwork(fieldValue(fields, "Endpoint URL")) : fieldValue(fields, "Endpoint URL")],
   ]);
   const requestedStorage = resolveObjectStorageConfig(storageFields, { docker: true });
-  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  const inheritedCredentials = resolveInheritedObjectStorageCredentials([], { docker: true });
   if (
     executionMode === "rest"
     && requestedStorage.provider === "minio"
-    && ((requestedStorage.accessKeyId && requestedStorage.accessKeyId !== inheritedStorage.accessKeyId)
-      || (requestedStorage.secretAccessKey && requestedStorage.secretAccessKey !== inheritedStorage.secretAccessKey))
+    && ((requestedStorage.accessKeyId && requestedStorage.accessKeyId !== inheritedCredentials.accessKeyId)
+      || (requestedStorage.secretAccessKey && requestedStorage.secretAccessKey !== inheritedCredentials.secretAccessKey))
   ) {
     throw apiError(
       "DATALAKE_SPARK_CREDENTIAL_CONFIGURATION_INVALID",
@@ -1823,8 +1824,9 @@ function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }
       422,
     );
   }
+  const runtimeStorageFields = executionMode === "rest" ? [] : storageFields;
   const storageEnvironment = Object.fromEntries(
-    objectStorageDockerEnv(storageFields).filter(([name]) => (
+    objectStorageDockerEnv(runtimeStorageFields).filter(([name]) => (
       executionMode === "docker"
       || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
     )),

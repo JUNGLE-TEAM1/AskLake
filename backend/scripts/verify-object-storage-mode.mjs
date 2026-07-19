@@ -4,10 +4,11 @@ import { testObjectStorageSource } from "../src/connectors.mjs";
 import {
   objectStorageDockerEnv,
   resolveObjectStorageConfig,
+  resolveInheritedObjectStorageCredentials,
   s3ClientOptions,
 } from "../src/objectStorageConfig.mjs";
 import { listS3Buckets } from "../src/s3.service.mjs";
-import { normalizeSparkOutputTargetPath } from "../src/sparkRunner.mjs";
+import { assertSparkRestStorageCredentials, normalizeSparkOutputTargetPath } from "../src/sparkRunner.mjs";
 
 const managedNames = [
   "ASKLAKE_OBJECT_STORAGE_PROVIDER",
@@ -49,6 +50,13 @@ try {
     accessKeyId: "local-access",
     secretAccessKey: "local-secret",
   });
+  const minioWithMaskedDraftCredentials = resolveObjectStorageConfig([
+    ["Storage Provider", "MinIO"],
+    ["Access Key", "********"],
+    ["Secret Key", "[REDACTED]"],
+  ]);
+  assert.equal(minioWithMaskedDraftCredentials.accessKeyId, "local-access");
+  assert.equal(minioWithMaskedDraftCredentials.secretAccessKey, "local-secret");
   assert.ok(objectStorageDockerEnv().some(([name, value]) => name === "MINIO_ENDPOINT" && value === "http://m3-minio:9000"));
   const loopbackFields = [
     ["Storage Provider", "MinIO"],
@@ -78,6 +86,25 @@ try {
   assert.equal("endpoint" in awsOptions, false);
   assert.equal(awsDockerEnv.some(([name]) => name.startsWith("MINIO_")), false);
   assert.equal(awsDockerEnv.some(([name]) => name === "AWS_ACCESS_KEY_ID" || name === "AWS_SECRET_ACCESS_KEY"), false);
+  process.env.AWS_ACCESS_KEY_ID = "local-compatible-access";
+  process.env.AWS_SECRET_ACCESS_KEY = "local-compatible-secret";
+  assert.deepEqual(resolveInheritedObjectStorageCredentials([], { docker: true }), {
+    accessKeyId: "local-compatible-access",
+    secretAccessKey: "local-compatible-secret",
+  });
+  assert.doesNotThrow(() => assertSparkRestStorageCredentials([
+    ["Storage Provider", "MinIO"],
+    ["Access Key", "local-compatible-access"],
+    ["Secret Key", "local-compatible-secret"],
+  ], "rest"));
+  assert.throws(
+    () => assertSparkRestStorageCredentials([
+      ["Storage Provider", "MinIO"],
+      ["Access Key", "different-access"],
+      ["Secret Key", "different-secret"],
+    ], "rest"),
+    (error) => error?.code === "SPARK_RUNNER_CONFIGURATION_INVALID",
+  );
   assert.throws(
     () => listS3Buckets(),
     (error) => error?.code === "SERVICE_UNAVAILABLE" && error?.status === 503,

@@ -7,6 +7,11 @@ function fieldValue(fields, label) {
     : "";
 }
 
+function credentialFieldValue(fields, label) {
+  const value = fieldValue(fields, label);
+  return /^(?:\*+|•+|●+|·+|\[?redacted\]?|masked)$/i.test(value) ? "" : value;
+}
+
 function parseBoolean(value, fallback) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized) return fallback;
@@ -56,10 +61,10 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
   );
 
   const accessKeyId = isMinio
-    ? fieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || ""
+    ? credentialFieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || ""
     : "";
   const secretAccessKey = isMinio
-    ? fieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || ""
+    ? credentialFieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || ""
     : "";
 
   return {
@@ -69,6 +74,25 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
     provider,
     region,
     secretAccessKey,
+  };
+}
+
+// Spark REST submissions cannot carry storage secrets.  The driver therefore
+// inherits credentials from the worker process.  Local MinIO deployments may
+// deliberately expose those same credentials through the standard AWS SDK
+// environment while using an S3-compatible endpoint, so credential identity
+// checks must understand both environment naming conventions.
+export function resolveInheritedObjectStorageCredentials(fields = [], { docker = false } = {}) {
+  const config = resolveObjectStorageConfig(fields, { docker });
+  if (config.accessKeyId || config.secretAccessKey) {
+    return {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    };
+  }
+  return {
+    accessKeyId: String(process.env.AWS_ACCESS_KEY_ID || "").trim(),
+    secretAccessKey: String(process.env.AWS_SECRET_ACCESS_KEY || "").trim(),
   };
 }
 

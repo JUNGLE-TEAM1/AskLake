@@ -8,6 +8,7 @@ import {
   isMinioProvider,
   objectStorageDockerEnv,
   resolveObjectStorageConfig,
+  resolveInheritedObjectStorageCredentials,
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
@@ -67,8 +68,9 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   const icebergEnvironment = sparkIcebergEnvironment(job);
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
+  const runtimeStorageFields = executionMode === "rest" ? [] : (job.sourceConfig ?? []);
   const storageEnvironment = Object.fromEntries(
-    objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
+    objectStorageDockerEnv(runtimeStorageFields).filter(([name]) => (
       executionMode === "docker"
       || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
     )),
@@ -1130,10 +1132,10 @@ export function assertSparkRestStorageCredentials(sourceConfig = [], executionMo
   if (executionMode !== "rest" || !isMinioProvider(sourceConfig)) return;
 
   const sourceStorage = resolveObjectStorageConfig(sourceConfig, { docker: true });
-  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  const inheritedCredentials = resolveInheritedObjectStorageCredentials([], { docker: true });
   if (
-    sourceStorage.accessKeyId !== inheritedStorage.accessKeyId
-    || sourceStorage.secretAccessKey !== inheritedStorage.secretAccessKey
+    sourceStorage.accessKeyId !== inheritedCredentials.accessKeyId
+    || sourceStorage.secretAccessKey !== inheritedCredentials.secretAccessKey
   ) {
     throw sparkConfigurationError(
       "Spark REST execution only supports the MinIO application credentials inherited by the worker.",
