@@ -339,10 +339,6 @@ class Settings(BaseSettings):
         return self
 
     def _validate_auth_runtime(self) -> None:
-        if self.auth_legacy_demo_users_enabled and not self.is_test_runtime:
-            raise ValueError(
-                "AUTH_LEGACY_DEMO_USERS_ENABLED is restricted to test environments"
-            )
         if bool(self.bootstrap_admin_email) != bool(
             self.bootstrap_admin_password
         ):
