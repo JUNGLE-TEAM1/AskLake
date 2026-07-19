@@ -137,7 +137,6 @@ def build_realtime_v2_plan(
         if not isinstance(relation, dict):
             continue
         dataset_id = str(relation.get("datasetId") or "")
-        schema = tuple(relation_schema(relation))
         if relation.get("mode") == "streaming":
             source = relation.get("streamingSource")
             topic = str(source.get("topic") or "") if isinstance(source, dict) else ""
@@ -147,7 +146,7 @@ def build_realtime_v2_plan(
                 role="fact",
                 physical_database=database,
                 physical_table=_RAW_VIEW,
-                schema=schema,
+                schema=tuple(relation_schema(relation)),
                 kafka_topic=topic,
                 record_parsing=(
                     dict(source.get("recordParsing") or {})
@@ -168,7 +167,7 @@ def build_realtime_v2_plan(
             role="dimension",
             physical_database=database,
             physical_table="dimension_current_v2_latest",
-            schema=schema,
+            schema=tuple(relation_schema(relation)),
             unique_key_sets=unique_sets,
             estimated_row_count=(
                 int(relation["estimatedRowCount"])
