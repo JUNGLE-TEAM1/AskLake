@@ -467,7 +467,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             "table",
             {"columns": ["amount"]},
         ))
-        for aggregation in ("count", "sum", "avg"):
+        for aggregation in ("count", "sum", "avg", "ratio"):
             with self.subTest(aggregation=aggregation):
                 self.assertTrue(dashboard_widget_supports_incremental_merge(
                     "metric",

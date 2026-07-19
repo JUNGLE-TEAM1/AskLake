@@ -274,6 +274,26 @@ class DashboardAggregateStateTests(unittest.TestCase):
 
         self.assertIsNone(merge_dashboard_aggregate_states(current, delta))
 
+    def test_ratio_state_merges_purchase_and_click_counts(self) -> None:
+        current = aggregate_state([{
+            "category": "vip",
+            "__asklake_state_count": 100,
+            "__asklake_state_sum": 8.0,
+        }], aggregation="ratio")
+        delta = aggregate_state([{
+            "category": "vip",
+            "__asklake_state_count": 50,
+            "__asklake_state_sum": 5.0,
+        }], aggregation="ratio")
+
+        merged = merge_dashboard_aggregate_states(current, delta)
+
+        self.assertIsNotNone(merged)
+        self.assertEqual(
+            dashboard_result_from_aggregate_state(merged)["data"],
+            [{"category": "vip", "amount": 8.67}],
+        )
+
 
 class DashboardLiveRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:

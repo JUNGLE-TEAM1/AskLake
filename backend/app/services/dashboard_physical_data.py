@@ -408,7 +408,7 @@ def dashboard_aggregation_query(
     config: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
-    if aggregation not in {"sum", "avg", "count", "min", "max"}:
+    if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
         raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
@@ -439,10 +439,12 @@ def dashboard_aggregation_query(
         if aggregation == "count" or configured_value_key in dimension_aliases
         else str(configured_value_key)
     )
-    select_parts.append(
-        f"{dashboard_aggregate_expression(aggregation, configured_value_key)} "
-        f"AS {quote_duckdb_identifier(value_alias)}"
+    aggregate_expression = (
+        dashboard_ratio_expression(str(configured_value_key), config)
+        if aggregation == "ratio"
+        else dashboard_aggregate_expression(aggregation, configured_value_key)
     )
+    select_parts.append(f"{aggregate_expression} AS {quote_duckdb_identifier(value_alias)}")
 
     runtime_config = dict(config)
     if aggregation == "count":
@@ -488,7 +490,7 @@ def dashboard_aggregate_state_query(
     where_sql: str = "",
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
-    if aggregation not in {"sum", "avg", "count", "min", "max"}:
+    if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
         raise ValueError(f"Unsupported dashboard aggregation: {aggregation}")
 
     dimension_specs, value_config_key = dashboard_widget_query_fields(widget_type, config)
@@ -523,6 +525,15 @@ def dashboard_aggregate_state_query(
         select_parts.extend([
             "COUNT(*) AS __asklake_state_count",
             "CAST(COUNT(*) AS DOUBLE) AS __asklake_state_sum",
+            "CAST(NULL AS DOUBLE) AS __asklake_state_min",
+            "CAST(NULL AS DOUBLE) AS __asklake_state_max",
+        ])
+    elif aggregation == "ratio":
+        value_column = quote_duckdb_identifier(str(configured_value_key))
+        numerator_value, denominator_value = dashboard_ratio_values(config)
+        select_parts.extend([
+            f"SUM(CASE WHEN CAST({value_column} AS VARCHAR) = {quote_duckdb_string_literal(denominator_value)} THEN 1 ELSE 0 END) AS __asklake_state_count",
+            f"CAST(SUM(CASE WHEN CAST({value_column} AS VARCHAR) = {quote_duckdb_string_literal(numerator_value)} THEN 1 ELSE 0 END) AS DOUBLE) AS __asklake_state_sum",
             "CAST(NULL AS DOUBLE) AS __asklake_state_min",
             "CAST(NULL AS DOUBLE) AS __asklake_state_max",
         ])
@@ -565,7 +576,7 @@ def dashboard_widget_supports_incremental_merge(
     if widget_type == "table":
         return False
     aggregation = str(config.get("aggregation") or "sum").strip().lower()
-    return aggregation in {"count", "sum", "avg"}
+    return aggregation in {"count", "sum", "avg", "ratio"}
 
 
 def merge_dashboard_aggregate_states(
@@ -627,6 +638,8 @@ def dashboard_result_from_aggregate_state(state: dict[str, Any]) -> dict[str, An
             value: Any = count
         elif aggregation == "avg":
             value = total / count if count else None
+        elif aggregation == "ratio":
+            value = round(100.0 * total / count, 2) if count else None
         elif aggregation == "min":
             value = state_row.get("__asklake_state_min")
         elif aggregation == "max":
@@ -720,6 +733,24 @@ def dashboard_aggregate_expression(aggregation: str, value_key: Any) -> str:
     column = quote_duckdb_identifier(str(value_key))
     function = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
     return f"{function}(TRY_CAST({column} AS DOUBLE))"
+
+
+def dashboard_ratio_values(config: dict[str, Any]) -> tuple[str, str]:
+    numerator = config.get("numeratorValue") or config.get("numerator_value")
+    denominator = config.get("denominatorValue") or config.get("denominator_value")
+    if not isinstance(numerator, str) or not numerator:
+        raise ValueError("Dashboard ratio requires numeratorValue")
+    if not isinstance(denominator, str) or not denominator:
+        raise ValueError("Dashboard ratio requires denominatorValue")
+    return numerator, denominator
+
+
+def dashboard_ratio_expression(value_key: str, config: dict[str, Any]) -> str:
+    numerator, denominator = dashboard_ratio_values(config)
+    column = quote_duckdb_identifier(value_key)
+    numerator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(numerator)} THEN 1 ELSE 0 END)"
+    denominator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(denominator)} THEN 1 ELSE 0 END)"
+    return f"100.0 * {numerator_count} / NULLIF({denominator_count}, 0)"
 
 
 def require_dashboard_column(column: str, columns: set[str]) -> None:
