@@ -189,6 +189,8 @@ sparkApplication:
 trino:
   enabled: true
   replicas: 1
+  distributed:
+    enabled: false
   nodeSelector:
     asklake.io/workload-class: general
     kubernetes.io/arch: amd64

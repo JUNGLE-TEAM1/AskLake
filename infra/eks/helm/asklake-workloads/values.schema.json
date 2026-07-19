@@ -50,6 +50,24 @@
         "memory": {"type": "string", "minLength": 1}
       }
     },
+    "trinoWorkerResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/$defs/trinoWorkerResourceValues"},
+        "limits": {"$ref": "#/$defs/trinoWorkerResourceValues"}
+      }
+    },
+    "trinoWorkerResourceValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": {"type": "string", "pattern": "^(?:[1-9][0-9]*|[1-9][0-9]*m|0\\.[0-9]+|[1-9][0-9]*\\.[0-9]+)$"},
+        "memory": {"type": "string", "pattern": "^[1-9][0-9]*(?:Ki|Mi|Gi|Ti)$"}
+      }
+    },
     "service": {
       "type": "object",
       "additionalProperties": false,
@@ -342,14 +360,45 @@
     "trino": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["enabled", "replicas", "distributed", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
         "replicas": {"type": "integer", "const": 1},
+        "distributed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "workerReplicas": {"type": "integer", "minimum": 1, "maximum": 5},
+            "includeCoordinator": {"type": "boolean", "const": false},
+            "workerNodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+            "workerTerminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+            "workerResources": {"$ref": "#/$defs/trinoWorkerResources"}
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["enabled"],
+                "properties": {"enabled": {"const": true}}
+              },
+              "then": {
+                "required": ["workerReplicas", "includeCoordinator", "workerNodeSelector", "workerTerminationGracePeriodSeconds", "workerResources"]
+              },
+              "else": {"maxProperties": 1}
+            }
+          ]
+        },
         "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
         "image": {"$ref": "#/$defs/image"},
         "serviceAccountName": {"type": "string", "const": "asklake-trino"},
-        "service": {"$ref": "#/$defs/service"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {
+            "name": {"const": "asklake-trino"},
+            "port": {"const": 8443}
+          }
+        },
         "config": {
           "type": "object",
           "additionalProperties": false,
