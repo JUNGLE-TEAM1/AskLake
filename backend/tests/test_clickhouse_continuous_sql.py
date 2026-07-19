@@ -48,7 +48,10 @@ from app.services.clickhouse_realtime_v2 import (
     realtime_v2_dlq_topic,
     realtime_v2_schema_fingerprint,
 )
-from app.services.clickhouse_realtime_v2_support import upsert_realtime_v2_catalog_dataset
+from app.services.clickhouse_realtime_v2_support import (
+    prepare_dimension_snapshot,
+    upsert_realtime_v2_catalog_dataset,
+)
 from app.services.continuous_sql_gateway import RoutedContinuousSqlWorkerGateway
 from app.services.dashboard_physical_data import DashboardDatasetQuerySession
 
@@ -234,6 +237,8 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(plan.relations[1].physical_table, "dimension_current_v2_latest")
         self.assertIn("serving_events_v2", compiled.insert_sql)
         self.assertIn("raw_events_v2_current", compiled.insert_sql)
+        self.assertIn("splitByRegexp('\\s+'", compiled.insert_sql)
+        self.assertNotIn("JSONExtractString(payload, 'event_id')", compiled.insert_sql)
         for metadata in (
             "kafka_partition",
             "kafka_offset",
@@ -351,6 +356,32 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(evidence.row_count, 3)
         self.assertEqual(len(evidence.checksum), 64)
         self.assertIn('ORDER BY "id"', trino.queries[-1])
+
+    def test_v2_dimension_load_is_not_rejected_by_the_static_cache_threshold(self) -> None:
+        class LargeDimensionTrino:
+            def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+                if "count(*)" in query:
+                    return TrinoClientPage(queryId="count", rows=[[5_000_001]])
+                return TrinoClientPage(queryId="rows", rows=[], nextUri="trino://next-page")
+
+        job = self._job()
+        columns, join_columns, dataset_id, total_rows, page = prepare_dimension_snapshot(
+            LargeDimensionTrino(),  # type: ignore[arg-type]
+            Settings(
+                _env_file=None,
+                app_env="test",
+                continuous_sql_static_cache_max_rows=0,
+            ),
+            job,
+            job.relation_bindings[1],
+            {"snapshotId": "77"},
+        )
+
+        self.assertEqual(columns, ["id", "name"])
+        self.assertEqual(join_columns, ["id"])
+        self.assertEqual(dataset_id, "dataset-users")
+        self.assertEqual(total_rows, 5_000_001)
+        self.assertEqual(page.next_uri, "trino://next-page")
 
     def test_output_contract_is_additive_and_keeps_iceberg_default(self) -> None:
         iceberg = ContinuousSqlOutput.model_validate({
@@ -516,6 +547,34 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         )
         self.assertIn("ORDER BY (`id`)", ddl)
         self.assertIn("SETTINGS allow_nullable_key = 1", ddl)
+
+    def test_v1_static_load_has_no_hard_row_count_cap(self) -> None:
+        class LargeSnapshotTrino:
+            def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+                if "count(*)" not in query:
+                    raise AssertionError(query)
+                return TrinoClientPage(queryId="count", rows=[[15_000_001]])
+
+        class AlreadyLoadedClickHouse:
+            def query(self, _query: str, **_kwargs) -> ClickHouseRows:
+                return ClickHouseRows(columns=["row_count"], rows=[[15_000_001]])
+
+            def execute(self, query: str, **_kwargs) -> None:
+                raise AssertionError(query)
+
+        job = self._job()
+        gateway = ClickHouseContinuousSqlWorkerGateway(
+            Settings(_env_file=None, app_env="test"),
+            trino_client=LargeSnapshotTrino(),  # type: ignore[arg-type]
+        )
+
+        gateway._load_static_relation(
+            AlreadyLoadedClickHouse(),  # type: ignore[arg-type]
+            "asklake",
+            "users_static",
+            job.relation_bindings[1],
+            {"snapshotId": "77"},
+        )
 
     def test_compiled_static_join_key_is_used_for_runtime_exact_verification(self) -> None:
         job = self._job()
@@ -745,7 +804,20 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
                     "queryEngineTable": {"catalog": "iceberg", "schema": "asklake", "table": "events", "format": "iceberg"},
                     "schema": [["event_id", "bigint"], ["user_id", "bigint"]],
                     "schemaFingerprint": "events-v1",
-                    "streamingSource": {"broker": "redpanda:9092", "topic": "events"},
+                    "streamingSource": {
+                        "broker": "redpanda:9092",
+                        "topic": "events",
+                        "recordParsing": {
+                            "enabled": True,
+                            "delimiterKind": "whitespace",
+                            "delimiterPattern": r"\s+",
+                            "expectedFieldCount": 2,
+                            "columns": [
+                                {"position": 0, "name": "event_id"},
+                                {"position": 1, "name": "user_id"},
+                            ],
+                        },
+                    },
                 },
                 {
                     "alias": "u",

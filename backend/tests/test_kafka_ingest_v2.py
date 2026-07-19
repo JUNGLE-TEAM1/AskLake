@@ -117,6 +117,16 @@ def job():
         rag=False,
         status="running",
         execution_mode="continuous",
+        record_parsing={
+            "enabled": True,
+            "delimiterKind": "whitespace",
+            "delimiterPattern": r"\s+",
+            "expectedFieldCount": 2,
+            "columns": [
+                {"name": "event_id", "position": 0},
+                {"name": "region", "position": 1},
+            ],
+        },
         source_config=[["TOPIC / QUEUE NAME", "events.v2"]],
     )
 
@@ -273,6 +283,7 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(CatalogDatasetResponse.model_validate(payload).freshness, "realtime")
         self.assertEqual(payload["physicalBindings"][0]["status"], "pending")
         self.assertEqual(payload["streamingSource"]["topic"], "events.v2")
+        self.assertTrue(payload["streamingSource"]["recordParsing"]["enabled"])
 
     def test_running_intent_resumes_and_reconfigures_a_paused_connector(self) -> None:
         self.connector.paused = True

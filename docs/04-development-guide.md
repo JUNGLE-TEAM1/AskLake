@@ -795,7 +795,11 @@ worker service account에는 Spark Operator의 `sparkapplications`에 대한 `ge
 
 ### EKS Continuous worker 렌더와 사전 점검
 
-`asklake-workloads`의 `realtimeV1` component는 전용 `asklake-realtime-v1-worker`와 `asklake-realtime-v1-spark` ServiceAccount를 사용하는 단일 replica worker package다. 기존 web release와 독립적으로 foundation의 `asklake-runtime` ConfigMap을 참조한다. 기본값은 disabled이고 EC2 owner를 중지하거나 `deploy/control-plane-ownership.json`을 자동으로 바꾸지 않는다. exact identity의 owner transfer 승인 전에는 apply하지 않는다.
+`asklake-workloads`의 `realtimeV1` component는 전용 `asklake-realtime-v1-worker`와
+`asklake-realtime-v1-spark` ServiceAccount를 사용하는 단일 replica worker package다.
+기존 web release와 독립적으로 foundation의 `asklake-runtime` ConfigMap을 참조하고
+`kafka` scope를 소유한다. Issue #1072 V2 cutover는 이 V1 owner를 보존하며 EC2 control
+loop quiesce와 V2 `continuous_sql` owner transfer 승인 전에는 apply하지 않는다.
 
 ```bash
 cd backend
@@ -811,7 +815,10 @@ kubectl -n "$ASKLAKE_K8S_NAMESPACE" auth can-i create sparkapplications.sparkope
   --as=system:serviceaccount:"$ASKLAKE_K8S_NAMESPACE":asklake-backend
 ```
 
-사전 점검은 Helm render와 RBAC만 확인한다. 실제 S3 runtime document read/write, SparkApplication 생성, start/pause/stop/restart E2E는 owner transfer 승인 이후 canary에서 별도로 확인해야 한다. apply 전에 EC2 Kafka scope를 유지한 채 EKS worker를 기동하면 owner가 둘이 된다. 실제 전환은 EC2 scope 분리·Kafka fence, ownership manifest/evidence 변경, EKS worker canary, Kafka job start/pause/stop 및 S3 report 확인을 하나의 승인된 rollout으로 처리한다.
+사전 점검은 Helm render와 RBAC만 확인한다. 실제 S3 runtime document read/write,
+SparkApplication 생성, start/pause/stop/restart E2E는 owner transfer 승인 이후 canary에서
+별도로 확인한다. 현재 V1은 EKS `kafka` owner이며 Issue #1072의 V2 cutover에서도 이를
+보존한다. V2 worker가 Kafka scope를 claim하거나 EC2 Kafka process를 병행하면 실패다.
 
 Issue #1044는 읽기 전용 live inventory로 V1을 단일 EKS MVP 경로로 선택했다. canonical package는 `infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml`이며 기본적으로 render하지 않는다. `realtimeV1.enabled=true`만 주면 실패하고 `ownerTransfer.approved=true`, `previousOwnerFenced=true`, exact generation을 모두 제공해야 render된다. EKS worker는 Kafka scope만 claim하며 Continuous SQL은 EC2에 남긴다. 다음 read-only 검증으로 [`deploy/eks-realtime-kafka-mvp.json`](../deploy/eks-realtime-kafka-mvp.json)의 selected-but-disabled 상태, EC2 단일 claim, transfer에서만 할당되는 generation, S3 checkpoint authority, 격리 fixture와 수동 rollback 불변식을 확인한다.
 
@@ -1917,7 +1924,7 @@ npm run build
 
 Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 두 경로를 사용한다. cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
 
-ClickHouse mode의 정적 snapshot 적재 기본 한도는 relation당 15,000,000행이고 insert batch는 20,000행이다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 실제 운영 데이터가 한도를 넘으면 값을 무조건 올리지 말고 dimension 크기·참조 열·ClickHouse 메모리와 disk를 먼저 확인한다. 동일 snapshot의 참조 열 table은 resume에서 재사용되며 source count와 local count가 다르면 truncate 후 다시 적재한다.
+ClickHouse mode의 정적 snapshot 적재에는 relation별 행 수 hard cap을 두지 않고 insert batch는 기본 20,000행으로 유지한다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 큰 dimension은 참조 열만 page·batch 단위로 적재하되 ClickHouse 메모리와 PVC 여유 용량을 배포 전에 확인한다. 동일 snapshot의 참조 열 table은 resume에서 재사용되며 source count와 local count가 다르면 truncate 후 다시 적재한다. `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`는 Spark cache 후보 판단값일 뿐 V1/V2 ClickHouse 적재 거부 기준으로 사용하지 않는다.
 
 실제 PostgreSQL multi-worker replay, Caddy/ALB heartbeat, rolling restart와 장시간 burst는 STACK-04 operator gate에서 검증한다. 정적 proxy 계약과 단위 테스트 통과를 production 통합 검증으로 과장하지 않는다. 절차와 판정은 `docs/realtime-2026/final-audit.md`, `docs/realtime-2026/production-runbook.md`를 따른다.
 
@@ -2011,11 +2018,10 @@ Windows에서 FastAPI 의존성이 저장소 가상환경에만 설치돼 있으
 EKS workload chart는 foundation chart와 분리된 `infra/eks/helm/asklake-workloads`에 있다. 실제 account, ECR repository, digest, bucket, endpoint는 git에 저장하지 않고 배포 시 values로 주입한다. credential은 values에 넣지 않고 `asklake-backend-runtime`, `asklake-airflow-runtime`, `asklake-spark-runtime`, `asklake-trino-runtime` Secret key/file을 정확히 참조한다. dev에는 네 이름의 source/ExternalSecret/target이 존재하며 Spark 3-key와 Trino 7-key는 staged/decoded hash 검증을 통과했다. 다만 live Backend main ExternalSecret의 Trino key/CA mapping은 아직 적용 전이라 Issue #828 검증은 임시 별도 target을 사용한다. Airflow extra key 정합성과 정식 Backend 단일 target 수렴은 후속 통합 gate다. Namespace, ServiceAccount와 FastAPI/Spark driver Role·RoleBinding은 foundation chart가 단독 소유하며 workload chart는 재생성하지 않는다.
 
 Trino distributed mode는 기본 비활성이다. 활성화할 때는 private values에
-`includeCoordinator=false`, 1~5 범위의 `workerReplicas`, worker General node selector, 완전한 CPU/memory
-request/limit와 termination grace를 모두 명시한다. 5는 비용·오입력 방지용 MVP 안전 상한이며 기본
-worker 수나 성능 보장이 아니다. 첫 live 후보는 Git 제외 private values에서 worker `2`개로
-시작하지만 checked-in values와 example에 실제 worker sizing을 추가하지 않는다.
-정적 검증은 기본 single render, 완전한 opt-in render, 0·6을 포함한 누락/범위 밖 입력 거부,
+`includeCoordinator=false`, 정확히 `2`인 `workerReplicas`, worker General node selector, 완전한 CPU/memory
+request/limit와 termination grace를 모두 명시한다. 2는 dev live의 고정 Pod replica이며 물리 서버
+수나 성능 보장이 아니다. checked-in values와 example에는 실제 worker sizing을 추가하지 않는다.
+정적 검증은 기본 single render, 완전한 opt-in render, 1·3을 포함한 고정값 밖 입력 거부,
 coordinator-only Service, 동일 image/Secret/ServiceAccount, Airflow-only 격리와 HPA/PDB/PVC/RBAC/Secret
 부재를 확인한다.
 
@@ -2043,23 +2049,36 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
   /path/to/redacted-trino-distributed-receipt.json
 ```
 
-실제 component release는 Git 제외 mode `0600` private values를 사용해 먼저 server-side dry-run한다.
+실제 component release는 Git 제외 mode `0600` private values에서
+`trino.distributed.workerReplicas=2`를 고정하고 먼저 server-side dry-run한다. SQL 요청·UI와 HPA는
+worker 수를 변경하지 않으며 다른 수는 chart schema와 배포 preflight가 거부한다.
 General NodePool의 live CPU/memory 상한도 실제 cluster-wide requests와 새 node system overhead를
 수용해야 한다. 2026-07-19 검증에서는 기존 8 CPU·32Gi 상한이 이미 사용 중인 6 CPU 때문에 새
 x86 node를 만들지 못해 private live 상한을 12 CPU·48Gi로 조정했다. 이 값은 상시 node 수나
 worker 성능 sizing이 아니며 다른 workload와 부하가 달라지면 다시 계산한다.
 승인된 적용은 배포 worktree의 `HEAD`와 fetched `origin/pair1`을 동일한 full SHA로 고정하고
 `ASKLAKE_TRINO_DEPLOYMENT_COMMIT`에 그 값을 전달해 `deploy-eks-trino-distributed.sh --apply`로
-수행하며 현재 immutable Trino image를 보존한다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
+수행하며 현재 immutable Trino image를 보존한다. 이미 분산 모드인 release를 재적용할 때도 live
+values에서 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도 values를 baseline에
+사용하며 기존 distributed 값을 그대로 재사용하지 않는다. distributed apply 전에는 같은 chart의 단일 coordinator `Recreate` 상태와 인증된 Iceberg
 query를 먼저 검증하고 그 Helm revision을 안전 rollback 기준으로 고정한다. apply 뒤
-`verify-eks-trino-distributed-live.sh <worker-count>`가 Deployment Ready뿐 아니라
+`verify-eks-trino-distributed-live.sh 2`가 Deployment Ready뿐 아니라
 FastAPI의 materializer identity로 `system.runtime.nodes`를 조회해 coordinator 1개와 active worker
 수를 확인하고 기존 non-empty Iceberg table을 실제로 한 행 읽는다. 이 조회 권한은 distributed
 mode의 materializer에만 `system_information: read`, system catalog
 read-only와 `system.runtime.nodes|tasks` SELECT를 함께 부여하며 일반 query identity에는 주지 않는다.
 실패하면 deploy script가 안전 단일 coordinator Helm revision으로 되돌린다. active-node gate는
 배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
-exact-UID 장애 복구, `2→1→2` scale-down/복원과 안전 rollback까지 같은 campaign에서 검증해야 한다.
+exact-UID 장애 복구와 안전 rollback까지 같은 campaign에서 검증해야 한다. 최초 2-worker
+campaign의 `2→1→2` 기록은 역사적 scale evidence이며 현재 fixed-2 운영 명령으로 사용하지 않는다.
+single baseline 생성 또는 query 검증이 실패하면 fixed-2 후보를 적용하지 않고 배포 전 관찰한
+revision을 복구해 기존 worker 수와 Iceberg query가 다시 정상인지 확인한다.
+apply 전체에서는 namespace-scoped `asklake-trino-deploy-lock` ConfigMap을 원자적으로 획득하고
+lock에는 획득 시각, 병합 commit, 관찰 revision을 기록한다. 비정상 종료로 lock이 남으면 이름 기반
+강제 삭제를 하지 않고 [Trino distributed runbook](eks-trino-distributed-phase0.md)의 상태 확인과
+UID-precondition break-glass 절차를 따른다. 각 Helm mutation은 command 결과의 revision을 즉시
+기록하고 query gate 뒤에도 같은 revision인지 확인하므로 foreign revision을 성공으로 인정하거나
+rollback하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 
@@ -2347,6 +2366,30 @@ npm run verify:control-plane-ownership
 
 이 검증은 배포를 실행하지 않으며 `backend/app/main.py`의 lifespan이나 Compose environment를 변경하지 않는다. 현재 owner 선언과 repository entrypoint marker가 어긋나거나 required control plane을 둘 이상의 workload가 claim하면 merge 전에 실패한다.
 
+### EKS ClickHouse Realtime data plane 검증
+
+EKS의 ClickHouse/Keeper PVC는 stateless `asklake-workloads`에 추가하지 않고 별도
+`asklake-realtime-data-plane` release가 소유한다. 기본 mode는 `disabled`이고 Kubernetes
+object를 만들지 않는다. `shadow`는 data service만 렌더하며 Continuous Worker replica를
+0으로 고정한다. `cutover`는 기존 EC2 control loop quiesce, EKS Realtime V1 Kafka owner
+보존, transfer 승인, `eks-continuous-worker-v2` Continuous SQL owner와 새 generation이
+모두 있을 때만 `continuous_sql` scope worker를 렌더한다.
+
+```bash
+scripts/verify-eks-realtime-data-plane.sh
+scripts/verify-eks-workloads.sh
+
+terraform -chdir=infra/eks/terraform fmt -check -recursive
+terraform -chdir=infra/eks/terraform init -backend=false
+terraform -chdir=infra/eks/terraform validate
+```
+
+검증기는 default/shadow/cutover render, immutable digest, 외부 Secret, EBS storage 입력, NetworkPolicy CIDR, Kafka Connect Pod Identity, backend `external_ec2` 기본값과 invalid owner/TLS/sizing 조합을 확인한다. checked-in test values의 replica/resource/storage/grace 값은 schema fixture일 뿐 운영 권장값이 아니다. Terraform CLI가 없는 로컬 SKIP은 CI PASS를 대신하지 않는다.
+
+Issue #1044의 `realtimeV1` Spark/Iceberg worker와 V2 ClickHouse backend opt-in은 상호 배타다. 둘을 동시에 enabled로 렌더하면 workload schema가 실패한다. V1 canary package가 repository에 있어도 production owner는 canonical manifest와 실제 process/lease evidence로 별도 확인한다.
+
+실제 shadow/apply, EC2 quiesce, canonical owner 변경, fault injection과 rollback은 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의 승인 경계를 따른다.
+
 ### 10단계 stacked PR 순차 머지 검증
 
 현재 refactor PR은 모두 base `dev`인 누적 branch다. `stacked-pr-merge-plan.json`의 order대로 한 번에 하나만 merge하고, 매 merge 뒤 `dev`를 fetch한 다음 다음 PR의 changed files·conflict·required checks를 다시 확인한다. validator 통과는 GitHub live check나 review 승인을 대신하지 않는다.
@@ -2572,3 +2615,51 @@ EKS 완료 판정에는 위 로컬 검증 외에 신규 공개 Job API로 생성
 2026-07-20 canary는 위 lifecycle과 rollback을 통과했으며 `deploy/eks-realtime-kafka-job-v2-receipt.json`에 secret-free 결과를 남겼다. V1/V2 Kafka worker는 같은 control-plane lease를 공유하므로 V1 fence → V2 canary → V2 disable → V1 lease 복구 순서를 지킨다. dual-run이나 두 owner의 동시 consumer claim으로 검증하지 않는다.
 
 EKS web/API와 V2 worker image를 올리기 전에 `npm run migrate:runtime-schema` one-shot을 실행한다. 이 bootstrap은 기존 `dataset_freshness`와 `dataset_revision_commits`에도 V2 publication의 additive column/index를 멱등 보강한다. schema가 뒤처진 상태에서는 connector 등록 전에 fail closed한다.
+
+### Issue #1072 EKS FastAPI V2 연결
+
+EKS의 canonical FastAPI release는 `asklake-web`, stateful V2 release는
+`asklake-realtime-v2`다. `asklake-web`의 `backend.realtime.enabled` 기본값은 false이며
+opt-in render만 private ClickHouse/Kafka Connect URL과 별도 runtime Secret/CA를
+FastAPI에 주입한다. data-plane chart는 retained PVC 이름을 유지하기 위해 StatefulSet
+`clickhouse-v2`, `clickhouse-keeper-v2`와 claim template `clickhouse-data`,
+`keeper-data`를 바꾸지 않는다. revision 17~19에서 생성된 리소스를 in-place
+이전하려면 이름뿐 아니라 `asklake-workloads`/
+`realtime-v2-{keeper,clickhouse,connect}` immutable selector도 보존해야 한다. preflight는
+live/render selector exact match와 desired `kafka`/`all` scope loop가 V1 하나인지를
+Secret/Helm 전에 검사한다.
+
+ClickHouse ESO target은 image init/re-init가 소비하는 admin/ingest/materializer/reader/
+migration/observer password 6개, TLS/Keeper config와 certificate key를 exact set으로 제공한다.
+password는 서로 달라야 하며 `users.xml`에 hash를 넣지 않는다. Kafka Connect는
+MSK IAM, internal topic/group, converter/ConfigProvider/REST/plugin/source·DLQ key 전체를
+명시적 `secretKeyRef`로 소비하고 file property/CA는 tmpfs에 stage한다.
+
+```bash
+bash scripts/verify-eks-web-workloads.sh
+bash scripts/verify-eks-realtime-data-plane.sh
+bash scripts/verify-eks-workloads.sh
+node scripts/verify-eks-realtime-v2-image-receipt.mjs \
+  infra/eks/delivery/realtime-v2-image-receipt.example.json
+bash scripts/test-eks-realtime-v2-secrets.sh
+ASKLAKE_CLICKHOUSE_V2_TEST_IMAGE='<clickhouse-ecr>@sha256:<digest>' \
+  bash scripts/test-clickhouse-v2-local-redeploy.sh
+cd backend
+.venv/bin/python -m pytest -q \
+  tests/test_realtime_feature_flags.py \
+  tests/test_continuous_sql_runtime_contract.py \
+  tests/test_clickhouse_continuous_sql.py \
+  tests/test_clickhouse_realtime_ingest.py \
+  tests/test_kafka_ingest_v2.py
+cd ../frontend
+npm run test:continuous-sql-ui
+npm run test:dashboard-realtime-v2
+npm run build
+```
+
+Terraform CLI가 없으면 verifier는 저장소를 read-only mount한 고정
+`hashicorp/terraform:1.9.8` Docker 환경에서 `fmt -check`, `init -backend=false`,
+`validate`를 실행한다. CLI와 Docker가 모두 없어 SKIP이면 CI 또는 승인된 운영 환경에서
+별도로 통과해야 한다. 실제 Helm upgrade, Kafka fixture produce, Pod scale/delete,
+owner 전환과 rollback은 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의
+승인 경계를 따른다.

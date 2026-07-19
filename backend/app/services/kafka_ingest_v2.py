@@ -574,6 +574,7 @@ class ClickHouseKafkaIngestV2Gateway:
             "streamingSource": {
                 "broker": runtime.broker,
                 "consumerGroupId": runtime.consumer_group_id,
+                "recordParsing": dict(getattr(job, "record_parsing", None) or {}),
                 "topic": runtime.topic,
             },
             "tags": previous.get("tags") or ["kafka", "clickhouse", "realtime-v2"],

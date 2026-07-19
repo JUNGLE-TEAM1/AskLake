@@ -40,6 +40,26 @@
       "else": {
         "properties": {"namespace": {"const": "asklake-dev"}}
       }
+    },
+    {
+      "not": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": true}
+                }
+              }
+            }
+          },
+          "realtimeV1": {
+            "properties": {
+              "enabled": {"const": true}
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -154,6 +174,70 @@
       "type": "object",
       "additionalProperties": {"type": "string", "minLength": 1}
     },
+    "backendRealtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "apiControlPlane", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled", "clickhouseRealtimeV2Enabled", "kafkaConnectSinkEnabled", "consumerOwner", "kafkaConnectUrl", "connectorName", "clickhouseV2Url", "clickhouseV2Database", "runtimeSecret"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "apiControlPlane": {"type": "string", "enum": ["external_ec2", "local"]},
+        "continuousSqlJoinEnabled": {"type": "boolean"},
+        "dashboardSyncMode": {"type": "string", "enum": ["polling", "hybrid", "sse"]},
+        "realtimeEventsEnabled": {"type": "boolean"},
+        "clickhouseRealtimeV2Enabled": {"type": "boolean"},
+        "kafkaConnectSinkEnabled": {"type": "boolean"},
+        "consumerOwner": {"type": "string", "enum": ["disabled", "kafka_connect_v2"]},
+        "kafkaConnectUrl": {"type": "string"},
+        "connectorName": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+        "clickhouseV2Url": {"type": "string"},
+        "clickhouseV2Database": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "materializerPasswordKey", "readerPasswordKey", "caKey"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-realtime-runtime"},
+            "materializerPasswordKey": {"type": "string", "const": "CLICKHOUSE_V2_MATERIALIZER_PASSWORD"},
+            "readerPasswordKey": {"type": "string", "const": "CLICKHOUSE_V2_READER_PASSWORD"},
+            "caKey": {"type": "string", "const": "clickhouse-v2-ca.crt"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": false}}},
+          "then": {
+            "properties": {
+              "apiControlPlane": {"const": "external_ec2"},
+              "continuousSqlJoinEnabled": {"const": false},
+              "dashboardSyncMode": {"const": "polling"},
+              "realtimeEventsEnabled": {"const": false},
+              "clickhouseRealtimeV2Enabled": {"const": false},
+              "kafkaConnectSinkEnabled": {"const": false},
+              "consumerOwner": {"const": "disabled"},
+              "kafkaConnectUrl": {"const": ""},
+              "clickhouseV2Url": {"const": ""}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"enabled": {"const": true}}},
+          "then": {
+            "properties": {
+              "apiControlPlane": {"const": "local"},
+              "continuousSqlJoinEnabled": {"const": true},
+              "dashboardSyncMode": {"enum": ["hybrid", "sse"]},
+              "realtimeEventsEnabled": {"const": true},
+              "clickhouseRealtimeV2Enabled": {"const": true},
+              "kafkaConnectSinkEnabled": {"const": true},
+              "consumerOwner": {"const": "kafka_connect_v2"},
+              "kafkaConnectUrl": {"const": "http://kafka-connect-v2:8083"},
+              "clickhouseV2Url": {"const": "https://clickhouse-v2:8443"}
+            }
+          }
+        }
+      ]
+    },
     "frontend": {
       "type": "object",
       "additionalProperties": false,
@@ -174,7 +258,7 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "realtime", "runtimeSecret", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
         "replicas": {"type": "integer", "minimum": 2},
@@ -215,6 +299,7 @@
             "trinoResultStorageBucket": {"type": "string", "minLength": 1}
           }
         },
+        "realtime": {"$ref": "#/$defs/backendRealtime"},
         "runtimeSecret": {
           "type": "object",
           "additionalProperties": false,
@@ -537,7 +622,7 @@
           "required": ["enabled"],
           "properties": {
             "enabled": {"type": "boolean"},
-            "workerReplicas": {"type": "integer", "minimum": 1, "maximum": 5},
+            "workerReplicas": {"type": "integer", "const": 2},
             "includeCoordinator": {"type": "boolean", "const": false},
             "workerNodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
             "workerTerminationGracePeriodSeconds": {"type": "integer", "minimum": 1},

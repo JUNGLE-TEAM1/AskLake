@@ -168,18 +168,18 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ### EKS Trino 분산 운영 도입 gate
 
-EKS Trino는 기존 단일 coordinator/task 실행을 기본값으로 유지한다. coordinator 1개와
-worker N 분리는 명시적 opt-in이며 worker replica, CPU/memory, placement와 termination
-grace를 private deployment input으로 모두 제공한 경우에만 허용한다. MVP worker replica는
-비용·오입력 방지용 안전 상한으로 1~5만 허용하되, 이 상한을 성능 보장이나 기본 worker 수로
-해석하지 않는다. 실제 기본 worker 수, HPA, PDB, 전용 NodePool, graceful scale-in과 처리량/SLO는
-부하·장애 evidence 없이 제품 기본값으로 확정하지 않는다. 첫 live 후보만 Git 제외 private
-overlay에서 worker `2`개로 시작하며, `2` 또한 제품 기본값이나 성능 sizing 결론이 아니다.
+EKS Trino chart의 비활성 기본값은 단일 coordinator/task process를 유지해 rollback에 사용한다.
+dev live에서 분산 모드를 활성화할 때는 coordinator 1개와 worker `2`개를 고정하며, SQL 요청·UI,
+HPA 또는 일반 배포 입력이 이 수를 변경하지 못한다. worker CPU/memory, placement와 termination
+grace는 Git 제외 private deployment input으로 계속 관리한다. worker `2`개는 기존 General node의
+4 vCPU 사양을 바꾸지 않는 Pod replica 정책이지 물리 서버 2대나 처리량·latency 보장이 아니다. 리소스 sizing, PDB, 전용 NodePool,
+graceful scale-in과 처리량/SLO는 별도 부하·장애 evidence로 결정한다.
 
-분산 promotion 전에는 worker 등록 수, non-empty Iceberg scan의 worker task, exact-UID
+분산 promotion 전에는 worker `2`개 등록, non-empty Iceberg scan의 worker task, exact-UID
 worker 장애와 replacement 등록, 복구 후 query, 단일 coordinator rollback을 같은 campaign에서
-증명해야 한다. `2→1→2` scale-down/복원 결과도 별도 operator evidence로 남겨야 하며 인증된
-graceful shutdown이 없는 상태에서 무중단 scale-in으로 해석하지 않는다. rollback 기준은
+증명해야 한다. 최초 2-worker campaign의 `2→1→2` 기록은 역사적 scale evidence일 뿐 현재
+고정 2-worker 운영 절차가 아니다. 인증된 graceful shutdown이 없는 상태에서 이를 무중단
+scale-in으로 해석하지 않는다. rollback 기준은
 distributed 직전에 `Recreate`로 검증한 안전한 단일 coordinator Helm revision이다. RDS Iceberg
 catalog, S3 Warehouse/Query Result 위치, TLS client 이름과 EKS Pod
 Identity는 전환 전후 동일해야 한다. 상세 계약과 evidence 형식은

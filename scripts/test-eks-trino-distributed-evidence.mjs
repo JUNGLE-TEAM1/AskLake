@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { validateDistributedTrinoEvidence } from './verify-eks-trino-distributed-evidence.mjs';
+import {
+  validateDistributedTrinoEvidence,
+  validateHistoricalDistributedTrinoEvidenceV2,
+} from './verify-eks-trino-distributed-evidence.mjs';
 
 const h = (character) => `sha256:${character.repeat(64)}`;
 const deploymentCommit = '1'.repeat(40);
@@ -12,7 +15,7 @@ const unchangedContracts = () => ({
   podIdentityHashBefore: h('5'), podIdentityHashAfter: h('5'),
 });
 const valid = () => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   baselineCommit: 'a782ab7aee560df8c68b4e64452a8d00e415d8ab',
   deploymentCommit,
   status: 'passed',
@@ -35,19 +38,31 @@ const valid = () => ({
 
 assert.equal(validateDistributedTrinoEvidence(valid(), deploymentCommit).status, 'passed');
 
-const maximumWorkers = valid();
-maximumWorkers.deployment.declaredWorkerReplicas = 5;
-maximumWorkers.nodes.activeWorkerCount = 5;
-maximumWorkers.nodes.workerNodeHashes = [h('b'), h('c'), h('1'), h('2'), h('3')];
-maximumWorkers.failure.recoveredWorkerNodeHashes = [h('b'), h('c'), h('1'), h('2'), h('0')];
-maximumWorkers.failure.recoveredActiveWorkerCount = 5;
-assert.equal(validateDistributedTrinoEvidence(maximumWorkers, deploymentCommit).status, 'passed');
+const historicalTwoWorkers = valid();
+historicalTwoWorkers.schemaVersion = 2;
+historicalTwoWorkers.deployment.declaredWorkerReplicas = 2;
+historicalTwoWorkers.nodes.activeWorkerCount = 2;
+historicalTwoWorkers.nodes.workerNodeHashes = [h('b'), h('c')];
+historicalTwoWorkers.failure.recoveredWorkerNodeHashes = [h('c'), h('0')];
+historicalTwoWorkers.failure.recoveredActiveWorkerCount = 2;
+assert.equal(validateHistoricalDistributedTrinoEvidenceV2(historicalTwoWorkers, deploymentCommit).status, 'passed');
+assert.throws(
+  () => validateDistributedTrinoEvidence(historicalTwoWorkers, deploymentCommit),
+  /schemaVersion must be 3/,
+);
+
+const undersizedWorkers = valid();
+undersizedWorkers.deployment.declaredWorkerReplicas = 1;
+assert.throws(
+  () => validateDistributedTrinoEvidence(undersizedWorkers, deploymentCommit),
+  /deployment\.declaredWorkerReplicas must be exactly 2/,
+);
 
 const excessiveWorkers = valid();
 excessiveWorkers.deployment.declaredWorkerReplicas = 6;
 assert.throws(
   () => validateDistributedTrinoEvidence(excessiveWorkers, deploymentCommit),
-  /deployment\.declaredWorkerReplicas must be an integer between 1 and 5/,
+  /deployment\.declaredWorkerReplicas must be exactly 2/,
 );
 
 for (const mutate of [

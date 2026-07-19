@@ -7,6 +7,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 2026-07-18 pair1·dev 통합은 dev의 최신 ETL/frontend/SQL 모듈 경계를 유지하면서 pair1의 EKS bounded fixture, Kubernetes Spark UID 복구, RDS owner/generation fence와 `external_ec2` 소유권 계약을 전용 adapter에 이식했다. Day 18 후속 계약은 non-terminal 동일 UID 복구와 terminal-failed attempt generation을 분리하고, 기존 EKS fixture Run에 deny-only MSK evidence를 연결한다. Python 전체 회귀 873개와 Spark Kubernetes Node 계약 18개가 통과했다. 실제 live rollout/fault/E2E 완료 여부는 [Day 18 Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
 
+Issue #1061은 pair1에 누락된 ClickHouse V2 Catalog/Dashboard projection, whitespace fact parsing과 Continuous JOIN validation 수정을 반영했다. focused backend 46개, Continuous SQL 23개, V2 release 60개와 realtime stack 101개가 통과했다. EKS는 별도 realtime data-plane chart와 backend opt-in을 추가했지만 기본 `external_ec2`와 기존 workload render는 유지한다. live shadow/cutover/fault/restore는 아직 실행하지 않았으며 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의 manual gate다.
+
 ## 1. 현재 연결 상태
 
 | 영역 | 현재 상태 | 남은 범위 |
@@ -62,7 +64,14 @@ Continuous publication은 `output -> manifest -> Catalog -> Dashboard` 단계로
 
 ClickHouse Continuous JOIN은 기존 Iceberg 경로를 대체하지 않는 dual-mode opt-in이다. `CONTINUOUS_SQL_JOIN_ENABLED=true`와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`인 `servingMode=clickhouse` Job만 Kafka Engine → raw `ReplacingMergeTree` → JOIN materialized view → output `ReplacingMergeTree` 경로를 사용한다. Kafka Engine은 `RawBLOB` 원문을 받고 저장된 공백 레코드/JSON schema 계약으로 typed raw row를 만든다. S3/Iceberg 정적 relation은 시작 시 SQL 참조 열만 exact snapshot에서 Trino page로 적재하고 `PINNED_AT_START`로 고정하며 동일 snapshot은 resume에서 재사용한다. raw input offset 수와 JOIN output 행 수를 분리해 Catalog revision을 발행하고 Dashboard는 JOIN된 output만 읽는다. pause/resume은 consumer group과 raw/output/static을 보존하며, 같은 Run 중 Spark/Iceberg 자동 fallback은 하지 않는다. worker status는 `system.kafka_consumers` exception을 포함해 JSON/field-count 오류를 false-running으로 숨기지 않는다. `npm run verify:clickhouse-kafka-join`은 실제 local Kafka·ClickHouse·PostgreSQL에서 Job 생성/시작, raw-text INNER JOIN, Catalog, published Dashboard 10개 widget type, pause 중 미소비와 resume 후 queued event 반영, offset duplicate 제거를 검증한다.
 
-Production deployment ownership은 `deploy/control-plane-ownership.json`에 EKS 웹·유한 배치 cell과 EC2 Continuous cell을 구분해 기록한다. Kafka Continuous와 Continuous SQL reconciliation은 현재 EC2 cell 하나만 claim하며 정적 validator가 owner 0개·중복 claim·entrypoint evidence drift를 차단한다. Worker는 `CONTINUOUS_WORKER_SCOPE=all|kafka|continuous_sql`과 scope별 PostgreSQL lease를 사용한다. EC2 기본 `all`은 기존 동작을 보존하며 Issue #1044의 EKS V1 package는 `realtimeV1.enabled=false`다. owner transfer 승인·EC2 Kafka fence·새 generation이 모두 있어야 Helm render가 열리며, EKS는 PostgreSQL runtime `metrics.ownerClaim`의 전체 identity·fencing·revision이 일치하는 Kafka Job만 reconcile한다. 새 코드의 EC2 worker도 EKS owner claim이 있는 runtime은 건너뛴다. 이 검증은 runtime 역할을 자동으로 옮기지 않으며 실제 EKS/EC2 process 대조는 rollout 전 수동 gate다.
+Production deployment ownership은 `deploy/control-plane-ownership.json`에 EKS web/finite
+batch, EKS Realtime V1 Kafka, EKS Realtime V2 Continuous SQL과 EC2 rollback standby를
+구분해 기록한다. 정적 validator는 owner 0개·중복 claim·entrypoint evidence drift를
+차단한다. V1 worker는 `CONTINUOUS_WORKER_SCOPE=kafka`, V2 worker는
+`CONTINUOUS_WORKER_SCOPE=continuous_sql`과 각 scope별 PostgreSQL lease를 사용한다.
+EC2 control loop quiesce, V1 ready, transfer 승인과 새 V2 generation이 모두 있어야
+cutover render가 열린다. 이 선언은 runtime 역할을 자동으로 옮기지 않으며 실제
+EKS/EC2 process와 lease 대조는 rollout gate다.
 
 Issue #1062의 EKS V2는 public API나 runtime routing을 아직 활성화하지 않는다. Kafka Connect 1, ClickHouse 1, Keeper 1과 encrypted EBS PVC를 non-HA canary topology로 선택했고 canonical Helm workload, generation-derived 5-topic/2-group IAM, image-local auth plugin, paired CSI snapshot recovery와 receipt 계약까지 정적으로 완료했다. source consumer group과 Connect worker group은 분리된다. AWS apply, live restart/restore와 production transfer는 차단 상태이며 `deploy/eks-realtime-kafka-v2-mvp.json` validator 통과만으로 V2 runtime readiness를 표시하지 않는다.
 

@@ -188,6 +188,19 @@ Phase 7/8 bounded E2E에서 닫는다.
 
 14일 A 마감의 Metrics Server는 EKS community add-on으로 관리한다. target cluster 호환 버전과 owner를 입력하기 전에는 disabled이고, 실제 완료는 Metrics API·`kubectl top`과 임시 General workload의 node scale-out/cleanup/scale-in evidence가 필요하다. 실행 절차도 Phase 14 문서를 따른다.
 
+## ClickHouse Realtime V2 opt-in
+
+SQL 분석의 실시간 GOLD 경로는 기존 EKS web/finite-batch release에 StatefulSet이나 PVC를 추가하지 않는다. `infra/eks/helm/asklake-realtime-data-plane`이 Keeper, ClickHouse, Kafka Connect와 승인 후 Continuous Worker를 별도 release로 소유한다. 기본값은 resource 0, shadow는 worker 0이며 현재 EC2 owner를 바꾸지 않는다. cutover는 구형 EC2 `all`과 V1 fence, 대체 EC2 `kafka` owner, 새 generation을 요구하고 EKS V2 worker는 `continuous_sql` scope로만 실행된다.
+
+Kafka Connect 이미지는 ClickHouse Sink와 MSK IAM module을 checksum으로 고정하고, exact topic/group ARN의 전용 Pod Identity를 사용한다. ClickHouse TLS와 role credential은 ESO-owned Secret, storage/resource/grace/replica와 network CIDR은 Git-ignored private values에서만 확정한다. direct chart는 single-node staging topology이고 HA가 아니다.
+
+```bash
+scripts/verify-eks-realtime-data-plane.sh
+scripts/verify-eks-workloads.sh
+```
+
+실제 shadow, owner 전환, E2E, fault와 rollback은 [EKS ClickHouse 실시간 GOLD 런북](../../docs/eks-clickhouse-realtime-gold-runbook.md)을 따른다. 현재 `deploy/control-plane-ownership.json`의 EC2 owner는 변경하지 않는다.
+
 ## 설계 참고 자료
 
 - [Amazon EKS VPC와 subnet 고려사항](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)

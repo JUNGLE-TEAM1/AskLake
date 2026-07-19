@@ -87,6 +87,7 @@ class Settings(BaseSettings):
         "ec2-continuous-worker",
         "eks-continuous-worker-v1",
         "eks-kafka-connect-clickhouse-v2",
+        "eks-continuous-worker-v2",
     ] = "ec2-continuous-worker"
     continuous_worker_generation: str | None = None
     # Web/API admission is separate from worker credentials. The external EKS
@@ -132,7 +133,6 @@ class Settings(BaseSettings):
     clickhouse_password: str | None = None
     clickhouse_database: str = "asklake"
     clickhouse_query_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
-    clickhouse_static_load_max_rows: int = Field(default=15_000_000, ge=1, le=100_000_000)
     clickhouse_insert_batch_rows: int = Field(default=20_000, ge=1, le=100_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
@@ -362,13 +362,18 @@ class Settings(BaseSettings):
         generation = str(self.continuous_worker_generation or "").strip()
         if generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", generation) is None:
             raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
-        if self.continuous_worker_owner in {
-            "eks-continuous-worker-v1",
-            "eks-kafka-connect-clickhouse-v2",
-        } and (
-            self.continuous_worker_scope != "kafka" or not generation
+        expected_eks_scope = {
+            "eks-continuous-worker-v1": "kafka",
+            "eks-kafka-connect-clickhouse-v2": "kafka",
+            "eks-continuous-worker-v2": "continuous_sql",
+        }.get(self.continuous_worker_owner)
+        if expected_eks_scope is not None and (
+            self.continuous_worker_scope != expected_eks_scope or not generation
         ):
-            raise ValueError("EKS Continuous owner requires Kafka scope and an explicit generation")
+            raise ValueError(
+                f"{self.continuous_worker_owner} requires {expected_eks_scope} scope "
+                "and an explicit generation"
+            )
         self.continuous_worker_generation = generation or None
         api_generation = str(self.kafka_continuous_v2_owner_generation or "").strip()
         if api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", api_generation) is None:

@@ -33,6 +33,7 @@ class RealtimeRelation:
     unique_key_sets: tuple[tuple[str, ...], ...] = ()
     estimated_row_count: int | None = None
     kafka_topic: str | None = None
+    record_parsing: dict[str, object] | None = None
     dimension_version_id: str | None = None
     dimension_semantics: DimensionSemantics | None = None
 

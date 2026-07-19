@@ -62,6 +62,24 @@ backend:
     trinoWarehouseBucket: ""
     trinoWarehousePrefix: warehouse
     trinoResultStorageBucket: ""
+  realtime:
+    enabled: false
+    apiControlPlane: external_ec2
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    connectorName: asklake-clickhouse-realtime-v2
+    clickhouseV2Url: ""
+    clickhouseV2Database: asklake_realtime_v2
+    runtimeSecret:
+      name: asklake-realtime-runtime
+      materializerPasswordKey: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+      readerPasswordKey: CLICKHOUSE_V2_READER_PASSWORD
+      caKey: clickhouse-v2-ca.crt
   runtimeSecret:
     name: asklake-backend-runtime
     trinoCaKey: trino-ca.pem

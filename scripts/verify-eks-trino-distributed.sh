@@ -7,7 +7,9 @@ VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 DEFAULT_RENDER="$(mktemp)"
 DISTRIBUTED_RENDER="$(mktemp)"
 AIRFLOW_ONLY_RENDER="$(mktemp)"
-trap 'rm -f "$DEFAULT_RENDER" "$DISTRIBUTED_RENDER" "$AIRFLOW_ONLY_RENDER"' EXIT
+SINGLE_VALUES_SAMPLE="$(mktemp)"
+SINGLE_VALUES_RESULT="$(mktemp)"
+trap 'rm -f "$DEFAULT_RENDER" "$DISTRIBUTED_RENDER" "$AIRFLOW_ONLY_RENDER" "$SINGLE_VALUES_SAMPLE" "$SINGLE_VALUES_RESULT"' EXIT
 
 HELM_BIN="${ASKLAKE_HELM_BIN:-}"
 if [[ -z "$HELM_BIN" ]] && command -v helm >/dev/null 2>&1; then
@@ -37,9 +39,6 @@ distributed_args=(
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" >"$DEFAULT_RENDER"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   "${distributed_args[@]}" >"$DISTRIBUTED_RENDER"
-"$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  "${distributed_args[@]}" \
-  --set trino.distributed.workerReplicas=5 >/dev/null
 "$HELM_BIN" template asklake-airflow "$CHART_DIR" -f "$VALUES_FILE" \
   --set frontend.enabled=false \
   --set backend.enabled=false \
@@ -135,10 +134,10 @@ common_worker_args=(
 
 expect_rejected "missing worker replicas" \
   "${common_worker_args[@]:0:4}" "${common_worker_args[@]:6}"
-expect_rejected "zero worker replicas" "${common_worker_args[@]}" \
-  --set trino.distributed.workerReplicas=0
-expect_rejected "worker replicas above the MVP safety ceiling" "${common_worker_args[@]}" \
-  --set trino.distributed.workerReplicas=6
+expect_rejected "worker replicas below the fixed live policy" "${common_worker_args[@]}" \
+  --set trino.distributed.workerReplicas=1
+expect_rejected "worker replicas above the fixed live policy" "${common_worker_args[@]}" \
+  --set trino.distributed.workerReplicas=3
 expect_rejected "coordinator task scheduling enabled" "${common_worker_args[@]}" \
   --set trino.distributed.includeCoordinator=true
 expect_rejected "missing worker node selector" \
@@ -179,4 +178,25 @@ bash -n "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 bash -n "$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
 python3 -m py_compile "$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py"
+python3 -m py_compile "$ROOT_DIR/scripts/lib/delete_kubernetes_resource_with_uid.py"
+python3 "$ROOT_DIR/scripts/test_eks_trino_lock_delete.py" >/dev/null
+
+deploy_script="$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
+grep -Fq "jq -eS '.trino.distributed = {enabled:false}' \"\$live_values\" >\"\$single_values\"" "$deploy_script"
+test "$(grep -Fc -- '-f "$BASE_VALUES" -f "$single_values"' "$deploy_script")" -eq 4
+grep -Fq 'safe single-coordinator candidate contains distributed resources' "$deploy_script"
+test "$(grep -Fc 'restore_observed_revision "' "$deploy_script")" -eq 2
+grep -Fq '[[ "$EXPECTED_WORKERS" == "2" ]]' "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
+grep -Fq 'LOCK_NAME="asklake-trino-deploy-lock"' "$deploy_script"
+grep -Fq 'delete_kubernetes_resource_with_uid.py' "$deploy_script"
+test "$(grep -Fc 'verify_campaign_lock' "$deploy_script")" -ge 5
+grep -Fq -- '--from-literal="acquiredAt=$lock_acquired_at"' "$deploy_script"
+grep -Fq 'baseline_revision="$(helm upgrade' "$deploy_script"
+grep -Fq 'candidate_revision="$(helm upgrade' "$deploy_script"
+test "$(grep -Fc -- "-o json | jq -er '.version'" "$deploy_script")" -ge 2
+test "$(grep -Fc 'assert_campaign_revision ' "$deploy_script")" -ge 7
+grep -Fq 'refusing to roll back a foreign revision' "$deploy_script"
+jq -n '{sentinel:"preserved",trino:{distributed:{enabled:true,workerReplicas:2,includeCoordinator:false}}}' >"$SINGLE_VALUES_SAMPLE"
+jq -eS '.trino.distributed = {enabled:false}' "$SINGLE_VALUES_SAMPLE" >"$SINGLE_VALUES_RESULT"
+jq -e '.sentinel == "preserved" and .trino.distributed == {enabled:false}' "$SINGLE_VALUES_RESULT" >/dev/null
 echo "EKS distributed Trino static verification passed."

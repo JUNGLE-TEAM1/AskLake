@@ -137,7 +137,6 @@ def build_realtime_v2_plan(
         if not isinstance(relation, dict):
             continue
         dataset_id = str(relation.get("datasetId") or "")
-        schema = tuple(relation_schema(relation))
         if relation.get("mode") == "streaming":
             source = relation.get("streamingSource")
             topic = str(source.get("topic") or "") if isinstance(source, dict) else ""
@@ -147,8 +146,13 @@ def build_realtime_v2_plan(
                 role="fact",
                 physical_database=database,
                 physical_table=_RAW_VIEW,
-                schema=schema,
+                schema=tuple(relation_schema(relation)),
                 kafka_topic=topic,
+                record_parsing=(
+                    dict(source.get("recordParsing") or {})
+                    if isinstance(source, dict)
+                    else None
+                ),
             ))
             continue
         join_columns = tuple(continuous_sql_static_join_columns(job, dataset_id))
@@ -163,7 +167,7 @@ def build_realtime_v2_plan(
             role="dimension",
             physical_database=database,
             physical_table="dimension_current_v2_latest",
-            schema=schema,
+            schema=tuple(relation_schema(relation)),
             unique_key_sets=unique_sets,
             estimated_row_count=(
                 int(relation["estimatedRowCount"])
@@ -267,8 +271,6 @@ def prepare_dimension_snapshot(
     if not count.rows or not count.rows[0]:
         raise ValueError("V2 dimension snapshot count is unavailable")
     total_rows = int(count.rows[0][0])
-    if total_rows > int(runtime_settings.continuous_sql_static_cache_max_rows):
-        raise ValueError("V2 dimension exceeds CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS")
     dataset_id = str(relation.get("datasetId") or "")
     join_columns = continuous_sql_static_join_columns(job, dataset_id)
     indexes = {name: index for index, name in enumerate(columns)}

@@ -84,16 +84,25 @@ rendered Pod template. A chart change does not mutate the live release by itself
 use a server-side dry-run and verify actual Pod placement during the next
 authorized Helm upgrade.
 
+## Realtime backend opt-in
+
+The default Backend still renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
+
+Only an approved owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker in `asklake-realtime-data-plane`.
+
+ClickHouse/Keeper StatefulSets, PVCs, Kafka Connect and the worker are not part of this chart. See [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
+
 ## Trino distributed opt-in
 
-The default remains the proven single Trino process: one coordinator that also
-runs tasks. `trino.distributed.enabled=true` is accepted only when the private
-overlay also supplies `includeCoordinator=false`, a worker replica count from 1 to 5,
-complete worker requests/limits, the approved General node selector, and
-a worker termination grace value. No worker sizing or autoscaling value is
-present in chart defaults or the checked-in dev example. The first live
-candidate uses two workers in a Git-ignored private overlay; two is an initial
-validation value, while five is only the input/cost ceiling.
+The disabled default remains the proven single Trino process and is the rollback
+path. When `trino.distributed.enabled=true`, the private overlay must supply
+`includeCoordinator=false`, exactly two worker replicas, complete worker
+requests/limits, the approved General node selector, and a worker termination
+grace value. SQL requests, the UI, and HPA cannot override this count. Two means
+Pod replicas, not two physical servers or a throughput guarantee. Existing General
+node CPU sizing is unchanged. No worker
+resource sizing or autoscaling value is present in chart defaults or the checked-in
+dev example.
 
 An accepted opt-in renders `asklake-trino-worker` separately. The existing
 `asklake-trino` Service selects only the coordinator role, while both roles use
@@ -111,7 +120,7 @@ never other system tables, write, or graceful-shutdown access.
 ```bash
 scripts/verify-eks-trino-distributed.sh
 node scripts/test-eks-trino-distributed-evidence.mjs
-scripts/verify-eks-trino-distributed-live.sh <expected-workers>
+scripts/verify-eks-trino-distributed-live.sh 2
 ```
 
 Do not add HPA, PDB, topology spread, a worker NodePool, graceful shutdown
@@ -121,7 +130,18 @@ produced evidence. The authorized live and rollback procedure is
 The operator first records a healthy single-coordinator `Recreate` revision as
 the safe rollback target. Apply also requires the worktree `HEAD`, fetched
 `origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
-Active worker registration plus a non-empty Iceberg read is only the deployment
-gate: promotion additionally requires a non-empty Iceberg worker task, exact-UID
-replacement, a `2→1→2` scale observation, and successful safe rollback evidence
-bound to the merged `pair1` commit.
+If creating or querying that single baseline fails, apply restores and verifies
+the exact pre-deployment revision before it stops; it never proceeds to two workers.
+The apply campaign also holds the namespace-scoped `asklake-trino-deploy-lock`
+ConfigMap, rechecks the Helm revision before each mutation, and removes only its
+own lock UID. A foreign revision observed during the live gate is never rolled back.
+`SIGKILL` or an operator-host loss can leave this cooperative lock behind. Do not
+delete it by name. First inspect its `acquiredAt`, `deploymentCommit`,
+`observedRevision`, and UID, confirm no campaign is running and Helm is not in a
+pending state, then use the UID-precondition break-glass procedure in
+`docs/eks-trino-distributed-phase0.md`.
+Active registration of both workers plus a non-empty Iceberg read is only the
+deployment gate: promotion additionally requires a non-empty Iceberg worker task,
+exact-UID replacement, and successful safe rollback evidence bound to the merged
+`pair1` commit. The initial two-worker campaign's `2→1→2` observation remains
+historical evidence, not a current scaling procedure.
