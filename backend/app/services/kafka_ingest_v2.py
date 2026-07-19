@@ -23,6 +23,7 @@ from app.core.config import Settings, settings
 from app.core.database import SessionLocal
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.continuous_runtime import runtime_contract_projection
 from app.models.catalog import CatalogDatasetModel
 from app.models.dashboard_live import DatasetFreshnessModel, DatasetRevisionCommitModel
 from app.models.etl import ETLJobModel, KafkaContinuousRuntimeModel
@@ -212,12 +213,18 @@ class ClickHouseKafkaIngestV2Gateway:
             self._register_and_resume(job, runtime)
             return self._result(job, "starting")
         if probe.connector_state == "PAUSED":
-            if job.status in {"starting", "running"}:
+            contract = runtime_contract_projection(
+                runtime.metrics,
+                public_status=runtime.status,
+                legacy_error=runtime.last_error,
+            )
+            if contract["desiredState"] == "running":
                 self._register_and_resume(job, runtime)
                 return self._result(job, "starting")
             return self._result(job, "exited", requested_action="pause")
         states = {probe.connector_state, *probe.task_states}
         if "FAILED" in states:
+            self._register_and_resume(job, runtime)
             connector = self.connector_factory(self._connector_name(job, runtime))
             try:
                 connector.restart_failed()

@@ -121,11 +121,21 @@ def job():
     )
 
 
-def runtime():
+def runtime(desired_state: str = "running"):
     return SimpleNamespace(
         broker="redpanda:9092",
         consumer_group_id="asklake-kafka-v2",
         topic="events.v2",
+        status="running" if desired_state == "running" else "pausing",
+        last_error=None,
+        metrics={
+            "runtimeContract": {
+                "version": "1.0",
+                "desiredState": desired_state,
+                "observedState": "running",
+                "stateRevision": 1,
+            }
+        },
     )
 
 
@@ -274,15 +284,23 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(len(self.ingest.register_calls), 1)
 
     def test_paused_intent_keeps_a_paused_connector_stopped(self) -> None:
-        paused_job = job()
-        paused_job.status = "paused"
         self.connector.paused = True
 
-        result = self.gateway.manage(paused_job, runtime(), "status")
+        result = self.gateway.manage(job(), runtime("paused"), "status")
 
         self.assertEqual(result["containerState"], "exited")
         self.assertFalse(self.connector.resumed)
         self.assertEqual(self.ingest.register_calls, [])
+
+    def test_failed_connector_is_reconfigured_before_restart(self) -> None:
+        self.connector.state = "FAILED"
+
+        result = self.gateway.manage(job(), runtime(), "status")
+
+        self.assertEqual(result["containerState"], "starting")
+        self.assertTrue(self.connector.resumed)
+        self.assertEqual(len(self.ingest.register_calls), 1)
+        self.assertEqual(self.connector.state, "RUNNING")
 
     def test_first_raw_offset_publishes_catalog_and_sse_revision(self) -> None:
         self.gateway.manage(job(), runtime(), "start")
