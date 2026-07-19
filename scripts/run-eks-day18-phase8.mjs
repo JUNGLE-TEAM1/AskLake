@@ -451,10 +451,12 @@ export function parseDenyProbeLog(raw) {
     record?.code,
     record?.causeCode,
   ].map((value) => String(value ?? "").toUpperCase());
-  const exactTopicAuthorization = protocolCodes.some(
+  const protocolCode = protocolCodes.find(
     (value) =>
       value === "29"
-      || value.includes("TOPIC_AUTHORIZATION_FAILED"),
+      || value === "31"
+      || value.includes("TOPIC_AUTHORIZATION_FAILED")
+      || value.includes("CLUSTER_AUTHORIZATION_FAILED"),
   );
   if (
     !record
@@ -462,7 +464,7 @@ export function parseDenyProbeLog(raw) {
     || Array.isArray(record)
     || record.status !== "failed"
     || record.category !== "AUTHORIZATION"
-    || !exactTopicAuthorization
+    || !protocolCode
     || Object.hasOwn(record, "producedCount")
     || Number(record.acknowledgedMessages ?? 0) !== 0
   ) {
@@ -472,6 +474,15 @@ export function parseDenyProbeLog(raw) {
     acknowledgedMessages: 0,
     attemptedMessages: 1,
     category: "AUTHORIZATION",
+    // KafkaJS enables idempotent production for the normal fixture producer.
+    // With the exact Describe-only IAM role, MSK can therefore reject the
+    // cluster-scoped idempotent-write request (31) before the topic write (29).
+    // Both are exact protocol authorization failures with zero acknowledgement.
+    protocolCode: protocolCode.includes("TOPIC_")
+      ? "29"
+      : protocolCode.includes("CLUSTER_")
+        ? "31"
+        : protocolCode,
     evidenceSha256: sha256(Buffer.from(String(raw))),
   };
 }
@@ -770,12 +781,13 @@ export class SystemCommandRunner {
   }
 
   incluster(payload, { allowFailure = false, timeout = 120_000 } = {}) {
+    const podName = this.fastApiPodName();
     const result = this.run(
       "kubectl",
       [
         "exec",
         "-i",
-        "deployment/fastapi",
+        podName,
         "-n",
         NAMESPACE,
         "-c",
@@ -804,12 +816,13 @@ export class SystemCommandRunner {
   }
 
   inclusterAsync(payload) {
+    const podName = this.fastApiPodName();
     const child = spawn(
       "kubectl",
       [
         "exec",
         "-i",
-        "deployment/fastapi",
+        podName,
         "-n",
         NAMESPACE,
         "-c",
@@ -846,6 +859,39 @@ export class SystemCommandRunner {
     });
     return { child, completed };
   }
+
+  fastApiPodName() {
+    return selectReadyFastApiPod(this.json("kubectl", [
+      "get",
+      "pods",
+      "-n",
+      NAMESPACE,
+      "-l",
+      "app.kubernetes.io/name=asklake,app.kubernetes.io/component=backend",
+      "-o",
+      "json",
+    ]));
+  }
+}
+
+
+export function selectReadyFastApiPod(pods) {
+  const candidates = (pods?.items ?? [])
+    .filter((pod) =>
+      !pod?.metadata?.deletionTimestamp
+      && pod?.status?.phase === "Running"
+      && (pod?.status?.containerStatuses ?? []).some(
+        (container) => container?.name === "fastapi" && container?.ready === true,
+      ))
+    .sort((left, right) =>
+      String(left?.metadata?.creationTimestamp ?? "").localeCompare(
+        String(right?.metadata?.creationTimestamp ?? ""),
+      ));
+  const name = candidates[0]?.metadata?.name;
+  if (typeof name !== "string" || name.length === 0) {
+    block("fastapi_ready_pod_unavailable");
+  }
+  return name;
 }
 
 
@@ -1160,6 +1206,8 @@ export function runPreflight(inputs, runner) {
     activeSparkApplications: steady.activeSparkApplications,
     activeKubernetesJobs: 0,
     pendingOrTerminatingPods: 0,
+    continuousRuntimes: Number(remote?.counts?.continuousRuntimes ?? 0),
+    continuousSessions: Number(remote?.counts?.continuousSessions ?? 0),
     nodes: steady.nodes,
   });
 }
@@ -1238,6 +1286,7 @@ function probeReceiptIsValid(value, campaignId) {
         && value.privateIdentity[key].length > 0,
     )
     && value?.probe?.category === "AUTHORIZATION"
+    && ["29", "31"].includes(value?.probe?.protocolCode)
     && value?.probe?.attemptedMessages === 1
     && value?.probe?.acknowledgedMessages === 0
     && /^[a-f0-9]{64}$/.test(value?.probe?.evidenceSha256 ?? "")
@@ -1951,7 +2000,7 @@ async function submitAndVerifyRunE(inputs, runner, initial) {
     state,
     "Run E",
     {
-      cloudWatchMarker: fault.podName,
+      cloudWatchMarker: runECloudWatchMarker(state),
       completedAt: state.runs["Run E"].firstAttemptFailedAt,
       resourceIdentities: [
         fault.applicationName,
@@ -2002,6 +2051,15 @@ async function submitAndVerifyRunE(inputs, runner, initial) {
       },
     }),
   });
+}
+
+
+export function runECloudWatchMarker(state) {
+  const runId = state?.runs?.["Run E"]?.identity?.runId;
+  if (typeof runId !== "string" || runId.length === 0) {
+    block("run_e_fault_evidence_checkpoint_missing", "run_e");
+  }
+  return runId;
 }
 
 
@@ -2147,6 +2205,9 @@ export function validateAbcReceipt(receipt, approvedTargets) {
   const checkpoints = new Set(
     identityList.map((identity) => identity?.checkpointPath),
   );
+  const runIds = new Set(
+    identityList.map((identity) => identity?.runId),
+  );
   const exactTargetKeys = [
     "jobId",
     "datasetId",
@@ -2167,6 +2228,13 @@ export function validateAbcReceipt(receipt, approvedTargets) {
     expected:
       Array.isArray(identities)
       && identities.every((identity) => identity.expectedCount === 100),
+    runIds:
+      runIds.size === 3
+      && identityList.every(
+        (identity) =>
+          typeof identity?.runId === "string"
+          && identity.runId.trim() !== "",
+      ),
     approvedTargetsExact:
       approved.size === 3
       && Array.isArray(identities)
@@ -2331,6 +2399,88 @@ function cleanupCampaignTemporaryJobs(inputs, runner, state) {
 }
 
 
+function campaignRunIds(inputs, state) {
+  const runIds = new Set(
+    [state.runs?.["Run D"]?.identity?.runId,
+      state.runs?.["Run E"]?.identity?.runId]
+      .filter((value) => typeof value === "string" && value.length > 0),
+  );
+  const receiptPath = state.artifacts?.abcReceipt;
+  if (typeof receiptPath === "string" && existsSync(receiptPath)) {
+    const receipt = validateAbcReceipt(
+      readPrivateJson(receiptPath, "abc_receipt").value,
+      inputs.liveInput.targets.bounded,
+    );
+    for (const identity of receipt.privateIdentity) {
+      if (typeof identity.runId !== "string" || identity.runId.trim() === "") {
+        block("abc_private_receipt_invalid", "cleanup");
+      }
+      runIds.add(identity.runId);
+    }
+  }
+  return runIds;
+}
+
+
+export function cleanupCampaignTerminalSparkPods(inputs, runner, state) {
+  const runIds = campaignRunIds(inputs, state);
+  if (runIds.size === 0) return 0;
+  const pods = runner.json("kubectl", [
+    "get", "pods", "-n", NAMESPACE, "-o", "json",
+  ]);
+  const applications = runner.json("kubectl", [
+    "get",
+    "sparkapplications.sparkoperator.k8s.io",
+    "-n",
+    NAMESPACE,
+    "-o",
+    "json",
+  ]);
+  const applicationsByName = new Map(
+    (applications.items ?? []).map((application) => [
+      application?.metadata?.name,
+      application,
+    ]),
+  );
+  const candidates = [];
+  for (const pod of pods.items ?? []) {
+    const runId = pod?.metadata?.labels?.["asklake.io/run-id"];
+    if (!runIds.has(runId)) continue;
+    if (!["Succeeded", "Failed"].includes(pod?.status?.phase)) continue;
+    const role = pod?.metadata?.labels?.["spark-role"];
+    const owners = (pod?.metadata?.ownerReferences ?? []).filter(
+      (owner) => owner?.kind === "SparkApplication" && owner?.controller === true,
+    );
+    const owner = owners[0];
+    const application = owner ? applicationsByName.get(owner.name) : undefined;
+    const applicationState = application?.status?.applicationState?.state;
+    if (
+      owners.length !== 1
+      || !["driver", "executor"].includes(role)
+      || typeof pod?.metadata?.name !== "string"
+      || typeof pod?.metadata?.uid !== "string"
+      || !application
+      || application?.metadata?.uid !== owner.uid
+      || application?.metadata?.labels?.["asklake.io/run-id"] !== runId
+      || !["COMPLETED", "FAILED", "SUBMISSION_FAILED"].includes(applicationState)
+    ) {
+      block("phase8_terminal_spark_pod_identity_ambiguous", "cleanup");
+    }
+    candidates.push(pod);
+  }
+  for (const pod of candidates) {
+    deleteNamespacedWithUidPrecondition(
+      runner,
+      "api/v1",
+      "pods",
+      pod.metadata.name,
+      pod.metadata.uid,
+    );
+  }
+  return candidates.length;
+}
+
+
 function globalCleanupSnapshot(runner) {
   const pods = runner.json("kubectl", [
     "get", "pods", "-n", NAMESPACE, "-o", "json",
@@ -2388,6 +2538,8 @@ export async function runCleanup(inputs, runner, initial) {
   let state = initial;
   const explicitlyDeletedJobs =
     cleanupCampaignTemporaryJobs(inputs, runner, state);
+  const terminalSparkPodsDeleted =
+    cleanupCampaignTerminalSparkPods(inputs, runner, state);
   const remote = await poll({
     timeoutMs: positiveInteger(
       process.env.ASKLAKE_DAY18_PHASE8_CLEANUP_TIMEOUT_MS,
@@ -2416,6 +2568,10 @@ export async function runCleanup(inputs, runner, initial) {
       && local.collectorReady === 1
       && local.hpaCurrent === 2
       && local.hpaDesired === 2
+      && Number(incluster?.counts?.continuousRuntimes ?? -1)
+        === Number(state.baseline.continuousRuntimes ?? -2)
+      && Number(incluster?.counts?.continuousSessions ?? -1)
+        === Number(state.baseline.continuousSessions ?? -2)
       && local.nodes.general <= state.baseline.nodes.general
       && local.nodes.spark <= state.baseline.nodes.spark,
   });
@@ -2430,9 +2586,14 @@ export async function runCleanup(inputs, runner, initial) {
       temporaryJobs: remote.local.temporaryPhase8Jobs,
       temporaryPods: remote.local.temporaryPhase8Pods,
       explicitlyDeletedJobs,
+      terminalSparkPodsDeleted,
       fastApiReady: remote.local.fastApiReady,
       collectorReady: remote.local.collectorReady,
       hpa: `${remote.local.hpaCurrent}/${remote.local.hpaDesired}`,
+      continuousRows: {
+        runtimes: remote.incluster.counts.continuousRuntimes,
+        sessions: remote.incluster.counts.continuousSessions,
+      },
       nodes: remote.local.nodes,
       continuousBoundary: "unchanged",
       durableEvidence: "preserved",

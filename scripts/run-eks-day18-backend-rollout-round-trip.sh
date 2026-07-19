@@ -15,6 +15,7 @@ ROLLOUT="$ROOT_DIR/scripts/rollout-eks-backend-image.sh"
 STEADY="$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh"
 CONTINUOUS="$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh"
 EXTERNAL_EC2="$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh"
+APPROVAL_VERIFIER="$ROOT_DIR/scripts/verify-eks-day18-phase7-approval.mjs"
 TEMP_DIR="$(mktemp -d)"
 ROLLBACK_LOG="$TEMP_DIR/rollback.log"
 ROLLBACK_MONITOR="$TEMP_DIR/rollback-http.txt"
@@ -32,6 +33,8 @@ frontend_generation_before=""
 frontend_pod_uids_before=""
 secret_keys_before=""
 secret_hash_before=""
+STEADY_TIMEOUT_SECONDS="${ASKLAKE_DAY18_ROUND_TRIP_STEADY_TIMEOUT_SECONDS:-420}"
+STEADY_INTERVAL_SECONDS="${ASKLAKE_DAY18_ROUND_TRIP_STEADY_INTERVAL_SECONDS:-5}"
 
 fail() {
   echo "$1" >&2
@@ -183,11 +186,22 @@ assert_backend_state() {
 
 verify_steady_phase() {
   local expected_image="$1"
-  bash "$STEADY" --steady >/dev/null
-  assert_backend_state "$expected_image"
-  assert_frontend_and_secret_unchanged
-  bash "$CONTINUOUS" >/dev/null
-  bash "$EXTERNAL_EC2" >/dev/null
+  bash "$STEADY" --steady >/dev/null || return 1
+  assert_backend_state "$expected_image" || return 1
+  assert_frontend_and_secret_unchanged || return 1
+  bash "$CONTINUOUS" >/dev/null || return 1
+  bash "$EXTERNAL_EC2" >/dev/null || return 1
+}
+
+wait_for_steady_phase() {
+  local expected_image="$1" deadline=$((SECONDS + STEADY_TIMEOUT_SECONDS))
+  while ((SECONDS < deadline)); do
+    if verify_steady_phase "$expected_image" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$STEADY_INTERVAL_SECONDS"
+  done
+  fail "Backend round-trip state did not return to exact steady before the deadline"
 }
 
 monitor_rollback_health() {
@@ -218,6 +232,16 @@ done
 case "$PRIVATE_EVIDENCE" in
   "$ROOT_DIR"|"$ROOT_DIR"/*) fail "private round-trip evidence must be stored outside the repository" ;;
 esac
+[[ -n "${ASKLAKE_DAY18_EXECUTION_CONTRACT:-}" ]] || fail "ASKLAKE_DAY18_EXECUTION_CONTRACT is required"
+[[ -n "${ASKLAKE_DAY18_LIVE_INPUT:-}" ]] || fail "ASKLAKE_DAY18_LIVE_INPUT is required"
+[[ -n "${ASKLAKE_EKS_CLUSTER_NAME:-}" ]] || fail "ASKLAKE_EKS_CLUSTER_NAME is required"
+
+node "$APPROVAL_VERIFIER" \
+  --contract "$ASKLAKE_DAY18_EXECUTION_CONTRACT" \
+  --live-input "$ASKLAKE_DAY18_LIVE_INPUT" \
+  --candidate-receipt "$RECEIPT_PATH" \
+  --ec2-env "$EC2_ENV" \
+  --cluster "$ASKLAKE_EKS_CLUSTER_NAME" >/dev/null
 
 set -a
 source "$EC2_ENV"
@@ -270,7 +294,7 @@ ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend \
 candidate_revision="$(release_revision)"
 [[ "$candidate_revision" =~ ^[0-9]+$ && "$candidate_revision" -gt "$prior_revision" ]] || \
   fail "candidate promotion did not advance the Helm release revision"
-verify_steady_phase "$candidate_backend_image"
+wait_for_steady_phase "$candidate_backend_image"
 write_private_evidence "candidate_promotion_passed"
 echo "backend_round_trip_candidate_promotion=passed"
 
@@ -282,6 +306,7 @@ if ! helm rollback asklake-web "$prior_revision" \
   --namespace "$NAMESPACE" --wait --timeout 10m >"$ROLLBACK_LOG" 2>&1; then
   fail "intentional Helm rollback failed; manual steady-state recovery is required"
 fi
+wait_for_steady_phase "$prior_backend_image"
 stop_monitor
 rollback_samples="$(wc -l <"$ROLLBACK_MONITOR" | tr -d ' ')"
 rollback_failures="$(awk '$1 != "200" {count++} END {print count+0}' "$ROLLBACK_MONITOR")"
@@ -290,7 +315,6 @@ rollback_failures="$(awk '$1 != "200" {count++} END {print count+0}' "$ROLLBACK_
 rollback_revision="$(release_revision)"
 [[ "$rollback_revision" =~ ^[0-9]+$ && "$rollback_revision" -gt "$candidate_revision" ]] || \
   fail "intentional rollback did not advance the Helm release revision"
-verify_steady_phase "$prior_backend_image"
 write_private_evidence "intentional_rollback_passed"
 echo "backend_round_trip_intentional_rollback=passed"
 echo "backend_round_trip_rollback_http_samples=$rollback_samples"
@@ -302,7 +326,7 @@ ASKLAKE_BACKEND_IMAGE_ROLLOUT_CONFIRM=deploy-new-immutable-backend \
 final_revision="$(release_revision)"
 [[ "$final_revision" =~ ^[0-9]+$ && "$final_revision" -gt "$rollback_revision" ]] || \
   fail "candidate re-promotion did not advance the Helm release revision"
-verify_steady_phase "$candidate_backend_image"
+wait_for_steady_phase "$candidate_backend_image"
 write_private_evidence "candidate_repromotion_passed"
 echo "backend_round_trip_candidate_repromotion=passed"
 echo "backend_round_trip_final_fastapi=2_of_2"

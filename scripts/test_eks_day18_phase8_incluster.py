@@ -61,16 +61,14 @@ install_module(
 )
 install_module(
     "app.services",
-    etl_service=SimpleNamespace(),
+    etl_service=SimpleNamespace(
+        airflow_run_reservation=lambda *args, **kwargs: None,
+        submit_or_reconcile_airflow_job_run=lambda *args, **kwargs: (None, None),
+    ),
 )
 install_module(
     "app.services.airflow_client",
     build_airflow_client=lambda: None,
-)
-install_module(
-    "app.services.etl.airflow_operations",
-    airflow_run_reservation=lambda *args, **kwargs: None,
-    submit_or_reconcile_airflow_job_run=lambda *args, **kwargs: (None, None),
 )
 install_module(
     "app.services.etl.eks_fixture",
@@ -112,6 +110,23 @@ class Day18Phase8InclusterTest(unittest.TestCase):
             HELPER.request_campaign({"campaignId": "not-approved"})
         with self.assertRaises(HELPER.Day18Phase8Error):
             HELPER.request_alias({"alias": "Run A"})
+
+    def test_mutating_dispatch_initializes_schema_before_handler(self) -> None:
+        timeline: list[str] = []
+        original_initialize = HELPER.initialize_mutation_schema
+        original_reserve = HELPER.reserve_fault_run
+        HELPER.initialize_mutation_schema = lambda: timeline.append("schema")
+        HELPER.reserve_fault_run = lambda request: (
+            timeline.append("reserve") or {"status": "reserved"}
+        )
+        try:
+            result = HELPER.dispatch({"action": "reserve"})
+        finally:
+            HELPER.initialize_mutation_schema = original_initialize
+            HELPER.reserve_fault_run = original_reserve
+
+        self.assertEqual(result["status"], "reserved")
+        self.assertEqual(timeline, ["schema", "reserve"])
 
     def test_marker_update_preserves_existing_state_and_created_time(self) -> None:
         run = SimpleNamespace(task_states={"existing": {"status": "kept"}})
@@ -279,7 +294,8 @@ class Day18Phase8InclusterTest(unittest.TestCase):
                 "status": "passed",
                 "counts": {
                     "activeFixtureRuns": 0,
-                    "continuousSessions": 0,
+                    "continuousRuntimes": 1,
+                    "continuousSessions": 4,
                 },
                 "checks": {"sparkApplicationListReadable": True},
             },
@@ -302,6 +318,9 @@ class Day18Phase8InclusterTest(unittest.TestCase):
             }
             result = HELPER.preflight(request)
             self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["checks"]["continuousRowsReadable"])
+            self.assertEqual(result["counts"]["continuousRuntimes"], 1)
+            self.assertEqual(result["counts"]["continuousSessions"], 4)
             request["boundedTargets"][0]["jobId"] = "other-job"
             self.assertEqual(HELPER.preflight(request)["status"], "blocked")
         finally:

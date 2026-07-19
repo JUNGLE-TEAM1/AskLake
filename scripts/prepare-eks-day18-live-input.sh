@@ -13,7 +13,12 @@ EC2_ENV="${ASKLAKE_DAY18_EC2_ENV:-}"
 CURRENT_RECEIPT="${ASKLAKE_DAY18_CURRENT_RECEIPT:-}"
 OUTPUT="${ASKLAKE_DAY18_LIVE_INPUT:-/private/tmp/asklake-day18-live-input.json}"
 COLLECTOR="$ROOT_DIR/scripts/collect-eks-day18-live-input.py"
-TEMP_DIR="$(mktemp -d)"
+# The verifier intentionally accepts live-input files only below /private/tmp.
+# macOS creates a bare `mktemp -d` directory below /var/folders, so validating
+# the staged file there made the real preparation path fail before the atomic
+# move. Keep the staging directory inside the same private boundary.
+TEMP_DIR="$(mktemp -d /private/tmp/asklake-day18-live-input.XXXXXX)"
+chmod 0700 "$TEMP_DIR"
 REMOTE="$TEMP_DIR/remote.json"
 WORKLOADS="$TEMP_DIR/workloads.json"
 HPA="$TEMP_DIR/hpa.json"

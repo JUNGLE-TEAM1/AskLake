@@ -52,6 +52,18 @@ case "$name" in
     ;;
   verify-eks-day15-alb-runtime.sh)
     echo steady >>"$ASKLAKE_TEST_CALLS"
+    if [[ "${ASKLAKE_TEST_FAIL_CANDIDATE_STEADY_ONCE:-false}" == "true" \
+      && "$(cat "$ASKLAKE_TEST_STATE/workload")" == "candidate" \
+      && ! -e "$ASKLAKE_TEST_STATE/candidate-steady-failed" ]]; then
+      : >"$ASKLAKE_TEST_STATE/candidate-steady-failed"
+      exit 1
+    fi
+    if [[ "${ASKLAKE_TEST_FAIL_PRIOR_STEADY_ONCE:-false}" == "true" \
+      && "$(cat "$ASKLAKE_TEST_STATE/workload")" == "prior" \
+      && ! -e "$ASKLAKE_TEST_STATE/prior-steady-failed" ]]; then
+      : >"$ASKLAKE_TEST_STATE/prior-steady-failed"
+      exit 1
+    fi
     ;;
   verify-eks-continuous-process-boundary.sh)
     echo continuous >>"$ASKLAKE_TEST_CALLS"
@@ -165,7 +177,12 @@ cat >"$FAKE_BIN/curl" <<'EOF'
 printf '200'
 EOF
 
-chmod +x "$FAKE_BIN/bash" "$FAKE_BIN/helm" "$FAKE_BIN/kubectl" "$FAKE_BIN/curl"
+cat >"$FAKE_BIN/node" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+
+chmod +x "$FAKE_BIN/bash" "$FAKE_BIN/helm" "$FAKE_BIN/kubectl" "$FAKE_BIN/curl" "$FAKE_BIN/node"
 
 reset_state() {
   printf '%s\n' prior >"$STATE_DIR/workload"
@@ -174,12 +191,21 @@ reset_state() {
   : >"$STATE_DIR/calls"
   : >"$OUTPUT"
   rm -f "$EVIDENCE"
+  rm -f "$STATE_DIR/candidate-steady-failed"
+  rm -f "$STATE_DIR/prior-steady-failed"
 }
 
 run_runner() {
   env \
     PATH="$FAKE_BIN:$PATH" \
     ASKLAKE_DAY18_EC2_ENV="$EC2_ENV" \
+    ASKLAKE_DAY18_EXECUTION_CONTRACT="$TEMP_DIR/approved.json" \
+    ASKLAKE_DAY18_LIVE_INPUT="$TEMP_DIR/live-input.json" \
+    ASKLAKE_EKS_CLUSTER_NAME=asklake-dev \
+    ASKLAKE_DAY18_ROUND_TRIP_STEADY_TIMEOUT_SECONDS=5 \
+    ASKLAKE_DAY18_ROUND_TRIP_STEADY_INTERVAL_SECONDS=0.1 \
+    ASKLAKE_TEST_FAIL_CANDIDATE_STEADY_ONCE="${ASKLAKE_TEST_FAIL_CANDIDATE_STEADY_ONCE:-false}" \
+    ASKLAKE_TEST_FAIL_PRIOR_STEADY_ONCE="${ASKLAKE_TEST_FAIL_PRIOR_STEADY_ONCE:-false}" \
     ASKLAKE_DAY18_ROUND_TRIP_PRIVATE_EVIDENCE="$EVIDENCE" \
     ASKLAKE_TEST_STATE="$STATE_DIR" \
     ASKLAKE_TEST_CALLS="$STATE_DIR/calls" \
@@ -235,6 +261,30 @@ grep -Fq 'backend_round_trip_result=passed' "$OUTPUT"
 assert_sanitized_output
 pass_count=$((pass_count + 1))
 echo "ok - candidate, rollback and re-promotion complete in order"
+
+reset_state
+ASKLAKE_TEST_FAIL_PRIOR_STEADY_ONCE=true \
+ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend \
+  run_runner /bin/bash "$RUNNER" --run "$RECEIPT" >"$OUTPUT" 2>&1
+[[ "$(cat "$STATE_DIR/workload")" == "candidate" ]]
+[[ -e "$STATE_DIR/prior-steady-failed" ]]
+[[ "$(jq -r '.state' "$EVIDENCE")" == "candidate_repromotion_passed" ]]
+grep -Fq 'backend_round_trip_result=passed' "$OUTPUT"
+assert_sanitized_output
+pass_count=$((pass_count + 1))
+echo "ok - rollback waits through a transient non-steady state"
+
+reset_state
+ASKLAKE_TEST_FAIL_CANDIDATE_STEADY_ONCE=true \
+ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend \
+  run_runner /bin/bash "$RUNNER" --run "$RECEIPT" >"$OUTPUT" 2>&1
+[[ "$(cat "$STATE_DIR/workload")" == "candidate" ]]
+[[ -e "$STATE_DIR/candidate-steady-failed" ]]
+[[ "$(jq -r '.state' "$EVIDENCE")" == "candidate_repromotion_passed" ]]
+grep -Fq 'backend_round_trip_result=passed' "$OUTPUT"
+assert_sanitized_output
+pass_count=$((pass_count + 1))
+echo "ok - candidate promotion waits through a transient non-steady state"
 
 reset_state
 if ASKLAKE_DAY18_BACKEND_ROUND_TRIP_CONFIRM=promote-rollback-repromote-immutable-backend \

@@ -117,7 +117,7 @@ approval metadata와 생성 시각을 제외한 canonical 전체 scope에서 자
 임의 hash, unresolved receipt/live input, proof mismatch, scope 확장, raw identifier
 또는 mode 오류는 실행 계약으로 인정하지 않는다.
 
-## 2026-07-19 준비 결과
+## 2026-07-19 실행 결과 연결
 
 | 항목 | 결과 |
 | --- | --- |
@@ -134,9 +134,11 @@ approval metadata와 생성 시각을 제외한 canonical 전체 scope에서 자
 | Run D/E target selection | READY — Run A/B 후보에 각각 바인딩, 새 logical Run은 승인 후 생성 |
 | SparkApplication visibility | PASS — FastAPI service account in-cluster list 가능 |
 | live-input approval binding | PASS (static) — exact schema, private mode, sanitizer, byte/target hash |
-| exact preserved EC2 input | BLOCKED — private input 없음 |
-| approved contract | NOT CREATED |
-| cluster mutation | `0` |
+| exact preserved EC2 input | PASS — 사용자 제공 private env를 mode `0600`으로 검증 |
+| approved contract | PASS — exact cluster/live input/receipt를 byte hash로 고정 |
+| Phase 7 image 왕복 | PASS — candidate 승격, rollback, 재승격 |
+| Phase 8 automated live core | PASS — Run D/E와 fresh Run A/B/C |
+| 최종 cleanup·Pod 직접 복구 | PASS — [실제 결과](eks-day18-phase7-8-result.md)에서 추적 |
 
 현재 Frontend/Airflow/Trino와 Backend/Collector/Spark runtime은 서로 다른 두 공식
 delivery receipt에 연결된다. receipt를 합성하지 않고 Phase 7 변경 대상인 Backend의
@@ -147,10 +149,11 @@ delivery receipt에 연결된다. receipt를 합성하지 않고 Phase 7 변경 
 Git revision을 가리켜 build-input freshness gate에서 거부됐다. 해당 파일을 재사용하지
 않고 최신 `pair1` workflow artifact를 새 mode-`0600` 파일로 검증해 바인딩했다.
 
-AWS 조회 결과로 cluster/EC2 input을 추론하거나 새 권한을 만들지 않는다. 현재
-남은 blocker는 사용자가 명시할 exact EKS cluster 이름과 보존 EC2 env 경로다.
-두 입력이 없으면 live-input 파일과 approved contract를 만들 수 없고 rollout,
-fault Job, SparkApplication 또는 E2E Run을 시작하지 않는다.
+AWS 조회 결과로 cluster/EC2 input을 추론하거나 새 권한을 만들지 않는 원칙은 실제
+실행에도 그대로 적용했다. exact 입력을 받은 뒤 새 private live input과 approved
+contract를 만들었고, 자동 live 핵심 결과는
+[Phase 7·8 결과](eks-day18-phase7-8-result.md)에 기록한다. 위 표의 준비 revision과
+workflow 정보는 입력 provenance이며 현재 live resource 식별자가 아니다.
 
 ## Phase 8 fault/E2E runner
 
@@ -158,6 +161,13 @@ Phase 7의 candidate 승격 → intentional rollback → candidate 재승격이 
 round-trip evidence에서 순서대로 통과한 뒤에만
 `scripts/run-eks-day18-phase8.mjs`를 사용한다. runner는 제품 경로를 대신하지 않고
 Run D/E fault와 fresh Run A/B/C를 승인된 범위에서 조정한다.
+
+runner의 in-cluster 명령은 `deployment/fastapi`에 임의로 exec하지 않는다. Running,
+Ready이고 deletion timestamp가 없는 FastAPI Pod만 고른 뒤, 여러 개면 생성 시각이 가장
+오래된 Pod를 사용한다. 조건을 만족하는 Pod가 없으면 추가 mutation을 fail-closed한다.
+rollout 중 외부 Helm revision 또는 component image가 승인 scope 밖에서 바뀌면 해당
+campaign은 폐기한다. 외부 변경 component는 보존하고 승인 대상 component만 복구한 뒤
+안정 window를 다시 확인하고 새 campaign을 시작한다.
 
 필수 입력은 모두 `/private/tmp`, mode `0600`, symlink 금지이며 byte hash로 승인
 contract에 묶인다.
@@ -223,6 +233,13 @@ node scripts/run-eks-day18-phase8.mjs --cleanup
 5. attempt generation 2의 새 application UID, terminal success, Iceberg snapshot
    1개와 Catalog materialization 1개를 검증한다.
 
+Kubernetes Event는 exact SparkApplication·driver Pod identity로 상관관계를 확인한다.
+CloudWatch application log는 Pod 이름이 모든 runtime log에 보장되지 않으므로 같은
+logical 실행의 durable `runId` marker로 장애 window를 확인한다. 둘 중 하나의 marker가
+없으면 다른 쪽만으로 관찰 완료를 선언하지 않는다. 이 marker는 log pipeline과 시간대의
+상관관계 증거이지 장애 자체의 단독 증거가 아니다. 장애 사실은 exact UID delete receipt,
+RDS의 terminal first attempt와 Kubernetes owner/Event를 함께 대조해 판정한다.
+
 이 경로는 Airflow retry 설정이나 image를 바꾸지 않는다. `first_attempt_armed`,
 `driver_deleted`, `first_attempt_failed`, `airflow_submitted`, `passed` checkpoint를
 사용해 재시작 시 delete/submit을 반복하지 않는다. checkpoint와 live application
@@ -245,6 +262,13 @@ name/UID/receipt를 모두 대조해 삭제하고, active Job/Run/Pending/temp r
 FastAPI `2/2`, Collector `1/1`, HPA `2/2`, node baseline 복귀와 외부 경계를 확인한다.
 RDS Run, S3 object, Iceberg snapshot, Catalog materialization 또는 SparkApplication
 evidence는 삭제하지 않는다.
+
+완료 Spark child Pod가 `WhenEmpty` NodePool scale-in을 막는 경우에는 current campaign의
+Run D/E와 검증된 A/B/C receipt에 있는 `runId`만 cleanup 후보로 사용한다. Pod가 terminal
+상태이고 driver/executor role, SparkApplication controller owner name/UID, application의
+같은 run label과 terminal state가 모두 일치할 때만 Pod UID precondition으로 삭제한다.
+SparkApplication CR과 RDS/S3/Iceberg/Catalog evidence는 그대로 보존하며 identity가 하나라도
+모호하면 삭제하지 않고 cleanup을 fail-closed한다.
 
 ## 로컬 검증
 

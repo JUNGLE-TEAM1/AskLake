@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
-from sqlalchemy import inspect, select, text
+from sqlalchemy import Text, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.compatibility import record_legacy_runtime_error_projection
@@ -34,6 +34,14 @@ from app.services.rule_compiler import compile_rule_set
 _schema_ready_bind_ids: set[int] = set()
 
 
+def column_requires_text_migration(
+    columns: dict[str, dict[str, Any]],
+    name: str,
+) -> bool:
+    column = columns.get(name)
+    return column is not None and not isinstance(column.get("type"), Text)
+
+
 class RunExecutionLease(NamedTuple):
     generation: int
     recovered: bool
@@ -56,7 +64,11 @@ def ensure_schema(db: Session) -> None:
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
-        existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+        existing_column_defs = {
+            column["name"]: column
+            for column in inspector.get_columns("etl_jobs")
+        }
+        existing_columns = set(existing_column_defs)
         if "payload" in existing_columns:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
@@ -197,15 +209,28 @@ def ensure_schema(db: Session) -> None:
             else:
                 sql_value = f"'{default_value}'"
             connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
-        if "schema_fingerprint" in existing_columns:
+        if column_requires_text_migration(
+            existing_column_defs,
+            "schema_fingerprint",
+        ):
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
-        if "last_state" in existing_columns:
+        if column_requires_text_migration(existing_column_defs, "last_state"):
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
 
-        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
-        if "failed_stage" in existing_run_columns:
+        existing_run_column_defs = {
+            column["name"]: column
+            for column in inspector.get_columns("etl_runs")
+        }
+        existing_run_columns = set(existing_run_column_defs)
+        if column_requires_text_migration(
+            existing_run_column_defs,
+            "failed_stage",
+        ):
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
-        if "error_summary" in existing_run_columns:
+        if column_requires_text_migration(
+            existing_run_column_defs,
+            "error_summary",
+        ):
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
 
 
