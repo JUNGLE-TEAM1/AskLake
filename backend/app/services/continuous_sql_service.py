@@ -164,10 +164,10 @@ class ContinuousSqlService:
             request,
             job_id,
         )
-        compiled_plan = {
-            **compiled.compiled_plan,
-            "servingMode": request.output.serving_mode,
-        }
+        compiled_plan = compiled_plan_with_serving_mode(
+            compiled.compiled_plan,
+            request.output.serving_mode,
+        )
         job = ContinuousSqlJobModel(
             id=job_id,
             name=request.name.strip(),
@@ -178,7 +178,7 @@ class ContinuousSqlService:
             original_sql=request.query,
             normalized_sql=compiled.normalized_sql,
             plan_version=compiled.plan_version,
-            plan_hash=compiled.plan_hash,
+            plan_hash=str(compiled_plan["planHash"]),
             compiled_plan=compiled_plan,
             relation_bindings=[
                 item.model_dump(mode="json", by_alias=True)
@@ -881,6 +881,20 @@ def worker_identity_error(
 def canonical_hash(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def compiled_plan_with_serving_mode(
+    compiled_plan: dict[str, Any],
+    serving_mode: str,
+) -> dict[str, Any]:
+    plan_without_hash = {
+        key: value for key, value in compiled_plan.items() if key != "planHash"
+    }
+    plan_without_hash["servingMode"] = serving_mode
+    return {
+        **plan_without_hash,
+        "planHash": canonical_hash(plan_without_hash),
+    }
 
 
 def utc_now() -> str:

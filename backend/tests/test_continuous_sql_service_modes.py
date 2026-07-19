@@ -7,7 +7,11 @@ from app.core.config import Settings
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.continuous_sql import ContinuousSqlCreateRequest
-from app.services.continuous_sql_service import ContinuousSqlService
+from app.services.continuous_sql_service import (
+    ContinuousSqlService,
+    canonical_hash,
+    compiled_plan_with_serving_mode,
+)
 
 
 class ContinuousSqlServiceModeTests(unittest.TestCase):
@@ -50,6 +54,18 @@ class ContinuousSqlServiceModeTests(unittest.TestCase):
         self.assertEqual(target.write_mode, "append")
         self.assertTrue(storage_path.startswith("s3a://asklake-output/continuous-sql/"))
         self.assertEqual(checkpoint_path, f"{storage_path}/_checkpoints/csql-test")
+
+    def test_serving_mode_is_included_in_the_runtime_plan_hash(self) -> None:
+        plan = {"planVersion": "continuous-sql.v1", "runtimeSql": "SELECT 1", "planHash": "stale"}
+
+        resolved = compiled_plan_with_serving_mode(plan, "iceberg")
+
+        self.assertEqual(resolved["servingMode"], "iceberg")
+        self.assertNotEqual(resolved["planHash"], "stale")
+        self.assertEqual(
+            resolved["planHash"],
+            canonical_hash({key: value for key, value in resolved.items() if key != "planHash"}),
+        )
 
     def test_iceberg_deployment_rejects_clickhouse_job_creation(self) -> None:
         request = ContinuousSqlCreateRequest.model_validate({
