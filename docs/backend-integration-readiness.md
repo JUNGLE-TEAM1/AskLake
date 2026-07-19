@@ -7,6 +7,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 2026-07-18 pair1·dev 통합은 dev의 최신 ETL/frontend/SQL 모듈 경계를 유지하면서 pair1의 EKS bounded fixture, Kubernetes Spark UID 복구, RDS owner/generation fence와 `external_ec2` 소유권 계약을 전용 adapter에 이식했다. Day 18 후속 계약은 non-terminal 동일 UID 복구와 terminal-failed attempt generation을 분리하고, 기존 EKS fixture Run에 deny-only MSK evidence를 연결한다. Python 전체 회귀 873개와 Spark Kubernetes Node 계약 18개가 통과했다. 실제 live rollout/fault/E2E 완료 여부는 [Day 18 Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
 
+Issue #1061은 pair1에 누락된 ClickHouse V2 Catalog/Dashboard projection, whitespace fact parsing과 Continuous JOIN validation 수정을 반영했다. focused backend 46개, Continuous SQL 23개, V2 release 60개와 realtime stack 101개가 통과했다. EKS는 별도 realtime data-plane chart와 backend opt-in을 추가했지만 기본 `external_ec2`와 기존 workload render는 유지한다. live shadow/cutover/fault/restore는 아직 실행하지 않았으며 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의 manual gate다.
+
 ## 1. 현재 연결 상태
 
 | 영역 | 현재 상태 | 남은 범위 |

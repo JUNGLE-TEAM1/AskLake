@@ -234,6 +234,8 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
         self.assertEqual(plan.relations[1].physical_table, "dimension_current_v2_latest")
         self.assertIn("serving_events_v2", compiled.insert_sql)
         self.assertIn("raw_events_v2_current", compiled.insert_sql)
+        self.assertIn("splitByRegexp('\\s+'", compiled.insert_sql)
+        self.assertNotIn("JSONExtractString(payload, 'event_id')", compiled.insert_sql)
         for metadata in (
             "kafka_partition",
             "kafka_offset",
@@ -745,7 +747,20 @@ class ClickHouseContinuousSqlTests(unittest.TestCase):
                     "queryEngineTable": {"catalog": "iceberg", "schema": "asklake", "table": "events", "format": "iceberg"},
                     "schema": [["event_id", "bigint"], ["user_id", "bigint"]],
                     "schemaFingerprint": "events-v1",
-                    "streamingSource": {"broker": "redpanda:9092", "topic": "events"},
+                    "streamingSource": {
+                        "broker": "redpanda:9092",
+                        "topic": "events",
+                        "recordParsing": {
+                            "enabled": True,
+                            "delimiterKind": "whitespace",
+                            "delimiterPattern": r"\s+",
+                            "expectedFieldCount": 2,
+                            "columns": [
+                                {"position": 0, "name": "event_id"},
+                                {"position": 1, "name": "user_id"},
+                            ],
+                        },
+                    },
                 },
                 {
                     "alias": "u",

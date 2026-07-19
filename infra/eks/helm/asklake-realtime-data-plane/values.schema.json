@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "mode", "ownership", "keeper", "clickhouse", "kafkaConnect", "continuousWorker", "networkPolicy"],
+  "properties": {
+    "namespace": {"type": "string", "const": "asklake-dev"},
+    "mode": {"type": "string", "enum": ["disabled", "shadow", "cutover"]},
+    "ownership": {"$ref": "#/$defs/ownership"},
+    "keeper": {"type": "object"},
+    "clickhouse": {"type": "object"},
+    "kafkaConnect": {"type": "object"},
+    "continuousWorker": {"type": "object"},
+    "networkPolicy": {"type": "object"}
+  },
+  "$defs": {
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalOwner", "ec2Quiesced", "ec2KafkaOwnerReady", "realtimeV1Fenced", "transferApproved", "generation"],
+      "properties": {
+        "canonicalOwner": {"type": "string", "enum": ["ec2-continuous-worker", "eks-continuous-worker-v2"]},
+        "ec2Quiesced": {"type": "boolean"},
+        "ec2KafkaOwnerReady": {"type": "boolean"},
+        "realtimeV1Fenced": {"type": "boolean"},
+        "transferApproved": {"type": "boolean"},
+        "generation": {"type": "string", "pattern": "^(?:|[a-z0-9][a-z0-9.-]{0,62})$"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "resourceValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": {"type": "string", "minLength": 1},
+        "memory": {"type": "string", "pattern": "^[1-9][0-9]*(?:Ki|Mi|Gi|Ti)$"}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/$defs/resourceValues"},
+        "limits": {"$ref": "#/$defs/resourceValues"}
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "minProperties": 1,
+      "required": ["kubernetes.io/arch"],
+      "properties": {
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["storageClassName", "size"],
+      "properties": {
+        "storageClassName": {"type": "string", "minLength": 1},
+        "size": {"type": "string", "pattern": "^[1-9][0-9]*(?:Gi|Ti)$"}
+      }
+    },
+    "cidrs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"}
+    },
+    "keeperEnabled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "nodeSelector", "serviceAccountName", "terminationGracePeriodSeconds", "configSecret", "storage", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "const": 1},
+        "image": {"$ref": "#/$defs/image"},
+        "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
+        "serviceAccountName": {"type": "string", "minLength": 1},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+        "configSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "configKey"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "configKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "storage": {"$ref": "#/$defs/storage"},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "clickhouseEnabled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "nodeSelector", "serviceAccountName", "terminationGracePeriodSeconds", "configSecret", "storage", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "const": 1},
+        "image": {"$ref": "#/$defs/image"},
+        "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
+        "serviceAccountName": {"type": "string", "minLength": 1},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+        "configSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "configKey", "usersKey", "caKey", "certificateKey", "privateKeyKey"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "configKey": {"type": "string", "minLength": 1},
+            "usersKey": {"type": "string", "minLength": 1},
+            "caKey": {"type": "string", "minLength": 1},
+            "certificateKey": {"type": "string", "minLength": 1},
+            "privateKeyKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "storage": {"$ref": "#/$defs/storage"},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "kafkaConnectEnabled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "nodeSelector", "serviceAccountName", "createServiceAccount", "terminationGracePeriodSeconds", "envSecretName", "fileSecret", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "const": 1},
+        "image": {"$ref": "#/$defs/image"},
+        "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
+        "serviceAccountName": {"type": "string", "const": "asklake-kafka-connect-v2"},
+        "createServiceAccount": {"type": "boolean", "const": true},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+        "envSecretName": {"type": "string", "minLength": 1},
+        "fileSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "connectorPropertiesKey", "clickhouseCaKey"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "connectorPropertiesKey": {"type": "string", "minLength": 1},
+            "clickhouseCaKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "continuousWorkerCommon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "image", "nodeSelector", "serviceAccountName", "terminationGracePeriodSeconds", "backendConfigMapName", "backendRuntimeSecretName", "realtimeRuntimeSecret", "resources"],
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 0},
+        "image": {"$ref": "#/$defs/image"},
+        "nodeSelector": {"$ref": "#/$defs/nodeSelector"},
+        "serviceAccountName": {"type": "string", "const": "asklake-backend"},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+        "backendConfigMapName": {"type": "string", "const": "asklake-backend-config"},
+        "backendRuntimeSecretName": {"type": "string", "const": "asklake-backend-runtime"},
+        "realtimeRuntimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "materializerPasswordKey", "readerPasswordKey", "caKey"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "materializerPasswordKey": {"type": "string", "minLength": 1},
+            "readerPasswordKey": {"type": "string", "minLength": 1},
+            "caKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "networkPolicyEnabled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "mskCidrs", "rdsCidrs", "awsApiCidrs", "kubernetesApiCidrs", "podIdentityAgentCidrs"],
+      "properties": {
+        "enabled": {"type": "boolean", "const": true},
+        "mskCidrs": {"$ref": "#/$defs/cidrs"},
+        "rdsCidrs": {"$ref": "#/$defs/cidrs"},
+        "awsApiCidrs": {"$ref": "#/$defs/cidrs"},
+        "kubernetesApiCidrs": {"$ref": "#/$defs/cidrs"},
+        "podIdentityAgentCidrs": {"$ref": "#/$defs/cidrs"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "disabled"}}},
+      "then": {
+        "properties": {
+          "ownership": {
+            "properties": {
+              "canonicalOwner": {"const": "ec2-continuous-worker"},
+              "ec2Quiesced": {"const": false},
+              "ec2KafkaOwnerReady": {"const": false},
+              "realtimeV1Fenced": {"const": false},
+              "transferApproved": {"const": false},
+              "generation": {"const": ""}
+            }
+          },
+          "keeper": {"maxProperties": 0},
+          "clickhouse": {"maxProperties": 0},
+          "kafkaConnect": {"maxProperties": 0},
+          "continuousWorker": {"maxProperties": 0},
+          "networkPolicy": {"maxProperties": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"enum": ["shadow", "cutover"]}}},
+      "then": {
+        "properties": {
+          "keeper": {"$ref": "#/$defs/keeperEnabled"},
+          "clickhouse": {"$ref": "#/$defs/clickhouseEnabled"},
+          "kafkaConnect": {"$ref": "#/$defs/kafkaConnectEnabled"},
+          "continuousWorker": {"$ref": "#/$defs/continuousWorkerCommon"},
+          "networkPolicy": {"$ref": "#/$defs/networkPolicyEnabled"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "shadow"}}},
+      "then": {
+        "properties": {
+          "ownership": {
+            "properties": {
+              "canonicalOwner": {"const": "ec2-continuous-worker"},
+              "ec2Quiesced": {"const": false},
+              "ec2KafkaOwnerReady": {"const": false},
+              "realtimeV1Fenced": {"const": false},
+              "transferApproved": {"const": false},
+              "generation": {"const": ""}
+            }
+          },
+          "continuousWorker": {"properties": {"replicas": {"const": 0}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "cutover"}}},
+      "then": {
+        "properties": {
+          "ownership": {
+            "properties": {
+              "canonicalOwner": {"const": "eks-continuous-worker-v2"},
+              "ec2Quiesced": {"const": true},
+              "ec2KafkaOwnerReady": {"const": true},
+              "realtimeV1Fenced": {"const": true},
+              "transferApproved": {"const": true},
+              "generation": {"minLength": 1}
+            }
+          },
+          "continuousWorker": {"properties": {"replicas": {"type": "integer", "minimum": 1}}}
+        }
+      }
+    }
+  ]
+}

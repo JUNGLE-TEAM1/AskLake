@@ -104,7 +104,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. Production Compose 기본값은 `true`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. Production Compose 기본값은 `true`이며 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
-- `CONTINUOUS_CONTROL_PLANE=worker`인 전용 process만 reconciliation side effect를 수행한다. `CONTINUOUS_WORKER_SCOPE`는 `all | kafka | continuous_sql`이며 EC2 기본은 `all`이다. Issue #1044의 승인된 owner transfer에서만 EC2를 `continuous_sql`, EKS V1을 `kafka`로 분리한다. EKS V1은 `CONTINUOUS_WORKER_OWNER=eks-continuous-worker-v1`과 `CONTINUOUS_WORKER_GENERATION`을 함께 요구하며 PostgreSQL runtime `metrics.ownerClaim`의 full identity·fencing·revision이 일치하지 않으면 side effect를 수행하지 않는다. 각 scope는 별도 PostgreSQL lease key를 사용하므로 한쪽 lease를 얻지 못한 process가 다른 control plane까지 실행하지 않는다. web/API process에는 `worker`를 설정하지 않는다.
+- `CONTINUOUS_CONTROL_PLANE=worker`인 전용 process만 reconciliation side effect를 수행한다. `CONTINUOUS_WORKER_SCOPE`는 `all | kafka | continuous_sql`이며 EC2 기본은 `all`이다. Issue #1044의 승인된 owner transfer에서만 EC2를 `continuous_sql`, EKS V1을 `kafka`로 분리한다. EKS V1은 `CONTINUOUS_WORKER_OWNER=eks-continuous-worker-v1`과 generation을 요구하고, EKS ClickHouse V2는 `eks-continuous-worker-v2`, `continuous_sql` scope와 generation 조합만 허용한다. V1의 Kafka runtime은 PostgreSQL `metrics.ownerClaim`의 full identity·fencing·revision이 일치하지 않으면 side effect를 수행하지 않는다. 각 scope는 별도 PostgreSQL lease key를 사용하므로 한쪽 lease를 얻지 못한 process가 다른 control plane까지 실행하지 않는다. web/API process에는 `worker`를 설정하지 않는다.
 - `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Kafka Engine V1 worker의 kill switch다. Production Compose는 V2의 단일 consumer ownership을 위해 기본값을 `false`로 둔다.
 - `CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`: Production Compose에서 V2 application과 Kafka Connect sink를 함께 활성화한다. 두 값과 consumer owner가 모두 V2일 때 일반 Kafka Continuous `startContinuous`도 Spark bridge 대신 Kafka Connect raw sink를 요청한다.
 - `CLICKHOUSE_REALTIME_CONSUMER_OWNER`: production 기본값은 `kafka_connect_v2`다. 같은 Job generation에서 `kafka_engine_v1`과 동시에 사용할 수 없으며, 일반 Kafka Continuous V2 route의 선택 조건이다.
@@ -193,6 +193,8 @@ FastAPI schema 구현 기준:
 ```
 
 `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
+
+V2 owner가 활성화된 Continuous SQL validate/create는 streaming Dataset의 active ClickHouse binding을 fact relation으로 해석한다. streaming relation은 `queryEngineStatus=unavailable`이어도 `storageFormat=clickhouse`, 완전한 `clickhouseTable`, 동일한 active `physicalBindings`가 모두 있어야 한다. static JOIN relation은 기존처럼 available Iceberg query-engine table과 committed snapshot이 필요하다.
 
 ### Realtime Dashboard stream
 
@@ -310,7 +312,7 @@ Canonical status values:
 | `POST` | `/api/query/validate` | `query` | 실행 없이 canonical Trino 문법·Dataset context·권한 검증 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | 모든 선택 Dataset의 `query` | signed MCP context, Semantic RAG, Catalog cost metadata 기반 SQL 초안 생성. intent/cost 공용 최대 1회 교정 횟수와 generator/prompt version 반환 | `docs/api-contract.md` |
 | `POST` | `/api/ai/generate-sql` | authenticated actor | ETL field/SQL transform용 Gateway SQL 생성 후 relation·column·read-only 검증 | 이 문서 |
-| `GET` | `/api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 최신 성공 materialization의 실제 row를 최대 500행 page로 조회 | `docs/api-contract.md` |
+| `GET` | `/api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 최신 성공 materialization의 실제 row를 최대 500행 page로 조회. V2 raw ClickHouse Dataset은 Trino mapping 없이 topic 범위와 저장된 JSON/공백 `recordParsing` projection으로 조회 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run의 1회성 Iceberg CTAS 등록 시작. SQL 결과 toolbar에는 노출하지 않음 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin + current `query` access | persisted CTAS/등록 상태 조회 | `docs/trino-query-run-contract.md` |
@@ -1232,6 +1234,10 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | `ASKLAKE_SPARK_RUNNER` | `kubernetes` | in-cluster API로 `SparkApplication`을 제출·복구·조회하고 driver 결과를 수집한다. |
 
 `external_ec2`에서 `GET /api/etl/jobs`는 Continuous Job을 반환하지 않는다. Continuous Job의 상세·수정·삭제, 생성, command, 전용 runtime/log/maintenance API와 Continuous dataset의 freshness/dashboard widget data 조회는 아래 `409` envelope를 반환한다. Batch/SQL dataset 조회는 이 경계의 영향을 받지 않는다.
+
+EKS ClickHouse Realtime owner transfer는 별도 opt-in이다. 기본 chart 값은 위 `external_ec2`와 V2 disabled를 유지한다. 승인된 cutover values에서만 `ASKLAKE_CONTINUOUS_CONTROL_PLANE=local`, `CONTINUOUS_CONTROL_PLANE=disabled`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, V2/sink true, owner `kafka_connect_v2`, private ClickHouse/Kafka Connect Service URL을 함께 설정한다. 이때 web/API process는 request와 intent만 소유하고 reconciliation은 별도 EKS Continuous Worker의 `CONTINUOUS_CONTROL_PLANE=worker`가 수행한다. 모순된 일부 opt-in은 Helm schema 또는 backend startup에서 실패한다.
+
+EKS Realtime V1과 V2는 상호 배타다. `realtimeV1.enabled=true`인 workload values에서 V2 backend opt-in을 함께 요청하면 render 단계에서 실패한다.
 
 ```json
 {

@@ -131,6 +131,28 @@ class ContinuousWorkerScopeTests(unittest.TestCase):
                 _env_file=None,
             )
 
+    def test_settings_require_generation_and_continuous_sql_scope_for_v2_owner(self) -> None:
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with self.assertRaises(ValidationError):
+            Settings(continuous_worker_owner="eks-continuous-worker-v2", _env_file=None)
+        with self.assertRaises(ValidationError):
+            Settings(
+                continuous_worker_owner="eks-continuous-worker-v2",
+                continuous_worker_scope="kafka",
+                continuous_worker_generation="g1",
+                _env_file=None,
+            )
+        settings = Settings(
+            continuous_worker_owner="eks-continuous-worker-v2",
+            continuous_worker_scope="continuous_sql",
+            continuous_worker_generation="g1",
+            _env_file=None,
+        )
+        self.assertEqual(settings.continuous_worker_scope, "continuous_sql")
+
     def test_eks_owner_claim_must_match_full_runtime_identity(self) -> None:
         runtime = SimpleNamespace(
             broker="broker:9098",

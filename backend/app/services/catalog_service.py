@@ -53,7 +53,6 @@ from app.services.resource_permission_service import (
 )
 from app.services.trino_client import TrinoClient
 
-
 def dataset_for_latest_successful_materialization(
     dataset: CatalogDatasetResponse,
 ) -> CatalogDatasetResponse:
@@ -64,7 +63,6 @@ def dataset_for_latest_successful_materialization(
     when no successful materialization is available so callers can return the
     existing storage error with the correct dataset identity.
     """
-
     successful_runs = [
         run
         for run in dataset.materialization_runs
@@ -72,14 +70,12 @@ def dataset_for_latest_successful_materialization(
     ]
     if not successful_runs:
         return dataset
-
     def created_at(run: object) -> datetime:
         value = str(getattr(run, "created_at", ""))
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return datetime.min.replace(tzinfo=timezone.utc)
-
     selected = max(successful_runs, key=created_at)
     updates: dict[str, object] = {
         "source_run_id": selected.run_id,
@@ -699,15 +695,19 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
+    query_engine_required = (
+        settings.trino_enabled
+        and str(dataset.storage_format or "").strip().casefold() != "clickhouse"
+    )
     if (
         permissions is not None
-        and settings.trino_enabled
+        and query_engine_required
         and (dataset.query_engine_status != "available" or dataset.query_engine_table is None)
     ):
         permissions = permissions.model_copy(update={"can_query": False})
     return dataset.model_copy(update={
         "permissions": permissions,
-        "query_engine_required": settings.trino_enabled,
+        "query_engine_required": query_engine_required,
     })
 
 
