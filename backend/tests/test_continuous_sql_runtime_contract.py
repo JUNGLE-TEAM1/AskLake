@@ -30,7 +30,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 from continuous_sql_runtime import (  # noqa: E402
+    RUNTIME_METADATA_COLUMNS,
     binding_manifest_path,
+    execute_continuous_sql_batch,
     validate_binding_manifest,
     validate_runtime_plan,
 )
@@ -102,6 +104,32 @@ class FakeIcebergWriter:
 
 
 class ContinuousSqlRuntimeContractTests(unittest.TestCase):
+    def test_foreach_batch_sql_uses_the_stream_frames_spark_session(self) -> None:
+        class BatchSpark:
+            def __init__(self) -> None:
+                self.queries = []
+
+            def sql(self, query):
+                self.queries.append(query)
+                return type("Result", (), {"columns": list(RUNTIME_METADATA_COLUMNS)})()
+
+        class WrongSpark:
+            def sql(self, _query):
+                raise AssertionError("the global SparkSession must not execute foreachBatch SQL")
+
+        batch_spark = BatchSpark()
+        stream_frame = type("Frame", (), {"sparkSession": batch_spark})()
+
+        result = execute_continuous_sql_batch(
+            WrongSpark(),
+            stream_frame,
+            {"relations": [], "runtimeSql": "SELECT 1", "outputSchema": []},
+            [],
+        )
+
+        self.assertEqual(result.columns, list(RUNTIME_METADATA_COLUMNS))
+        self.assertEqual(batch_spark.queries, ["SELECT 1"])
+
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         self.db = Session(self.engine)
