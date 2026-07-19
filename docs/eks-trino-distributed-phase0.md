@@ -6,9 +6,9 @@
 > 배포 증거는 역사적 기준선이 아니라 실제로 병합·배포한 `pair1` 전체 commit을
 > 별도로 고정해야 한다. 이 구현만으로 운영 처리량을 보장하지 않는다.
 
-> 2026-07-19 후속 운영 결정으로 dev live의 distributed 모드는 worker `5`개 고정으로
-> 전환했다. 아래의 최초 worker `2`개와 `2→1→2` 내용은 Phase 0 역사 evidence이며 현재
-> 운영 명령이 아니다. 현재 정책은 11절이 우선한다.
+> 2026-07-19 최종 운영 결정으로 dev live의 distributed 모드는 worker `2`개 고정으로
+> 전환했다. 기존 General node의 4 vCPU 사양은 변경하지 않는다. 아래의 최초 `2→1→2`
+> 내용은 Phase 0 역사 evidence이며 현재 운영 명령이 아니다. 현재 정책은 11절이 우선한다.
 
 ## 1. 현재 기준선
 
@@ -72,7 +72,7 @@ coordinator를 만드는 잘못된 변경이다.
 모두 명시된 경우에만 렌더한다.
 
 - distributed worker 활성화
-- 현재 dev live에서 정확히 5인 worker replica
+- 현재 dev live에서 정확히 2인 worker replica
 - worker CPU/memory request와 limit
 - worker node selector
 - worker 종료 유예 시간
@@ -91,9 +91,10 @@ coordinator label만 선택하고 worker readiness는 `/v1/info`와 cluster regi
 완료 처리하지 않는다.
 
 최초 Phase 0에서는 worker 1~5를 실험 범위로 허용하고 private overlay의 worker `2`개로
-시작했다. 후속 결정 이후 dev live에서 distributed를 활성화하면 worker는 정확히 `5`개이며
+시작했다. 최종 결정 이후 dev live에서 distributed를 활성화하면 worker는 정확히 `2`개이며
 SQL 요청·UI와 HPA가 이를 바꾸지 않는다. 이는 Pod replica 정책이지 처리량 보장이나 실제 서버
-5대를 의미하지 않는다. chart의 disabled single-process 경로는 안전 rollback용으로 유지한다.
+2대를 의미하지 않는다. 기존 General node의 4 vCPU 사양은 유지하고 chart의 disabled
+single-process 경로는 안전 rollback용으로 유지한다.
 
 ## 4. 아직 확정하지 않는 결정
 
@@ -127,7 +128,7 @@ credential이 없으므로 이를 우회하는 unauthenticated `preStop`을 추�
 6. 두 role은 같은 immutable image, ServiceAccount, internal shared secret, JKS,
    password database, JDBC catalog와 S3 설정을 사용한다.
 7. worker replica, resources, placement 또는 termination 값이 빠지거나 잘못되면
-   schema/render가 실패한다. 현재 worker replica는 5만 허용하고 4와 6은 거부한다.
+   schema/render가 실패한다. 현재 worker replica는 2만 허용하고 1과 3은 거부한다.
 8. HPA, PDB, StatefulSet, PVC, Secret, foundation RBAC, static AWS credential 또는
    mutable image는 추가되지 않는다.
 9. Airflow-only render에는 coordinator와 worker가 모두 없다.
@@ -135,7 +136,7 @@ credential이 없으므로 이를 우회하는 unauthenticated `preStop`을 추�
 ## 6. live 분산·장애 수용 기준
 
 승인된 EKS 실행은 private input과 immutable image receipt를 사용한다. 최초 Phase 0 후보는
-worker `2`개로 검증했으며 현재 fixed-5 rollout은 active worker `5`개를 요구한다. 다음 evidence를
+worker `2`개로 검증했으며 현재 fixed-2 rollout도 active worker `2`개를 요구한다. 다음 evidence를
 비식별 JSON으로 남기기 전에는 분산 모드를 완료된 promotion으로 판정하지 않는다.
 
 1. `system.runtime.nodes`에 coordinator `1`과 선언한 수의 active worker가 있다.
@@ -147,8 +148,8 @@ worker `2`개로 검증했으며 현재 fixed-5 rollout은 active worker `5`개�
    Identity가 변하지 않는다.
 5. worker 장애 중 실행 중 query의 결과는 `succeeded` 또는 `failed`로 사실 그대로
    기록한다. fault-tolerant execution 결정 전에는 자동 성공을 요구하지 않는다.
-6. 최초 Phase 0의 worker `2→1→2`는 역사적 scale evidence로 보존한다. fixed-5 정책에서는
-   일반 운영자가 replica를 낮추지 않으며 exact-UID worker 장애 후 `5`개 복구를 확인한다.
+6. 최초 Phase 0의 worker `2→1→2`는 역사적 scale evidence로 보존한다. fixed-2 정책에서는
+   일반 운영자가 replica를 낮추지 않으며 exact-UID worker 장애 후 `2`개 복구를 확인한다.
 7. rollback은 distributed 배포 직전에 새 chart의 `Recreate` 전략으로 검증해 기록한 안전한
    단일 coordinator Helm revision으로 수행하고 Backend health와 Trino query, RDS/S3, Secret,
    ServiceAccount/Pod Identity가 복구됨을 확인한다. 오래된 RollingUpdate revision을 안전
@@ -158,9 +159,9 @@ worker `2`개로 검증했으며 현재 fixed-5 rollout은 active worker `5`개�
 
 ## 7. Phase 0 판정
 
-Phase 0 판정은 **최초 2-worker 구조 검증 완료, 후속 fixed-5 운영 전환**이다. 현재 chart schema와
-배포 preflight는 distributed 활성화 시 worker `5`개만 허용한다. non-empty Iceberg worker task,
-exact-UID 장애 후 5-worker 복구와 안전 단일 coordinator rollback evidence가 완료되기 전에는
+Phase 0 판정은 **2-worker 구조 검증 완료, fixed-2 운영 전환**이다. 현재 chart schema와
+배포 preflight는 distributed 활성화 시 worker `2`개만 허용한다. non-empty Iceberg worker task,
+exact-UID 장애 후 2-worker 복구와 안전 단일 coordinator rollback evidence가 완료되기 전에는
 분산 모드를 성능 완료 상태로 판단하지 않는다.
 
 참고:
@@ -181,7 +182,7 @@ trino:
   distributed:
     enabled: true
     includeCoordinator: false
-    workerReplicas: 5
+    workerReplicas: 2
     workerNodeSelector: <approved-general-placement>
     workerTerminationGracePeriodSeconds: <measured-value>
     workerResources:
@@ -189,8 +190,8 @@ trino:
       limits: {cpu: <measured>, memory: <measured>}
 ```
 
-이 문서의 placeholder는 배포값이 아니다. 최초 live 후보는 private overlay에서 worker `2`를
-사용했지만 현재 distributed private overlay는 `5`를 고정한다. chart default/example에는 worker
+이 문서의 placeholder는 배포값이 아니다. 최초 live 후보와 현재 distributed private overlay는
+worker `2`를 고정한다. chart default/example에는 worker
 replica, resources, termination grace 또는 HPA 수치가 없다. opt-in render는 기존 coordinator
 Deployment와 별도 `Deployment/asklake-trino-worker`, 별도 role config를 만들고 Service는
 기존 `app.kubernetes.io/component=trino` coordinator만 선택한다. worker는 별도
@@ -216,8 +217,8 @@ component-scoped Helm release, Git 제외 `0600` private values, immutable image
 2026-07-19 첫 live 시도에서는 General NodePool이 이미 CPU 6을 사용한 상태에서 pool 상한
 CPU 8·memory 32Gi가 새 x86 node의 system overhead까지 수용하지 못해 coordinator와 worker가
 Pending이 됐다. 다른 private Auto Mode 값은 유지하고 live pool 상한만 CPU 12·memory 48Gi로
-올린 뒤 NodePool Ready와 새 node scale-out을 확인했다. 이는 worker를 상시 실행하거나 5개
-처리량을 보장하는 값이 아니라, opt-in 최대 5개를 검증할 수 있게 하는 비용·capacity 상한이다.
+올린 뒤 NodePool Ready와 새 node scale-out을 확인했다. 이는 worker 처리량을 보장하는 값이 아니라,
+당시 실험 범위를 검증할 수 있게 한 비용·capacity 상한이다. 현재 General node의 4 vCPU 사양은 유지한다.
 배포 전에는 항상 현재 cluster-wide requests와 다른 active workload를 다시 확인한다.
 
 1. 현재 live values를 보존한 채 distributed를 끈 새 chart를 먼저 적용한다. coordinator replica 1,
@@ -265,13 +266,13 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
   /path/to/redacted-trino-distributed-receipt.json
 ```
 
-역사적인 evidence schema v2는 2-worker campaign을 기록했다. 현재 fixed-5 promotion은 schema
-v3에서 declared/active/recovered worker가 모두 5인지, Iceberg worker task, exact-UID 장애 복구,
+역사적인 evidence schema v2는 2-worker campaign을 기록했다. 현재 fixed-2 promotion은 schema
+v3에서 declared/active/recovered worker가 모두 2인지, Iceberg worker task, exact-UID 장애 복구,
 불변 계약과 안전 단일 coordinator rollback을 검증한다. `2→1→2` scale 단계는 역사적 operator
 증거로만 남긴다.
 
 역사 v2 receipt를 재검증할 때만 명시적 flag를 사용한다. 이 flag는 current promotion에 사용할
-수 없고 기본 검증 경로는 항상 fixed-5 schema v3다.
+수 없고 기본 검증 경로는 항상 fixed-2 schema v3다.
 
 ```bash
 ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<historical-deployed-pair1-full-sha> \
@@ -282,18 +283,19 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<historical-deployed-pair1-full-sha> \
 ## 10. 보류 결정
 
 구현은 HPA, PDB, topology spread, 전용 NodePool, fault-tolerant execution과 인증된 graceful
-shutdown hook을 만들지 않는다. worker replica는 fixed-5로 결정됐지만 특히
+shutdown hook을 만들지 않는다. worker replica는 fixed-2로 결정됐지만 특히
 `workerTerminationGracePeriodSeconds`는 Kubernetes의
 SIGTERM 대기 경계일 뿐 Trino graceful shutdown API 호출을 의미하지 않는다. 부하·장애 campaign과
 별도 보안 결정에서 worker sizing, JVM/query memory, scale-in 동작과 system-information 운영
 identity가 승인되기 전에는 distributed mode를 기본값으로 승격하지 않는다.
 
-## 11. 현재 fixed-5 운영 정책
+## 11. 현재 fixed-2 운영 정책
 
-dev live에서 distributed mode를 켜는 private values는 `workerReplicas: 5`만 허용한다. SQL
+dev live에서 distributed mode를 켜는 private values는 `workerReplicas: 2`만 허용한다. SQL
 query request와 Frontend/Backend API에는 worker count 필드가 없으며 HPA도 만들지 않는다.
-Trino scheduler는 현재 Ready인 공용 worker 5개에 query task를 분배한다. 유휴 상태에서도 다섯
-worker Pod는 유지되므로 배포 전 General NodePool capacity와 비용을 확인한다.
+Trino scheduler는 현재 Ready인 공용 worker 2개에 query task를 분배한다. 유휴 상태에서도 두
+worker Pod는 유지되므로 배포 전 General NodePool capacity와 비용을 확인한다. 물리 node 사양은
+기존 4 vCPU를 유지하며 이 정책은 worker replica만 변경한다.
 
 apply는 namespace에 `asklake-trino-deploy-lock` ConfigMap을 원자적으로 생성하고 lock UID와
 Helm revision을 다시 확인한 뒤에만 baseline을 변경한다. 다른 campaign이 lock을 보유하면 즉시
@@ -318,10 +320,10 @@ python3 scripts/lib/delete_kubernetes_resource_with_uid.py \
 
 재배포는 현재 live values의 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도
 single values를 먼저 적용한다. worker/discovery 부재, coordinator `Recreate`와 non-empty Iceberg
-query를 확인한 revision을 rollback 기준으로 고정한 뒤 fixed-5 values를 적용한다. 최종 gate는
-coordinator 1개, active worker 5개와 non-empty Iceberg query다. 실패하면 안전 single revision으로
+query를 확인한 revision을 rollback 기준으로 고정한 뒤 fixed-2 values를 적용한다. 최종 gate는
+coordinator 1개, active worker 2개와 non-empty Iceberg query다. 실패하면 안전 single revision으로
 되돌린다. single baseline 자체의 검증이 실패하면 후보를 적용하지 않고 배포 전 관찰한 revision과
-그 worker/query 상태를 복구한다. 최초 `2→1→2` 결과는 역사 evidence이며 fixed-5 운영에서 반복하지 않는다.
+그 worker/query 상태를 복구한다. 최초 `2→1→2` 결과는 역사 evidence이며 fixed-2 운영에서 반복하지 않는다.
 
 ## 12. 최종 로컬 검증·범위 감사
 
