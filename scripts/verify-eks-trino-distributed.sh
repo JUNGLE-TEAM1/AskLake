@@ -178,6 +178,8 @@ bash -n "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 bash -n "$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
 bash -n "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
 python3 -m py_compile "$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py"
+python3 -m py_compile "$ROOT_DIR/scripts/lib/delete_kubernetes_resource_with_uid.py"
+python3 "$ROOT_DIR/scripts/test_eks_trino_lock_delete.py" >/dev/null
 
 deploy_script="$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
 grep -Fq "jq -eS '.trino.distributed = {enabled:false}' \"\$live_values\" >\"\$single_values\"" "$deploy_script"
@@ -186,8 +188,13 @@ grep -Fq 'safe single-coordinator candidate contains distributed resources' "$de
 test "$(grep -Fc 'restore_observed_revision "' "$deploy_script")" -eq 2
 grep -Fq '[[ "$EXPECTED_WORKERS" == "5" ]]' "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
 grep -Fq 'LOCK_NAME="asklake-trino-deploy-lock"' "$deploy_script"
-grep -Fq "'{apiVersion:\"v1\",kind:\"DeleteOptions\",preconditions:{uid:\$uid}}'" "$deploy_script"
+grep -Fq 'delete_kubernetes_resource_with_uid.py' "$deploy_script"
 test "$(grep -Fc 'verify_campaign_lock' "$deploy_script")" -ge 5
+grep -Fq -- '--from-literal="acquiredAt=$lock_acquired_at"' "$deploy_script"
+grep -Fq 'baseline_revision="$(helm upgrade' "$deploy_script"
+grep -Fq 'candidate_revision="$(helm upgrade' "$deploy_script"
+test "$(grep -Fc -- "-o json | jq -er '.version'" "$deploy_script")" -ge 2
+test "$(grep -Fc 'assert_campaign_revision ' "$deploy_script")" -ge 7
 grep -Fq 'refusing to roll back a foreign revision' "$deploy_script"
 jq -n '{sentinel:"preserved",trino:{distributed:{enabled:true,workerReplicas:5,includeCoordinator:false}}}' >"$SINGLE_VALUES_SAMPLE"
 jq -eS '.trino.distributed = {enabled:false}' "$SINGLE_VALUES_SAMPLE" >"$SINGLE_VALUES_RESULT"

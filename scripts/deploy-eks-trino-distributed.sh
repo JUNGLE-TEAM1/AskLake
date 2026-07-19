@@ -87,9 +87,9 @@ lock_uid=""
 cleanup() {
   rm -f "$rendered" "$live_values" "$single_values" "$single_rendered" "$live_without_distributed" "$candidate_without_distributed"
   if [[ -n "$lock_uid" ]]; then
-    if ! jq -cn --arg uid "$lock_uid" \
-      '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}' | \
-      kubectl delete --raw "/api/v1/namespaces/$NAMESPACE/configmaps/$LOCK_NAME" -f - >/dev/null 2>&1; then
+    if ! python3 "$ROOT_DIR/scripts/lib/delete_kubernetes_resource_with_uid.py" \
+      --resource-path "/api/v1/namespaces/$NAMESPACE/configmaps/$LOCK_NAME" \
+      --uid "$lock_uid" >/dev/null 2>&1; then
       echo "warning: failed to release the Trino deployment lock with its UID precondition" >&2
     fi
   fi
@@ -159,9 +159,11 @@ git -C "$ROOT_DIR" diff --quiet || fail "the deployment worktree has unstaged tr
 git -C "$ROOT_DIR" diff --cached --quiet || fail "the deployment worktree has staged changes"
 
 lock_object=""
+lock_acquired_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 if ! lock_object="$(kubectl create configmap "$LOCK_NAME" -n "$NAMESPACE" \
   --from-literal="deploymentCommit=$deployment_commit" \
-  --from-literal="observedRevision=$observed_revision" -o json 2>/dev/null)"; then
+  --from-literal="observedRevision=$observed_revision" \
+  --from-literal="acquiredAt=$lock_acquired_at" -o json 2>/dev/null)"; then
   fail "another Trino deployment campaign holds the Kubernetes release lock"
 fi
 lock_uid="$(jq -er '.metadata.uid' <<<"$lock_object")" || fail "the Trino deployment lock has no UID"
@@ -173,6 +175,14 @@ verify_campaign_lock() {
 
 current_revision() {
   helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version'
+}
+
+assert_campaign_revision() {
+  local expected_revision="$1"
+  local message="$2"
+  verify_campaign_lock
+  [[ "$(current_revision)" == "$expected_revision" ]] || \
+    fail "$message; refusing to mutate or accept a foreign Helm revision"
 }
 
 verify_campaign_lock
@@ -244,13 +254,17 @@ verify_observed_mode() {
 
 restore_observed_revision() {
   local reason="$1"
-  verify_campaign_lock
+  local expected_current_revision="$2"
+  local restored_revision
+  assert_campaign_revision "$expected_current_revision" "$reason"
   echo "$reason; restoring observed revision $observed_revision" >&2
   if ! helm rollback "$RELEASE" "$observed_revision" -n "$NAMESPACE" \
     --cleanup-on-fail --wait=watcher --timeout=15m; then
     fail "$reason and restoring the observed revision failed; manual recovery is required"
   fi
+  restored_revision="$(current_revision)"
   verify_observed_mode || fail "$reason and the restored observed revision did not pass its query gate; manual recovery is required"
+  assert_campaign_revision "$restored_revision" "$reason and observed-revision recovery"
   fail "$reason; the observed revision was restored"
 }
 
@@ -259,25 +273,37 @@ restore_observed_revision() {
 # an already-distributed release changing its fixed worker policy.
 verify_campaign_lock
 [[ "$(current_revision)" == "$observed_revision" ]] || fail "asklake-trino changed before the single baseline upgrade"
-if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
+baseline_revision=""
+if ! baseline_revision="$(helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" \
-  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
-  restore_observed_revision "failed to create the safe single-coordinator Recreate baseline"
+  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m \
+  -o json | jq -er '.version')"; then
+  failed_baseline_revision="$(current_revision)"
+  if verify_observed_mode; then
+    assert_campaign_revision "$failed_baseline_revision" "failed single-baseline upgrade recovery"
+    fail "failed to create the safe single-coordinator Recreate baseline; the observed mode remains healthy"
+  fi
+  restore_observed_revision "failed to create the safe single-coordinator Recreate baseline" "$failed_baseline_revision"
 fi
+assert_campaign_revision "$baseline_revision" "single baseline Helm response"
 if ! verify_single_mode; then
-  restore_observed_revision "safe single-coordinator baseline verification failed"
+  restore_observed_revision "safe single-coordinator baseline verification failed" "$baseline_revision"
 fi
-baseline_revision="$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version')"
+assert_campaign_revision "$baseline_revision" "single baseline verification"
 
 verify_campaign_lock
 [[ "$(current_revision)" == "$baseline_revision" ]] || fail "asklake-trino changed before the fixed five-worker upgrade"
-if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
+candidate_revision=""
+if ! candidate_revision="$(helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
-  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
+  --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m \
+  -o json | jq -er '.version')"; then
+  failed_candidate_revision="$(current_revision)"
   verify_single_mode || fail "distributed Trino upgrade failed and the safe single baseline could not be verified; manual recovery is required"
+  assert_campaign_revision "$failed_candidate_revision" "failed fixed five-worker upgrade recovery"
   fail "distributed Trino Helm upgrade failed; the safe single-coordinator baseline was restored"
 fi
-candidate_revision="$(current_revision)"
+assert_campaign_revision "$candidate_revision" "fixed five-worker Helm response"
 
 if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers"; then
   echo "distributed Trino live gate failed; rolling back revision $baseline_revision" >&2
@@ -288,8 +314,11 @@ if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers
     --cleanup-on-fail --wait=watcher --timeout=15m; then
     fail "distributed Trino live gate and automatic rollback both failed; manual recovery is required"
   fi
+  rollback_revision="$(current_revision)"
   verify_single_mode || fail "distributed Trino live gate failed and the safe single rollback could not be verified; manual recovery is required"
+  assert_campaign_revision "$rollback_revision" "safe single rollback verification"
   fail "distributed Trino rollout was rolled back"
 fi
+assert_campaign_revision "$candidate_revision" "fixed five-worker live verification"
 
 echo "EKS distributed Trino rollout passed revision, active-worker, and non-empty Iceberg query gates."

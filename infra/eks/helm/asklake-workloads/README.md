@@ -126,6 +126,11 @@ the exact pre-deployment revision before it stops; it never proceeds to five wor
 The apply campaign also holds the namespace-scoped `asklake-trino-deploy-lock`
 ConfigMap, rechecks the Helm revision before each mutation, and removes only its
 own lock UID. A foreign revision observed during the live gate is never rolled back.
+`SIGKILL` or an operator-host loss can leave this cooperative lock behind. Do not
+delete it by name. First inspect its `acquiredAt`, `deploymentCommit`,
+`observedRevision`, and UID, confirm no campaign is running and Helm is not in a
+pending state, then use the UID-precondition break-glass procedure in
+`docs/eks-trino-distributed-phase0.md`.
 Active registration of all five workers plus a non-empty Iceberg read is only the
 deployment gate: promotion additionally requires a non-empty Iceberg worker task,
 exact-UID replacement, and successful safe rollback evidence bound to the merged

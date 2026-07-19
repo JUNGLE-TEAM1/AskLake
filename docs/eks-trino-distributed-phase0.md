@@ -300,6 +300,22 @@ Helm revision을 다시 확인한 뒤에만 baseline을 변경한다. 다른 cam
 중단한다. 종료 시 자신이 만든 UID에만 precondition delete를 수행하며, live gate 중 다른 revision이
 관찰되면 foreign revision을 rollback하지 않는다.
 
+`SIGKILL` 또는 실행 호스트 장애로 lock이 남았다고 해서 이름만 보고 삭제하지 않는다. 먼저
+`acquiredAt`, `deploymentCommit`, `observedRevision`, UID를 확인하고 해당 배포 실행자가 종료됐는지,
+`helm status asklake-trino -n asklake-dev`가 `pending-*` 상태가 아닌지, 현재 revision과 workload
+mode가 무엇인지 확인한다. 이 근거를 남긴 뒤에만 아래처럼 읽어 둔 동일 UID를 precondition으로
+사용한다. UID가 그 사이 바뀌면 삭제가 거부되므로 새 campaign의 lock을 지우지 않는다.
+
+```bash
+lock_json="$(kubectl get configmap asklake-trino-deploy-lock -n asklake-dev -o json)"
+jq -r '.data | {acquiredAt,deploymentCommit,observedRevision}' <<<"$lock_json"
+lock_uid="$(jq -er '.metadata.uid' <<<"$lock_json")"
+python3 scripts/lib/delete_kubernetes_resource_with_uid.py \
+  --resource-path \
+    '/api/v1/namespaces/asklake-dev/configmaps/asklake-trino-deploy-lock' \
+  --uid "$lock_uid"
+```
+
 재배포는 현재 live values의 `trino.distributed` 객체 전체를 `{enabled:false}`로 교체한 별도
 single values를 먼저 적용한다. worker/discovery 부재, coordinator `Recreate`와 non-empty Iceberg
 query를 확인한 revision을 rollback 기준으로 고정한 뒤 fixed-5 values를 적용한다. 최종 gate는
@@ -310,7 +326,7 @@ coordinator 1개, active worker 5개와 non-empty Iceberg query다. 실패하면
 ## 12. 최종 로컬 검증·범위 감사
 
 2026-07-19에 구현 브랜치를 최신 `origin/pair1`
-`066de7c47d4740b30ad525ed33a45e8c507ca507`에 동기화한 뒤 다음 로컬 계약을 확인했다.
+`6943a9764e1b0152575802ba03ac8a7d85c6915a`에 동기화한 뒤 다음 로컬 계약을 확인했다.
 Issue baseline `a782ab7aee560df8c68b4e64452a8d00e415d8ab`은 evidence의 역사적 시작점으로만
 보존하며 배포 commit을 대신하지 않는다.
 

@@ -2048,8 +2048,11 @@ campaign의 `2→1→2` 기록은 역사적 scale evidence이며 현재 fixed-5 
 single baseline 생성 또는 query 검증이 실패하면 fixed-5 후보를 적용하지 않고 배포 전 관찰한
 revision을 복구해 기존 worker 수와 Iceberg query가 다시 정상인지 확인한다.
 apply 전체에서는 namespace-scoped `asklake-trino-deploy-lock` ConfigMap을 원자적으로 획득하고
-UID precondition으로만 해제한다. lock을 얻은 직후와 각 Helm mutation 직전에 revision을 다시
-확인하며, live gate 사이 foreign revision이 보이면 해당 revision을 덮거나 rollback하지 않는다.
+lock에는 획득 시각, 병합 commit, 관찰 revision을 기록한다. 비정상 종료로 lock이 남으면 이름 기반
+강제 삭제를 하지 않고 [Trino distributed runbook](eks-trino-distributed-phase0.md)의 상태 확인과
+UID-precondition break-glass 절차를 따른다. 각 Helm mutation은 command 결과의 revision을 즉시
+기록하고 query gate 뒤에도 같은 revision인지 확인하므로 foreign revision을 성공으로 인정하거나
+rollback하지 않는다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 
