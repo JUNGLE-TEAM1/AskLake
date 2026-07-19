@@ -231,6 +231,7 @@ def execute_continuous_sql_batch(
 ) -> Any:
     if not plan:
         return stream_frame
+    batch_spark = getattr(stream_frame, "sparkSession", None) or spark
     bindings_by_dataset = {
         str(item.get("datasetId") or ""): item
         for item in static_bindings
@@ -248,7 +249,7 @@ def execute_continuous_sql_batch(
         if binding is None:
             raise RuntimeError("CONTINUOUS_SQL_STATIC_BINDING_MISSING")
         static_frame = reusable_static_snapshot(
-            spark,
+            batch_spark,
             relation,
             binding,
         )
@@ -259,7 +260,7 @@ def execute_continuous_sql_batch(
 
             static_frame = broadcast(static_frame)
         static_frame.createOrReplaceTempView(runtime_view)
-    result = spark.sql(str(plan["runtimeSql"]))
+    result = batch_spark.sql(str(plan["runtimeSql"]))
     expected_columns = [str(item[0]) for item in plan["outputSchema"]] + RUNTIME_METADATA_COLUMNS
     actual_columns = list(result.columns)
     if actual_columns != expected_columns:
