@@ -61,7 +61,7 @@ def clickhouse_v2_query_binding(
     if not active:
         return None
     binding = active[0]
-    if binding.get("engine") != "clickhouse" or binding.get("table") != "serving_current_v2":
+    if binding.get("engine") != "clickhouse":
         return None
     database = validate_clickhouse_identifier(binding.get("database"))
     table = validate_clickhouse_identifier(binding.get("table"))
@@ -123,13 +123,31 @@ def clickhouse_v2_query_binding(
     if not projections or len(projections) > 200:
         raise ValueError("V2 serving binding exposes an invalid number of Catalog columns")
     target = qualified_clickhouse_table(database, table)
-    query_table = (
-        f"(SELECT {', '.join(projections)} FROM {target} "
-        "WHERE scope_id = 'deployment' "
-        f"AND serving_dataset_id = {quote_clickhouse_string(dataset_id)} "
-        f"AND pipeline_version_id = {quote_clickhouse_string(pipeline_version_id)}) "
-        "AS __asklake_serving"
-    )
+    if table == "serving_current_v2":
+        query_table = (
+            f"(SELECT {', '.join(projections)} FROM {target} "
+            "WHERE scope_id = 'deployment' "
+            f"AND serving_dataset_id = {quote_clickhouse_string(dataset_id)} "
+            f"AND pipeline_version_id = {quote_clickhouse_string(pipeline_version_id)}) "
+            "AS __asklake_serving"
+        )
+    elif table == "raw_events_v2_current":
+        streaming_source = _dataset_value(dataset, "streaming_source", "streamingSource")
+        topic = (
+            str(streaming_source.get("topic") or "").strip()
+            if isinstance(streaming_source, Mapping)
+            else ""
+        )
+        if not topic:
+            raise ValueError("V2 raw ingest binding requires a Kafka topic")
+        query_table = (
+            f"(SELECT {', '.join(projections)} FROM {target} "
+            "WHERE scope_id = 'deployment' "
+            f"AND kafka_topic = {quote_clickhouse_string(topic)}) "
+            "AS __asklake_serving"
+        )
+    else:
+        return None
     return target, query_table, columns, binding_epoch
 
 
