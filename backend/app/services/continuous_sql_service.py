@@ -78,7 +78,14 @@ class ContinuousSqlService:
         self.settings = runtime_settings or settings
         self.repository = ContinuousSqlRepository(db)
         self.catalog_repository = CatalogRepository(db)
-        self.catalog_resolver = ContinuousSqlCatalogResolver(db)
+        self.catalog_resolver = ContinuousSqlCatalogResolver(
+            db,
+            allow_clickhouse_streaming=(
+                self.settings.clickhouse_realtime_v2_enabled
+                and self.settings.kafka_connect_sink_enabled
+                and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+            ),
+        )
         self.planner = ContinuousSqlPlanner()
         self.gateway = gateway or RoutedContinuousSqlWorkerGateway(self.settings)
         self.publication_service = publication_service or ContinuousSqlPublicationService(db)
