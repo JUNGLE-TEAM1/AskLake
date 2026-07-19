@@ -71,12 +71,14 @@ function kubernetesEnvironment(runtimeEnvironment, environment) {
     ASKLAKE_SPARK_ICEBERG_JDBC_URL: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_URL_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
     ASKLAKE_SPARK_ICEBERG_JDBC_USER: environment.ASKLAKE_SPARK_KUBERNETES_ICEBERG_JDBC_USER_KEY || "ASKLAKE_SPARK_ICEBERG_JDBC_USER",
   };
-  return Object.entries(runtimeEnvironment).map(([name, value]) => {
-    const secretKey = secretKeys[name];
-    return secretKey
-      ? { name, valueFrom: { secretKeyRef: { name: secretName, key: secretKey } } }
-      : { name, value: String(value) };
-  });
+  const publicEnvironment = Object.entries(runtimeEnvironment)
+    .filter(([name]) => !secretKeys[name])
+    .map(([name, value]) => ({ name, value: String(value) }));
+  const secretEnvironment = Object.entries(secretKeys).map(([name, key]) => ({
+    name,
+    valueFrom: { secretKeyRef: { name: secretName, key } },
+  }));
+  return [...publicEnvironment, ...secretEnvironment];
 }
 
 function kubernetesHadoopConf(environment) {

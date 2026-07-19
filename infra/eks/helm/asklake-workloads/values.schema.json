@@ -362,7 +362,7 @@
           "properties": {
             "serviceAccountName": {"type": "string", "const": "asklake-realtime-v1-spark"},
             "runtimeSecretName": {"type": "string", "const": "asklake-spark-runtime"},
-            "mainApplicationFile": {"type": "string", "const": "/opt/asklake/scripts/kafka_continuous_stream.py"}
+            "mainApplicationFile": {"type": "string", "const": "local:///opt/asklake/scripts/kafka_continuous_stream.py"}
           }
         },
         "kafka": {

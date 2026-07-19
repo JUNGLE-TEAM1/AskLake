@@ -335,6 +335,7 @@ grep -q 'serviceAccountName: asklake-realtime-v1-worker' "$REALTIME_V1_RENDERED_
 grep -q 'name: asklake-runtime' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "asklake-realtime-v1-spark"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: ASKLAKE_KAFKA_AUTH_MODE' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "local:///opt/asklake/scripts/kafka_continuous_stream.py"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$REALTIME_V1_RENDERED_FILE"
 if grep -Eq 'app.kubernetes.io/component: (kafka-connect|clickhouse|keeper)' "$REALTIME_V1_RENDERED_FILE"; then
   echo "selected V1 render unexpectedly contains a V2 workload" >&2

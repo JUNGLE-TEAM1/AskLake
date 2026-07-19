@@ -87,7 +87,12 @@ jq --arg runtime "$RUNTIME_OBJECT_ARN" '
 
 jq --arg topic "$TOPIC_ARN" '
   def arr: if type=="array" then . else [.] end;
-  .Statement |= map(if .Sid=="ProduceFixtureTopic" then .Resource=((.Resource|arr)+[$topic]|unique) else . end)
+  .Statement |= map(
+    if .Sid=="ProduceFixtureTopic" then
+      .Resource=((.Resource|arr)+[$topic]|unique)
+      | .Action=((.Action|arr)+["kafka-cluster:CreateTopic"]|unique)
+    else . end
+  )
   ' "$WORK_DIR/producer.old.json" >"$WORK_DIR/producer.new.json"
 
 APPLIED=""

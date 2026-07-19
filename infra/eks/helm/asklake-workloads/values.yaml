@@ -232,7 +232,7 @@ realtimeV1:
   spark:
     serviceAccountName: asklake-realtime-v1-spark
     runtimeSecretName: asklake-spark-runtime
-    mainApplicationFile: /opt/asklake/scripts/kafka_continuous_stream.py
+    mainApplicationFile: local:///opt/asklake/scripts/kafka_continuous_stream.py
   kafka:
     authMode: iam
     iamAuthJar: local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar
