@@ -5,7 +5,7 @@ module "workload_iam_policies" {
   use_storage   = local.use_storage
 
   msk_cluster_arn = local.msk_cluster_arn
-  msk_topic_arn   = local.msk_topic_arn
+  msk_topic_arns  = local.msk_topic_arns
   msk_group_arns  = local.msk_group_arns
 
   storage_bucket_arns = local.storage_bucket_arns

@@ -415,6 +415,9 @@ services:
     command: ["python", "-m", "app.continuous_worker"]
     environment:
       CONTINUOUS_CONTROL_PLANE: worker
+      CONTINUOUS_WORKER_SCOPE: ${CONTINUOUS_WORKER_SCOPE:-all}
+      CONTINUOUS_WORKER_OWNER: ${CONTINUOUS_WORKER_OWNER:-ec2-continuous-worker}
+      CONTINUOUS_WORKER_GENERATION: ${CONTINUOUS_WORKER_GENERATION:-}
       STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
     healthcheck:
       disable: true

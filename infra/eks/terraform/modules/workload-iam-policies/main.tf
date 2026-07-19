@@ -21,7 +21,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:WriteData",
         ]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
     ]
   } : null
@@ -39,7 +39,7 @@ locals {
         Sid      = "DescribeFixtureTopic"
         Effect   = "Allow"
         Action   = ["kafka-cluster:DescribeTopic"]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
     ]
   } : null
@@ -60,7 +60,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:ReadData",
         ]
-        Resource = [var.msk_topic_arn]
+        Resource = var.msk_topic_arns
       },
       {
         Sid    = "UseFixtureConsumerGroup"
@@ -176,6 +176,8 @@ locals {
               "${var.storage_prefixes.output}/*",
               var.storage_prefixes.evidence,
               "${var.storage_prefixes.evidence}/*",
+              var.storage_prefixes.continuous_runtime,
+              "${var.storage_prefixes.continuous_runtime}/*",
             ]
           }
         }
@@ -218,6 +220,7 @@ locals {
           var.storage_object_arns.warehouse,
           var.storage_object_arns.query_results,
           var.storage_object_arns.evidence,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
       {
@@ -231,6 +234,7 @@ locals {
         Resource = [
           var.storage_object_arns.query_results,
           var.storage_object_arns.evidence,
+          var.storage_object_arns.continuous_runtime,
         ]
       },
     ]
