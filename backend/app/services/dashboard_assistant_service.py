@@ -67,6 +67,20 @@ class DashboardAssistantService:
 
         if _is_low_signal_prompt(request.prompt):
             return _build_low_signal_prompt_response()
+        if _requires_materialized_join_dataset(request):
+            return DashboardAssistantResponse(
+                message=(
+                    "여러 데이터셋 JOIN 결과를 단일 데이터셋으로 먼저 생성해야 합니다. "
+                    "SQL 분석에서 선택한 데이터셋의 검증된 관계로 JOIN을 실행·저장한 뒤, "
+                    "그 결과 데이터셋을 선택해 차트를 만들어 주세요."
+                ),
+                actions=[],
+                warnings=[
+                    "현재 대시보드 위젯은 하나의 실제 결과 데이터셋만 연결합니다. "
+                    "실행되지 않은 JOIN을 차트 제목이나 데이터로 가장하지 않았습니다."
+                ],
+                provider="local-join-guard",
+            )
 
         if not self.settings.openai_assistant_enabled:
             return self._attach_rag(
@@ -254,6 +268,17 @@ def _is_low_signal_prompt(prompt: str) -> bool:
     if re.fullmatch(r"(ha|haha|lol|lmao|rofl)+", compact):
         return True
     return False
+
+
+def _requires_materialized_join_dataset(request: DashboardAssistantRequest) -> bool:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
+        return False
+    normalized = request.prompt.strip().lower()
+    if not re.search(r"(?:join|조인|결합)", normalized):
+        return False
+    selected_count = len(set(request.selected_dataset_ids))
+    explicitly_multi_source = bool(re.search(r"(?:두\s*(?:개|개의)?\s*데이터|여러\s*데이터|복수\s*데이터)", normalized))
+    return selected_count != 1 or explicitly_multi_source
 
 
 def _build_visualization_retry_prompt(prompt: str) -> str:

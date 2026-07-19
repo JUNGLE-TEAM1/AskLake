@@ -183,8 +183,13 @@ def _scope_datasets_for_request(
 ) -> tuple[list[AssistantDatasetContext], list[str]]:
     """Prioritize explicitly selected datasets without dropping other authorized datasets."""
 
-    requested_dataset_ids: list[str] = []
-    if request.current_dataset_id:
+    explicit_dataset_ids = list(dict.fromkeys(
+        dataset_id.strip()
+        for dataset_id in request.selected_dataset_ids
+        if dataset_id.strip()
+    ))
+    requested_dataset_ids: list[str] = list(explicit_dataset_ids)
+    if not explicit_dataset_ids and request.current_dataset_id:
         requested_dataset_ids.append(request.current_dataset_id)
 
     if _target_widget_id(request):
@@ -202,7 +207,7 @@ def _scope_datasets_for_request(
         if dataset_id in dataset_by_id
     ]
     prioritized_ids = {dataset.id for dataset in prioritized_datasets}
-    scoped_datasets = [
+    scoped_datasets = prioritized_datasets if explicit_dataset_ids else [
         *prioritized_datasets,
         *(dataset for dataset in datasets if dataset.id not in prioritized_ids),
     ]

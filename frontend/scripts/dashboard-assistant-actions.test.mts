@@ -98,6 +98,50 @@ test("failed persistence is surfaced instead of claiming a chart was applied", a
   );
 });
 
+test("type-changing update replaces incompatible config instead of retaining table fields", async () => {
+  let persisted: Record<string, unknown> | null = null;
+  await applyAssistantWidgetActions({
+    datasets: [{ id: "sales", rows: [{ category: "Camera", price: 100 }] }] as never,
+    onUpdateWidget: async (_widgetId, input) => {
+      persisted = input as unknown as Record<string, unknown>;
+      return true;
+    },
+    response: {
+      actions: [{
+        patch: {
+          config: {
+            aggregation: "avg",
+            color: { colors: ["#2563eb"] },
+            xKey: "category",
+            yKey: "price",
+          },
+          type: "bar_chart",
+        },
+        type: "update_widget",
+        usedEvidenceIds: [],
+        widgetId: "widget-table",
+      }],
+      message: "updated",
+      warnings: [],
+    },
+    widgets: [{
+      config: { columns: ["category", "price"], limit: 100, sortKey: "category" },
+      datasetId: "sales",
+      id: "widget-table",
+      title: "상품 표",
+      type: "table",
+    }] as never,
+  });
+
+  assert.equal(persisted?.type, "bar_chart");
+  assert.deepEqual(persisted?.config, {
+    aggregation: "avg",
+    color: { colors: ["#2563eb"] },
+    xKey: "category",
+    yKey: "price",
+  });
+});
+
 test("missing persistence confirmation fails closed", async () => {
   await assert.rejects(
     applyAssistantWidgetActions({

@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -252,6 +253,9 @@ def _guard_create_widget_action(
         return None, warnings
     config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
     action.widget.config = config_payload
+    if _title_claims_unverified_join(action.widget.title, dataset):
+        warnings.append("단일 데이터셋 위젯이 JOIN 결과라고 주장한 제목을 실제 집계 기준 제목으로 교체했습니다.")
+        action.widget.title = ""
     action.widget.title = _ensure_korean_widget_title(action.widget.title, widget_type, config_payload, dataset)
     return action, warnings
 
@@ -339,6 +343,8 @@ def _ensure_korean_widget_title(
 
 
 def _title_needs_korean_normalization(title: str, dataset: AssistantDatasetContext) -> bool:
+    if re.fullmatch(r"[\s?\ufffd]+", title):
+        return True
     normalized_title = _normalize_title_text(title)
     if not normalized_title or normalized_title in PLACEHOLDER_TITLES:
         return True
@@ -348,6 +354,18 @@ def _title_needs_korean_normalization(title: str, dataset: AssistantDatasetConte
     if not _contains_hangul(title):
         return True
     return _contains_known_english_data_term(normalized_title)
+
+
+def _title_claims_unverified_join(title: str, dataset: AssistantDatasetContext) -> bool:
+    if not re.search(r"(?:join|조인|결합)", title, re.IGNORECASE):
+        return False
+    dataset_identity = " ".join((
+        dataset.id,
+        dataset.name,
+        dataset.description,
+        *dataset.tags,
+    ))
+    return not re.search(r"(?:join|조인|결합)", dataset_identity, re.IGNORECASE)
 
 
 def _normalize_title_text(value: str) -> str:

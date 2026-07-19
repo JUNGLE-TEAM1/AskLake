@@ -21,6 +21,7 @@ type DatasetSidebarProps = {
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
+  selectedDatasetIds?: string[];
 };
 
 type DatasetTreeNode = ExplorerTreeNode & {
@@ -146,6 +147,7 @@ export function DatasetSidebar({
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
+  selectedDatasetIds = [],
 }: DatasetSidebarProps) {
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
@@ -205,7 +207,7 @@ export function DatasetSidebar({
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  selected: dataset.id === selectedDatasetId,
+                  selected: dataset.id === selectedDatasetId || selectedDatasetIds.includes(dataset.id),
                   title: dataset.name,
                 };
               }),
@@ -268,7 +270,7 @@ export function DatasetSidebar({
       label: "system",
       title: "system",
     },
-  ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
+  ], [datasets, selectedDatasetId, selectedDatasetIds, totalColumnCount, totalMetricCount]);
 
   return (
     <aside
@@ -312,7 +314,6 @@ export function DatasetSidebar({
             className="mt-2 min-h-0 flex-1 pr-2"
             data={treeData}
             defaultHeight={620}
-            disableMultiSelection
             disableSelect
             getIcon={(node) => node.data.icon}
             getLabel={(node) => (

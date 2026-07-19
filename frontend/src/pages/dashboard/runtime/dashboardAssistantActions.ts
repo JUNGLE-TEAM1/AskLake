@@ -89,10 +89,16 @@ async function applyUpdateWidgetAction(
 
   const nextDatasetId = action.patch.datasetId ?? currentWidget.datasetId ?? null;
   const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
-  const nextConfig = {
-    ...currentWidget.config,
-    ...(action.patch.config ?? {}),
-  } as UpdateDraftWidgetFormInput["config"];
+  const changesWidgetType = action.patch.type !== undefined && action.patch.type !== currentWidget.type;
+  if (changesWidgetType && action.patch.config === undefined) {
+    throw new Error("AI 위젯 타입 변경에는 새 타입의 전체 설정이 필요합니다.");
+  }
+  const nextConfig = (changesWidgetType
+    ? { ...(action.patch.config ?? {}) }
+    : {
+        ...currentWidget.config,
+        ...(action.patch.config ?? {}),
+      }) as UpdateDraftWidgetFormInput["config"];
   const nextTitle = action.patch.title ?? currentWidget.title ?? "제목 없는 위젯";
   const nextType = action.patch.type ?? currentWidget.type;
 

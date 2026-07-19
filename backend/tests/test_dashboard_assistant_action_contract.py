@@ -9,6 +9,7 @@ from app.core.errors import ApiError
 from app.main import create_app
 from app.mcp.context import verify_ai_context_token
 from app.schemas.dashboard import (
+    CreateDraftWidgetRequest,
     DashboardAssistantRequest,
     DashboardAssistantResponse,
     DashboardRuntimeWidgetType,
@@ -27,6 +28,7 @@ from app.services.dashboard_assistant_service import (
     _build_visualization_guard_retry_prompt,
     _build_visualization_retry_prompt,
     _require_visualization_action,
+    _requires_materialized_join_dataset,
 )
 
 
@@ -156,6 +158,32 @@ def test_title_only_update_remains_valid_without_rewriting_config() -> None:
     assert guarded.actions[0].patch.config is None
 
 
+def test_single_dataset_widget_cannot_claim_unverified_join_in_title() -> None:
+    response = DashboardAssistantResponse.model_validate({
+        "message": "created",
+        "actions": [{
+            "type": "create_widget",
+            "widget": {
+                "config": {
+                    "aggregation": "sum",
+                    "color": {"colors": ["#2563eb"]},
+                    "xKey": "region",
+                    "yKey": "revenue",
+                },
+                "datasetId": "sales",
+                "title": "지역별 매출 (조인 기준)",
+                "type": "bar_chart",
+            },
+        }],
+    })
+
+    guarded = guard_assistant_response(response, assistant_context())
+
+    assert len(guarded.actions) == 1
+    assert "조인" not in guarded.actions[0].widget.title
+    assert any("JOIN 결과" in warning for warning in guarded.warnings)
+
+
 def test_noop_update_is_rejected_instead_of_reporting_fake_success() -> None:
     guarded = guard_assistant_response(
         response_with_update({"title": "지역별 매출"}),
@@ -271,6 +299,56 @@ def test_current_amazon_dataset_is_prioritized_without_dropping_available_datase
 
     assert [dataset.id for dataset in datasets] == ["amazon-products", "unrelated-orders"]
     assert warnings == []
+
+
+def test_explicit_dashboard_dataset_selection_is_scoped_exactly() -> None:
+    request = DashboardAssistantRequest.model_validate({
+        "currentDatasetId": "unrelated-orders",
+        "selectedDatasetIds": ["amazon-products"],
+        "mode": "visualization_request",
+        "prompt": "카테고리별 상품 수 차트를 만들어줘",
+    })
+
+    datasets, warnings = _scope_datasets_for_request(
+        request,
+        amazon_dashboard_context().datasets,
+        [],
+    )
+
+    assert [dataset.id for dataset in datasets] == ["amazon-products"]
+    assert warnings == []
+
+
+def test_multi_dataset_join_visualization_requires_materialized_result_dataset() -> None:
+    request = DashboardAssistantRequest.model_validate({
+        "selectedDatasetIds": ["amazon-products", "unrelated-orders"],
+        "mode": "visualization_request",
+        "prompt": "두 데이터를 JOIN해서 도넛 그래프로 보여줘",
+    })
+
+    assert _requires_materialized_join_dataset(request) is True
+
+
+def test_single_materialized_dataset_can_be_visualized_even_when_named_join_result() -> None:
+    request = DashboardAssistantRequest.model_validate({
+        "selectedDatasetIds": ["amazon-products-join-result"],
+        "mode": "visualization_request",
+        "prompt": "저장된 조인 결과를 도넛 그래프로 보여줘",
+    })
+
+    assert _requires_materialized_join_dataset(request) is False
+
+
+def test_corrupt_replacement_character_widget_title_is_rejected() -> None:
+    try:
+        CreateDraftWidgetRequest.model_validate({
+            "type": "bar_chart",
+            "title": "????? ?? ??",
+        })
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("corrupt dashboard title must be rejected")
 
 
 def test_unavailable_requested_dataset_is_excluded_without_dropping_authorized_datasets() -> None:

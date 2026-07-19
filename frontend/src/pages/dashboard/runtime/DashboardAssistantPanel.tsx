@@ -31,6 +31,7 @@ type DashboardAssistantPanelProps = {
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
+  selectedDatasetIds?: string[];
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
 };
@@ -75,7 +76,7 @@ function assistantResponseText(response: DashboardAssistantResponse, actionMessa
   const reportAction = response.actions.find(
     (action): action is DashboardAssistantReportAction => action.type === "report",
   );
-  const provenance = response.provider && !["local-input-guard", "unavailable"].includes(response.provider)
+  const provenance = response.provider && !["local-input-guard", "local-join-guard", "unavailable"].includes(response.provider)
     ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
     : "";
   const warning = response.warnings.length > 0 ? `경고: ${response.warnings.join(" / ")}` : "";
@@ -122,6 +123,7 @@ export function DashboardAssistantPanel({
   onUpdateWidget,
   pageId,
   promptInsertion,
+  selectedDatasetIds = [],
   selectedWidget,
   widgets,
 }: DashboardAssistantPanelProps) {
@@ -139,6 +141,7 @@ export function DashboardAssistantPanel({
     dashboardId,
     pageId,
     selectedWidget?.id,
+    selectedDatasetIds,
     dashboardAssistantWidgetContextSignature(widgets),
   ]), () => setIsSubmitting(false));
   const isConfigured = isDashboardAssistantConfigured();
@@ -183,6 +186,7 @@ export function DashboardAssistantPanel({
         mode,
         pageId,
         prompt: requestPrompt,
+        selectedDatasetIds,
         selectedWidgetId,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       }, { signal: lease.signal });

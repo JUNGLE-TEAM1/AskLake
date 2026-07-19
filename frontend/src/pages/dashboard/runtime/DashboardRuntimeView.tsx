@@ -176,6 +176,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
+  const [assistantDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
@@ -251,6 +252,16 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
+  useEffect(() => {
+    const availableIds = new Set(dashboardDatasets.map((dataset) => dataset.id));
+    setAssistantDatasetIds((current) => {
+      const next = current.filter((datasetId) => availableIds.has(datasetId));
+      return next.length === current.length ? current : next;
+    });
+  }, [dashboardDatasets]);
+  useEffect(() => {
+    setAssistantDatasetIds([]);
+  }, [draftRuntime?.dashboard.id]);
   const isDraftMode = mode === "draft";
   const openDraftAction = <RuntimeActionButton onClick={onOpenDraft} primary />;
   const retryAction = <RuntimeActionButton onClick={onRetryPublished} />;
@@ -266,10 +277,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
     const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
-    const nextConfig = {
-      ...widget.config,
-      ...(patch.config ?? {}),
-    } as Record<string, unknown>;
+    const changesWidgetType = patch.type !== undefined && patch.type !== widget.type;
+    const nextConfig = (changesWidgetType
+      ? { ...(patch.config ?? {}) }
+      : {
+          ...widget.config,
+          ...(patch.config ?? {}),
+        }) as Record<string, unknown>;
 
     if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
@@ -297,6 +311,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   };
   const assistantContext = {
     activeDatasetId: selectedDatasetId,
+    selectedDatasetIds: assistantDatasetIds,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
@@ -361,7 +376,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(dataset.name);
+      const wasSelected = assistantDatasetIds.includes(datasetId);
+      setAssistantDatasetIds((current) => (
+        current.includes(datasetId)
+          ? current.filter((id) => id !== datasetId)
+          : [...current, datasetId]
+      ));
+      if (!wasSelected) queueAssistantPromptText(dataset.name);
       return;
     }
 
@@ -487,6 +508,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
             isLoading={dashboardDatasetsLoading}
             onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
+            selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : []}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />
@@ -505,6 +527,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               datasets={dashboardDatasets}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
+              selectedDatasetIds={assistantContext.selectedDatasetIds}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
               onCreateWidget={onCreateDatasetWidget}

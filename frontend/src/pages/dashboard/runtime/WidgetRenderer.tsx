@@ -60,6 +60,8 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const DASHBOARD_CHART_ANIMATION_MS = 600;
+const CIRCULAR_CHART_VISIBLE_SLICE_LIMIT = 6;
+const CIRCULAR_CHART_OTHER_LABEL = "기타";
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -199,7 +201,7 @@ function groupedChartPoints({
   aggregation: DashboardWidgetAggregation;
   dateUnit?: DashboardWidgetDateUnit;
   labelKey: string | null;
-  limit: number;
+  limit?: number;
   rows: SimpleRow[];
   sortByLabel?: boolean;
   valueKey: string | null;
@@ -235,7 +237,50 @@ function groupedChartPoints({
     return first - second;
   });
 
-  return points.slice(0, limit);
+  return typeof limit === "number" ? points.slice(0, Math.max(0, limit)) : points;
+}
+
+function circularChartTotal(points: ChartPoint[]) {
+  return points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
+}
+
+function compactCircularChartPoints(points: ChartPoint[], visibleSliceLimit: number) {
+  const positivePoints = points
+    .map((point, index) => ({
+      index,
+      point: {
+        ...point,
+        value: Math.max(0, point.value),
+      },
+    }))
+    .filter(({ point }) => point.value > 0)
+    .sort((left, right) => right.point.value - left.point.value || left.index - right.index)
+    .map(({ point }) => point);
+  const safeLimit = Math.max(1, Math.floor(visibleSliceLimit));
+
+  if (positivePoints.length <= safeLimit) return positivePoints;
+
+  const visiblePoints = positivePoints.slice(0, safeLimit);
+  const hiddenTotal = circularChartTotal(positivePoints.slice(safeLimit));
+  if (hiddenTotal <= 0) return visiblePoints;
+
+  const visibleOtherIndex = visiblePoints.findIndex((point) => point.label === CIRCULAR_CHART_OTHER_LABEL);
+  if (visibleOtherIndex >= 0) {
+    return visiblePoints.map((point, index) => (
+      index === visibleOtherIndex
+        ? { ...point, value: point.value + hiddenTotal }
+        : point
+    ));
+  }
+
+  return [
+    ...visiblePoints,
+    {
+      label: CIRCULAR_CHART_OTHER_LABEL,
+      sortValue: CIRCULAR_CHART_OTHER_LABEL,
+      value: hiddenTotal,
+    },
+  ];
 }
 
 function groupedSeriesChartPoints({
@@ -1227,10 +1272,11 @@ function PieLikeChartWidget({
   const aggregation = aggregationValue(widget.config.aggregation);
   const labelKey = widget.config.labelKey || firstTextKey(firstRow);
   const valueKey = widget.config.valueKey || firstNumericKey(firstRow);
-  const points = groupedChartPoints({ aggregation, labelKey, limit: 6, rows, valueKey });
-  if (!points.length) return <EmptyWidgetData />;
+  const allPoints = groupedChartPoints({ aggregation, labelKey, rows, valueKey });
+  const points = compactCircularChartPoints(allPoints, CIRCULAR_CHART_VISIBLE_SLICE_LIMIT);
+  if (!allPoints.length || !points.length) return <EmptyWidgetData />;
 
-  const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
+  const total = circularChartTotal(allPoints);
   if (total <= 0) return <EmptyWidgetData />;
 
   const colors = colorsForSlots(widget.config.color, points.length);
@@ -1271,7 +1317,7 @@ function PieLikeChartWidget({
     labels: points.map((point) => point.label),
     legend: {
       ...baseOptions.legend,
-      position: "right",
+      show: false,
     },
     plotOptions: piePlotOptions,
     stroke: {
@@ -1282,7 +1328,48 @@ function PieLikeChartWidget({
   };
   const series = points.map((point) => Math.max(0, point.value));
 
-  return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={series} type={chartType} widget={widget} />;
+  return (
+    <div className="asklake-circular-chart-widget">
+      <div className="asklake-circular-chart-plot">
+        <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={series} type={chartType} widget={widget} />
+      </div>
+      <ul className="asklake-circular-chart-legend" aria-label="차트 범례" tabIndex={0}>
+        {points.map((point, index) => {
+          const legendContent = (
+            <>
+              <span
+                aria-hidden="true"
+                className="asklake-circular-chart-legend-swatch"
+                style={{ backgroundColor: colors[index] }}
+              />
+              <span className="asklake-circular-chart-legend-label" title={point.label}>{point.label}</span>
+              <span className="asklake-circular-chart-legend-value">{formatCell(point.value)}</span>
+            </>
+          );
+
+          return (
+            <li className="asklake-circular-chart-legend-item" key={`${point.label}-${index}`}>
+              {onSelectColorSlot ? (
+                <button
+                  aria-label={`${point.label} 색상 변경`}
+                  className="asklake-circular-chart-legend-content interactive"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectColorSlot(index);
+                  }}
+                  type="button"
+                >
+                  {legendContent}
+                </button>
+              ) : (
+                <div className="asklake-circular-chart-legend-content">{legendContent}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function DonutChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"donut_chart">) {
