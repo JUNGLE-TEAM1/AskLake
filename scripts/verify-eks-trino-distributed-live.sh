@@ -16,7 +16,7 @@ fail() {
 for command in helm jq kubectl python3; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
-[[ "$EXPECTED_WORKERS" =~ ^[1-5]$ ]] || fail "expected worker count must be between 1 and 5"
+[[ "$EXPECTED_WORKERS" == "5" ]] || fail "expected worker count must be exactly 5"
 [[ "$(kubectl config current-context)" == "$CONTEXT" ]] || fail "unexpected Kubernetes context"
 [[ "$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -r '.info.status')" == "deployed" ]] || \
   fail "Trino Helm release is not deployed"

@@ -183,6 +183,8 @@ deploy_script="$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
 grep -Fq "jq -eS '.trino.distributed = {enabled:false}' \"\$live_values\" >\"\$single_values\"" "$deploy_script"
 test "$(grep -Fc -- '-f "$BASE_VALUES" -f "$single_values"' "$deploy_script")" -eq 4
 grep -Fq 'safe single-coordinator candidate contains distributed resources' "$deploy_script"
+test "$(grep -Fc 'restore_observed_revision "' "$deploy_script")" -eq 2
+grep -Fq '[[ "$EXPECTED_WORKERS" == "5" ]]' "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
 jq -n '{sentinel:"preserved",trino:{distributed:{enabled:true,workerReplicas:5,includeCoordinator:false}}}' >"$SINGLE_VALUES_SAMPLE"
 jq -eS '.trino.distributed = {enabled:false}' "$SINGLE_VALUES_SAMPLE" >"$SINGLE_VALUES_RESULT"
 jq -e '.sentinel == "preserved" and .trino.distributed == {enabled:false}' "$SINGLE_VALUES_RESULT" >/dev/null

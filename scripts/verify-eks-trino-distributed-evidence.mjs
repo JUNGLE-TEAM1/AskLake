@@ -14,7 +14,7 @@ const positiveInteger = (value, label) => {
   if (!Number.isInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
 };
 const workerReplicaCount = (value, label) => {
-  if (!Number.isInteger(value) || value < 1 || value > 5) throw new Error(`${label} must be an integer between 1 and 5`);
+  if (value !== 5) throw new Error(`${label} must be exactly 5`);
 };
 const nonNegativeInteger = (value, label) => {
   if (!Number.isInteger(value) || value < 0) throw new Error(`${label} must be a non-negative integer`);
@@ -46,7 +46,7 @@ const unchangedHashPair = (value, beforeKey, afterKey, label) => {
 
 export function validateDistributedTrinoEvidence(receipt, expectedDeploymentCommit = null) {
   exactKeys(receipt, ['schemaVersion', 'baselineCommit', 'deploymentCommit', 'status', 'deployment', 'nodes', 'query', 'failure', 'contracts', 'rollback', 'cleanup'], 'receipt');
-  if (receipt.schemaVersion !== 2) throw new Error('schemaVersion must be 2');
+  if (receipt.schemaVersion !== 3) throw new Error('schemaVersion must be 3');
   if (receipt.baselineCommit !== ISSUE_BASELINE_COMMIT) throw new Error('baselineCommit does not match the Issue baseline');
   commit(receipt.deploymentCommit, 'deploymentCommit');
   if (expectedDeploymentCommit !== null && receipt.deploymentCommit !== expectedDeploymentCommit) {
@@ -138,7 +138,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     commit(expectedDeploymentCommit, 'ASKLAKE_TRINO_DEPLOYMENT_COMMIT');
     validateDistributedTrinoEvidence(JSON.parse(readFileSync(path, 'utf8')), expectedDeploymentCommit);
-    console.log(JSON.stringify({ contract: 'eks-trino-distributed-evidence-v2', status: 'passed' }));
+    console.log(JSON.stringify({ contract: 'eks-trino-distributed-evidence-v3', status: 'passed' }));
   } catch (error) {
     console.error(`distributed Trino evidence rejected: ${error.message}`);
     process.exit(1);

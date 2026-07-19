@@ -2045,6 +2045,8 @@ read-only와 `system.runtime.nodes|tasks` SELECT를 함께 부여하며 일반 q
 배포 안전 확인일 뿐 promotion 완료 증거가 아니다. non-empty Iceberg worker task,
 exact-UID 장애 복구와 안전 rollback까지 같은 campaign에서 검증해야 한다. 최초 2-worker
 campaign의 `2→1→2` 기록은 역사적 scale evidence이며 현재 fixed-5 운영 명령으로 사용하지 않는다.
+single baseline 생성 또는 query 검증이 실패하면 fixed-5 후보를 적용하지 않고 배포 전 관찰한
+revision을 복구해 기존 worker 수와 Iceberg query가 다시 정상인지 확인한다.
 
 Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 `spark.jars.ivy=/tmp/.ivy2`를 유지해 비루트 controller의 쓸 수 없는 home 경로를 피한다. Spark driver namespace Role은 executor Pod·Service·ConfigMap lifecycle과 shutdown label cleanup에 필요한 `deletecollection`을 제공하고, PVC는 cleanup-only get/list/delete/deletecollection만 허용한다. Secret, Node와 cluster-wide resource 조회는 허용하지 않는다.
 

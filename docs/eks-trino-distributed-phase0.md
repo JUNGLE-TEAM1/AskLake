@@ -265,9 +265,10 @@ ASKLAKE_TRINO_DEPLOYMENT_COMMIT=<merged-pair1-full-sha> \
   /path/to/redacted-trino-distributed-receipt.json
 ```
 
-현재 evidence schema v2는 active-node, Iceberg worker task, exact-UID 장애 복구, 불변 계약과
-안전 단일 coordinator rollback을 검증한다. `2→1→2` scale 단계는 같은 campaign의 별도 operator
-증거로 남기며, 해당 증거까지 없으면 promotion 완료로 보고하지 않는다.
+역사적인 evidence schema v2는 2-worker campaign을 기록했다. 현재 fixed-5 promotion은 schema
+v3에서 declared/active/recovered worker가 모두 5인지, Iceberg worker task, exact-UID 장애 복구,
+불변 계약과 안전 단일 coordinator rollback을 검증한다. `2→1→2` scale 단계는 역사적 operator
+증거로만 남긴다.
 
 ## 10. 보류 결정
 
@@ -289,7 +290,8 @@ worker Pod는 유지되므로 배포 전 General NodePool capacity와 비용을 
 single values를 먼저 적용한다. worker/discovery 부재, coordinator `Recreate`와 non-empty Iceberg
 query를 확인한 revision을 rollback 기준으로 고정한 뒤 fixed-5 values를 적용한다. 최종 gate는
 coordinator 1개, active worker 5개와 non-empty Iceberg query다. 실패하면 안전 single revision으로
-되돌린다. 최초 `2→1→2` 결과는 역사 evidence이며 fixed-5 운영에서 반복하지 않는다.
+되돌린다. single baseline 자체의 검증이 실패하면 후보를 적용하지 않고 배포 전 관찰한 revision과
+그 worker/query 상태를 복구한다. 최초 `2→1→2` 결과는 역사 evidence이며 fixed-5 운영에서 반복하지 않는다.
 
 ## 12. 최종 로컬 검증·범위 감사
 

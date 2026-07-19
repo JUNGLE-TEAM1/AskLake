@@ -121,6 +121,8 @@ produced evidence. The authorized live and rollback procedure is
 The operator first records a healthy single-coordinator `Recreate` revision as
 the safe rollback target. Apply also requires the worktree `HEAD`, fetched
 `origin/pair1`, and `ASKLAKE_TRINO_DEPLOYMENT_COMMIT` to be the same full SHA.
+If creating or querying that single baseline fails, apply restores and verifies
+the exact pre-deployment revision before it stops; it never proceeds to five workers.
 Active registration of all five workers plus a non-empty Iceberg read is only the
 deployment gate: promotion additionally requires a non-empty Iceberg worker task,
 exact-UID replacement, and successful safe rollback evidence bound to the merged

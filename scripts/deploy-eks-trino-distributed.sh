@@ -85,6 +85,13 @@ candidate_without_distributed="$(mktemp)"
 trap 'rm -f "$rendered" "$live_values" "$single_values" "$single_rendered" "$live_without_distributed" "$candidate_without_distributed"' EXIT
 
 helm get values "$RELEASE" -n "$NAMESPACE" --revision "$observed_revision" -o json >"$live_values"
+observed_distributed="$(jq -r '.trino.distributed.enabled // false' "$live_values")"
+if [[ "$observed_distributed" == "true" ]]; then
+  observed_workers="$(jq -er '.trino.distributed.workerReplicas | select(type == "number" and floor == . and . >= 1 and . <= 5)' "$live_values")" || \
+    fail "the observed distributed revision has an invalid worker count"
+else
+  observed_workers=0
+fi
 jq -eS '.trino.distributed = {enabled:false}' "$live_values" >"$single_values"
 jq -S 'del(.trino.distributed)' "$live_values" >"$live_without_distributed"
 jq -S 'del(.trino.distributed)' "$VALUES" >"$candidate_without_distributed"
@@ -138,23 +145,25 @@ git -C "$ROOT_DIR" diff --quiet || fail "the deployment worktree has unstaged tr
 git -C "$ROOT_DIR" diff --cached --quiet || fail "the deployment worktree has staged changes"
 
 verify_single_mode() {
-  kubectl rollout status deployment/asklake-trino -n "$NAMESPACE" --timeout=10m >/dev/null
+  local backend_pod single_query_ready
+  kubectl rollout status deployment/asklake-trino -n "$NAMESPACE" --timeout=10m >/dev/null || return 1
   [[ "$(kubectl get deployment asklake-trino -n "$NAMESPACE" -o jsonpath='{.spec.strategy.type}')" == "Recreate" ]] || \
-    fail "single coordinator baseline is not using Recreate"
+    { echo "single coordinator baseline is not using Recreate" >&2; return 1; }
   [[ "$(kubectl get deployment asklake-trino -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}')" == "1" ]] || \
-    fail "single coordinator baseline is not Ready"
+    { echo "single coordinator baseline is not Ready" >&2; return 1; }
   if kubectl get deployment asklake-trino-worker -n "$NAMESPACE" >/dev/null 2>&1 || \
      kubectl get service asklake-trino-discovery -n "$NAMESPACE" >/dev/null 2>&1; then
-    fail "single coordinator baseline contains distributed resources"
+    echo "single coordinator baseline contains distributed resources" >&2
+    return 1
   fi
   grep -q 'discovery.uri=https://127.0.0.1:8443' < <(kubectl get configmap asklake-trino-config -n "$NAMESPACE" -o jsonpath='{.data.config\.properties}') || \
-    fail "single coordinator baseline did not restore localhost discovery"
+    { echo "single coordinator baseline did not restore localhost discovery" >&2; return 1; }
   backend_pod="$(kubectl get pod -n "$NAMESPACE" -l 'app.kubernetes.io/component=backend' -o json | jq -r '
     [.items[] | select(.status.phase == "Running") |
       select(any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
       .metadata.name] | sort | first // empty
   ')"
-  [[ -n "$backend_pod" ]] || fail "a Ready FastAPI Pod is required for the Trino query gate"
+  [[ -n "$backend_pod" ]] || { echo "a Ready FastAPI Pod is required for the Trino query gate" >&2; return 1; }
   single_query_ready=false
   for _ in {1..18}; do
     if kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
@@ -164,7 +173,49 @@ verify_single_mode() {
     fi
     sleep 5
   done
-  [[ "$single_query_ready" == "true" ]] || fail "single coordinator Iceberg query did not recover before the 90-second deadline"
+  [[ "$single_query_ready" == "true" ]] || {
+    echo "single coordinator Iceberg query did not recover before the 90-second deadline" >&2
+    return 1
+  }
+}
+
+verify_observed_mode() {
+  local backend_pod observed_query_ready
+  if [[ "$observed_distributed" != "true" ]]; then
+    verify_single_mode
+    return
+  fi
+  kubectl rollout status deployment/asklake-trino -n "$NAMESPACE" --timeout=10m >/dev/null || return 1
+  kubectl rollout status deployment/asklake-trino-worker -n "$NAMESPACE" --timeout=10m >/dev/null || return 1
+  [[ "$(kubectl get deployment asklake-trino-worker -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')" == "$observed_workers" ]] || return 1
+  [[ "$(kubectl get deployment asklake-trino-worker -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}')" == "$observed_workers" ]] || return 1
+  backend_pod="$(kubectl get pod -n "$NAMESPACE" -l 'app.kubernetes.io/component=backend' -o json | jq -r '
+    [.items[] | select(.status.phase == "Running") |
+      select(any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
+      .metadata.name] | sort | first // empty
+  ')"
+  [[ -n "$backend_pod" ]] || return 1
+  observed_query_ready=false
+  for _ in {1..18}; do
+    if kubectl exec -i -n "$NAMESPACE" "$backend_pod" -- \
+      python - "$observed_workers" <"$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py" >/dev/null 2>&1; then
+      observed_query_ready=true
+      break
+    fi
+    sleep 5
+  done
+  [[ "$observed_query_ready" == "true" ]]
+}
+
+restore_observed_revision() {
+  local reason="$1"
+  echo "$reason; restoring observed revision $observed_revision" >&2
+  if ! helm rollback "$RELEASE" "$observed_revision" -n "$NAMESPACE" \
+    --cleanup-on-fail --wait=watcher --timeout=15m; then
+    fail "$reason and restoring the observed revision failed; manual recovery is required"
+  fi
+  verify_observed_mode || fail "$reason and the restored observed revision did not pass its query gate; manual recovery is required"
+  fail "$reason; the observed revision was restored"
 }
 
 # Always create a fresh safe rollback target from the observed live values with
@@ -173,15 +224,17 @@ verify_single_mode() {
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$single_values" "${component_overrides[@]}" \
   --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
-  fail "failed to create the safe single-coordinator Recreate baseline; distributed rollout was not attempted"
+  restore_observed_revision "failed to create the safe single-coordinator Recreate baseline"
 fi
-verify_single_mode
+if ! verify_single_mode; then
+  restore_observed_revision "safe single-coordinator baseline verification failed"
+fi
 baseline_revision="$(helm status "$RELEASE" -n "$NAMESPACE" -o json | jq -er '.version')"
 
 if ! helm upgrade "$RELEASE" "$CHART" -n "$NAMESPACE" \
   -f "$BASE_VALUES" -f "$VALUES" "${component_overrides[@]}" \
   --reset-values --rollback-on-failure --cleanup-on-fail --wait=watcher --timeout=15m; then
-  verify_single_mode
+  verify_single_mode || fail "distributed Trino upgrade failed and the safe single baseline could not be verified; manual recovery is required"
   fail "distributed Trino Helm upgrade failed; the safe single-coordinator baseline was restored"
 fi
 
@@ -191,7 +244,7 @@ if ! "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh" "$expected_workers
     --cleanup-on-fail --wait=watcher --timeout=15m; then
     fail "distributed Trino live gate and automatic rollback both failed; manual recovery is required"
   fi
-  verify_single_mode
+  verify_single_mode || fail "distributed Trino live gate failed and the safe single rollback could not be verified; manual recovery is required"
   fail "distributed Trino rollout was rolled back"
 fi
 
