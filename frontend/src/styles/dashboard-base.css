@@ -62,12 +62,11 @@
   padding-top: 2px;
 }
 
-.dashboard-page-header {
-  min-height: var(--page-masthead-height);
-}
-
-.dashboard-page-header > div {
-  width: 100%;
+.dashboard-list-actions {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .dashboard-create-button {

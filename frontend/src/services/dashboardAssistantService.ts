@@ -1,5 +1,6 @@
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
+import type { ApiRequestOptions } from "./apiClient";
 
 // Docker build args are exposed to Vite as empty strings when omitted. Treat an
 // empty value like an unset value so every build keeps the live same-origin API.
@@ -150,7 +151,11 @@ function normalizeEndpoint(path: string) {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
-async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest) {
+async function postAbsoluteUrl(
+  endpoint: string,
+  body: DashboardAssistantRequest,
+  options: ApiRequestOptions,
+) {
   const response = await fetch(endpoint, {
     body: JSON.stringify(body),
     credentials: "include",
@@ -159,6 +164,7 @@ async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest
       "Content-Type": "application/json",
     },
     method: "POST",
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -168,12 +174,15 @@ async function postAbsoluteUrl(endpoint: string, body: DashboardAssistantRequest
   return response.json() as Promise<DashboardAssistantResponse>;
 }
 
-export async function requestDashboardAssistant(body: DashboardAssistantRequest) {
+export async function requestDashboardAssistant(
+  body: DashboardAssistantRequest,
+  options: ApiRequestOptions = {},
+) {
   if (!assistantEndpoint) throw new DashboardAssistantNotConfiguredError();
 
   if (/^https?:\/\//i.test(assistantEndpoint)) {
-    return postAbsoluteUrl(assistantEndpoint, body);
+    return postAbsoluteUrl(assistantEndpoint, body, options);
   }
 
-  return apiClient.post<DashboardAssistantResponse>(normalizeEndpoint(assistantEndpoint), body);
+  return apiClient.post<DashboardAssistantResponse>(normalizeEndpoint(assistantEndpoint), body, options);
 }

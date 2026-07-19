@@ -53,12 +53,18 @@ Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성
 ```bash
 cd frontend
 npm run test:trino-timeline
+npm run test:catalog-lineage-projection
 npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
+`npm run test:catalog-lineage-projection`은 저장된 API graph를 변경하지 않으면서 Catalog 화면에서 `PROCESS` node를 제거하고 동일 컬럼의 source→target edge만 만드는지 검증한다. UI 수동 확인에서는 `/etl/source`의 connector 카드, 전역 152px sidebar, `/catalog` 목록·lineage, `/dashboards/:dashboardId/edit`의 기본 닫힌 데이터 패널과 오른쪽 설정 패널 toggle을 desktop과 좁은 viewport에서 함께 확인한다.
+
+관리자 감사 로그 계약을 변경할 때는 test dependency를 설치한 Python 환경에서 `cd backend && npm run verify:admin-audit-contract`를 실행한다. 이 검증은 신규 writer의 enum-only 계약, production producer의 문자열 literal 금지, `query_run` HTTP 직렬화, 레거시 타입의 `unknown` 투영과 원본 metadata, `resourceType=unknown` 필터, OpenAPI enum, backend/frontend 타입 집합 일치와 inline enum/local `$ref` 의미 호환성을 확인한다. 실제 PostgreSQL과 FastAPI smoke는 `npm run verify:identity-admin`으로 임시 PostgreSQL schema에 smoke resource와 demo fixture를 만들고 admin/viewer session cookie로 검증한다. 이 smoke는 actor header fallback을 사용하지 않고 permission test grant, governance 상태와 session을 정리한 뒤 임시 schema를 drop하며 실패 시 non-zero로 종료한다. 프런트 부분 실패·stale 갱신·최신 요청 소유권은 `cd frontend && npm run test:admin-console-load`로 확인한다.
+
+EC2 반영 후에는 admin session으로 `/api/admin/audit-logs?resourceType=query_run&limit=10`과 `/api/admin/audit-logs?resourceType=unknown&limit=10`이 모두 `200`인지 확인한다. 관리 화면에서는 사용자·그룹·권한·제한 metric이 실제 각 API 응답과 일치하고 감사 로그 오류가 다른 탭의 성공 데이터를 `0`으로 바꾸지 않는지 확인한다. `scripts/deploy.sh diagnose`의 backend/frontend/database readiness도 함께 통과해야 하며, 실제 deploy·restart·traffic 전환은 release owner의 별도 승인을 받는다.
 
 ### 단계적 리팩토링 기준선
 
@@ -135,7 +141,73 @@ PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
 .venv/bin/python scripts/verify-permission-create-flow-contract.py
 ```
 
-`npm run verify:ui-regressions`는 timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 관리자 콘솔 API의 section별 부분 실패 격리, timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다. 관리자 콘솔만 빠르게 확인할 때는 `cd frontend && npm run test:admin-console-load`를 실행한다.
+
+Nessie가 생성한 SQL의 대용량 정확성·스캔량·실행시간·자원 사용량을 고정 Dataset snapshot과 질문 suite로 비교하는 내부 검증 기준은 [Nessie SQL 대용량 Benchmark](nessie-sql-benchmark.md)를 따른다. 이 benchmark는 공개 Query AI API나 자동 실행 동작을 추가하지 않으며, live campaign은 preflight와 별도의 명시적 confirmation을 거쳐야 한다.
+
+Benchmark Run 저장 계약과 migration은 다음 집중 테스트로 확인한다.
+
+```bash
+cd backend
+.venv/bin/python -m pytest -q \
+  tests/test_nessie_benchmark_dataset.py \
+  tests/test_nessie_benchmark_suite.py \
+  tests/test_nessie_benchmark_run.py
+.venv/bin/alembic heads
+```
+
+Runner의 preflight/live/receipt/timeout 경계는 다음으로 검증한다.
+
+```bash
+cd backend
+.venv/bin/python -m pytest -q tests/test_nessie_benchmark_runner.py
+```
+
+동일 조건의 baseline/candidate 요약 회귀 gate는 raw SQL이나 provider credential 없이 로컬과 CI에서 결정론적으로 재실행할 수 있다.
+
+```bash
+cd backend
+npm run verify:nessie-benchmark
+
+# 또는 구성요소를 분리해 실행
+.venv/bin/python -m pytest -q \
+  tests/test_nessie_benchmark_summary.py \
+  tests/test_nessie_benchmark_comparison.py
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-compare.py \
+  --baseline benchmarks/nessie-sql/comparable-baseline-summary.v1.json \
+  --candidate benchmarks/nessie-sql/comparable-candidate-summary.v2.json \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --policy benchmarks/nessie-sql/regression-policy.v1.json
+```
+
+비교 artifact는 기존 파일을 덮어쓰지 않는다. 새 baseline 승격은 gate 통과만으로 자동화하지 않고 새 version과 사람 승인을 요구한다.
+
+실제 Query AI candidate는 synthetic Dataset을 임시 Catalog에 등록한 뒤 공개 API를 통해 private receipt로 수집한다. 등록과 정리는 benchmark 전용 `benchmark_*` ID만 다룬다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-catalog.py register \
+  --evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --map-output /tmp/asklake-benchmark-dataset-map.json \
+  --confirm REGISTER_SYNTHETIC_BENCHMARK
+
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-candidates.py \
+  --suite benchmarks/nessie-sql/question-suite.v1.json \
+  --dataset-map /tmp/asklake-benchmark-dataset-map.json \
+  --receipt /tmp/asklake-provider-candidates.json \
+  --confirm CALL_LIVE_QUERY_AI
+
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-catalog.py cleanup \
+  --evidence benchmarks/nessie-sql/dataset-load-evidence.v1.json \
+  --confirm REMOVE_SYNTHETIC_BENCHMARK
+
+PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
+  --manifest benchmarks/nessie-sql/dataset-manifest.v1.json \
+  --live --cleanup --confirm CLEANUP_BENCHMARK_DATASET \
+  --receipt /tmp/asklake-nessie-dataset-cleanup.json
+```
+
+두 cleanup은 application Catalog의 `benchmark_*` 임시 row와 Iceberg의 `asklake_benchmark` 전용 schema만 제거한다. 다른 Dataset/schema와 shared Trino/MinIO container는 건드리지 않는다.
 
 ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
 
@@ -169,6 +241,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
 
 프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
+
+`scripts/verify-deploy-readiness.sh`는 Docker 작업 전에 `ASKLAKE_PYTHON_BIN`이 정확히 Python 3.13인지 확인하고 다른 minor version이면 즉시 실패한다.
 
 Production Compose의 Trino on/off profile, strict env/file/bucket/ACL guard와 기존 배포 호환성은 root에서 `bash tests/deploy/deploy-scripts-regression.sh`로 확인한다. Compose render, backend/frontend deploy image build, backend production Node/Python dependency 준비, CI runner의 Spark runtime contract만 빠르게 확인하고 JSON release record를 남길 때는 `bash scripts/verify-deploy-readiness.sh`를 사용한다. 결과 파일 위치는 `ASKLAKE_RELEASE_RECORD_PATH`로 지정하며, record 작성 실패도 readiness 실패로 처리한다. GitHub Actions는 Node 22와 Python 3.13을 준비한다. 이 명령과 workflow는 EC2, production secret, Kafka/Spark long-running runtime을 변경하지 않는다. Phase 0-5 통합 후보의 merge 순서와 회귀 명령은 [배포 파이프라인 Phase 6 통합 후보 검증](./deployment-phase-6-integration.md)에 기록한다. 로컬 기존 PostgreSQL volume upgrade는 `docker compose run --rm trino-postgres-bootstrap`을 두 번 실행해도 같은 catalog table/owner/grant 상태를 유지해야 한다.
 Spark runtime bind mount 변경은 `cd backend && npm run verify:spark-runtime-paths`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:production-spark`를 필수로 실행한다. Docker daemon이 있으면 `npm run verify:spark-runtime-paths:container`로 실제 UID 185 write/atomic rename, guard restart, 기존 report/checkpoint 보존까지 확인한다.
@@ -415,6 +489,8 @@ cd backend
 
 Provider API key는 프론트나 FastAPI가 아니라 `ai-server` env에만 둔다. FastAPI는 `backend/.env`에서 Gateway service token과 MCP signing/service secret만 사용한다.
 AI provider key가 없거나 private AI Gateway가 unavailable이면 backend는 실패를 명시하고 action을 비운다. Assistant guard는 provider가 반환한 action의 Dataset·컬럼·값축을 catalog schema 기준으로 검증하지만, 응답이 비었다고 기본 막대 차트나 성공 결과를 만들어 내지 않는다.
+Dashboard Assistant 후속 지시는 최근 사용자 발화 최대 2건의 Dataset/field/column 단서만 제한적으로 결합한다. `field_1 event_id` 다음의 `랜덤으로 진행해줘`처럼 단서가 있는 후속 실행은 `visualization_request`로 분류하지만, 맥락 없는 `랜덤으로 진행해줘`는 로컬 입력 guard가 구체화를 요청하고 provider를 호출하지 않는다. Gateway 502 contract 오류는 질문 mode의 report-only 또는 시각화 mode의 단일 mutation 지침으로 한 번만 교정 재시도하며, 두 번째 실패에도 mock action을 만들지 않는다.
+SQL과 Dashboard generation의 `usedEvidenceIds`는 요청별 RAG source allowlist를 structured output schema에 넣어 생성 단계부터 제한한다. Provider 호환성 응답에 범위 밖 ID가 섞이면 citation metadata만 제거하고 경고하며, SQL/widget 본체의 기존 안전 검증은 그대로 적용한다. 이 정규화는 목 SQL·목 차트·fallback 성공 응답을 만들지 않는다.
 
 Semantic/RAG 관리 UI는 `/catalog?view=semantic`에서 확인한다. `/semantic-layer`와 기존 `/ai`는 같은 URL로 replace 이동해야 하며, standalone AI 메뉴나 채팅 화면을 다시 추가하지 않는다. Dataset schema, metric·dimension, RAG 분류·승인·색인·작업 이력은 `semanticApi.ts`의 live endpoint를 사용한다. 최소 frontend 검증은 다음과 같다.
 
@@ -442,6 +518,8 @@ cd backend
 npm run verify:dashboard-assistant-guard
 ```
 
+이 verifier는 실제 `Settings`의 `OPENAI_ASSISTANT_ENABLED`·`OPENAI_ASSISTANT_MAX_SAMPLE_ROWS` 계약과 현재 fail-closed action 정책을 사용한다. 빈 시각화 응답, 단일 mutation action, 복수 mutation action, 질문 모드 mutation 제거를 검증하며 삭제된 local chart fallback helper를 import하거나 복원하지 않는다.
+
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, backend reconciliation이 Airflow task와 Spark 처리 완료 상태를 DB에 저장한다. 프론트는 `GET /api/etl/jobs/statuses` batch polling으로 저장된 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
 Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. Target 표시명과 내부 ID 분리는 `cd backend && npm run verify:dataset-identity`로 확인하며, 서로 다른 한글 이름과 같은 ASCII slug를 만드는 이름이 별도 Job으로 남고 정확히 같은 target만 append 재사용되는지 검증한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
@@ -454,7 +532,7 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 
 1. sidebar에 `AI 활용` 메뉴가 없고 `/ai`가 별도 채팅 화면 대신 `/catalog?view=semantic`으로 replace 이동하는지 확인한다.
 2. SQL 분석에서 실제 Dataset을 선택하고 SQL 초안을 생성한다. 요청 중 prompt·Dataset·editor context를 바꿨을 때 이전 응답이 적용되지 않는지, 자동 실행되지 않으며 적용 후 read-only/scope 검사를 다시 통과하는지 확인한다.
-3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다. 저장 API를 실패시킨 경우 성공 문구를 표시하지 않고 기존 draft와 입력을 유지해야 한다.
+3. 대시보드 편집기에서 시각화를 요청한다. `create_widget` 또는 `update_widget` action이 실제 draft에 저장되고 그래프가 렌더링되는지 확인한다. 저장 API를 실패시킨 경우 성공 문구를 표시하지 않고 기존 draft와 입력을 유지해야 한다. 요청 중 Dashboard, page, Dataset 또는 선택 widget을 바꾸면 이전 요청이 취소되고 그 응답의 mutation이 새 화면에 적용되지 않아야 한다.
 4. 수집/처리에서 field transform과 SQL transform을 생성하고 입력 schema 밖의 컬럼·관계·위험 함수를 거부하는지 확인한다.
 5. Semantic Layer에서 RAG 역할 승인, 전체 문서 미리보기, 색인 작업 이력, 실제 근거 검색을 차례로 확인한다.
 6. SQL과 대시보드의 `RAG 근거`가 검색 후보 전체가 아니라 생성에 실제 사용된 source만 표시하는지 확인한다.
@@ -791,7 +869,7 @@ uvicorn app.main:app --reload --port 8080
 
 로컬 환경 변수는 `backend/.env.example`과 `ai-server/.env.example`을 기준으로 둔다. `AI_PROVIDER_API_KEY`는 `ai-server`에만 두고, FastAPI는 service token과 signed context secret만 사용한다. Query AI, Dashboard Assistant, ETL transform, RAG, 리뷰 분석은 같은 Gateway를 사용하며 direct/mock provider fallback은 지원하지 않는다.
 
-SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
+SQL UI를 변경할 때는 desktop에서 좌측 SQL 도구와 우측 editor/result workspace의 하단이 SQL 실행 전후 모두 일치하는지 확인한다. 데스크톱 workspace와 editor는 각각 기존 높이의 1.5배 토큰을 사용하며, 1180px 이하에서는 자동 높이로 전환되어 가로·세로 overflow가 생기지 않아야 한다. Trino를 켜도 editor wrapper/textarea 높이, toolbar, 단일 scroll 계약은 바뀌지 않아야 한다. 실행 평가와 timeline을 editor 아래 sibling card로 추가하지 않고 결과 panel의 세 번째 `실행 정보` view에 넣으며, `차트 보기`/`데이터 미리보기`/`실행 정보`가 같은 bounded 높이에서 전환·scroll되는지 확인한다. 주요 목록 route에서는 제목과 아이콘이 공통 `Topbar`에 한 번만 표시되고 본문 `PageHeader`가 중복되지 않는지, 대시보드 이름 아래 상태·제품 보조 문구가 제거되면서 소유자와 최근 수정 정보는 유지되는지도 함께 확인한다. 기본 실행은 최대 100행 preview이며 `실행 정보`에는 `쿼리 실행`, `첫 결과 준비`만 표시한다. `전체 보기`/CSV의 full run 저장 진행은 preview와 하나의 진행률로 합치지 않는다. 전체 보기는 준비된 cursor page부터 100행씩 조회하고, CSV는 full result 완료 뒤 server stream을 사용한다. 반복 Job 생성은 full result를 기다리지 않고 preview의 SQL recipe만 저장한다. 1회성 Dataset materialization action은 toolbar에 노출하지 않는다. Trino preview 차트는 현재 최대 100행 범위를 명시하고 persistent Dashboard source로 저장하지 않는다. Catalog 미리보기 이동과 Nessie 초안 적용은 기존처럼 동작하되 자동 실행되지 않아야 한다.
 
 Preview/full-result 저장 경계는 아래 격리 검증으로 확인한다. Preview page가 object storage를 호출하지 않고 PostgreSQL inline manifest를 만들며, full-result 요청이 `mode=run`과 source preview ID를 보존하는지 검사한다.
 
@@ -829,11 +907,11 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
 ```
 
-ClickHouse Continuous JOIN을 배포할 때는 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse`를 함께 설정한다. `CLICKHOUSE_URL`은 Compose private endpoint `http://clickhouse:8123`를 사용하고 16자 이상의 전용 password를 server `deploy/.env`에만 둔다. ClickHouse port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/Trino/credential/backend-service wiring 불일치를 배포 전에 차단한다. `scripts/deploy.sh`는 enabled 배포에서 Redpanda와 ClickHouse를 먼저 기동하고 backend credential로 실제 query readiness를 확인하며, disabled 배포에서는 이전 profile의 stale ClickHouse container를 제거한다.
+Production 배포 템플릿은 `TRINO_ENABLED=true`, `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `COMPOSE_PROFILES=trino,clickhouse-realtime-v2`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`, `KAFKA_CONNECT_URL=http://kafka-connect-v2:8083`, `DASHBOARD_SYNC_MODE=sse`, `REALTIME_EVENTS_ENABLED=true`를 기본값으로 사용한다. V2 ClickHouse 계정 비밀번호, TLS 파일, connector properties와 immutable Kafka Connect image digest는 server `deploy/.env` 또는 secret storage에만 둔다. ClickHouse와 Kafka Connect port는 host에 publish하지 않는다. `scripts/verify-deploy-env.sh`가 flag/profile/credential/TLS/image/backend-service wiring 불일치를 배포 전에 차단한다.
 
 롤백은 실행 중인 ClickHouse Job을 먼저 pause 또는 stop한 뒤 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false`로 바꾸고 `COMPOSE_PROFILES`에서 `clickhouse`를 제거해 재배포한다. 이미 같은 consumer group을 소유한 Run을 Spark로 자동 전환하지 않는다. 기존 Iceberg mode Job과 일반 ETL·Catalog·Dashboard 경로는 이 flag와 무관하게 계속 동작한다.
 
-Production은 알려진 legacy demo 계정을 허용하지 않는다. `scripts/verify-deploy-env.sh`는 `AUTH_LEGACY_DEMO_USERS_ENABLED`가 `false`가 아니거나 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED`가 존재하면 preflight를 실패시킨다. legacy identity 호환은 backend test 환경에만 남기며, 실제 배포는 bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단을 유지한다.
+Production은 알려진 legacy demo 계정을 기본적으로 생성하거나 복구하지 않는다. Backend startup은 기존 `auth_users.status`와 session을 보존하므로 재배포 자체가 활성 admin을 비활성화하지 않는다. 공개 demo 배포에서만 `AUTH_LEGACY_DEMO_USERS_ENABLED=true`와 `VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=true`를 함께 설정해 누락 계정 생성, disabled demo 계정 복구와 frontend 로그인 안내를 함께 활성화한다. `scripts/verify-deploy-env.sh`는 두 값이 lowercase `true|false`가 아니거나 서로 다르면 preflight를 실패시킨다. 일반 운영에서는 두 플래그를 `false`로 유지하고 계정 차단·해제는 명시적인 admin/DB 작업으로 수행한다. bootstrap admin, Secure cookie, public signup 기본 차단, client actor header fallback 차단은 opt-in과 무관하게 유지한다.
 
 dev EKS가 아직 HTTP ALB만 사용하는 동안에는 `asklake-runtime-config` release의 private runtime values에 `AUTH_SESSION_COOKIE_SECURE: "false"`가 필요하다. FastAPI가 참조하는 `asklake-runtime` ConfigMap에 이 값이 렌더되면 로그인 후 새로고침에서도 세션 쿠키를 전송한다. 운영 기본값과 HTTPS 환경은 `true`를 유지하고, 인증서 적용 후 dev 값도 즉시 `true`로 되돌린다. `APP_ENV`를 개발 모드로 낮추는 우회는 header-auth fallback을 열 수 있으므로 사용하지 않는다.
 
@@ -1453,3 +1531,147 @@ npm run verify:etl-e2e-recovery
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
 
 시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.
+
+## 21) ClickHouse Realtime Serving V2 순차 구현
+
+V2 구현은 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 순서를 따른다. 기존 Realtime 2026 STACK-01~04와 refactor 10-PR plan을 대체하거나 다시 실행하지 않는다.
+
+작업 규칙:
+
+1. PR01은 최신 `origin/dev`, PR02~09는 직전 V2 branch에서 시작한다.
+2. 모든 PR base는 `dev`다. 선행 PR merge 전 후속 PR은 Ready 상태여도 merge하지 않는다.
+3. 선행 PR merge 뒤 다음 branch에 최신 `origin/dev`를 merge하고 실제 GitHub diff와 required check를 다시 확인한다.
+4. 이미 공개한 누적 branch는 rebase/force-push하지 않는다. 예외적으로 force가 필요하면 작업을 중단하고 사용자 승인을 받는다.
+5. 한 PR은 한 issue outcome만 소유하고 body 끝에 자기 issue의 `Closes #...`만 둔다.
+6. 기존 dirty workspace의 변경을 새 issue branch로 가져오지 않는다. 별도 clean worktree에서 구현한다.
+7. production deploy, traffic promotion, consumer offset reset, 기존 table/drop은 별도 운영 승인 없이는 실행하지 않는다.
+
+V2 공통 빠른 검증은 기존 suite를 먼저 보존한다.
+
+```bash
+cd backend
+npm run verify:realtime-stack
+npm run verify:continuous-sql-contract
+
+cd ../frontend
+npm run build
+```
+
+Docker/ClickHouse/Kafka가 필요한 `npm run verify:clickhouse-kafka-join`은 PR02 이후의 integration/operator profile에서 실행한다. 공통 빠른 검증으로 분류하지 않는다. PR별 신규 검증 command는 해당 PR에서 `package.json`, 이 문서, `docs/system-guardrails.md`와 CI workflow를 함께 갱신한다. 실행하지 못한 live/production 항목은 PASS로 쓰지 않고 operator gate로 남긴다.
+
+### ClickHouse V2 기반시설과 migration
+
+V2 Compose service는 모두 `clickhouse-realtime-v2` profile에 있다. Production 기본 profile/flag/owner는 Kafka Connect V2로 맞춰져 있고 local root Compose만 profile을 명시한다. ClickHouse serving mode Job 시작이 토픽별 connector를 자동 등록하며 reconcile이 receipt/checkpoint, JOIN, Catalog revision과 SSE publication을 계속 전진시킨다.
+
+먼저 외부 runtime이 필요 없는 설정과 migration 계약을 검증한다. 가상환경 Python에 `backend/requirements.txt`의 Alembic/SQLAlchemy dependency가 설치돼 있어야 한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-foundation
+.venv/bin/python -m alembic -c alembic.ini heads
+npm run verify:realtime-stack
+
+cd ..
+docker compose config --quiet
+docker compose --profile clickhouse-realtime-v2 config --quiet
+docker compose --env-file deploy/.env.example \
+  -f deploy/docker-compose.prod.yml \
+  --profile clickhouse-realtime-v2 config --quiet
+tests/deploy/deploy-scripts-regression.sh
+```
+
+`0016_clickhouse_realtime_v2_foundation`은 `0015_ai_generation_evidence_audit` 다음 단일 head이며 V2 metadata table 10개만 추가한다. production은 `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`를 유지하고 web/worker rollout 전에 명시적으로 upgrade한다.
+
+```bash
+cd backend
+.venv/bin/python -m alembic -c alembic.ini upgrade head
+.venv/bin/python -m alembic -c alembic.ini current
+```
+
+Production image는 `alembic.ini`와 migration directory를 포함한다. 이미 기동한 PostgreSQL에 one-shot으로 적용할 때는 `deploy/`의 실제 server `.env`를 사용한다.
+
+V2 profile을 포함한 production env는 먼저 preflight를 통과해야 한다. Profile-only shadow도 six-account secret, TLS, cert/secret file mode, immutable image digest와 Compose network를 검사한다. Sink/application owner를 enabled로 전환하면 private Connect origin, stable connector name과 단일-owner 조합도 추가로 fail closed한다. 기존 V1 backend ClickHouse credential은 V2 identity로 repurpose하지 않는다.
+
+```bash
+cd ..
+scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
+```
+
+```bash
+cd deploy
+docker compose --env-file .env -f docker-compose.prod.yml run --rm --no-deps \
+  backend python -m alembic -c alembic.ini upgrade head
+```
+
+Local profile smoke를 실행하려면 admin/ingest/materializer/reader/migration/observer의 서로 다른 16자 이상 password를 shell environment에 설정하고, repository 밖의 connector properties file을 read-only mount해야 한다. root `.env`나 tracked example에 실제 secret을 쓰지 않는다. Kafka Connect image는 공식 plugin release checksum을 검증하며 network download가 필요하다.
+
+```bash
+docker build -t asklake/kafka-connect-clickhouse:1.4.0 deploy/kafka-connect
+docker compose --profile clickhouse-realtime-v2 up -d \
+  clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2
+curl --fail http://127.0.0.1:18083/connector-plugins
+curl --fail http://127.0.0.1:18123/ping
+```
+
+이 smoke는 process와 plugin만 확인한다. 실제 ingest/JOIN은 ClickHouse serving mode Job 또는 V2 container E2E에서 확인한다. production downgrade, offset reset, named volume 삭제는 rollback 절차가 아니며 disabled-mode rollback은 세 V2 owner/flag를 끄고 expand schema를 보존한다. exact image, TLS/local 차이와 미완료 operator evidence는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)에 기록한다.
+
+### PR09 archive/recovery와 최종 release gate
+
+누적 branch의 deterministic backend 계약과 migration lifecycle은 한 번에 실행한다.
+
+```bash
+cd backend
+npm run verify:clickhouse-realtime-v2-release
+npm run verify:clickhouse-realtime-v2-recovery
+```
+
+`verify:clickhouse-realtime-v2-release`는 PR02~09의 feature flag, Alembic, ingest, dimension, materializer, Catalog publication, Dashboard/SSE와 archive recovery module을 한 suite로 실행한다. `0018_realtime_archive_recovery`가 새 head이며 disposable DB에서 `0015 → head → 0015 → head`가 가능해야 한다. production에서는 downgrade하지 않는다.
+
+실제 PostgreSQL은 이미 head migration이 적용된 disposable database에서만 검증한다.
+
+```bash
+ASKLAKE_VERIFY_REALTIME_POSTGRES=true \
+DATABASE_URL=postgresql+psycopg://asklake:asklake_test@127.0.0.1:5432/asklake_test \
+npm run verify:realtime-recovery-postgres
+```
+
+이 검증은 독립 실행을 위해 disposable DB에 없는 legacy Catalog/freshness/revision/event table만 `checkfirst`로 준비한다. V2 table은 계속 Alembic이 소유한다. 같은 cutover idempotency key를 두 session에서 동시에 실행하고 단일 epoch/revision/event만 생성됐는지 확인한 뒤 자기 fixture를 삭제한다. 공유 production DB에 실행하지 않는다.
+
+ClickHouse live parity smoke는 migration 권한을 가진 disposable instance에 hot/archive fixture table 두 개를 만들고 100개 source position의 partition boundary, count, checksum과 numeric sum을 비교한 뒤 table을 삭제한다.
+
+```bash
+ASKLAKE_VERIFY_CLICKHOUSE_RECOVERY=true \
+CLICKHOUSE_URL=http://127.0.0.1:18123 \
+CLICKHOUSE_USER=asklake_v2_admin \
+CLICKHOUSE_PASSWORD='<test-only-secret>' \
+CLICKHOUSE_DATABASE=asklake_realtime_v2 \
+npm run verify:clickhouse-realtime-v2-recovery-live
+```
+
+Docker Desktop가 선언된 loopback port를 publish하지 않는 로컬 환경만 `CLICKHOUSE_DOCKER_CONTAINER=asklake-clickhouse-v2`를 사용할 수 있다. CI/Linux는 HTTP 경로를 사용한다. 이 smoke의 100행은 실제 10만 건 cutover gate를 대체하지 않는다.
+
+독립 evidence JSON은 다음 preflight로 비교한다. mismatch는 exit 1이며 DB를 변경하지 않는다.
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/verify-hot-archive-parity.py \
+  --hot /secure/evidence/hot.json \
+  --archive /secure/evidence/archive.json
+```
+
+PR09 통합 단계에서는 중복되는 PR별 suite 대신 아래 전체 회귀를 한 번만 수행한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest -q
+
+cd ../frontend
+npm run verify:ui-regressions
+npm run test:dashboard-realtime-v2
+npm run build
+
+cd ..
+bash tests/deploy/deploy-scripts-regression.sh
+docker compose --profile clickhouse-realtime-v2 config --quiet
+```
+
+실제 production 10만 건, 72시간 shadow, P95, restart/chaos, security, browser cutover/rollback DOM과 backup/restore evidence는 코드 gate의 boolean을 임의로 true로 채우지 않는다. 모두 operator artifact가 있을 때만 cutover request를 구성한다. 절차와 rollback 금지 사항은 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.

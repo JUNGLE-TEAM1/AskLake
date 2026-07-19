@@ -193,8 +193,8 @@ class DashboardAssistantAccessTests(unittest.TestCase):
             SimpleNamespace(),
             catalog_repository,
             SimpleNamespace(
-                ai_assistant_enabled=True,
-                ai_assistant_max_sample_rows=5,
+                openai_assistant_enabled=True,
+                openai_assistant_max_sample_rows=5,
                 ai_gateway_base_url="http://ai-server:8090",
                 ai_gateway_service_token="test-token",
             ),

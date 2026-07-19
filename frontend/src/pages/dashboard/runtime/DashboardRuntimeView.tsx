@@ -18,6 +18,7 @@ import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
+import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 import type {
   CreateDraftWidgetFormInput,
   DashboardDatasetColumn,
@@ -57,6 +58,7 @@ type DashboardRuntimeState = {
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
   realtimeConnectionState: RealtimeConnectionState;
+  realtimeDataState: DashboardLiveDataState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -178,6 +180,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const {
     canRedoLayout,
     canUndoLayout,
@@ -332,7 +335,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
       if (widget) queueAssistantPromptText(`선택한 위젯 "${widget.title || "제목 없는 위젯"}"에 대해`);
     }
-    if (inspectorMode !== "assistant") setInspectorMode("widget");
+    if (inspectorMode !== "assistant") { setInspectorMode("widget"); setIsInspectorOpen(true); }
     onSelectWidget(widgetId);
   };
   const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
@@ -343,11 +346,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     }
 
     setInspectorMode("widget");
+    setIsInspectorOpen(true);
     setFocusedColorSlot({ slotIndex, widgetId });
     if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
   };
   const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
     setInspectorMode("widget");
+    setIsInspectorOpen(true);
     await onCreateToolbarWidget(kind);
   };
   const handleSelectDataset = (datasetId: string) => {
@@ -360,6 +365,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       return;
     }
 
+    setIsInspectorOpen(true);
     queueVisualizationPromptText(dataset.name);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
@@ -369,11 +375,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       return;
     }
 
+    setIsInspectorOpen(true);
     queueVisualizationPromptText(column.name);
     onSelectDataset(dataset.id);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
+  const isInspectorAvailable = isAssistantInspectorOpen || (isDraftMode && !selectedWidgetHidesInspector);
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
 
   useEffect(() => {
@@ -489,8 +497,8 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isAssistantInspectorOpen ? (
-          <aside className="asklake-dashboard-inspector assistant">
+        inspector={isInspectorAvailable && isInspectorOpen && isAssistantInspectorOpen ? (
+          <aside className="asklake-dashboard-inspector assistant" id="asklake-dashboard-inspector">
             <DashboardAssistantPanel
               currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
@@ -503,8 +511,8 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               onUpdateWidget={onUpdateWidget}
             />
           </aside>
-        ) : isDraftMode && !selectedWidgetHidesInspector ? (
-          <aside className="asklake-dashboard-inspector">
+        ) : isInspectorAvailable && isInspectorOpen ? (
+          <aside className="asklake-dashboard-inspector" id="asklake-dashboard-inspector">
             <WidgetConfigPanel
               datasets={dashboardDatasets}
               editingWidget={configurableDraftWidget}
@@ -520,10 +528,11 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
             />
           </aside>
         ) : undefined}
+        inspectorOpen={isInspectorAvailable && isInspectorOpen}
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={runtime.realtimeConnectionState}
+        realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}
@@ -540,6 +549,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         onSelectPage={onSelectPage}
         onShare={onShare}
         onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}
+        onToggleInspector={isInspectorAvailable ? () => setIsInspectorOpen((open) => !open) : undefined}
       >
         {canShowEditToolbar ? (
           <div className="asklake-dashboard-edit-stage">
@@ -549,7 +559,10 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               canRedo={canRedoLayout}
               canUndo={canUndoLayout}
               disabled={isCreatingToolbarWidget || !selectedPageId}
-              onAssistant={() => setInspectorMode("assistant")}
+              onAssistant={() => {
+                setInspectorMode("assistant");
+                setIsInspectorOpen(true);
+              }}
               onCursor={handleCursorMode}
               onCreateToolbarWidget={handleCreateToolbarWidget}
               onRedo={onRedoLayout}

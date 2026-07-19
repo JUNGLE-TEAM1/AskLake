@@ -1,5 +1,5 @@
 :root {
-  --sidebar-width: 220px;
+  --sidebar-width: 152px;
   --layout-main-width: 1240px;
   --layout-wide-width: 1360px;
   --layout-page-padding: 40px;
@@ -87,13 +87,13 @@ p {
   min-height: 64px;
   border: 0;
   background: transparent;
-  padding: 0 28px;
+  padding: 0 18px;
   text-align: left;
 }
 
 .brand img {
   display: block;
-  width: 148px;
+  width: 112px;
   max-width: 100%;
   height: auto;
 }
@@ -107,22 +107,30 @@ p {
 
 .nav-list {
   display: grid;
-  gap: 4px;
-  padding: 0 16px;
+  gap: 3px;
+  padding: 0 10px;
 }
 
 .nav-item,
 .account-button {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
+  gap: 8px;
+  min-height: 40px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: #565d6d;
-  padding: 0 16px;
+  padding: 0 9px;
   text-align: left;
+}
+
+.nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item.active {
@@ -132,12 +140,12 @@ p {
 }
 
 .account-button {
-  min-height: 78px;
-  margin: auto 16px 18px;
+  min-height: 66px;
+  margin: auto 10px 14px;
   overflow: hidden;
   border-top: 1px solid #dee1e6;
   border-radius: 0;
-  padding: 18px 4px 0;
+  padding: 14px 4px 0;
 }
 
 .account-button:hover .user-identity span:first-child {
@@ -175,6 +183,44 @@ p {
   padding: 0 32px;
 }
 
+.topbar-section {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.topbar-section-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #fff;
+  color: #2563eb;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.topbar-section-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.topbar-section h1 {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .schema-shell .topbar {
   min-height: 64px;
 }
@@ -194,6 +240,7 @@ p {
 .topbar-actions {
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
 }

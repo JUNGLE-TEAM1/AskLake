@@ -67,3 +67,7 @@ class QueryAiSuggestionResponse(CamelModel):
     sql: str
     title: str
     used_evidence_ids: list[str] = Field(default_factory=list, max_length=24)
+    generation_attempts: int = Field(default=1, ge=1, le=2)
+    regeneration_count: int = Field(default=0, ge=0, le=1)
+    generator_version: str = "query-ai-service-v2"
+    prompt_version: str = "cost-aware-v2"

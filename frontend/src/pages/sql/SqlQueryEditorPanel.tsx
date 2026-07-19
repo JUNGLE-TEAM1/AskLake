@@ -1,10 +1,8 @@
 import type { KeyboardEventHandler, RefObject } from "react";
 import { Zap } from "lucide-react";
 import {
-  SQL_PAGE_PANEL_ICON_CLASS_NAME,
-  SqlPageIcon as PlayCircle,
-  SqlPageIcon as RotateCcw,
-  SqlPageIcon as Table2,
+  SQL_PAGE_SECTION_MARKER_CLASS_NAME,
+  SqlSectionMarker,
 } from "./SqlPageIcon";
 
 import { ActionGroup } from "@/components/ui/action-group";
@@ -103,16 +101,15 @@ export function SqlQueryEditorPanel({
             )}
             <SqlAiWriterDialog disabled={disabled} {...ai} />
             <Button type="button" onClick={onReset} size="sm" variant="outline">
-              <RotateCcw data-icon="inline-start" /> SQL 초기화
+              SQL 초기화
             </Button>
             <Button type="button" onClick={onExecute} disabled={!canExecute || pending} size="sm" variant="primary">
-              <PlayCircle data-icon="inline-start" /> {pending ? "실행 중" : "실행"}
+              {pending ? "실행 중" : "실행"}
             </Button>
           </ActionGroup>
         )}
-        icon={<Table2 size={16} />}
-        iconClassName={SQL_PAGE_PANEL_ICON_CLASS_NAME}
-        iconVariant="outline"
+        icon={<SqlSectionMarker />}
+        iconClassName={SQL_PAGE_SECTION_MARKER_CLASS_NAME}
         size="section"
         title="선택 데이터셋 기준 SQL"
       />

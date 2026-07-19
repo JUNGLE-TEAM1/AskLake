@@ -4,6 +4,7 @@ from fastapi import status
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.trino import TrinoQueryRunListResponse, TrinoQueryRunResponse
@@ -62,7 +63,7 @@ class TrinoQueryLifecycleService:
             http_method="GET",
             metadata={"count": len(items)},
             target_id=actor_context.id or actor_context.name,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )
         return TrinoQueryRunListResponse(items=items)
 
@@ -106,5 +107,5 @@ class TrinoQueryLifecycleService:
             result="success",
             status_code=status.HTTP_200_OK,
             target_id=response.base_dataset_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )

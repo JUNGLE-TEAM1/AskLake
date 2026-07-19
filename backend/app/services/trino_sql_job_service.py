@@ -11,6 +11,7 @@ from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.audit import AuditTargetType
 from app.models import ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.repositories.audit_repository import safe_record_audit_event
@@ -528,7 +529,7 @@ class TrinoSqlJobService:
             result=result,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
 
 

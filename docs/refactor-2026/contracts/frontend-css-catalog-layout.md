@@ -10,6 +10,7 @@
 
 | 경계 | 소유 파일 |
 |---|---|
+| 전역 shell 폭·sidebar grid token | `styles/base.css` |
 | 공통 ETL shell | `styles/etl/shared/base.css` → `00-shared.css` |
 | `/etl/source` | `styles/etl/routes/source.css` → `01-source-shared.css` |
 | `/etl/schema` | `styles/etl/routes/schema.css` → `02-schema.css` |
@@ -44,9 +45,11 @@
 | 검색 debounce, 조회 취소, 선택·정렬·pagination 상태 | `useCatalogExplorerState.ts` |
 | 상세·schema·sample 표현 | `CatalogDetailPage.tsx` |
 | lineage graph 표현 | `CatalogLineage.tsx` |
+| PROCESS node 화면 축약 | `catalogLineageProjection.ts` |
 | 순수 검색·정렬·format model | `catalogModel.ts` |
 
 상세 조회는 선택 dataset ID별 effect가 소유하고 cleanup 이후 완료된 요청은 상태를 갱신하지 않는다. SQL 이동은 사용자가 목록에서 명시적으로 선택한 dataset만 허용한다.
+API와 persisted `LineageGraph`는 실행 provenance를 위해 `PROCESS` node를 계속 보존한다. `catalogLineageProjection.ts`만 같은 PROCESS 컬럼으로 이어지는 입력·출력 edge를 직접 연결한 화면용 graph를 만들며 원본 object를 변경하거나 source edge가 없는 실행 metadata를 임의 연결하지 않는다.
 
 ## 호환성·접근성
 

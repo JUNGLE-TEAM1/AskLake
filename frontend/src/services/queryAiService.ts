@@ -19,6 +19,10 @@ export type QueryAiRequest = {
 
 export type QueryAiSuggestion = {
   body: string;
+  generationAttempts?: number;
+  regenerationCount?: number;
+  generatorVersion?: string;
+  promptVersion?: string;
   mode: QueryAiMode;
   requestId: string;
   model?: string | null;

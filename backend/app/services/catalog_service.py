@@ -1,6 +1,5 @@
 import re
 from datetime import datetime, timezone
-
 from fastapi import status
 
 from app.core.auth_context import ActorContext, require_any_permission, require_permission
@@ -9,6 +8,7 @@ from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.materialization import active_materialization_runs, materialization_mode
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.domain.audit import AuditTargetType
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
@@ -234,7 +234,7 @@ class CatalogService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 target_id=dataset.id,
                 target_name=dataset.name,
-                target_type="dataset",
+                target_type=AuditTargetType.DATASET,
             )
             raise ApiError(
                 "CATALOG_UNIQUE_KEY_VERIFICATION_FAILED",
@@ -288,7 +288,7 @@ class CatalogService:
             status_code=status.HTTP_200_OK,
             target_id=dataset.id,
             target_name=dataset.name,
-            target_type="dataset",
+            target_type=AuditTargetType.DATASET,
         )
         return VerifyCatalogUniqueKeyResponse(
             columns=columns,
@@ -1221,7 +1221,7 @@ def record_forbidden_dataset_event(
         status_code=status_code or status.HTTP_403_FORBIDDEN,
         target_id=dataset.id,
         target_name=dataset.name,
-        target_type="dataset",
+        target_type=AuditTargetType.DATASET,
     )
 def dataset_for_latest_successful_materialization(
     dataset: CatalogDatasetResponse,

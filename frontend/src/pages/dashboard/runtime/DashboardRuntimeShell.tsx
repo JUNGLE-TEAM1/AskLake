@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, Database } from "lucide-react";
+import { Check, Copy, Database, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,6 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
+import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -33,6 +34,7 @@ export function DashboardRuntimeShell({
   datasetSidebarOpen = false,
   hasPublishedRevision,
   inspector,
+  inspectorOpen = false,
   isAddingPage,
   isPublishing,
   isRenamingTitle,
@@ -51,8 +53,10 @@ export function DashboardRuntimeShell({
   onSelectPage,
   onShare,
   onToggleDatasetSidebar,
+  onToggleInspector,
   pages,
   realtimeConnectionState,
+  realtimeDataState,
   renamingPageId,
   selectedPageId,
   shareLink,
@@ -63,6 +67,7 @@ export function DashboardRuntimeShell({
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
   inspector?: ReactNode;
+  inspectorOpen?: boolean;
   isAddingPage?: boolean;
   isPublishing?: boolean;
   isRenamingTitle?: boolean;
@@ -81,8 +86,10 @@ export function DashboardRuntimeShell({
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
+  onToggleInspector?: () => void;
   pages: DashboardPageTab[];
   realtimeConnectionState?: RealtimeConnectionState;
+  realtimeDataState?: DashboardLiveDataState;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -91,6 +98,7 @@ export function DashboardRuntimeShell({
   const [copyFeedback, setCopyFeedback] = useState<"idle" | "success" | "error">("idle");
   const hasDatasetSidebar = Boolean(datasetSidebar);
   const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
+  const canToggleInspector = Boolean(onToggleInspector);
   const workspaceClassName = [
     "asklake-dashboard-workspace",
     hasDatasetSidebar && "has-dataset-sidebar",
@@ -139,6 +147,7 @@ export function DashboardRuntimeShell({
         isRefreshing={isRefreshing}
         mode={mode}
         realtimeConnectionState={realtimeConnectionState}
+        realtimeDataState={realtimeDataState}
         title={title}
         onOpenDraft={onOpenDraft}
         onOpenPublished={onOpenPublished}
@@ -147,6 +156,20 @@ export function DashboardRuntimeShell({
         onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
+      {mode === "published" && realtimeDataState && realtimeDataState !== "fresh" ? (
+        <Alert
+          aria-live="polite"
+          className={`asklake-dashboard-runtime-notice ${realtimeDataState === "degraded" ? "error" : ""}`}
+          role="status"
+          variant={realtimeDataState === "degraded" ? "destructive" : "default"}
+        >
+          <AlertDescription>
+            {realtimeDataState === "degraded"
+              ? "최신 데이터 확인에 실패했습니다. 마지막으로 확인된 결과를 표시하고 있으며 수동 새로고침이 필요할 수 있습니다."
+              : "실시간 동기화가 지연되어 마지막으로 확인된 결과를 표시하고 있습니다."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {notice && (
         <Alert
           className={`asklake-dashboard-runtime-notice ${notice.tone}`}
@@ -227,6 +250,21 @@ export function DashboardRuntimeShell({
               onRenamePage={onRenamePage}
               onSelectPage={onSelectPage}
             />
+          ) : null}
+          {canToggleInspector ? (
+            <Button
+              aria-controls="asklake-dashboard-inspector"
+              aria-expanded={inspectorOpen}
+              aria-label={inspectorOpen ? "오른쪽 설정 패널 접기" : "오른쪽 설정 패널 열기"}
+              className="asklake-dashboard-inspector-toggle"
+              size="sm"
+              type="button"
+              variant="ghost"
+              onClick={onToggleInspector}
+            >
+              {inspectorOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              설정
+            </Button>
           ) : null}
         </div>
       </div>

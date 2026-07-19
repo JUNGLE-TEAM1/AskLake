@@ -158,6 +158,19 @@ print("true" if str(enabled).strip().lower() == "true" else "false")
 '
 }
 
+remote_clickhouse_v2_enabled() {
+  remote_compose 'config --format json' | "$PYTHON_BIN" -c '
+import json
+import sys
+
+try:
+    enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("CLICKHOUSE_REALTIME_V2_ENABLED")
+except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+print("true" if str(enabled).strip().lower() == "true" else "false")
+'
+}
+
 wait_for_ssh() {
   local host
   host="$(resolve_host)"
@@ -334,7 +347,17 @@ prepare_clickhouse_runtime() {
 
 bootstrap_metadata_schema() {
   remote_compose 'up -d --wait postgres'
+  remote_compose 'run --rm --no-deps --build backend python -m alembic upgrade head'
   remote_compose 'run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'
+}
+
+prepare_clickhouse_v2_runtime() {
+  if [[ "$(remote_clickhouse_v2_enabled)" != "true" ]]; then
+    printf 'ClickHouse Realtime V2 is disabled; removing stale V2 runtime containers.\n'
+    remote_compose 'rm -sf kafka-connect-v2 clickhouse-v2 clickhouse-keeper-v2'
+    return
+  fi
+  remote_compose 'up -d --wait redpanda clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2'
 }
 
 verify_clickhouse_runtime() {
@@ -353,6 +376,24 @@ verify_clickhouse_runtime() {
     fi
   done
   die "ClickHouse production readiness failed"
+}
+
+verify_clickhouse_v2_runtime() {
+  local attempt
+  if [[ "$(remote_clickhouse_v2_enabled)" != "true" ]]; then
+    printf 'ClickHouse Realtime V2 is disabled; runtime readiness check skipped.\n'
+    return
+  fi
+  for attempt in $(seq 1 12); do
+    if remote_compose 'exec -T backend python -c "from app.realtime.application.ingest_service import RealtimeIngestService; from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient.realtime_v2_reader(); assert client.ping(); client.close(); assert RealtimeIngestService().probe().runtime_ready"'; then
+      return
+    fi
+    if [[ "$attempt" -lt 12 ]]; then
+      printf 'ClickHouse Realtime V2 readiness is not ready yet (attempt %s/12).\n' "$attempt"
+      sleep 5
+    fi
+  done
+  die "ClickHouse Realtime V2 production readiness failed"
 }
 
 DIAGNOSTIC_CHECKS=()
@@ -504,10 +545,12 @@ start_stack() {
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
+  prepare_clickhouse_v2_runtime
   remote_compose 'up -d'
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime
+  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 
@@ -541,10 +584,12 @@ deploy_stack() {
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
+  prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime
+  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 
@@ -554,10 +599,12 @@ restart_stack() {
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
   prepare_clickhouse_runtime
+  prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime
+  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 

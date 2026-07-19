@@ -18,6 +18,13 @@ class DatasetFreshnessModel(Base):
     latest_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     latest_run_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     next_check_after_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=1_000)
+    binding_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    active_serving_engine: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    active_serving_version_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    active_archive_snapshot_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latest_source_boundary: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
+    latest_checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    latest_mutation_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -40,6 +47,13 @@ class DatasetRevisionCommitModel(Base):
             postgresql_where=text("source_fingerprint IS NOT NULL"),
             sqlite_where=text("source_fingerprint IS NOT NULL"),
         ),
+        Index(
+            "dataset_revision_commits_materialization_uq",
+            "materialization_id",
+            unique=True,
+            postgresql_where=text("materialization_id IS NOT NULL"),
+            sqlite_where=text("materialization_id IS NOT NULL"),
+        ),
     )
 
     dataset_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -53,6 +67,13 @@ class DatasetRevisionCommitModel(Base):
     source_ranges: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, nullable=False, default=list)
     source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manifest_location: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    materialization_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source_boundary: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
+    serving_engine: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    serving_version_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    binding_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    dimension_version_ids: Mapped[dict[str, str]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    mutation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="append")
     committed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
