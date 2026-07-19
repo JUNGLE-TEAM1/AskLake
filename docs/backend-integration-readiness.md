@@ -25,7 +25,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Production은 bootstrap admin, Secure cookie, header fallback/public signup 차단을 유지하고 legacy demo identity를 기본 비활성화한다. 공개 demo 배포만 backend/frontend paired opt-in으로 계정과 로그인 안내를 함께 복구하며 preflight가 값과 일치를 검증한다. | 운영 IdP/SSO와 정식 계정 provisioning |
 | Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그. Backend 저장/필터/응답은 단일 `AuditTargetType` 계약을 사용하고 `query_run`을 지원하며, 계약 밖 레거시 값은 `unknown`과 `metadata.rawTargetType`으로 안전하게 반환한다. Admin frontend는 users/groups/permissions/governance/audit 초기 요청을 section별로 격리해 한 API 실패가 성공한 metric과 탭을 0으로 덮지 않는다. | audit export/retention 정책 |
 
-감사 로그 신규 writer는 알려진 `AuditTargetType` enum member만 허용하고, `unknown`은 레거시 읽기 호환에만 사용한다. 프런트 재조회 실패는 마지막 성공 데이터를 stale로 유지하며 요청 순서가 역전되어도 최신 요청만 상태를 소유한다.
+감사 로그 신규 writer는 알려진 `AuditTargetType` enum member만 허용하고, `unknown`은 레거시 읽기 호환에만 사용한다. OpenAPI 호환성 검사는 inline enum과 local component `$ref`를 resolve한 의미 기준으로 비교하면서 enum 제거·type 변경·미해결 reference는 계속 차단한다. 프런트 재조회 실패는 마지막 성공 데이터를 stale로 유지하며 요청 순서가 역전되어도 최신 요청만 상태를 소유한다. `verify:identity-admin`은 smoke 전용 demo fixture를 명시적으로 활성화하고 admin/viewer session cookie로 관리 API를 호출하며 actor header fallback에 의존하지 않는다.
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint, Dashboard card/runtime, local session auth와 Phase 0 admin endpoint를 함께 포함한다.

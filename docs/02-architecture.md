@@ -318,7 +318,7 @@ Production startup은 기본적으로 알려진 legacy demo 계정(`admin.user@a
 
 세션 쿠키의 `Secure` 속성은 운영 환경에서 기본 활성화된다. HTTPS 인증서가 아직 없는 제한된 dev HTTP ALB만 `AUTH_SESSION_COOKIE_SECURE=false`를 명시해 로그인 세션을 유지할 수 있으며, 이 예외는 header-auth fallback, public signup, legacy demo 계정을 활성화하지 않는다. HTTPS 전환 시 해당 override를 제거하거나 `true`로 복구한다.
 
-감사 로그 재조회가 실패하면 마지막 성공 데이터를 유지한 채 stale 경고를 표시하고, 최신 요청보다 늦게 끝난 이전 응답은 화면 상태를 갱신하지 않는다. 신규 감사 writer는 `AuditTargetType`의 알려진 enum member만 허용하며 `unknown`은 계약 밖 레거시 저장값을 읽는 호환 경계에서만 사용한다.
+감사 로그 재조회가 실패하면 마지막 성공 데이터를 유지한 채 stale 경고를 표시하고, 최신 요청보다 늦게 끝난 이전 응답은 화면 상태를 갱신하지 않는다. 신규 감사 writer는 `AuditTargetType`의 알려진 enum member만 허용하며 `unknown`은 계약 밖 레거시 저장값을 읽는 호환 경계에서만 사용한다. 계약 검증기는 OpenAPI local `$ref`를 component schema로 resolve해 inline enum과 의미 기준으로 비교하며 미해결·순환 reference는 fail closed한다.
 
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
 이 endpoint는 `get_actor_context`를 필수 dependency로 사용하고, `dashboardId`가 있으면 해당 actor의 dashboard `view` 권한을 확인한 뒤에만 Assistant context를 구성한다. 운영 환경의 유효한 session이 없는 요청은 `401 UNAUTHORIZED`, dashboard 접근 권한이 없는 요청은 `403 FORBIDDEN`을 반환한다.

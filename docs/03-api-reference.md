@@ -1132,7 +1132,7 @@ PR 07의 application 경계 분리는 공개 endpoint와 payload를 변경하지
 
 ### Refactor 하위 호환 게이트
 
-`npm run verify:backward-compatibility`는 refactor baseline의 95개 operation과 component schema를 현재 FastAPI OpenAPI와 비교한다. 기존 operation·response·property·enum 제거, request required 강화는 허용하지 않는다. 현재 추가된 `KafkaContinuousRuntime.desiredState`, `observedState`와 `ContinuousRuntimeErrorDetail`은 기존 `status`, `lastError`를 유지하는 응답 전용 additive 계약이다. 이 검증은 endpoint를 추가하는 작업을 막지 않지만 additive 항목을 출력해 리뷰 근거로 남긴다.
+`npm run verify:backward-compatibility`는 refactor baseline의 95개 operation과 component schema를 현재 FastAPI OpenAPI와 비교한다. local `$ref`는 실제 component schema로 안전하게 resolve한 뒤 inline schema와 의미 기준으로 비교한다. 기존 operation·response·property·enum 제거, primitive type 변경, request required 강화와 resolve할 수 없는 reference는 허용하지 않으며 enum 값 추가는 additive로 기록한다. 현재 추가된 `KafkaContinuousRuntime.desiredState`, `observedState`와 `ContinuousRuntimeErrorDetail`은 기존 `status`, `lastError`를 유지하는 응답 전용 additive 계약이다. 이 검증은 endpoint를 추가하는 작업을 막지 않지만 additive 항목을 출력해 리뷰 근거로 남긴다.
 
 ## 10) ETL Permission 옵션 및 grant 저장
 

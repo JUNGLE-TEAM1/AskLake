@@ -3986,6 +3986,8 @@ type AuditEntry = {
 
 계약 밖의 레거시 `target_type`은 응답에서 `unknown`으로 투영하고 원래 값은 해당 로그의 `metadata.rawTargetType`에 보존합니다. 신규 감사 이벤트 writer는 `AuditTargetType`의 알려진 enum member만 전달해야 하며 문자열이나 `unknown` 쓰기는 거부합니다. `unknown`은 레거시 읽기 호환 전용이고 신규 오타를 숨기는 저장값으로 사용하지 않습니다.
 
+OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현될 수 있으므로 하위 호환성 판정은 reference를 resolve한 뒤 primitive type과 enum 값의 의미를 비교합니다. 기존 enum 제거와 type 변경은 breaking이며 값 추가는 additive입니다.
+
 ## 10. 백엔드 구현 체크리스트
 
 - P0 API 3개를 먼저 구현합니다.
