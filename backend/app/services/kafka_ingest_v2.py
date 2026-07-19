@@ -257,7 +257,10 @@ class ClickHouseKafkaIngestV2Gateway:
         self.ingest_service_factory(self.settings).register(
             topic=runtime.topic,
             table=_RAW_TABLE,
-            dlq_topic=realtime_v2_dlq_topic(runtime.topic),
+            dlq_topic=(
+                self.settings.kafka_connect_dlq_topic
+                or realtime_v2_dlq_topic(runtime.topic)
+            ),
             generation=generation,
             connector_name=connector_name,
             consumer_group=runtime.consumer_group_id,

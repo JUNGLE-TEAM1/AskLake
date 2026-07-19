@@ -170,7 +170,10 @@ class ClickHouseRealtimeV2WorkerGateway:
         RealtimeIngestService(self.settings).register(
             topic=topic,
             table="raw_events_v2",
-            dlq_topic=realtime_v2_dlq_topic(topic),
+            dlq_topic=(
+                self.settings.kafka_connect_dlq_topic
+                or realtime_v2_dlq_topic(topic)
+            ),
             generation=int(run.generation),
             connector_name=realtime_v2_connector_name(
                 self.settings.kafka_connect_connector_name,

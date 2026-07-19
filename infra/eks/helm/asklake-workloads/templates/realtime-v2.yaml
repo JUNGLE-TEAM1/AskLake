@@ -251,6 +251,7 @@ spec:
             - {name: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED, value: "false"}
             - {name: KAFKA_CONNECT_URL, value: "http://kafka-connect-v2:8083"}
             - {name: KAFKA_CONNECT_CONNECTOR_NAME, value: {{ printf "asklake-eks-realtime-v2-%s" $generation | quote }}}
+            - {name: KAFKA_CONNECT_DLQ_TOPIC, value: {{ $dlqTopic | quote }}}
             - {name: CLICKHOUSE_V2_URL, value: "https://clickhouse-v2:8443"}
             - {name: CLICKHOUSE_V2_DATABASE, value: {{ .Values.realtimeV2.clickhouse.database | quote }}}
             - {name: CLICKHOUSE_V2_TLS_CA_FILE, value: /run/asklake-v2/clickhouse-v2-ca.crt}

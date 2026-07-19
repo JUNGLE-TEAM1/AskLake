@@ -143,6 +143,7 @@ class KafkaIngestV2Tests(unittest.TestCase):
             kafka_connect_sink_enabled=True,
             clickhouse_realtime_consumer_owner="kafka_connect_v2",
             kafka_connect_url="http://connect.internal:8083",
+            kafka_connect_dlq_topic="asklake.realtime.v2.dlq.g1",
         )
         self.gateway = ClickHouseKafkaIngestV2Gateway(
             self.settings,
@@ -250,6 +251,10 @@ class KafkaIngestV2Tests(unittest.TestCase):
         self.assertEqual(
             self.ingest.register_calls[0]["consumer_group"],
             "asklake-kafka-v2",
+        )
+        self.assertEqual(
+            self.ingest.register_calls[0]["dlq_topic"],
+            "asklake.realtime.v2.dlq.g1",
         )
         with Session(self.engine) as db:
             catalog = db.get(CatalogDatasetModel, "ds_kafka_v2_events")
