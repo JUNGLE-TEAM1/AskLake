@@ -707,13 +707,7 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    # external_ec2 fences side effects in the web/API process, but an explicit
-    # dedicated worker in that deployment is the control plane and must
-    # reconcile its exact-generation owner claims.
-    if (
-        external_continuous_control_plane_enabled()
-        and settings.continuous_control_plane != "worker"
-    ):
+    if external_continuous_control_plane_enabled() and settings.continuous_control_plane != "worker":
         return
     sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
         reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,

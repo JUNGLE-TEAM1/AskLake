@@ -53,20 +53,12 @@ def continuous_request() -> CreatePipelineRequest:
 def continuous_job() -> ETLJobModel:
     request = continuous_request()
     compiled = etl_service.compile_pipeline_rules(request)
-    etl_service.require_compiled_rules(compiled)
-    etl_service.apply_compiled_rules(request, compiled)
+    etl_service.require_compiled_rules(compiled); etl_service.apply_compiled_rules(request, compiled)
     dataset_id = "ds_reviews_continuous_contract"
-    iceberg_target = build_iceberg_writer_target(
-        request.target_dataset,
-        dataset_id,
-        write_mode="append",
-    )
-    legacy_continuous_config = etl_service.continuous_config_from_request(
-        request, "JOB-CONTINUOUS-CONTRACT"
-    )
+    iceberg_target = build_iceberg_writer_target(request.target_dataset, dataset_id, write_mode="append")
+    legacy_continuous_config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT")
     assert legacy_continuous_config is not None
-    legacy_continuous_config.pop("runtimeEngine", None)
-    legacy_continuous_config.pop("runtimeGeneration", None)
+    for marker in ("runtimeEngine", "runtimeGeneration"): legacy_continuous_config.pop(marker, None)
     return ETLJobModel(
         id="JOB-CONTINUOUS-CONTRACT",
         name=request.job_name,
@@ -136,11 +128,9 @@ def main() -> None:
     else:
         raise AssertionError("Replay offsets must use partition:offset format.")
 
-    request = continuous_request()
-    config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT")
+    config = etl_service.continuous_config_from_request(continuous_request(), "JOB-CONTINUOUS-CONTRACT")
     assert config == {
-        "runtimeEngine": "kafka_connect_clickhouse_v2",
-        "runtimeGeneration": 1,
+        "runtimeEngine": "kafka_connect_clickhouse_v2", "runtimeGeneration": 1,
         "initialOffsetPolicy": "earliest",
         "triggerIntervalSeconds": 30,
         "maxOffsetsPerTrigger": 10000,
