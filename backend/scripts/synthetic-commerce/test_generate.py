@@ -14,6 +14,8 @@ from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).with_name("generate.py")
+if str(MODULE_PATH.parent) not in sys.path:
+    sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("synthetic_generate", MODULE_PATH)
 assert SPEC and SPEC.loader
 generate = importlib.util.module_from_spec(SPEC)

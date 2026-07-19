@@ -523,11 +523,10 @@ def query_as_dicts(connection: sqlite3.Connection, query: str) -> list[dict[str,
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def evaluate_v3_patterns(
+def _v3_category_patterns(
     connection: sqlite3.Connection,
-    manifest: dict[str, Any],
+    profile: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    profile = manifest["behavior_profile"]
     thresholds = profile["thresholds"]
     category_profile = profile["category_purchase_intent"]["categories"]
     categories = query_as_dicts(connection, QUERIES["category_purchase_intent"])
@@ -539,26 +538,6 @@ def evaluate_v3_patterns(
     maximum = max(rates.values())
     minimum = min(rates.values())
     adjacent_gap = thresholds["category_adjacent_group_gap_pp"]
-
-    daily_rows = query_as_dicts(connection, QUERIES["daily_funnel"])
-    daily = {row["event_date"]: row for row in daily_rows}
-    date_profiles = profile["date_profiles"]
-    planted_dates = {
-        date
-        for item in date_profiles.values()
-        for date in item["dates"]
-    }
-    ordinary = [row for row in daily_rows if row["event_date"] not in planted_dates]
-    ordinary_impressions = statistics.median(row["impressions"] for row in ordinary)
-    ordinary_ctr = statistics.median(row["ctr_pct"] for row in ordinary)
-    ordinary_click_to_cart = statistics.median(row["click_to_cart_pct"] for row in ordinary)
-
-    campaign = [daily[date] for date in date_profiles["weekend_campaign"]["dates"]]
-    campaign_impressions = statistics.mean(row["impressions"] for row in campaign)
-    campaign_ctr = statistics.mean(row["ctr_pct"] for row in campaign)
-    payday = daily[date_profiles["payday_promotion"]["dates"][0]]
-    payday_traffic_delta_pct = 100.0 * (payday["impressions"] - ordinary_impressions) / ordinary_impressions
-
     sample_passed = all(
         row["clicks"] >= thresholds["minimum_clicks_per_category"]
         and row["purchase_clicks"] >= thresholds["minimum_purchase_clicks_per_category"]
@@ -570,11 +549,6 @@ def evaluate_v3_patterns(
     )
     spread = maximum - minimum
     spread_ratio = ratio(maximum, minimum)
-    traffic_ratio = ratio(campaign_impressions, ordinary_impressions)
-    ctr_drop = ordinary_ctr - campaign_ctr
-    payday_cart_lift = payday["click_to_cart_pct"] - ordinary_click_to_cart
-    ctr_values = [row["ctr_pct"] for row in daily_rows]
-    cart_values = [row["click_to_cart_pct"] for row in daily_rows]
 
     return [
         {
@@ -604,6 +578,40 @@ def evaluate_v3_patterns(
                 and spread_ratio >= thresholds["category_max_min_ratio"]
             ),
         },
+    ]
+
+
+def _v3_daily_patterns(
+    connection: sqlite3.Connection,
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    thresholds = profile["thresholds"]
+    daily_rows = query_as_dicts(connection, QUERIES["daily_funnel"])
+    daily = {row["event_date"]: row for row in daily_rows}
+    date_profiles = profile["date_profiles"]
+    planted_dates = {
+        date
+        for item in date_profiles.values()
+        for date in item["dates"]
+    }
+    ordinary = [row for row in daily_rows if row["event_date"] not in planted_dates]
+    ordinary_impressions = statistics.median(row["impressions"] for row in ordinary)
+    ordinary_ctr = statistics.median(row["ctr_pct"] for row in ordinary)
+    ordinary_click_to_cart = statistics.median(row["click_to_cart_pct"] for row in ordinary)
+
+    campaign = [daily[date] for date in date_profiles["weekend_campaign"]["dates"]]
+    campaign_impressions = statistics.mean(row["impressions"] for row in campaign)
+    campaign_ctr = statistics.mean(row["ctr_pct"] for row in campaign)
+    payday = daily[date_profiles["payday_promotion"]["dates"][0]]
+    payday_traffic_delta_pct = 100.0 * (payday["impressions"] - ordinary_impressions) / ordinary_impressions
+
+    traffic_ratio = ratio(campaign_impressions, ordinary_impressions)
+    ctr_drop = ordinary_ctr - campaign_ctr
+    payday_cart_lift = payday["click_to_cart_pct"] - ordinary_click_to_cart
+    ctr_values = [row["ctr_pct"] for row in daily_rows]
+    cart_values = [row["click_to_cart_pct"] for row in daily_rows]
+
+    return [
         {
             "name": "weekend campaign raises traffic and lowers CTR",
             "observed": {"traffic_ratio": round(traffic_ratio, 3), "ctr_drop_pp": round(ctr_drop, 3)},
@@ -644,6 +652,14 @@ def evaluate_v3_patterns(
             ),
         },
     ]
+
+
+def evaluate_v3_patterns(
+    connection: sqlite3.Connection,
+    manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    profile = manifest["behavior_profile"]
+    return _v3_category_patterns(connection, profile) + _v3_daily_patterns(connection, profile)
 
 
 def evaluate_patterns(

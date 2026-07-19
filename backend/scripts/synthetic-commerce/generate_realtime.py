@@ -194,33 +194,11 @@ def evaluate_thresholds(category_metrics: list[dict[str, Any]]) -> list[dict[str
     ]
 
 
-def generate_realtime_fixture(
-    *,
-    baseline_dir: Path,
-    output_dir: Path,
-    run_id: str,
-    anchor_at: str,
-    seed: int = 20260711,
-    clicks_per_category: int = 1_000,
-) -> dict[str, Any]:
-    validate_run_id(run_id)
-    if clicks_per_category < MINIMUM_CLICKS_PER_CATEGORY:
-        raise ValueError(
-            f"clicks-per-category must be at least {MINIMUM_CLICKS_PER_CATEGORY}"
-        )
-    anchor = parse_anchor(anchor_at)
-    window_start = anchor - timedelta(minutes=WINDOW_MINUTES)
-    baseline = load_baseline(baseline_dir, window_start)
-
-    run_dir = output_dir.resolve() / run_id
-    if run_dir.exists():
-        raise FileExistsError(f"run directory already exists: {run_dir}")
-    run_dir.mkdir(parents=True)
-    log_path = run_dir / "click-events.log"
-    kafka_path = run_dir / "click-events.kafka.jsonl"
-
+def _plan_categories(
+    baseline: dict[str, Any], clicks_per_category: int
+) -> list[dict[str, Any]]:
     category_profile = baseline["manifest"]["behavior_profile"]["category_purchase_intent"]["categories"]
-    planned: list[dict[str, Any]] = []
+    planned = []
     for category, profile in category_profile.items():
         baseline_rate = float(baseline["metrics"][category]["click_to_purchase_pct"])
         state = state_for_group(profile["group"])
@@ -230,7 +208,6 @@ def generate_realtime_fixture(
             round(clicks_per_category * desired_rate / 100.0),
         )
         carts = max(purchases, round(clicks_per_category * 0.22))
-        impressions = clicks_per_category * 3
         observed_rate = 100.0 * purchases / clicks_per_category
         planned.append(
             {
@@ -238,7 +215,7 @@ def generate_realtime_fixture(
                 "state": state,
                 "baseline_click_to_purchase_pct": baseline_rate,
                 "target_click_to_purchase_pct": round(desired_rate, 4),
-                "impressions": impressions,
+                "impressions": clicks_per_category * 3,
                 "clicks": clicks_per_category,
                 "carts": carts,
                 "purchase_clicks": purchases,
@@ -246,40 +223,52 @@ def generate_realtime_fixture(
                 "delta_pp": round(observed_rate - baseline_rate, 4),
             }
         )
+    return planned
 
-    checks = evaluate_thresholds(planned)
-    if not all(item["passed"] for item in checks):
-        failed = ", ".join(item["name"] for item in checks if not item["passed"])
-        raise ValueError(f"realtime fixture plan does not satisfy thresholds: {failed}")
 
+def _realtime_identity(
+    baseline: dict[str, Any], seed: int, run_id: str, anchor: datetime
+) -> str:
+    return hashlib.sha256(
+        (
+            f"{PROFILE_VERSION}:{baseline['manifest_sha256']}:{baseline['analysis_result_sha256']}:"
+            f"{seed}:{run_id}:{anchor.isoformat()}"
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+
+
+def _write_realtime_events(
+    *,
+    baseline: dict[str, Any],
+    planned: list[dict[str, Any]],
+    run_dir: Path,
+    identity: str,
+    run_id: str,
+    seed: int,
+    window_start: datetime,
+) -> tuple[int, dict[str, Counter[str]]]:
+    log_path = run_dir / "click-events.log"
+    kafka_path = run_dir / "click-events.kafka.jsonl"
     total_events = sum(
         row["impressions"] + row["clicks"] + row["carts"] + row["purchase_clicks"]
         for row in planned
     )
     window_microseconds = WINDOW_MINUTES * 60 * 1_000_000
-    identity = hashlib.sha256(
-        (
-            f"{PROFILE_VERSION}:{baseline['manifest_sha256']}:{baseline['analysis_result_sha256']}:"
-            f"{seed}:{run_id}:"
-            f"{anchor.isoformat()}"
-        ).encode("utf-8")
-    ).hexdigest()[:12]
     event_index = 0
     session_index = 0
     observed_counts: dict[str, Counter[str]] = defaultdict(Counter)
 
     with log_path.open("wb") as log_file, kafka_path.open("wb") as kafka_file:
-        for category_index, row in enumerate(planned):
+        for row in planned:
             products = baseline["products_by_category"][row["category"]]
-            for click_index in range(clicks_per_category):
+            for click_index in range(row["clicks"]):
                 session_index += 1
                 user = baseline["users"][(seed + session_index * 17) % len(baseline["users"])]
                 product = products[(seed + click_index * 31) % len(products)]
                 session_id = f"RTS-{identity}-{session_index:06d}"
                 device = user["primary_device"]
-                position = 3
 
-                def emit(event_type: str, page_url: str, event_position: int) -> None:
+                def emit(event_type: str, page_url: str, position: int) -> None:
                     nonlocal event_index
                     event_index += 1
                     event_time = window_start + timedelta(
@@ -295,43 +284,61 @@ def generate_realtime_fixture(
                         "page_url": page_url,
                         "device_type": device,
                         "referrer": "realtime_demo",
-                        "position": event_position,
+                        "position": position,
                     }
                     log_file.write(raw_line(raw))
-                    envelope = {
-                        "schema_version": "1.0",
-                        "event_id": raw["event_id"],
-                        "source": f"synthetic-commerce-realtime/{run_id}",
-                        "offset": event_index,
-                        "review": event_type,
-                        "created_at": raw["event_time"],
-                        "raw": raw,
-                    }
-                    kafka_file.write(encode_json(envelope))
+                    kafka_file.write(
+                        encode_json(
+                            {
+                                "schema_version": "1.0",
+                                "event_id": raw["event_id"],
+                                "source": f"synthetic-commerce-realtime/{run_id}",
+                                "offset": event_index,
+                                "review": event_type,
+                                "created_at": raw["event_time"],
+                                "raw": raw,
+                            }
+                        )
+                    )
                     observed_counts[row["category"]][event_type] += 1
 
                 search_url = f"/search?category={quote_plus(row['category'])}"
-                for impression_position in range(1, 4):
-                    emit("product_impression", search_url, impression_position)
-                emit("product_click", f"/dp/{product['product_id']}", position)
+                for position in range(1, 4):
+                    emit("product_impression", search_url, position)
+                emit("product_click", f"/dp/{product['product_id']}", 3)
                 if click_index < row["carts"]:
-                    emit("add_to_cart", f"/dp/{product['product_id']}", position)
+                    emit("add_to_cart", f"/dp/{product['product_id']}", 3)
                 if click_index < row["purchase_clicks"]:
-                    emit("purchase_click", "/checkout", position)
+                    emit("purchase_click", "/checkout", 3)
 
     if event_index != total_events:
         raise RuntimeError(f"planned {total_events} events but wrote {event_index}")
     for row in planned:
-        counts = observed_counts[row["category"]]
         expected = {
             "product_impression": row["impressions"],
             "product_click": row["clicks"],
             "add_to_cart": row["carts"],
             "purchase_click": row["purchase_clicks"],
         }
-        if dict(counts) != expected:
+        if dict(observed_counts[row["category"]]) != expected:
             raise RuntimeError(f"observed realtime counts differ for {row['category']}")
+    return total_events, observed_counts
 
+
+def _build_realtime_manifest(
+    *,
+    baseline: dict[str, Any],
+    planned: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+    run_dir: Path,
+    run_id: str,
+    seed: int,
+    anchor: datetime,
+    window_start: datetime,
+    total_events: int,
+) -> dict[str, Any]:
+    log_path = run_dir / "click-events.log"
+    kafka_path = run_dir / "click-events.kafka.jsonl"
     metrics_path = run_dir / "category-metrics.json"
     metrics_path.write_bytes(encode_json({"categories": planned, "checks": checks}, indent=2))
     files = [
@@ -340,7 +347,7 @@ def generate_realtime_fixture(
         file_evidence(metrics_path, len(planned)),
     ]
     slug = run_id.lower().replace("_", "-").replace(".", "-")
-    manifest = {
+    return {
         "fixture_type": "synthetic-commerce-realtime-5m",
         "profile_version": PROFILE_VERSION,
         "run_id": run_id,
@@ -369,32 +376,66 @@ def generate_realtime_fixture(
         "threshold_checks": checks,
         "files": files,
     }
+
+
+def generate_realtime_fixture(
+    *,
+    baseline_dir: Path,
+    output_dir: Path,
+    run_id: str,
+    anchor_at: str,
+    seed: int = 20260711,
+    clicks_per_category: int = 1_000,
+) -> dict[str, Any]:
+    validate_run_id(run_id)
+    if clicks_per_category < MINIMUM_CLICKS_PER_CATEGORY:
+        raise ValueError(
+            f"clicks-per-category must be at least {MINIMUM_CLICKS_PER_CATEGORY}"
+        )
+    anchor = parse_anchor(anchor_at)
+    window_start = anchor - timedelta(minutes=WINDOW_MINUTES)
+    baseline = load_baseline(baseline_dir, window_start)
+
+    run_dir = output_dir.resolve() / run_id
+    if run_dir.exists():
+        raise FileExistsError(f"run directory already exists: {run_dir}")
+    run_dir.mkdir(parents=True)
+    planned = _plan_categories(baseline, clicks_per_category)
+    checks = evaluate_thresholds(planned)
+    if not all(item["passed"] for item in checks):
+        failed = ", ".join(item["name"] for item in checks if not item["passed"])
+        raise ValueError(f"realtime fixture plan does not satisfy thresholds: {failed}")
+    identity = _realtime_identity(baseline, seed, run_id, anchor)
+    total_events, _ = _write_realtime_events(
+        baseline=baseline,
+        planned=planned,
+        run_dir=run_dir,
+        identity=identity,
+        run_id=run_id,
+        seed=seed,
+        window_start=window_start,
+    )
+    manifest = _build_realtime_manifest(
+        baseline=baseline,
+        planned=planned,
+        checks=checks,
+        run_dir=run_dir,
+        run_id=run_id,
+        seed=seed,
+        anchor=anchor,
+        window_start=window_start,
+        total_events=total_events,
+    )
     (run_dir / "manifest.json").write_bytes(encode_json(manifest, indent=2))
     return manifest
 
 
-def validate_fixture(data_dir: Path, baseline_dir: Path | None = None) -> dict[str, Any]:
-    data_dir = data_dir.resolve()
-    manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("fixture_type") != "synthetic-commerce-realtime-5m":
-        raise ValueError("not a synthetic-commerce realtime fixture")
-    evidence_checks = []
-    for item in manifest["files"]:
-        path = data_dir / item["path"]
-        evidence_checks.append(
-            path.is_file()
-            and path.stat().st_size == item["bytes"]
-            and sha256_file(path) == item["sha256"]
-        )
-    window_start = datetime.fromisoformat(manifest["window"]["start"])
-    window_end = datetime.fromisoformat(manifest["window"]["end_exclusive"])
-    baseline = load_baseline(baseline_dir, window_start) if baseline_dir else None
-    baseline_identity_passed = baseline is None or (
-        baseline["manifest"]["run_id"] == manifest["baseline"]["run_id"]
-        and baseline["manifest_sha256"] == manifest["baseline"]["manifest_sha256"]
-        and baseline["analysis_result_sha256"]
-        == manifest["baseline"]["analysis_result_sha256"]
-    )
+def _scan_realtime_events(
+    data_dir: Path,
+    window_start: datetime,
+    window_end: datetime,
+    baseline: dict[str, Any] | None,
+) -> tuple[bool, int, int, dict[str, Counter[str]]]:
     valid_users = {row["user_id"] for row in baseline["users"]} if baseline else None
     product_categories = (
         {
@@ -423,10 +464,7 @@ def validate_fixture(data_dir: Path, baseline_dir: Path | None = None) -> dict[s
         for offset, (log_line, kafka_line) in enumerate(
             zip_longest(log_handle, kafka_handle), start=1
         ):
-            if log_line is None or kafka_line is None:
-                content_passed = False
-                continue
-            if not log_line.strip() or not kafka_line.strip():
+            if log_line is None or kafka_line is None or not log_line.strip() or not kafka_line.strip():
                 content_passed = False
                 continue
             log_rows += 1
@@ -441,7 +479,7 @@ def validate_fixture(data_dir: Path, baseline_dir: Path | None = None) -> dict[s
             timestamp = datetime.fromisoformat(raw["event_time"])
             stage = expected_order.get(raw["event_type"], -1)
             prior_stage = session_stage.get(raw["session_id"], -1)
-            if (
+            invalid = (
                 envelope.get("offset") != offset
                 or envelope.get("event_id") != raw["event_id"]
                 or envelope.get("raw") != raw
@@ -452,12 +490,40 @@ def validate_fixture(data_dir: Path, baseline_dir: Path | None = None) -> dict[s
                 or (raw["event_type"] == "purchase_click" and prior_stage < 2)
                 or (valid_users is not None and raw["user_id"] not in valid_users)
                 or (product_categories is not None and raw["product_id"] not in product_categories)
-            ):
-                content_passed = False
+            )
+            content_passed = content_passed and not invalid
             event_ids.add(raw["event_id"])
             session_stage[raw["session_id"]] = stage
             if product_categories is not None:
                 observed_counts[product_categories[raw["product_id"]]][raw["event_type"]] += 1
+    return content_passed, log_rows, kafka_rows, observed_counts
+
+
+def validate_fixture(data_dir: Path, baseline_dir: Path | None = None) -> dict[str, Any]:
+    data_dir = data_dir.resolve()
+    manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("fixture_type") != "synthetic-commerce-realtime-5m":
+        raise ValueError("not a synthetic-commerce realtime fixture")
+    evidence_checks = []
+    for item in manifest["files"]:
+        path = data_dir / item["path"]
+        evidence_checks.append(
+            path.is_file()
+            and path.stat().st_size == item["bytes"]
+            and sha256_file(path) == item["sha256"]
+        )
+    window_start = datetime.fromisoformat(manifest["window"]["start"])
+    window_end = datetime.fromisoformat(manifest["window"]["end_exclusive"])
+    baseline = load_baseline(baseline_dir, window_start) if baseline_dir else None
+    baseline_identity_passed = baseline is None or (
+        baseline["manifest"]["run_id"] == manifest["baseline"]["run_id"]
+        and baseline["manifest_sha256"] == manifest["baseline"]["manifest_sha256"]
+        and baseline["analysis_result_sha256"]
+        == manifest["baseline"]["analysis_result_sha256"]
+    )
+    content_passed, log_rows, kafka_rows, observed_counts = _scan_realtime_events(
+        data_dir, window_start, window_end, baseline
+    )
 
     category_counts_passed = True
     if baseline:
