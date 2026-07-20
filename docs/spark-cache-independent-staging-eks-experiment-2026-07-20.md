@@ -153,9 +153,9 @@ cluster, Run, application, snapshot 식별자는 private mode-0600 evidence에�
 이 항목들은 staging으로 JVM OOM을 제거한 현재 변경과 분리해 후속 검증 및 운영
 hardening으로 진행한다.
 
-## 8. Staging-first hybrid 후속 구현
+## 8. 폐기한 staging-first cache 실험
 
-후속 runtime은 원본 격리 경계를 유지하면서 작은 staging만 선택적으로
+첫 hybrid 후보는 원본 격리 경계를 유지하면서 작은 staging만 선택적으로
 `MEMORY_AND_DISK`에 재사용할 수 있도록 `ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES`를
 추가한다. 기본값은 0이며, 모든 staged Parquet file의 물리 byte 합계를 정확히
 읽었고 그 값이 양수 한도 이하일 때만 cache를 선택한다. cache 준비가 실패하면
@@ -198,8 +198,31 @@ version/delete marker도 모두 0이었다. 100GB는 310,578,707행을 약 19분
    write와 file별 exact byte 조회를 합쳐 기록하므로 원인을 단정할 수는 없지만,
    724개 file status를 직렬 합산하는 구현이 유력한 병목이다.
 
-따라서 hybrid의 현재 검증 범위는 **작은 staging의 bounded cache 선택과 큰
-staging의 안정적인 cache 거부**까지다. 작은 데이터의 속도 개선은 입증되지
-않았다. 후속 성능 작업은 file별 metadata 조회 시간을 별도 계측하고, write
-결과나 병렬 filesystem metadata로 exact byte를 얻는 방법을 검증한 뒤 독립 PR로
-진행한다.
+따라서 이 후보는 **작은 staging의 bounded cache 선택과 큰 staging의 안정적인
+cache 거부**는 확인했지만 작은 데이터의 속도 개선을 입증하지 못했다. 현재
+runtime 계약으로 채택하지 않고 아래 direct-cache/staging 분기의 비교 근거로만
+보존한다.
+
+## 9. Direct-cache/staging hybrid
+
+현재 후보는 staging 전에 exact source byte로 분기한다.
+
+- `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=0`은 운영 기본값이며 항상
+  run-scoped Parquet staging을 사용한다.
+- 양수 한도 이하의 source는 projected source DataFrame을 원본 lineage 그대로
+  `MEMORY_AND_DISK`에 올리고 Parquet staging을 만들지 않는다.
+- 크기 미확인·빈 source·한도 초과 source는 run-scoped Parquet staging을
+  사용하고 cache하지 않는다.
+- direct cache 초기화 실패는 staging으로 묵시 fallback하지 않고 run을
+  실패시킨다. 정상 실행의 원본 physical read 예산은 1회이지만 executor/cache
+  block 유실 시 lineage가 원본을 다시 읽을 수 있으므로 strict source isolation은
+  staging 경로가 담당한다.
+- staging 전략은 file별 exact byte 직렬 조회를 제거하고
+  `materializationBytes=null`,
+  `materializationSizeStatus=not_measured_by_strategy`를 남긴다.
+
+로컬 Docker Spark 계약 검증은 direct-cache와 staging 모두 정상 실행의 JSONL
+원본 physical read 1회, exact row identity, direct path의 staging file 0,
+staging path의 생성·성공/실패 cleanup을 확인했다. EKS에서는 실제 10GB source가
+포함되고 100GB source가 제외되도록 실험용 10GiB source 한도를 사용한다. 이 값은
+두 규모의 분기를 검증하기 위한 선택값이며 실제 운영 경계 탐색은 후속 범위다.

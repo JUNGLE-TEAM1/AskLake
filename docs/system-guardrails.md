@@ -45,7 +45,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
-| Spark staged-cache threshold | `ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES`는 기본 0으로 두고, 동일 resource shape의 staging-only control과 raw read 1회·OOM·residue 검증 없이 운영 기본값을 올리지 않는다. |
+| Spark direct-cache threshold | `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES`는 기본 0으로 두고, source byte와 실제 cache footprint가 다름을 전제로 raw read 1회·OOM·executor replacement·residue 검증 없이 운영 기본값을 올리지 않는다. |
 
 ### What Is Deferred
 
@@ -64,7 +64,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | Deploy readiness failed | GitHub Actions artifact의 JSON record와 실패한 `compose_config`, `backend_image`, `backend_dependencies`, `backend_python_dependencies`, `backend_runtime_contract`, `frontend_image` step을 확인한다. 로컬 재현은 `bash scripts/verify-deploy-readiness.sh`로 한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
-| Spark staged cache was skipped | Spark result의 `materializationSizeStatus`, `materializationBytes`, `stagedCacheMaxBytes`, `stagedCacheDecisionReason`을 확인한다. 크기 미확인이나 한도 초과를 우회해 강제 cache하지 않는다. |
+| Spark direct cache was skipped or failed | Spark result의 `source.inputBytes`, `directCacheMaxSourceBytes`, `directCacheDecisionReason`, `directCacheInitializationStatus`, `directCacheFallbackCount`를 확인한다. 크기 미확인이나 한도 초과를 우회해 강제 cache하지 않으며, 초기화 실패를 staging fallback으로 바꿔 원본 재읽기를 숨기지 않는다. |
 | Admin audit contract failed | `cd backend && npm run verify:admin-audit-contract`로 `query_run`, 레거시 `unknown`, OpenAPI inline/local-ref 의미 호환성과 frontend 타입 집합을 확인한다. session 기반 실제 HTTP 흐름은 `npm run verify:identity-admin`, 부분 실패 UI는 `cd frontend && npm run test:admin-console-load`로 확인한다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |

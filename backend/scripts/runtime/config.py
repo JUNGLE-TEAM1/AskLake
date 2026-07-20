@@ -16,7 +16,7 @@ class SparkJobConfig:
     output_path: str
     run_id: str
     row_limit: int
-    staged_cache_max_bytes: int
+    direct_cache_max_source_bytes: int
     manifest: dict[str, Any]
 
     @classmethod
@@ -32,16 +32,16 @@ class SparkJobConfig:
         if row_limit < 0:
             raise ValueError("ASKLAKE_SPARK_RUN_ROW_LIMIT must be zero or greater.")
         try:
-            staged_cache_max_bytes = int(
-                source.get("ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES", "0") or "0"
+            direct_cache_max_source_bytes = int(
+                source.get("ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES", "0") or "0"
             )
         except ValueError as exc:
             raise ValueError(
-                "ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES must be an integer."
+                "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES must be an integer."
             ) from exc
-        if staged_cache_max_bytes < 0:
+        if direct_cache_max_source_bytes < 0:
             raise ValueError(
-                "ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES must be zero or greater."
+                "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES must be zero or greater."
             )
         return cls(
             source_path=required_env("ASKLAKE_SPARK_SOURCE_PATH", environ=source),
@@ -49,7 +49,7 @@ class SparkJobConfig:
             output_path=required_env("ASKLAKE_SPARK_OUTPUT_PATH", environ=source),
             run_id=required_env("ASKLAKE_SPARK_RUN_ID", environ=source),
             row_limit=row_limit,
-            staged_cache_max_bytes=staged_cache_max_bytes,
+            direct_cache_max_source_bytes=direct_cache_max_source_bytes,
             manifest=load_spark_job_manifest(environ=source),
         )
 

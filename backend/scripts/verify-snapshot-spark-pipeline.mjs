@@ -12,7 +12,7 @@ chmodSync(tempDir, 0o777);
 
 try {
   const actionBudget = runPipeline("action-budget", actionBudgetManifest(), {
-    ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES: "1",
+    ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES: "1",
   });
   assert(actionBudget.process.status === 0, `Action-budget pipeline exited ${actionBudget.process.status}:\n${actionBudget.process.stdout}\n${actionBudget.process.stderr}`);
   assert(actionBudget.report.inputRows === 3, `Expected 3 action-budget input rows: ${JSON.stringify(actionBudget.report)}`);
@@ -20,12 +20,13 @@ try {
   assert(actionBudget.report.sparkResources?.cacheStorageLevel === "NONE", `Expected the batch path to avoid executor DataFrame cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.materializationMode === "run_scoped_parquet_staging", `Expected run-scoped Parquet materialization: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.materializationFileCount > 0, `Expected materialized Parquet files: ${JSON.stringify(actionBudget.report.sparkResources)}`);
-  assert(actionBudget.report.sparkResources?.materializationBytes > 1, `Expected exact materialized Parquet bytes: ${JSON.stringify(actionBudget.report.sparkResources)}`);
-  assert(actionBudget.report.sparkResources?.materializationSizeStatus === "exact", `Expected exact materialization size status: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.materializationBytes === null, `Expected staging byte measurement to be skipped after the source-size decision: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.materializationSizeStatus === "not_measured_by_strategy", `Expected staging size status to explain the skipped measurement: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.materializationCleanupStatus === "success", `Expected successful materialization cleanup: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.sparkResources?.outputFrameCacheMode === "staged_parquet_reuse", `Expected downstream work to reuse staged Parquet instead of executor cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
-  assert(actionBudget.report.sparkResources?.stagedCacheEligible === false, `Expected an above-threshold materialization to skip cache: ${JSON.stringify(actionBudget.report.sparkResources)}`);
-  assert(actionBudget.report.sparkResources?.stagedCacheDecisionReason === "above_threshold", `Expected an auditable cache rejection reason: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.directCacheEligible === false, `Expected an above-threshold source to use staging: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.directCacheDecisionReason === "above_threshold", `Expected an auditable direct-cache rejection reason: ${JSON.stringify(actionBudget.report.sparkResources)}`);
+  assert(actionBudget.report.sparkResources?.executionStrategyPolicy === "max_source_bytes", `Expected source-size strategy evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.phaseTimings?.materializationStaging?.durationMs >= 0, `Expected materialization timing evidence: ${JSON.stringify(actionBudget.report.phaseTimings)}`);
   assert(actionBudget.report.sparkResources?.executorInstances === 1, `Expected one local executor in action-budget evidence: ${JSON.stringify(actionBudget.report.sparkResources)}`);
   assert(actionBudget.report.transform?.rowPreservingSqlExpressionCount === 2, `Expected two action-free row-preserving SQL transforms: ${JSON.stringify(actionBudget.report.transform)}`);
@@ -35,16 +36,20 @@ try {
   assert(sourceReadCount === 1, `Expected exactly 1 raw JSONL read, got ${sourceReadCount}:\n${actionBudget.process.stderr}`);
 
   const cached = runPipeline("cached", actionBudgetManifest(), {
-    ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES: String(1024 * 1024 * 1024),
+    ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES: String(1024 * 1024 * 1024),
   });
   assert(cached.process.status === 0, `Cached pipeline exited ${cached.process.status}:\n${cached.process.stdout}\n${cached.process.stderr}`);
-  assert(cached.report.sparkResources?.stagedCacheEligible === true, `Expected a small staged frame to be cache eligible: ${JSON.stringify(cached.report.sparkResources)}`);
-  assert(cached.report.sparkResources?.stagedCacheDecisionReason === "within_threshold", `Expected an auditable cache selection reason: ${JSON.stringify(cached.report.sparkResources)}`);
-  assert(cached.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected staged Parquet to use bounded memory/disk cache: ${JSON.stringify(cached.report.sparkResources)}`);
-  assert(cached.report.sparkResources?.outputFrameCacheMode === "staged_parquet_memory_and_disk", `Expected downstream work to use the staged cache: ${JSON.stringify(cached.report.sparkResources)}`);
-  assert(cached.report.sparkResources?.stagedCacheFallbackCount === 0, `Expected no cache fallback for the small fixture: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.directCacheEligible === true, `Expected a small source to be direct-cache eligible: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.directCacheDecisionReason === "within_threshold", `Expected an auditable direct-cache selection reason: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.cacheStorageLevel === "MEMORY_AND_DISK", `Expected the projected source to use bounded memory/disk cache: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.materializationMode === "direct_source_cache", `Expected the small path to skip Parquet materialization: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.materializationFileCount === 0, `Expected no materialization files on the direct-cache path: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.materializationCleanupStatus === "not_required", `Expected no materialization cleanup on the direct-cache path: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.outputFrameCacheMode === "direct_source_memory_and_disk", `Expected downstream work to use the direct source cache: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.sparkResources?.directCacheFallbackCount === 0, `Expected no hidden staging fallback for the small fixture: ${JSON.stringify(cached.report.sparkResources)}`);
+  assert(cached.report.phaseTimings?.materializationStaging === undefined, `Expected the direct-cache path to skip staging timing: ${JSON.stringify(cached.report.phaseTimings)}`);
   const cachedSourceReadCount = cached.process.stderr.split(sourceReadMarker).length - 1;
-  assert(cachedSourceReadCount === 1, `Expected exactly 1 raw JSONL read with staged cache, got ${cachedSourceReadCount}:\n${cached.process.stderr}`);
+  assert(cachedSourceReadCount === 1, `Expected exactly 1 raw JSONL read with direct cache, got ${cachedSourceReadCount}:\n${cached.process.stderr}`);
   assertNoMaterializationStaging("cached-output");
 
   const preMaterialized = runPipeline("pre-materialized-prefix", preMaterializedPrefixManifest());

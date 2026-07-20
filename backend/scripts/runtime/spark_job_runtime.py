@@ -40,10 +40,7 @@ from runtime.spark_iceberg_identifiers import (
     required_iceberg_identifier,
 )
 from runtime.spark_materialization_staging import RunScopedParquetStaging, spark_staging_path
-from runtime.spark_staged_cache import (
-    initialize_staged_frame,
-    release_all_cached_frames,
-)
+from runtime.spark_hybrid_execution import prepare_hybrid_frame, release_all_cached_frames
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -208,10 +205,10 @@ def main():
         delete_spark_path(spark, staging_path)
         delete_spark_path(spark, materialization.path)
         quarantine_staging_path = f"{staging_path}_quarantine"
-        staged_df = materialization.materialize(spark, contracted_df, phase_timings, spark_resources)
-        staged_df, input_rows, null_required = initialize_staged_frame(
-            spark, staged_df, materialization.path, config.staged_cache_max_bytes, cached_frames, spark_resources,
+        staged_df, input_rows, null_required = prepare_hybrid_frame(
+            input_bytes, config.direct_cache_max_source_bytes, contracted_df, cached_frames, spark_resources,
             StorageLevel.MEMORY_AND_DISK, lambda frame: schema_contract_summary(frame, required_targets),
+            lambda frame: materialization.materialize(spark, frame, phase_timings, spark_resources),
         )
         if null_required:
             raise ValueError(

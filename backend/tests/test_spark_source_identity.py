@@ -42,6 +42,10 @@ from scripts.spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
 )
+from runtime.spark_hybrid_execution import (
+    DirectCacheInitializationError,
+    initialize_direct_cache,
+)
 
 
 def identity(
@@ -114,50 +118,47 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
-    def test_staged_cache_initialization_failure_reloads_parquet_without_raw_source(self) -> None:
+    def test_direct_cache_initialization_failure_refuses_hidden_source_rescan(self) -> None:
         cached_frame = FakeFrame()
         fallback_frame = FakeFrame()
         spark = FakeSpark(fallback_frame)
-        spark_resources = {"materializationBytes": 10}
+        spark_resources = {}
         cached_frames = []
 
         with (
             patch.object(
                 spark_job_run,
                 "schema_contract_summary",
-                side_effect=[RuntimeError("cache warmup failed"), (3, [])],
+                side_effect=RuntimeError("cache warmup failed"),
             ) as summarize,
             patch("builtins.print"),
         ):
-            frame, input_rows, null_required = spark_job_run.initialize_staged_frame(
-                spark,
-                cached_frame,
-                "s3a://output/run.__materialization__run",
-                100,
-                cached_frames,
-                spark_resources,
-                spark_job_run.StorageLevel.MEMORY_AND_DISK,
-                lambda candidate: spark_job_run.schema_contract_summary(
-                    candidate,
-                    [],
-                ),
-            )
+            with self.assertRaisesRegex(
+                DirectCacheInitializationError,
+                "stopped before fallback",
+            ):
+                initialize_direct_cache(
+                    cached_frame,
+                    cached_frames,
+                    spark_resources,
+                    spark_job_run.StorageLevel.MEMORY_AND_DISK,
+                    lambda candidate: spark_job_run.schema_contract_summary(
+                        candidate,
+                        [],
+                    ),
+                )
 
-        self.assertIs(frame, fallback_frame)
-        self.assertEqual((input_rows, null_required), (3, []))
-        self.assertEqual(summarize.call_count, 2)
+        self.assertEqual(summarize.call_count, 1)
         cached_frame.persist.assert_called_once_with(
             spark_job_run.StorageLevel.MEMORY_AND_DISK
         )
         cached_frame.unpersist.assert_called_once_with(blocking=False)
-        spark.read.parquet.assert_called_once_with(
-            "s3a://output/run.__materialization__run"
-        )
+        spark.read.parquet.assert_not_called()
         self.assertEqual(cached_frames, [])
         self.assertEqual(spark_resources["cacheStorageLevel"], "NONE")
-        self.assertEqual(spark_resources["stagedCacheFallbackCount"], 1)
+        self.assertEqual(spark_resources["directCacheInitializationStatus"], "failed")
         self.assertEqual(
-            spark_resources["stagedCacheFallbackReason"],
+            spark_resources["directCacheFailureReason"],
             "cache_initialization_failed",
         )
 
