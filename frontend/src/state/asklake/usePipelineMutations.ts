@@ -7,6 +7,8 @@ import { applyDraftPipelinePatch } from "../../services/draftPipelineContract";
 
 import { createPipelineDraft as createMockPipelineDraft, updatePipelineDraft as updateMockPipelineDraft } from "../../services/mockApi";
 import { createPipelineDraft as createLivePipelineDraft, createTrinoSqlJob as createLiveTrinoSqlJob, updatePipelineDraft as updateLivePipelineDraft } from "../../services/pipelineApi";
+import { createDashboard } from "../../services/dashboardApi";
+import { createDashboardJobBinding } from "../../services/dashboardJobBindingApi";
 
 import { transitionMutation } from "../../state/requestOwnership";
 import type { CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, DraftPipeline, DraftPipelinePatch, FlowId } from "../../types";
@@ -70,7 +72,8 @@ export function usePipelineMutations({
     {
       navigateToJobs = true,
       resetDraft = true,
-    }: { navigateToJobs?: boolean; resetDraft?: boolean } = {},
+      dashboardBinding,
+    }: { navigateToJobs?: boolean; resetDraft?: boolean; dashboardBinding?: { title: string } } = {},
   ) => {
     if (createPendingRef.current) {
       showToast("이미 생성 요청이 처리 중입니다.", "info");
@@ -110,6 +113,22 @@ export function usePipelineMutations({
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
+      if (dashboardBinding && !activeEditJobId && !apiConfig.useMock) {
+        try {
+          const { dashboard } = await createDashboard({ source: "manual", title: dashboardBinding.title });
+          await createDashboardJobBinding({
+            dashboardId: dashboard.id,
+            jobId: normalizedJob.id,
+            jobKind: "etl",
+            outputDatasetId: normalizedDataset?.id ?? ("catalogTarget" in result ? result.catalogTarget?.id : undefined) ?? pipelineDraft.id,
+          });
+          writeAuditLog("dashboard.job_binding.created", "/api/dashboard-job-bindings", dashboard.id);
+          showToast("Job 결과 Dashboard 연동을 만들었습니다.", "success");
+        } catch (error) {
+          writeAuditLog("dashboard.job_binding.create_failed", "/api/dashboard-job-bindings", normalizedJob.id, "failed");
+          showToast(error instanceof ApiError ? `Job은 생성됐지만 Dashboard 연동에 실패했습니다: ${error.message}` : "Job은 생성됐지만 Dashboard 연동에 실패했습니다.", "info");
+        }
+      }
       writeAuditLog(activeEditJobId ? "etl.job.updated" : "etl.job.created", activeEditJobId ? `/api/etl/jobs/${normalizedJob.id}` : "/api/etl/jobs", normalizedJob.id);
       if (!activeEditJobId) writeAuditLog("etl.run.queued", `/api/etl/jobs/${pipelineDraft.id}/runs`, pipelineDraft.id);
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
@@ -133,8 +152,8 @@ export function usePipelineMutations({
     }
   };
 
-  const createPipeline = async () => {
-    await createPipelineFromDraft(draftPipeline);
+  const createPipeline = async (dashboardBinding?: { title: string }) => {
+    await createPipelineFromDraft(draftPipeline, { dashboardBinding });
   };
 
   const createSqlDatasetJob = async (request: CreateDerivedDatasetRequest) => {

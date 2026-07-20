@@ -1017,7 +1017,7 @@ Dashboard Job Binding은 실행 엔진 변경이나 EKS migration과 같은 PR�
 
 1. Phase 0에서 새/빈 Dashboard만 지원하는 V1 범위, Dashboard-level Dataset lock, `latestRevision`/`appliedRevision` 완료 조건과 권한 경계를 문서로 확인한다.
 2. Phase 1에서 binding/delivery migration, repository, schema와 `/api/dashboard-job-bindings` Job/Dashboard API를 만든다. API는 empty Dashboard, output Dataset 일치와 Job/Dashboard 권한을 검사해야 한다.
-3. Phase 2에서 Job 생성의 선택적 연동 UI, managed Dashboard source lock, detach UX를 구현한다. Widget 시각화 편집은 유지한다.
+3. Phase 2에서 Job review의 선택적 연동 UI와 managed Dashboard source lock을 구현한다. 새 Dashboard 생성과 binding은 Job 생성 성공 뒤 실행하며, binding 실패는 Job 결과를 rollback하지 않는다. Widget 시각화 편집은 유지한다. detach UX는 binding API를 사용하는 Dashboard 관리 화면 후속 작업이다.
 4. Phase 3에서 검증된 Dataset revision publication 뒤 delivery worker를 연결한다. Dashboard 실패가 Job publication을 rollback하지 않는지 확인한다.
 5. Phase 4에서 기존 EC2 환경으로 Batch `replace`, Continuous `append`, worker/backend restart, duplicate revision, Dashboard 계산 실패와 detach를 E2E 검증한다.
 6. Phase 5에서 서버 delivery가 안정된 뒤 SSE/hybrid의 browser 자동 갱신을 별도로 활성화한다.

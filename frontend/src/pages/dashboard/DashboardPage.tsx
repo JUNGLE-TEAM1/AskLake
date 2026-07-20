@@ -21,6 +21,7 @@ import {
   publishDashboard as publishRuntimeDashboard,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
+import { getDashboardJobBinding } from "../../services/dashboardJobBindingApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, SavedDashboardCard, SqlResultDraft } from "../../types";
 import type { DashboardDatasetOption } from "./runtime/dashboardRuntimeTypes";
@@ -101,6 +102,7 @@ export function DashboardPage({
   const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(false);
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
+  const [managedDatasetId, setManagedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [deletedDatasetIds, setDeletedDatasetIds] = useState<Set<string>>(() => new Set());
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
@@ -121,9 +123,9 @@ export function DashboardPage({
       const datasets = sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
       : dashboardDatasets;
-      return datasets.filter((item) => !deletedDatasetIds.has(item.id));
+      return datasets.filter((item) => !deletedDatasetIds.has(item.id) && (!managedDatasetId || item.id === managedDatasetId));
     },
-    [dashboardDatasets, deletedDatasetIds, sqlDashboardDataset],
+    [dashboardDatasets, deletedDatasetIds, managedDatasetId, sqlDashboardDataset],
   );
   const availableDashboardDatasetIds = useMemo(
     () => new Set(availableDashboardDatasets.map((item) => item.id)),
@@ -139,6 +141,22 @@ export function DashboardPage({
       return next;
     });
   }), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getDashboardJobBinding(runtimeSelection.dashboardId)
+      .then((binding) => {
+        if (!cancelled) setManagedDatasetId(binding?.mode === "managed" && binding.enabled ? binding.outputDatasetId : null);
+      })
+      .catch(() => {
+        if (!cancelled) setManagedDatasetId(null);
+      });
+    return () => { cancelled = true; };
+  }, [runtimeSelection.dashboardId]);
+
+  useEffect(() => {
+    if (managedDatasetId) setSelectedDatasetId(managedDatasetId);
+  }, [managedDatasetId]);
 
   useEffect(() => {
     setView(entry.view);
@@ -634,6 +652,7 @@ export function DashboardPage({
       isLoading: dashboardDatasetsLoading,
       selectedDataset: editorDataset,
       selectedDatasetId: editorDatasetId,
+      managedDatasetId,
     };
     const runtimeViewState = {
       deletingWidgetId: widgetMutations.deletingWidgetId,

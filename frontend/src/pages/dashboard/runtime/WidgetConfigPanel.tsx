@@ -512,6 +512,7 @@ export function WidgetConfigPanel({
   initialCreateInput = null,
   isCreating = false,
   isUpdating = false,
+  managedDatasetId = null,
   onCreateWidget,
   onPreviewWidgetChange,
   onSelectDataset,
@@ -526,6 +527,7 @@ export function WidgetConfigPanel({
   initialCreateInput?: CreateDraftWidgetFormInput | null;
   isCreating?: boolean;
   isUpdating?: boolean;
+  managedDatasetId?: string | null;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void | boolean> | void;
   onPreviewWidgetChange?: (widget: DashboardRuntimeWidget | null) => void;
   onSelectDataset?: (datasetId: string) => void;
@@ -821,7 +823,7 @@ export function WidgetConfigPanel({
           <FieldGroup className="contents">
             {shouldShowDatasetSelect ? (
               <DashboardFieldCombobox
-                disabled={!datasets.length || !onSelectDataset}
+                disabled={Boolean(managedDatasetId) || !datasets.length || !onSelectDataset}
                 fieldClassName="asklake-widget-dataset-field"
                 label="데이터셋"
                 options={datasets.map((dataset) => ({ label: dataset.name, value: dataset.id }))}
@@ -830,6 +832,7 @@ export function WidgetConfigPanel({
                 onValueChange={(value) => onSelectDataset?.(value)}
               />
             ) : null}
+            {managedDatasetId ? <p className="text-xs text-muted-foreground">Job 연동 Dashboard에서는 출력 Dataset이 고정됩니다.</p> : null}
           <Field>
             <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
             <Input

@@ -80,6 +80,7 @@ type DashboardRuntimeDatasetState = {
   isLoading: boolean;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
+  managedDatasetId?: string | null;
 };
 
 type DashboardRuntimeViewActions = {
@@ -220,6 +221,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     isLoading: dashboardDatasetsLoading,
     selectedDataset,
     selectedDatasetId,
+    managedDatasetId,
   } = datasets;
   const {
     addPage: onAddPage,
@@ -550,6 +552,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               focusedColorSlot={focusedColorSlot}
               isCreating={isCreatingDatasetWidget}
               isUpdating={updatingWidgetId === configurableDraftWidget?.id}
+              managedDatasetId={managedDatasetId}
               onPreviewWidgetChange={onPreviewWidget}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}

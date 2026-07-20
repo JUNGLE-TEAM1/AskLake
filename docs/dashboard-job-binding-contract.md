@@ -1,6 +1,6 @@
 # Dashboard Job Binding V1 계약
 
-> 상태: Phase 1 durable API 구현 완료. Widget Dataset lock UI와 revision delivery worker는 아직 구현되지 않았다.
+> 상태: Phase 2 UI와 Dataset lock 구현 완료. revision delivery worker는 아직 구현되지 않았다.
 
 ## 1. 목적
 
@@ -140,3 +140,10 @@ DashboardBindingDelivery
 - binding 생성은 Job output Dataset 일치, Job/Dashboard `manage`, 새/빈 Dashboard 제약을 서버에서 검증한다.
 - Dashboard별 binding은 하나이며, 같은 요청 재시도는 idempotent하다. detach 뒤에는 같은 Dashboard binding record를 새 managed binding으로 재활성화할 수 있다.
 - API는 UI·delivery worker 없이도 binding 조회, detach, 실패 delivery retry 상태 전환을 제공한다.
+
+## 10. Phase 2 완료 조건
+
+- ETL Job review 화면에서 사용자는 `결과를 Dashboard에 자동 반영`을 선택하고 새 Dashboard 이름을 지정할 수 있다.
+- Job 생성 성공 뒤 실제 `job.id`와 API가 반환한 output Dataset ID로 새 빈 Dashboard와 managed binding을 순서대로 만든다. Dashboard binding 실패는 Job 생성을 rollback하지 않고 사용자에게 부분 성공을 알린다.
+- managed Dashboard는 binding output Dataset만 화면에 제공하고 Widget Dataset selector를 비활성화한다.
+- Widget create/update API는 selector 우회, assistant action, 직접 호출에서도 binding output Dataset 외 값을 `409 CONFLICT`로 거부한다. 시각화·레이아웃·제목·필드 편집과 Widget 삭제는 계속 허용한다.

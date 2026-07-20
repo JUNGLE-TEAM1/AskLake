@@ -38,7 +38,7 @@ export function ReviewPage({
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
-  onCreate: () => void;
+  onCreate: (dashboardBinding?: { title: string }) => void;
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
 }) {
@@ -46,6 +46,8 @@ export function ReviewPage({
   const [reviewLoading, setReviewLoading] = useState(true);
   const [reviewError, setReviewError] = useState("");
   const [reviewRetryCount, setReviewRetryCount] = useState(0);
+  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
+  const [dashboardTitle, setDashboardTitle] = useState("");
   const reviewRequestKey = getReviewSnapshotRequestKey(buildReviewSnapshotRequest(draft));
   const reviewRequest = useMemo(
     () => JSON.parse(reviewRequestKey) as ReviewSnapshotRequest,
@@ -96,7 +98,7 @@ export function ReviewPage({
   return (
     <CreationFlowLayout
       variant="review"
-      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} split onPrev={() => onEdit("target")} onNext={onCreate} />}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} split onPrev={() => onEdit("target")} onNext={() => onCreate(dashboardBindingEnabled ? { title: dashboardTitle.trim() || `${draft.target.datasetName.trim() || "Job 결과"} Dashboard` } : undefined)} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -125,6 +127,15 @@ export function ReviewPage({
                 value,
               }))}
             />
+          </section>
+
+          <section className="etl-review-card">
+            <EtlSectionHeader icon={<Database />} title="Dashboard 연동" />
+            <label className="flex items-start gap-3 text-sm">
+              <input checked={dashboardBindingEnabled} type="checkbox" onChange={(event) => setDashboardBindingEnabled(event.target.checked)} />
+              <span><strong className="block">결과를 Dashboard에 자동 반영</strong><small className="text-muted-foreground">새 빈 Dashboard를 만들고, 이 Job의 출력 Dataset으로 고정합니다.</small></span>
+            </label>
+            {dashboardBindingEnabled ? <label className="mt-4 block text-sm">Dashboard 이름<input className="mt-2 w-full rounded border px-3 py-2" value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} /></label> : null}
           </section>
 
           <section className="etl-review-card">

@@ -14,6 +14,8 @@ from app.models.dashboard_job_binding import DashboardBindingDeliveryModel, Dash
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
 from app.models.etl import ETLJobModel
 from app.repositories.dashboard_job_binding_repository import DashboardJobBindingRepository
+from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
+from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
     DashboardBindingDeliveryStatus,
@@ -31,7 +33,10 @@ class DashboardJobBindingService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.repository = DashboardJobBindingRepository(db)
-        self.dashboard_service = DashboardRuntimeService(db)
+        self.dashboard_service = DashboardRuntimeService(
+            DashboardRuntimeRepository(db),
+            CatalogRepository(db),
+        )
 
     def create(self, request: DashboardJobBindingCreateRequest, actor: ActorContext) -> DashboardJobBinding:
         self.dashboard_service._require_dashboard_permission(request.dashboard_id, actor, "manage")
