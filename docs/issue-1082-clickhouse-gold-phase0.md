@@ -147,3 +147,34 @@ hunk 검색, secret signature 검색과 생성물 경로 검색을 사용했다.
 `gitRevision=0f1a9390...`으로 현재 pair1 기준과 다르다. 따라서 최신 pair1 이미지
 delivery receipt로 교체하기 전에는 배포 입력으로 사용하지 않는다. 로컬 ClickHouse와
 Kafka Connect image는 `arm64`이므로 `linux/amd64` 운영 receipt를 대체하지 않는다.
+
+## 10. 목표모드 재실행 Phase 1~2 결과
+
+최신 `765ffe0298898ad3c003cd3ed34c89ff2c33fe23` 기준으로 GitHub Actions의 표준
+EKS image delivery를 `dev` 환경에 수동 실행했다. Frontend/Backend/AI Gateway/
+Spark/Airflow/Trino receipt가 생성됐고 `scripts/verify-eks-image-receipt.mjs
+--require-ai-gateway`를 통과했다. 별도 V2 image build도 `linux/amd64`로 수행해
+ClickHouse/Kafka Connect digest를 ECR에 push했고, 조합한 V2 receipt가
+`scripts/verify-eks-realtime-v2-image-receipt.mjs`를 통과했다. receipt 원문은
+저장소에 복사하거나 커밋하지 않았다.
+
+최신 digest와 live values를 이용한 read-only 결과:
+
+- `deploy-eks-web-workloads.sh --render`: 통과
+- `deploy-eks-realtime-v2.sh --preflight`: receipt/schema 검증 통과 후
+  `asklake-clickhouse-keeper-v2-config` ExternalSecret NotFound에서 fail-closed
+- 기존 V2 private values는 `mode: shadow`, worker replicas `0`, 이전 digest였으며
+  실제 apply에 사용하지 않았다.
+- 현재 live V1 worker `1/1`, V2 workload `0`, PVC/VolumeSnapshot 보존 상태는 변하지 않았다.
+
+따라서 다음 live gate가 남아 있다.
+
+1. ClickHouse/Keeper/Connect/Backend용 ExternalSecret과 TLS/CA/계정 source 준비
+2. 정확한 MSK IAM topic/DLQ/group policy와 Pod Identity association 확인
+3. private values에 최신 receipt digest와 확인된 resource/storage/grace 입력
+4. 승인된 shadow apply와 readiness/secure listener/plugin 검증
+5. 별도 owner 전환 승인 후에만 EC2 quiesce, V1 보존, V2 `continuous_sql` cutover
+6. 전용 fixture Kafka E2E, 장애 주입, PVC 복구, rollback 및 재배포 증거
+
+이 단계들은 현재 권한·승인 범위에서 실행하지 않았으며, 기존 런북의 명령·기대 결과·
+실패 판정·rollback 절차를 따른다.
