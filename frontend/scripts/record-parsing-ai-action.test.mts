@@ -41,16 +41,30 @@ function extractEtlSectionHeaderTags(source: string): string[] {
   return tags;
 }
 
-test("record parsing always renders the AI inference placeholder without preset logic", () => {
+test("record parsing applies the click-event demo schema after a one-second inference state", () => {
   const etlPagesSource = readEtlPageSources();
 
   assert.match(etlPagesSource, /data-testid="record-parsing-ai-button"/);
   assert.match(etlPagesSource, /AI 필드 자동 추론/);
-  assert.doesNotMatch(etlPagesSource, /CLICK_EVENT_RECORD_SCHEMA_PRESET|applyRecommendedSchema|isClickEventLogSource/);
-  assert.doesNotMatch(
+  assert.match(etlPagesSource, /DEMO_AI_INFERENCE_DELAY_MS = 1_000/);
+  assert.match(etlPagesSource, /AI 분석 중\.\.\./);
+  assert.match(etlPagesSource, /const CLICK_EVENT_RECORD_SCHEMA_PRESET = \[[\s\S]*name: "event_time", inferredType: "Timestamp"/);
+  assert.match(etlPagesSource, /name: "event_id", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "user_id", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "session_id", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "event_type", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "product_id", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "page_url", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "device_type", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "referrer", inferredType: "String"/);
+  assert.match(etlPagesSource, /name: "properties\.position", inferredType: "Integer"/);
+  assert.match(
     etlPagesSource,
-    /data-testid="record-parsing-ai-button"[\s\S]{0,300}(?:disabled=|onClick=)/,
+    /data-testid="record-parsing-ai-button"[\s\S]{0,300}disabled=\{loading \|\| aiInferring\}[\s\S]{0,300}onClick=/,
   );
+  assert.match(etlPagesSource, /현재 데모 자동 추론은.*개 필드 로그에만 적용할 수 있습니다/);
+  assert.match(etlPagesSource, /sourceName,\s+targetName,\s+type: column\.inferredType/);
+  assert.match(etlPagesSource, /name: column\.name\.trim\(\)/);
 });
 
 test("record parsing keeps content focused and makes large previews collapsible", () => {
