@@ -178,3 +178,24 @@ ClickHouse/Kafka Connect digest를 ECR에 push했고, 조합한 V2 receipt가
 
 이 단계들은 현재 권한·승인 범위에서 실행하지 않았으며, 기존 런북의 명령·기대 결과·
 실패 판정·rollback 절차를 따른다.
+
+## 11. 최종 전체 diff·범위 감사
+
+최종 HEAD `081b91a9`에서 `origin/pair1`까지 다시 비교했다. Phase 5 기록 이후
+receipt checksum 계약을 실제 Dockerfile checksum과 맞추기 위해 verifier와 example
+JSON을 추가 수정했으므로, 아래 최종 집합이 우선한다.
+
+- 변경 파일: 이 문서, `infra/eks/delivery/realtime-v2-image-receipt.example.json`,
+  `scripts/verify-eks-realtime-data-plane.sh`, `scripts/verify-eks-realtime-v2-image-receipt.mjs`
+- Issue #1082 범위 밖 변경: 0건
+- Airflow schema 교차 오염: 0건
+- 불필요한 Trino schema/chart/구현 변경: 0건
+- secret/token/private key/실제 credential: 0건
+- 생성물·임시 파일: 0건
+- `git diff --check`: 오류 0건
+- live AWS/EKS mutation, owner 전환, Kafka produce, EC2 중단: 0건
+
+최종 감사에는 tracked `git diff --name-status origin/pair1`, untracked 목록, JSON/YAML
+diff의 Airflow·Trino hunk 검색, secret signature 검색, 생성물 경로 검색을 사용했다.
+ECR image receipt와 AMD64 pull/inspect 결과는 저장소 밖 evidence이며 Git에 추가하지
+않았다.
