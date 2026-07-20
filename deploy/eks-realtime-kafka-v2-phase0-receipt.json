@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase0-operations-preflight",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "b3ee48ddd46fe63d4b35eb26ade67e21d86ec16a",
+  "environment": "dev",
+  "mode": "read-only",
+  "sharedMutationPerformed": false,
+  "deploymentAllowed": false,
+  "staticChecks": {
+    "v2MachineContract": "pass",
+    "v2MachineContractTests": "pass",
+    "storageContract": "pass",
+    "helmWorkloadContract": "pass",
+    "helmLint": "pass",
+    "imageReceiptContract": "pass",
+    "imageReceiptTests": "pass",
+    "kafkaIamContractTests": "pass",
+    "liveEvidenceTests": "pass",
+    "shellSyntax": "pass",
+    "gitDiffCheck": "pass"
+  },
+  "liveReadOnlyPreflight": {
+    "status": "blocked",
+    "reason": "ASKLAKE_EKS_CLUSTER_NAME is not set; the verifier fails closed before AWS/EKS reads.",
+    "awsApply": false,
+    "eksMutation": false,
+    "kubernetesMutation": false,
+    "productionIdentityTransfer": false
+  },
+  "requiredBeforePhase1": [
+    "explicit ASKLAKE_EKS_CLUSTER_NAME and matching kubectl context",
+    "private environment values with real cluster, registry, endpoint and Secret references",
+    "immutable linux/amd64 ClickHouse, Kafka Connect and backend image receipt",
+    "MSK IAM Pod Identity and exact topic/group policy plan",
+    "approved deployment window and rollback owner"
+  ],
+  "productionHaClaimAllowed": false
+}
