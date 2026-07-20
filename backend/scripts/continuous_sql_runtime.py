@@ -248,10 +248,16 @@ def execute_continuous_sql_batch(
         binding = bindings_by_dataset.get(str(relation.get("datasetId") or ""))
         if binding is None:
             raise RuntimeError("CONTINUOUS_SQL_STATIC_BINDING_MISSING")
-        static_frame = reusable_static_snapshot(
-            batch_spark,
-            relation,
-            binding,
+        static_frame = (
+            reusable_static_snapshot(batch_spark, relation, binding)
+            if relation.get("cacheHint") is True
+            else pruned_static_snapshot(
+                batch_spark,
+                stream_frame,
+                relation,
+                binding,
+                plan,
+            )
         )
         validate_frame_schema(static_frame, relation)
         verify_static_key_uniqueness(static_frame, relation, plan, binding)
@@ -359,6 +365,79 @@ def reusable_static_snapshot(
     _STATIC_FRAME_CACHE[key] = frame
     _STATIC_FRAME_KEY_BY_DATASET[dataset_id] = key
     return frame
+
+
+def pruned_static_snapshot(
+    spark: Any,
+    stream_frame: Any,
+    relation: dict[str, Any],
+    binding: dict[str, Any],
+    plan: dict[str, Any],
+) -> Any:
+    """Push at most one micro-batch of equality keys into the Iceberg scan."""
+    streaming_aliases = {
+        normalize_identifier(str(item.get("alias") or ""))
+        for item in plan.get("relations") or []
+        if isinstance(item, dict) and item.get("mode") == "streaming"
+    }
+    right_alias = normalize_identifier(str(relation.get("alias") or ""))
+    join = next(
+        (
+            item
+            for item in plan.get("joins") or []
+            if isinstance(item, dict)
+            and normalize_identifier(str(item.get("rightAlias") or "")) == right_alias
+        ),
+        None,
+    )
+    key_pairs = [
+        (str(item.get("leftColumn") or ""), str(item.get("rightColumn") or ""))
+        for item in (join.get("keys") if isinstance(join, dict) else []) or []
+        if isinstance(item, dict)
+        and normalize_identifier(str(item.get("leftAlias") or "")) in streaming_aliases
+        and str(item.get("leftColumn") or "").strip()
+        and str(item.get("rightColumn") or "").strip()
+    ]
+    if not key_pairs:
+        raise RuntimeError("CONTINUOUS_SQL_STATIC_PRUNING_UNSUPPORTED")
+    try:
+        limit = max(1, int(plan.get("staticPruningMaxKeys") or 100))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("CONTINUOUS_SQL_STATIC_PRUNING_LIMIT_INVALID") from exc
+
+    from pyspark.sql.functions import col, lit
+
+    key_aliases = [f"__asklake_join_key_{index}" for index in range(len(key_pairs))]
+    key_frame = stream_frame.select(*[
+        col(left_column).alias(key_aliases[index])
+        for index, (left_column, _right_column) in enumerate(key_pairs)
+    ])
+    for alias in key_aliases:
+        key_frame = key_frame.where(col(alias).isNotNull())
+    key_rows = key_frame.distinct().limit(limit + 1).collect()
+    if len(key_rows) > limit:
+        raise RuntimeError(
+            f"CONTINUOUS_SQL_STATIC_PRUNING_KEY_LIMIT_EXCEEDED:{len(key_rows)}>{limit}"
+        )
+    frame = read_static_snapshot(
+        spark,
+        relation.get("queryEngineTable") or {},
+        str(binding.get("snapshotId") or ""),
+    )
+    if not key_rows:
+        return frame.limit(0)
+    predicate = None
+    for row in key_rows:
+        item_predicate = None
+        for index, (_left_column, right_column) in enumerate(key_pairs):
+            comparison = col(right_column) == lit(row[key_aliases[index]])
+            item_predicate = (
+                comparison
+                if item_predicate is None
+                else item_predicate & comparison
+            )
+        predicate = item_predicate if predicate is None else predicate | item_predicate
+    return frame.where(predicate)
 
 
 def static_snapshot_cache_key(

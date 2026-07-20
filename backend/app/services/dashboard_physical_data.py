@@ -566,6 +566,8 @@ def dashboard_aggregate_state_query(
         "valueConfigKey": value_config_key,
         "valueAlias": value_alias,
         "sourceConfig": config,
+        "windowDays": dashboard_window_days(config) if time_dimension_filters else None,
+        "windowDimensionKey": dimension_keys[0] if time_dimension_filters and dimension_keys else None,
     }
 
 
@@ -576,7 +578,7 @@ def dashboard_widget_supports_incremental_merge(
     if widget_type == "table":
         return False
     aggregation = str(config.get("aggregation") or "sum").strip().lower()
-    return aggregation in {"count", "sum", "avg", "ratio"}
+    return aggregation in {"count", "sum", "avg", "ratio", "min", "max"}
 
 
 def merge_dashboard_aggregate_states(
@@ -616,10 +618,11 @@ def merge_dashboard_aggregate_states(
             merge_row(item)
     if len(merged) > MAX_DASHBOARD_INCREMENTAL_GROUPS:
         return None
-    return {**current, "rows": list(merged.values())}
+    return prune_dashboard_aggregate_state({**current, "rows": list(merged.values())})
 
 
 def dashboard_result_from_aggregate_state(state: dict[str, Any]) -> dict[str, Any]:
+    state = prune_dashboard_aggregate_state(state)
     aggregation = str(state.get("aggregation") or "sum")
     widget_type = str(state.get("widgetType") or "")
     dimension_keys = [str(value) for value in state.get("dimensionKeys") or []]
@@ -668,6 +671,60 @@ def dashboard_result_from_aggregate_state(state: dict[str, Any]) -> dict[str, An
     runtime_config["dataMode"] = "server_aggregated"
     runtime_config["sourceConfig"] = source_config
     return {"config": runtime_config, "data": data}
+
+
+def dashboard_window_days(config: dict[str, Any]) -> int | None:
+    value = config.get("windowDays") or config.get("window_days")
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Dashboard windowDays must be an integer") from exc
+    if parsed < 1 or parsed > 3_650:
+        raise ValueError("Dashboard windowDays must be between 1 and 3650")
+    return parsed
+
+
+def prune_dashboard_aggregate_state(state: dict[str, Any]) -> dict[str, Any]:
+    try:
+        window_days = int(state.get("windowDays") or 0)
+    except (TypeError, ValueError):
+        return state
+    dimension_key = str(state.get("windowDimensionKey") or "").strip()
+    rows = [item for item in state.get("rows") or [] if isinstance(item, dict)]
+    if window_days < 1 or not dimension_key or not rows:
+        return state
+    dated_rows: list[tuple[datetime, dict[str, Any]]] = []
+    undated_rows: list[dict[str, Any]] = []
+    for row in rows:
+        parsed = dashboard_bucket_datetime(row.get(dimension_key))
+        if parsed is None:
+            undated_rows.append(row)
+        else:
+            dated_rows.append((parsed, row))
+    if not dated_rows:
+        return state
+    latest = max(value for value, _row in dated_rows)
+    from datetime import timedelta
+
+    threshold = latest - timedelta(days=window_days - 1)
+    retained = [row for value, row in dated_rows if value >= threshold]
+    return {**state, "rows": [*retained, *undated_rows]}
+
+
+def dashboard_bucket_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
 
 
 def numeric_state(value: Any) -> float:

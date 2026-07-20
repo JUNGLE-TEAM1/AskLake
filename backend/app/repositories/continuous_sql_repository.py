@@ -11,6 +11,7 @@ from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
+    ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
 )
@@ -29,6 +30,7 @@ CONTINUOUS_SQL_TABLES = [
     ContinuousSqlRunModel.__table__,
     ContinuousSqlBatchModel.__table__,
     ContinuousSqlCommandModel.__table__,
+    ContinuousSqlIncrementalBindingModel.__table__,
 ]
 _schema_ready_binds: WeakSet = WeakSet()
 
@@ -101,6 +103,40 @@ class ContinuousSqlRepository:
                 ])
             )
             .order_by(ContinuousSqlJobModel.updated_at.asc())
+        ).all())
+
+    def get_incremental_binding(
+        self,
+        job_id: str,
+        *,
+        for_update: bool = False,
+    ) -> ContinuousSqlIncrementalBindingModel | None:
+        statement = select(ContinuousSqlIncrementalBindingModel).where(
+            ContinuousSqlIncrementalBindingModel.job_id == job_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.db.scalars(statement).first()
+
+    def add_incremental_binding(
+        self,
+        binding: ContinuousSqlIncrementalBindingModel,
+    ) -> ContinuousSqlIncrementalBindingModel:
+        self.db.add(binding)
+        self.db.flush()
+        return binding
+
+    def list_active_incremental_bindings(
+        self,
+    ) -> list[tuple[ContinuousSqlIncrementalBindingModel, ContinuousSqlJobModel]]:
+        return list(self.db.execute(
+            select(ContinuousSqlIncrementalBindingModel, ContinuousSqlJobModel)
+            .join(
+                ContinuousSqlJobModel,
+                ContinuousSqlJobModel.id == ContinuousSqlIncrementalBindingModel.job_id,
+            )
+            .where(ContinuousSqlJobModel.desired_state == "running")
+            .order_by(ContinuousSqlIncrementalBindingModel.updated_at.asc())
         ).all())
 
     def add_run(self, run: ContinuousSqlRunModel) -> ContinuousSqlRunModel:
@@ -225,6 +261,7 @@ class ContinuousSqlRepository:
 def job_to_schema(
     job: ContinuousSqlJobModel,
     run: ContinuousSqlRunModel | None = None,
+    binding: ContinuousSqlIncrementalBindingModel | None = None,
 ) -> ContinuousSqlJob:
     return ContinuousSqlJob(
         id=job.id,
@@ -257,6 +294,7 @@ def job_to_schema(
         last_error_code=job.last_error_code,
         last_error_message=job.last_error_message,
         active_run=run_to_schema(run) if run is not None else None,
+        incremental_binding=incremental_binding_payload(binding),
     )
 
 
@@ -307,9 +345,37 @@ def jobs_to_schema(
     repository: ContinuousSqlRepository,
 ) -> list[ContinuousSqlJob]:
     return [
-        job_to_schema(job, repository.get_run(job.active_run_id) if job.active_run_id else None)
+        job_to_schema(
+            job,
+            repository.get_run(job.active_run_id) if job.active_run_id else None,
+            repository.get_incremental_binding(job.id),
+        )
         for job in jobs
     ]
+
+
+def incremental_binding_payload(
+    binding: ContinuousSqlIncrementalBindingModel | None,
+) -> dict | None:
+    if binding is None:
+        return None
+    return {
+        "baselineDatasetId": binding.baseline_dataset_id,
+        "baselineRevision": int(binding.baseline_revision),
+        "baselineSnapshotId": binding.baseline_snapshot_id,
+        "fullRefreshCount": int(binding.full_refresh_count or 0),
+        "nextOffsets": list(binding.next_offsets or []),
+        "outputRevision": int(binding.output_revision or 0),
+        "processedRows": int(binding.processed_rows or 0),
+        "processedStaticKeys": int(binding.processed_static_keys or 0),
+        "sourceDatasetId": binding.source_dataset_id,
+        "sourceFingerprint": binding.source_fingerprint,
+        "sourceRanges": list(binding.source_ranges or []),
+        "sourceRevision": int(binding.source_revision or 0),
+        "sourceRunId": binding.source_run_id,
+        "staticSnapshots": list(binding.static_snapshots or []),
+        "status": binding.status,
+    }
 
 
 def output_commit_identity(value: dict) -> tuple[str, dict]:

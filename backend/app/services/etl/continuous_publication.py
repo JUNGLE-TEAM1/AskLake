@@ -95,7 +95,7 @@ def continuous_heartbeat_is_stale(heartbeat_at: str | None, job: ETLJobModel) ->
         heartbeat = datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))
     except ValueError:
         return True
-    trigger_seconds = int((job.continuous_config or {}).get("triggerIntervalSeconds") or 30)
+    trigger_seconds = int((job.continuous_config or {}).get("triggerIntervalSeconds") or 10)
     timeout_seconds = int(os.environ.get("ASKLAKE_CONTINUOUS_HEARTBEAT_TIMEOUT_SECONDS") or max(90, trigger_seconds * 3))
     return datetime.now(UTC) - heartbeat > timedelta(seconds=timeout_seconds)
 

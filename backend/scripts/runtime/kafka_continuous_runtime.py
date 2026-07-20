@@ -1365,7 +1365,7 @@ def main() -> None:
         .option("kafka.bootstrap.servers", config.broker)
         .option("subscribe", config.topic)
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
-        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
+        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "100"))
         .option("kafka.group.id", config.consumer_group_id)
         .load())
     raw_payload = col("value").cast("string")

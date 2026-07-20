@@ -56,11 +56,29 @@ class ContinuousSqlServiceModeTests(unittest.TestCase):
         self.assertEqual(checkpoint_path, f"{storage_path}/_checkpoints/csql-test")
 
     def test_serving_mode_is_included_in_the_runtime_plan_hash(self) -> None:
-        plan = {"planVersion": "continuous-sql.v1", "runtimeSql": "SELECT 1", "planHash": "stale"}
+        plan = {
+            "planVersion": "continuous-sql.v1",
+            "runtimeSql": "SELECT 1",
+            "planHash": "stale",
+            "streamingSource": {
+                "consumerGroupId": "shared-source-group",
+                "topic": "events",
+            },
+        }
 
-        resolved = compiled_plan_with_serving_mode(plan, "iceberg")
+        resolved = compiled_plan_with_serving_mode(
+            plan,
+            "iceberg",
+            job_id="csql-test",
+            max_offsets_per_trigger=100,
+        )
 
         self.assertEqual(resolved["servingMode"], "iceberg")
+        self.assertEqual(
+            resolved["streamingSource"]["consumerGroupId"],
+            "asklake-continuous-sql-csql-test",
+        )
+        self.assertEqual(resolved["streamingSource"]["maxOffsetsPerTrigger"], 100)
         self.assertNotEqual(resolved["planHash"], "stale")
         self.assertEqual(
             resolved["planHash"],

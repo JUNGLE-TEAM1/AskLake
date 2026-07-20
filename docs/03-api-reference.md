@@ -243,7 +243,7 @@ Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 s
 
 요청은 `{ "columns": ["user_id"] }`이고 응답은 `verified`, `totalRows`, `invalidKeyRows`, `distinctKeys`, 갱신된 `dataset`을 포함한다. 실패는 `CATALOG_UNIQUE_KEY_VERIFICATION_FAILED`와 동일 count를 반환하며 SQL 문에 별도 metadata 구문을 넣지 않는다.
 
-validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
+validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 10초다. 기존 Trino JOIN 결과를 증분 기준점으로 사용할 때 create에 `baselineDatasetId`를 보내며, 이 값은 append할 `output.datasetId`와 같아야 한다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
 
 - 기본 `servingMode=iceberg`: `storagePath`와 append `icebergTarget`을 함께 보내거나 둘 다 생략한다. 생략하면 backend가 배포 output bucket과 Trino catalog/schema에서 target·checkpoint를 생성한다.
 - opt-in `servingMode=clickhouse`: `clickhouseTarget: { engine: "clickhouse", database, table }`만 사용한다. `storagePath`, `icebergTarget`, `checkpointPath`를 함께 보내면 `422`다. 정적 S3/Iceberg relation은 Job 시작 때 참조 열만 Trino page로 읽어 snapshot-scoped ClickHouse local table에 고정하고, 같은 snapshot은 resume에서 재사용한다. Kafka Engine은 메시지를 `RawBLOB`으로 받고 Dataset의 `recordParsing/schemaColumns`에 따라 typed raw table로 변환한 뒤 JOIN output table에 연속 반영한다. 이 mode는 `PINNED_AT_START`만 지원한다.
@@ -252,7 +252,7 @@ Job 응답은 `servingMode`와 mode별 `outputTarget`을 반환한다. ClickHous
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
-SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 5초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
+SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 10초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
 
 Canonical status values:
 
@@ -860,7 +860,7 @@ Content-Type: application/json
 
 `calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
 
-전체 누적 기준 `count`/`sum`/`avg`는 새 widget에서 Catalog `icebergSnapshotId`에 고정한 전체 데이터로 기준값을 한 번 만든다. 이후 revision은 한 개씩 `_asklake_run_id = commit.run_id`인 행만 Trino 집계해 기존 계산 상태에 병합하고 성공한 revision까지만 저장한다. row가 존재하는 commit의 delta 집계가 비어 있으면 revision만 전진시키지 않고 같은 Catalog snapshot 전체 재계산으로 fallback한다. backfill/legacy/non-delta revision, `min`/`max`, table, revision gap, 내부 run ID가 없는 과거 table, 고카디널리티는 같은 Catalog snapshot 전체 재계산으로 fallback한다. Iceberg full scan은 query timeout 경계를 적용하므로 매우 큰 최초 baseline은 별도 aggregate snapshot/bootstrap이 필요하다. 전환 전 file-backed full scan에는 기본 256 objects, 512 MiB, 15초 한계가 있다. 최근 N분·슬라이딩 시간창은 지원하지 않는다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
+`count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
 Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 그대로면 빠른 catch-up을 중지한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다. Continuous published 위젯은 `실시간 · R{appliedRevision}` 배지와 revision 변경 pulse를 표시하며, bar chart는 숫자 data label과 dynamic animation으로 갱신을 시각화한다. 이 배지는 SSE/WebSocket 연결 상태가 아니라 마지막으로 성공 적용된 PostgreSQL dataset revision을 나타낸다.
 
