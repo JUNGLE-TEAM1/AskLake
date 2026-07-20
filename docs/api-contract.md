@@ -4059,6 +4059,21 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
+
+## Dashboard Job Binding Phase 0 계약
+
+> 구현 상태: 아직 API, migration, UI가 없는 Phase 0 결정이다. 이 절은 live endpoint를 추가하지 않으며 implementation phase에서 `docs/03-api-reference.md`와 함께 실제 request/response를 확정한다.
+
+Dashboard Job Binding은 모든 Dataset-producing Job의 검증된 Dataset revision을 Dashboard의 managed Widget으로 전달하는 공통 downstream contract다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 각자의 실행 및 물리 publication 계약을 유지한다. binding은 해당 publication 이후에만 동작하며, Job 성공 또는 Catalog row 존재만으로 Widget 계산을 시작하지 않는다.
+
+V1은 새 Dashboard 또는 Widget이 없는 빈 Dashboard에 하나의 Job output Dataset을 고정한다. Dashboard가 `managed`일 때 새 Widget은 고정 Dataset을 상속하고 Widget 설정은 수정할 수 있지만 Dashboard/Widget Dataset selector는 사용할 수 없다. 명시적 detach 뒤에만 일반 Dataset 선택으로 되돌아간다.
+
+예정 durable resource는 `DashboardJobBinding`과 revision별 `DashboardBindingDelivery`다. delivery는 `waiting_first_data | pending | calculating | applied | degraded | failed | detached` 상태를 가지며, 서버 기준 성공은 enabled binding의 모든 managed Widget에서 `appliedRevision >= latestRevision`을 만족할 때다. 기존 Continuous SQL `dashboard_ready`는 Catalog revision/event publication stage이며 Widget delivery 성공을 의미하지 않는다.
+
+`replace`는 full recalculation, `append`는 지원 Widget의 delta merge, `upsert`/`retract`/revision gap/schema identity 변경은 full recalculation을 사용한다. `(datasetId, revision)` delivery는 멱등이며 Dashboard 계산 실패는 검증된 Dataset revision과 원본 Job 상태를 되돌리지 않는다. 권한은 binding create/detach에 Job·Dashboard `manage`, Widget 계산/runtime read에 Dashboard `view`와 Dataset `query`를 각각 다시 검사한다.
+
+상세 모델, lifecycle, 제외 범위와 EC2 → EKS 순서는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+
 ## ETL Permission create-flow contract
 
 ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다. 다만 그룹 후보는 현재 backend의 `DEMO_GROUPS` 고정 정의이며, 사용자 후보만 `auth_users` table을 우선 사용한다.

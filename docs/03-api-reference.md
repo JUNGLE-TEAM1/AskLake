@@ -526,6 +526,8 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
+> Dashboard Job Binding은 Phase 0에서 제품·계약만 확정됐으며, 아래 live API 목록에는 아직 binding 생성, 해제, delivery 조회·재시도 endpoint가 없다. 예정 request/response와 권한 경계는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다. 구현 전에는 이 문서에 실제 endpoint와 response shape를 추가해야 한다.
+
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
 | `POST` | `/api/auth/login` | 활성 상태인 계정 로그인과 `asklake_session` 쿠키 발급. Demo 계정의 생성·복구 및 UI 기본값 노출은 paired opt-in으로 제어 |

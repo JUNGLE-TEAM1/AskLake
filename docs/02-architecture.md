@@ -553,6 +553,26 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 
+## Dashboard Job Binding 경계
+
+Dashboard Job Binding은 Continuous SQL 또는 Kafka만의 별도 Dashboard Job이 아니다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL이 검증된 Dataset revision을 publication한 뒤 공통으로 연결하는 downstream binding이다. Job 실행 엔진은 Dataset revision 이전의 물리 write·검증·복구를 소유하고, binding worker는 revision 이후의 Dashboard delivery만 소유한다.
+
+```text
+Job Run / micro-batch
+→ verified Dataset revision publication
+→ DashboardJobBinding delivery
+→ managed Widget calculation
+→ widget appliedRevision
+```
+
+- V1 binding은 새 Dashboard 또는 Widget이 없는 빈 Dashboard 하나와 Job output Dataset 하나를 연결한다. Dashboard가 `managed`일 때 모든 Widget은 Dashboard-level output Dataset을 상속하며 Widget 생성·삭제·시각화 편집은 허용하지만 Dataset selector는 잠근다.
+- binding은 Job/Dashboard `manage` 권한으로 생성·해제하며, Widget 계산과 runtime read는 기존 Dataset `query`, Dashboard `view` 권한을 다시 검사한다.
+- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`와 durable realtime event는 계속 canonical source다. binding은 경쟁 revision/event source를 만들지 않는다.
+- `replace` publication은 full Widget recalculation, `append`는 지원 Widget의 delta merge를 우선 사용한다. `upsert`, `retract`, revision gap, schema identity 변경은 current serving 결과를 다시 읽는 full recalculation으로 fail safe한다.
+- Continuous SQL의 `output_committed -> catalog_ready -> dashboard_ready`는 기존 Catalog publication stage다. 실제 binding delivery 완료는 별도 `DashboardBindingDelivery`가 `applied`이고 모든 managed Widget의 `appliedRevision`이 Dataset 최신 revision 이상인 경우뿐이다.
+- Dashboard 계산 실패, Dashboard 삭제, 권한 회수는 binding을 `degraded` 또는 `failed`로 만들 수 있지만 이미 검증된 Job/Dataset publication을 rollback하거나 Job을 실패시키지 않는다. 마지막 성공 Widget 결과는 유지한다.
+- Phase 0에서는 계약만 고정한다. DB migration/API/UI/delivery worker와 EKS migration은 후속 phase이며 상세는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+
 ## 14) Realtime 2026 전환 아키텍처
 
 Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. Production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE 경로를 기본 활성화하고, 같은 generation의 중복 소비를 막기 위해 Kafka Engine V1은 비활성화한다.
