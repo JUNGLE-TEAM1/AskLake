@@ -216,3 +216,26 @@ ECR image receipt와 AMD64 pull/inspect 결과는 저장소 밖 evidence이며 G
 삭제가 함께 존재하므로 이번 이슈에 병합하지 않는다. 저장소 안의 기존 V2/standard
 receipt는 모두 `gitRevision=0f1a9390...`이라 현재 기준의 대체 입력으로 사용하지
 않는다. 최신 AMD64 receipt는 저장소 밖에서 별도로 검증·보관한다.
+
+## 13. Phase 2 정적·shadow 검증 결과
+
+2026-07-20 Phase 2에서 live apply 없이 chart와 검증기를 재실행했다.
+
+- `bash scripts/test-eks-realtime-data-plane.sh`: 통과
+  - Helm lint 통과
+  - 기본값 렌더에서 V2 object 0개 확인
+  - `shadow`에서 Keeper/ClickHouse/Connect/PVC/NetworkPolicy만 렌더
+  - shadow Continuous worker 0개 확인
+  - cutover/worker/ownership/TLS/storage/secret 관련 negative test 통과
+- `bash scripts/test-eks-realtime-v2-secrets.sh`: 통과
+- `node --test scripts/test-eks-realtime-v2-image-receipt.mjs`: 4/4 통과
+- `bash scripts/verify-eks-realtime-data-plane.sh`: 통과
+- `bash scripts/verify-eks-workloads.sh`: 통과
+- realtime V2 Kafka contract: 5/5 통과
+- realtime V2 live-evidence contract: 5/5 통과
+
+기본값에서 기존 V1/finite batch 경로를 바꾸지 않았고, 명시적 shadow opt-in 외에는
+V2 데이터 플레인이나 worker가 렌더되지 않는다. Kubernetes server dry-run과 실제
+shadow apply는 Secret gate가 해소되고 별도 승인이 있을 때까지 실행하지 않았다.
+현재 live blocker는 계속해서 `asklake-clickhouse-keeper-v2-config` ExternalSecret
+부재이며, 이 Phase에서 AWS/EKS mutation은 0건이다.
