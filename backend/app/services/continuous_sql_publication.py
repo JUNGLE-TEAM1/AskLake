@@ -244,10 +244,8 @@ class ContinuousSqlPublicationService:
             collected.extend(list(commit.source_ranges or []))
             coverage = _source_range_coverage(collected)
             target = _source_range_coverage(target_ranges)
-            if coverage == target:
+            if _coverage_contains(coverage, target):
                 return selected
-            if _coverage_exceeds(coverage, target):
-                return False
         return False
 
     def _advance_incremental_binding(
@@ -266,18 +264,31 @@ class ContinuousSqlPublicationService:
         binding = self.repository.get_incremental_binding(job.id, for_update=True)
         if binding is None:
             return
-        last_commit = source_commits[-1]
-        if int(last_commit.revision) <= int(binding.source_revision or 0):
-            return
         source_ranges = normalize_kafka_source_ranges(
             evidence.get("sourceRanges"),
             required=True,
         )
-        binding.source_revision = int(last_commit.revision)
-        binding.source_run_id = str(last_commit.run_id)
+        next_offsets = _merge_next_offsets(
+            list(binding.next_offsets or []),
+            _next_offsets(source_ranges),
+        )
+        completed_commit = next(
+            (
+                commit
+                for commit in reversed(source_commits)
+                if _source_ranges_consumed(commit.source_ranges, next_offsets)
+            ),
+            None,
+        )
+        if (
+            completed_commit is not None
+            and int(completed_commit.revision) > int(binding.source_revision or 0)
+        ):
+            binding.source_revision = int(completed_commit.revision)
+            binding.source_run_id = str(completed_commit.run_id)
         binding.source_fingerprint = kafka_source_fingerprint(source_ranges)
         binding.source_ranges = source_ranges
-        binding.next_offsets = _next_offsets(source_ranges)
+        binding.next_offsets = next_offsets
         binding.output_revision = max(int(binding.output_revision or 0), output_revision)
         binding.processed_rows = int(binding.processed_rows or 0) + _source_row_count(source_ranges)
         binding.processed_static_keys = int(binding.processed_static_keys or 0) + min(
@@ -505,24 +516,25 @@ def _source_range_coverage(
     return tuple(result)
 
 
-def _coverage_exceeds(
-    current: tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...],
+def _coverage_contains(
+    available: tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...],
     target: tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...],
 ) -> bool:
-    target_map = {(topic, partition): ranges for topic, partition, ranges in target}
-    for topic, partition, ranges in current:
-        expected = target_map.get((topic, partition))
-        if expected is None:
-            return True
-        if sum(end - start for start, end in ranges) > sum(
-            end - start for start, end in expected
-        ):
-            return True
-        if ranges and expected and (
-            ranges[0][0] < expected[0][0] or ranges[-1][1] > expected[-1][1]
-        ):
-            return True
-    return False
+    available_map = {
+        (topic, partition): ranges
+        for topic, partition, ranges in available
+    }
+    return all(
+        any(
+            available_start <= target_start and available_end >= target_end
+            for available_start, available_end in available_map.get(
+                (topic, partition),
+                (),
+            )
+        )
+        for topic, partition, ranges in target
+        for target_start, target_end in ranges
+    )
 
 
 def _source_row_count(source_ranges: list[dict[str, Any]]) -> int:
@@ -544,3 +556,42 @@ def _next_offsets(source_ranges: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"topic": topic, "partition": partition, "nextOffset": next_offset}
         for (topic, partition), next_offset in sorted(next_by_partition.items())
     ]
+
+
+def _merge_next_offsets(
+    previous: list[dict[str, Any]],
+    current: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    next_by_partition: dict[tuple[str, int], int] = {}
+    for item in [*previous, *current]:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("topic") or ""), int(item.get("partition") or 0))
+        if not key[0]:
+            continue
+        next_by_partition[key] = max(
+            next_by_partition.get(key, 0),
+            int(item.get("nextOffset") or 0),
+        )
+    return [
+        {"topic": topic, "partition": partition, "nextOffset": next_offset}
+        for (topic, partition), next_offset in sorted(next_by_partition.items())
+    ]
+
+
+def _source_ranges_consumed(
+    source_ranges: list[dict[str, Any]],
+    next_offsets: list[dict[str, Any]],
+) -> bool:
+    cursors = {
+        (str(item.get("topic") or ""), int(item.get("partition") or 0)): int(
+            item.get("nextOffset") or 0
+        )
+        for item in next_offsets
+        if isinstance(item, dict)
+    }
+    return all(
+        cursors.get((str(item["topic"]), int(item["partition"])), -1)
+        >= int(item["endOffset"])
+        for item in normalize_kafka_source_ranges(source_ranges, required=True)
+    )

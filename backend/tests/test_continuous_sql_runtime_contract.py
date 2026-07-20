@@ -28,6 +28,10 @@ from app.services.continuous_sql_catalog import parse_row_count, unique_key_sets
 from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
+    _coverage_contains,
+    _merge_next_offsets,
+    _source_range_coverage,
+    _source_ranges_consumed,
     validate_publication_identity,
 )
 from app.services.continuous_sql_service import ContinuousSqlService, worker_identity_error
@@ -576,6 +580,32 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
             "CONTINUOUS_SQL_SOURCE_RANGE_ALREADY_APPLIED",
         )
         self.assertEqual(writer.verified_runs, [boundary["runId"]])
+
+    def test_incremental_micro_batch_may_use_part_of_a_source_commit(self) -> None:
+        source_commit_ranges = [
+            {"topic": "events", "partition": 0, "startOffset": 0, "endOffset": 100}
+        ]
+        micro_batch_ranges = [
+            {"topic": "events", "partition": 0, "startOffset": 0, "endOffset": 10}
+        ]
+        self.assertTrue(
+            _coverage_contains(
+                _source_range_coverage(source_commit_ranges),
+                _source_range_coverage(micro_batch_ranges),
+            )
+        )
+        next_offsets = _merge_next_offsets(
+            [{"topic": "events", "partition": 0, "nextOffset": 0}],
+            [{"topic": "events", "partition": 0, "nextOffset": 10}],
+        )
+        self.assertEqual(next_offsets[0]["nextOffset"], 10)
+        self.assertFalse(_source_ranges_consumed(source_commit_ranges, next_offsets))
+        self.assertTrue(
+            _source_ranges_consumed(
+                source_commit_ranges,
+                [{"topic": "events", "partition": 0, "nextOffset": 100}],
+            )
+        )
 
 
 if __name__ == "__main__":

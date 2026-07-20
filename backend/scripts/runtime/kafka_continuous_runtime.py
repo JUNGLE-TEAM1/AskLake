@@ -1583,16 +1583,6 @@ def main() -> None:
                 .withColumn("_asklake_run_id", lit(run_id))
                 .withColumn("_asklake_ingested_at", current_timestamp())
             )
-            missing_partitions = [
-                name for name in iceberg_target["partitionColumns"]
-                if name not in iceberg_frame.columns
-                and name not in {"_asklake_run_id", "_asklake_ingested_at"}
-            ]
-            if missing_partitions:
-                raise RuntimeError(
-                    "Continuous Iceberg partition contract references missing output columns: "
-                    + ", ".join(missing_partitions)
-                )
             iceberg_commit = commit_iceberg_table(
                 spark,
                 iceberg_frame,
