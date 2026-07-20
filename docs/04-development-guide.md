@@ -2090,6 +2090,12 @@ Kubernetes application/recovery identity, terminal retry Plan 유지, Helm의
 통과하기 전 `enforce` 실험을 시작하지 않는다. 상세 계약은
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
 
+Live FastAPI와 Collector는 `asklake-runtime-config` release가 소유하는
+`asklake-runtime` ConfigMap을 소비한다. 따라서 Planner mode·정책값·executor
+baseline과 새 Spark runtime digest는 private runtime-config values 한 revision에서
+함께 바꾸고, Backend/Collector image는 별도 `asklake-web` atomic rollout을
+사용한다. 두 release 중 하나만 갱신된 상태에서는 Run을 제출하지 않는다.
+
 동시 bounded fixture 검증은 A가 승인한 MSK group을 먼저 `asklake-runtime-config` release의 `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`에 exact group/table 쌍으로 추가한다. 기본 `asklake-eks-mvp-spark-v1 → eks_mvp_fixture` slot은 항상 포함하고 scale slot은 최대 4개만 더한다. group과 table 중복, wildcard/prefix, 기본 slot 제거, 5개 초과는 Backend와 Spark runtime이 모두 거부한다. 실제 private values를 만들기 전 A의 IAM group 범위 승인이 없으면 기본 slot을 여러 Job에 복제하지 말고 blocker로 남긴다.
 
 Terraform의 Spark MSK group 권한은 `msk_scale_consumer_groups`에 `49d163cfbaf1`부터 필요한 exact 값만 선택한다. 변수 validation은 `scale17-01..04` 외 값과 wildcard를 거부하고, IAM policy는 기본 group ARN과 선택한 group ARN만 `DescribeGroup`/`AlterGroup` resource로 렌더한다. 3개 실험에는 `01..03`만 사용하며 4번째는 3개로 Pending 증거를 만들 수 없을 때 별도 검토 후 추가한다.

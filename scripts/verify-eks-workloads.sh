@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-workloads"
+RUNTIME_CONFIG_CHART_DIR="$ROOT_DIR/infra/eks/helm/asklake-runtime-config"
 VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/dev.example.yaml"
 RENDERED_FILE="$(mktemp)"
 OPT_IN_RENDERED_FILE="$(mktemp)"
@@ -74,6 +75,23 @@ fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 "$HELM_BIN" lint "$CHART_DIR" -f "$VALUES_FILE"
+"$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=off \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES=134217728 \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR=96 \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS=1 \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=6 \
+  --set-string configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES=1 >/dev/null
+if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=invalid >/dev/null 2>&1; then
+  echo "runtime ConfigMap schema accepted an invalid Spark Resource Planner mode" >&2
+  exit 1
+fi
+if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=7 >/dev/null 2>&1; then
+  echo "runtime ConfigMap schema accepted a Spark Resource Planner maximum above six" >&2
+  exit 1
+fi
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set mskSmoke.create=true \
