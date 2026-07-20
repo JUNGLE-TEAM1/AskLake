@@ -2,7 +2,7 @@
 
 작성일: 2026-07-20
 관련 이슈: #931
-상태: executor cache OOM 수정, 격리 EKS scale, bounded publication 안전성 검증 완료
+상태: executor cache OOM 수정, 격리 EKS scale, bounded publication 및 staging-first hybrid 안전성 검증 완료
 
 ## 1. 목적과 범위
 
@@ -161,9 +161,45 @@ hardening으로 진행한다.
 읽었고 그 값이 양수 한도 이하일 때만 cache를 선택한다. cache 준비가 실패하면
 같은 run staging을 다시 읽고 raw source로 돌아가지 않는다.
 
-이 정책의 EKS 임계값과 성능 효과는 아직 이 문서의 기존 10GB/100GB 결과로
-입증한 것으로 간주하지 않는다. 새 candidate는 동일 image/resource shape의
-staging-only control과 반복 비교하고, `materializationBytes`, cache 선택/fallback,
-JVM heap·GC·executor replacement, raw read 1회, row identity, residue 0을 함께
-수집한다. dev EKS의 다른 workload를 완전히 통제할 수 없으면 elapsed time은
-참고 지표로만 사용하고 기능적 안전성 판정과 분리한다.
+### 8.1 EKS 임계값 실험 결과
+
+새 candidate revision `43be2087`을 private ECR의 immutable digest로 고정했다.
+10GB control과 candidate는 같은 image와 1 executor/2 cores/4GiB heap 조건으로
+각각 두 번 실행했다. control은 한도 0, candidate는 control에서 측정한
+`materializationBytes=781,310,537`보다 큰 1GiB 한도를 사용했다. 100GB는 같은
+1GiB 한도와 4 executor를 사용했다. 실제 registry, bucket, object, digest,
+SparkApplication과 Pod identity는 private mode-0600 evidence에만 보관했다.
+
+| 규모 / 정책 | 반복 | materialization bytes | cache 판정 | Spark duration | peak storage memory |
+| --- | ---: | ---: | --- | ---: | ---: |
+| 10GB / staging-only | 1 | 781,310,537 | `disabled`, `NONE` | 253,179 ms | 635,297 bytes |
+| 10GB / staged-cache | 1 | 781,310,537 | `within_threshold`, `MEMORY_AND_DISK` | 293,109 ms | 882,839,405 bytes |
+| 10GB / staging-only | 2 | 781,310,537 | `disabled`, `NONE` | 282,324 ms | 680,308 bytes |
+| 10GB / staged-cache | 2 | 781,310,537 | `within_threshold`, `MEMORY_AND_DISK` | 310,464 ms | 882,887,617 bytes |
+| 100GB / 1GiB 한도 | 1 | 8,530,966,512 | `above_threshold`, `NONE` | 1,143,963 ms | 731,633 bytes |
+
+모든 실행은 exact input/output row, source size/ETag/version 불변, raw physical
+full-read stage 1개, cache fallback 0, failed task/executor replacement/JVM OOM 0을
+확인했다. 종료 뒤 SparkApplication, Pod, current S3 object,
+version/delete marker도 모두 0이었다. 100GB는 310,578,707행을 약 19분 4초에
+완료했다.
+
+기능적 결론은 다음과 같다.
+
+1. 같은 1GiB 임계값에서 약 781MB staging은 cache를 선택하고 약 8.53GB
+   staging은 fail-closed로 cache를 거부했다.
+2. cache 선택 여부와 관계없이 후속 lineage는 staging에서 시작했고 raw source
+   물리 읽기는 한 번이었다.
+3. 이 workload에서 10GB staged-cache 평균은 301,787ms, staging-only 평균은
+   267,752ms였다. 두 번 모두 cache가 빨라지지 않았으므로 현재 결과를 latency
+   개선 근거로 사용하지 않는다. dev EKS 잡음과 2회 표본 한계도 함께 적용한다.
+4. 100GB materialization 중 Spark UI에서 완료 task 724개 뒤 active Spark job이
+   없는 약 5분 구간이 관찰됐다. 현재 `materializationStaging` timing은 Parquet
+   write와 file별 exact byte 조회를 합쳐 기록하므로 원인을 단정할 수는 없지만,
+   724개 file status를 직렬 합산하는 구현이 유력한 병목이다.
+
+따라서 hybrid의 현재 검증 범위는 **작은 staging의 bounded cache 선택과 큰
+staging의 안정적인 cache 거부**까지다. 작은 데이터의 속도 개선은 입증되지
+않았다. 후속 성능 작업은 file별 metadata 조회 시간을 별도 계측하고, write
+결과나 병렬 filesystem metadata로 exact byte를 얻는 방법을 검증한 뒤 독립 PR로
+진행한다.
