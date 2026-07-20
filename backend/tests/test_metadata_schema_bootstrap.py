@@ -3,9 +3,21 @@ from unittest.mock import MagicMock, patch
 
 from app import main
 from app.migrations.metadata_schema import bootstrap_metadata_schema
+from app.repositories import etl_repository
 
 
 class MetadataSchemaBootstrapTests(unittest.TestCase):
+    def test_etl_repository_skips_runtime_ddl_when_schema_management_is_disabled(self) -> None:
+        database = MagicMock()
+        bind = MagicMock()
+        database.get_bind.return_value = bind
+        etl_repository._schema_ready_bind_ids.discard(id(bind))
+
+        with patch.object(etl_repository.settings, "startup_schema_management_enabled", False):
+            etl_repository.ensure_schema(database)
+
+        bind.begin.assert_not_called()
+
     def test_bootstrap_owns_metadata_schema_preparation(self) -> None:
         database = object()
         with (
