@@ -35,6 +35,11 @@ Prefix 선택 시 저장된 `__Source Total Bytes` snapshot이다. 근거가 없
 조회가 실패하면 `input_size_unavailable` fallback으로 기록한다. Kafka와 Iceberg
 입력 추정은 후속 범위다.
 
+AWS native S3의 `HEAD`는 `AWS_REGION`과 workload identity/default credential chain을
+사용하며 Source에 custom endpoint를 저장하지 않는다. MinIO 등 Source가 custom
+endpoint를 명시한 경우에만 endpoint allowlist를 요구한다. 두 경로 모두 bucket
+allowlist를 통과해야 하며 Plan에는 bucket, key, endpoint를 저장하지 않는다.
+
 실행 시점의 executor profile이 `standard-v1`과 다르면
 `executor_profile_unsupported` fallback으로 기록한다. 따라서 `enforce`여도 검증되지
 않은 CPU·memory 조합에 Planner 결정을 적용하지 않는다.
