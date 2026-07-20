@@ -380,6 +380,8 @@ class DashboardLiveRuntimeTests(unittest.TestCase):
         self.assertEqual(response.applied_revision, 4)
         self.assertEqual(response.data, [{"category": "A", "amount": 30.0}])
         self.assertEqual(live_repository.save_calls, [])
+        self.assertEqual(service.catalog_repository.calls, [])
+        self.assertEqual(live_repository.calls[0], "freshness")
 
     def test_prepared_only_request_returns_pending_before_background_baseline(self) -> None:
         live_repository = FakeLiveRepository(latest_revision=1, saved_result=None)
