@@ -1578,20 +1578,20 @@ def main() -> None:
         quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if quarantined_count else None
         evidence_batch_path = None
         if stored_count:
+            iceberg_frame = (
+                target_frame
+                .withColumn("_asklake_run_id", lit(run_id))
+                .withColumn("_asklake_ingested_at", current_timestamp())
+            )
             missing_partitions = [
                 name for name in iceberg_target["partitionColumns"]
-                if name not in target_frame.columns
+                if name not in iceberg_frame.columns
             ]
             if missing_partitions:
                 raise RuntimeError(
                     "Continuous Iceberg partition contract references missing output columns: "
                     + ", ".join(missing_partitions)
                 )
-            iceberg_frame = (
-                target_frame
-                .withColumn("_asklake_run_id", lit(run_id))
-                .withColumn("_asklake_ingested_at", current_timestamp())
-            )
             iceberg_commit = commit_iceberg_table(
                 spark,
                 iceberg_frame,
