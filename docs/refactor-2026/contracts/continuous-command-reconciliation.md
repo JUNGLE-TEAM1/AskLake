@@ -34,7 +34,7 @@ start 응답이 유실되면 worker status를 한 번 조회한다. 같은 deter
 | 우선순위 | 증거 | 판정 |
 |---:|---|---|
 | 1 | 현재 start/resume intent와 충돌하지 않는 committed pause/stop intent + worker exited/missing | report가 없어도 terminal intent 확정 |
-| 2 | report worker attempt != active fencing token | stale report 무시 |
+| 2 | report worker attempt != active fencing token | stale report 무시. 단, `desiredState=running`이고 그 stale worker가 `exited`/`missing`이면 committed fence로 새 worker를 한 번 제출 |
 | 3 | unreadable/invalid report | report 단계 오류 기록, 성공/실패 추측 금지 |
 | 4 | current worker report | report projection과 publication reconciliation 수행 |
 | 5 | durable publication pending | manifest 기반 복구 수행 |
@@ -48,7 +48,7 @@ start 응답이 유실되면 worker status를 한 번 조회한다. 같은 deter
 
 - start/resume 전 consumer identity와 maintenance/replay conflict를 같은 lock 순서로 검사한다.
 - committed command revision은 단조 증가하고, worker heartbeat만으로 증가하지 않는다.
-- start/resume은 external control plane이 관찰하기 전에 새 provisional worker fence를 기록한다. 이전 REST runner의 `stop`/`KILLED` 증거는 `desiredState=running`인 새 intent를 terminal 상태로 되돌릴 수 없으며, restart가 실제 runner를 제출하면서 그 provisional fence를 실제 worker attempt로 교체한다.
+- start/resume은 external control plane이 관찰하기 전에 새 worker fence를 기록하고, API와 lease owner가 이 값을 runner에 전달한다. 이전 REST runner의 `stop`/`KILLED` 증거는 `desiredState=running`인 새 intent를 terminal 상태로 되돌릴 수 없으며, stale worker가 종료된 경우 reconciler가 같은 committed fence로 실제 runner를 한 번 제출한다.
 - active worker attempt와 다른 report는 counter, checkpoint, 공개 상태를 갱신하지 않는다.
 - restart는 contract가 초기화됐고 desired state가 `running`이며 deterministic worker가 없을 때만 수행한다.
 - startup 복구와 주기 동기화는 모두 `reconcile_continuous_runtime`을 호출한다.

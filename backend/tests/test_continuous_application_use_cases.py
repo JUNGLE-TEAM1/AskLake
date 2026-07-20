@@ -32,8 +32,8 @@ class FakeWorker:
         self.events = events
         self.lose_start_response = lose_start_response
 
-    def command(self, _job, _runtime, action, _options=None):
-        self.events.append(f"worker:{action}")
+    def command(self, _job, _runtime, action, options=None):
+        self.events.append(f"worker:{action}:{(options or {}).get('workerAttemptId', '')}")
         if action == "start" and self.lose_start_response:
             raise ApiError("BACKEND_BRIDGE_TIMEOUT", "response lost", 504)
         if action == "status":
@@ -130,14 +130,18 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
     def test_desired_state_is_committed_before_worker_submission(self) -> None:
         events, current_runtime, result = self.execute()
 
-        self.assertEqual(events, ["save", "worker:start", "save"])
+        self.assertEqual(events[0], "save")
+        self.assertTrue(events[1].startswith("worker:start:start-"))
+        self.assertEqual(events[2], "save")
         self.assertEqual(current_runtime.status, "starting")
         self.assertEqual(result["processing_result"]["runtimeStatus"], "starting")
 
     def test_lost_start_response_is_reconciled_without_duplicate_submission(self) -> None:
         events, current_runtime, result = self.execute(lose_start_response=True)
 
-        self.assertEqual(events, ["save", "worker:start", "worker:status", "save"])
+        self.assertEqual(events[0], "save")
+        self.assertTrue(events[1].startswith("worker:start:start-"))
+        self.assertEqual(events[2:], ["worker:status:", "save"])
         self.assertEqual(current_runtime.failed_count, 0)
         self.assertTrue(result["processing_result"]["workerResult"]["submissionRecovered"])
 
@@ -256,7 +260,8 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
                 hooks=reconciliation_hooks,
             )
 
-        self.assertEqual(events, ["worker:start", "save"])
+        self.assertTrue(events[0].startswith("worker:start:start-new-intent"))
+        self.assertEqual(events[1:], ["save"])
         self.assertEqual(current_runtime.status, "starting")
         self.assertEqual(current_job.status, "running")
         self.assertEqual(
@@ -272,6 +277,16 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
             observed_worker_attempt_id="old",
         ))
         self.assertEqual(decision.action, ReconciliationAction.IGNORE_STALE_REPORT)
+
+    def test_terminal_stale_report_restarts_the_current_fenced_attempt(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            container_state="exited",
+            expected_worker_attempt_id="start-current",
+            observed_worker_attempt_id="old-attempt",
+        ))
+
+        self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
+        self.assertEqual(decision.certainty, ReconciliationCertainty.CONFIRMED)
 
     def test_partial_publication_uses_current_report_for_resume(self) -> None:
         decision = decide_reconciliation(self.evidence(

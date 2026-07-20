@@ -121,6 +121,16 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
         and evidence.expected_worker_attempt_id
         and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id
     ):
+        if (
+            evidence.desired_state == "running"
+            and evidence.contract_initialized
+            and evidence.container_state in {"exited", "missing"}
+        ):
+            return ReconciliationDecision(
+                ReconciliationAction.RESTART_WORKER,
+                ReconciliationCertainty.CONFIRMED,
+                "stale worker is terminal; submit the durable current start intent",
+            )
         return ReconciliationDecision(
             ReconciliationAction.IGNORE_STALE_REPORT,
             ReconciliationCertainty.CONFIRMED,
@@ -576,7 +586,14 @@ def _restart_missing_worker(
     hooks: ContinuousReconciliationHooks,
 ) -> None:
     try:
-        result = worker.command(job, runtime, "start")
+        contract = runtime_contract_projection(
+            runtime.metrics,
+            public_status=runtime.status,
+            legacy_error=runtime.last_error,
+        )
+        worker_attempt_id = _optional_string(contract.get("fencingToken"))
+        options = {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
+        result = worker.command(job, runtime, "start", options)
     except Exception as exc:
         hooks.mark_failed(
             job,
