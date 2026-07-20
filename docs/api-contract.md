@@ -1623,6 +1623,11 @@ type PermissionGrant = {
 
 ## EKS MVP execution and Continuous ownership contract
 
+- `ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=shadow`는 File/S3 입력 metadata로
+  `taskStates.sparkExecution.resourcePlan`을 최초 제출 전에 저장한다.
+- `shadow`의 `appliedExecutors`는 기존 executor 수를 유지하며 같은 Run의 retry는
+  Plan을 재사용한다. Plan hash drift는 `SPARK_EXECUTION_IDENTITY_MISMATCH`로 실패한다.
+
 ## Realtime 2026 전환 계약
 
 ### GET /api/realtime/config

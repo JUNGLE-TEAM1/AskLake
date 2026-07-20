@@ -131,6 +131,18 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.config.sparkResourcePlannerMode=invalid >/dev/null 2>&1; then
+  echo "EKS workload schema accepted an invalid Spark Resource Planner mode" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.config.sparkResourceMaxExecutors=7 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a Spark Resource Planner maximum above six" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   --set backend.config.trinoBaseUrl=http://trino:8080 >/dev/null 2>&1; then
   echo "EKS workload schema accepted a non-HTTPS Trino endpoint" >&2
   exit 1
@@ -185,14 +197,14 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if ! "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set sparkApplication.executor.instances=4 >/dev/null 2>&1; then
-  echo "EKS workload schema rejected the bounded four-executor experiment" >&2
+  --set sparkApplication.executor.instances=6 >/dev/null 2>&1; then
+  echo "EKS workload schema rejected the bounded six-executor experiment" >&2
   exit 1
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set sparkApplication.executor.instances=5 >/dev/null 2>&1; then
-  echo "EKS workload schema accepted more than four Spark executors" >&2
+  --set sparkApplication.executor.instances=7 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted more than six Spark executors" >&2
   exit 1
 fi
 
@@ -276,6 +288,11 @@ grep -q 'value: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthMana
 grep -q 'path: /v1/info' "$RENDERED_FILE"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: "60"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "off"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "96"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: "1"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: "6"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "7200"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RUNNER: "kubernetes"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_KAFKA_AUTH_MODE: "iam"' "$RENDERED_FILE"

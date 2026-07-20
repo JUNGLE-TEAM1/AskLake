@@ -33,6 +33,7 @@ export function sparkKubernetesAnnotations({
   imageDigest,
   jobId,
   normalizedAttemptGeneration,
+  resourcePlanAnnotations = {},
   runId,
 }) {
   return {
@@ -41,6 +42,7 @@ export function sparkKubernetesAnnotations({
     "asklake.io/run-id": String(runId),
     "asklake.io/executor-instances": String(executorInstances),
     "asklake.io/execution-generation": String(normalizedAttemptGeneration),
+    ...resourcePlanAnnotations,
     ...(fixtureBatchId ? { "asklake.io/fixture-batch-id": fixtureBatchId } : {}),
   };
 }

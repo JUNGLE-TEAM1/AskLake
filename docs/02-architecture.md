@@ -437,3 +437,13 @@ owner identity는 `(brokerIdentity, topic, consumerGroup, generation, checkpoint
 active claim은 정확히 하나다. workload는 이전 owner fence, 승인, 새 generation이 모두
 확인되기 전에는 0 replica로 남는다. rollback도 checkpoint를 보존하고 새 generation으로
 수행하며 dual-run이나 checkpoint rewind를 허용하지 않는다.
+
+## 25) Spark 초기 Resource Plan
+
+EKS batch Spark Run은 입력 크기 기반 초기 executor 권장값을 Run별 Resource
+Plan으로 계산한다. `shadow`는 권장값과 근거를 RDS Run과 SparkApplication
+identity에 기록하지만 실제 executor 수는 기존 고정값을 유지한다. Plan은 최초
+SparkApplication 제출 전에 한 번 확정하며 같은 `runId`의 lease takeover와
+terminal attempt generation retry도 저장된 Plan을 재사용한다. 계산식, fallback,
+상한과 검증 순서는 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을
+따른다.

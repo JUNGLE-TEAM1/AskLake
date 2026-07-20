@@ -802,6 +802,11 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | --- | --- | --- |
 | `ASKLAKE_CONTINUOUS_CONTROL_PLANE` | `external_ec2` | Kafka Continuous 제어권과 상태는 EC2에 남기고 EKS 접근을 차단한다. |
 | `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
+| `ASKLAKE_SPARK_RESOURCE_PLANNER_MODE` | `off` | `off`, `shadow`, `enforce`. 최초 적용은 계산만 기록하는 `shadow`다. |
+| `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES` | `134217728` | 예상 Spark read partition 크기다. |
+| `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR` | `96` | 초기 executor 하나가 담당하도록 계획하는 partition 수다. |
+| `ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS` | `1` | Resource Plan 최소 executor 수다. |
+| `ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS` | `6` | 승인된 1단계 실험의 최대 executor 수다. |
 | `ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS` | `2` | terminal-failed SparkApplication 뒤 같은 logical Run에서 허용하는 attempt generation 상한이다. `1..3`으로 제한한다. |
 | `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS` | `7200` | SparkApplication polling의 최대 실행시간이다. heartbeat가 이 제한을 연장하지 않는다. |
 | `ASKLAKE_SPARK_RUNNER` | `kubernetes` | in-cluster API로 `SparkApplication`을 제출·복구·조회하고 driver 결과를 수집한다. |
@@ -821,6 +826,12 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 ```
 
 `ASKLAKE_SPARK_RUNNER=kubernetes`에서 같은 `runId`와 같은 attempt generation은 같은 Kubernetes object name을 사용한다. 최초 create 응답을 잃거나 이미 object가 있으면 provider는 기존 `SparkApplication`의 run/job/image/attempt identity를 검증한 뒤 이어서 polling한다. identity가 다르면 기존 object를 재사용하지 않고 실행을 실패시킨다. create/recover 직후 terminal 전에도 `etl_runs.task_states.sparkExecution.kubernetesExecution`에 namespace, application name/UID, attempt generation, run/job/image identity, 관찰 state와 recovery 여부를 저장한다. driver가 생기면 Pod name을 연결하고 terminal에는 Pod phase, termination reason/exit code, result marker 존재 여부를 합친다. terminal manifest와 이미 저장한 RDS identity의 namespace/name/UID/image/attempt/driver Pod가 다르거나 `success`에 유효한 `ASKLAKE_SPARK_JOB_RESULT` marker가 없으면 `409 SPARK_EXECUTION_IDENTITY_MISMATCH`로 성공 처리를 차단한다. timeout은 해당 application 삭제 후 실패 처리한다.
+
+Resource Planner가 활성화되면 최초 제출 전에
+`taskStates.sparkExecution.resourcePlan`을 저장한다. 같은 Run과 새 attempt
+generation의 retry는 이 값을 재계산하지 않으며 SparkApplication annotation과
+Kubernetes execution의 `resourcePlanHash`가 다르면 identity mismatch로 차단한다.
+`shadow`의 `appliedExecutors`는 기존 고정 executor 수와 같다.
 
 terminal failure 뒤 internal execute 경계를 같은 `runId`로 다시 호출하면 기본 최대 2회 안에서 다음 deterministic application name과 새 UID를 만든다. 이전 terminal identity는 `sparkExecution.kubernetesAttempts`에 남고 현재 attempt와 분리된다. non-terminal application에는 새 UID를 만들 수 없으며, 상한을 넘으면 `409 SPARK_TERMINAL_RETRY_EXHAUSTED`다.
 
