@@ -30,6 +30,7 @@ const server = createServer(async (request, response) => {
       const submissionId = [
         "driver-success",
         "driver-failed",
+        "driver-retry-success",
         "driver-timeout",
         "driver-orphan",
       ][createCount - 1] || `driver-${createCount}`;
@@ -41,7 +42,7 @@ const server = createServer(async (request, response) => {
       const submissionId = decodeURIComponent(statusMatch[1]);
       const pollCount = (submissions.get(submissionId) || 0) + 1;
       submissions.set(submissionId, pollCount);
-      const driverState = submissionId === "driver-success"
+      const driverState = new Set(["driver-success", "driver-retry-success"]).has(submissionId)
         ? pollCount === 1 ? "UNKNOWN" : pollCount === 2 ? "RUNNING" : "FINISHED"
         : submissionId === "driver-failed"
           ? "FAILED"
@@ -121,6 +122,20 @@ try {
   assert.notEqual(failure.code, 0, "Terminal Spark driver failure must fail the REST client.");
   assert.match(failure.stderr, /driver-failed ended in state FAILED/);
   assert.equal(readState(failureStateFile).driverState, "FAILED");
+
+  const recoveredFailure = await runClient({
+    ...baseRequest,
+    retryTerminalFailures: true,
+    stateFile: failureStateFile,
+  });
+  assert.equal(recoveredFailure.code, 0, recoveredFailure.stderr);
+  assert.match(recoveredFailure.stdout, /"submissionId":"driver-retry-success"/);
+  assert.equal(readState(failureStateFile).driverState, "FINISHED");
+  assert.equal(
+    createCount,
+    3,
+    "A new Spark submission must replace a persisted terminal failure on an orchestrated retry.",
+  );
 
   const timeoutStateFile = stateFile("timeout");
   const timeout = await runClient({ ...baseRequest, stateFile: timeoutStateFile, timeoutMs: 1_000 });
