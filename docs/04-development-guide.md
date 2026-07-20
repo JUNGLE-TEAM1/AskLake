@@ -1,5 +1,7 @@
 # 04. Development Guide
 
+> RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
+
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
 
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.

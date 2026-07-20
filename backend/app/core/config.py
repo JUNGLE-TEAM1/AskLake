@@ -37,41 +37,13 @@ class Settings(BaseSettings):
     ai_context_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     ai_context_max_sample_rows: int = Field(default=20, ge=0, le=20)
     semantic_model_default_version: int = Field(default=1, ge=1)
-    rag_classification_sample_rows: int = Field(default=20, ge=1, le=100)
-    rag_document_preview_limit: int = Field(default=20, ge=1, le=100)
-    rag_embedding_model: str = "text-embedding-3-small"
-    rag_embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
-    rag_embedding_batch_size: int = Field(default=64, ge=1, le=256)
-    rag_chunk_target_tokens: int = Field(default=800, ge=100, le=2_000)
-    rag_chunk_overlap_tokens: int = Field(default=400, ge=0, le=1_000)
-    rag_chunk_max_tokens: int = Field(default=1_200, ge=100, le=4_000)
-    rag_context_max_tokens: int = Field(default=6_000, ge=256, le=32_000)
-    rag_query_intelligence_enabled: bool = True
-    rag_relevance_min_score: float = Field(default=0.6, ge=0.0, le=1.0)
-    rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
-    rag_job_stale_seconds: int = Field(default=7_200, ge=300, le=604_800)
-    rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
-    rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
-    rag_runtime_create_schema: bool = False
-    rag_staging_base_path: str = "s3a://asklake-warehouse/rag-staging"
-    rag_parent_iceberg_namespace: str = "rag"
-    rag_index_prefix: str = "asklake-rag"
-    opensearch_base_url: str | None = None
-    opensearch_username: str | None = None
-    opensearch_password: str | None = None
-    opensearch_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
-    opensearch_verify_tls: bool = True
-    opensearch_ca_cert: str | None = None
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
-    rag_airflow_dag_id: str = "asklake_rag_index"
     airflow_api_token: str | None = None
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
-    rag_worker_base_url: str | None = None
-    rag_worker_token: str | None = None
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     # Local development keeps the embedded loop. Deployed web APIs must leave
@@ -352,7 +324,6 @@ class Settings(BaseSettings):
         self._validate_clickhouse_runtime()
         self._validate_clickhouse_realtime_v2_runtime()
         self._validate_ai_runtime()
-        self._validate_rag_runtime()
         return self
 
     def _validate_auth_runtime(self) -> None:
@@ -623,18 +594,6 @@ class Settings(BaseSettings):
         if len(self.ai_context_signing_secret) < 32:
             raise ValueError(
                 "AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters"
-            )
-
-    def _validate_rag_runtime(self) -> None:
-        minimum_budget = (
-            self.rag_embedding_batch_size
-            * self.rag_embedding_dimensions
-            * 32
-            + 16_384
-        )
-        if self.ai_gateway_max_embedding_response_bytes < minimum_budget:
-            raise ValueError(
-                "AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES is too small for the configured RAG embedding batch contract"
             )
 
     @property

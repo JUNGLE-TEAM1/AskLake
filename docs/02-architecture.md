@@ -1,5 +1,7 @@
 # 02. Architecture
 
+> 2026-07-20부터 RAG/OpenSearch/embedding worker는 제품 아키텍처에서 제거됐다. 아래의 과거 RAG 서술은 migration 및 이전 운영 기록을 위한 이력이며, 현재 runtime 경로가 아니다.
+
 AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 따른다. 공개 Query AI route는 FastAPI가 소유하고, Gateway는 내부 Compose network에서만 접근한다.
 
 이 문서는 AskLake의 현재 frontend baseline, FastAPI 전환 경계, 그리고 Pair별 backend ownership을 함께 기록한다.

@@ -30,6 +30,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 ## 4) 현재 MVP 범위
 
+### RAG 제외 결정 (2026-07-20)
+
+RAG, VectorDB/OpenSearch, embedding worker와 RAG 색인 API/UI는 현재 제품 범위에서 제거한다. AI SQL·Dashboard Assistant는 Catalog와 Semantic Model만 사용하며, retrieval evidence는 만들거나 표시하지 않는다. 이미 배포된 RAG DB migration과 데이터 볼륨은 호환·복구 이력으로 보존하되 새 runtime은 이를 기동하거나 참조하지 않는다.
+
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
 - `/` AskLake 랜딩과 session login 진입

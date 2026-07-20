@@ -1,5 +1,7 @@
 # 03. API Reference
 
+> RAG Dataset API(`/api/catalog/datasets/{datasetId}/rag/*`)는 2026-07-20에 제거됐다. SQL AI와 Dashboard Assistant의 retrieval 응답은 `mode=disabled`, `status=disabled`, 빈 `sources`를 반환한다.
+
 Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.
 
 이 문서는 AskLake API/interface 계약의 상위 진입점이다.

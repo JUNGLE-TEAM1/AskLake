@@ -1,1 +1,0 @@
-"""AskLake RAG embedding worker."""

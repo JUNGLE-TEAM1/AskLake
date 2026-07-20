@@ -23,10 +23,6 @@ x-airflow-common:
     ASKLAKE_EXECUTION_API_BASE_URL: ${ASKLAKE_EXECUTION_API_BASE_URL:-http://backend:8080}
     ASKLAKE_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:?AIRFLOW_EXECUTION_API_TOKEN is required}
     ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS: ${ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS:-7500}
-    ASKLAKE_RAG_SPARK_REST_URL: ${ASKLAKE_RAG_SPARK_REST_URL:-http://spark-master:6066}
-    ASKLAKE_RAG_PARENT_SCRIPT: ${ASKLAKE_RAG_PARENT_SCRIPT:-/opt/asklake/scripts/rag_parent_staging.py}
-    ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS: ${ASKLAKE_RAG_SPARK_TIMEOUT_SECONDS:-7200}
-    ASKLAKE_RAG_SPARK_POLL_SECONDS: ${ASKLAKE_RAG_SPARK_POLL_SECONDS:-5}
     ASKLAKE_SPARK_MASTER_URL: ${ASKLAKE_SPARK_MASTER_URL:-spark://spark-master:7077}
     ASKLAKE_SPARK_ICEBERG_PACKAGE: ${ASKLAKE_SPARK_ICEBERG_PACKAGE:-org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.11.0}
     ASKLAKE_SPARK_HADOOP_AWS_PACKAGE: ${ASKLAKE_SPARK_HADOOP_AWS_PACKAGE:-org.apache.hadoop:hadoop-aws:3.4.1}
@@ -39,10 +35,6 @@ x-airflow-common:
     AWS_REGION: ${AWS_REGION:-ap-northeast-2}
     S3_ENDPOINT: ${S3_ENDPOINT:-}
     S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
-    RAG_WORKER_BASE_URL: ${RAG_WORKER_BASE_URL:-http://embedding-worker:8090}
-    RAG_WORKER_TOKEN: ${RAG_WORKER_TOKEN:?RAG_WORKER_TOKEN is required}
-    RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
-    RAG_EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-1536}
     _PIP_ADDITIONAL_REQUIREMENTS: ""
   volumes:
     - ${AIRFLOW_PROJ_DIR:-../airflow}/dags:/opt/airflow/dags
@@ -63,22 +55,6 @@ x-spark-runtime:
     target: spark-runtime
 
 services:
-  opensearch:
-    image: opensearchproject/opensearch:2.19.1
-    restart: unless-stopped
-    environment:
-      discovery.type: single-node
-      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?OPENSEARCH_INITIAL_ADMIN_PASSWORD is required}
-      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
-    expose:
-      - "9200"
-    volumes:
-      - opensearch_data:/usr/share/opensearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -ksSf -u \"admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}\" https://localhost:9200/_cluster/health >/dev/null"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
@@ -152,8 +128,6 @@ services:
         condition: service_healthy
       spark-worker:
         condition: service_healthy
-      opensearch:
-        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       API_PREFIX: ${API_PREFIX:-/api}
@@ -187,21 +161,12 @@ services:
       AI_CONTEXT_MAX_SAMPLE_ROWS: ${AI_CONTEXT_MAX_SAMPLE_ROWS:-20}
       AIRFLOW_API_BASE_URL: ${AIRFLOW_API_BASE_URL:-http://airflow-apiserver:8080}
       AIRFLOW_DAG_ID: ${AIRFLOW_DAG_ID:-asklake_etl_job}
-      RAG_AIRFLOW_DAG_ID: ${RAG_AIRFLOW_DAG_ID:-asklake_rag_index}
       AIRFLOW_UI_BASE_URL: ${AIRFLOW_UI_BASE_URL:-}
       AIRFLOW_API_TOKEN: ${AIRFLOW_API_TOKEN:-}
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-airflow}
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?AIRFLOW_PASSWORD is required}
       AIRFLOW_REQUEST_TIMEOUT_SECONDS: ${AIRFLOW_REQUEST_TIMEOUT_SECONDS:-10}
       AIRFLOW_RUN_SYNC_INTERVAL_SECONDS: ${AIRFLOW_RUN_SYNC_INTERVAL_SECONDS:-5}
-      RAG_WORKER_BASE_URL: ${RAG_WORKER_BASE_URL:-http://embedding-worker:8090}
-      RAG_WORKER_TOKEN: ${RAG_WORKER_TOKEN:?RAG_WORKER_TOKEN is required}
-      RAG_JOB_STALE_SECONDS: ${RAG_JOB_STALE_SECONDS:-7200}
-      OPENSEARCH_BASE_URL: ${OPENSEARCH_BASE_URL:-https://opensearch:9200}
-      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
-      OPENSEARCH_VERIFY_TLS: ${OPENSEARCH_VERIFY_TLS:-true}
-      OPENSEARCH_CA_CERT: ${OPENSEARCH_CA_CERT:-}
       # Web/API replicas persist intent but never own Continuous Spark side
       # effects. The dedicated service below holds the PostgreSQL lease.
       CONTINUOUS_CONTROL_PLANE: disabled
@@ -436,7 +401,6 @@ services:
       PROVIDER_MODEL_QUERY_SQL: ${AI_PROVIDER_MODEL_QUERY_SQL:-gpt-4.1}
       PROVIDER_MODEL_DASHBOARD_ASSISTANT: ${AI_PROVIDER_MODEL_DASHBOARD_ASSISTANT:-gpt-4.1}
       PROVIDER_MODEL_ETL_TRANSFORM: ${AI_PROVIDER_MODEL_ETL_TRANSFORM:-gpt-4.1}
-      PROVIDER_MODEL_RAG: ${AI_PROVIDER_MODEL_RAG:-gpt-4.1}
       PROVIDER_MODEL_REVIEW: ${AI_PROVIDER_MODEL_REVIEW:-gpt-4.1}
       MCP_ENABLED: ${AI_MCP_ENABLED:-true}
       MCP_SERVER_URL: ${AI_MCP_SERVER_URL:-http://backend:8080/internal/mcp}
@@ -444,7 +408,6 @@ services:
       MCP_TIMEOUT_SECONDS: ${AI_MCP_TIMEOUT_SECONDS:-10}
       REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
       MAX_EMBEDDING_PROVIDER_RESPONSE_BYTES: ${AI_MAX_EMBEDDING_PROVIDER_RESPONSE_BYTES:-8388608}
-      EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-1536}
     expose:
       - "8090"
     healthcheck:
@@ -453,46 +416,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-  embedding-worker:
-    build:
-      context: ../embedding-worker
-    restart: unless-stopped
-    depends_on:
-      ai-server:
-        condition: service_healthy
-      opensearch:
-        condition: service_healthy
-    environment:
-      AI_GATEWAY_BASE_URL: ${AI_GATEWAY_BASE_URL:-http://ai-server:8090}
-      AI_GATEWAY_SERVICE_TOKEN: ${AI_GATEWAY_SERVICE_TOKEN:?AI_GATEWAY_SERVICE_TOKEN is required}
-      AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES: ${AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES:-8388608}
-      OPENSEARCH_BASE_URL: ${OPENSEARCH_BASE_URL:-https://opensearch:9200}
-      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
-      OPENSEARCH_VERIFY_TLS: ${OPENSEARCH_VERIFY_TLS:-true}
-      OPENSEARCH_CA_CERT: ${OPENSEARCH_CA_CERT:-}
-      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
-      RAG_EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-1536}
-      RAG_SOURCE_ALLOWED_HOSTS: ${RAG_SOURCE_ALLOWED_HOSTS:-}
-      WORKER_INTERNAL_TOKEN: ${RAG_WORKER_TOKEN:?RAG_WORKER_TOKEN is required}
-      RAG_IDEMPOTENCY_STORE_PATH: ${RAG_IDEMPOTENCY_STORE_PATH:-/var/lib/asklake/embedding-worker/idempotency.sqlite3}
-    expose:
-      - "8090"
-    volumes:
-      - embedding_worker_state:/var/lib/asklake/embedding-worker
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/ready', timeout=5).read()\""]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 15s
-  rag-artifact-cleanup:
-    extends:
-      service: backend
-    restart: unless-stopped
-    command: ["python", "scripts/cleanup-rag-artifacts.py", "--apply", "--loop"]
-    healthcheck:
-      disable: true
   aws-s3-readiness:
     build:
       context: ../backend
@@ -995,8 +918,6 @@ volumes:
   mongo_data:
   redpanda_data:
   lake_data:
-  opensearch_data:
-  embedding_worker_state:
 
 networks:
   clickhouse_v2_internal:
