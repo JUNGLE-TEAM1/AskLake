@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from queue import Queue
 from tempfile import TemporaryDirectory
@@ -30,11 +31,13 @@ from app.models import (
 from app.models.base import Base
 from app.services.airflow_client import AirflowDagRun
 from app.services.etl_service import (
+    SPARK_EXECUTION_OWNER_ID,
     airflow_submission_error_is_definitive,
     command_job,
     delete_job,
     execute_airflow_spark_run,
     record_airflow_sync_error,
+    spark_execution_lease_is_active,
     sync_airflow_run,
 )
 
@@ -315,6 +318,23 @@ class MissingTaskInstancesAirflowClient(BlockingAirflowClient):
 
 
 class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
+    def test_spark_execution_lease_is_scoped_to_current_backend_process(self) -> None:
+        started_at = datetime.now(UTC).isoformat()
+        self.assertTrue(spark_execution_lease_is_active({
+            "ownerId": SPARK_EXECUTION_OWNER_ID,
+            "startedAt": started_at,
+            "status": "running",
+        }))
+        self.assertFalse(spark_execution_lease_is_active({
+            "ownerId": "stopped-backend-process",
+            "startedAt": started_at,
+            "status": "running",
+        }))
+        self.assertFalse(spark_execution_lease_is_active({
+            "startedAt": started_at,
+            "status": "running",
+        }))
+
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
         database_path = Path(self.temp_dir.name) / "locking.db"

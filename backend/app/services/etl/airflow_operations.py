@@ -15,6 +15,7 @@ RUNTIME_NAMES = {
     'ImportError',
     'Path',
     'SOURCE_WINDOW_CONTRACT_VERSION',
+    'SPARK_EXECUTION_OWNER_ID',
     'SnapshotReconciliationHooks',
     'UTC',
     'ValueError',
@@ -199,6 +200,7 @@ def execute_airflow_spark_run(
 def airflow_spark_execution_hooks() -> AirflowSparkExecutionHooks:
     return AirflowSparkExecutionHooks(
         compact_storage_text=compact_storage_text,
+        execution_owner_id=SPARK_EXECUTION_OWNER_ID,
         format_duration_ms=format_duration_ms,
         format_rows=format_rows,
         iso_now=iso_now,
@@ -216,6 +218,8 @@ def airflow_spark_execution_hooks() -> AirflowSparkExecutionHooks:
 
 def spark_execution_lease_is_active(value: Any) -> bool:
     if not isinstance(value, dict) or value.get("status") != "running":
+        return False
+    if str(value.get("ownerId") or "") != SPARK_EXECUTION_OWNER_ID:
         return False
     try:
         started_at = parse_incremental_timestamp(str(value.get("startedAt") or ""), "sparkExecution.startedAt")

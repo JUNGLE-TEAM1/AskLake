@@ -27,6 +27,7 @@ from app.schemas.etl import AirflowCatalogReconciliationResponse
 @dataclass(frozen=True, slots=True)
 class AirflowSparkExecutionHooks:
     compact_storage_text: Callable[..., str]
+    execution_owner_id: str
     format_duration_ms: Callable[[Any], str]
     format_rows: Callable[[Any], str]
     iso_now: Callable[[], str]
@@ -93,6 +94,7 @@ def execute_airflow_spark_run(
         **(run.task_states or {}),
         "sparkExecution": {
             "attemptId": attempt_id,
+            "ownerId": hooks.execution_owner_id,
             "startedAt": hooks.iso_now(),
             "status": "running",
         },
