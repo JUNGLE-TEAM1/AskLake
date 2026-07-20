@@ -10,6 +10,7 @@ AWS_ENV_AND_INSTANCE_PROVIDERS = (
     "org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider"
 )
 MINIO_SIMPLE_PROVIDER = "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+S3A_FILE_SYSTEM = "org.apache.hadoop.fs.s3a.S3AFileSystem"
 
 
 def object_storage_provider() -> str:
@@ -47,6 +48,8 @@ def configure_spark_builder(builder):
     region = object_storage_region()
     builder = (
         builder
+        .config("spark.hadoop.fs.s3.impl", S3A_FILE_SYSTEM)
+        .config("spark.hadoop.fs.s3a.impl", S3A_FILE_SYSTEM)
         .config("spark.hadoop.fs.s3a.endpoint.region", region)
         .config("spark.hadoop.fs.s3a.path.style.access", str(object_storage_force_path_style()).lower())
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "true" if provider == "aws" else _minio_ssl(endpoint))
@@ -69,6 +72,8 @@ def configure_spark_hadoop(hadoop) -> None:
     """Apply the same provider contract to a running Spark Hadoop config."""
     provider = object_storage_provider()
     endpoint = object_storage_endpoint()
+    hadoop.set("fs.s3.impl", S3A_FILE_SYSTEM)
+    hadoop.set("fs.s3a.impl", S3A_FILE_SYSTEM)
     hadoop.set("fs.s3a.endpoint.region", object_storage_region())
     hadoop.set("fs.s3a.path.style.access", str(object_storage_force_path_style()).lower())
     hadoop.set("fs.s3a.connection.ssl.enabled", "true" if provider == "aws" else _minio_ssl(endpoint))
