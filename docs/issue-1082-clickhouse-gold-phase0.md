@@ -318,3 +318,34 @@ Secret/TLS/Pod Identity source와 승인된 live shadow apply가 남아 있어 `
 live approval`로 판정한다. `asklake-clickhouse-keeper-v2-config` ExternalSecret이
 준비되기 전에는 preflight가 계속 fail-closed하며, 이번 최종 Phase에서도 AWS/EKS
 apply, Kafka produce, EC2 중단, owner 전환은 0건이다.
+
+## 18. Phase 7 live 승인 handoff 결과
+
+2026-07-20 `asklake-dev`에서 운영 전환 직전 상태를 read-only로 재확인했다.
+
+- 브랜치/원격 일치: `feat-#1082` / `4dd40f97`
+- V1 worker: `1/1`, Available
+- V2 ClickHouse/Keeper/Connect/Continuous worker: 0개
+- ClickHouse/Keeper PVC: `Bound`, 20Gi/10Gi, encrypted StorageClass
+- ClickHouse/Keeper snapshot: 각각 `ready=true`
+- `asklake-clickhouse-keeper-v2-config` ExternalSecret: NotFound
+- 동명 Kubernetes Secret: NotFound
+- continuous-worker deployment: 0개
+
+따라서 handoff 판정은 `NO-GO: secret gate missing`이다. 승인자가 Secret source,
+ExternalSecret/SecretStore, Pod Identity, TLS/CA와 private values를 준비한 뒤 아래
+순서로 재개한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME=asklake-dev
+scripts/deploy-eks-realtime-v2.sh --preflight <private-values.yaml> <v2-image-receipt.json>
+# 기대: receipt/schema/render/server-dry-run/Secret/TLS/PVC/IAM 모두 PASS
+export ASKLAKE_REALTIME_V2_APPLY_CONFIRM=deploy-reviewed-realtime-v2
+export ASKLAKE_EC2_CONTROL_LOOP_QUIESCED_CONFIRM=ec2-control-loop-zero
+scripts/deploy-eks-realtime-v2.sh --apply <private-values.yaml> <v2-image-receipt.json>
+```
+
+preflight가 하나라도 실패하면 apply하지 않는다. cutover 후 장애나 owner 불일치 시
+V2 worker를 0으로 유지하고 V1/EC2 canonical owner를 복원하며, PVC·offset·Catalog
+revision을 삭제하거나 reset하지 않는다. 이번 handoff에서도 AWS/EKS mutation,
+Kafka produce, EC2 중단 및 owner 전환은 0건이다.
