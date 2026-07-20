@@ -196,6 +196,7 @@ class DashboardWidgetConfigBase(CamelModel):
     prompt: str | None = None
     numerator_value: str | None = None
     denominator_value: str | None = None
+    window_days: int | None = Field(default=None, ge=1, le=3_650)
     source_config: dict[str, Any] | None = None
 
 
