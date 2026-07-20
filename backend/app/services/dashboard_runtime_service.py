@@ -793,10 +793,14 @@ class DashboardRuntimeService:
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
         dataset_id = str(widget.dataset_id)
-        # ETL publishes Catalog metadata and freshness in one transaction while
-        # locking Catalog first. Use the same lock order so a widget can never
-        # pair an old S3 run list with a newer applied revision.
-        payload = self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        # Browser refreshes only read the last prepared result and must never
+        # wait behind a background calculation's row locks. Calculating workers
+        # retain the Catalog -> freshness -> result lock order.
+        payload = (
+            self.catalog_repository.get_dataset_payload(dataset_id)
+            if self.prepared_live_results_only
+            else self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        )
         catalog_payloads[dataset_id] = payload
         if payload is None:
             return self._live_widget_response(
@@ -808,7 +812,10 @@ class DashboardRuntimeService:
                 },
                 data=[],
             )
-        freshness = self.live_repository.get_freshness(dataset_id, for_update=True)
+        freshness = self.live_repository.get_freshness(
+            dataset_id,
+            for_update=not self.prepared_live_results_only,
+        )
         latest_revision = int(freshness.latest_revision or 0) if freshness is not None else 0
         if dataset_id not in session_errors:
             try:
@@ -852,7 +859,7 @@ class DashboardRuntimeService:
         saved = self.live_repository.get_widget_result(
             widget.id,
             calculation_version,
-            for_update=True,
+            for_update=not self.prepared_live_results_only,
         )
         saved_payload = dict(saved.result_payload or {}) if saved is not None else None
         saved_state = dict(saved.calculation_state or {}) if saved is not None else None
