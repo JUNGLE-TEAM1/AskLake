@@ -605,6 +605,8 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
   retry 재사용과 SparkApplication Plan hash를 검증하는 Resource Planner 계약
 - [x] Phase 3 private runtime/Web candidate builder, read-only server-dry-run
   preflight와 sanitized 10/100 GB shadow evidence validator
+- [x] live Spark digest/profile drift를 Planner `off` 상태에서만 정렬하는
+  exact-delta private candidate와 같은 read-only preflight 경로
 - [ ] 실제 EKS 10/100 GB shadow에서 권장/적용/실행 identity 검증 후,
   10 GB executor 1과 100 GB executor 2 `balanced-v1` 비용·성능 gate.
   executor 4는 2개가 목표를 충족하지 못할 때 후속 검증

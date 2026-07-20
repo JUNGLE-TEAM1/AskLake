@@ -19,7 +19,8 @@ release apply와 10/100GB 실행은 각각 명시적 승인 뒤에만 수행한�
 - Planner mode는 시작과 복구 시 `off`, 실험 중에만 `shadow`다.
 - executor baseline과 실제 `SparkApplication.spec.executor.instances`는 계속 `1`이다.
 - executor profile은 cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`다.
-- runtime 후보는 Planner 여섯 key만 변경한다.
+- off alignment runtime 후보는 formal Spark digest와 승인된 policy/profile key만
+  변경하고, shadow runtime 후보는 Planner 여섯 key 범위만 변경한다.
 - Web 후보는 `backend.runtimeConfigRevision`만 변경해 FastAPI와 Collector를 같은
   ConfigMap revision으로 재시작한다.
 - RDS Plan hash, SparkApplication annotation hash와 Kubernetes execution hash가 같다.
@@ -39,8 +40,10 @@ release apply와 10/100GB 실행은 각각 명시적 승인 뒤에만 수행한�
 | 산출물 | 기본 경로 | 용도 |
 | --- | --- | --- |
 | runtime base | `infra/eks/values/workloads/dev.runtime-config-values.json` | apply 전 live ConfigMap과 rollback source |
+| runtime off alignment | `infra/eks/values/workloads/dev.spark-resource-planner-off.runtime-config-values.json` | 새 Spark digest와 `standard-v1`을 Planner `off`로 정렬 |
 | runtime shadow | `infra/eks/values/workloads/dev.spark-resource-planner-shadow.runtime-config-values.json` | Planner-only candidate |
 | Web base | `infra/eks/values/workloads/dev.web.private-values.json` | 현재 `asklake-web` release values |
+| Web off alignment | `infra/eks/values/workloads/dev.spark-resource-planner-off.web.private-values.json` | off alignment revision-only candidate |
 | Web shadow | `infra/eks/values/workloads/dev.spark-resource-planner-shadow.web.private-values.json` | runtime revision-only candidate |
 | evidence | `infra/eks/delivery/dev.spark-resource-planner-evidence.json` | 10/100GB sanitized result |
 
@@ -52,6 +55,7 @@ release apply와 10/100GB 실행은 각각 명시적 승인 뒤에만 수행한�
 cd /path/to/AskLake
 
 node --test \
+  scripts/test-eks-spark-resource-planner-off-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-web-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-evidence.mjs
@@ -69,27 +73,48 @@ ASKLAKE_FASTAPI_PYTHON=backend/.venv/bin/python \
 3. formal receipt의 Git revision, AMD64 immutable Backend/Spark digest를 검증한다.
 4. Planner가 아직 `off`인 상태에서 기존 Backend-only preflight와 rollout 절차로
    FastAPI 2개와 Collector 1개를 새 Backend image에 맞춘다.
-5. receipt의 Spark digest가 현재 runtime ConfigMap과 다르면 Planner를 `off`로
-   유지한 별도 승인 변경에서 Spark image만 먼저 맞추고 runtime base를 다시 캡처한다.
-6. ALB/RDS/외부 health와 기존 Continuous ownership이 정상인지 확인한다.
+5. ALB/RDS/외부 health와 기존 Continuous ownership이 정상인지 확인한다.
 
 Image build/push와 rollout은 이 경계의 별도 승인이 필요하다. 새 코드 image와
 기존 `off` 설정을 먼저 배포하므로 이 시점에는 Resource Plan이 생성되지 않는다.
 
-## 6. private 후보 values 준비
+## 6. 승인 경계 A-2 — Planner off image/profile 정렬
 
-Backend image rollout 뒤 live 값을 캡처한다.
+Backend rollout 뒤 live runtime/Web 값을 캡처하고 formal receipt를 지정한다.
 
 ```bash
+export ASKLAKE_IMAGE_RECEIPT=<private-formal-receipt>
+umask 077
+
 ASKLAKE_RUNTIME_CONFIG_VALUES=infra/eks/values/workloads/dev.runtime-config-values.json \
   ./scripts/prepare-eks-runtime-config-values.sh
 
 helm get values asklake-web -n asklake-dev -o json \
   > infra/eks/values/workloads/dev.web.private-values.json
 chmod 600 infra/eks/values/workloads/dev.web.private-values.json
+
+./scripts/prepare-eks-spark-resource-planner-off-values.sh
+./scripts/prepare-eks-spark-resource-planner-off-web-values.sh
+
+ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=off \
+  ./scripts/preflight-eks-spark-resource-planner-shadow.sh
 ```
 
-그다음 두 후보를 만든다.
+off candidate는 formal receipt의 Spark digest, mode `off`, executor baseline `1`,
+cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`와 policy V2 기본값만
+정렬한다. 기존 값이 없거나 이미 같은 값일 때만 허용하며 예상 밖 profile/policy
+값은 덮어쓰지 않고 실패한다. preflight가 통과해도 apply는 자동 실행하지 않는다.
+
+별도 승인 뒤 runtime off candidate와 Web off candidate를 순서대로 적용한다.
+FastAPI `2/2`, Collector `1/1`, 외부 health와 active Spark `0`을 확인하고
+Planner `off` 상태에서 새 Resource Plan이 생성되지 않는지 검증한다. 실패하면 두
+base values로 복구한다.
+
+정렬 성공 뒤 runtime/Web base를 다시 캡처한다.
+
+## 7. private shadow 후보 values 준비
+
+새로 캡처한 off base에서 두 shadow 후보를 만든다.
 
 ```bash
 ./scripts/prepare-eks-spark-resource-planner-shadow-values.sh
@@ -101,12 +126,13 @@ chmod 600 infra/eks/values/workloads/dev.web.private-values.json
 hash로 `sprp-shadow-<hash-prefix>` revision을 만들고 Web values에서
 `backend.runtimeConfigRevision`만 변경한다.
 
-## 7. 승인 경계 B — read-only preflight와 apply
+## 8. 승인 경계 B — read-only preflight와 apply
 
 새 Backend/Spark image가 live와 formal receipt에 맞은 뒤 다음 preflight를 실행한다.
 
 ```bash
 ASKLAKE_IMAGE_RECEIPT=<private-formal-receipt> \
+  ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=shadow \
   ./scripts/preflight-eks-spark-resource-planner-shadow.sh
 ```
 
@@ -127,7 +153,7 @@ candidate를 먼저 적용하고, 이어서 Web candidate로 FastAPI/Collector�
 restart한다. 둘 중 하나가 실패하면 새 Run을 제출하지 않고 runtime base와 Web base를
 사용해 두 release를 이전 상태로 복구한다.
 
-## 8. 승인 경계 C — 10GB와 100GB shadow
+## 9. 승인 경계 C — 10GB와 100GB shadow
 
 각 Run은 별도 실행 승인을 기록하고 정확히 한 번 제출한다.
 
@@ -142,7 +168,7 @@ restart한다. 둘 중 하나가 실패하면 새 Run을 제출하지 않고 run
 `shadow`에서 실제 executor가 2가 되면 즉시 실패다. 100GB 권장값이 2가 아니어도
 Phase 4로 진행하지 않는다.
 
-## 9. 증거 생성과 검증
+## 10. 증거 생성과 검증
 
 먼저 Git-ignored template을 만든다.
 
@@ -165,7 +191,7 @@ node scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs \
 executor `1`, correctness/Catalog, 환경 비교 가능성, 네 승인 기록과 rollback
 준비를 함께 검사한다.
 
-## 10. 종료와 Phase 4 진입 조건
+## 11. 종료와 Phase 4 진입 조건
 
 증거를 수집한 뒤 runtime base와 새 off revision으로 FastAPI/Collector를 재시작해
 Planner `off`, executor `1`, workload health와 active Spark `0`을 확인한다. 완료된

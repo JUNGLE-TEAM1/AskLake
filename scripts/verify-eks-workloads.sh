@@ -27,11 +27,16 @@ required_files=(
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
   "$ROOT_DIR/deploy/profiles/realtime-v1-only.yaml"
+  "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
+  "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+  "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-values.sh"
+  "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-web-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
   "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-off-values.mjs"
   "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs"
@@ -487,13 +492,18 @@ if grep -Eq 'resources: \["secrets"\]|resources: \["jobs"\]' "$RENDERED_FILE"; t
 fi
 
 bash -n "$ROOT_DIR/scripts/verify-eks-workloads.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-values.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-web-values.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
 bash -n "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
+node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
+node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
 node --test \
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-off-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"

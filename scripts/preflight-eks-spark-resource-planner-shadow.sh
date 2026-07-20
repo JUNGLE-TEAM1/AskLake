@@ -10,14 +10,31 @@ source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
 
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
 BASE_VALUES="${ASKLAKE_RUNTIME_CONFIG_BASE_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.runtime-config-values.json}"
-CANDIDATE_VALUES="${ASKLAKE_RUNTIME_CONFIG_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-shadow.runtime-config-values.json}"
 BASE_WEB_VALUES="${ASKLAKE_WEB_BASE_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.web.private-values.json}"
-CANDIDATE_WEB_VALUES="${ASKLAKE_WEB_VALUES:-$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-shadow.web.private-values.json}"
 CHART="$ROOT_DIR/infra/eks/helm/asklake-runtime-config"
 WEB_CHART="$ROOT_DIR/infra/eks/helm/asklake-web"
 RELEASE="asklake-runtime-config"
-BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
-WEB_BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+TARGET_MODE="${ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE:-shadow}"
+case "$TARGET_MODE" in
+  off)
+    DEFAULT_CANDIDATE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-off.runtime-config-values.json"
+    DEFAULT_CANDIDATE_WEB_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-off.web.private-values.json"
+    BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
+    WEB_BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
+    ;;
+  shadow)
+    DEFAULT_CANDIDATE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-shadow.runtime-config-values.json"
+    DEFAULT_CANDIDATE_WEB_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-shadow.web.private-values.json"
+    BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
+    WEB_BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+    ;;
+  *)
+    echo "ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE must be off or shadow" >&2
+    exit 1
+    ;;
+esac
+CANDIDATE_VALUES="${ASKLAKE_RUNTIME_CONFIG_VALUES:-$DEFAULT_CANDIDATE_VALUES}"
+CANDIDATE_WEB_VALUES="${ASKLAKE_WEB_VALUES:-$DEFAULT_CANDIDATE_WEB_VALUES}"
 TEMP_DIR="$(mktemp -d)"
 
 fail() {
@@ -35,6 +52,8 @@ for command in git helm jq kubectl node; do
 done
 RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR")" || \
   fail "current image receipt is invalid"
+[[ "$(jq -er '.gitRevision' "$RECEIPT")" == "$(git -C "$ROOT_DIR" rev-parse HEAD)" ]] || \
+  fail "formal image receipt must match the checked-out merge revision"
 for values in "$BASE_VALUES" "$CANDIDATE_VALUES" "$BASE_WEB_VALUES" "$CANDIDATE_WEB_VALUES"; do
   [[ -s "$values" ]] || fail "private runtime ConfigMap values are missing"
   git -C "$ROOT_DIR" check-ignore -q -- "$values" || \
@@ -43,11 +62,15 @@ for values in "$BASE_VALUES" "$CANDIDATE_VALUES" "$BASE_WEB_VALUES" "$CANDIDATE_
     fail "private runtime ConfigMap values must use mode 0600"
 done
 
-node "$BUILDER" "$BASE_VALUES" >"$TEMP_DIR/expected-candidate.json"
+if [[ "$TARGET_MODE" == "off" ]]; then
+  node "$BUILDER" "$BASE_VALUES" "$RECEIPT" >"$TEMP_DIR/expected-candidate.json"
+else
+  node "$BUILDER" "$BASE_VALUES" >"$TEMP_DIR/expected-candidate.json"
+fi
 jq -S -c . "$TEMP_DIR/expected-candidate.json" >"$TEMP_DIR/expected-canonical.json"
 jq -S -c . "$CANDIDATE_VALUES" >"$TEMP_DIR/candidate-canonical.json"
 cmp -s "$TEMP_DIR/expected-canonical.json" "$TEMP_DIR/candidate-canonical.json" || \
-  fail "candidate values are not the exact Phase 3 shadow delta"
+  fail "candidate values are not the exact Phase 3 $TARGET_MODE delta"
 node "$WEB_BUILDER" "$BASE_WEB_VALUES" "$CANDIDATE_VALUES" \
   >"$TEMP_DIR/expected-web-candidate.json"
 jq -S -c . "$TEMP_DIR/expected-web-candidate.json" >"$TEMP_DIR/expected-web-canonical.json"
@@ -89,9 +112,9 @@ jq -e --arg image "$expected_backend_image" '
   and ([.spec.template.spec.containers[] | select(.name == "trino-result-collector") | .image] == [$image])
 ' "$TEMP_DIR/collector.json" >/dev/null || \
   fail "Collector is not Ready on the candidate Backend image"
-jq -e --arg image "$expected_spark_image" '
+jq -e --arg image "$expected_spark_image" --arg mode "$TARGET_MODE" '
   .configMap.data.ASKLAKE_SPARK_KUBERNETES_IMAGE == $image
-  and .configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE == "shadow"
+  and .configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE == $mode
   and .configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES == "1"
   and .configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES == "2"
   and .configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST == "2"
@@ -152,8 +175,8 @@ active_spark="$(kubectl get sparkapplications -n "$NAMESPACE" -o json | jq '
   | length
 ')"
 [[ "$active_spark" == "0" ]] || \
-  fail "active SparkApplications must be zero at the shadow apply checkpoint"
+  fail "active SparkApplications must be zero at the $TARGET_MODE apply checkpoint"
 
-echo "spark_resource_planner_shadow_preflight=passed"
-echo "spark_resource_planner_shadow_preflight_cluster_mutation=zero"
-echo "spark_resource_planner_shadow_preflight_active_spark=0"
+echo "spark_resource_planner_${TARGET_MODE}_preflight=passed"
+echo "spark_resource_planner_${TARGET_MODE}_preflight_cluster_mutation=zero"
+echo "spark_resource_planner_${TARGET_MODE}_preflight_active_spark=0"

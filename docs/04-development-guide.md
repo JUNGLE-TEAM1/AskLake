@@ -784,9 +784,15 @@ Phase 3 준비는 `prepare-eks-spark-resource-planner-shadow-values.sh`와
 `prepare-eks-spark-resource-planner-shadow-web-values.sh`로 각각 Planner-only
 runtime 후보와 `runtimeConfigRevision`-only Web 후보를 만든다. 두 입력과 출력은
 Git-ignored mode `0600`이어야 한다.
+현재 live profile이나 Spark digest가 `standard-v1`과 formal receipt에 맞지 않으면
+먼저 `prepare-eks-spark-resource-planner-off-values.sh`와
+`prepare-eks-spark-resource-planner-off-web-values.sh`로 Planner를 `off`로 유지한
+image/profile 후보를 만든다. 이 후보는 누락되었거나 이미 승인값과 같은 설정만
+정렬하며 예상 밖 기존 값을 덮어쓰지 않는다.
 `preflight-eks-spark-resource-planner-shadow.sh`는 live/base exact match, image
 receipt, workload health, active Spark 0, 두 Helm server dry-run의 mutation 0을
-확인한다. 10/100GB 결과는
+확인한다. `ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=off`는 선행 정렬 후보를,
+기본 `shadow`는 shadow 후보를 검사한다. 10/100GB 결과는
 `verify-eks-spark-resource-planner-shadow-evidence.mjs`로 검증한다. 실제 apply,
 image rollout과 각 Spark Run은 별도 승인 경계다. 전체 순서는
 [Phase 3 Shadow runbook](eks-spark-resource-planner-phase3-shadow-runbook.md)을
