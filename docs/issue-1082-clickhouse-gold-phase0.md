@@ -281,3 +281,22 @@ scripts/deploy-eks-realtime-v2.sh --preflight <private-values.yaml> <v2-image-re
 기대 결과는 receipt·schema·render·server dry-run·Secret/TLS/PVC/IAM preflight 통과이며,
 실패 시 해당 단계에서 중단하고 shadow release를 생성하지 않는다. rollback은 V2
 worker replicas를 0으로 유지하고 V1/EC2 canonical owner를 보존하는 기존 런북을 따른다.
+
+## 16. Phase 5 전체 diff·범위 감사 결과
+
+2026-07-20 현재 HEAD `933812a7`을 `origin/pair1` (`69cab941`)과 비교했다.
+
+- 변경 파일: 감사 문서 1개, V2 image receipt example 1개, realtime data-plane verifier 1개, V2 receipt verifier 1개
+- untracked 파일: 0개
+- `git diff --check origin/pair1`: 오류 0건
+- Issue #1082 범위 밖 변경: 0건
+- Airflow schema 교차 오염: 0건
+- 불필요한 Trino schema/chart/구현 변경: 0건
+- secret/token/private key/실제 credential signature: 0건
+- 생성물·임시 파일 경로: 0건
+
+Airflow·Trino 문자열이 문서의 보존/제외 설명에 포함된 것은 확인했지만, 변경된
+JSON/YAML schema hunk나 해당 구현 경로는 없었다. 변경된 코드 3개는 ClickHouse Sink
+checksum(실제 64자리 값) 검증 계약만 교정하며, 문서 변경은 Issue #1082의 Phase
+감사·런북 기록으로 한정된다. 공유 AWS/EKS mutation, pair1 직접 수정, PR/merge는
+없다.
