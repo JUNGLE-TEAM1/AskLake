@@ -184,7 +184,13 @@ def asklake_etl_job() -> None:
         time.sleep(sleep_seconds(conf, "smokeReadSeconds", 0))
         return conf
 
-    @task(task_id="spark_process_write")
+    @task(
+        task_id="spark_process_write",
+        retries=4,
+        retry_delay=timedelta(seconds=15),
+        retry_exponential_backoff=True,
+        max_retry_delay=timedelta(minutes=2),
+    )
     def spark_process_write(conf: dict[str, Any]) -> dict[str, Any]:
         if conf.get("executionMode") == "smoke":
             time.sleep(sleep_seconds(conf, "smokeProcessSeconds", 0))

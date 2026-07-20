@@ -137,7 +137,7 @@ MinIO 검증은 `--s3-endpoint-url http://127.0.0.1:9000 --s3-force-path-style`�
 
 Preview 계약과 전체 runtime을 함께 검증할 때는 FastAPI, Airflow, MinIO, Spark가 같은 local Compose network를 사용하도록 한 뒤 아래 명령을 실행한다.
 
-대용량 실행 중 Airflow가 재시작되면 orphan task는 backend의 기존 Spark 결과를 재조회하며, backend까지 재시작된 경우 이전 process owner의 실행 lease를 stale로 처리해 같은 Run을 다시 claim한다. 재시작 직후 `SPARK_RUN_ALREADY_EXECUTING`만으로 Run을 terminal 실패로 확정하면 안 된다.
+대용량 실행 중 Airflow가 재시작되면 orphan task는 backend의 기존 Spark 결과를 재조회하며, backend까지 재시작된 경우 이전 process owner의 실행 lease를 stale로 처리해 같은 Run을 다시 claim한다. 재시작 직후 `SPARK_RUN_ALREADY_EXECUTING`만으로 Run을 terminal 실패로 확정하면 안 된다. Backend 컨테이너가 교체되는 동안 Docker DNS 또는 연결이 잠시 끊겨도 `spark_process_write`는 15초부터 최대 2분까지 지수 backoff로 4회 재시도하고 같은 Run의 persisted result/lease를 재사용한다.
 
 ```powershell
 cd backend
