@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase2-data-plane-preflight",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "907915b9bbc0386e50d4671a8c663c8acfd7dc07",
+  "mode": "render-and-read-only-preflight",
+  "sharedMutationPerformed": false,
+  "render": {
+    "status": "pass",
+    "values": "infra/eks/values/workloads/realtime-data-plane.test.example.yaml",
+    "imageReceipt": "infra/eks/delivery/realtime-v2-image-receipt.example.json",
+    "statefulSets": 2,
+    "deployments": 1,
+    "services": 3,
+    "imagesPinnedByDigest": true,
+    "secretResourcesRendered": false
+  },
+  "staticVerification": {
+    "dataPlaneWrapper": "pass",
+    "helmLint": "pass",
+    "terraformValidate": "pass",
+    "kafkaIamContract": "pass",
+    "storageContract": "pass",
+    "secretTlsNegativeTests": "pass"
+  },
+  "readOnlyPreflight": {
+    "status": "blocked",
+    "reason": "ASKLAKE_EKS_CLUSTER_NAME is not set; context and live foundation resources cannot be verified.",
+    "eksMutation": false,
+    "awsMutation": false,
+    "helmApply": false
+  },
+  "apply": {
+    "status": "not-run",
+    "reason": "Test values and placeholder image receipt are not production deployment inputs."
+  },
+  "phase2Ready": false,
+  "productionHaClaimAllowed": false
+}
