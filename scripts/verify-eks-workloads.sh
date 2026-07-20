@@ -27,6 +27,15 @@ required_files=(
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
   "$ROOT_DIR/deploy/profiles/realtime-v1-only.yaml"
+  "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
+  "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+  "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
+  "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
+  "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
+  "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs"
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs"
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -80,9 +89,9 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=off \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES=134217728 \
-  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR=96 \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR=384 \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS=1 \
-  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=6 \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=4 \
   --set-string configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES=1 >/dev/null
 if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=invalid >/dev/null 2>&1; then
@@ -90,8 +99,13 @@ if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
   exit 1
 fi
 if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
-  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=7 >/dev/null 2>&1; then
-  echo "runtime ConfigMap schema accepted a Spark Resource Planner maximum above six" >&2
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=5 >/dev/null 2>&1; then
+  echo "runtime ConfigMap schema accepted a Spark Resource Planner maximum above four" >&2
+  exit 1
+fi
+if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR=96 >/dev/null 2>&1; then
+  echo "runtime ConfigMap schema accepted a non-balanced-v1 partition budget" >&2
   exit 1
 fi
 "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
@@ -155,8 +169,14 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set backend.config.sparkResourceMaxExecutors=7 >/dev/null 2>&1; then
-  echo "EKS workload schema accepted a Spark Resource Planner maximum above six" >&2
+  --set backend.config.sparkResourceMaxExecutors=5 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a Spark Resource Planner maximum above four" >&2
+  exit 1
+fi
+
+if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
+  --set backend.config.sparkResourceTargetPartitionsPerExecutor=96 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted a non-balanced-v1 partition budget" >&2
   exit 1
 fi
 
@@ -215,14 +235,14 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
 fi
 
 if ! "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set sparkApplication.executor.instances=6 >/dev/null 2>&1; then
-  echo "EKS workload schema rejected the bounded six-executor experiment" >&2
+  --set sparkApplication.executor.instances=4 >/dev/null 2>&1; then
+  echo "EKS workload schema rejected the bounded four-executor experiment" >&2
   exit 1
 fi
 
 if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
-  --set sparkApplication.executor.instances=7 >/dev/null 2>&1; then
-  echo "EKS workload schema accepted more than six Spark executors" >&2
+  --set sparkApplication.executor.instances=5 >/dev/null 2>&1; then
+  echo "EKS workload schema accepted more than four Spark executors" >&2
   exit 1
 fi
 
@@ -308,9 +328,9 @@ grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: "60"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "off"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728"' "$RENDERED_FILE"
-grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "96"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "384"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: "1"' "$RENDERED_FILE"
-grep -q 'ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: "6"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: "4"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: "7200"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RUNNER: "kubernetes"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_KAFKA_AUTH_MODE: "iam"' "$RENDERED_FILE"
@@ -467,6 +487,16 @@ if grep -Eq 'resources: \["secrets"\]|resources: \["jobs"\]' "$RENDERED_FILE"; t
 fi
 
 bash -n "$ROOT_DIR/scripts/verify-eks-workloads.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
+bash -n "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
+node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
+node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+node --check "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
+node --test \
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs" \
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs" \
+  "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"
 node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope

@@ -1404,7 +1404,7 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
             baseline_executors=1,
             environment={
                 "ASKLAKE_SPARK_RESOURCE_PLANNER_MODE": "shadow",
-                "ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS": "6",
+                "ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS": "4",
             },
         )
 

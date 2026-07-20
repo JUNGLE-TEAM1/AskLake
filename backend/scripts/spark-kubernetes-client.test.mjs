@@ -30,19 +30,29 @@ function resourcePlan(overrides = {}) {
   const plan = {
     appliedExecutors: 4,
     baselineExecutors: 4,
-    calculatedExecutors: 8,
+    calculatedExecutors: 2,
+    decisionStatus: "planned",
     estimatedPartitions: 724,
+    executorCandidates: [1, 2, 4],
+    executorCores: 2,
+    executorCpuLimit: "3",
+    executorCpuRequest: "2",
+    executorMemory: "4g",
+    executorMemoryOverhead: "1g",
+    executorProfileName: "standard-v1",
     inputBytes: 97_079_116_733,
     inputFileCount: 1,
     inputSizeSource: "s3_head",
-    maxExecutors: 6,
+    maxExecutors: 4,
     minExecutors: 1,
     mode: "shadow",
-    policyVersion: 1,
-    reason: "capped_by_max_executors",
-    recommendedExecutors: 6,
+    policyName: "balanced-v1",
+    policyTargetCompletionSeconds: 1800,
+    policyVersion: 2,
+    reason: "balanced_partition_budget",
+    recommendedExecutors: 2,
     targetPartitionBytes: 134_217_728,
-    targetPartitionsPerExecutor: 96,
+    targetPartitionsPerExecutor: 384,
     ...overrides,
   };
   const canonical = Object.fromEntries(
@@ -54,7 +64,7 @@ function resourcePlan(overrides = {}) {
   };
 }
 
-function applicationFixture(attemptGeneration = 1, plan = undefined) {
+function applicationFixture(attemptGeneration = 1, plan = undefined, environmentOverrides = {}) {
   return createSparkKubernetesApplication({
     appName: "asklake-test",
     environmentVariables: {
@@ -74,12 +84,16 @@ function applicationFixture(attemptGeneration = 1, plan = undefined) {
     ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_LIMIT: "2",
     ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_REQUEST: "500m",
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: "3",
-    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "1500m",
-    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "4",
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "2",
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES: "2",
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: String(plan?.baselineExecutors ?? 4),
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY: "4g",
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY_OVERHEAD: "1g",
     ASKLAKE_SPARK_KUBERNETES_NAMESPACE: "asklake-dev",
     ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET: "asklake-spark-runtime",
     ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT: "asklake-spark",
     AWS_REGION: "ap-northeast-2",
+    ...environmentOverrides,
   });
 }
 
@@ -98,7 +112,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.equal(first.spec.executor.serviceAccount, "asklake-spark");
   assert.equal(first.spec.driver.coreRequest, "500m");
   assert.equal(first.spec.driver.coreLimit, "2");
-  assert.equal(first.spec.executor.coreRequest, "1500m");
+  assert.equal(first.spec.executor.coreRequest, "2");
   assert.equal(first.spec.executor.coreLimit, "3");
   assert.equal(first.spec.executor.instances, 4);
   assert.equal(first.spec.sparkConf["spark.jars.ivy"], "/tmp/.ivy2");
@@ -139,7 +153,7 @@ test("Kubernetes Spark terminal replacement uses a bounded generation suffix", (
   assert.throws(() => applicationFixture(4), /must be between 1 and 3/);
 });
 
-test("Kubernetes Spark executor count is bounded for the Stage 1 matrix", () => {
+test("Kubernetes Spark executor count is bounded for the Resource Planner V1 candidates", () => {
   assert.equal(sparkExecutorInstances({}), 1);
   assert.equal(sparkExecutorInstances({
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "1",
@@ -148,55 +162,106 @@ test("Kubernetes Spark executor count is bounded for the Stage 1 matrix", () => 
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "2",
   }), 2);
   assert.equal(sparkExecutorInstances({
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "3",
+  }), 3);
+  assert.equal(sparkExecutorInstances({
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "4",
   }), 4);
-  assert.equal(sparkExecutorInstances({
-    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "6",
-  }), 6);
-  for (const value of ["0", "7", "1.5", "not-a-number"]) {
+  for (const value of ["0", "5", "6", "7", "1.5", "not-a-number"]) {
     assert.throws(
       () => sparkExecutorInstances({
         ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: value,
       }),
-      /must be an integer between 1 and 6/,
+      /must be an integer between 1 and 4/,
     );
   }
 });
 
 test("shadow Resource Plan records its recommendation without changing executors", () => {
   const plan = resourcePlan();
-  assert.equal(plan.planHash, "dc9cba0b3331437ab7ec28e0d7a3d1fb46e26a63e7010d315e40b443ef0e8871");
   const application = applicationFixture(1, plan);
 
   assert.equal(application.spec.executor.instances, 4);
   assert.equal(application.metadata.annotations["asklake.io/resource-plan-mode"], "shadow");
-  assert.equal(application.metadata.annotations["asklake.io/calculated-executors"], "8");
+  assert.equal(application.metadata.annotations["asklake.io/calculated-executors"], "2");
+  assert.equal(application.metadata.annotations["asklake.io/recommended-executors"], "2");
   assert.equal(application.metadata.annotations["asklake.io/applied-executors"], "4");
+  assert.equal(application.metadata.annotations["asklake.io/executor-profile"], "standard-v1");
+  assert.equal(application.metadata.annotations["asklake.io/resource-policy"], "balanced-v1");
   assert.equal(application.metadata.annotations["asklake.io/resource-plan-hash"], plan.planHash);
 });
 
 test("enforcing Resource Plan applies its bounded executor count", () => {
   const plan = resourcePlan({
-    appliedExecutors: 6,
+    appliedExecutors: 2,
     baselineExecutors: 1,
     mode: "enforce",
   });
   const application = applicationFixture(1, plan);
 
-  assert.equal(application.spec.executor.instances, 6);
-  assert.equal(application.metadata.annotations["asklake.io/executor-instances"], "6");
+  assert.equal(application.spec.executor.instances, 2);
+  assert.equal(application.metadata.annotations["asklake.io/executor-instances"], "2");
 });
 
 test("tampered and non-enforcing Resource Plans are rejected", () => {
   const tampered = resourcePlan();
-  tampered.appliedExecutors = 6;
+  tampered.appliedExecutors = 2;
   assert.throws(
     () => applicationFixture(1, tampered),
     /hash does not match/,
   );
   assert.throws(
-    () => applicationFixture(1, resourcePlan({ appliedExecutors: 6 })),
-    /must preserve the configured executor count/,
+    () => applicationFixture(1, resourcePlan({ appliedExecutors: 2 })),
+    /violates its mode or fallback/,
+  );
+});
+
+test("enforcing fallback plan preserves the configured baseline", () => {
+  const plan = resourcePlan({
+    appliedExecutors: 3,
+    baselineExecutors: 3,
+    calculatedExecutors: 1,
+    decisionStatus: "fallback",
+    estimatedPartitions: null,
+    inputBytes: null,
+    inputFileCount: null,
+    inputSizeSource: "unavailable",
+    mode: "enforce",
+    reason: "input_size_unavailable",
+    recommendedExecutors: 3,
+  });
+  const application = applicationFixture(1, plan);
+
+  assert.equal(application.spec.executor.instances, 3);
+  assert.equal(application.metadata.annotations["asklake.io/applied-executors"], "3");
+});
+
+test("Resource Plan rejects executor profile drift before submission", () => {
+  const plan = resourcePlan();
+  assert.throws(
+    () => applicationFixture(1, plan, {
+      ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "1",
+    }),
+    /executorCpuRequest does not match/,
+  );
+});
+
+test("Resource Plan rejects policy and candidate drift before submission", () => {
+  assert.throws(
+    () => applicationFixture(1, resourcePlan({ policyVersion: 3 })),
+    /policy version is unsupported/i,
+  );
+  assert.throws(
+    () => applicationFixture(1, resourcePlan({ targetPartitionsPerExecutor: 96 })),
+    /partition budget is invalid/i,
+  );
+  assert.throws(
+    () => applicationFixture(1, resourcePlan({
+      appliedExecutors: 3,
+      mode: "enforce",
+      recommendedExecutors: 3,
+    })),
+    /recommendation is outside/i,
   );
 });
 

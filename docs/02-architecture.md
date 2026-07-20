@@ -441,9 +441,15 @@ active claim은 정확히 하나다. workload는 이전 owner fence, 승인, 새
 ## 25) Spark 초기 Resource Plan
 
 EKS batch Spark Run은 입력 크기 기반 초기 executor 권장값을 Run별 Resource
-Plan으로 계산한다. `shadow`는 권장값과 근거를 RDS Run과 SparkApplication
-identity에 기록하지만 실제 executor 수는 기존 고정값을 유지한다. Plan은 최초
-SparkApplication 제출 전에 한 번 확정하며 같은 `runId`의 lease takeover와
-terminal attempt generation retry도 저장된 Plan을 재사용한다. 계산식, fallback,
-상한과 검증 순서는 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을
-따른다.
+Plan으로 계산한다. V1 `balanced-v1`은 cores `2`, CPU request/limit `2/3`,
+heap/overhead `4g/1g`인 `standard-v1` executor profile을 고정하고 executor 수만
+후보 `1`, `2`, `4` 중 선택한다. 30분 완료 목표는 정책 metadata와 검증 기준이며,
+현재 계산은 `128MiB/partition`, `384 partitions/executor` seed rule이다.
+
+`shadow`는 권장값과 근거를 RDS Run과 SparkApplication identity에 기록하지만 실제
+executor 수는 기존 고정값을 유지한다. 입력 크기가 없거나 실제 profile이 다르면
+`enforce`에서도 baseline을 유지한다. Plan은 최초 SparkApplication 제출 전에 한 번
+확정하며 같은 `runId`의 lease takeover와 terminal attempt generation retry도 저장된
+Plan을 재사용한다. 실행 중 Dynamic Allocation, 동시 Job 전역 최적화와 자동 학습은
+V1 범위가 아니다. 계산식, fallback, 상한과 검증 순서는
+[Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.

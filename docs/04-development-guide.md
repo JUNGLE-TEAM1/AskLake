@@ -774,9 +774,23 @@ Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 
 
 Spark Resource Planner를 변경하면 pure planner와 S3 metadata fallback,
 Kubernetes application/recovery identity, terminal retry Plan 유지, Helm의
-`off` 기본값과 최대 6 schema gate를 함께 검증한다. EKS에서는 10/100 GB shadow가
+`off` 기본값, `balanced-v1`의 384 partition budget, `standard-v1` executor
+profile과 최대 4 schema gate를 함께 검증한다. profile drift와 입력 metadata
+부재는 `enforce`에서도 baseline을 보존해야 한다. EKS에서는 10/100 GB shadow가
 통과하기 전 `enforce` 실험을 시작하지 않는다. 상세 계약은
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
+
+Phase 3 준비는 `prepare-eks-spark-resource-planner-shadow-values.sh`와
+`prepare-eks-spark-resource-planner-shadow-web-values.sh`로 각각 Planner-only
+runtime 후보와 `runtimeConfigRevision`-only Web 후보를 만든다. 두 입력과 출력은
+Git-ignored mode `0600`이어야 한다.
+`preflight-eks-spark-resource-planner-shadow.sh`는 live/base exact match, image
+receipt, workload health, active Spark 0, 두 Helm server dry-run의 mutation 0을
+확인한다. 10/100GB 결과는
+`verify-eks-spark-resource-planner-shadow-evidence.mjs`로 검증한다. 실제 apply,
+image rollout과 각 Spark Run은 별도 승인 경계다. 전체 순서는
+[Phase 3 Shadow runbook](eks-spark-resource-planner-phase3-shadow-runbook.md)을
+따른다.
 
 Live FastAPI와 Collector는 `asklake-runtime-config` release가 소유하는
 `asklake-runtime` ConfigMap을 소비한다. 따라서 Planner mode·정책값·executor
