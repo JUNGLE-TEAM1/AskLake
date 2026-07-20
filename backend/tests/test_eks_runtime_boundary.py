@@ -18,6 +18,22 @@ from app.services.dashboard_runtime_service import DashboardRuntimeService
 
 
 class EksContinuousControlPlaneTests(unittest.TestCase):
+    def test_v1_api_admission_requires_an_exact_owner_generation(self) -> None:
+        configured = Settings(
+            kafka_continuous_v1_api_enabled=True,
+            kafka_continuous_v1_owner_generation="v1-only-g1",
+            _env_file=None,
+        )
+
+        self.assertEqual(configured.kafka_continuous_v1_owner_generation, "v1-only-g1")
+        with self.assertRaises(ValidationError):
+            Settings(kafka_continuous_v1_api_enabled=True, _env_file=None)
+        with self.assertRaises(ValidationError):
+            Settings(
+                kafka_continuous_v1_owner_generation="v1-only-g1",
+                _env_file=None,
+            )
+
     def test_settings_accept_only_local_or_external_ec2(self) -> None:
         configured = Settings(
             asklake_continuous_control_plane="external_ec2",
@@ -123,6 +139,39 @@ class EksContinuousControlPlaneTests(unittest.TestCase):
             etl_service.sync_active_kafka_continuous_runtimes()
 
         session_factory.assert_not_called()
+
+    def test_disabled_api_read_does_not_reconcile_continuous_runtime(self) -> None:
+        database = Mock()
+        job = SimpleNamespace(id="JOB-CONTINUOUS", execution_mode="continuous")
+
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "local"),
+            patch.object(etl_service.settings, "continuous_control_plane", "disabled"),
+            patch.object(etl_service, "reconcile_continuous_runtime") as reconcile,
+        ):
+            etl_service.refresh_kafka_continuous_runtime(database, job)
+
+        reconcile.assert_not_called()
+
+    def test_disabled_api_background_sync_returns_without_opening_database(self) -> None:
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "local"),
+            patch.object(etl_service.settings, "continuous_control_plane", "disabled"),
+            patch.object(etl_service, "sync_active_kafka_continuous_jobs") as sync,
+        ):
+            etl_service.sync_active_kafka_continuous_runtimes()
+
+        sync.assert_not_called()
+
+    def test_local_dedicated_worker_reconciles_continuous_runtime(self) -> None:
+        with (
+            patch.object(etl_service.settings, "asklake_continuous_control_plane", "local"),
+            patch.object(etl_service.settings, "continuous_control_plane", "worker"),
+            patch.object(etl_service, "sync_active_kafka_continuous_jobs") as sync,
+        ):
+            etl_service.sync_active_kafka_continuous_runtimes()
+
+        sync.assert_called_once()
 
     def test_external_ec2_dedicated_worker_runs_kafka_reconciliation(self) -> None:
         with (

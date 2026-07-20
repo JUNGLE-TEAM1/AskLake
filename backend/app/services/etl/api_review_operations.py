@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.realtime_job_engine import selected_realtime_job_engine
+
 RUNTIME_NAMES = {
     'ApiError',
     'CallableKafkaRuntimeGateway',
@@ -270,8 +272,10 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
-
-
+def _processing_mode_label(execution_mode: str) -> str:
+    if execution_mode != "continuous":
+        return "배치 · Spark"
+    return "실시간 · ClickHouse" if selected_realtime_job_engine(settings) == "kafka_connect_clickhouse_v2" else "실시간 · Spark (기존 V1)"
 def review_pipeline(
     request: ReviewPipelineRequest,
     *,
@@ -340,7 +344,7 @@ def review_pipeline(
     return ReviewSnapshot(
         basic_information=[
             review_entry("소스", source_display),
-            review_entry("처리 방식", "실시간 스트리밍" if request.execution_mode == "continuous" else "배치 처리"),
+            review_entry("처리 방식", _processing_mode_label(request.execution_mode)),
             review_entry("출력 데이터셋 이름", request.target_dataset),
             review_entry("설명", request.target_description),
         ],

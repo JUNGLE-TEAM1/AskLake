@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "issue": 1101,
+  "status": "deployed-v1-only-live-verified",
+  "observedAt": "2026-07-20T08:58:37Z",
+  "source": {
+    "branch": "feat-#1101",
+    "baselineRef": "origin/pair1",
+    "baselineCommit": "1066190e066c2b33dbdb45f92655ce7b3862b3bd",
+    "workingTreeCommitted": false,
+    "mergedIntoPair1": false,
+    "imageTag": "feat-1101-kafka-owner-20260720-06"
+  },
+  "target": {
+    "region": "ap-northeast-2",
+    "cluster": "asklake-dev",
+    "namespace": "asklake-dev",
+    "deploymentProfile": "realtime-v1-only"
+  },
+  "helmReleases": {
+    "asklake-web": {
+      "revision": 117,
+      "status": "deployed",
+      "chart": "asklake-web-0.5.0"
+    },
+    "asklake-realtime-v1": {
+      "revision": 15,
+      "status": "deployed",
+      "chart": "asklake-workloads-0.2.0"
+    },
+    "asklake-realtime-v2": {
+      "revision": 47,
+      "status": "deployed-disabled",
+      "chart": "asklake-workloads-0.2.0"
+    }
+  },
+  "images": {
+    "frontend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:f1b87c3311205925c68f9fadaf7bf7ed66e85d6fd0db9a8bf9fbf7703967145a",
+    "backend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:1e5fbbac593ab4bd362de180604ee9dd671b789aba51a5827864a436b19685a1"
+  },
+  "runtimeContract": {
+    "selectedRealtimeJobEngine": "spark_structured_streaming",
+    "apiControlPlane": "local",
+    "apiRuntimeSideEffects": "disabled",
+    "v1ApiAdmissionEnabled": true,
+    "v1ApiOwnerGeneration": "1044-20260719-058ff8ac",
+    "workerControlPlane": "worker",
+    "workerScope": "kafka",
+    "continuousSqlJoinEnabled": false,
+    "realtimeEventsEnabled": false,
+    "clickhouseRealtimeV2Enabled": false,
+    "kafkaConnectSinkEnabled": false,
+    "consumerOwner": "disabled",
+    "v2EndpointEnvironmentPresent": false,
+    "v2CredentialEnvironmentPresent": false,
+    "v2CaMountPresent": false
+  },
+  "exactOneOwner": {
+    "activeV1WorkloadCount": 1,
+    "activeV2WorkloadCount": 0,
+    "workerOwner": "eks-continuous-worker-v1",
+    "workerGeneration": "1044-20260719-058ff8ac",
+    "previousOwnerFenced": true,
+    "deploymentStrategy": "Recreate",
+    "replicas": 1,
+    "readyReplicas": 1,
+    "topicPrefix": "asklake.eks-realtime.fixture",
+    "consumerGroupPrefix": "asklake-eks-realtime-v1",
+    "runtimeDocumentPrefix": "continuous-runtime"
+  },
+  "podIdentityReadiness": {
+    "activationReady": true,
+    "sparkAssociationCount": 1,
+    "workerAssociationCount": 1,
+    "sparkExactConsumerActions": true,
+    "sparkExactTopicResourceCount": 1,
+    "sparkExactConsumerGroupResourceCount": 1,
+    "runtimeObjectResourceCountPerRole": 1,
+    "broadActionOrResourceDetected": false,
+    "blockingReasons": []
+  },
+  "liveContinuousJob": {
+    "jobId": "JOB-57A3B324",
+    "status": "running",
+    "sparkApplication": "asklake-continuous-job-57a3b324",
+    "sparkApplicationState": "RUNNING",
+    "topic": "asklake.eks-realtime.fixture.1044-20260719-058ff8ac",
+    "consumerGroup": "asklake-stream-job-57a3b324",
+    "batchId": 0,
+    "consumedCount": 100,
+    "storedCount": 100,
+    "quarantinedCount": 0,
+    "lag": 0,
+    "catalogBatchCursor": 0,
+    "publicationRecoveryPending": false,
+    "catalogStatus": "available",
+    "catalogRows": "100행",
+    "manifestRegistered": true,
+    "icebergSnapshotRegistered": true,
+    "lastError": null
+  },
+  "preservedV2State": {
+    "activeNamespaceWorkloadCount": 0,
+    "activeNamespacePvcs": [
+      {
+        "name": "clickhouse-data-clickhouse-v2-0",
+        "status": "Bound",
+        "capacity": "20Gi"
+      },
+      {
+        "name": "keeper-data-clickhouse-keeper-v2-0",
+        "status": "Bound",
+        "capacity": "10Gi"
+      }
+    ],
+    "restoreNamespace": "asklake-v2-restore-1062",
+    "restoreStatefulSetsScaledToZero": 2,
+    "restorePvcsBound": 2
+  },
+  "verification": {
+    "staticProfile": "pass",
+    "webHelmContract": "pass",
+    "backendEngineAndBoundaryTests": "80-pass",
+    "managedBatchGroupJoin": "pass",
+    "v1OwnerClaimDryProbe": "pass",
+    "batchZeroManifestRecoveryRegression": "pass",
+    "continuousOutputFileCountRegression": "pass",
+    "workerTrinoCaMount": "pass",
+    "liveKafkaToIcebergCatalog": "pass",
+    "frontendProfileTests": "3-pass",
+    "continuousSessionSelectionTests": "5-pass",
+    "frontendProductionBuild": "pass",
+    "backendExternalHealthStatus": 200,
+    "frontendExternalStatus": 200,
+    "newPodsReady": true,
+    "newPodsRestartCount": 0,
+    "terminatingBackendPods": 0
+  },
+  "rollback": {
+    "webPreviousRevision": 116,
+    "v1PreviousRevision": 14,
+    "v2PreviousRevision": 46,
+    "deleteCheckpointForbidden": true,
+    "deletePreservedV2StorageForbidden": true
+  },
+  "limitations": [
+    "The deployed images were built from the uncommitted feat-#1101 working tree on top of origin/pair1.",
+    "This deployment does not merge or publish the V1-only source changes to pair1.",
+    "Existing jobs marked kafka_connect_clickhouse_v2 remain fail closed and are not rewritten to V1.",
+    "Continuous jobs created before V1 admission was enabled and lacking ownerClaim remain fail closed; the live verification used a newly created owner-claimed job.",
+    "The deployment reused the already validated V1 canary owner generation and did not create a new production data identity."
+  ],
+  "containsSecrets": false
+}

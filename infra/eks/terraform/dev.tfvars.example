@@ -127,7 +127,7 @@ storage_prefixes = {
   # multiple top-level prefixes. The IAM resource boundary remains that exact
   # bucket; Warehouse and Query Result stay on explicit prefixes.
   raw                = "raw"
-  output             = "output"
+  output             = "*"
   warehouse          = "warehouse"
   query_results      = "query-results"
   checkpoint         = "checkpoints"

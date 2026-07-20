@@ -86,11 +86,13 @@ authorized Helm upgrade.
 
 ## Realtime backend opt-in
 
-The default Backend still renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
+The `standard` default Backend renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
 
-Only an approved owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker in `asklake-realtime-data-plane`.
+Only an approved V2 owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker.
 
-ClickHouse/Keeper StatefulSets, PVCs, Kafka Connect and the worker are not part of this chart. See [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
+`deploy/profiles/realtime-v1-only.yaml` is the separate pair1 V1-only profile. It opens the local web/API intent path without mounting V2 credentials, keeps every V2 and Continuous SQL/Gold flag off, and renders no realtime owner by itself. A private activation overlay may enable only `realtimeV1` and must provide previous-owner fencing, approval, and a fresh generation. `scripts/verify-eks-realtime-v1-only-profile.sh` proves the base owner count is zero, the approved contract render has exactly one V1 worker, and V2 resources remain zero.
+
+V2 ClickHouse/Keeper/Kafka Connect assets remain opt-in and are not rendered by the V1-only profile. The independent recovery/cutover contract remains documented in [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
 
 ## Trino distributed opt-in
 

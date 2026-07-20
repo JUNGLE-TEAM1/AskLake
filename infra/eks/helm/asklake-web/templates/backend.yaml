@@ -53,10 +53,13 @@ spec:
             - secretRef:
                 name: {{ .Values.backend.trinoRuntimeSecretName }}
             {{- end }}
-          {{- if .Values.backend.realtime.enabled }}
           env:
+            - {name: ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES, value: {{ .Values.backend.kafkaAllowedTopicPrefixes | quote }}}
+          {{- if or .Values.backend.realtime.enabled (eq .Values.deploymentProfile "realtime-v1-only") }}
             - {name: ASKLAKE_CONTINUOUS_CONTROL_PLANE, value: {{ .Values.backend.realtime.apiControlPlane | quote }}}
             - {name: CONTINUOUS_CONTROL_PLANE, value: "disabled"}
+            - {name: KAFKA_CONTINUOUS_V1_API_ENABLED, value: {{ .Values.backend.realtime.v1ApiEnabled | quote }}}
+            - {name: KAFKA_CONTINUOUS_V1_OWNER_GENERATION, value: {{ .Values.backend.realtime.v1OwnerGeneration | quote }}}
             - {name: CONTINUOUS_SQL_JOIN_ENABLED, value: {{ .Values.backend.realtime.continuousSqlJoinEnabled | quote }}}
             - {name: DASHBOARD_SYNC_MODE, value: {{ .Values.backend.realtime.dashboardSyncMode | quote }}}
             - {name: REALTIME_EVENTS_ENABLED, value: {{ .Values.backend.realtime.realtimeEventsEnabled | quote }}}
@@ -64,6 +67,7 @@ spec:
             - {name: CLICKHOUSE_REALTIME_V2_ENABLED, value: {{ .Values.backend.realtime.clickhouseRealtimeV2Enabled | quote }}}
             - {name: KAFKA_CONNECT_SINK_ENABLED, value: {{ .Values.backend.realtime.kafkaConnectSinkEnabled | quote }}}
             - {name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: {{ .Values.backend.realtime.consumerOwner | quote }}}
+            {{- if .Values.backend.realtime.enabled }}
             - {name: KAFKA_CONNECT_URL, value: {{ .Values.backend.realtime.kafkaConnectUrl | quote }}}
             - {name: KAFKA_CONNECT_CONNECTOR_NAME, value: {{ .Values.backend.realtime.connectorName | quote }}}
             - {name: CLICKHOUSE_V2_URL, value: {{ .Values.backend.realtime.clickhouseV2Url | quote }}}
@@ -81,6 +85,7 @@ spec:
                   name: {{ .Values.backend.realtime.runtimeSecret.name }}
                   key: {{ .Values.backend.realtime.runtimeSecret.readerPasswordKey }}
             - {name: CLICKHOUSE_V2_TLS_CA_FILE, value: "/var/run/asklake/secrets/clickhouse-v2-ca.crt"}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: backend-runtime-files

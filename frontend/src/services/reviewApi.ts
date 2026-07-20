@@ -1,5 +1,6 @@
 import type { CreatePipelineRequest, DraftPipeline, PermissionGrant, RuleCompilationResult } from "../types";
 import { apiClient, apiConfig } from "./apiClient";
+import { describeProcessingMode } from "./processingMode";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { compileRuleContract } from "./ruleContract";
 
@@ -101,7 +102,7 @@ function buildMockReviewSnapshot(request: ReviewSnapshotRequest): ReviewSnapshot
   return {
     basicInformation: toReviewEntries([
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
-      ["처리 방식", request.executionMode === "continuous" ? "실시간 · ClickHouse" : "배치 · Spark"],
+      ["처리 방식", describeProcessingMode(request)],
       ["출력 데이터셋 이름", request.targetDataset],
       ["설명", request.targetDescription],
     ]),

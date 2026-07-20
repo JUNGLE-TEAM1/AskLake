@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.application.etl_schedule import job_schedule_kind, schedule_next_run_label
 from app.core.config import settings
 from app.domain.continuous_runtime import record_runtime_observation
+from app.domain.realtime_job_engine import selected_realtime_job_engine
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousRuntimeModel
 from app.schemas.etl import CreatePipelineRequest, UpdatePipelineRequest
 
@@ -247,8 +248,8 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     config = request.continuous_config
     base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
-        # Server-owned marker; markerless legacy Jobs remain Spark V1.
-        "runtimeEngine": "kafka_connect_clickhouse_v2",
+        # The deployment profile selects the engine; markerless legacy Jobs remain Spark V1.
+        "runtimeEngine": selected_realtime_job_engine(settings),
         "runtimeGeneration": 1,
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
@@ -270,7 +271,11 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
     checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
-    metrics = record_runtime_observation({}, "stopped", default_public_status="stopped")
+    metrics = record_runtime_observation(
+        {"publicationRecoveryPending": False},
+        "stopped",
+        default_public_status="stopped",
+    )
     if config.get("runtimeEngine") == "kafka_connect_clickhouse_v2":
         metrics = {**metrics, "runtimeEngine": "kafka_connect_clickhouse_v2",
                    "runtimeGeneration": int(config.get("runtimeGeneration") or 1)}
@@ -284,18 +289,13 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         status="stopped",
         metrics=metrics,
     )
-    if (config.get("runtimeEngine") == "kafka_connect_clickhouse_v2"
-            and settings.kafka_continuous_v2_api_enabled
-            and settings.kafka_continuous_v2_owner_generation):
-        from app.services.continuous_runtime_sync import assign_runtime_owner_claim
-
-        assign_runtime_owner_claim(
+    from app.services.continuous_runtime_sync import assign_runtime_admission_owner_claim
+    assign_runtime_admission_owner_claim(
             runtime,
-            owner="eks-kafka-connect-clickhouse-v2",
-            generation=settings.kafka_continuous_v2_owner_generation,
+            runtime_engine=str(config.get("runtimeEngine") or ""),
+            configured_settings=settings,
             fencing_token=f"create-{uuid4()}",
-            state_revision=1,
-        )
+    )
     return runtime
 
 
@@ -474,7 +474,6 @@ def format_iso_duration(started_at: str, ended_at: str) -> str:
     except ValueError:
         return "-"
     return format_duration_ms(max(0, int((end - start).total_seconds() * 1000)))
-
 
 def iso_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")

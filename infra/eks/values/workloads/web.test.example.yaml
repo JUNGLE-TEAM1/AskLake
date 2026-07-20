@@ -1,4 +1,5 @@
 enabled: true
+deploymentProfile: standard
 namespace: asklake-dev
 environment: dev
 readiness:

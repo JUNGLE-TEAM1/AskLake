@@ -10,7 +10,6 @@ import secrets
 from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import urlparse
-
 from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -416,6 +415,7 @@ from app.services.etl.runtime_binding import bind_runtime
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
 from app.services.eks_execution_contract import (
+    continuous_runtime_reconciliation_enabled,
     external_continuous_control_plane_enabled,
     job_visible_in_current_control_plane,
     require_local_continuous_control_plane,
@@ -707,7 +707,7 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
-    if external_continuous_control_plane_enabled() and settings.continuous_control_plane != "worker":
+    if not continuous_runtime_reconciliation_enabled():
         return
     sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
         reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,

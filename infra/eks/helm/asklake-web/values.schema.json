@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["enabled", "namespace", "environment", "readiness", "placement", "frontend", "backend", "aiGateway", "collector"],
+  "required": ["enabled", "deploymentProfile", "namespace", "environment", "readiness", "placement", "frontend", "backend", "aiGateway", "collector"],
   "properties": {
     "enabled": { "type": "boolean" },
+    "deploymentProfile": { "type": "string", "enum": ["standard", "realtime-v1-only"] },
     "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
     "environment": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
     "readiness": {
@@ -42,6 +43,64 @@
     "collector": { "$ref": "#/$defs/collector" }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": { "const": "realtime-v1-only" }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": { "const": false },
+                  "apiControlPlane": { "const": "local" },
+                  "continuousSqlJoinEnabled": { "const": false },
+                  "dashboardSyncMode": { "const": "polling" },
+                  "realtimeEventsEnabled": { "const": false },
+                  "clickhouseRealtimeV2Enabled": { "const": false },
+                  "kafkaConnectSinkEnabled": { "const": false },
+                  "consumerOwner": { "const": "disabled" },
+                  "kafkaConnectUrl": { "const": "" },
+                  "clickhouseV2Url": { "const": "" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": { "const": "standard" },
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": { "const": false }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "apiControlPlane": { "const": "external_ec2" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": { "properties": { "enabled": { "const": true } } },
       "then": {
@@ -187,7 +246,7 @@
     "backend": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "realtime", "resources"],
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
       "properties": {
         "image": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
@@ -202,6 +261,7 @@
         "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
         "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
+        "kafkaAllowedTopicPrefixes": { "type": "string", "const": "asklake." },
         "realtime": { "$ref": "#/$defs/backendRealtime" },
         "resources": { "type": "object" }
       },
@@ -227,10 +287,12 @@
     "backendRealtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "apiControlPlane", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled", "clickhouseRealtimeV2Enabled", "kafkaConnectSinkEnabled", "consumerOwner", "kafkaConnectUrl", "connectorName", "clickhouseV2Url", "clickhouseV2Database", "runtimeSecret"],
+      "required": ["enabled", "apiControlPlane", "v1ApiEnabled", "v1OwnerGeneration", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled", "clickhouseRealtimeV2Enabled", "kafkaConnectSinkEnabled", "consumerOwner", "kafkaConnectUrl", "connectorName", "clickhouseV2Url", "clickhouseV2Database", "runtimeSecret"],
       "properties": {
         "enabled": { "type": "boolean" },
         "apiControlPlane": { "type": "string", "enum": ["local", "external_ec2"] },
+        "v1ApiEnabled": { "type": "boolean" },
+        "v1OwnerGeneration": { "type": "string", "pattern": "^$|^[a-z0-9][a-z0-9.-]{0,62}$" },
         "continuousSqlJoinEnabled": { "type": "boolean" },
         "dashboardSyncMode": { "type": "string", "enum": ["polling", "sse"] },
         "realtimeEventsEnabled": { "type": "boolean" },
@@ -255,10 +317,23 @@
       },
       "allOf": [
         {
+          "if": { "properties": { "v1ApiEnabled": { "const": true } } },
+          "then": {
+            "properties": {
+              "apiControlPlane": { "const": "local" },
+              "v1OwnerGeneration": { "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$", "minLength": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "v1OwnerGeneration": { "const": "" }
+            }
+          }
+        },
+        {
           "if": { "properties": { "enabled": { "const": false } } },
           "then": {
             "properties": {
-              "apiControlPlane": { "const": "external_ec2" },
               "continuousSqlJoinEnabled": { "const": false },
               "dashboardSyncMode": { "const": "polling" },
               "realtimeEventsEnabled": { "const": false },
@@ -279,6 +354,8 @@
               "dashboardSyncMode": { "const": "sse" },
               "realtimeEventsEnabled": { "const": true },
               "clickhouseRealtimeV2Enabled": { "const": true },
+              "v1ApiEnabled": { "const": false },
+              "v1OwnerGeneration": { "const": "" },
               "kafkaConnectSinkEnabled": { "const": true },
               "consumerOwner": { "const": "kafka_connect_v2" },
               "kafkaConnectUrl": { "const": "http://kafka-connect-v2:8083" },

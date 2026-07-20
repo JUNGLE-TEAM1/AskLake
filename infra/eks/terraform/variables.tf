@@ -211,19 +211,21 @@ variable "service_account_names" {
     trino             = "asklake-trino"
     mskSmoke          = "asklake-msk-smoke"
     spark             = "asklake-spark"
+    realtimeV1Spark   = "asklake-realtime-v1-spark"
+    realtimeV1Worker  = "asklake-realtime-v1-worker"
     realtimeV2Connect = "asklake-realtime-v2-connect"
     realtimeV2Worker  = "asklake-realtime-v2-worker"
   }
 
   validation {
     condition = (
-      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "realtimeV2Connect", "realtimeV2Worker"]) &&
+      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker", "realtimeV2Connect", "realtimeV2Worker"]) &&
       alltrue([
         for name in values(var.service_account_names) :
         can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name))
       ])
     )
-    error_message = "service_account_names must define DNS-compatible frontend, backend, aiGateway, airflow, trino, mskSmoke, spark, realtimeV2Connect, and realtimeV2Worker names."
+    error_message = "service_account_names must define DNS-compatible frontend, backend, aiGateway, airflow, trino, mskSmoke, spark, realtimeV1Spark, realtimeV1Worker, realtimeV2Connect, and realtimeV2Worker names."
   }
 }
 

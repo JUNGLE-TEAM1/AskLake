@@ -74,6 +74,7 @@ RUNTIME_NAMES = {
     'list',
     'make_dataset_id',
     'make_job_id',
+    'managed_kafka_source_config',
     'map_create_request_to_job',
     'max',
     'nonnegative_int',
@@ -285,6 +286,12 @@ def pipeline_create_mapping_context(
             schedule_policy.get("nextRunUtc"),
         ),
         schedule_policy=schedule_policy,
+        source_config=managed_kafka_source_config(
+            request.source_type,
+            request.source_config,
+            execution_mode=request.execution_mode,
+            job_id=job_id,
+        ),
         stats=initial_job_stats(metrics),
     )
 

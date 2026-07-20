@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "realtimeV2", "trino"],
+  "required": ["namespace", "deploymentProfile", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "realtimeV2", "trino"],
   "properties": {
     "namespace": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "deploymentProfile": {"type": "string", "enum": ["standard", "realtime-v1-only"]},
     "global": {
       "type": "object",
       "additionalProperties": false,
@@ -56,6 +57,70 @@
           "realtimeV1": {
             "properties": {
               "enabled": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": {"const": "realtime-v1-only"}
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": false},
+                  "apiControlPlane": {"const": "local"},
+                  "continuousSqlJoinEnabled": {"const": false},
+                  "dashboardSyncMode": {"const": "polling"},
+                  "realtimeEventsEnabled": {"const": false},
+                  "clickhouseRealtimeV2Enabled": {"const": false},
+                  "kafkaConnectSinkEnabled": {"const": false},
+                  "consumerOwner": {"const": "disabled"},
+                  "kafkaConnectUrl": {"const": ""},
+                  "clickhouseV2Url": {"const": ""}
+                }
+              }
+            }
+          },
+          "realtimeV2": {
+            "properties": {
+              "enabled": {"const": false},
+              "recoveryMode": {"const": false}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": {"const": "standard"},
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "apiControlPlane": {"const": "external_ec2"}
+                }
+              }
             }
           }
         }
@@ -208,7 +273,6 @@
           "if": {"properties": {"enabled": {"const": false}}},
           "then": {
             "properties": {
-              "apiControlPlane": {"const": "external_ec2"},
               "continuousSqlJoinEnabled": {"const": false},
               "dashboardSyncMode": {"const": "polling"},
               "realtimeEventsEnabled": {"const": false},
@@ -272,7 +336,7 @@
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
           "properties": {
             "aiQueryProvider": {"type": "string", "enum": ["direct", "gateway"]},
             "airflowApiAuthMode": {"type": "string", "enum": ["api_token", "username_password"]},
@@ -280,6 +344,7 @@
             "bootstrapAdminEmail": {"type": "string", "format": "email"},
             "kafkaBroker": {"type": "string", "minLength": 1},
             "kafkaAuthMode": {"type": "string", "const": "iam"},
+            "kafkaAllowedTopicPrefixes": {"type": "string", "const": "asklake."},
             "objectStorageProvider": {"type": "string", "const": "aws"},
             "rawBucket": {"type": "string", "minLength": 1},
             "outputBucket": {"type": "string", "minLength": 1},
