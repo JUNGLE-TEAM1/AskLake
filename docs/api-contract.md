@@ -3350,7 +3350,7 @@ Request:
 }
 ```
 
-`mode`는 `published`가 기본값이며 `draft`도 지원합니다. `widgetIds`는 `1..100`개이고 해당 mode의 현재 revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Published는 Dashboard `view`, draft는 Dashboard `manage` 권한이 필요하며 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
+`mode`는 `published`가 기본값이며 `draft`도 지원합니다. `widgetIds`는 `1..100`개이고 해당 mode의 현재 revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Published는 Dashboard `view`, draft는 Dashboard `manage` 권한이 필요하며 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다. Published runtime 초기 `GET`은 저장된 결과를 읽는 read-only 경로라 새 widget을 `pending`으로 반환할 수 있고, 이 `POST`가 그 widget을 잠금·계산·저장하여 `ready` 또는 `error`로 전이시키는 유일한 browser 계산 경로입니다.
 
 Response `200 OK`:
 
