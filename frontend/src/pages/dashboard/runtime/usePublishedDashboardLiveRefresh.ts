@@ -331,11 +331,6 @@ export function usePublishedDashboardLiveRefresh({
       const strategy = pollingStrategy();
       dueDatasetIds.forEach((datasetId) => {
         const freshness = freshnessByDatasetId.get(datasetId);
-        if (freshness && !freshness.isContinuous) {
-          eligibleDatasetIds.delete(datasetId);
-          nextCheckAtByDatasetId.delete(datasetId);
-          return;
-        }
         const normalInterval = dashboardLiveRefreshInterval(
           freshness?.nextCheckAfterMs,
           datasetId,

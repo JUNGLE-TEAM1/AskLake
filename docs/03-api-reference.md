@@ -528,7 +528,7 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
-> Dashboard Job Binding Phase 1~3 API와 worker는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. `continuous_worker`는 검증된 `dataset_revision_commits` 뒤 delivery를 계산하며, browser 자동 갱신은 별도 후속 범위다.
+> Dashboard Job Binding Phase 1~3 API와 worker는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. `continuous_worker`는 검증된 `dataset_revision_commits` 뒤 delivery를 계산하며, browser는 보기·편집 모드 모두에서 freshness polling으로 revision을 감지하고 영향 받은 widget만 재계산한다.
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
@@ -873,7 +873,7 @@ Content-Type: application/json
 
 `count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
-Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 그대로면 빠른 catch-up을 중지한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다. Continuous published 위젯은 `실시간 · R{appliedRevision}` 배지와 revision 변경 pulse를 표시하며, bar chart는 숫자 data label과 dynamic animation으로 갱신을 시각화한다. 이 배지는 SSE/WebSocket 연결 상태가 아니라 마지막으로 성공 적용된 PostgreSQL dataset revision을 나타낸다.
+Frontend는 보기·편집 모드 모두에서 Dataset freshness를 polling한다. published는 SSE/hybrid 변경 알림을 빠른 trigger로 추가로 사용하고 연결 실패 시 polling으로 복귀한다. revision이 전진한 Dataset의 영향 widget만 `widgets/query`로 요청하며, draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 현재 값보다 낮으면 폐기한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer와 subscription을 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다.
 
 ### Pair A -> Pair B
 

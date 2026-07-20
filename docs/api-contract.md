@@ -4062,7 +4062,7 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 
 ## Dashboard Job Binding Phase 1 계약
 
-> 구현 상태: durable API, managed Dashboard Dataset lock UI, Dataset revision delivery worker가 구현됐다. browser 자동 갱신과 EC2/EKS end-to-end validation은 후속 범위다.
+> 구현 상태: durable API, managed Dashboard Dataset lock UI, Dataset revision delivery worker와 browser 자동 갱신이 구현됐다. 보기 모드는 SSE/hybrid trigger와 polling fallback을 사용하며, 편집 모드는 polling으로 widget data만 갱신한다. EC2/EKS end-to-end validation은 운영 검증 범위다.
 
 Dashboard Job Binding은 모든 Dataset-producing Job의 검증된 Dataset revision을 Dashboard의 managed Widget으로 전달하는 공통 downstream contract다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 각자의 실행 및 물리 publication 계약을 유지한다. binding은 해당 publication 이후에만 동작하며, Job 성공 또는 Catalog row 존재만으로 Widget 계산을 시작하지 않는다.
 

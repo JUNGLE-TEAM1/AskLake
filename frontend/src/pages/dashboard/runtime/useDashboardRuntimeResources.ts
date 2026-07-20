@@ -3,6 +3,7 @@ import type { DashboardRuntimeMode } from "../../../types";
 import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
 import { usePreparedPublishedDashboard } from "./usePreparedPublishedDashboard";
 import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
+import { useDashboardDraftLiveRefresh } from "./useDashboardDraftLiveRefresh";
 import { useDashboardWidgetData } from "./useDashboardWidgetData";
 import { onCatalogDatasetDeleted } from "../../../services/catalogEvents";
 
@@ -103,10 +104,17 @@ export function useDashboardRuntimeResources({
     reloadPublishedRuntime: loadPublishedRuntime,
     setPublishedRuntime,
   });
+  const { realtimeDataState: draftRealtimeDataState } = useDashboardDraftLiveRefresh({
+    active: active && mode === "draft",
+    dashboardId,
+    runtime: draftRuntime,
+    setRuntime: setDraftRuntime,
+  });
 
   return {
     draftError, draftLoading, draftRuntime, loadDraftRuntime, loadPublishedRuntime,
-    pages, publishedRuntime, realtimeConnectionState, realtimeDataState,
+    pages, publishedRuntime, realtimeConnectionState,
+    realtimeDataState: mode === "draft" ? draftRealtimeDataState : realtimeDataState,
     retryWidgetData, runtimeError, runtimeLoading, selectedPageId,
     setDraftError, setDraftRuntime, setPublishedRuntime, setSelectedPageId,
   };

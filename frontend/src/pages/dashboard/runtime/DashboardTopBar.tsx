@@ -10,7 +10,7 @@ const REALTIME_STATUS: Record<RealtimeConnectionState, {
   label: string;
   tone: "default" | "muted" | "success" | "warning";
 }> = {
-  closed: { label: "수동 새로고침", tone: "muted" },
+  closed: { label: "자동 새로고침", tone: "muted" },
   connecting: { label: "실시간 연결 중", tone: "default" },
   degraded: { label: "재연결 중", tone: "warning" },
   fallback_polling: { label: "폴링 복구", tone: "warning" },
@@ -105,7 +105,7 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
-            {mode === "published" && realtimeStatus ? (
+            {realtimeStatus ? (
               <StatusBadge
                 aria-label={`대시보드 동기화 상태: ${realtimeStatus.label}`}
                 tone={realtimeStatus.tone}

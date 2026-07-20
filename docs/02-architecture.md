@@ -515,6 +515,8 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 
 ## 13) Kafka Continuous 대시보드 자동 갱신 경계
 
+Dashboard runtime은 보기와 편집 mode에 공통 freshness → targeted widget query 경로를 둔다. published는 SSE/hybrid event를 low-latency trigger로 사용하고 polling으로 failover하며, draft는 polling만 사용한다. draft 응답은 widget의 server-calculated data, `appliedRevision`, `calculatedAt`만 교체하고 local draft config/layout/title/selection은 유지한다. hidden tab 및 route unmount에서는 in-flight request, timer, event subscription을 정리한다.
+
 Kafka 수집 hot path는 바꾸지 않는다. 기존 Spark Structured Streaming이 checkpoint 기준 micro-batch를 backend-owned Iceberg table에 append하고 완료 manifest를 게시하면, backend control-plane이 exact Iceberg commit을 Trino로 검증해 Catalog에 반영한 다음에만 대시보드 리비전을 공개한다.
 
 ```text
