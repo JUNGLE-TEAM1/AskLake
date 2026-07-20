@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase7-final-rollback-and-exit-audit",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "32802393e8131d153bcb34ca2c30e2a21293004a",
+  "mode": "final-static-and-scope-audit",
+  "finalDecision": "NO-GO-FOR-PRODUCTION",
+  "sharedMutationPerformed": false,
+  "verification": {
+    "mvpContract": "pass",
+    "mvpContractTests": "11 pass",
+    "dataPlaneStaticWrapper": "pass",
+    "backendLifecycleTests": "49 pass",
+    "scopeDiffCheckAgainstFeat1044": "pass",
+    "phaseArtifactCount": 14,
+    "identicalContentDuplicates": 0,
+    "workingTree": "clean"
+  },
+  "rollbackExitGate": {
+    "automaticCrossEngineFallback": false,
+    "offsetResetAllowed": false,
+    "generationReuseAllowed": false,
+    "stateDeletionAllowed": false,
+    "zeroOwnerProofRequired": true,
+    "rollbackRunLive": false
+  },
+  "remainingBlockers": [
+    "approved ECR registry/repository target and push credential",
+    "ASKLAKE_EKS_CLUSTER_NAME with matching kubectl context",
+    "private production values and immutable ECR receipt",
+    "live Phase 2 preflight",
+    "live Phase 4 canary and Phase 5 lifecycle receipt",
+    "approved rollout window and rollback owner"
+  ],
+  "production": {
+    "trafficOpened": false,
+    "productionTransferAllowed": false,
+    "haClaimAllowed": false,
+    "currentRuntimeActivation": "disabled-by-default"
+  },
+  "handoffReady": false
+}
