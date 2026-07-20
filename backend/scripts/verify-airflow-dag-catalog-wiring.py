@@ -112,6 +112,39 @@ def main() -> None:
     assert published["catalogReconciledAt"] == "2026-07-11T00:00:00Z"
     assert "dataset" not in published
 
+    spark_attempts = 0
+
+    def active_then_success(request, timeout):
+        nonlocal spark_attempts
+        spark_attempts += 1
+        if spark_attempts < 3:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                409,
+                "Spark still active",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"code":"SPARK_RUN_ALREADY_EXECUTING"}}'),
+            )
+        return FakeResponse(spark_result)
+
+    with patch.dict(
+        os.environ,
+        {
+            "ASKLAKE_EXECUTION_API_BASE_URL": "http://asklake-backend:8080",
+            "ASKLAKE_EXECUTION_API_TOKEN": "phase3-token",
+            "ASKLAKE_SPARK_ACTIVE_RETRY_SECONDS": "1",
+            "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS": "60",
+        },
+        clear=False,
+    ), patch.object(module.urllib.request, "urlopen", side_effect=active_then_success), patch.object(
+        module.time, "sleep"
+    ) as sleep:
+        resumed_result = module.execute_spark_run(conf)
+
+    assert resumed_result == spark_result
+    assert spark_attempts == 3
+    assert sleep.call_count == 2
+
     smoke_conf = {**conf, "executionMode": "smoke"}
     with patch.object(module, "reconcile_catalog_run") as reconcile:
         smoke_published = module.publish_catalog_result(smoke_conf, spark_result)

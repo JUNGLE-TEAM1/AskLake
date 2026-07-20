@@ -17,6 +17,10 @@ except ImportError:  # Airflow 2 compatibility for local fallback environments.
     from airflow.decorators import dag, task
 
 
+class SparkExecutionAlreadyActive(RuntimeError):
+    """The backend still owns this Run and Airflow must wait for its result."""
+
+
 def sleep_seconds(conf: dict[str, Any], key: str, default: int) -> int:
     try:
         return max(0, min(int(conf.get(key, default)), 60))
@@ -71,6 +75,12 @@ def post_asklake_execution_api(
             payload = json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
         response_body = exc.read().decode("utf-8", errors="replace")[-2000:]
+        try:
+            error_code = str(json.loads(response_body).get("error", {}).get("code") or "")
+        except (AttributeError, json.JSONDecodeError):
+            error_code = ""
+        if exc.code == 409 and error_code == "SPARK_RUN_ALREADY_EXECUTING":
+            raise SparkExecutionAlreadyActive(response_body) from exc
         raise RuntimeError(
             f"AskLake {operation} API returned HTTP {exc.code}: {response_body}"
         ) from exc
@@ -84,14 +94,32 @@ def post_asklake_execution_api(
 
 def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
     run_id = str(conf["runId"])
-    return post_asklake_execution_api(
-        f"/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/execute",
-        {
-            "command": str(conf.get("command") or "run"),
-            "jobId": str(conf["jobId"]),
-        },
-        operation="Spark execution",
+    wait_seconds = max(
+        60,
+        int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "7200"),
     )
+    retry_seconds = max(
+        1,
+        min(int(os.environ.get("ASKLAKE_SPARK_ACTIVE_RETRY_SECONDS") or "5"), 60),
+    )
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            return post_asklake_execution_api(
+                f"/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/execute",
+                {
+                    "command": str(conf.get("command") or "run"),
+                    "jobId": str(conf["jobId"]),
+                },
+                operation="Spark execution",
+            )
+        except SparkExecutionAlreadyActive as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Spark execution for {run_id} remained active for {wait_seconds}s."
+                ) from exc
+            time.sleep(min(retry_seconds, remaining))
 
 
 def reconcile_catalog_run(conf: dict[str, Any]) -> dict[str, Any]:
