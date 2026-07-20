@@ -199,3 +199,20 @@ JSON을 추가 수정했으므로, 아래 최종 집합이 우선한다.
 diff의 Airflow·Trino hunk 검색, secret signature 검색, 생성물 경로 검색을 사용했다.
 ECR image receipt와 AMD64 pull/inspect 결과는 저장소 밖 evidence이며 Git에 추가하지
 않았다.
+
+## 12. Phase 0 재감사 결과
+
+2026-07-20 재실행에서 기준을 다시 조회했다.
+
+- 작업 브랜치: `feat-#1082`, HEAD `2334e514`
+- `origin/pair1`: `69cab941`
+- `origin/dev`: `c7ea77e4`
+- live V1 worker: `1/1 Running`
+- live V2 ClickHouse/Keeper/Connect/Continuous worker: `0`
+- V2 PVC: 2개 Bound, VolumeSnapshot: 2개 `readyToUse=true`
+- live mutation: 0건
+
+`origin/dev` 차이에는 ClickHouse 관련 수정 외에도 Airflow/Trino 및 과거 EKS 파일
+삭제가 함께 존재하므로 이번 이슈에 병합하지 않는다. 저장소 안의 기존 V2/standard
+receipt는 모두 `gitRevision=0f1a9390...`이라 현재 기준의 대체 입력으로 사용하지
+않는다. 최신 AMD64 receipt는 저장소 밖에서 별도로 검증·보관한다.
