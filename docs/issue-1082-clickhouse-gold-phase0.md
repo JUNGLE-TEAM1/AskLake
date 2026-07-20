@@ -239,3 +239,28 @@ V2 데이터 플레인이나 worker가 렌더되지 않는다. Kubernetes server
 shadow apply는 Secret gate가 해소되고 별도 승인이 있을 때까지 실행하지 않았다.
 현재 live blocker는 계속해서 `asklake-clickhouse-keeper-v2-config` ExternalSecret
 부재이며, 이 Phase에서 AWS/EKS mutation은 0건이다.
+
+## 14. Phase 3 승인 shadow gate 결과
+
+2026-07-20 Phase 3에서 `asklake-dev` context의 상태를 read-only로 재확인했다.
+
+- `asklake-realtime-v1`: deployed, V1 worker `1/1`, Available
+- `asklake-realtime-v2`: deployed revision 27이나 manifest에 V2 workload object 없음
+- ClickHouse/Keeper PVC: 20Gi/10Gi Bound, snapshots 각각 `readyToUse=true`
+- `ExternalSecret asklake-clickhouse-keeper-v2-config`: NotFound
+- 동명 Kubernetes Secret: NotFound
+
+따라서 승인된 shadow apply의 입력 gate가 아직 충족되지 않았다. preflight는 receipt와
+schema/static 검증까지 통과한 뒤 위 ExternalSecret NotFound에서 fail-closed해야 하며,
+이번 Phase에서도 Helm apply, server-side mutation, Kafka produce, EC2 quiesce 및
+ownership 전환은 실행하지 않았다. Secret source/ExternalSecret/Pod Identity가 준비된
+뒤 다음 명령으로 재검증한다.
+
+```bash
+export ASKLAKE_EKS_CLUSTER_NAME=asklake-dev
+scripts/deploy-eks-realtime-v2.sh --preflight <private-values.yaml> <v2-image-receipt.json>
+```
+
+기대 결과는 receipt·schema·render·server dry-run·Secret/TLS/PVC/IAM preflight 통과이며,
+실패 시 해당 단계에서 중단하고 shadow release를 생성하지 않는다. rollback은 V2
+worker replicas를 0으로 유지하고 V1/EC2 canonical owner를 보존하는 기존 런북을 따른다.
