@@ -275,6 +275,8 @@ class ContinuousSqlService:
             checkpoint_path = request.checkpoint_path or (
                 f"{output_storage_path}/_checkpoints/{job_id}"
             )
+            output_storage_path = _spark_object_storage_path(output_storage_path)
+            checkpoint_path = _spark_object_storage_path(checkpoint_path)
         return output_target, output_storage_path, checkpoint_path
 
     def _resolve_incremental_baseline(
@@ -345,7 +347,10 @@ class ContinuousSqlService:
                 status.HTTP_409_CONFLICT,
                 {"datasetId": dataset_id},
             )
-        checkpoint_path = request.checkpoint_path or f"{storage_path}/_checkpoints/{job_id}"
+        storage_path = _spark_object_storage_path(storage_path)
+        checkpoint_path = _spark_object_storage_path(
+            request.checkpoint_path or f"{storage_path}/_checkpoints/{job_id}"
+        )
 
         live = DashboardLiveRepository(self.db)
         baseline_freshness = live.get_freshness(dataset_id)
@@ -1096,6 +1101,13 @@ class ContinuousSqlService:
                 "observedState": job.observed_state,
             },
         )
+
+
+def _spark_object_storage_path(value: str) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    if normalized.casefold().startswith("s3://"):
+        return f"s3a://{normalized[5:]}"
+    return normalized
 
 
 def _catalog_row_count(value: Any) -> int:
