@@ -11,7 +11,10 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import {
@@ -287,12 +290,12 @@ export function SqlJobWizardDialog({
             runtime={runtime}
             showErrors={showErrors}
           />
-          <section className="rounded-lg border border-slate-200 p-4">
-            <label className="flex cursor-pointer items-start gap-3">
-              <input checked={dashboardBindingEnabled} disabled={isBusy} type="checkbox" onChange={(event) => setDashboardBindingEnabled(event.target.checked)} />
-              <span><strong className="block text-sm">결과를 Dashboard에 자동 반영</strong><small className="text-slate-500">새 빈 Dashboard를 만들고 이 Job의 출력 Dataset으로 고정합니다.</small></span>
+          <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+            <label className="flex cursor-pointer items-start gap-3" htmlFor="sql-dashboard-binding-enabled">
+              <Checkbox checked={dashboardBindingEnabled} disabled={isBusy} id="sql-dashboard-binding-enabled" onCheckedChange={(checked) => setDashboardBindingEnabled(checked === true)} />
+              <span className="grid gap-1"><strong className="text-sm text-slate-900">결과를 Dashboard에 자동 반영</strong><small className="text-sm leading-5 text-slate-500">새 Dashboard를 만들고 출력 Dataset을 고정합니다.</small></span>
             </label>
-            {dashboardBindingEnabled ? <label className="mt-4 block text-sm">Dashboard 이름<input className="mt-2 w-full rounded border px-3 py-2" disabled={isBusy} maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${configuration.dataset.name || "SQL 결과"} Dashboard`} /></label> : null}
+            {dashboardBindingEnabled ? <Field className="mt-5 rounded-lg border border-blue-100 bg-white p-4"><FieldLabel htmlFor="sql-dashboard-title">Dashboard 이름</FieldLabel><Input id="sql-dashboard-title" className="mt-2" disabled={isBusy} maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${configuration.dataset.name || "SQL 결과"} Dashboard`} /><FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 계속 편집할 수 있습니다.</FieldDescription></Field> : null}
           </section>
         </> : null}
       </div>

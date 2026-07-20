@@ -516,6 +516,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
             error={dashboardDatasetsError}
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
+            lockedDatasetId={managedDatasetId}
             onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
             selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : undefined}

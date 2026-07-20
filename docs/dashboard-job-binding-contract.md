@@ -24,6 +24,7 @@ Job Run 성공
 - Dashboard의 모든 Widget은 고정 Dataset을 상속한다.
 - Widget 생성·삭제와 차트 유형, 필드, 집계, 필터, 색상, 제목, 레이아웃 편집은 계속 허용한다.
 - managed Dashboard에서는 Dashboard/Widget의 Dataset selector를 노출하지 않거나 비활성화한다.
+- Job의 첫 성공 실행 전에는 Catalog Dataset이 아직 없을 수 있다. 이때 sidebar는 Job에 저장된 출력 이름·스키마를 `preparing` source로 단일 표시하고 선택 상태를 고정한다. 실제 data revision이 없으므로 Widget/차트 생성은 허용하지 않으며, 첫 publication 뒤에는 같은 ID의 Catalog Dataset으로 전환한다.
 - 사용자가 명시적으로 binding을 해제하면 Dashboard는 `detached`가 되고 Dataset selector를 다시 사용할 수 있다.
 
 V1에서 제외한다.

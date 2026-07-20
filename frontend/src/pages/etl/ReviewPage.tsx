@@ -1,6 +1,9 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { ValidationList } from "@/components/ui/validation-list";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -131,11 +134,22 @@ export function ReviewPage({
 
           <section className="etl-review-card">
             <EtlSectionHeader icon={<Database />} title="Dashboard 연동" />
-            <label className="flex items-start gap-3 text-sm">
-              <input checked={dashboardBindingEnabled} type="checkbox" onChange={(event) => setDashboardBindingEnabled(event.target.checked)} />
-              <span><strong className="block">결과를 Dashboard에 자동 반영</strong><small className="text-muted-foreground">새 빈 Dashboard를 만들고, 이 Job의 출력 Dataset으로 고정합니다.</small></span>
-            </label>
-            {dashboardBindingEnabled ? <label className="mt-4 block text-sm">Dashboard 이름<input className="mt-2 w-full rounded border px-3 py-2" value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} /></label> : null}
+            <div className="etl-dashboard-binding">
+              <label className="etl-dashboard-binding-toggle" htmlFor="etl-dashboard-binding-enabled">
+                <Checkbox checked={dashboardBindingEnabled} id="etl-dashboard-binding-enabled" onCheckedChange={(checked) => setDashboardBindingEnabled(checked === true)} />
+                <span>
+                  <strong>결과를 Dashboard에 자동 반영</strong>
+                  <small>새 Dashboard를 만들고 출력 Dataset 하나만 선택된 상태로 고정합니다.</small>
+                </span>
+              </label>
+              {dashboardBindingEnabled ? (
+                <Field className="etl-dashboard-binding-name">
+                  <FieldLabel htmlFor="etl-dashboard-title">Dashboard 이름</FieldLabel>
+                  <Input id="etl-dashboard-title" maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} />
+                  <FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 자유롭게 편집할 수 있습니다.</FieldDescription>
+                </Field>
+              ) : null}
+            </div>
           </section>
 
           <section className="etl-review-card">

@@ -222,6 +222,16 @@ class DashboardJobBindingDelivery(CamelModel):
     error_message: str | None = None
 
 
+class DashboardBoundDataset(CamelModel):
+    """The managed output source, including its pre-publication Job schema."""
+
+    id: str
+    name: str
+    layer: str
+    status: str
+    schema_: list[list[str]] = Field(default_factory=list, alias="schema")
+
+
 class DashboardJobBinding(CamelModel):
     id: str
     dashboard_id: str
@@ -235,6 +245,7 @@ class DashboardJobBinding(CamelModel):
     created_at: str
     updated_at: str
     latest_delivery: DashboardJobBindingDelivery | None = None
+    output_dataset: DashboardBoundDataset | None = None
 
 
 class DashboardJobBindingList(CamelModel):

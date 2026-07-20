@@ -9,6 +9,13 @@ export type DashboardJobBinding = {
   outputDatasetId: string;
   mode: "managed" | "detached";
   enabled: boolean;
+  outputDataset?: {
+    id: string;
+    name: string;
+    layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
+    status: "preparing" | "available" | "approval_required";
+    schema: Array<[string, string]>;
+  } | null;
 };
 
 export function createDashboardJobBinding(input: {

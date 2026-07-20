@@ -19,6 +19,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
     DashboardBindingDeliveryStatus,
+    DashboardBoundDataset,
     DashboardBindingMode,
     DashboardJobBinding,
     DashboardJobBindingCreateRequest,
@@ -164,4 +165,58 @@ class DashboardJobBindingService:
             mode=DashboardBindingMode(binding.mode), enabled=binding.enabled, created_by=binding.created_by,
             detached_at=binding.detached_at.isoformat() if binding.detached_at else None,
             created_at=binding.created_at.isoformat(), updated_at=binding.updated_at.isoformat(), latest_delivery=latest,
+            output_dataset=self._output_dataset_summary(binding),
         )
+
+    def _output_dataset_summary(self, binding: DashboardJobBindingModel) -> DashboardBoundDataset:
+        """Keep a managed source visible before its first Catalog publication.
+
+        A snapshot Job stores its output schema at creation time, while the
+        Catalog record is intentionally created only after a successful run.
+        The Dashboard must therefore not depend on the Catalog list alone to
+        render a newly bound source.
+        """
+        catalog_payload = CatalogRepository(self.db).get_dataset_payload(binding.output_dataset_id)
+        if catalog_payload is not None:
+            return DashboardBoundDataset(
+                id=str(catalog_payload.get("id") or binding.output_dataset_id),
+                name=str(catalog_payload.get("name") or binding.output_dataset_id),
+                layer=str(catalog_payload.get("layer") or "GOLD"),
+                status=str(catalog_payload.get("status") or "available"),
+                schema_=_schema_rows(catalog_payload.get("schema")),
+            )
+
+        if binding.job_kind == DashboardJobKind.ETL.value:
+            job = self.db.get(ETLJobModel, binding.job_id)
+            if job is not None:
+                return DashboardBoundDataset(
+                    id=binding.output_dataset_id,
+                    name=job.target or job.name,
+                    layer=job.target_layer or "GOLD",
+                    status="preparing",
+                    schema_=_schema_rows(job.schema_columns),
+                )
+
+        job = self.db.get(ContinuousSqlJobModel, binding.job_id)
+        return DashboardBoundDataset(
+            id=binding.output_dataset_id,
+            name=job.output_dataset_name if job is not None else binding.output_dataset_id,
+            layer=job.output_layer if job is not None else "GOLD",
+            status="preparing",
+            schema_=[],
+        )
+
+
+def _schema_rows(value: object) -> list[list[str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[list[str]] = []
+    for column in value:
+        if isinstance(column, (list, tuple)) and len(column) >= 2:
+            rows.append([str(column[0]), str(column[1])])
+        elif isinstance(column, dict):
+            name = column.get("name") or column.get("columnName")
+            data_type = column.get("type") or column.get("dataType")
+            if name and data_type:
+                rows.append([str(name), str(data_type)])
+    return rows

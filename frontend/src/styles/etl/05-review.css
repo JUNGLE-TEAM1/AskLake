@@ -18,6 +18,45 @@
   white-space: nowrap;
 }
 
+.etl-dashboard-binding {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 20px;
+}
+
+.etl-dashboard-binding-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.etl-dashboard-binding-toggle > span {
+  display: grid;
+  gap: 4px;
+}
+
+.etl-dashboard-binding-toggle strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.etl-dashboard-binding-toggle small {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.etl-dashboard-binding-name {
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
 .etl-review-kv {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

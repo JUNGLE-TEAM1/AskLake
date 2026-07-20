@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
-import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
+import { bindingOutputToDashboardOption, sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
 import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
@@ -21,7 +21,7 @@ import {
   publishDashboard as publishRuntimeDashboard,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../services/dashboardApi";
-import { getDashboardJobBinding } from "../../services/dashboardJobBindingApi";
+import { getDashboardJobBinding, type DashboardJobBinding } from "../../services/dashboardJobBindingApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, SavedDashboardCard, SqlResultDraft } from "../../types";
 import type { DashboardDatasetOption } from "./runtime/dashboardRuntimeTypes";
@@ -103,6 +103,7 @@ export function DashboardPage({
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [managedDatasetId, setManagedDatasetId] = useState<string | null>(null);
+  const [managedBinding, setManagedBinding] = useState<DashboardJobBinding | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [deletedDatasetIds, setDeletedDatasetIds] = useState<Set<string>>(() => new Set());
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
@@ -120,12 +121,15 @@ export function DashboardPage({
   } = useDashboardDatasets(view === "runtime");
   const availableDashboardDatasets = useMemo(
     () => {
-      const datasets = sqlDashboardDataset
+      const boundDataset = managedBinding ? bindingOutputToDashboardOption(managedBinding) : null;
+      const datasets = boundDataset
+        ? [boundDataset, ...dashboardDatasets.filter((item) => item.id !== boundDataset.id)]
+        : sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
       : dashboardDatasets;
       return datasets.filter((item) => !deletedDatasetIds.has(item.id) && (!managedDatasetId || item.id === managedDatasetId));
     },
-    [dashboardDatasets, deletedDatasetIds, managedDatasetId, sqlDashboardDataset],
+    [dashboardDatasets, deletedDatasetIds, managedBinding, managedDatasetId, sqlDashboardDataset],
   );
   const availableDashboardDatasetIds = useMemo(
     () => new Set(availableDashboardDatasets.map((item) => item.id)),
@@ -146,10 +150,16 @@ export function DashboardPage({
     let cancelled = false;
     void getDashboardJobBinding(runtimeSelection.dashboardId)
       .then((binding) => {
-        if (!cancelled) setManagedDatasetId(binding?.mode === "managed" && binding.enabled ? binding.outputDatasetId : null);
+        if (cancelled) return;
+        const isManaged = binding?.mode === "managed" && binding.enabled;
+        setManagedBinding(isManaged ? binding : null);
+        setManagedDatasetId(isManaged ? binding.outputDatasetId : null);
       })
       .catch(() => {
-        if (!cancelled) setManagedDatasetId(null);
+        if (!cancelled) {
+          setManagedBinding(null);
+          setManagedDatasetId(null);
+        }
       });
     return () => { cancelled = true; };
   }, [runtimeSelection.dashboardId]);
