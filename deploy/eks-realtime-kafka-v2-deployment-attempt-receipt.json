@@ -1,0 +1,43 @@
+{
+  "contractVersion": "1.0",
+  "issue": 1084,
+  "gitRevision": "f2694e4c1843faa54f3f2fd551f4579f9dc78346",
+  "environment": "dev",
+  "cluster": "asklake-dev",
+  "namespace": "asklake-dev",
+  "region": "ap-northeast-2",
+  "imagePublish": {
+    "status": "passed",
+    "tag": "git-f2694e4c",
+    "components": [
+      "clickhouse-v2",
+      "kafka-connect-v2",
+      "backend"
+    ],
+    "immutableDigestsVerified": true,
+    "platform": "linux/amd64"
+  },
+  "preflight": {
+    "status": "blocked",
+    "passed": [
+      "receipt contract",
+      "static verification",
+      "helm lint",
+      "helm render",
+      "ExternalSecret contract checks"
+    ],
+    "blockedAt": "live service discovery",
+    "reason": "required Service kafka-connect-v2 was not found in asklake-dev"
+  },
+  "apply": {
+    "performed": false,
+    "reason": "preflight did not pass"
+  },
+  "runtimeBefore": {
+    "v2WorkloadReplicas": 0,
+    "continuousControlPlane": "external_ec2",
+    "v2ApiEnabled": false
+  },
+  "productionTransferAllowed": false,
+  "createdAt": "2026-07-20T00:00:00Z"
+}
