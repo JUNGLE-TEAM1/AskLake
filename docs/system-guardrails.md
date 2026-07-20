@@ -63,6 +63,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | Deploy readiness failed | GitHub Actions artifact의 JSON record와 실패한 `compose_config`, `backend_image`, `backend_dependencies`, `backend_python_dependencies`, `backend_runtime_contract`, `frontend_image` step을 확인한다. 로컬 재현은 `bash scripts/verify-deploy-readiness.sh`로 한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
+| Spark Planner가 AWS S3 입력을 `input_size_unavailable`로 기록 | FastAPI workload identity의 직접 `HEAD`와 `S3_ALLOWED_BUCKETS`를 먼저 확인한다. AWS native S3는 custom endpoint를 저장하거나 `S3_ALLOWED_ENDPOINTS`를 요구하지 않으며, custom endpoint를 쓰는 Source만 endpoint allowlist를 가져야 한다. |
 | Admin audit contract failed | `cd backend && npm run verify:admin-audit-contract`로 `query_run`, 레거시 `unknown`, OpenAPI inline/local-ref 의미 호환성과 frontend 타입 집합을 확인한다. session 기반 실제 HTTP 흐름은 `npm run verify:identity-admin`, 부분 실패 UI는 `cd frontend && npm run test:admin-console-load`로 확인한다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |
