@@ -5,6 +5,7 @@ set +x
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/verify-eks-context.sh"
+source "$ROOT_DIR/scripts/lib/verify-eks-backend-rollout-boundary.sh"
 
 RECEIPT_PATH="${1:-${ASKLAKE_IMAGE_RECEIPT:-}}"
 NAMESPACE="${ASKLAKE_EKS_NAMESPACE:-asklake-dev}"
@@ -343,8 +344,7 @@ unset target_secret_after secret_hash_before secret_hash_after
 bash "$ROOT_DIR/scripts/verify-eks-backend-image-provenance.sh" \
   "$RECEIPT_PATH" "$new_backend_image" "$receipt_commit" >/dev/null
 bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
-bash "$ROOT_DIR/scripts/verify-eks-continuous-process-boundary.sh" >/dev/null
-bash "$ROOT_DIR/scripts/verify-eks-external-ec2-instance.sh" >/dev/null
+verify_asklake_backend_rollout_boundary "$ROOT_DIR" >/dev/null
 
 ROLLOUT_COMPLETE=true
 transport_rechecks=0
