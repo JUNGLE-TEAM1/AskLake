@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "issue": 1101,
   "status": "deployed-v1-only-live-verified",
-  "observedAt": "2026-07-20T08:58:37Z",
+  "observedAt": "2026-07-20T09:25:00Z",
   "source": {
-    "branch": "feat-#1101",
+    "branch": "pair1",
     "baselineRef": "origin/pair1",
-    "baselineCommit": "1066190e066c2b33dbdb45f92655ce7b3862b3bd",
-    "workingTreeCommitted": false,
-    "mergedIntoPair1": false,
-    "imageTag": "feat-1101-kafka-owner-20260720-06"
+    "baselineCommit": "eaec2e1dd70b52adc169067c080a25f4f45d7f40",
+    "workingTreeCommitted": true,
+    "mergedIntoPair1": true,
+    "pullRequest": "https://github.com/JUNGLE-TEAM1/AskLake/pull/1102",
+    "imageTag": "pair1-eaec2e1d-20260720-01"
   },
   "target": {
     "region": "ap-northeast-2",
@@ -19,12 +20,12 @@
   },
   "helmReleases": {
     "asklake-web": {
-      "revision": 117,
+      "revision": 118,
       "status": "deployed",
       "chart": "asklake-web-0.5.0"
     },
     "asklake-realtime-v1": {
-      "revision": 15,
+      "revision": 16,
       "status": "deployed",
       "chart": "asklake-workloads-0.2.0"
     },
@@ -35,8 +36,8 @@
     }
   },
   "images": {
-    "frontend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:f1b87c3311205925c68f9fadaf7bf7ed66e85d6fd0db9a8bf9fbf7703967145a",
-    "backend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:1e5fbbac593ab4bd362de180604ee9dd671b789aba51a5827864a436b19685a1"
+    "frontend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/frontend@sha256:87673473ded747e117ddfc31dbf82067ba2560df6411210371cff40985ec5943",
+    "backend": "215819604878.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0117ee8142a43d3ca35804657b6caa8967f0fc05af7b10a43745955405ee8c39"
   },
   "runtimeContract": {
     "selectedRealtimeJobEngine": "spark_structured_streaming",
@@ -129,6 +130,8 @@
     "liveKafkaToIcebergCatalog": "pass",
     "frontendProfileTests": "3-pass",
     "continuousSessionSelectionTests": "5-pass",
+    "terraformContractTests": "55-pass",
+    "githubPullRequestChecks": "12-pass",
     "frontendProductionBuild": "pass",
     "backendExternalHealthStatus": 200,
     "frontendExternalStatus": 200,
@@ -137,15 +140,13 @@
     "terminatingBackendPods": 0
   },
   "rollback": {
-    "webPreviousRevision": 116,
-    "v1PreviousRevision": 14,
+    "webPreviousRevision": 117,
+    "v1PreviousRevision": 15,
     "v2PreviousRevision": 46,
     "deleteCheckpointForbidden": true,
     "deletePreservedV2StorageForbidden": true
   },
   "limitations": [
-    "The deployed images were built from the uncommitted feat-#1101 working tree on top of origin/pair1.",
-    "This deployment does not merge or publish the V1-only source changes to pair1.",
     "Existing jobs marked kafka_connect_clickhouse_v2 remain fail closed and are not rewritten to V1.",
     "Continuous jobs created before V1 admission was enabled and lacking ownerClaim remain fail closed; the live verification used a newly created owner-claimed job.",
     "The deployment reused the already validated V1 canary owner generation and did not create a new production data identity."
