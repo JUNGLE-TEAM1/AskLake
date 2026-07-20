@@ -170,6 +170,10 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
 
 def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_payload = dict(payload)
+    # RAG is no longer a product/runtime capability. Older durable Catalog
+    # payloads may omit this former field, so retain a harmless compatibility
+    # default instead of making the whole Catalog list fail validation.
+    normalized_payload.setdefault("rag", False)
     physical_bindings = normalized_payload.get("physicalBindings")
     if not isinstance(physical_bindings, list):
         physical_bindings = []

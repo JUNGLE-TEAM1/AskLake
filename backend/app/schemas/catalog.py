@@ -131,7 +131,9 @@ class CatalogDatasetResponse(CamelModel):
     next_refresh: str
     owner: str
     quality: str
-    rag: bool
+    # Kept only to deserialize Catalog payloads created before RAG was removed.
+    # New runtime paths neither create nor consume RAG metadata.
+    rag: bool = False
     rows: str
     sample_rows: list[list[str]]
     schema_: list[tuple[str, str]] = Field(alias="schema")
