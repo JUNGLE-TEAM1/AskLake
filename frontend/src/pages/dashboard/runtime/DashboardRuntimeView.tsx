@@ -177,7 +177,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
-  const [assistantDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
+  const [assistantSelectedDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
@@ -254,6 +254,11 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
+  const managedDataset = managedDatasetId
+    ? dashboardDatasets.find((dataset) => dataset.id === managedDatasetId) ?? null
+    : null;
+  const assistantDatasetIds = managedDatasetId ? [managedDatasetId] : assistantSelectedDatasetIds;
+  const managedDatasetPreparing = managedDataset?.status === "preparing";
   useEffect(() => {
     const availableIds = new Set(dashboardDatasets.map((dataset) => dataset.id));
     setAssistantDatasetIds((current) => {
@@ -273,7 +278,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       ...widget.config,
       ...patch,
     } as UpdateDraftWidgetFormInput["config"],
-    datasetId: widget.datasetId ?? null,
+    datasetId: managedDatasetId ?? widget.datasetId ?? null,
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
@@ -300,7 +305,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
   const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
-    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const nextDatasetId = managedDatasetId ?? patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
     const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
 
     return onUpdateWidget(widget.id, {
@@ -379,6 +384,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
+      if (managedDatasetId) return;
       const wasSelected = assistantDatasetIds.includes(datasetId);
       setAssistantDatasetIds((current) => (
         current.includes(datasetId)
@@ -398,6 +404,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
+      if (managedDatasetId) return;
       setAssistantDatasetIds((current) => (
         current.includes(dataset.id) ? current : [...current, dataset.id]
       ));
@@ -536,6 +543,8 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
+              managedDatasetId={managedDatasetId}
+              mutationBlockedMessage={managedDatasetPreparing ? "연결된 Job의 첫 실행이 완료된 뒤 차트를 만들 수 있습니다." : null}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedDatasetIds={assistantContext.selectedDatasetIds}

@@ -27,6 +27,8 @@ type DashboardAssistantPanelProps = {
   currentDatasetId?: string | null;
   dashboardId?: string;
   datasets: DashboardDatasetOption[];
+  managedDatasetId?: string | null;
+  mutationBlockedMessage?: string | null;
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   pageId: string | null;
@@ -119,6 +121,8 @@ export function DashboardAssistantPanel({
   currentDatasetId,
   dashboardId,
   datasets,
+  managedDatasetId = null,
+  mutationBlockedMessage = null,
   onCreateWidget,
   onUpdateWidget,
   pageId,
@@ -171,6 +175,11 @@ export function DashboardAssistantPanel({
 
     setIsSubmitting(true);
     const { mode, requestPrompt } = buildAssistantRequestIntent(nextPrompt, messages, Boolean(selectedWidget));
+    if (mode === "visualization_request" && mutationBlockedMessage) {
+      setIsSubmitting(false);
+      setError(mutationBlockedMessage);
+      return;
+    }
     const selectedWidgetId = mode === "visualization_request"
       ? resolveDashboardAssistantMutationTarget(nextPrompt, selectedWidget?.id)
       : selectedWidget?.id ?? null;
@@ -196,6 +205,7 @@ export function DashboardAssistantPanel({
       }
       const actionMessages = await applyAssistantWidgetActions({
         datasets,
+        managedDatasetId,
         onCreateWidget,
         onUpdateWidget,
         response,
