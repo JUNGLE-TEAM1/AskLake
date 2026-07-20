@@ -695,10 +695,7 @@ def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContex
         if db is not None
         else None
     )
-    query_engine_required = (
-        settings.trino_enabled
-        and str(dataset.storage_format or "").strip().casefold() != "clickhouse"
-    )
+    query_engine_required = settings.trino_enabled
     if (
         permissions is not None
         and query_engine_required

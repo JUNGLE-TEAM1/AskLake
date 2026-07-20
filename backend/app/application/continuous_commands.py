@@ -138,9 +138,6 @@ def execute_continuous_command(
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
         ) or requested_attempt_id
-        if worker_result.get("worker") == "kafka_connect_clickhouse_v2":
-            job.last_state = "Kafka Connect → ClickHouse V2 수집 시작 요청"
-            job.progress = {"label": "Kafka Connect V2 시작 요청", "value": 5}
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
         runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)

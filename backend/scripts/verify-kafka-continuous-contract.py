@@ -130,7 +130,7 @@ def main() -> None:
 
     config = etl_service.continuous_config_from_request(continuous_request(), "JOB-CONTINUOUS-CONTRACT")
     assert config == {
-        "runtimeEngine": "kafka_connect_clickhouse_v2", "runtimeGeneration": 1,
+        "runtimeEngine": "spark_structured_streaming", "runtimeGeneration": 1,
         "initialOffsetPolicy": "earliest",
         "triggerIntervalSeconds": 30,
         "maxOffsetsPerTrigger": 10000,

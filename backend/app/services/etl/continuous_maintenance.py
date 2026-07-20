@@ -11,8 +11,6 @@ RUNTIME_NAMES = {
     'IcebergWriterError',
     'IcebergWriterService',
     'IcebergWriterTarget',
-    'clickhouse_kafka_ingest_v2_enabled',
-    'clickhouse_kafka_ingest_v2_selected',
     'UTC',
     'ValueError',
     'apply_continuous_replay_runtime_counters',
@@ -50,10 +48,8 @@ RUNTIME_NAMES = {
     'require_continuous_job_access',
     'require_continuous_maintenance_idle',
     'require_no_active_continuous_maintenance',
-    'require_kafka_ingest_v2_ready',
     'reversed',
     'run_kafka_continuous_maintenance',
-    'run_clickhouse_kafka_ingest_v2',
     'run_kafka_continuous_worker',
     'run_node_bridge',
     'safe_record_audit_event',
@@ -72,15 +68,6 @@ def run_kafka_continuous_worker(
     action: str,
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if clickhouse_kafka_ingest_v2_selected(job):
-        require_kafka_ingest_v2_ready(job, settings)
-        return run_clickhouse_kafka_ingest_v2(
-            job,
-            runtime,
-            action,
-            options,
-            runtime_settings=settings,
-        )
     config = job.continuous_config or {}
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)

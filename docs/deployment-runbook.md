@@ -237,9 +237,6 @@ export ASKLAKE_HEALTH_RETRY_DELAY=5
 scripts/deploy.sh diagnose
 ```
 
-기본 출력 경로는 `${TMPDIR:-/tmp}/asklake-deploy-diagnostic.json`이며,
-필요하면 `ASKLAKE_DEPLOY_DIAGNOSTIC_PATH`로 로컬 경로를 지정한다. record는 EC2 running 상태, canonical URL, deploy env preflight, frontend/backend/AI health, Compose 상태, Trino 및 ClickHouse readiness를 `passed`, `failed`, `skipped`로 남긴다. 실패한 단계가 있어도 가능한 나머지 관찰을 끝까지 수집한 뒤 non-zero로 종료한다.
-
 record에는 server `deploy/.env`, SSH key path, credential, raw remote log를 저장하지 않는다. 이 명령은 EC2 시작/중지, Compose 재기동, Git pull, rollback, checkpoint 또는 데이터 변경을 수행하지 않는다.
 
 ## 8. 로그 확인

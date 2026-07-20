@@ -68,8 +68,6 @@ helm template asklake-workloads \
   --set-string realtimeV1.ownerTransfer.generation='<approved-generation>'
 ```
 
-This command is a render example, not authorization to apply. Before an actual upgrade, follow `docs/eks-realtime-kafka-v1-rollout.md`: fence the previous owner for the exact identity, write the matching PostgreSQL durable owner claim, approve one exact generation-scoped topic/group pair, and verify the Backend and Spark `continuous-runtime` plus Spark output/checkpoint prefixes. The Realtime Deployment is an independent release, consumes the foundation-owned `asklake-runtime` ConfigMap, uses dedicated worker/Spark ServiceAccounts, passes the owner/generation to the worker, and explicitly disables V2 flags/consumer ownership. Kafka Connect, ClickHouse, and Keeper are not rendered by this V1 component.
-
 FastAPI's normal batch path uses the in-cluster Kubernetes API to create a deterministic `SparkApplication` per `runId`, recover the same object after a duplicate create or lost response, poll terminal state, read the driver result marker, and delete a timed-out application. Chart rendering and unit tests verify that contract; the final live proof still requires A's AWS resources.
 
 The foundation ServiceAccount contract sets `asklake-backend` and `asklake-spark` to `automountServiceAccountToken: true`. FastAPI needs the token to manage `SparkApplication` objects; the Spark driver needs it to create and monitor executor Pods. The 15-day MVP keeps driver and executor on the same `asklake-spark` ServiceAccount, so executor Pods inherit the driver token/RBAC as a documented residual risk; split them before production. Frontend, Airflow, MSK smoke, and Trino keep the Kubernetes API token disabled. FastAPI startup/readiness use the DB-aware `/api/health` endpoint, while liveness uses a TCP socket so an RDS outage removes Pods from Service endpoints without causing restart loops.
@@ -85,14 +83,6 @@ use a server-side dry-run and verify actual Pod placement during the next
 authorized Helm upgrade.
 
 ## Realtime backend opt-in
-
-The `standard` default Backend renders `ASKLAKE_CONTINUOUS_CONTROL_PLANE=external_ec2` with ClickHouse Realtime V2 and Kafka Connect disabled. This preserves the EC2-owned Continuous cell and rejects EKS Continuous control/read paths.
-
-Only an approved V2 owner-transfer values file may set `backend.realtime.enabled=true`. The schema then requires the local API boundary, Continuous SQL, SSE/hybrid events, Kafka Connect V2 owner, fixed private Service URLs and the separate `asklake-realtime-runtime` Secret. The web Deployment keeps `CONTINUOUS_CONTROL_PLANE=disabled`; reconciliation belongs to the separate worker.
-
-`deploy/profiles/realtime-v1-only.yaml` is the separate pair1 V1-only profile. It opens the local web/API intent path without mounting V2 credentials, keeps every V2 and Continuous SQL/Gold flag off, and renders no realtime owner by itself. A private activation overlay may enable only `realtimeV1` and must provide previous-owner fencing, approval, and a fresh generation. `scripts/verify-eks-realtime-v1-only-profile.sh` proves the base owner count is zero, the approved contract render has exactly one V1 worker, and V2 resources remain zero.
-
-V2 ClickHouse/Keeper/Kafka Connect assets remain opt-in and are not rendered by the V1-only profile. The independent recovery/cutover contract remains documented in [the separate realtime chart](../asklake-realtime-data-plane/README.md) and `docs/eks-clickhouse-realtime-gold-runbook.md`.
 
 ## Trino distributed opt-in
 

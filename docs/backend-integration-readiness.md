@@ -7,28 +7,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 2026-07-18 pair1·dev 통합은 dev의 최신 ETL/frontend/SQL 모듈 경계를 유지하면서 pair1의 EKS bounded fixture, Kubernetes Spark UID 복구, RDS owner/generation fence와 `external_ec2` 소유권 계약을 전용 adapter에 이식했다. Day 18 후속 계약은 non-terminal 동일 UID 복구와 terminal-failed attempt generation을 분리하고, 기존 EKS fixture Run에 deny-only MSK evidence를 연결한다. Python 전체 회귀 873개와 Spark Kubernetes Node 계약 18개가 통과했다. 실제 live rollout/fault/E2E 완료 여부는 [Day 18 Phase 7·8 결과](eks-day18-phase7-8-result.md)를 따른다.
 
-Issue #1061은 pair1에 누락된 ClickHouse V2 Catalog/Dashboard projection, whitespace fact parsing과 Continuous JOIN validation 수정을 반영했다. focused backend 46개, Continuous SQL 23개, V2 release 60개와 realtime stack 101개가 통과했다. EKS는 별도 realtime data-plane chart와 backend opt-in을 추가했지만 기본 `external_ec2`와 기존 workload render는 유지한다. live shadow/cutover/fault/restore는 아직 실행하지 않았으며 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)의 manual gate다.
-
 ## 1. 현재 연결 상태
-
-| 영역 | 현재 상태 | 남은 범위 |
-| --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` read-only hydrate. 외부 runtime probe와 상태 write 없이 Job/최신 Run/runtime/permission 자료를 종류별로 일괄 조회한다. `GET /api/etl/jobs/statuses`는 active Snapshot Job 최대 100개의 저장된 상태·진행률·최신 Run·DAG 단계만 한 번에 반환한다. 목록 `runHistory`는 Job별 최신 Run 1개만 반환하고 상세/실행 이력 route는 read-only `GET /api/etl/jobs/{jobId}`로 전체 이력을 hydrate한다. `status` 반복 query, `scheduleKind=daily|weekly|monthly|realtime|none|other`, `owner`, `lastRunOutcome`으로 server-side 목록을 좁히고 status/최근 실행 결과 count와 owner facet을 함께 반환. Frontend는 초기 Jobs 응답을 Catalog 응답과 독립 반영한다. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시하며, `PATCH /api/etl/jobs/{jobId}`가 같은 Job ID에 허용된 metadata를 저장 | 삭제 API, 서버 pagination/search, 복제 후 새 Job 생성 UX |
-| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
-| Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. bucket 목록은 writer의 `ASKLAKE_SPARK_OUTPUT_BUCKET`을 첫 번째로 반환하고 프론트의 오래된 기본 bucket을 이 값으로 교정한다. 로컬은 MinIO, EC2 prod compose는 실제 AWS S3와 instance profile IAM Role/default credential chain을 사용하며 AWS 설정 누락은 명시적 `503`이다. | 서비스별 IAM 분리와 credential rotation 고도화 |
-| Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock/live mode 모두 연결 검증과 대상 선택을 분리한다. `POST /api/etl/sources/assets`가 S3 파일·폴더, PostgreSQL 테이블, MongoDB 컬렉션 후보를 반환하고, 사용자가 단일 대상 또는 File / S3 prefix를 선택한 뒤에만 `POST /api/etl/sources/test`가 schema/sampleRows를 만든다. Prefix는 폴더 펼치기와 별도 action으로 선택하고 같은 형식·호환 schema 파일만 데이터셋으로 인정하며 대표 파일, 전체 파일 수·용량을 `datasetSummary`로 반환한다. JSON/JSONL은 native token으로 `String`/`Long`/`Double`/`Boolean`/`JSON`을 구분하고 dotted source path와 물리 target alias를 분리한다. File/S3 `.txt`/`.log`는 Source 탐색에서 `rawPreviewLines`의 줄바꿈을 보존한 원문 블록으로 표시하고, `POST /api/etl/record-parsing/preview`에서만 공백 구분 규칙과 필드 수를 검증한다. Kafka Source는 broker에서 읽은 raw text와 JSON `value`를 `rawPreviewLines`에 변형 없이 보존한다. JSON/JSONL은 `Kafka JSON 원본 샘플`로 표시하고 `requiresRecordParsing=false`로 Schema 단계에 연결하며, nested `raw` 값을 공백 로그로 복원하지 않는다. 실제 Kafka raw text만 `requiresRecordParsing=true`로 레코드 구조화 단계에 연결한다. Kafka Snapshot과 Continuous runtime도 저장된 같은 구조화 계약을 적용한다. replay producer의 `payloadMode=raw_text`는 배포 입력 파일의 각 줄을 JSON envelope 없이 전송한다. `npm run minio:seed-click-log`는 100줄 fixture를 준비하고 `npm run synthetic-commerce:click-log`는 로컬 또는 S3 prefix의 클릭 JSONL을 메모리 제한형 10필드 `.log`와 manifest로 변환한다. S3 mode는 IAM/default credential chain, ETag `If-Match`, multipart upload/abort를 사용한다 | 변환 CLI의 ETL/Airflow 자동 실행 연결, 임의 정규식, 오류 행 재처리, partitioned Parquet 및 다중 Parquet 파일의 통합 스키마 추론 |
-| Rule | versioned canonical `rules[]` compiler, legacy transform/quality adapter, create/update/review 사전 검증, pass-through output schema와 bounded Rule Preview를 제공한다. Snapshot conformance를 통과한 stateless Rule은 Continuous `foreachBatch`와 replay에도 같은 Spark runtime으로 적용한다 | stateful join/aggregation과 engine-specific SQL은 후속 범위 |
-| Job command | Kafka Snapshot Job은 fixed range를 transform/quality한 뒤 Iceberg append, Trino/Catalog 검증, offset commit 순서로 실행하고 같은 snapshot retry를 deduplicate한다. non-Kafka Job은 Airflow DAG Run을 접수한다. V2 조건(`CLICKHOUSE_REALTIME_V2_ENABLED`, `KAFKA_CONNECT_SINK_ENABLED`, consumer owner `kafka_connect_v2`)이 모두 켜진 Continuous Kafka Job은 Spark를 시작하지 않고 Kafka Connect raw sink를 등록·재개한다. 시작 시 Catalog `preparing`과 pending ClickHouse serving binding을 만들고, 첫 topic offset 확인 뒤 `available`, freshness/revision/SSE event와 topic-scoped Dashboard reader를 게시한다. V2 runtime은 Connector state·ClickHouse offset을 직접 투영하고 Spark report/manifest/S3 archive를 요구하지 않는다. 조건이 꺼진 Continuous Job은 기존 Spark worker, partition cursor, checkpoint, deterministic source boundary, Iceberg append/reuse와 Trino/Catalog 복구를 유지한다. | V2 hot path의 Bronze/S3 archive 및 Spark parity/rebuild, production 대용량/concurrent-query soak |
-| Run/DAG | local Airflow DAG는 일반 batch의 Spark/Catalog 단계를 관리한다. Continuous는 start-to-terminal session과 하위 micro-batch 이력에 Source부터 Catalog까지 7단계 증적을 영속화하고 active 실행 이력 화면을 자동 갱신한다 | Spark log object storage 분리, session history 장기 retention/pagination |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, `GET /api/catalog/datasets/{datasetId}/rows` 기반 row pagination. 검증된 Iceberg Dataset은 `queryEngineTable`의 main snapshot을 요청당 고정해 count/page를 함께 조회하고 Catalog 사용자 schema만 projection한다. `POST /api/catalog/datasets/{datasetId}/unique-keys/verify-and-register`는 manage 권한과 exact null/empty/distinct scan을 통과한 정적 Iceberg key만 등록해 Continuous SQL UI의 자동 재검증에 사용한다. opt-in ClickHouse Continuous SQL Dataset은 첫 실제 offset/output publication 뒤에만 나타나며 `clickhouseTable`을 `FINAL`로 읽어 offset retry 중복을 제거한다. legacy file Dataset만 DuckDB compatibility reader를 사용한다. SQL derived/Kafka 결과를 Postgres JSONB payload로 반영하며 늦은 과거 snapshot reconciliation이 현재 projection을 되돌리지 않는다. 일반 Airflow/Spark batch는 Iceberg current snapshot/warehouse/exact file evidence를 검증하는 멱등 reconciliation endpoint, transaction, final-task 연결, Catalog route 독립 hydrate, frontend terminal-success 1회 refresh, live E2E 구현 | 서버 검색/정렬 API, Iceberg snapshot expiration과 materialization 삭제 UX 고도화 |
-| Semantic RAG Data Plane | 검증된 Spark Catalog publication이 exact Iceberg snapshot을 가진 `sourceManifest`를 발급하고, `asklake_rag_index` Airflow DAG가 그 snapshot을 Spark parent/chunk staging으로 변환한다. private embedding worker는 AI Gateway embedding과 OpenSearch generation index/alias publication을 수행한다. parent/chunk ID, checkpoint, callback stage, Spark transient `UNKNOWN` polling, failed-row threshold, worker idempotency와 dimension을 계약 테스트로 고정하며 stale active Job은 명시적으로 실패 전이한다. retention cleanup은 현재 alias에 연결된 index를 삭제하지 않는다. | 실제 provider/OpenSearch 대용량 soak, multi-node OpenSearch TLS/CA 운영, generation retention 운영 지표 |
-| EKS AI Gateway | private `ai-gateway:8090`, immutable image, exact 1 replica, provider-key 전용 Secret, Backend/MCP token binding, NetworkPolicy와 `/api/health/ai` 진단이 chart·contract 테스트에 포함된다. Backend는 provider key를 받지 않는다. | dev source/ExternalSecret sync, Gateway rollout, provider/MCP readiness, Dashboard Assistant·Query AI live smoke |
-| SQL 분석 | DuckDB compatibility snapshot과 Trino Query Run을 분리 지원. Trino mode는 canonical `/api/query/validate`, idempotent submit, durable collector, signed-cursor 결과 page, server-side CSV, Iceberg CTAS 등록과 반복 full-refresh SQL Job을 제공한다. ETL Job의 backend-owned `icebergTarget`, 일반 Spark/Kafka Snapshot/Kafka Continuous의 native Iceberg commit과 공통 `$refs` main snapshot/warehouse/`DESCRIBE`/exact `$snapshots.summary` 검증 adapter도 제공한다. Continuous maintenance 결과도 같은 current/exact snapshot 계약으로 Trino 재검증한다. 실행 평가와 timeline은 기존 SQL editor를 변경하지 않고 결과 panel의 `실행 정보` view에 표시한다. | old SQL Job table cleanup policy, org quota와 조직별 retention policy 고도화 |
-| Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. Catalog Iceberg source widget은 Catalog/physical schema 교집합만 검증된 Trino table에서 집계하고, opt-in ClickHouse source widget은 같은 widget query contract를 output table `FINAL`에 적용한다. 전체 wall-clock timeout 뒤 진행 query를 취소하고 legacy file source만 DuckDB를 사용한다. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
-| Permission/Governance | ETL Permission 화면이 그룹·사용자별 `permissionGrants`와 대상별 action을 저장하고 Job 접근 판정에 사용. owner는 자동 전체 권한 fallback, `permissionSummary`/`permissionRoles`는 호환용 요약. Job/Dataset/Dashboard 응답은 optional identity/grant/permission metadata를 제공. Backend는 session 또는 local header fallback을 `ActorContext`로 읽고 공통 `can()`을 적용한다. Dashboard/Catalog/Job뿐 아니라 Trino Query Run submit/history/result/CSV/cancel/materialization도 현재 Dataset 권한, principal block, resource lock과 submitter identity를 재검사한다. Frontend 비활성화는 UX 보조이고 backend 403이 최종 경계다. | 실서비스 조직/그룹 디렉터리 연동, deny/조건부 정책, dataset 생성/삭제 전체로 permission check 확대 |
-| Auth / Admin | httpOnly `asklake_session` cookie 기반 local login/signup/session/logout, 현재 사용자 profile, admin 사용자·그룹·permission grant·governance control API 연결. Production은 bootstrap admin, Secure cookie, header fallback/public signup 차단을 유지하고 재배포 시 기존 계정 status/session을 보존하며 legacy demo identity를 기본 비활성화한다. 공개 demo 배포만 backend/frontend paired opt-in으로 계정과 로그인 안내를 함께 복구하며 preflight가 값과 일치를 검증한다. | 운영 IdP/SSO와 정식 계정 provisioning |
-| Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그. Backend 저장/필터/응답은 단일 `AuditTargetType` 계약을 사용하고 `query_run`을 지원하며, 계약 밖 레거시 값은 `unknown`과 `metadata.rawTargetType`으로 안전하게 반환한다. Admin frontend는 users/groups/permissions/governance/audit 초기 요청을 section별로 격리해 한 API 실패가 성공한 metric과 탭을 0으로 덮지 않는다. | audit export/retention 정책 |
 
 감사 로그 신규 writer는 알려진 `AuditTargetType` enum member만 허용하고, `unknown`은 레거시 읽기 호환에만 사용한다. OpenAPI 호환성 검사는 inline enum과 local component `$ref`를 resolve한 의미 기준으로 비교하면서 enum 제거·type 변경·미해결 reference는 계속 차단한다. 프런트 재조회 실패는 마지막 성공 데이터를 stale로 유지하며 요청 순서가 역전되어도 최신 요청만 상태를 소유한다. `verify:identity-admin`은 smoke 전용 demo fixture를 명시적으로 활성화하고 admin/viewer session cookie로 관리 API를 호출하며 actor header fallback에 의존하지 않는다.
 
@@ -61,19 +40,6 @@ Kafka Source Preview와 Snapshot bridge는 공통 KafkaJS Snappy codec을 등록
 Production Spark 공유 경로는 `spark-runtime-guard`가 매 daemon restart마다 기존 데이터를 보존하면서 초기화한다. worker는 UID 185 write/read/atomic rename/delete, backend는 report readiness read를 각각 startup probe로 확인한다. `npm run verify:spark-runtime-paths`, `npm run verify:spark-runtime-paths:container`, `npm run verify:production-spark`가 이 경계를 검증하며 실패 로그는 `runtime_storage_unwritable` 등 path·expected/actual metadata가 있는 JSON code를 사용한다. deploy 관련 PR은 GitHub Actions `Deploy Readiness`가 Node 22/Python 3.13에서 production Compose render, backend/frontend deploy image build, backend production dependency 준비, repository Spark runtime contract를 실행하고 JSON release-readiness artifact를 남긴다. 이 CI gate는 EC2 deploy 또는 long-running Spark/Kafka 실행을 수행하지 않는다.
 
 Continuous publication은 `output -> manifest -> Catalog -> Dashboard` 단계로 분리되어 있다. output/manifest 외부 검증 뒤 Catalog를 독립 commit하고 Dashboard revision 또는 zero-row progress를 별도 commit한다. 같은 batch/run/manifest fingerprint의 재시도는 기존 Iceberg output과 Catalog Run을 재사용하며, Dashboard 실패는 적재 성공을 data loss로 바꾸지 않는다. 최신 단계 진단은 기존 runtime metrics의 bounded `publicationWorkflow`에 저장되고 공개 API·DB schema는 그대로 유지한다. 구현·복구 기준은 [Continuous Materialization·Catalog·Dashboard 발행 계약](./refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
-
-ClickHouse Continuous JOIN은 기존 Iceberg 경로를 대체하지 않는 dual-mode opt-in이다. `CONTINUOUS_SQL_JOIN_ENABLED=true`와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`인 `servingMode=clickhouse` Job만 Kafka Engine → raw `ReplacingMergeTree` → JOIN materialized view → output `ReplacingMergeTree` 경로를 사용한다. Kafka Engine은 `RawBLOB` 원문을 받고 저장된 공백 레코드/JSON schema 계약으로 typed raw row를 만든다. S3/Iceberg 정적 relation은 시작 시 SQL 참조 열만 exact snapshot에서 Trino page로 적재하고 `PINNED_AT_START`로 고정하며 동일 snapshot은 resume에서 재사용한다. raw input offset 수와 JOIN output 행 수를 분리해 Catalog revision을 발행하고 Dashboard는 JOIN된 output만 읽는다. pause/resume은 consumer group과 raw/output/static을 보존하며, 같은 Run 중 Spark/Iceberg 자동 fallback은 하지 않는다. worker status는 `system.kafka_consumers` exception을 포함해 JSON/field-count 오류를 false-running으로 숨기지 않는다. `npm run verify:clickhouse-kafka-join`은 실제 local Kafka·ClickHouse·PostgreSQL에서 Job 생성/시작, raw-text INNER JOIN, Catalog, published Dashboard 10개 widget type, pause 중 미소비와 resume 후 queued event 반영, offset duplicate 제거를 검증한다.
-
-Production deployment ownership은 `deploy/control-plane-ownership.json`에 EKS web/finite
-batch, EKS Realtime V1 Kafka, EKS Realtime V2 Continuous SQL과 EC2 rollback standby를
-구분해 기록한다. 정적 validator는 owner 0개·중복 claim·entrypoint evidence drift를
-차단한다. V1 worker는 `CONTINUOUS_WORKER_SCOPE=kafka`, V2 worker는
-`CONTINUOUS_WORKER_SCOPE=continuous_sql`과 각 scope별 PostgreSQL lease를 사용한다.
-EC2 control loop quiesce, V1 ready, transfer 승인과 새 V2 generation이 모두 있어야
-cutover render가 열린다. 이 선언은 runtime 역할을 자동으로 옮기지 않으며 실제
-EKS/EC2 process와 lease 대조는 rollout gate다.
-
-Issue #1062의 EKS V2는 public API나 runtime routing을 아직 활성화하지 않는다. Kafka Connect 1, ClickHouse 1, Keeper 1과 encrypted EBS PVC를 non-HA canary topology로 선택했고 canonical Helm workload, generation-derived 5-topic/2-group IAM, image-local auth plugin, paired CSI snapshot recovery와 receipt 계약까지 정적으로 완료했다. source consumer group과 Connect worker group은 분리된다. AWS apply, live restart/restore와 production transfer는 차단 상태이며 `deploy/eks-realtime-kafka-v2-mvp.json` validator 통과만으로 V2 runtime readiness를 표시하지 않는다.
 
 배포 readiness의 현재 관찰 기준은 [배포 파이프라인 Phase 0 기준선](./deployment-phase-0-baseline.md)에 기록한다. Compose health와 API JSON health, Spark driver 상태, Kafka Continuous session heartbeat는 별개로 확인한다. request/worker hot path의 schema DDL 경쟁 제거와 자동 release gate는 아직 후속 Phase 범위다.
 
@@ -417,20 +383,6 @@ MinIO/S3-backed Parquet Preview의 query-scoped cache/byte limit은 DuckDB compa
 
 Pair2 FastAPI 5단계 완료 기준:
 
-- `npm run verify:fastapi-pair2`가 통과한다.
-- live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
-- Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
-- Catalog 상세와 스키마 상세 modal에서 `GET /api/catalog/datasets/{datasetId}/rows`로 최신 성공 materialization의 첫/중간/마지막 page를 탐색한다.
-- DuckDB compatibility 실행은 기존 `POST /api/query/runs` snapshot/offset pagination 회귀를 유지한다.
-- Trino 실행은 `POST /api/query/validate` 성공 뒤 최대 100행 preview Query Run을 `202`로 접수하고 durable 상태를 polling한다.
-- Preview 결과는 PostgreSQL inline page로 반환한다. 전체 보기/CSV는 `POST /api/query/runs/{previewRunId}/full-results`로 별도 full run을 시작하고 signed cursor 또는 server CSV로 읽는다.
-- 결과 panel은 SQL editor를 변경하지 않고 `차트 보기`, `데이터 미리보기`, `실행 정보`를 같은 높이 안에서 전환한다. `실행 정보`는 평가와 preview의 두 단계 timeline을 포함한다.
-- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고 선택 Dataset ID만 request에 포함한다. Backend가 Catalog context를 재구성하고 명시적 분석 의도를 검증하며 위반 시 한 번만 교정 재요청한다. Frontend는 context가 바뀐 stale 응답을 적용하지 않고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
-- Query AI cost-aware v2는 Catalog의 schema/type, partition, storage/row/key/role metadata를 prompt에 추가하고 SQLGlot cost guard와 intent guard가 공통 최대 1회 교정 budget을 사용한다. 고정 합성 Iceberg snapshot과 12개 질문 suite의 candidate는 60/60 정답이며, provider 없는 CI는 `npm run verify:nessie-benchmark`로 fixture·durable run·bounded runner·33.33%→100% 비교 gate를 재현한다. Live campaign과 baseline 승격은 자동 실행하지 않는다.
-- DuckDB compatibility 처리 Job은 기존 `POST /api/etl/jobs` 흐름을 유지하고, Trino preview는 full result를 기다리지 않고 `POST /api/etl/sql-jobs` 반복 full-refresh recipe로 연결한다.
-- Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
-- 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
-
 ## 9. 대시보드
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
@@ -483,13 +435,6 @@ Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 
 Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
 
 Catalog dataset materialization 보완 기준:
-
-- 같은 Job 또는 같은 `targetDataset`의 성공 결과는 새 Catalog row를 만들지 않고 기존 dataset payload의 `materializationRuns` history에 추가한다. 일반 full-refresh는 snapshot으로 이전 snapshot을 rebaseline하고 Kafka delta만 누적한다.
-- `materializationRuns`가 없는 기존 payload는 빈 history로 읽기 호환한다.
-- `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}`는 metadata history만 삭제하고 active snapshot/delta 기준으로 부모 rows/size/latest/storageLocation을 재계산한다. 물리 lake 파일 삭제는 후속 범위다.
-- `GET /api/catalog/datasets/{datasetId}/deletion-impact`와 `DELETE /api/catalog/datasets/{datasetId}`는 materialization 한 건 삭제와 별개인 Dataset 전체 삭제 경로다. Catalog 목록에서 직접 시작하며 dependency blocker가 없을 때 durable worker가 AskLake-managed Iceberg/ClickHouse/local/S3/RAG artifact를 먼저 지우고 metadata를 정리한다. 물리 purge 실패 시 Dataset row를 유지하고 상태를 `failed`로 기록한다.
-- Catalog UI는 dataset row 펼침에서 version history를 5개씩 표시하며, 5개 이하일 때는 실제 개수만큼만 높이가 늘어난다.
-구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 10. 아직 실제 저장되지 않는 기능
 
@@ -679,43 +624,6 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 실제 Kafka/MinIO/Spark/Iceberg/Trino Continuous SQL E2E와 fault/restart 검증
 - [ ] production PostgreSQL multi-worker·실제 proxy/ALB·Spark 통합 및 rolling restart 검증
 
-Production Compose 기본값은 Kafka Connect V2 ClickHouse serving과 SSE를 활성화하고 Kafka Engine V1을 비활성화한다. 장애 시 `DASHBOARD_SYNC_MODE=polling`, `REALTIME_EVENTS_ENABLED=false`, `CLICKHOUSE_REALTIME_V2_ENABLED=false`, `KAFKA_CONNECT_SINK_ENABLED=false`, owner `disabled`와 profile 제거로 ingestion을 중지한다. V1로 rollback할 때는 새 generation에서만 V1 단일 owner를 명시한다.
-
-## ClickHouse Realtime Serving V2 readiness
-
-현재 기준선은 Kafka Engine 기반 opt-in ClickHouse V1, Continuous SQL V1, `dataset_freshness`/`dataset_revision_commits`, durable `realtime_event_log`, Dashboard `FINAL` reader와 hybrid SSE다. 아래 항목은 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)의 V2 완료 상태이며 기존 V1 체크리스트를 대체하지 않는다.
-
-- [x] 최신 `dev` V1 기준선과 Kafka Connect V2 gap을 문서화
-- [x] 기존 Continuous SQL API, revision table, event log와 Catalog 호환 field를 재사용하는 expand-only 계약 확정
-- [x] `scope_id="deployment"`와 resource ACL 유지, tenant foundation 비포함을 확정
-- [x] 같은 Job generation에서 Kafka Engine V1/Kafka Connect V2 동시 consumer ownership 금지
-- [x] PR01~09 merge 순서, disabled-mode rollback과 production 미전환 원칙 문서화
-- [x] PR02 repository: ClickHouse 26.3.17.4 exact image/digest, Kafka Connect 8.2.2 base와 공식 Sink v1.4.0 checksum provenance
-- [x] PR02 repository: 기본-off local/production profile, local loopback/prod private TLS 경계와 단일 Keeper/ClickHouse/Connect demo topology
-- [x] V2 repository: role-separated six-account init, V1/V2 owner fail-closed, worker plugin·V2 reader live health HTTP 503
-- [x] PR02 repository: deploy preflight의 V2 regression cases와 CI의 V2 profile render·Alembic upgrade/downgrade/upgrade lifecycle
-- [x] PR02 repository: Alembic 0016의 신규 metadata 10-table expand, fresh/current/repeat/development-downgrade topology test와 backend image migration 포함
-- [x] V2 isolated live: clean start/restart, strict CA 9440 health, HTTPS 8443·secure native 9440·interserver HTTPS 9010과 six-account RBAC grant
-- [ ] PR02 operator evidence: 실제 production certificate handshake, clean host/EC2 reboot, connector 등록·restart/rebalance, backup/restore와 HA failover
-- [x] PR03 repository: opaque raw envelope, DLQ/quarantine, read-committed receipt audit, contiguous checkpoint와 stable retry identity
-- [x] PR04 repository: current/temporal dimension version, overlap 거부, missing row hold/correction와 bounded late repair
-- [x] PR05 repository: SQL classifier/compiler, version-scoped shadow materializer, deterministic serving current와 split-failure reconcile
-- [x] PR06 repository: Catalog `physicalBindings`, binding epoch, 기존 revision/event-log schema v2 원자 publication
-- [x] PR07 repository: bounded ClickHouse Dashboard query, mutation-aware current requery, event-log replica replay와 event별 permission recheck
-- [x] PR08 repository/browser: Dataset cursor cache, epoch-aware snapshot replacement, stale/degraded last-good UX와 live route mock 제거
-- [x] PR09 repository: same-boundary hot/archive parity, idempotent rebuild ledger, gate-checked cutover/rollback, 0018 migration과 release CI
-- [x] PR09 local integration: PostgreSQL concurrent cutover 단일 event, ClickHouse 100-position parity smoke, 실제 Kafka→TLS ClickHouse 자동 JOIN/Catalog/SSE E2E와 deploy 62 checks
-- [ ] PR09 operator evidence: 실제 browser cutover→rollback DOM, multi-partition poison/rebalance, service restart/chaos와 backup/restore
-- [ ] 100k deterministic fixture 유실·논리 중복 0, restart/rebalance/gap/poison 검증
-- [ ] 최소 72시간 shadow count/checksum과 SLO evidence
-- [ ] production HA topology, backup/restore와 rollback drill에 대한 별도 운영 승인
-
-Production Compose는 PR09 V2 routing과 consumer flag를 기본 활성화한다. 단일 EC2 Compose는 HA로 판정하지 않으며 secret·TLS·immutable image, connector live readiness와 migration이 충족되지 않으면 preflight 또는 health가 배포를 차단한다.
-
-체크된 항목은 repository/local/container evidence다. ClickHouse serving mode Job은 topic-scoped connector를 자동 등록하고 reconcile이 JOIN과 publication을 수행한다. `/api/health/realtime`은 worker plugin과 V2 reader가 준비되지 않으면 HTTP 503으로 fail closed하지만 fresh deployment에 Job connector가 없는 것은 장애로 보지 않는다. PR06/09 additive migration은 `0017`/`0018`이며 production rollback에서 downgrade하지 않는다. 명령과 미완료 증거는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)과 [복구·전환 runbook](realtime-2026/clickhouse-v2-recovery-runbook.md)을 따른다.
-
-V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL `VARCHAR(64)`에 직접 저장하지 않고 canonical SHA-256 fingerprint로 고정한다. 정적 Iceberg snapshot은 Trino의 JOIN key 정렬 결과를 5,000행 이하 ClickHouse insert로 나눠 checksum·유일키·전체 행 수를 검증하므로 백만 행 단위 dimension도 전체 payload를 Python 메모리에 적재하지 않는다. 시작 중 dimension/control-plane 등록이 완료되지 않은 Job은 status reconciliation이 idempotent provisioning을 다시 수행한 뒤 partition checkpoint를 생성하므로, 부분 시작 실패가 외래키 오류로 고착되지 않는다.
-
 ## Legacy removal evidence readiness
 
 - [x] production legacy register 10경로와 evidence manifest ID·owner 1:1 검증
@@ -751,21 +659,4 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 
 ## Kafka Job engine routing readiness (#1073)
 
-- [x] 신규 Continuous create가 배포 프로파일의 server-owned engine/generation marker를 저장
-- [x] marker 없는 기존 Continuous Job은 Spark V1로 보존
-- [x] V2 marker Job의 disabled/unready 상태는 Spark fallback 없이 fail closed
-- [x] 결정적 connector/keeper identity와 persisted generation 사용
-- [x] 기존 UI에 `실시간 · ClickHouse`, `배치 · Spark` 표기
-- [x] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt
-
-2026-07-20 격리 EKS canary는 ClickHouse row 60→65, pause/resume, Connect Pod 교체 복구, 추가 적재 65→70, stop을 확인했다. rollback은 V2 task/workload 0, admission disabled, V2 PVC 2개 보존, V1 worker/lease 복구까지 완료했다. V1/V2 worker는 같은 Kafka control-plane lease를 공유하므로 동시 실행이 아니라 exact-one serial fence로 검증했다. 근거는 `deploy/eks-realtime-kafka-job-v2-receipt.json`이다.
-
 ## EKS Realtime V1-only profile readiness (#1101)
-
-- [x] `deploymentProfile=realtime-v1-only`가 V2/Gold flag와 `realtimeV2` render를 schema에서 거부
-- [x] EKS web/API는 local intent 경로로 생성·조회·command를 받고 side effect는 exact-generation V1 worker만 수행
-- [x] profile 단독 render owner 0, 승인된 검증 generation에서 V1 worker 1·V2 resource 0
-- [x] 신규 Continuous create가 `runtimeEngine=spark_structured_streaming`을 저장
-- [x] 기존 V2 marker Job은 V1 fallback 없이 503 fail closed
-- [x] UI가 실시간 Spark/배치 Spark를 구분하고 V1-only에서 ClickHouse Gold action을 숨김
-- [x] V2 코드와 EKS PVC/PV/VolumeSnapshot 보존 계약 문서화

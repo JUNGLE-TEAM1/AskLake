@@ -38,37 +38,6 @@ locals {
     )
   ]
 
-  msk_realtime_v2_identity = var.msk_realtime_v2_generation == null ? null : {
-    generation     = var.msk_realtime_v2_generation
-    source_topic   = "asklake.eks-realtime.v2.fixture.${var.msk_realtime_v2_generation}"
-    dlq_topic      = "asklake.eks-realtime.v2.dlq.${var.msk_realtime_v2_generation}"
-    config_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-config"
-    offset_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-offset"
-    status_topic   = "asklake-connect-v2-${var.msk_realtime_v2_generation}-status"
-    consumer_group = "asklake-eks-realtime-v2-${var.msk_realtime_v2_generation}"
-    worker_group   = "asklake-eks-realtime-v2-worker-${var.msk_realtime_v2_generation}"
-  }
-  msk_realtime_v2_topic_arns = local.msk_cluster_arn == null || local.msk_realtime_v2_identity == null ? [] : [
-    for topic in [
-      local.msk_realtime_v2_identity.source_topic,
-      local.msk_realtime_v2_identity.dlq_topic,
-      local.msk_realtime_v2_identity.config_topic,
-      local.msk_realtime_v2_identity.offset_topic,
-      local.msk_realtime_v2_identity.status_topic,
-      ] : format(
-      "%s/%s",
-      replace(local.msk_cluster_arn, ":cluster/", ":topic/"),
-      topic,
-    )
-  ]
-  msk_realtime_v2_group_arns = local.msk_cluster_arn == null || local.msk_realtime_v2_identity == null ? [] : [
-    for group in [local.msk_realtime_v2_identity.consumer_group, local.msk_realtime_v2_identity.worker_group] : format(
-      "%s/%s",
-      replace(local.msk_cluster_arn, ":cluster/", ":group/"),
-      group,
-    )
-  ]
-
   rds_endpoint = local.create_rds ? try(aws_db_instance.metadata[0].address, null) : var.existing_rds_endpoint
   rds_port     = local.create_rds ? try(aws_db_instance.metadata[0].port, 5432) : var.existing_rds_port
   rds_master_secret_arn = local.create_rds ? try(

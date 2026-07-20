@@ -29,7 +29,6 @@ from app.repositories.continuous_sql_repository import (
 from app.schemas.common import ErrorCode
 from app.schemas.continuous_sql import (
     ContinuousSqlBatch,
-    ClickHouseWriterTarget,
     ContinuousSqlCommandRequest,
     ContinuousSqlCommandResponse,
     ContinuousSqlCreateRequest,
@@ -38,12 +37,8 @@ from app.schemas.continuous_sql import (
     ContinuousSqlPlanRequest,
     ContinuousSqlPlanResponse,
     ContinuousSqlRelationBinding,
-    continuous_sql_serving_mode,
 )
 from app.services.continuous_sql_catalog import ContinuousSqlCatalogResolver
-from app.services.clickhouse_continuous_publication import (
-    ClickHouseContinuousSqlPublicationService,
-)
 from app.services.continuous_sql_gateway import (
     ContinuousSqlWorkerGateway,
     RoutedContinuousSqlWorkerGateway,
@@ -72,27 +67,15 @@ class ContinuousSqlService:
         runtime_settings: Settings | None = None,
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
-        clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
         self.repository = ContinuousSqlRepository(db)
         self.catalog_repository = CatalogRepository(db)
-        self.catalog_resolver = ContinuousSqlCatalogResolver(
-            db,
-            allow_clickhouse_streaming=(
-                self.settings.clickhouse_realtime_v2_enabled
-                and self.settings.kafka_connect_sink_enabled
-                and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
-            ),
-        )
+        self.catalog_resolver = ContinuousSqlCatalogResolver(db)
         self.planner = ContinuousSqlPlanner()
         self.gateway = gateway or RoutedContinuousSqlWorkerGateway(self.settings)
         self.publication_service = publication_service or ContinuousSqlPublicationService(db)
-        self.clickhouse_publication_service = (
-            clickhouse_publication_service
-            or ClickHouseContinuousSqlPublicationService(db)
-        )
 
     def validate(
         self,
@@ -108,15 +91,6 @@ class ContinuousSqlService:
         actor: ActorContext,
     ) -> ContinuousSqlJob:
         self._require_enabled()
-        if request.output.serving_mode == "clickhouse":
-            self._require_clickhouse_enabled()
-            if request.static_binding_policy != "PINNED_AT_START":
-                raise ApiError(
-                    "CONTINUOUS_SQL_CLICKHOUSE_STATIC_BINDING_UNSUPPORTED",
-                    "ClickHouse Continuous SQL currently requires PINNED_AT_START static bindings.",
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    {"staticBindingPolicy": request.static_binding_policy},
-                )
         request_fingerprint = canonical_hash(
             request.model_dump(mode="json", by_alias=True, exclude={"client_request_id"})
         )
@@ -202,31 +176,13 @@ class ContinuousSqlService:
         request: ContinuousSqlCreateRequest,
         job_id: str,
     ) -> tuple[Any, str, str]:
-        if request.output.serving_mode == "clickhouse":
-            if request.output.clickhouse_target is None:
-                raise RuntimeError("Validated ClickHouse output target is missing")
-            output_target = request.output.clickhouse_target
-            if (
-                self.settings.clickhouse_realtime_v2_enabled
-                and self.settings.kafka_connect_sink_enabled
-                and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
-            ):
-                output_target = ClickHouseWriterTarget(
-                    database=self.settings.clickhouse_v2_database,
-                    table="serving_events_v2",
-                )
-            output_storage_path = request.output.storage_path or output_target.table_uri
-            checkpoint_path = request.checkpoint_path or (
-                f"{output_target.table_uri}/_consumer/{job_id}"
-            )
-        else:
-            if request.output.iceberg_target is None or request.output.storage_path is None:
-                raise RuntimeError("Validated Iceberg output target is missing")
-            output_target = request.output.iceberg_target
-            output_storage_path = request.output.storage_path
-            checkpoint_path = request.checkpoint_path or (
-                f"{request.output.storage_path}/_checkpoints/{job_id}"
-            )
+        if request.output.iceberg_target is None or request.output.storage_path is None:
+            raise RuntimeError("Validated Iceberg output target is missing")
+        output_target = request.output.iceberg_target
+        output_storage_path = request.output.storage_path
+        checkpoint_path = request.checkpoint_path or (
+            f"{request.output.storage_path}/_checkpoints/{job_id}"
+        )
         return output_target, output_storage_path, checkpoint_path
 
     def list(self, actor: ActorContext) -> ContinuousSqlJobList:
@@ -257,8 +213,6 @@ class ContinuousSqlService:
             self._require_enabled()
         job = self._require_job(job_id, actor, for_update=True)
         if request.command in {"start", "resume", "recover"}:
-            if continuous_sql_serving_mode(job) == "clickhouse":
-                self._require_clickhouse_enabled()
             self._require_relation_access(job, actor)
         fingerprint = canonical_hash({"command": request.command})
         existing_command = self.repository.get_command(job.id, request.command_id)
@@ -405,52 +359,6 @@ class ContinuousSqlService:
             else:
                 self._apply_worker_report(job, run, report)
                 self._reconcile_publications(job, run, report)
-        elif (
-            continuous_sql_serving_mode(job) == "clickhouse"
-            and container_state == "running"
-            and run is not None
-        ):
-            if job.desired_state == "running":
-                job.observed_state = "running"
-                run.status = "running"
-            try:
-                self.clickhouse_publication_service.reconcile_progress(job, run, worker)
-                job.last_error_code = None
-                job.last_error_message = None
-                run.last_error_code = None
-                run.last_error_message = None
-            except ValueError as exc:
-                job.last_error_code = "CLICKHOUSE_PUBLICATION_INVALID"
-                job.last_error_message = str(exc)[:2000]
-                run.last_error_code = job.last_error_code
-                run.last_error_message = job.last_error_message
-        elif (
-            continuous_sql_serving_mode(job) == "clickhouse"
-            and container_state == "starting"
-            and run is not None
-        ):
-            if job.desired_state == "running":
-                job.observed_state = "starting"
-                run.status = "starting"
-            job.last_error_code = None
-            job.last_error_message = None
-            run.last_error_code = None
-            run.last_error_message = None
-        elif (
-            continuous_sql_serving_mode(job) == "clickhouse"
-            and container_state == "failed"
-            and run is not None
-        ):
-            job.observed_state = "failed"
-            job.last_error_code = str(
-                worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
-            )
-            job.last_error_message = str(
-                worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
-            )[:2000]
-            run.status = "failed"
-            run.last_error_code = job.last_error_code
-            run.last_error_message = job.last_error_message
         elif container_state in {"exited", "missing", "not_running"}:
             if job.desired_state == "paused":
                 job.observed_state = "paused"
@@ -647,7 +555,7 @@ class ContinuousSqlService:
                     worker.get("lastErrorCode") or "CLICKHOUSE_CONTINUOUS_SQL_FAILED"
                 )
                 job.last_error_message = str(
-                    worker.get("lastErrorMessage") or "ClickHouse Continuous SQL worker failed."
+                    worker.get("lastErrorMessage") or "Continuous SQL worker failed."
                 )[:2000]
             else:
                 job.observed_state = "running" if container_state == "running" else "starting"
@@ -783,27 +691,6 @@ class ContinuousSqlService:
             "Continuous SQL JOIN is disabled.",
             status.HTTP_409_CONFLICT,
             {"setting": "CONTINUOUS_SQL_JOIN_ENABLED"},
-        )
-
-    def _require_clickhouse_enabled(self) -> None:
-        if self.settings.clickhouse_continuous_join_enabled or (
-            self.settings.clickhouse_realtime_v2_enabled
-            and self.settings.kafka_connect_sink_enabled
-            and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
-        ):
-            return
-        raise ApiError(
-            "CLICKHOUSE_CONTINUOUS_SQL_DISABLED",
-            "ClickHouse Continuous SQL serving is disabled.",
-            status.HTTP_409_CONFLICT,
-            {
-                "settings": [
-                    "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED",
-                    "CLICKHOUSE_REALTIME_V2_ENABLED",
-                    "KAFKA_CONNECT_SINK_ENABLED",
-                    "CLICKHOUSE_REALTIME_CONSUMER_OWNER",
-                ]
-            },
         )
 
     def _require_job(

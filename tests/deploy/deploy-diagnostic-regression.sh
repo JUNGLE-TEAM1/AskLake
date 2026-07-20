@@ -105,7 +105,6 @@ assert statuses == {
     "ai_health": "passed",
     "compose_status": "passed",
     "trino_runtime": "skipped",
-    "clickhouse_runtime": "skipped",
 }
 PY
 then

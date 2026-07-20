@@ -7,17 +7,17 @@ import { describeProcessingMode } from "../src/services/processingMode.ts";
 
 const frontendRoot = resolve(import.meta.dirname, "..");
 
-test("continuous review labels follow the persisted runtime engine", () => {
+test("continuous review labels expose Spark as the only runtime engine", () => {
   assert.equal(
     describeProcessingMode({ executionMode: "continuous" } as never),
-    "실시간 · Spark (기존 V1)",
+    "실시간 · Spark",
   );
   assert.equal(
     describeProcessingMode({
-      continuousConfig: { runtimeEngine: "kafka_connect_clickhouse_v2" },
+      continuousConfig: { runtimeEngine: "spark_structured_streaming" },
       executionMode: "continuous",
     } as never),
-    "실시간 · ClickHouse",
+    "실시간 · Spark",
   );
   assert.equal(
     describeProcessingMode({ executionMode: "snapshot" } as never),
@@ -25,15 +25,13 @@ test("continuous review labels follow the persisted runtime engine", () => {
   );
 });
 
-test("ClickHouse Gold action is absent when the deployment feature is disabled", () => {
+test("ClickHouse Gold action is removed", () => {
   const page = readFileSync(
     resolve(frontendRoot, "src/pages/sql/SqlAnalysisPage.tsx"),
     "utf8",
   );
-  assert.match(
-    page,
-    /continuousJoinAction=\{continuousSql\.relationMix && continuousSql\.featureEnabled/,
-  );
+  assert.doesNotMatch(page, /continuousJoinAction=/);
+  assert.doesNotMatch(page, /ContinuousSqlJoinDialog/);
 });
 
 test("Kafka create mode tells V1-only users that Spark is the realtime engine", () => {
@@ -41,6 +39,6 @@ test("Kafka create mode tells V1-only users that Spark is the realtime engine", 
     resolve(frontendRoot, "src/pages/etl/SourceConnectionStages.tsx"),
     "utf8",
   );
-  assert.match(sourceStage, /실시간 · Spark \(기존 V1\)/);
+  assert.match(sourceStage, /실시간 · Spark/);
   assert.doesNotMatch(sourceStage, /실시간 · ClickHouse/);
 });

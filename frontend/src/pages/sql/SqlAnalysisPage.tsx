@@ -20,7 +20,6 @@ import {
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CreateTrinoSqlJobRequest, CurrentUserResponse, SqlResultDraft } from "../../types";
 import styles from "./SqlAnalysisPage.module.css";
-import { ContinuousSqlJoinDialog } from "./ContinuousSqlJoinDialog";
 import { SqlDatasetContextPanel } from "./SqlDatasetContextPanel";
 import { SqlExecutionInfo } from "./SqlExecutionInfo";
 import { SqlJobWizardDialog } from "./SqlJobWizardDialog";
@@ -45,7 +44,6 @@ import {
   type SqlPreflightResult,
 } from "./sqlLogic";
 import { useSqlContextPanel } from "./useSqlContextPanel";
-import { useContinuousSqlJoin } from "./useContinuousSqlJoin";
 import { useSqlJobCreation } from "./useSqlJobCreation";
 import { useSqlQueryAi } from "./useSqlQueryAi";
 import {
@@ -159,7 +157,6 @@ export function SqlAnalysisPage({
       : [],
     [baseDataset, datasetById, referenceDatasetIds],
   );
-  const continuousSql = useContinuousSqlJoin({ onAction, query, selectedDatasets: selectedContextDatasets });
   const visibleResultCandidate = resultDraft ?? trinoDisplayResult;
   const visibleResult = hasSqlResultDataShape(visibleResultCandidate) ? visibleResultCandidate : null;
   const fullResult = useTrinoFullResult({
@@ -811,10 +808,6 @@ export function SqlAnalysisPage({
           autocompleteCandidates={autocompleteCandidates}
           autocompleteIndex={autocompleteIndex}
           canExecute={canRunPreview}
-          continuousJoinAction={continuousSql.relationMix && continuousSql.featureEnabled ? {
-            onClick: continuousSql.open,
-            pending: continuousSql.pending,
-          } : undefined}
           disabled={!baseDataset}
           lineNumberRef={lineNumberRef}
           lineNumbers={lineNumbers}
@@ -918,25 +911,6 @@ export function SqlAnalysisPage({
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      )}
-      {continuousSql.relationMix && (
-        <ContinuousSqlJoinDialog
-          catalogDataset={continuousSql.catalogDataset}
-          error={continuousSql.error}
-          featureEnabled={continuousSql.featureEnabled}
-          onCreate={() => void continuousSql.create()}
-          onOpenChange={continuousSql.setDialogOpen}
-          onOutputNameChange={continuousSql.setOutputName}
-          onTriggerIntervalChange={continuousSql.setTriggerIntervalSeconds}
-          open={continuousSql.dialogOpen}
-          outputName={continuousSql.outputName}
-          pending={continuousSql.pending}
-          progressMessage={continuousSql.progressMessage}
-          result={continuousSql.result}
-          staticDatasets={continuousSql.relationMix.staticDatasets}
-          streamingDataset={continuousSql.relationMix.streamingDataset}
-          triggerIntervalSeconds={continuousSql.triggerIntervalSeconds}
-        />
       )}
       {materializationResult && baseDataset && materializeDialogOpen && (
         <SqlJobWizardDialog

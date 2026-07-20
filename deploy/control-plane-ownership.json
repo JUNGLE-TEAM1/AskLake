@@ -67,34 +67,18 @@
       "active": true,
       "responsibilities": [
         "kafka-continuous-control-plane",
+        "continuous-sql-control-plane",
+        "iceberg-gold-publication",
         "spark-structured-streaming"
       ],
       "ownsControlPlanes": [
-        "kafka-continuous-runtime-sync"
-      ],
-      "evidence": [
-        {
-          "kind": "repository",
-          "reference": "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::CONTINUOUS_WORKER_SCOPE"
-        }
-      ]
-    },
-    {
-      "id": "eks-realtime-v2-worker",
-      "platform": "eks",
-      "deploymentCell": "production-eks-realtime-v2",
-      "active": true,
-      "responsibilities": [
-        "continuous-sql-control-plane",
-        "clickhouse-gold-publication"
-      ],
-      "ownsControlPlanes": [
+        "kafka-continuous-runtime-sync",
         "continuous-sql-runtime-sync"
       ],
       "evidence": [
         {
           "kind": "repository",
-          "reference": "infra/eks/helm/asklake-realtime-data-plane/templates/deployments.yaml::CONTINUOUS_WORKER_SCOPE"
+          "reference": "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::CONTINUOUS_WORKER_SCOPE"
         }
       ]
     }

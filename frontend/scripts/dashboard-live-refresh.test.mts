@@ -54,7 +54,7 @@ function publishedRuntime(widgets: DashboardRuntimeWidget[] = [metricWidget()]):
 function freshness(overrides: Record<string, unknown> = {}) {
   return {
     activeArchiveSnapshotId: "archive-7",
-    activeServingEngine: "clickhouse",
+    activeServingEngine: "iceberg",
     activeServingVersionId: "serving-v7",
     bindingEpoch: 7,
     datasetId: "clickstream_events",
@@ -69,7 +69,7 @@ function freshness(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function realtimeV2(overrides: Partial<RealtimeDatasetEventV2> = {}): RealtimeDatasetEventV2 {
+function realtimeEventV2(overrides: Partial<RealtimeDatasetEventV2> = {}): RealtimeDatasetEventV2 {
   return {
     aggregateRevision: 8,
     correlationId: "materialization-8",
@@ -95,22 +95,22 @@ function realtimeV2(overrides: Partial<RealtimeDatasetEventV2> = {}): RealtimeDa
 
 test("dataset cursor plans targeted refresh and promotes gaps, replace, or binding changes to snapshot", () => {
   const current = dashboardCursorFromFreshness(freshness({ latestRevision: 7 }));
-  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2()).action, "targeted");
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeEventV2()).action, "targeted");
   assert.equal(planDashboardRealtimeRefresh(
     { ...current, eventCursor: 8, revision: 8 },
-    realtimeV2(),
+    realtimeEventV2(),
   ).action, "ignore");
   assert.equal(planDashboardRealtimeRefresh(
     current,
-    realtimeV2({ aggregateRevision: 10, eventId: 10 }),
+    realtimeEventV2({ aggregateRevision: 10, eventId: 10 }),
   ).reason, "revision_gap");
-  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2({
-    payload: { ...realtimeV2().payload, mutationType: "replace" },
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeEventV2({
+    payload: { ...realtimeEventV2().payload, mutationType: "replace" },
   })).reason, "mutation_replace");
-  assert.equal(planDashboardRealtimeRefresh(current, realtimeV2({
+  assert.equal(planDashboardRealtimeRefresh(current, realtimeEventV2({
     aggregateRevision: 1,
     eventId: 9,
-    payload: { ...realtimeV2().payload, bindingEpoch: 8 },
+    payload: { ...realtimeEventV2().payload, bindingEpoch: 8 },
   })).reason, "binding_changed");
   assert.equal(dashboardFreshnessRequiresSnapshot(current, freshness({ bindingEpoch: 8 })), true);
 });

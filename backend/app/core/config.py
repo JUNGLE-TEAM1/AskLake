@@ -86,16 +86,11 @@ class Settings(BaseSettings):
     continuous_worker_owner: Literal[
         "ec2-continuous-worker",
         "eks-continuous-worker-v1",
-        "eks-kafka-connect-clickhouse-v2",
-        "eks-continuous-worker-v2",
     ] = "ec2-continuous-worker"
     continuous_worker_generation: str | None = None
-    # Web/API admission is separate from worker credentials. The external EKS
-    # worker owns Kafka Connect and ClickHouse secrets.
+    # Web/API admission is separate from worker credentials.
     kafka_continuous_v1_api_enabled: bool = False
     kafka_continuous_v1_owner_generation: str | None = None
-    kafka_continuous_v2_api_enabled: bool = False
-    kafka_continuous_v2_owner_generation: str | None = None
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
@@ -106,36 +101,6 @@ class Settings(BaseSettings):
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
     continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
-    clickhouse_continuous_join_enabled: bool = False
-    clickhouse_realtime_v2_enabled: bool = False
-    kafka_connect_sink_enabled: bool = False
-    clickhouse_realtime_consumer_owner: Literal[
-        "disabled",
-        "kafka_engine_v1",
-        "kafka_connect_v2",
-    ] = "disabled"
-    kafka_connect_url: str | None = None
-    kafka_connect_connector_name: str = "asklake-clickhouse-realtime-v2"
-    kafka_connect_dlq_topic: str | None = None
-    kafka_connect_request_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
-    clickhouse_v2_url: str = "https://localhost:8443"
-    clickhouse_v2_database: str = "asklake_realtime_v2"
-    clickhouse_v2_materializer_user: str = "asklake_v2_materializer"
-    clickhouse_v2_materializer_password: str | None = None
-    clickhouse_v2_reader_user: str = "asklake_v2_reader"
-    clickhouse_v2_reader_password: str | None = None
-    clickhouse_v2_tls_ca_file: str | None = None
-    clickhouse_realtime_v2_batch_max_positions: int = Field(
-        default=10_000,
-        ge=1,
-        le=100_000,
-    )
-    clickhouse_url: str = "http://localhost:8123"
-    clickhouse_user: str = "asklake"
-    clickhouse_password: str | None = None
-    clickhouse_database: str = "asklake"
-    clickhouse_query_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
-    clickhouse_insert_batch_rows: int = Field(default=20_000, ge=1, le=100_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)
     realtime_replay_limit: int = Field(default=500, ge=1, le=5_000)
@@ -288,54 +253,6 @@ class Settings(BaseSettings):
             raise ValueError("AI_GATEWAY_BASE_URL must be an absolute http(s) URL without credentials or query parameters")
         return normalized
 
-    @field_validator("kafka_connect_url")
-    @classmethod
-    def validate_kafka_connect_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip().rstrip("/")
-        if not normalized:
-            return None
-        if len(normalized) > 2_048:
-            raise ValueError("KAFKA_CONNECT_URL must contain at most 2048 characters")
-        parsed = urlparse(normalized)
-        try:
-            parsed_port = parsed.port
-        except ValueError as error:
-            raise ValueError("KAFKA_CONNECT_URL contains an invalid port") from error
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path not in {"", "/"}
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-            or (
-                parsed_port is not None
-                and not 1 <= parsed_port <= 65_535
-            )
-        ):
-            raise ValueError(
-                "KAFKA_CONNECT_URL must be an absolute http(s) origin without credentials, path, query, or fragment"
-            )
-        return normalized
-
-    @field_validator("kafka_connect_connector_name")
-    @classmethod
-    def validate_kafka_connect_connector_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", normalized)
-            is None
-            or "replace-with-" in normalized.casefold()
-        ):
-            raise ValueError(
-                "KAFKA_CONNECT_CONNECTOR_NAME must be a stable 1-128 character connector identity"
-            )
-        return normalized
-
     @field_validator(
         "ai_gateway_generate_path",
         "ai_gateway_classification_path",
@@ -365,9 +282,7 @@ class Settings(BaseSettings):
         if generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", generation) is None:
             raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
         expected_eks_scope = {
-            "eks-continuous-worker-v1": "kafka",
-            "eks-kafka-connect-clickhouse-v2": "kafka",
-            "eks-continuous-worker-v2": "continuous_sql",
+            "eks-continuous-worker-v1": "all",
         }.get(self.continuous_worker_owner)
         if expected_eks_scope is not None and (
             self.continuous_worker_scope != expected_eks_scope or not generation
@@ -385,16 +300,8 @@ class Settings(BaseSettings):
         if not self.kafka_continuous_v1_api_enabled and v1_api_generation:
             raise ValueError("KAFKA_CONTINUOUS_V1_OWNER_GENERATION requires KAFKA_CONTINUOUS_V1_API_ENABLED")
         self.kafka_continuous_v1_owner_generation = v1_api_generation or None
-        api_generation = str(self.kafka_continuous_v2_owner_generation or "").strip()
-        if api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", api_generation) is None:
-            raise ValueError("KAFKA_CONTINUOUS_V2_OWNER_GENERATION must be a lowercase generation token")
-        if self.kafka_continuous_v2_api_enabled and not api_generation:
-            raise ValueError("KAFKA_CONTINUOUS_V2_API_ENABLED requires an owner generation")
-        self.kafka_continuous_v2_owner_generation = api_generation or None
         self._validate_auth_runtime()
         self._validate_trino_runtime()
-        self._validate_clickhouse_runtime()
-        self._validate_clickhouse_realtime_v2_runtime()
         self._validate_ai_runtime()
         self._validate_rag_runtime()
         return self
@@ -541,106 +448,6 @@ class Settings(BaseSettings):
         }.items():
             if len(str(secret or "")) < 32:
                 raise ValueError(f"{key} must contain at least 32 characters")
-
-    def _validate_clickhouse_runtime(self) -> None:
-        if (
-            self.allows_header_auth_fallback
-            or not self.clickhouse_continuous_join_enabled
-        ):
-            return
-        if not self.trino_enabled:
-            raise ValueError(
-                "TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED is true"
-            )
-        parsed_url = urlparse(self.clickhouse_url)
-        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise ValueError("CLICKHOUSE_URL must be an explicit http(s) URL")
-        if re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*",
-            self.clickhouse_database,
-        ) is None:
-            raise ValueError(
-                "CLICKHOUSE_DATABASE must be a safe ClickHouse identifier"
-            )
-        if not self.clickhouse_user.strip():
-            raise ValueError("CLICKHOUSE_USER is required")
-        password = str(self.clickhouse_password or "")
-        if len(password) < 16 or "replace-with-" in password:
-            raise ValueError(
-                "CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters"
-            )
-
-    def _validate_clickhouse_realtime_v2_runtime(self) -> None:
-        owner = self.clickhouse_realtime_consumer_owner
-        if self.kafka_connect_sink_enabled and not self.clickhouse_realtime_v2_enabled:
-            raise ValueError(
-                "CLICKHOUSE_REALTIME_V2_ENABLED must be true when KAFKA_CONNECT_SINK_ENABLED is true"
-            )
-        if self.kafka_connect_sink_enabled and owner != "kafka_connect_v2":
-            raise ValueError(
-                "CLICKHOUSE_REALTIME_CONSUMER_OWNER must be kafka_connect_v2 when KAFKA_CONNECT_SINK_ENABLED is true"
-            )
-        if owner == "kafka_connect_v2":
-            if not self.clickhouse_realtime_v2_enabled or not self.kafka_connect_sink_enabled:
-                raise ValueError(
-                    "kafka_connect_v2 ownership requires CLICKHOUSE_REALTIME_V2_ENABLED and KAFKA_CONNECT_SINK_ENABLED"
-                )
-            if self.clickhouse_continuous_join_enabled:
-                raise ValueError(
-                    "Kafka Engine V1 and Kafka Connect V2 cannot own the same active ClickHouse generation"
-                )
-            if self.kafka_connect_url is None:
-                raise ValueError(
-                    "KAFKA_CONNECT_URL is required when kafka_connect_v2 ownership is enabled"
-                )
-        if owner == "kafka_engine_v1":
-            if (
-                not self.continuous_sql_join_enabled
-                or not self.clickhouse_continuous_join_enabled
-            ):
-                raise ValueError(
-                    "kafka_engine_v1 ownership requires CONTINUOUS_SQL_JOIN_ENABLED and CLICKHOUSE_CONTINUOUS_JOIN_ENABLED"
-                )
-            if self.kafka_connect_sink_enabled:
-                raise ValueError(
-                    "Kafka Engine V1 and Kafka Connect V2 cannot own the same active ClickHouse generation"
-                )
-        if not self.clickhouse_realtime_v2_enabled or self.is_development_runtime:
-            return
-        parsed_url = urlparse(self.clickhouse_v2_url)
-        if parsed_url.scheme != "https" or not parsed_url.netloc:
-            raise ValueError(
-                "CLICKHOUSE_V2_URL must be an explicit https URL outside local development"
-            )
-        if re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*",
-            self.clickhouse_v2_database,
-        ) is None:
-            raise ValueError(
-                "CLICKHOUSE_V2_DATABASE must be a safe ClickHouse identifier"
-            )
-        if not self.clickhouse_v2_tls_ca_file:
-            raise ValueError(
-                "CLICKHOUSE_V2_TLS_CA_FILE is required outside local development"
-            )
-        credentials = {
-            "CLICKHOUSE_V2_MATERIALIZER_PASSWORD": self.clickhouse_v2_materializer_password,
-            "CLICKHOUSE_V2_READER_PASSWORD": self.clickhouse_v2_reader_password,
-        }
-        for key, secret in credentials.items():
-            normalized = str(secret or "")
-            if len(normalized) < 16 or "replace-with-" in normalized:
-                raise ValueError(
-                    f"{key} must be a non-placeholder value with at least 16 characters"
-                )
-        if self.clickhouse_v2_materializer_user == self.clickhouse_v2_reader_user:
-            raise ValueError(
-                "CLICKHOUSE_V2_MATERIALIZER_USER and CLICKHOUSE_V2_READER_USER must be distinct"
-            )
-        if self.clickhouse_v2_materializer_password == self.clickhouse_v2_reader_password:
-            raise ValueError(
-                "CLICKHOUSE_V2 materializer and reader passwords must be distinct"
-            )
 
     def _validate_ai_runtime(self) -> None:
         if (

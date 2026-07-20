@@ -16,13 +16,12 @@ locals {
     local.use_storage
   )
   identity_role_suffixes = {
-    backend           = "backend"
-    trino             = "trino"
-    mskSmoke          = "msk-smoke"
-    spark             = "spark"
-    realtimeV1Spark   = "realtime-v1-spark"
-    realtimeV1Worker  = "realtime-v1-worker"
-    realtimeV2Connect = "realtime-v2-connect"
+    backend          = "backend"
+    trino            = "trino"
+    mskSmoke         = "msk-smoke"
+    spark            = "spark"
+    realtimeV1Spark  = "realtime-v1-spark"
+    realtimeV1Worker = "realtime-v1-worker"
   }
 
   base_identity_policy_documents = local.identity_resources_ready ? {
@@ -33,12 +32,7 @@ locals {
     realtimeV1Spark  = local.workload_iam_policy_documents.realtime_v1_spark
     realtimeV1Worker = local.workload_iam_policy_documents.realtime_v1_worker
   } : {}
-  active_identity_policy_documents = merge(
-    local.base_identity_policy_documents,
-    local.identity_resources_ready && local.msk_realtime_v2_identity != null ? {
-      realtimeV2Connect = local.workload_iam_policy_documents.realtime_v2_connect
-    } : {},
-  )
+  active_identity_policy_documents = local.base_identity_policy_documents
 
   workload_assume_role_policies = local.identity_resources_ready ? {
     for workload in keys(local.active_identity_policy_documents) :
@@ -111,15 +105,15 @@ check "pod_identity_agent_contract" {
 
 check "workload_identity_policy_completeness" {
   assert {
-    condition = !local.identity_resources_ready || toset(keys(local.active_identity_policy_documents)) == toset(concat([
+    condition = !local.identity_resources_ready || toset(keys(local.active_identity_policy_documents)) == toset([
       "backend",
       "trino",
       "mskSmoke",
       "spark",
       "realtimeV1Spark",
       "realtimeV1Worker",
-    ], local.msk_realtime_v2_identity == null ? [] : ["realtimeV2Connect"]))
-    error_message = "workload identity requires exact base policy documents and the dedicated V2 Connect policy when a V2 generation is configured."
+    ])
+    error_message = "workload identity requires the exact reviewed V1 policy documents."
   }
 }
 

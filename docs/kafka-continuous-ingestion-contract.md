@@ -4,10 +4,6 @@ Issue: #500
 
 ## 1. Status
 
-The implemented V1 persists `executionMode`, continuous configuration, durable runtime state, lifecycle commands, and a versioned canonical Rule contract; prod-like Compose provides the shared Redpanda endpoint. When V2 is not selected, an isolated Spark Structured Streaming container reads Kafka with a durable checkpoint, applies schema policy plus streaming-safe Transform/Quality Rules, commits each non-empty micro-batch to an append Iceberg table, publishes manifests, and writes rejected payloads to target-adjacent quarantine. The control plane provides lag/log/schema/Rule observability, Trino-verified Catalog recovery, and policy-aware Iceberg replay. The bounded Snapshot bridge remains unchanged.
-
-When `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, and `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`, a regular Kafka Continuous Job uses the V2 route instead: `startContinuous → Kafka Connect Sink → ClickHouse raw_events_v2 → topic-scoped Dashboard reader`. It does not start the Spark bridge. The start creates a `preparing` Catalog Dataset; the first observed raw topic offset atomically activates the serving binding, publishes the Dataset revision/SSE event, and makes the Dataset available to Dashboard. This V2 hot-ingest route does not create an Iceberg/S3 archive; archive/rebuild remains a separate pipeline.
-
 ## 2. Objective
 
 AskLake supports two mutually exclusive execution modes for a Kafka source Job.
@@ -43,12 +39,6 @@ type KafkaContinuousConfig = {
   checkpointPath: string; // generated from immutable job/target identity
 };
 ```
-
-- Existing Kafka Jobs hydrate as `executionMode: "snapshot"`.
-- `executionMode` is selected on creation and becomes immutable after creation. Changing the mode, source identity, consumer group, target identity, or checkpoint identity requires Job copy and new Job creation.
-- A fresh continuous Job with `initialOffsetPolicy: "earliest"` first consumes retained Kafka backlog and then tails new messages. `latest` processes only messages available after the streaming query begins.
-- Spark Continuous source progress is owned by the durable Spark checkpoint. V2 source progress is the scoped ClickHouse raw topic/partition/offset boundary observed from the Kafka Connect sink. `consumerGroupId` remains source identity metadata and must not be shared with another active Snapshot or Continuous Job.
-- Target layer selection remains independent from Rule presence. `RAW`, `BRONZE`, `SILVER`, and `GOLD` labels may be selected, while GOLD streaming join/aggregation semantics remain excluded. V1 accepts only the stateless canonical operations proven by Snapshot conformance and rejects arbitrary SQL, joins, aggregations, and other stateful/engine-specific Rules before creation.
 
 ## 4. Continuous Runtime Contract
 
@@ -116,14 +106,6 @@ type KafkaContinuousRuntime = {
 
 `status`는 기존 client용 호환 projection이고, command intent는 `desiredState`, 현재 worker 증거는 `observedState`가 각각 소유한다. `stateRevision`은 command commit 때만 증가하며 frontend는 더 작은 revision의 polling 응답을 버린다. `fencingToken`과 worker report attempt가 모두 있으면 반드시 일치해야 한다. `errorDetail`은 단계별 진단을 제공하고 `lastError` 문자열은 기존 client를 위해 유지한다. canonical writer, 전이표, fencing과 rollback 규칙은 [Continuous runtime 상태·오류 소유권](refactor-2026/contracts/runtime-state-ownership.md)을 따른다.
 
-- A Continuous Job runs as a long-lived Spark Structured Streaming application only when the V2 selection conditions are not all enabled. V2 runs as a Kafka Connect sink and does not wait for a Spark report; the control plane projects Connector state and ClickHouse offsets directly into `continuousRuntime`.
-- Each successful micro-batch applies the compiled canonical Rule set before appending the selected target dataset and advancing the checkpoint. The supported Transform operations are `cast`, `copy`, `default_value`, `json_extract`, `lowercase_trim`, `mask`, `null_guard`, `parse_timestamp`, and `rename`; Quality supports `accepted_values`, `not_null`, `range`, and `regex`.
-- `Fail Batch` aborts the current `foreachBatch` invocation before manifest/checkpoint completion. `Quarantine` stores raw payload, Kafka identity, Rule/stage/column identity, and schema/rule fingerprints. Warn, drop-row, set-null, invalid, quarantine, and failed-batch counters are persisted in the worker report and per-batch manifest.
-- `_asklake_contract` under the checkpoint records schema, Rule, source/target, output schema, and a combined runtime fingerprint. A mismatched runtime cannot reuse that checkpoint. Once this contract is initialized, schema, Rule, or physical target changes require a copied Job and new checkpoint.
-- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. Start/resume receives PostgreSQL topic/partition `nextOffset` watermarks, and `foreachBatch` filters older rows before schema, Rule, target and counters; a full duplicate is skipped while a partial overlap publishes only the unseen suffix. Each non-empty filtered batch derives a deterministic `sourceBoundary` and `_asklake_run_id` from Job, durable publication sequence, checkpoint, consumer identity and `[startOffset, endOffset)` ranges. Spark raw batch ID remains diagnostic only. If Iceberg commit succeeds but manifest publication fails, retry finds that marker in the table and reuses the committed snapshot instead of appending again. Quarantine and schema-evidence sidecars still require `_SUCCESS` plus their hidden signatures. Backend verifies the exact reported Iceberg snapshot and exact `_asklake_run_id` row count through Trino before reconciling the manifest into an idempotent Catalog run, stores the canonical source range/fingerprint before advancing the dashboard revision, rejects duplicate or partially overlapping stream offsets, and then acknowledges the highest completed Catalog publication. A terminal stale report window is continued from completed S3 manifest IDs and never skips an incomplete last manifest. Replay uses a separate commit namespace and rolls back only a newly created snapshot when its manifest publication fails.
-- Malformed payloads and `Quarantine` quality results preserve raw payload plus Kafka context in a target-adjacent quarantine output. A quarantined micro-batch must not silently drop source progress.
-- Continuous writes use an append Iceberg table whose physical warehouse data files are Parquet. Persisted `targetFormat=parquet` remains a create-flow compatibility value, not the query-engine identity. Physical file optimization uses a finite Iceberg maintenance run and never rewrites legacy direct-Parquet `_batches` or the streaming checkpoint.
-
 ## 5. Command and API Contract
 
 The existing `POST /api/etl/jobs/{jobId}/commands` endpoint gains these planned commands only for `executionMode: "continuous"` Kafka Jobs.
@@ -140,15 +122,6 @@ type JobCommand =
   | "resumeContinuous"
   | "stopContinuous";
 ```
-
-- `startContinuous`: starts a long-running Spark worker on the legacy path, or registers/resumes the Kafka Connect ClickHouse V2 sink on the V2 path.
-- `pauseContinuous`: records pause intent and signals the worker to stop after its current checkpointed micro-batch.
-- `resumeContinuous`: persists a resume request for the durable checkpoint.
-- `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
-- `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
-- `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
-- Command responses identify the actual worker: `spark_structured_streaming` on the legacy path or `kafka_connect_clickhouse_v2` on the V2 path. An external control plane still returns the selected worker while deferring the side effect. Spark worker heartbeats and counters are written to the Spark report volume, while V2 uses Connector state and ClickHouse offsets. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by worker attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate signal and cannot be mistaken for an operator stop.
-- Every accepted command increments `continuousRuntime.stateRevision`. Worker observations keep that revision and are accepted only for the active fencing token; reports created before fencing metadata existed remain readable for backward compatibility.
 
 ## 6. Mutual Exclusion and Backfill
 

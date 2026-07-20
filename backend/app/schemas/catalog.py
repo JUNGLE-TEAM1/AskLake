@@ -17,8 +17,8 @@ MaterializationMode = Literal["snapshot", "delta"]
 QueryEngineTableFormat = Literal["iceberg", "parquet"]
 QueryEngineStatus = Literal["pending", "available", "registration_failed", "unavailable"]
 CatalogDatasetDeletionStatus = Literal["queued", "validating", "purging", "metadata_cleanup", "succeeded", "failed"]
-PhysicalBindingRole = Literal["serving", "archive"]
-PhysicalBindingEngine = Literal["clickhouse", "trino"]
+PhysicalBindingRole = Literal["archive"]
+PhysicalBindingEngine = Literal["trino"]
 PhysicalBindingStatus = Literal["pending", "active", "stale", "failed"]
 
 
@@ -57,11 +57,6 @@ class QueryEngineTableRef(CamelModel):
     partition_columns: list[str] = Field(default_factory=list)
 
 
-class ClickHouseTableRef(CamelModel):
-    database: str
-    table: str
-
-
 class DatasetPhysicalBinding(CamelModel):
     role: PhysicalBindingRole
     engine: PhysicalBindingEngine
@@ -80,8 +75,6 @@ class DatasetPhysicalBinding(CamelModel):
 
     @model_validator(mode="after")
     def validate_engine_location(self):
-        if self.engine == "clickhouse" and (self.role != "serving" or not self.database):
-            raise ValueError("ClickHouse physical binding requires serving role and database")
         if self.engine == "trino" and (self.role != "archive" or not self.catalog or not self.schema_):
             raise ValueError("Trino physical binding requires archive role, catalog, and schema")
         return self
@@ -148,7 +141,6 @@ class CatalogDatasetResponse(CamelModel):
     query_engine_table: QueryEngineTableRef | None = None
     query_engine_status: QueryEngineStatus = "unavailable"
     query_engine_error: str | None = None
-    clickhouse_table: ClickHouseTableRef | None = None
     physical_bindings: list[DatasetPhysicalBinding] = Field(default_factory=list)
     query_engine_required: bool = False
     index_columns: list[str] | None = None

@@ -95,28 +95,10 @@ spec:
                   name: {{ $secretName }}
                   key: {{ .Values.backend.runtimeSecret.keys.openaiApiKey }}
             {{- end }}
-            {{- if .Values.backend.realtime.enabled }}
-            - name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.backend.realtime.runtimeSecret.name }}
-                  key: {{ required "ClickHouse V2 materializer password key is required" .Values.backend.realtime.runtimeSecret.materializerPasswordKey }}
-            - name: CLICKHOUSE_V2_READER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.backend.realtime.runtimeSecret.name }}
-                  key: {{ required "ClickHouse V2 reader password key is required" .Values.backend.realtime.runtimeSecret.readerPasswordKey }}
-            {{- end }}
           volumeMounts:
             - name: backend-runtime-files
               mountPath: /var/run/asklake/secrets
               readOnly: true
-            {{- if .Values.backend.realtime.enabled }}
-            - name: backend-realtime-files
-              mountPath: /var/run/asklake/secrets/clickhouse-v2-ca.crt
-              subPath: clickhouse-v2-ca.crt
-              readOnly: true
-            {{- end }}
           startupProbe:
             httpGet:
               path: /api/health
@@ -146,13 +128,4 @@ spec:
             items:
               - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
                 path: trino-ca.pem
-        {{- if .Values.backend.realtime.enabled }}
-        - name: backend-realtime-files
-          secret:
-            secretName: {{ .Values.backend.realtime.runtimeSecret.name }}
-            defaultMode: 0400
-            items:
-              - key: {{ required "ClickHouse V2 CA key is required" .Values.backend.realtime.runtimeSecret.caKey }}
-                path: clickhouse-v2-ca.crt
-        {{- end }}
 {{- end }}

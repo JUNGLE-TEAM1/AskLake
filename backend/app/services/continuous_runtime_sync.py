@@ -78,7 +78,6 @@ def build_runtime_owner_claim(
     if owner not in {
         "ec2-continuous-worker",
         "eks-continuous-worker-v1",
-        "eks-kafka-connect-clickhouse-v2",
     }:
         raise ValueError("unsupported Continuous runtime owner")
     if not generation or not fencing_token or state_revision < 1:
@@ -130,11 +129,6 @@ def assign_runtime_admission_owner_claim(
             configured_settings.kafka_continuous_v1_api_enabled,
             configured_settings.kafka_continuous_v1_owner_generation,
             "eks-continuous-worker-v1",
-        ),
-        "kafka_connect_clickhouse_v2": (
-            configured_settings.kafka_continuous_v2_api_enabled,
-            configured_settings.kafka_continuous_v2_owner_generation,
-            "eks-kafka-connect-clickhouse-v2",
         ),
     }
     enabled, generation, owner = candidates.get(runtime_engine, (False, None, None))

@@ -152,16 +152,14 @@ variable "ecr_repository_names" {
     "airflow",
     "trino",
     "spark-runtime",
-    "kafka-connect-v2",
-    "clickhouse-v2",
   ]
 
   validation {
     condition = alltrue([
-      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime", "kafka-connect-v2", "clickhouse-v2"] :
+      for component in ["frontend", "backend", "ai-gateway", "airflow", "trino", "spark-runtime"] :
       contains(var.ecr_repository_names, component)
     ])
-    error_message = "ecr_repository_names must include frontend, backend, ai-gateway, airflow, trino, spark-runtime, kafka-connect-v2, and clickhouse-v2."
+    error_message = "ecr_repository_names must include frontend, backend, ai-gateway, airflow, trino, and spark-runtime."
   }
 }
 
@@ -204,28 +202,26 @@ variable "service_account_names" {
   description = "Stable workload service account names. IAM roles are attached only after B supplies least-privilege actions."
   type        = map(string)
   default = {
-    frontend          = "asklake-frontend"
-    backend           = "asklake-backend"
-    aiGateway         = "asklake-ai-gateway"
-    airflow           = "asklake-airflow"
-    trino             = "asklake-trino"
-    mskSmoke          = "asklake-msk-smoke"
-    spark             = "asklake-spark"
-    realtimeV1Spark   = "asklake-realtime-v1-spark"
-    realtimeV1Worker  = "asklake-realtime-v1-worker"
-    realtimeV2Connect = "asklake-realtime-v2-connect"
-    realtimeV2Worker  = "asklake-realtime-v2-worker"
+    frontend         = "asklake-frontend"
+    backend          = "asklake-backend"
+    aiGateway        = "asklake-ai-gateway"
+    airflow          = "asklake-airflow"
+    trino            = "asklake-trino"
+    mskSmoke         = "asklake-msk-smoke"
+    spark            = "asklake-spark"
+    realtimeV1Spark  = "asklake-realtime-v1-spark"
+    realtimeV1Worker = "asklake-realtime-v1-worker"
   }
 
   validation {
     condition = (
-      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker", "realtimeV2Connect", "realtimeV2Worker"]) &&
+      toset(keys(var.service_account_names)) == toset(["frontend", "backend", "aiGateway", "airflow", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker"]) &&
       alltrue([
         for name in values(var.service_account_names) :
         can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name))
       ])
     )
-    error_message = "service_account_names must define DNS-compatible frontend, backend, aiGateway, airflow, trino, mskSmoke, spark, realtimeV1Spark, realtimeV1Worker, realtimeV2Connect, and realtimeV2Worker names."
+    error_message = "service_account_names must define DNS-compatible frontend, backend, aiGateway, airflow, trino, mskSmoke, spark, realtimeV1Spark, and realtimeV1Worker names."
   }
 }
 
