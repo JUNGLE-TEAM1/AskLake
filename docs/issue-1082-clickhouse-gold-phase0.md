@@ -368,3 +368,22 @@ values를 준비하고 `deploy-eks-realtime-v2.sh --preflight`를 실행한다. 
 별도 승인 없이는 `--apply`, Kafka fixture produce, EC2 quiesce, owner 전환을 실행하지
 않는다. live 실패 시 V2 worker 0, V1/EC2 canonical owner 복원, PVC·offset·Catalog
 revision 보존을 rollback 기준으로 삼는다.
+
+## 20. EKS Secret gate 해소 기록
+
+2026-07-20 사용자 승인과 갱신된 `asklake-deployer` 권한으로 `asklake-dev`의
+Secret source와 ExternalSecret을 준비했다. 실제 credential, private key와 Secret
+payload는 저장소·로그·evidence에 기록하지 않았다.
+
+- Secrets Manager source `asklake/dev/realtime/clickhouse-v2`: 생성
+- Secrets Manager source `asklake/dev/realtime/kafka-connect-v2`: 생성
+- `asklake-clickhouse-keeper-v2-config`: `Ready=True`, key 1개
+- `asklake-clickhouse-v2-config`: `Ready=True`, key 11개
+- `asklake-kafka-connect-v2-runtime`: `Ready=True`, key 29개
+- `asklake-realtime-runtime`: `Ready=True`, key 3개
+- TLS chain/SAN, 6개 계정 분리, Kafka Connect key·DLQ 형식 검증: 통과
+
+Secret gate 해소 후 전체 `--preflight`는 `service/kafka-connect-v2` NotFound에서
+중단됐다. 현재 shadow data-plane이 아직 설치되지 않아 Service가 없는 상태이며,
+Secret/TLS 실패는 아니다. 최초 shadow 설치 전에 live Connect REST를 필수 조회하는
+preflight 순서를 재검토한 뒤 server dry-run과 승인된 shadow apply로 진행한다.
