@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
+    dashboard_auto_refresh_enabled: bool = False
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False
     continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"

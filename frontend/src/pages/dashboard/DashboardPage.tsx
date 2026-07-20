@@ -182,6 +182,7 @@ export function DashboardPage({
     active: view === "runtime", dashboardId: runtimeSelection.dashboardId, mode: runtimeSelection.mode,
   });
   const {
+    autoRefreshEnabled,
     draftError,
     draftLoading,
     draftRuntime,
@@ -665,6 +666,7 @@ export function DashboardPage({
       managedDatasetId,
     };
     const runtimeViewState = {
+      autoRefreshEnabled,
       deletingWidgetId: widgetMutations.deletingWidgetId,
       draftError,
       draftLoading,

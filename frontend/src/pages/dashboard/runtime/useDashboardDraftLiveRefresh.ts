@@ -16,9 +16,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 /** Refreshes only server-calculated widget data; the draft's config and layout stay local. */
 export function useDashboardDraftLiveRefresh({
-  active, dashboardId, runtime, setRuntime,
+  active, autoRefreshEnabled, dashboardId, runtime, setRuntime,
 }: {
   active: boolean;
+  autoRefreshEnabled: boolean;
   dashboardId: string;
   runtime: DashboardRuntimeResponse | null;
   setRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
@@ -30,7 +31,7 @@ export function useDashboardDraftLiveRefresh({
   const datasetIdsKey = JSON.stringify(datasetIds);
 
   useEffect(() => {
-    if (!active || datasetIds.length === 0) {
+    if (!active || !autoRefreshEnabled || datasetIds.length === 0) {
       setRealtimeDataState("fresh");
       return undefined;
     }
@@ -102,7 +103,7 @@ export function useDashboardDraftLiveRefresh({
       controller?.abort();
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [active, dashboardId, datasetIdsKey, setRuntime]);
+  }, [active, autoRefreshEnabled, dashboardId, datasetIdsKey, setRuntime]);
 
   return { realtimeDataState };
 }

@@ -35,7 +35,7 @@ function metricWidget(overrides: Partial<Extract<DashboardRuntimeWidget, { type:
   } satisfies Extract<DashboardRuntimeWidget, { type: "metric" }>;
 }
 
-test("dashboards enable automatic revision refresh", () => {
+test("automatic revision refresh remains opt-in", () => {
   assert.equal(publishedDashboardUsesManualRefresh(), false);
 });
 

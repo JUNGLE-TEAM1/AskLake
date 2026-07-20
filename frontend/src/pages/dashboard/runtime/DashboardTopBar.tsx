@@ -18,6 +18,7 @@ const REALTIME_STATUS: Record<RealtimeConnectionState, {
 };
 
 export function DashboardTopBar({
+  autoRefreshEnabled = false,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
@@ -33,6 +34,7 @@ export function DashboardTopBar({
   realtimeDataState,
   title,
 }: {
+  autoRefreshEnabled?: boolean;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
@@ -51,7 +53,9 @@ export function DashboardTopBar({
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
-  const realtimeStatus = realtimeDataState === "degraded"
+  const realtimeStatus = !autoRefreshEnabled
+    ? { label: "수동 새로고침", tone: "muted" as const }
+    : realtimeDataState === "degraded"
     ? { label: "최신 데이터 확인 필요", tone: "warning" as const }
     : realtimeDataState === "stale"
       ? { label: "데이터 지연", tone: "warning" as const }

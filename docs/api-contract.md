@@ -4113,6 +4113,7 @@ type PermissionGrant = {
 | 필드 | 타입 | 계약 |
 |---|---|---|
 | dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
+| dashboardAutoRefreshEnabled | boolean | false이면 Dashboard 보기·편집 모드 모두 background polling/SSE widget refresh를 하지 않고 수동 새로고침만 사용 |
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | continuousSqlServingMode | iceberg \| clickhouse | 새 Continuous SQL Job에 허용되는 deployment serving mode |

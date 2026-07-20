@@ -41,6 +41,7 @@ const REALTIME_EVENT_COALESCE_MS = 50;
 
 export function usePublishedDashboardLiveRefresh({
   active,
+  autoRefreshEnabled,
   dashboardId,
   mode,
   publishedRuntime,
@@ -48,6 +49,7 @@ export function usePublishedDashboardLiveRefresh({
   setPublishedRuntime,
 }: {
   active: boolean;
+  autoRefreshEnabled: boolean;
   dashboardId: string;
   mode: DashboardRuntimeMode;
   publishedRuntime: DashboardRuntimeResponse | null;
@@ -69,7 +71,7 @@ export function usePublishedDashboardLiveRefresh({
   const liveDatasetIdsKey = JSON.stringify(liveDatasetIds);
 
   useEffect(() => {
-    if (publishedDashboardUsesManualRefresh()) {
+    if (!autoRefreshEnabled || publishedDashboardUsesManualRefresh()) {
       setRealtimeConnectionState("closed");
       setRealtimeDataState("fresh");
       return;
@@ -549,6 +551,7 @@ export function usePublishedDashboardLiveRefresh({
     };
   }, [
     active,
+    autoRefreshEnabled,
     dashboardId,
     liveDatasetIdsKey,
     mode,

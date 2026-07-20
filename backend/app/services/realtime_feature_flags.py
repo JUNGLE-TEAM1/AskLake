@@ -24,6 +24,7 @@ class RealtimeConsumerOwnershipError(ValueError):
 @dataclass(frozen=True)
 class RealtimeFeatureState:
     dashboard_sync_mode: DashboardSyncMode
+    dashboard_auto_refresh_enabled: bool
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
     continuous_sql_serving_mode: ContinuousSqlServingMode
@@ -56,6 +57,7 @@ def resolve_realtime_feature_state(settings: Settings) -> RealtimeFeatureState:
     continuous_sql_join_enabled = bool(settings.continuous_sql_join_enabled)
     return RealtimeFeatureState(
         dashboard_sync_mode=effective_mode,
+        dashboard_auto_refresh_enabled=bool(settings.dashboard_auto_refresh_enabled),
         realtime_events_enabled=realtime_events_enabled,
         continuous_sql_join_enabled=continuous_sql_join_enabled,
         continuous_sql_serving_mode=cast(

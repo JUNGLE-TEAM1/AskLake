@@ -40,6 +40,7 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
+  autoRefreshEnabled: boolean;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -577,6 +578,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         notice={notice}
         pages={pages}
         realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
+        autoRefreshEnabled={runtime.autoRefreshEnabled}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

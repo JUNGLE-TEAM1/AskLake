@@ -30,6 +30,7 @@ type RuntimeNotice = {
 
 export function DashboardRuntimeShell({
   children,
+  autoRefreshEnabled = false,
   datasetSidebar,
   datasetSidebarOpen = false,
   hasPublishedRevision,
@@ -63,6 +64,7 @@ export function DashboardRuntimeShell({
   title,
 }: {
   children: ReactNode;
+  autoRefreshEnabled?: boolean;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
@@ -142,6 +144,7 @@ export function DashboardRuntimeShell({
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
         hasPublishedRevision={hasPublishedRevision}
+        autoRefreshEnabled={autoRefreshEnabled}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
