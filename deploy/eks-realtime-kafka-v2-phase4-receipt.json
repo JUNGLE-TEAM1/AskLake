@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase4-single-canary-gate",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "9da748b09b9e3b96c35c901144575c22c13c8436",
+  "mode": "contract-and-read-only-preflight",
+  "sharedMutationPerformed": false,
+  "contractVerification": {
+    "liveEvidenceNegativeTests": "5 pass",
+    "liveEvidenceExampleShape": "pass-example-only",
+    "kafkaIamContractTests": "5 pass",
+    "exactOneOwnerRule": true,
+    "sourcePositionBoundaryRequired": true,
+    "duplicateSourcePositionsAllowed": 0,
+    "rollbackRequiresZeroTasksAndZeroOwnerClaims": true
+  },
+  "livePreflight": {
+    "status": "blocked",
+    "reason": "ASKLAKE_EKS_CLUSTER_NAME is not set; EKS context, Pod Identity, connector and source owner cannot be read.",
+    "preflightCommand": "scripts/audit-eks-realtime-v2-kafka-live.sh --preflight",
+    "e2eCommand": "scripts/audit-eks-realtime-v2-kafka-live.sh --e2e",
+    "preflightExit": 1,
+    "e2eExit": 1
+  },
+  "canary": {
+    "status": "not-run",
+    "productionTopicReused": false,
+    "productionGroupReused": false,
+    "fixturePublished": false,
+    "connectorActivated": false,
+    "clickhouseRowsClaimed": false
+  },
+  "rollback": {
+    "status": "not-run",
+    "automaticFallback": false,
+    "offsetReset": false,
+    "stateDeletion": false
+  },
+  "phase4Ready": false,
+  "productionTransferAllowed": false
+}
