@@ -203,6 +203,20 @@ class SparkKubernetesExecutionIdentityTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "SPARK_EXECUTION_IDENTITY_MISMATCH")
 
+    def test_resource_plan_hash_drift_is_rejected(self) -> None:
+        current = self.identity(resourcePlanHash="b" * 64)
+        observed = self.identity(resourcePlanHash="c" * 64)
+
+        with self.assertRaises(ApiError) as raised:
+            contract.merge_spark_kubernetes_execution(
+                current,
+                observed,
+                job_id="JOB-1",
+                run_id="RUN-1",
+            )
+
+        self.assertEqual(raised.exception.code, "SPARK_EXECUTION_IDENTITY_MISMATCH")
+
     def test_run_and_job_identity_mismatch_is_rejected(self) -> None:
         for job_id, run_id in (("JOB-OTHER", "RUN-1"), ("JOB-1", "RUN-OTHER")):
             with self.subTest(job_id=job_id, run_id=run_id):

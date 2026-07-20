@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { kafkaSecurityOptions } from "../src/kafka-codecs.mjs";
@@ -25,7 +26,35 @@ const RUN_ID = "run/with a long unsafe identity that should remain deterministic
 const JOB_ID = "job-001";
 const IMAGE = `example.invalid/spark@sha256:${"a".repeat(64)}`;
 
-function applicationFixture(attemptGeneration = 1) {
+function resourcePlan(overrides = {}) {
+  const plan = {
+    appliedExecutors: 4,
+    baselineExecutors: 4,
+    calculatedExecutors: 8,
+    estimatedPartitions: 724,
+    inputBytes: 97_079_116_733,
+    inputFileCount: 1,
+    inputSizeSource: "s3_head",
+    maxExecutors: 6,
+    minExecutors: 1,
+    mode: "shadow",
+    policyVersion: 1,
+    reason: "capped_by_max_executors",
+    recommendedExecutors: 6,
+    targetPartitionBytes: 134_217_728,
+    targetPartitionsPerExecutor: 96,
+    ...overrides,
+  };
+  const canonical = Object.fromEntries(
+    Object.entries(plan).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+  );
+  return {
+    ...plan,
+    planHash: createHash("sha256").update(JSON.stringify(canonical)).digest("hex"),
+  };
+}
+
+function applicationFixture(attemptGeneration = 1, plan = undefined) {
   return createSparkKubernetesApplication({
     appName: "asklake-test",
     environmentVariables: {
@@ -36,6 +65,7 @@ function applicationFixture(attemptGeneration = 1) {
     },
     jobId: JOB_ID,
     packages: ["org.postgresql:postgresql:42.7.7"],
+    resourcePlan: plan,
     runId: RUN_ID,
     attemptGeneration,
   }, {
@@ -109,7 +139,7 @@ test("Kubernetes Spark terminal replacement uses a bounded generation suffix", (
   assert.throws(() => applicationFixture(4), /must be between 1 and 3/);
 });
 
-test("Kubernetes Spark executor count is bounded for the 1, 2, 4 experiment matrix", () => {
+test("Kubernetes Spark executor count is bounded for the Stage 1 matrix", () => {
   assert.equal(sparkExecutorInstances({}), 1);
   assert.equal(sparkExecutorInstances({
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "1",
@@ -120,14 +150,54 @@ test("Kubernetes Spark executor count is bounded for the 1, 2, 4 experiment matr
   assert.equal(sparkExecutorInstances({
     ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "4",
   }), 4);
-  for (const value of ["0", "5", "1.5", "not-a-number"]) {
+  assert.equal(sparkExecutorInstances({
+    ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "6",
+  }), 6);
+  for (const value of ["0", "7", "1.5", "not-a-number"]) {
     assert.throws(
       () => sparkExecutorInstances({
         ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: value,
       }),
-      /must be an integer between 1 and 4/,
+      /must be an integer between 1 and 6/,
     );
   }
+});
+
+test("shadow Resource Plan records its recommendation without changing executors", () => {
+  const plan = resourcePlan();
+  assert.equal(plan.planHash, "dc9cba0b3331437ab7ec28e0d7a3d1fb46e26a63e7010d315e40b443ef0e8871");
+  const application = applicationFixture(1, plan);
+
+  assert.equal(application.spec.executor.instances, 4);
+  assert.equal(application.metadata.annotations["asklake.io/resource-plan-mode"], "shadow");
+  assert.equal(application.metadata.annotations["asklake.io/calculated-executors"], "8");
+  assert.equal(application.metadata.annotations["asklake.io/applied-executors"], "4");
+  assert.equal(application.metadata.annotations["asklake.io/resource-plan-hash"], plan.planHash);
+});
+
+test("enforcing Resource Plan applies its bounded executor count", () => {
+  const plan = resourcePlan({
+    appliedExecutors: 6,
+    baselineExecutors: 1,
+    mode: "enforce",
+  });
+  const application = applicationFixture(1, plan);
+
+  assert.equal(application.spec.executor.instances, 6);
+  assert.equal(application.metadata.annotations["asklake.io/executor-instances"], "6");
+});
+
+test("tampered and non-enforcing Resource Plans are rejected", () => {
+  const tampered = resourcePlan();
+  tampered.appliedExecutors = 6;
+  assert.throws(
+    () => applicationFixture(1, tampered),
+    /hash does not match/,
+  );
+  assert.throws(
+    () => applicationFixture(1, resourcePlan({ appliedExecutors: 6 })),
+    /must preserve the configured executor count/,
+  );
 });
 
 test("MSK IAM dependency is image-local, Kafka-only, and absent from Maven packages", () => {
@@ -411,6 +481,34 @@ test("persisted UID recovery reads the existing SparkApplication without POST", 
   assert.equal(result.recovered, true);
   assert.equal(result.application.metadata.uid, "spark-uid-persisted-001");
   assert.deepEqual(calls.map(([method]) => method), ["GET"]);
+});
+
+test("persisted UID recovery rejects Resource Plan hash drift", async () => {
+  const application = applicationFixture(1, resourcePlan());
+  const existing = {
+    ...application,
+    metadata: {
+      ...application.metadata,
+      annotations: {
+        ...application.metadata.annotations,
+        "asklake.io/resource-plan-hash": "f".repeat(64),
+      },
+      uid: "spark-uid-persisted-plan-001",
+    },
+  };
+
+  await assert.rejects(
+    createOrRecoverApplication({
+      application,
+      expectedKubernetesExecution: {
+        applicationName: application.metadata.name,
+        applicationUid: "spark-uid-persisted-plan-001",
+        namespace: application.metadata.namespace,
+      },
+      requestJson: async () => ({ body: existing, status: 200 }),
+    }),
+    /resource-plan-hash/,
+  );
 });
 
 test("persisted UID recovery refuses replacement when the SparkApplication is gone", async () => {

@@ -20,6 +20,7 @@ def prepare_eks_spark_attempt(
     attempt_id: str,
     lease_generation: int,
     job_id: str,
+    resource_plan: dict[str, Any] | None,
     run_id: str,
     started_at: str,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, int]:
@@ -73,6 +74,7 @@ def prepare_eks_spark_attempt(
         "startedAt": started_at,
         "status": "running",
         "kubernetesAttempts": previous_attempts,
+        **({"resourcePlan": resource_plan} if resource_plan is not None else {}),
         **(
             {"kubernetesExecution": previous_kubernetes_execution}
             if previous_kubernetes_execution is not None and not terminal_replacement

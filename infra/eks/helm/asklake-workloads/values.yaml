@@ -52,6 +52,11 @@ backend:
     allowedBuckets: ""
     sparkRunner: kubernetes
     sparkExecutionLeaseSeconds: 60
+    sparkResourcePlannerMode: "off"
+    sparkResourceTargetPartitionBytes: 134217728
+    sparkResourceTargetPartitionsPerExecutor: 96
+    sparkResourceMinExecutors: 1
+    sparkResourceMaxExecutors: 6
     airflowApiBaseUrl: http://airflow-apiserver:8080
     airflowDagId: asklake_etl_job
     trinoEnabled: true

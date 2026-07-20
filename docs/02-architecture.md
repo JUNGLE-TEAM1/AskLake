@@ -914,3 +914,13 @@ Recovery application/repository는 backend-owned 내부 경계다. 현재 외부
 6. V2 flag off에서는 marker 없는 기존 V1/Iceberg/polling 동작을 바꾸지 않는다. V2 marker가 있는 신규 Job은 fail closed하고 V1으로 자동 fallback하지 않는다.
 
 상세 DDL, transaction, API, failure recovery와 검증은 [ClickHouse Realtime Serving V2 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md), PR 의존 관계는 [9-PR 실행 매핑](codex-clickhouse-realtime-pr-pack/STACKED_PR_PLAN.md)을 따른다.
+
+## 25) Spark 초기 Resource Plan
+
+EKS batch Spark Run은 입력 크기 기반 초기 executor 권장값을 Run별 Resource
+Plan으로 계산한다. `shadow`는 권장값과 근거를 RDS Run과 SparkApplication
+identity에 기록하지만 실제 executor 수는 기존 고정값을 유지한다. Plan은 최초
+SparkApplication 제출 전에 한 번 확정하며 같은 `runId`의 lease takeover와
+terminal attempt generation retry도 저장된 Plan을 재사용한다. 계산식, fallback,
+상한과 검증 순서는 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을
+따른다.

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.auth_context import ActorContext
 from app.core.config import settings
 from app.core.errors import ApiError
+from app.domain.spark_resource_plan import build_spark_resource_plan
 from app.application.eks_msk_fault_execution import (
     record_eks_msk_authorization_fault,
 )
@@ -1396,25 +1397,58 @@ class EtlJobDeleteRunConcurrencyTests(unittest.TestCase):
         self.insert_job(job_id)
         self.insert_airflow_run(job_id, run_id)
         observed_while_running: dict = {}
+        resource_plan = build_spark_resource_plan(
+            input_bytes=97_079_116_733,
+            input_file_count=1,
+            input_size_source="s3_head",
+            baseline_executors=1,
+            environment={
+                "ASKLAKE_SPARK_RESOURCE_PLANNER_MODE": "shadow",
+                "ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS": "6",
+            },
+        )
 
-        def spark_with_progress(_db, _job, _command, _run_id, *, spark_progress_callback):
-            progress = kubernetes_execution_fixture(job_id, run_id)
+        def spark_with_progress(
+            _db,
+            _job,
+            _command,
+            _run_id,
+            *,
+            spark_progress_callback,
+            spark_resource_plan,
+        ):
+            self.assertEqual(spark_resource_plan, resource_plan)
+            progress = {
+                **kubernetes_execution_fixture(job_id, run_id),
+                "resourcePlanHash": resource_plan["planHash"],
+            }
             spark_progress_callback(progress)
             with self.session_factory() as observer:
                 running = observer.get(ETLRunModel, run_id)
-                observed_while_running.update(running.task_states["sparkExecution"]["kubernetesExecution"])
+                observed_while_running.update(running.task_states["sparkExecution"])
             return spark_terminal_result(job_id, run_id, progress)
 
         with (
             patch.dict(os.environ, {"ASKLAKE_SPARK_RUNNER": "kubernetes"}),
             patch("app.repositories.etl_repository.ensure_schema", return_value=None),
+            patch(
+                "app.application.spark_resource_planning.spark_resource_plan_for_job",
+                return_value=resource_plan,
+            ),
             patch("app.services.etl_service.run_spark_job", side_effect=spark_with_progress),
             self.session_factory() as db,
         ):
             result = execute_airflow_spark_run(db, job_id=job_id, run_id=run_id, command="run")
 
-        self.assertEqual(observed_while_running["applicationUid"], "spark-uid-contract-001")
-        self.assertEqual(observed_while_running["namespace"], "asklake-dev")
+        self.assertEqual(
+            observed_while_running["kubernetesExecution"]["applicationUid"],
+            "spark-uid-contract-001",
+        )
+        self.assertEqual(
+            observed_while_running["kubernetesExecution"]["namespace"],
+            "asklake-dev",
+        )
+        self.assertEqual(observed_while_running["resourcePlan"], resource_plan)
         self.assertEqual(result["kubernetesExecution"]["resultMarkerFound"], True)
         with self.session_factory() as db:
             run = db.get(ETLRunModel, run_id)

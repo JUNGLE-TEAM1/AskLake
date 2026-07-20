@@ -97,7 +97,12 @@ function applicationPath(namespace, name = "") {
 function validateRunIdentity(application, existing) {
   const expectedAnnotations = application.metadata?.annotations || {};
   const actualAnnotations = existing?.metadata?.annotations || {};
-  for (const key of ["asklake.io/run-id", "asklake.io/job-id", "asklake.io/image-digest"]) {
+  for (const key of [
+    "asklake.io/run-id",
+    "asklake.io/job-id",
+    "asklake.io/image-digest",
+    "asklake.io/resource-plan-hash",
+  ]) {
     if (String(actualAnnotations[key] || "") !== String(expectedAnnotations[key] || "")) {
       throw new Error(`Existing SparkApplication identity mismatch for ${key}`);
     }
@@ -278,6 +283,7 @@ function kubernetesExecutionIdentity(application, observed, recovered, extra = {
     observedAt: new Date().toISOString(),
     recovered,
     replacement: extra.replacement === true,
+    resourcePlanHash: String(annotations["asklake.io/resource-plan-hash"] || "") || undefined,
     runId: String(annotations["asklake.io/run-id"] || ""),
     state: applicationState(observed),
     ...extra,

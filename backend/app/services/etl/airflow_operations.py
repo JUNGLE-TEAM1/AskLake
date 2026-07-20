@@ -128,6 +128,7 @@ def run_spark_job(
     spark_attempt_generation: int = 1,
     source_boundary: dict[str, Any] | None = None,
     expected_kubernetes_execution: dict[str, Any] | None = None,
+    spark_resource_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
@@ -169,6 +170,11 @@ def run_spark_job(
                 source_boundary=source_boundary,
             ),
             "runId": run_id,
+            **(
+                {"sparkResourcePlan": spark_resource_plan}
+                if spark_resource_plan is not None
+                else {}
+            ),
             **(
                 {
                     "sparkAttemptGeneration": spark_attempt_generation,

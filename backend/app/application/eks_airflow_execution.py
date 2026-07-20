@@ -36,7 +36,9 @@ from app.services.eks_execution_contract import (
     spark_execution_lease_seconds,
     spark_kubernetes_execution_progress_callback,
 )
-from app.application.eks_spark_retry import prepare_eks_spark_attempt
+from app.application.spark_resource_planning import (
+    prepare_eks_spark_attempt_with_resource_plan,
+)
 from app.services.etl.eks_fixture import (
     is_eks_mvp_bounded_fixture_job,
     persisted_eks_mvp_fixture_source_boundary,
@@ -47,6 +49,27 @@ from app.services.etl.eks_fixture import (
 
 SparkRunner = Callable[..., dict[str, Any]]
 ManifestBuilder = Callable[[dict[str, Any], str], dict[str, Any]]
+
+
+def _spark_runner_kwargs(
+    *,
+    attempt_generation: int,
+    previous_kubernetes_execution: dict[str, Any] | None,
+    progress_callback: Callable[[dict[str, Any]], None],
+    resource_plan: dict[str, Any] | None,
+    source_boundary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "spark_progress_callback": progress_callback,
+        **({"spark_attempt_generation": attempt_generation} if attempt_generation > 1 else {}),
+        **({"source_boundary": source_boundary} if source_boundary is not None else {}),
+        **(
+            {"expected_kubernetes_execution": previous_kubernetes_execution}
+            if previous_kubernetes_execution is not None
+            else {}
+        ),
+        **({"spark_resource_plan": resource_plan} if resource_plan is not None else {}),
+    }
 
 
 def execute_eks_airflow_spark_run(
@@ -81,7 +104,6 @@ def execute_eks_airflow_spark_run(
     existing_result = (run.task_states or {}).get("sparkResult")
     if isinstance(existing_result, dict) and existing_result.get("status") == "success":
         return existing_result
-
     lease_seconds = spark_execution_lease_seconds()
     lease = etl_repository.claim_run_execution_lease(
         db,
@@ -121,9 +143,11 @@ def execute_eks_airflow_spark_run(
             run.task_states,
             previous_kubernetes_execution,
             spark_attempt_generation,
-        ) = prepare_eks_spark_attempt(
+            resource_plan,
+        ) = prepare_eks_spark_attempt_with_resource_plan(
             run.task_states or {},
             attempt_id=attempt_id,
+            job=job,
             lease_generation=lease.generation,
             job_id=job_id,
             run_id=run_id,
@@ -155,17 +179,13 @@ def execute_eks_airflow_spark_run(
             run_id=run_id,
             generation=lease.generation,
         )
-        spark_kwargs: dict[str, Any] = {
-            "spark_progress_callback": progress_callback,
-        }
-        if spark_attempt_generation > 1:
-            spark_kwargs["spark_attempt_generation"] = spark_attempt_generation
-        if source_boundary is not None:
-            spark_kwargs["source_boundary"] = source_boundary
-        if previous_kubernetes_execution is not None:
-            spark_kwargs["expected_kubernetes_execution"] = (
-                previous_kubernetes_execution
-            )
+        spark_kwargs = _spark_runner_kwargs(
+            attempt_generation=spark_attempt_generation,
+            previous_kubernetes_execution=previous_kubernetes_execution,
+            progress_callback=progress_callback,
+            resource_plan=resource_plan,
+            source_boundary=source_boundary,
+        )
         result = run_spark_job(
             db,
             job,

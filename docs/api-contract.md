@@ -4118,6 +4118,10 @@ type PermissionGrant = {
 - `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS`는 EKS에서 7200초로 주입하며 SparkApplication polling의 절대 제한이다. lease heartbeat는 이 timeout을 연장하지 않는다.
 - 같은 `runId`의 활성 lease가 있으면 중복 요청은 `409 SPARK_RUN_ALREADY_EXECUTING`이다. 만료 후 takeover는 generation을 증가시키고 이전 generation의 결과 저장을 fence한다.
 - `ASKLAKE_SPARK_RUNNER=kubernetes`는 `runId` 기반 deterministic name으로 `SparkApplication`을 create/poll하고 driver result marker를 수집한다. create 응답 유실 또는 `409`는 기존 object의 run/job/image identity가 모두 일치할 때만 복구하며, timeout이면 해당 object를 삭제한다. local/REST runner로 fallback하지 않는다.
+- `ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=shadow`는 File/S3 입력 metadata로
+  `taskStates.sparkExecution.resourcePlan`을 최초 제출 전에 저장한다.
+  `appliedExecutors`는 기존 executor 수를 유지하며 같은 Run의 retry는 Plan을
+  재사용한다. Plan hash drift는 `SPARK_EXECUTION_IDENTITY_MISMATCH`로 실패한다.
 현재 그룹 후보는 backend의 `DEMO_GROUPS` 고정 정의이고 사용자 후보는 `auth_users` table을 우선한다. `permissionTemplate`은 과거 request 호환용 요약이며 권한 판정에는 사용하지 않는다.
 
 ## Realtime 2026 전환 계약

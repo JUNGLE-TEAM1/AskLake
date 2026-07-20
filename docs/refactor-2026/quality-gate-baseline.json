@@ -10,7 +10,7 @@
         "backend/app/services/etl_service.py": 2276,
         "backend/scripts/run_eks_day17_hpa_race.py": 1303,
         "backend/scripts/runtime/spark_job_runtime.py": 1772,
-        "backend/src/sparkRunner.mjs": 1641
+        "backend/src/sparkRunner.mjs": 1626
       },
       "oversizedJavascriptFunctions": {
         "backend/scripts/ingest-kafka-reviews.mjs::ingestReviews": 153,
@@ -18,7 +18,7 @@
         "backend/src/sparkRunner.mjs::runSparkPipelineWithSource": 220
       },
       "oversizedPythonFunctions": {
-        "backend/app/application/eks_airflow_execution.py::execute_eks_airflow_spark_run": 265,
+        "backend/app/application/eks_airflow_execution.py::execute_eks_airflow_spark_run": 262,
         "backend/app/application/airflow_execution.py::commit_airflow_catalog_reconciliation": 105,
         "backend/app/application/eks_airflow_execution.py::reconcile_eks_airflow_catalog": 170,
         "backend/app/services/catalog_service.py::CatalogService.verify_and_register_unique_key": 121,

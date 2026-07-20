@@ -656,6 +656,9 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] A가 승인한 3~4개 MSK group을 private runtime-config values에 반영하고 동시 MSK → Iceberg → Trino → Catalog 결과의 pairwise isolation 검증
 - [ ] 실제 EKS 2-replica FastAPI에서 Pod 종료 후 같은 runId recovery/takeover 검증
 - [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
+- [x] File/S3 입력 크기로 초기 executor 권장값을 계산하고 Run persistence,
+  retry 재사용과 SparkApplication Plan hash를 검증하는 Resource Planner 계약
+- [ ] 실제 EKS 10/100 GB shadow와 100 GB executor 1/4/6 순차 비용·성능 gate
 ## Realtime 2026 foundation readiness
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
