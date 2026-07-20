@@ -82,6 +82,24 @@ class ContinuousReconciliationHooks:
     apply_report: Callable[..., None]
 
 
+def _stale_worker_decision(evidence: RuntimeEvidence) -> ReconciliationDecision:
+    if evidence.desired_state == "running" and evidence.container_state in {
+        "exited",
+        "missing",
+        "failed",
+    }:
+        return ReconciliationDecision(
+            ReconciliationAction.RESTART_WORKER,
+            ReconciliationCertainty.CONFIRMED,
+            "stale report belongs to an older failed worker; restart the current intent",
+        )
+    return ReconciliationDecision(
+        ReconciliationAction.IGNORE_STALE_REPORT,
+        ReconciliationCertainty.CONFIRMED,
+        "report belongs to an older worker attempt",
+    )
+
+
 def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
     """Return one deterministic action from immutable runtime evidence."""
     requested_terminal = (
@@ -121,20 +139,7 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
         and evidence.expected_worker_attempt_id
         and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id
     ):
-        if (
-            evidence.desired_state == "running"
-            and evidence.container_state in {"exited", "missing", "failed"}
-        ):
-            return ReconciliationDecision(
-                ReconciliationAction.RESTART_WORKER,
-                ReconciliationCertainty.CONFIRMED,
-                "stale report belongs to an older failed worker; restart the current intent",
-            )
-        return ReconciliationDecision(
-            ReconciliationAction.IGNORE_STALE_REPORT,
-            ReconciliationCertainty.CONFIRMED,
-            "report belongs to an older worker attempt",
-        )
+        return _stale_worker_decision(evidence)
     if evidence.report_state in {JsonDocumentState.INVALID, JsonDocumentState.UNREADABLE}:
         return ReconciliationDecision(
             ReconciliationAction.RECORD_REPORT_ERROR,

@@ -26,12 +26,12 @@ locals {
   }
 
   base_identity_policy_documents = local.identity_resources_ready ? {
-    backend           = local.workload_iam_policy_documents.backend
-    trino             = local.workload_iam_policy_documents.trino
-    mskSmoke          = local.workload_iam_policy_documents.msk_smoke
-    spark             = local.workload_iam_policy_documents.spark
-    realtimeV1Spark   = local.workload_iam_policy_documents.realtime_v1_spark
-    realtimeV1Worker  = local.workload_iam_policy_documents.realtime_v1_worker
+    backend          = local.workload_iam_policy_documents.backend
+    trino            = local.workload_iam_policy_documents.trino
+    mskSmoke         = local.workload_iam_policy_documents.msk_smoke
+    spark            = local.workload_iam_policy_documents.spark
+    realtimeV1Spark  = local.workload_iam_policy_documents.realtime_v1_spark
+    realtimeV1Worker = local.workload_iam_policy_documents.realtime_v1_worker
   } : {}
   active_identity_policy_documents = merge(
     local.base_identity_policy_documents,

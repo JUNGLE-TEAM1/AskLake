@@ -82,7 +82,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:WriteData",
         ]
-        Resource = concat(var.msk_topic_arns, [local.managed_msk.topic])
+        Resource = var.msk_topic_arns
       },
     ]
   } : null
@@ -121,7 +121,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:ReadData",
         ]
-        Resource = var.msk_topic_arns
+        Resource = concat(var.msk_topic_arns, [local.managed_msk.topic])
       },
       {
         Sid    = "UseFixtureConsumerGroup"
@@ -245,7 +245,7 @@ locals {
           local.managed_msk.batch_group,
         ]
       },
-    ] : [], [
+      ] : [], [
       {
         Sid      = "ListBackendRawBucket"
         Effect   = "Allow"
@@ -356,9 +356,9 @@ locals {
         }
       },
       {
-        Sid      = "ReadContinuousPublicationAndRuntimeDocuments"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
+        Sid    = "ReadContinuousPublicationAndRuntimeDocuments"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
         Resource = [
           var.storage_object_arns.output,
           var.storage_object_arns.continuous_runtime,

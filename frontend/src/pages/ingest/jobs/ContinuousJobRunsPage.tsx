@@ -38,6 +38,47 @@ import { ContinuousDagSelection, JobRunsPageProps, activeContinuousSessionStatus
 import { formatCompactDateTime } from "./jobShared";
 import { DagStepInspector, DagTimelineItem, getSelectedDagStep } from "./SnapshotJobRunsPage";
 
+interface ContinuousSessionSelectionOptions {
+  jobId: string;
+  onAction: JobRunsPageProps["onAction"];
+  setBatches: (value: KafkaContinuousBatch[]) => void;
+  setDagSelection: (value: ContinuousDagSelection | null) => void;
+  setRefreshError: (value: string | null) => void;
+  setSelectedSession: (value: KafkaContinuousSession | null) => void;
+  setSelectedSessionId: (value: string | null) => void;
+}
+
+function useContinuousSessionSelection(options: ContinuousSessionSelectionOptions) {
+  const selectionRequestSequenceRef = useRef(0);
+  const selectedSessionIdRef = useRef<string | null>(null);
+  const resetSessionSelection = useCallback(() => {
+    selectedSessionIdRef.current = null;
+    selectionRequestSequenceRef.current += 1;
+  }, []);
+  const selectSession = useCallback(async (session: KafkaContinuousSession) => {
+    const selectionRequestSequence = selectionRequestSequenceRef.current + 1;
+    selectionRequestSequenceRef.current = selectionRequestSequence;
+    selectedSessionIdRef.current = session.sessionId;
+    options.setSelectedSessionId(session.sessionId);
+    options.setSelectedSession(session);
+    options.setBatches([]);
+    options.setDagSelection(null);
+    options.onAction("etl.continuous.session_opened", `/api/etl/jobs/${options.jobId}/continuous/sessions/${session.sessionId}`, session.sessionId);
+    try {
+      const nextBatches = await getContinuousSessionBatches(options.jobId, session.sessionId, 100);
+      if (selectionRequestSequence === selectionRequestSequenceRef.current && selectedSessionIdRef.current === session.sessionId) {
+        options.setBatches(nextBatches);
+        options.setRefreshError(null);
+      }
+    } catch {
+      if (selectionRequestSequence === selectionRequestSequenceRef.current && selectedSessionIdRef.current === session.sessionId) {
+        options.setRefreshError("선택한 세션의 micro-batch를 불러오지 못했습니다. 다시 선택하거나 새로고침해 주세요.");
+      }
+    }
+  }, [options]);
+  return { resetSessionSelection, selectSession, selectedSessionIdRef };
+}
+
 export function ContinuousJobRunsPage({
   catalogDatasetId,
   catalogRowCount,
@@ -59,10 +100,12 @@ export function ContinuousJobRunsPage({
   const [dagSelection, setDagSelection] = useState<ContinuousDagSelection | null>(null);
   const inFlightRef = useRef(false);
   const requestSequenceRef = useRef(0);
-  const selectionRequestSequenceRef = useRef(0);
-  const selectedSessionIdRef = useRef<string | null>(null);
   const activeSessionsRef = useRef(false);
   const hasLoadedRef = useRef(false);
+  const { resetSessionSelection, selectSession, selectedSessionIdRef } = useContinuousSessionSelection({
+    jobId: job.id, onAction, setBatches, setDagSelection,
+    setRefreshError, setSelectedSession, setSelectedSessionId,
+  });
 
   const loadSessions = useCallback(async () => {
     if (inFlightRef.current) return { active: activeSessionsRef.current, ok: true };
@@ -112,8 +155,7 @@ export function ContinuousJobRunsPage({
     hasLoadedRef.current = false;
     activeSessionsRef.current = false;
     setSessions([]);
-    selectedSessionIdRef.current = null;
-    selectionRequestSequenceRef.current += 1;
+    resetSessionSelection();
     setSelectedSessionId(null);
     setSelectedSession(null);
     setBatches([]);
@@ -121,7 +163,7 @@ export function ContinuousJobRunsPage({
     setLoading(true);
     setRefreshError(null);
     setDagSelection(null);
-  }, [job.id]);
+  }, [job.id, resetSessionSelection]);
 
   const runtimeActive = job.continuousRuntime
     ? ["starting", "running", "pausing", "stopping"].includes(job.continuousRuntime.status)
@@ -163,34 +205,6 @@ export function ContinuousJobRunsPage({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [loadSessions, runtimeActive, sessionPollingActive]);
-
-  const selectSession = async (session: KafkaContinuousSession) => {
-    const selectionRequestSequence = selectionRequestSequenceRef.current + 1;
-    selectionRequestSequenceRef.current = selectionRequestSequence;
-    selectedSessionIdRef.current = session.sessionId;
-    setSelectedSessionId(session.sessionId);
-    setSelectedSession(session);
-    setBatches([]);
-    setDagSelection(null);
-    onAction("etl.continuous.session_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
-    try {
-      const nextBatches = await getContinuousSessionBatches(job.id, session.sessionId, 100);
-      if (
-        selectionRequestSequence === selectionRequestSequenceRef.current
-        && selectedSessionIdRef.current === session.sessionId
-      ) {
-        setBatches(nextBatches);
-        setRefreshError(null);
-      }
-    } catch {
-      if (
-        selectionRequestSequence === selectionRequestSequenceRef.current
-        && selectedSessionIdRef.current === session.sessionId
-      ) {
-        setRefreshError("선택한 세션의 micro-batch를 불러오지 못했습니다. 다시 선택하거나 새로고침해 주세요.");
-      }
-    }
-  };
 
   const refreshNow = async () => {
     setManualRefreshing(true);

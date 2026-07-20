@@ -1161,12 +1161,12 @@ run "irsa_workload_identity_contract" {
   }
 
   assert {
-    condition     = length(aws_iam_role.workload) == 4
-    error_message = "IRSA must create isolated backend, Trino, MSK smoke, and Spark roles."
+    condition     = length(aws_iam_role.workload) == 6
+    error_message = "IRSA must create isolated backend, Trino, MSK smoke, Spark, Realtime V1 Spark, and Realtime V1 worker roles."
   }
 
   assert {
-    condition     = length(output.workload_identity_contract.service_account_annotations) == 4
+    condition     = length(output.workload_identity_contract.service_account_annotations) == 6
     error_message = "IRSA must hand off one role annotation per AWS-enabled service account."
   }
 
@@ -1211,15 +1211,29 @@ run "irsa_workload_identity_contract" {
 
   assert {
     condition = (
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == local.msk_topic_arns &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "ConsumeFixtureTopic"]).Resource == concat(local.msk_topic_arns, [format("%s/%s", replace(local.msk_cluster_arn, ":cluster/", ":topic/"), "asklake.*")]) &&
       length(local.msk_topic_arns) == 2 &&
       alltrue([for arn in local.msk_topic_arns : !strcontains(arn, "*")]) &&
-      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == local.msk_group_arns &&
+      one([for statement in module.workload_iam_policies.contracts.spark.Statement : statement if statement.Sid == "UseFixtureConsumerGroup"]).Resource == concat(local.msk_group_arns, [
+        format("%s/%s", replace(local.msk_cluster_arn, ":cluster/", ":group/"), "asklake-batch-*"),
+        format("%s/%s", replace(local.msk_cluster_arn, ":cluster/", ":group/"), "asklake-stream-*"),
+      ]) &&
       length(local.msk_group_arns) == 5 &&
       alltrue([for arn in local.msk_group_arns : !strcontains(arn, "*")]) &&
       one([for statement in module.workload_iam_policies.contracts.msk_smoke.Statement : statement if statement.Sid == "DescribeFixtureTopic"]).Resource == local.msk_topic_arns
     )
-    error_message = "Spark and MSK smoke policies must stay on exact isolated test/Realtime topics and approved consumer groups."
+    error_message = "Spark must combine exact fixture identities with deployment-owned managed topic/group prefixes while MSK smoke stays exact-only."
+  }
+
+  assert {
+    condition = (
+      toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker"]) &&
+      jsondecode(aws_iam_role.workload["realtimeV1Spark"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:sub"] == "system:serviceaccount:${var.namespace}:${var.service_account_names["realtimeV1Spark"]}" &&
+      jsondecode(aws_iam_role.workload["realtimeV1Worker"].assume_role_policy).Statement[0].Condition.StringEquals["${local.cluster_oidc_host}:sub"] == "system:serviceaccount:${var.namespace}:${var.service_account_names["realtimeV1Worker"]}" &&
+      module.workload_iam_policies.contracts.realtime_v1_spark == module.workload_iam_policies.contracts.spark &&
+      length(module.workload_iam_policies.contracts.realtime_v1_worker.Statement) == 3
+    )
+    error_message = "Realtime V1 Spark and control worker must have separate exact service-account identities and reviewed policies."
   }
 
   assert {
@@ -1273,7 +1287,7 @@ run "realtime_v2_connect_has_exact_generation_identity" {
   }
 
   assert {
-    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV2Connect"])
+    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker", "realtimeV2Connect"])
     error_message = "A configured V2 generation must add exactly one dedicated Connect workload identity."
   }
 
@@ -1393,7 +1407,7 @@ run "create_mode_irsa_has_static_identity_keys" {
   }
 
   assert {
-    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark"])
+    condition     = toset(keys(aws_iam_role.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker"])
     error_message = "Create mode IRSA identity resource keys must be fully known during plan."
   }
 }
@@ -1426,7 +1440,7 @@ run "create_mode_pod_identity_has_static_keys" {
   }
 
   assert {
-    condition     = toset(keys(aws_eks_pod_identity_association.workload)) == toset(["backend", "trino", "mskSmoke", "spark"])
+    condition     = toset(keys(aws_eks_pod_identity_association.workload)) == toset(["backend", "trino", "mskSmoke", "spark", "realtimeV1Spark", "realtimeV1Worker"])
     error_message = "Create mode Pod Identity association keys must be fully known during plan."
   }
 

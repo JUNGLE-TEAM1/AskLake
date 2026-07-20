@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { kafkaSecurityOptions, loadKafkaJs, validateManagedKafkaSourceBoundary } from "./kafka-codecs.mjs";
-import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
+import { buildKafkaPreviewConsumerGroups, buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -762,12 +762,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
   validateManagedKafkaSourceBoundary({ broker, topic });
   const iamMode = String(process.env.ASKLAKE_KAFKA_AUTH_MODE || "none").trim().toLowerCase() === "iam";
-  const configuredGroupId = iamMode
-    ? "server-assigned-on-job-create"
-    : fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
-  const sampleGroupId = iamMode
-    ? `asklake-preview-${randomUUID()}`
-    : `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const { configuredGroupId, sampleGroupId } = buildKafkaPreviewConsumerGroups(fields, iamMode, fieldValue);
   const samplePolicy = samplePolicyForFields(fields, "rows");
   const securityOptions = await kafkaSecurityOptions();
   const kafka = new Kafka({

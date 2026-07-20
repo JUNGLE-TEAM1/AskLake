@@ -10,14 +10,12 @@ import secrets
 from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import urlparse
-
 from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
 from app.domain.audit import AuditTargetType
-from app.domain.kafka_source_identity import managed_kafka_source_config
 from app.core.compatibility import (
     CompatibilityPath,
     record_compatibility_path,
