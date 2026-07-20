@@ -143,7 +143,7 @@ DashboardBindingDelivery
 
 ## 10. Phase 2 완료 조건
 
-- ETL Job review 화면에서 사용자는 `결과를 Dashboard에 자동 반영`을 선택하고 새 Dashboard 이름을 지정할 수 있다.
+- ETL Job review 및 Continuous SQL 생성 화면에서 사용자는 `결과를 Dashboard에 자동 반영`을 선택하고 새 Dashboard 이름을 지정할 수 있다.
 - Job 생성 성공 뒤 실제 `job.id`와 API가 반환한 output Dataset ID로 새 빈 Dashboard와 managed binding을 순서대로 만든다. Dashboard binding 실패는 Job 생성을 rollback하지 않고 사용자에게 부분 성공을 알린다.
 - managed Dashboard는 binding output Dataset만 화면에 제공하고 Widget Dataset selector를 비활성화한다.
 - Widget create/update API는 selector 우회, assistant action, 직접 호출에서도 binding output Dataset 외 값을 `409 CONFLICT`로 거부한다. 시각화·레이아웃·제목·필드 편집과 Widget 삭제는 계속 허용한다.

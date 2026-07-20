@@ -10,6 +10,8 @@ import {
   verifyAndRegisterCatalogUniqueKey,
 } from "../../services/continuousSqlApi";
 import { getCatalogDataset } from "../../services/catalogApi";
+import { createDashboard } from "../../services/dashboardApi";
+import { createDashboardJobBinding } from "../../services/dashboardJobBindingApi";
 import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
 import { ApiError, type AuditResult, type CatalogDataset } from "../../types";
 import {
@@ -36,6 +38,8 @@ export function useContinuousSqlJoin({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [featureConfig, setFeatureConfig] = useState<RealtimeFeatureConfig | null>(null);
   const [outputName, setOutputName] = useState("");
+  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
+  const [dashboardTitle, setDashboardTitle] = useState("");
   const [triggerIntervalSeconds, setTriggerIntervalSeconds] = useState(5);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +130,8 @@ export function useContinuousSqlJoin({
   const open = () => {
     if (!relationMix) return;
     setOutputName(buildContinuousSqlOutputName(relationMix.streamingDataset));
+    setDashboardBindingEnabled(false);
+    setDashboardTitle("");
     setTriggerIntervalSeconds(5);
     setError(null);
     setResult(null);
@@ -221,6 +227,25 @@ export function useContinuousSqlJoin({
         `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
         started.job.outputDatasetId,
       );
+      if (dashboardBindingEnabled) {
+        try {
+          const { dashboard } = await createDashboard({
+            source: "manual",
+            title: dashboardTitle.trim() || `${outputName.trim()} Dashboard`,
+          });
+          await createDashboardJobBinding({
+            dashboardId: dashboard.id,
+            jobId: started.job.id,
+            jobKind: "continuous_sql",
+            outputDatasetId: started.job.outputDatasetId,
+          });
+          onAction("analysis.continuous_sql.dashboard_binding.created", "/api/dashboard-job-bindings", dashboard.id);
+        } catch (bindingError) {
+          const bindingMessage = bindingError instanceof Error ? bindingError.message : "Dashboard 연동 생성에 실패했습니다.";
+          setError(`Continuous SQL Job은 시작됐지만 Dashboard 연동에 실패했습니다: ${bindingMessage}`);
+          onAction("analysis.continuous_sql.dashboard_binding.failed", "/api/dashboard-job-bindings", started.job.id, "failed");
+        }
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "실시간 JOIN Job을 만들지 못했습니다.");
       setProgressMessage(null);
@@ -233,6 +258,8 @@ export function useContinuousSqlJoin({
   return {
     catalogDataset,
     create,
+    dashboardBindingEnabled,
+    dashboardTitle,
     dialogOpen,
     error,
     featureEnabled,
@@ -244,6 +271,8 @@ export function useContinuousSqlJoin({
     result,
     servingMode,
     setDialogOpen,
+    setDashboardBindingEnabled,
+    setDashboardTitle,
     setOutputName,
     setTriggerIntervalSeconds,
     triggerIntervalSeconds,

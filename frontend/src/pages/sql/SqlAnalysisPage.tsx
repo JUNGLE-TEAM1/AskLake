@@ -922,9 +922,13 @@ export function SqlAnalysisPage({
       {continuousSql.relationMix && (
         <ContinuousSqlJoinDialog
           catalogDataset={continuousSql.catalogDataset}
+          dashboardBindingEnabled={continuousSql.dashboardBindingEnabled}
+          dashboardTitle={continuousSql.dashboardTitle}
           error={continuousSql.error}
           featureEnabled={continuousSql.featureEnabled}
           onCreate={() => void continuousSql.create()}
+          onDashboardBindingEnabledChange={continuousSql.setDashboardBindingEnabled}
+          onDashboardTitleChange={continuousSql.setDashboardTitle}
           onOpenChange={continuousSql.setDialogOpen}
           onOutputNameChange={continuousSql.setOutputName}
           onTriggerIntervalChange={continuousSql.setTriggerIntervalSeconds}
