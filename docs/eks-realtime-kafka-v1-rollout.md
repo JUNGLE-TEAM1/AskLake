@@ -39,38 +39,38 @@ profile verifier는 base owner 0, 승인된 contract-only generation의 V1 worke
 
 ## 2026-07-20 pair1 기준 V1-only EKS 배포
 
-사용자 승인으로 `origin/pair1` commit `1066190e066c2b33dbdb45f92655ce7b3862b3bd` 위 `feat-#1101` working tree를 이미지화해 `asklake-dev`에 배포했다. Kafka batch의 managed IAM group, side-effect-free web read, 신규 V1 runtime owner admission과 live publication 복구 경계를 보완한 현재 release는 `asklake-web` revision 117, `asklake-realtime-v1` revision 15이며 비활성 V2 release는 그대로 보존한다.
+PR [#1102](https://github.com/JUNGLE-TEAM1/AskLake/pull/1102)를 `pair1`에 병합하고 merge commit `eaec2e1dd70b52adc169067c080a25f4f45d7f40`을 이미지화해 `asklake-dev`에 재배포했다. Kafka batch의 managed IAM group, side-effect-free web read, 신규 V1 runtime owner admission과 live publication 복구 경계를 보완한 현재 release는 `asklake-web` revision 118, `asklake-realtime-v1` revision 16이며 비활성 V2 release는 그대로 보존한다.
 
-- FastAPI/Collector/Worker Backend digest: `sha256:1e5fbbac593ab4bd362de180604ee9dd671b789aba51a5827864a436b19685a1`
-- Frontend digest: `sha256:f1b87c3311205925c68f9fadaf7bf7ed66e85d6fd0db9a8bf9fbf7703967145a`
+- FastAPI/Collector/Worker Backend digest: `sha256:0117ee8142a43d3ca35804657b6caa8967f0fc05af7b10a43745955405ee8c39`
+- Frontend digest: `sha256:87673473ded747e117ddfc31dbf82067ba2560df6411210371cff40985ec5943`
 - FastAPI는 local API control plane에서 신규 Kafka Continuous Job engine을 `spark_structured_streaming`으로 선택한다.
 - V1 worker는 `Recreate`, replica 1, owner `eks-continuous-worker-v1`, generation `1044-20260719-058ff8ac`, Kafka scope로 Ready다.
 - FastAPI는 같은 generation의 V1 admission만 수행하고 `CONTINUOUS_CONTROL_PLANE=disabled`로 조회/reconcile side effect를 실행하지 않는다. 신규 Job owner-claim dry probe와 managed batch group join을 통과했다. 보완 전 생성되어 owner claim이 없는 실패 Job은 자동 채택하지 않으므로 새 Job으로 검증한다.
 - live V2 workload 0, ClickHouse/Keeper PVC 2개 Bound, restore namespace StatefulSet 2개 replica 0/PVC 2개 Bound를 보존했다.
 - 새 Pod의 imageID digest 일치, restart 0, 외부 Backend health 200, Frontend 200, MSK/S3 Pod Identity `activationReady=true`를 확인했다.
 
-비민감 상세 결과는 [`deploy/eks-realtime-kafka-v1-only-deployment-receipt.json`](../deploy/eks-realtime-kafka-v1-only-deployment-receipt.json)에 기록한다. 이 배포는 working tree 이미지이며 commit/push/PR/pair1 merge는 수행하지 않았다. 따라서 이후 pair1 기반 자동 재배포에 V1-only 소스를 영구 반영하려면 별도 PR/merge가 필요하다.
+비민감 상세 결과는 [`deploy/eks-realtime-kafka-v1-only-deployment-receipt.json`](../deploy/eks-realtime-kafka-v1-only-deployment-receipt.json)에 기록한다. 이미지는 `pair1` merge commit에서 직접 빌드했고 ECR digest와 실제 Pod imageID, Helm revision, 외부 health를 대조했다.
 
 ### 2026-07-20 신규 Job end-to-end 보완 검증
 
 신규 owner-claimed Job `JOB-57A3B324`의 첫 micro-batch에서 발견된 세 경계 오류를 근본 계약에 반영했다. 숫자 batch ID `0`을 빈 문자열로 취급하던 manifest 파서를 정수 비교로 교체했고, V1 worker에 Backend runtime Secret의 Trino CA 파일을 read-only mount했으며, Continuous publication 검증 입력에 Spark commit의 `dataFileCount`를 전달해 Trino snapshot 파일 수와 비교하도록 했다. batch 0과 output file count 회귀 테스트 및 V1-only Helm render 검증을 추가했다.
 
-최종 Backend digest는 `sha256:1e5fbbac593ab4bd362de180604ee9dd671b789aba51a5827864a436b19685a1`이며 `asklake-web` revision 117과 `asklake-realtime-v1` revision 15에 같은 Backend digest를 적용했다. FastAPI, collector, exact-one V1 worker가 모두 Ready다. 현재 Job과 SparkApplication은 `running`/`RUNNING`, batch 0 consumed/stored/quarantine은 `100/100/0`, lag 0이다. durable manifest와 Iceberg snapshot이 등록됐고 Catalog dataset은 `available`, `100행`, `catalogBatchCursor=0`, `publicationRecoveryPending=false`, `lastError=null`이다. checkpoint·topic·보존된 V2 storage는 삭제하지 않았다.
+최종 Backend digest는 `sha256:0117ee8142a43d3ca35804657b6caa8967f0fc05af7b10a43745955405ee8c39`이며 `asklake-web` revision 118과 `asklake-realtime-v1` revision 16에 같은 Backend digest를 적용했다. FastAPI, collector, exact-one V1 worker가 모두 Ready다. 현재 Job과 SparkApplication은 `running`/`RUNNING`, batch 0 consumed/stored/quarantine은 `100/100/0`, lag 0이다. durable manifest와 Iceberg snapshot이 등록됐고 Catalog dataset은 `available`, `100행`, `catalogBatchCursor=0`, `publicationRecoveryPending=false`, `lastError=null`이다. checkpoint·topic·보존된 V2 storage는 삭제하지 않았다.
 
-세션 선택 UI에서는 active polling 응답이 사용자의 직전 선택을 이전 ID로 덮어쓸 수 있던 경쟁 상태를 제거했다. 선택 ID를 최신 ref로 유지하고 클릭 즉시 해당 세션의 batch를 조회하며, 세션 ID뿐 아니라 행 전체에 키보드 접근 가능한 선택 동작을 연결했다. frontend digest `sha256:f1b87c3311205925c68f9fadaf7bf7ed66e85d6fd0db9a8bf9fbf7703967145a`를 Web revision 117에 적용했고 새 production asset `assets/index-DhSHjIBG.js`, Frontend 2/2 Ready, 외부 API health 200을 확인했다.
+세션 선택 UI에서는 active polling 응답이 사용자의 직전 선택을 이전 ID로 덮어쓸 수 있던 경쟁 상태를 제거했다. 선택 ID를 최신 ref로 유지하고 클릭 즉시 해당 세션의 batch를 조회하며, 세션 ID뿐 아니라 행 전체에 키보드 접근 가능한 선택 동작을 연결했다. frontend digest `sha256:87673473ded747e117ddfc31dbf82067ba2560df6411210371cff40985ec5943`를 Web revision 118에 적용했고 새 production asset `assets/index-Bqt_cpsu.js`, Frontend 2/2 Ready, 외부 API health 200을 확인했다.
 
 ## 작업트리 범위 감사
 
-2026-07-20 배포 결과 기록 후 `origin/pair1`과 `origin/feat-#1101`을 다시 fetch했다. 두 ref와 현재 HEAD는 모두 `1066190e066c2b33dbdb45f92655ce7b3862b3bd`다.
+2026-07-20 PR #1102 merge 전에 `origin/pair1`과 `origin/feat-#1101`을 다시 fetch하고 전체 diff를 감사했다. 이후 `pair1` merge commit `eaec2e1dd70b52adc169067c080a25f4f45d7f40`에서 이미지를 빌드했다.
 
-- #1101 최종 working-tree path 63개(`backend`, `deploy`, `docs`, `frontend`, `infra`, `scripts`)
+- #1101 최종 PR path 65개(`backend`, `deploy`, `docs`, `frontend`, `infra`, `scripts`)
 - 전체 path를 V1-only API/UI/runtime/IAM/검증/배포 증거 범위로 대조한 결과 #1101 범위 밖 변경 0개, 삭제 0개
 - case-insensitive path 충돌 0개
 - 신규 파일의 기존 tracked/신규 file 동일-content 중복 0개
 - 신규 파일끼리 basename 중복 0개
 - high-confidence credential/private-key pattern hit 0개, `git diff --check` 오류 0개
 
-변경은 V1-only backend engine/API projection, workload·web Helm profile/schema, frontend label/Gold action, focused test/verifier, 배포 receipt와 관련 SSOT에 한정된다. V2 runtime template, image, PVC/PV/VolumeSnapshot, 기존 canary receipt는 편집하거나 삭제하지 않았다. 이 감사는 commit/push/merge를 수행하지 않은 working tree 기준이다.
+변경은 V1-only backend engine/API projection, workload·web Helm profile/schema, frontend label/Gold action, focused test/verifier, 배포 receipt와 관련 SSOT에 한정된다. V2 runtime template, image, PVC/PV/VolumeSnapshot, 기존 canary receipt는 편집하거나 삭제하지 않았다. 범위 밖 변경·삭제·중복 산출물은 모두 0건이며 PR 체크 12개도 모두 통과한 뒤 병합했다.
 
 ## 1. 고정 identity와 owner 계약
 
