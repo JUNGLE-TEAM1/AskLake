@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.dashboard_job_binding import DashboardBindingDeliveryModel, DashboardJobBindingModel
 from app.models.dashboard_live import DatasetRevisionCommitModel, DatasetFreshnessModel
+from app.repositories.dashboard_job_binding_repository import DashboardJobBindingRepository
 from app.services import dashboard_binding_delivery_worker as worker
 
 
@@ -87,3 +88,15 @@ class DashboardBindingDeliveryWorkerTests(unittest.TestCase):
         with patch.object(worker, "SessionLocal", self.session_local):
             self.assertEqual(worker.process_dashboard_binding_deliveries(), 0)
         self.assertEqual(self._deliveries(), [])
+
+    def test_repository_save_is_visible_to_a_new_session(self) -> None:
+        with self.session_local() as db:
+            DashboardJobBindingRepository(db).save(DashboardJobBindingModel(
+                id="binding-persisted", dashboard_id="dashboard-persisted", job_id="job-persisted", job_kind="etl",
+                output_dataset_id="dataset-persisted", mode="managed", enabled=True, created_by="Admin User",
+            ))
+        with self.session_local() as db:
+            persisted = DashboardJobBindingRepository(db).get("binding-persisted")
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.output_dataset_id, "dataset-persisted")

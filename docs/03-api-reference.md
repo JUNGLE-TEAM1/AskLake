@@ -539,7 +539,7 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/dashboards` | dashboard 목록 조회 |
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
-| `POST` | `/api/dashboard-job-bindings` | 빈 Dashboard에 Job output Dataset managed binding 생성 |
+| `POST` | `/api/dashboard-job-bindings` | 빈 Dashboard에 ETL 또는 Continuous SQL Job output Dataset managed binding을 transaction commit 후 생성 |
 | `GET` | `/api/dashboard-job-bindings?jobId=&jobKind=` 또는 `?dashboardId=` | Job 또는 Dashboard 기준 binding summary 조회 |
 | `GET` | `/api/dashboard-job-bindings/{bindingId}` | binding과 latest delivery 상태 조회 |
 | `POST` | `/api/dashboard-job-bindings/{bindingId}/detach` | binding을 detached로 전환하고 이후 delivery 중지 |

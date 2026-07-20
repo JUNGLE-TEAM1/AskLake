@@ -79,6 +79,8 @@ export function SqlJobWizardDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [storagePathTouched, setStoragePathTouched] = useState(false);
+  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
+  const [dashboardTitle, setDashboardTitle] = useState("");
   const previousContextRef = useRef<string | null>(null);
   const contextKey = `${baseDataset.id}:${resultDraft.runId}`;
   const activeStep = wizardSteps[stepIndex];
@@ -102,6 +104,8 @@ export function SqlJobWizardDialog({
     setShowErrors(false);
     setSubmitError(null);
     setStoragePathTouched(false);
+    setDashboardBindingEnabled(false);
+    setDashboardTitle("");
   }, [baseDataset, contextKey, defaultMetadata, open, resultDraft]);
 
   const updateDataset = (patch: Partial<SqlJobWizardDatasetInfo>) => {
@@ -168,7 +172,13 @@ export function SqlJobWizardDialog({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const created = await onCreate(createSqlJobRequest(baseDataset, resultDraft, configuration));
+      const request = createSqlJobRequest(baseDataset, resultDraft, configuration);
+      if (dashboardBindingEnabled) {
+        request.dashboardBinding = {
+          title: dashboardTitle.trim() || `${configuration.dataset.name.trim() || "SQL 결과"} Dashboard`,
+        };
+      }
+      const created = await onCreate(request);
       if (created !== false) onClose();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "처리 Job 생성 요청을 완료하지 못했습니다.");
@@ -266,7 +276,7 @@ export function SqlJobWizardDialog({
           />
         ) : null}
 
-        {activeStep.id === "review" ? (
+        {activeStep.id === "review" ? <>
           <SqlJobReviewStep
             baseDataset={baseDataset}
             configuration={configuration}
@@ -277,7 +287,14 @@ export function SqlJobWizardDialog({
             runtime={runtime}
             showErrors={showErrors}
           />
-        ) : null}
+          <section className="rounded-lg border border-slate-200 p-4">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input checked={dashboardBindingEnabled} disabled={isBusy} type="checkbox" onChange={(event) => setDashboardBindingEnabled(event.target.checked)} />
+              <span><strong className="block text-sm">결과를 Dashboard에 자동 반영</strong><small className="text-slate-500">새 빈 Dashboard를 만들고 이 Job의 출력 Dataset으로 고정합니다.</small></span>
+            </label>
+            {dashboardBindingEnabled ? <label className="mt-4 block text-sm">Dashboard 이름<input className="mt-2 w-full rounded border px-3 py-2" disabled={isBusy} maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${configuration.dataset.name || "SQL 결과"} Dashboard`} /></label> : null}
+          </section>
+        </> : null}
       </div>
     </DialogShell>
   );

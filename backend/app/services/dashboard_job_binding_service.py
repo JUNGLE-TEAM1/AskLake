@@ -108,7 +108,8 @@ class DashboardJobBindingService:
         delivery.error_code = None
         delivery.error_message = None
         delivery.attempt_count += 1
-        self.db.flush()
+        self.db.commit()
+        self.db.refresh(delivery)
         return self._to_schema(binding)
 
     def _require_binding(self, binding_id: str) -> DashboardJobBindingModel:

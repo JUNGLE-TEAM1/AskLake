@@ -77,8 +77,8 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCreateDatasetJob: (request: CreateDerivedDatasetRequest) => Promise<boolean>;
-  onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest) => Promise<boolean>;
+  onCreateDatasetJob: (request: CreateDerivedDatasetRequest, dashboardBinding?: { title: string }) => Promise<boolean>;
+  onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest, dashboardBinding?: { title: string }) => Promise<boolean>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState<string | null>(dataset?.id ?? null);

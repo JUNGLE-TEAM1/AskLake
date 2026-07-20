@@ -97,15 +97,15 @@ export function useSqlJobCreation({
 }: {
   materializationResult: SqlResultDraft | null;
   onClose: () => void;
-  onCreateDatasetJob: (request: CreateDerivedDatasetRequest) => Promise<boolean>;
-  onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest) => Promise<boolean>;
+  onCreateDatasetJob: (request: CreateDerivedDatasetRequest, dashboardBinding?: { title: string }) => Promise<boolean>;
+  onCreateTrinoSqlJob: (request: CreateTrinoSqlJobRequest, dashboardBinding?: { title: string }) => Promise<boolean>;
 }) {
   return useCallback(async (request: SqlJobWizardCreateRequest) => {
     const isTrinoRun = materializationResult?.engine === "trino"
       && materializationResult.runId === request.context.sourceRunId;
     const created = isTrinoRun
-      ? await onCreateTrinoSqlJob(buildTrinoJobRequest(request))
-      : await onCreateDatasetJob(buildCompatibilityJobRequest(request));
+      ? await onCreateTrinoSqlJob(buildTrinoJobRequest(request), request.dashboardBinding)
+      : await onCreateDatasetJob(buildCompatibilityJobRequest(request), request.dashboardBinding);
     if (created) onClose();
     return created;
   }, [materializationResult?.engine, materializationResult?.runId, onClose, onCreateDatasetJob, onCreateTrinoSqlJob]);

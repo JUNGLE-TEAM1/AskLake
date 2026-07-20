@@ -10,8 +10,7 @@ import {
   verifyAndRegisterCatalogUniqueKey,
 } from "../../services/continuousSqlApi";
 import { getCatalogDataset } from "../../services/catalogApi";
-import { createDashboard } from "../../services/dashboardApi";
-import { createDashboardJobBinding } from "../../services/dashboardJobBindingApi";
+import { createManagedJobDashboard } from "../../services/dashboardJobBindingApi";
 import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
 import { ApiError, type AuditResult, type CatalogDataset } from "../../types";
 import {
@@ -229,15 +228,11 @@ export function useContinuousSqlJoin({
       );
       if (dashboardBindingEnabled) {
         try {
-          const { dashboard } = await createDashboard({
-            source: "manual",
-            title: dashboardTitle.trim() || `${outputName.trim()} Dashboard`,
-          });
-          await createDashboardJobBinding({
-            dashboardId: dashboard.id,
+          const { dashboard } = await createManagedJobDashboard({
             jobId: started.job.id,
             jobKind: "continuous_sql",
             outputDatasetId: started.job.outputDatasetId,
+            title: dashboardTitle.trim() || `${outputName.trim()} Dashboard`,
           });
           onAction("analysis.continuous_sql.dashboard_binding.created", "/api/dashboard-job-bindings", dashboard.id);
         } catch (bindingError) {

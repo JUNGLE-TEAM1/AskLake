@@ -47,7 +47,8 @@ class DashboardJobBindingRepository:
 
     def save(self, binding: DashboardJobBindingModel) -> DashboardJobBindingModel:
         self.db.add(binding)
-        self.db.flush()
+        self.db.commit()
+        self.db.refresh(binding)
         return binding
 
     def get_delivery(self, binding_id: str, dataset_revision: int) -> DashboardBindingDeliveryModel | None:
