@@ -124,7 +124,11 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
         if (
             evidence.desired_state == "running"
             and evidence.contract_initialized
-            and evidence.container_state in {"exited", "missing"}
+            # REST runner state is an ephemeral file.  A control-plane
+            # redeploy can therefore make a conclusively stale report pair
+            # with an `unknown` runner status; the committed start intent is
+            # still the only safe worker identity to submit.
+            and evidence.container_state in {"exited", "missing", "unknown"}
         ):
             return ReconciliationDecision(
                 ReconciliationAction.RESTART_WORKER,

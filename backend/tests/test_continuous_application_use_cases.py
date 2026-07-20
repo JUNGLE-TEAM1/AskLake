@@ -278,15 +278,17 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         ))
         self.assertEqual(decision.action, ReconciliationAction.IGNORE_STALE_REPORT)
 
-    def test_terminal_stale_report_restarts_the_current_fenced_attempt(self) -> None:
-        decision = decide_reconciliation(self.evidence(
-            container_state="exited",
-            expected_worker_attempt_id="start-current",
-            observed_worker_attempt_id="old-attempt",
-        ))
+    def test_terminal_or_unknown_stale_report_restarts_the_current_fenced_attempt(self) -> None:
+        for container_state in ("exited", "missing", "unknown"):
+            with self.subTest(container_state=container_state):
+                decision = decide_reconciliation(self.evidence(
+                    container_state=container_state,
+                    expected_worker_attempt_id="start-current",
+                    observed_worker_attempt_id="old-attempt",
+                ))
 
-        self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
-        self.assertEqual(decision.certainty, ReconciliationCertainty.CONFIRMED)
+                self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
+                self.assertEqual(decision.certainty, ReconciliationCertainty.CONFIRMED)
 
     def test_partial_publication_uses_current_report_for_resume(self) -> None:
         decision = decide_reconciliation(self.evidence(
