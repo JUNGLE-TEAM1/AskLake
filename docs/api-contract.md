@@ -1693,6 +1693,8 @@ Spark/Kafka production entrypoint 경로, 기존 CLI/environment 입력, exit �
 
 Review analysis API request/response는 변경하지 않는다. 내부 Python→Node 호출만 `version/requestId/idempotencyKey/operation/payload` envelope로 전환하며 bridge 오류는 기존 `BACKEND_TIMEOUT`, `REVIEW_ANALYSIS_FAILED`, `REVIEW_ANALYSIS_INVALID_RESPONSE` public 오류로 변환한다.
 
+일반 Snapshot Spark runtime report의 `sparkResources`는 `materializationMode=run_scoped_parquet_staging`을 유지하고 `materializationFileCount`, nullable `materializationBytes`, `materializationSizeStatus`, `materializationCleanupStatus`, 실제 `cacheStorageLevel`과 `outputFrameCacheMode`를 보존한다. `ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES`가 양수이고 모든 staged Parquet file의 exact byte 합계가 이 값 이하일 때만 `cacheStorageLevel=MEMORY_AND_DISK`, `outputFrameCacheMode=staged_parquet_memory_and_disk`다. 기본 한도 0, 크기 조회 실패, 빈 staging, 한도 초과는 `NONE`, `staged_parquet_reuse`다. `stagedCachePolicy=max_materialization_bytes`, `stagedCacheMaxBytes`, `stagedCacheEligible`, `stagedCacheDecisionReason`, `stagedCacheFallbackCount`를 additive evidence로 남기며, cache 준비 실패에서는 `stagedCacheFallbackReason=cache_initialization_failed`를 추가하고 같은 run staging을 다시 읽는다. cache 선택과 관계없이 후속 action의 lineage는 run staging에서 시작하므로 raw source physical full read 예산은 1회다.
+
 ## Refactor persisted compatibility and legacy visibility
 
 리팩토링은 baseline API 83 paths/95 operations, 23개 persisted table model, 기존 Job·session·checkpoint shape를 하위 호환 기준으로 사용한다. `KafkaContinuousRuntime.desiredState`, `observedState`와 `ContinuousRuntimeErrorDetail`은 응답 전용 additive field/schema이며 기존 `status`, `lastError`를 제거하지 않는다.

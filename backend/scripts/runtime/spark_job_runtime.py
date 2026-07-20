@@ -40,6 +40,10 @@ from runtime.spark_iceberg_identifiers import (
     required_iceberg_identifier,
 )
 from runtime.spark_materialization_staging import RunScopedParquetStaging, spark_staging_path
+from runtime.spark_staged_cache import (
+    initialize_staged_frame,
+    release_all_cached_frames,
+)
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -66,35 +70,9 @@ def finish_phase(phase_timings, name, phase):
     }
 
 
-def persist_reusable_frame(frame):
-    return frame.persist(StorageLevel.MEMORY_AND_DISK)
-
-
-def release_cached_frame(frame, cached_frames):
-    if frame is None:
-        return
-    for index, cached in enumerate(cached_frames):
-        if cached is frame:
-            cached_frames.pop(index)
-            try:
-                cached.unpersist(blocking=False)
-            except Exception as exc:
-                print(f"Spark cache cleanup failed: {exc}", file=sys.stderr)
-            return
-
-
-def release_all_cached_frames(cached_frames):
-    while cached_frames:
-        cached = cached_frames.pop()
-        try:
-            cached.unpersist(blocking=False)
-        except Exception as exc:
-            print(f"Spark cache cleanup failed: {exc}", file=sys.stderr)
-
-
 def spark_resource_manifest(spark):
     return {
-        "cacheStorageLevel": "MEMORY_AND_DISK",
+        "cacheStorageLevel": "NONE",
         "defaultParallelism": spark_runtime_integer(
             lambda: spark.sparkContext.defaultParallelism,
             1,
@@ -231,9 +209,9 @@ def main():
         delete_spark_path(spark, materialization.path)
         quarantine_staging_path = f"{staging_path}_quarantine"
         staged_df = materialization.materialize(spark, contracted_df, phase_timings, spark_resources)
-        input_rows, null_required = schema_contract_summary(
-            staged_df,
-            required_targets,
+        staged_df, input_rows, null_required = initialize_staged_frame(
+            spark, staged_df, materialization.path, config.staged_cache_max_bytes, cached_frames, spark_resources,
+            StorageLevel.MEMORY_AND_DISK, lambda frame: schema_contract_summary(frame, required_targets),
         )
         if null_required:
             raise ValueError(
@@ -1492,7 +1470,7 @@ def apply_schema_contract_with_count(
 ):
     contracted, required_targets = project_schema_contract(frame, schema_columns, transform_steps)
     if persist:
-        contracted = persist_reusable_frame(contracted)
+        contracted = contracted.persist(StorageLevel.MEMORY_AND_DISK)
     try:
         input_rows, null_required = schema_contract_summary(contracted, required_targets)
     except Exception:

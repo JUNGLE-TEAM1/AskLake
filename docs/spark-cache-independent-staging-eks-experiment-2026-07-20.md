@@ -152,3 +152,18 @@ cluster, Run, application, snapshot 식별자는 private mode-0600 evidence에�
 
 이 항목들은 staging으로 JVM OOM을 제거한 현재 변경과 분리해 후속 검증 및 운영
 hardening으로 진행한다.
+
+## 8. Staging-first hybrid 후속 구현
+
+후속 runtime은 원본 격리 경계를 유지하면서 작은 staging만 선택적으로
+`MEMORY_AND_DISK`에 재사용할 수 있도록 `ASKLAKE_SPARK_STAGED_CACHE_MAX_BYTES`를
+추가한다. 기본값은 0이며, 모든 staged Parquet file의 물리 byte 합계를 정확히
+읽었고 그 값이 양수 한도 이하일 때만 cache를 선택한다. cache 준비가 실패하면
+같은 run staging을 다시 읽고 raw source로 돌아가지 않는다.
+
+이 정책의 EKS 임계값과 성능 효과는 아직 이 문서의 기존 10GB/100GB 결과로
+입증한 것으로 간주하지 않는다. 새 candidate는 동일 image/resource shape의
+staging-only control과 반복 비교하고, `materializationBytes`, cache 선택/fallback,
+JVM heap·GC·executor replacement, raw read 1회, row identity, residue 0을 함께
+수집한다. dev EKS의 다른 workload를 완전히 통제할 수 없으면 elapsed time은
+참고 지표로만 사용하고 기능적 안전성 판정과 분리한다.

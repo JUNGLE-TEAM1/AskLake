@@ -114,6 +114,53 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_staged_cache_initialization_failure_reloads_parquet_without_raw_source(self) -> None:
+        cached_frame = FakeFrame()
+        fallback_frame = FakeFrame()
+        spark = FakeSpark(fallback_frame)
+        spark_resources = {"materializationBytes": 10}
+        cached_frames = []
+
+        with (
+            patch.object(
+                spark_job_run,
+                "schema_contract_summary",
+                side_effect=[RuntimeError("cache warmup failed"), (3, [])],
+            ) as summarize,
+            patch("builtins.print"),
+        ):
+            frame, input_rows, null_required = spark_job_run.initialize_staged_frame(
+                spark,
+                cached_frame,
+                "s3a://output/run.__materialization__run",
+                100,
+                cached_frames,
+                spark_resources,
+                spark_job_run.StorageLevel.MEMORY_AND_DISK,
+                lambda candidate: spark_job_run.schema_contract_summary(
+                    candidate,
+                    [],
+                ),
+            )
+
+        self.assertIs(frame, fallback_frame)
+        self.assertEqual((input_rows, null_required), (3, []))
+        self.assertEqual(summarize.call_count, 2)
+        cached_frame.persist.assert_called_once_with(
+            spark_job_run.StorageLevel.MEMORY_AND_DISK
+        )
+        cached_frame.unpersist.assert_called_once_with(blocking=False)
+        spark.read.parquet.assert_called_once_with(
+            "s3a://output/run.__materialization__run"
+        )
+        self.assertEqual(cached_frames, [])
+        self.assertEqual(spark_resources["cacheStorageLevel"], "NONE")
+        self.assertEqual(spark_resources["stagedCacheFallbackCount"], 1)
+        self.assertEqual(
+            spark_resources["stagedCacheFallbackReason"],
+            "cache_initialization_failed",
+        )
+
     def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
         frame = FakeFrame()
         spark = SimpleNamespace(table=Mock(return_value=frame))
