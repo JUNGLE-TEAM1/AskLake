@@ -240,6 +240,23 @@ shadow apply는 Secret gate가 해소되고 별도 승인이 있을 때까지 �
 현재 live blocker는 계속해서 `asklake-clickhouse-keeper-v2-config` ExternalSecret
 부재이며, 이 Phase에서 AWS/EKS mutation은 0건이다.
 
+## 15. Phase 4 E2E·운영 런북 검증 결과
+
+실제 fixture produce나 owner 전환 없이 기존 [EKS ClickHouse 실시간 GOLD 런북](eks-clickhouse-realtime-gold-runbook.md)을 기준으로 E2E, 장애, rollback, 재배포 절차를 점검했다.
+
+- `bash scripts/test-eks-day18-operations-runbook.sh`: 8/8 통과
+- `PYTHONPATH=. python3 scripts/refactor_audit/test_control_plane_ownership.py`: 6/6 통과
+- V2 Kafka contract 및 live-evidence contract: 10/10 통과
+- `node scripts/verify-eks-realtime-v2-live-evidence.mjs infra/eks/delivery/realtime-v2-live-evidence.example.json`: 의도된 실패
+  (`evidenceType`이 `example`이므로 live PASS로 오인하지 않음)
+
+런북에는 전용 Kafka fixture만 사용하는 `Kafka → ClickHouse → GOLD Catalog →
+Dashboard` 순서, 첫 offset 전 `preparing`/첫 publication 후 `available`, source
+position·generation·revision 일치, worker/Connect/ClickHouse 장애, PVC snapshot 복구,
+EC2 rollback 및 재배포 지속성의 명령·기대 결과·실패 판정이 포함되어 있다. 실제 실행은
+Secret gate와 별도 live 승인 이후로 남겼고, 이번 Phase의 Kafka produce·apply·장애 주입·
+owner 전환은 0건이다.
+
 ## 14. Phase 3 승인 shadow gate 결과
 
 2026-07-20 Phase 3에서 `asklake-dev` context의 상태를 read-only로 재확인했다.
