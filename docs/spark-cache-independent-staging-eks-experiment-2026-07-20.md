@@ -2,7 +2,7 @@
 
 작성일: 2026-07-20
 관련 이슈: #931
-상태: executor cache OOM 수정, 격리 EKS scale, bounded publication 및 staging-first hybrid 안전성 검증 완료
+상태: executor cache OOM 수정, 격리 EKS scale, direct-cache/staging hybrid 10GB·100GB 검증 완료
 
 ## 1. 목적과 범위
 
@@ -226,3 +226,39 @@ runtime 계약으로 채택하지 않고 아래 direct-cache/staging 분기의 �
 staging path의 생성·성공/실패 cleanup을 확인했다. EKS에서는 실제 10GB source가
 포함되고 100GB source가 제외되도록 실험용 10GiB source 한도를 사용한다. 이 값은
 두 규모의 분기를 검증하기 위한 선택값이며 실제 운영 경계 탐색은 후속 범위다.
+
+### 9.1 EKS 10GB·100GB 분기 결과
+
+candidate revision `f8f1b95e`를 private ECR의 immutable digest로 고정하고 active
+Spark workload가 없는 dev EKS에서 각 규모를 한 번 실행했다. 10GB는 1 executor,
+100GB는 4 executors를 사용했으며 둘 다 2 cores/4GiB heap/1GiB overhead와 같은
+10GiB source 한도를 적용했다. 실제 registry, bucket, object, digest,
+SparkApplication과 Pod identity는 private mode-0600 evidence에만 보관했다.
+
+| 규모 | 선택 전략 | 행 수 | Spark duration | staging file | peak storage memory |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 10GB | `direct_source_cache`, `MEMORY_AND_DISK` | 29,544,766 | 222,345 ms | 0 | 882,691,514 bytes |
+| 100GB | `run_scoped_parquet_staging`, `NONE` | 310,578,707 | 1,246,208 ms | 724 | 792,787 bytes |
+
+두 실행 모두 exact input/output row, source byte/ETag/version 불변, raw physical
+full-read stage 1개, direct-cache fallback 0, failed task/executor replacement/JVM
+OOM 0을 확인했다. 종료 뒤 SparkApplication, Pod, current S3 object,
+version/delete marker도 모두 0이었다. 10GB는 Parquet materialization을 만들지
+않고 direct cache를 준비했으며, 100GB는 같은 한도를 `above_threshold`로 거부해
+cache 없이 staging을 만들고 성공적으로 정리했다.
+
+기능적 결론은 **10GB 성능 우선 경로와 100GB 안정성 우선 경로가 같은 runtime에서
+source 크기로 실제 분기되고, 두 경로 모두 정상 실행에서 원본을 한 번만 읽는다**는
+것이다. 다만 이 10GiB는 10GB fixture를 포함하고 100GB fixture를 제외하기 위한
+실험값일 뿐 운영 경계 근거가 아니다. direct cache는 executor/cache block 유실 시
+lineage 재계산으로 원본을 다시 읽을 수 있다는 한계도 유지한다.
+
+### 9.2 남은 staging metadata/plan 병목
+
+100GB에서 staging write의 724 tasks가 끝난 뒤 Spark UI 표본상 약 5분 54초 동안
+active Job과 active Stage가 모두 0이었다. file별 `getFileStatus` exact byte 합산을
+제거한 뒤에도 같은 형태의 공백이 남았으므로 이전에 기록한 “직렬 byte 조회가
+유력한 원인” 가설은 입증되지 않았다. 현재 `RunScopedParquetStaging.materialize`
+안의 `spark.read.parquet(...).inputFiles()`와 S3 file discovery/plan 준비 구간을
+분리 계측해야 한다. 이 병목은 100GB 안정성·정확성 검증을 깨지는 않았지만 성능
+개선으로 주장할 수 없으며 후속 최적화 범위다.
