@@ -277,3 +277,4 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - profile 단독 render는 realtime owner 0개다. V1 activation에는 이전 exact owner fence, 승인, 새 generation을 담은 별도 private overlay가 필요하다.
 - V2 marker Job은 V1-only에서 실행하지 않고 503으로 fail closed한다. checkpoint나 runtime marker를 V1으로 바꾸지 않는다.
 - V2 asset/PVC/PV/VolumeSnapshot과 중지된 canary state는 삭제하지 않는다.
+- pair1 재배포는 merge commit, ECR digest, Helm revision, exact-one V1 owner, V2 workload 0, 외부 health와 기존 checkpoint 보존을 `deploy/eks-realtime-kafka-v1-only-deployment-receipt.json`에 함께 기록해야 완료로 본다.
