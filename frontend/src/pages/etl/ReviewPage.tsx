@@ -134,19 +134,16 @@ export function ReviewPage({
 
           <section className="etl-review-card">
             <EtlSectionHeader icon={<Database />} title="Dashboard 연동" />
-            <div className="etl-dashboard-binding">
-              <label className="etl-dashboard-binding-toggle" htmlFor="etl-dashboard-binding-enabled">
+            <div className="bg-slate-50/70 p-5">
+              <label className="flex cursor-pointer items-start gap-3" htmlFor="etl-dashboard-binding-enabled">
                 <Checkbox checked={dashboardBindingEnabled} id="etl-dashboard-binding-enabled" onCheckedChange={(checked) => setDashboardBindingEnabled(checked === true)} />
-                <span>
-                  <strong>결과를 Dashboard에 자동 반영</strong>
-                  <small>새 Dashboard를 만들고 출력 Dataset 하나만 선택된 상태로 고정합니다.</small>
-                </span>
+                <span className="grid gap-1"><strong className="text-sm text-slate-900">결과를 Dashboard에 자동 반영</strong><small className="text-sm leading-5 text-slate-500">새 Dashboard를 만들고 출력 Dataset을 고정합니다.</small></span>
               </label>
               {dashboardBindingEnabled ? (
-                <Field className="etl-dashboard-binding-name">
+                <Field className="mt-5 rounded-lg border border-blue-100 bg-white p-4">
                   <FieldLabel htmlFor="etl-dashboard-title">Dashboard 이름</FieldLabel>
-                  <Input id="etl-dashboard-title" maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} />
-                  <FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 자유롭게 편집할 수 있습니다.</FieldDescription>
+                  <Input id="etl-dashboard-title" className="mt-2" maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} />
+                  <FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 계속 편집할 수 있습니다.</FieldDescription>
                 </Field>
               ) : null}
             </div>
