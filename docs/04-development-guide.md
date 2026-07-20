@@ -2594,7 +2594,20 @@ docker compose --profile clickhouse-realtime-v2 config --quiet
 
 ## 신규 Kafka Job engine routing 검증 (#1073)
 
-신규 Continuous Job은 `runtimeEngine=kafka_connect_clickhouse_v2`를 서버가 저장하고, 기존 marker 없는 Job은 Spark V1로 남는다. V2 marker Job은 V2 flag/owner가 준비되지 않으면 Spark로 fallback하지 않는다.
+신규 Continuous Job은 배포 프로파일에 따라 server-owned `runtimeEngine`을 저장한다. exact V2 flag/owner 세트에서는 `kafka_connect_clickhouse_v2`, V1-only에서는 `spark_structured_streaming`이다. 기존 marker 없는 Job은 Spark V1로 남고 V2 marker Job은 V2 flag/owner가 준비되지 않으면 Spark로 fallback하지 않는다.
+
+V1-only 정적 검증은 환경 values 뒤에 profile을 적용한다. 첫 render는 owner 0개이며, 두 번째 render만 검증용 exact fence/승인/generation을 주어 V1 worker 1개와 V2 resource 0개를 확인한다. 실제 배포 generation은 저장소에 고정하지 않고 private 승인 overlay가 제공한다.
+
+```bash
+bash scripts/verify-eks-realtime-v1-only-profile.sh
+
+cd backend
+npm run verify:eks-realtime-v1-only-profile
+
+cd ../frontend
+npm run test:realtime-v1-only-profile
+npm run build
+```
 
 ```bash
 cd backend
@@ -2606,6 +2619,7 @@ PYTHONPATH=. .venv/bin/python -m unittest \
 cd ../frontend
 npm run test:etl-draft-contract
 npm run test:continuous-runtime-contract
+npm run test:realtime-v1-only-profile
 npm run test:e2e-selectors
 npm run build
 ```

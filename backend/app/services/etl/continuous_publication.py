@@ -259,6 +259,9 @@ def read_continuous_stream_manifest(
     manifest_port: ObjectManifestPort | None = None,
 ) -> dict[str, Any] | None:
     """Recover a committed publication when the local worker report is incomplete."""
+    expected_batch_id = optional_int(batch_id)
+    if expected_batch_id is None or expected_batch_id < 0:
+        return None
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     bucket = target["bucket"]
     target_prefix = target["prefix"].strip("/")
@@ -287,7 +290,10 @@ def read_continuous_stream_manifest(
             if not manifest_line:
                 continue
             manifest = json.loads(manifest_line)
-            if not isinstance(manifest, dict) or optional_string(manifest.get("batchId")) != batch_id:
+            if (
+                not isinstance(manifest, dict)
+                or optional_int(manifest.get("batchId")) != expected_batch_id
+            ):
                 return None
             manifest["manifestPath"] = f"s3a://{bucket}/{manifest_key}"
             if nonnegative_int(manifest.get("storedCount"), 0) > 0:
@@ -456,6 +462,7 @@ def _verify_continuous_publication_output(
         "icebergCommit": commit,
         "materializationRows": stored_count,
         "outputPath": target.table_uri,
+        "outputFileCount": nonnegative_int(commit.get("dataFileCount"), 0),
         "outputRows": runtime.stored_count,
         "publicationManifest": inputs.manifest_path,
         "quality": publication.get("quality") if isinstance(publication.get("quality"), dict) else {},

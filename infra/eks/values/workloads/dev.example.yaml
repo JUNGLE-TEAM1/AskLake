@@ -1,4 +1,5 @@
 namespace: asklake-dev
+deploymentProfile: standard
 
 global:
   environment: production
@@ -33,6 +34,7 @@ backend:
     bootstrapAdminEmail: admin@example.invalid
     kafkaBroker: boot.example.kafka.ap-northeast-2.amazonaws.com:9098
     kafkaAuthMode: iam
+    kafkaAllowedTopicPrefixes: asklake.
     objectStorageProvider: aws
     rawBucket: asklake-dev-raw-example
     outputBucket: asklake-dev-output-example

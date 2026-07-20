@@ -67,6 +67,7 @@ from app.application.pipeline_mapping import (
     map_create_request_to_job,
 )
 from app.core.errors import ApiError
+from app.domain.kafka_source_identity import managed_kafka_source_violations
 from app.domain.pipeline_contract import (
     create_request_violations,
     permission_grant_violations,
@@ -211,6 +212,7 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
         request,
         normalize_column_name=normalize_column_name,
     )
+    violations.extend(managed_kafka_source_violations(request.source_type, request.source_config))
     if violations:
         violation = violations[0]
         raise ApiError(
@@ -219,7 +221,6 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             status.HTTP_400_BAD_REQUEST,
             violation.details,
         )
-
 def validate_update_request(request: UpdatePipelineRequest) -> None:
     violations = update_request_violations(request)
     if violations:

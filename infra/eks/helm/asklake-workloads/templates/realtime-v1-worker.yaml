@@ -75,6 +75,17 @@ spec:
             - {name: ASKLAKE_KAFKA_AUTH_MODE, value: {{ .Values.realtimeV1.kafka.authMode | quote }}}
             - {name: ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR, value: {{ .Values.sparkApplication.nodeSelector | toJson | quote }}}
             - {name: ASKLAKE_SPARK_KUBERNETES_TOLERATIONS, value: {{ .Values.sparkApplication.tolerations | toJson | quote }}}
+          volumeMounts:
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
+              readOnly: true
           resources:
             {{- toYaml .Values.realtimeV1.resources | nindent 12 }}
+      volumes:
+        - name: backend-runtime-files
+          secret:
+            secretName: {{ .Values.backend.runtimeSecret.name }}
+            items:
+              - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
+                path: trino-ca.pem
 {{- end }}

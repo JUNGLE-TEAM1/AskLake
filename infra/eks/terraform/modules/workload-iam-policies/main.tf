@@ -1,4 +1,27 @@
 locals {
+  managed_msk = var.reference_msk ? {
+    topic = format(
+      "%s/%s",
+      replace(var.msk_cluster_arn, ":cluster/", ":topic/"),
+      "asklake.*",
+    )
+    preview_group = format(
+      "%s/%s",
+      replace(var.msk_cluster_arn, ":cluster/", ":group/"),
+      "asklake-preview-*",
+    )
+    batch_group = format(
+      "%s/%s",
+      replace(var.msk_cluster_arn, ":cluster/", ":group/"),
+      "asklake-batch-*",
+    )
+    stream_group = format(
+      "%s/%s",
+      replace(var.msk_cluster_arn, ":cluster/", ":group/"),
+      "asklake-stream-*",
+    )
+  } : null
+
   realtime_v2_connect = var.reference_msk && length(var.msk_realtime_v2_topic_arns) == 5 && length(var.msk_realtime_v2_group_arns) == 2 ? {
     Version = "2012-10-17"
     Statement = [
@@ -59,7 +82,7 @@ locals {
           "kafka-cluster:DescribeTopic",
           "kafka-cluster:WriteData",
         ]
-        Resource = var.msk_topic_arns
+        Resource = concat(var.msk_topic_arns, [local.managed_msk.topic])
       },
     ]
   } : null
@@ -107,7 +130,10 @@ locals {
           "kafka-cluster:DescribeGroup",
           "kafka-cluster:AlterGroup",
         ]
-        Resource = var.msk_group_arns
+        Resource = concat(var.msk_group_arns, [
+          local.managed_msk.batch_group,
+          local.managed_msk.stream_group,
+        ])
       },
       {
         Sid      = "ListSparkRawBucket"
@@ -191,7 +217,35 @@ locals {
 
   backend = var.use_storage ? {
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat(var.reference_msk ? [
+      {
+        Sid      = "ConnectToManagedMsk"
+        Effect   = "Allow"
+        Action   = ["kafka-cluster:Connect"]
+        Resource = [var.msk_cluster_arn]
+      },
+      {
+        Sid    = "PreviewManagedKafkaTopics"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:ReadData",
+        ]
+        Resource = [local.managed_msk.topic]
+      },
+      {
+        Sid    = "UseManagedBackendGroups"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeGroup",
+          "kafka-cluster:AlterGroup",
+        ]
+        Resource = [
+          local.managed_msk.preview_group,
+          local.managed_msk.batch_group,
+        ]
+      },
+    ] : [], [
       {
         Sid      = "ListBackendRawBucket"
         Effect   = "Allow"
@@ -279,6 +333,47 @@ locals {
           var.storage_object_arns.continuous_runtime,
         ]
       },
+    ])
+  } : null
+
+  realtime_v1_worker = var.use_storage ? {
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ListContinuousOutputAndRuntimeDocuments"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.storage_bucket_arns.output]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              var.storage_prefixes.output,
+              "${var.storage_prefixes.output}/*",
+              var.storage_prefixes.continuous_runtime,
+              "${var.storage_prefixes.continuous_runtime}/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid      = "ReadContinuousPublicationAndRuntimeDocuments"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = [
+          var.storage_object_arns.output,
+          var.storage_object_arns.continuous_runtime,
+        ]
+      },
+      {
+        Sid    = "WriteContinuousRuntimeDocuments"
+        Effect = "Allow"
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:DeleteObject",
+          "s3:PutObject",
+        ]
+        Resource = [var.storage_object_arns.continuous_runtime]
+      },
     ]
   } : null
 
@@ -334,7 +429,9 @@ locals {
     external_fixture_producer = local.external_fixture_producer
     msk_smoke                 = local.msk_smoke
     spark                     = local.spark
+    realtime_v1_spark         = local.spark
     backend                   = local.backend
+    realtime_v1_worker        = local.realtime_v1_worker
     trino                     = local.trino
     realtime_v2_connect       = local.realtime_v2_connect
   }

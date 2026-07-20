@@ -33,6 +33,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AuditResult, JobRowData } from "../../../types";
 
 import { JobDetailHeader } from "./JobDetailPage";
+import { retainedContinuousSessionId } from "./continuousSessionSelection";
 import { ContinuousDagSelection, JobRunsPageProps, activeContinuousSessionStatuses, continuousBatchStatusMeta, continuousSessionStatusMeta } from "./jobRunsModel";
 import { formatCompactDateTime } from "./jobShared";
 import { DagStepInspector, DagTimelineItem, getSelectedDagStep } from "./SnapshotJobRunsPage";
@@ -58,6 +59,8 @@ export function ContinuousJobRunsPage({
   const [dagSelection, setDagSelection] = useState<ContinuousDagSelection | null>(null);
   const inFlightRef = useRef(false);
   const requestSequenceRef = useRef(0);
+  const selectionRequestSequenceRef = useRef(0);
+  const selectedSessionIdRef = useRef<string | null>(null);
   const activeSessionsRef = useRef(false);
   const hasLoadedRef = useRef(false);
 
@@ -72,15 +75,14 @@ export function ContinuousJobRunsPage({
         getContinuousSessions(job.id),
         catalogDatasetId ? getCatalogDataset(catalogDatasetId).catch(() => null) : Promise.resolve(null),
       ]);
-      const nextSelectedId = nextSessions.some((session) => session.sessionId === selectedSessionId)
-        ? selectedSessionId
-        : nextSessions[0]?.sessionId ?? null;
+      const nextSelectedId = retainedContinuousSessionId(nextSessions, selectedSessionIdRef.current);
       const nextSelectedSession = nextSessions.find((session) => session.sessionId === nextSelectedId) ?? null;
       const nextBatches = nextSelectedId
         ? await getContinuousSessionBatches(job.id, nextSelectedId, 100)
         : [];
       if (requestSequence !== requestSequenceRef.current) return { active: false, ok: true };
       setSessions(nextSessions);
+      selectedSessionIdRef.current = nextSelectedId;
       setSelectedSessionId(nextSelectedId);
       setSelectedSession(nextSelectedSession);
       setBatches(nextBatches);
@@ -102,7 +104,7 @@ export function ContinuousJobRunsPage({
       }
       inFlightRef.current = false;
     }
-  }, [catalogDatasetId, catalogRowCount, job.id, selectedSessionId]);
+  }, [catalogDatasetId, catalogRowCount, job.id]);
 
   useEffect(() => {
     requestSequenceRef.current += 1;
@@ -110,6 +112,8 @@ export function ContinuousJobRunsPage({
     hasLoadedRef.current = false;
     activeSessionsRef.current = false;
     setSessions([]);
+    selectedSessionIdRef.current = null;
+    selectionRequestSequenceRef.current += 1;
     setSelectedSessionId(null);
     setSelectedSession(null);
     setBatches([]);
@@ -160,12 +164,32 @@ export function ContinuousJobRunsPage({
     };
   }, [loadSessions, runtimeActive, sessionPollingActive]);
 
-  const selectSession = (session: KafkaContinuousSession) => {
+  const selectSession = async (session: KafkaContinuousSession) => {
+    const selectionRequestSequence = selectionRequestSequenceRef.current + 1;
+    selectionRequestSequenceRef.current = selectionRequestSequence;
+    selectedSessionIdRef.current = session.sessionId;
     setSelectedSessionId(session.sessionId);
     setSelectedSession(session);
     setBatches([]);
     setDagSelection(null);
     onAction("etl.continuous.session_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
+    try {
+      const nextBatches = await getContinuousSessionBatches(job.id, session.sessionId, 100);
+      if (
+        selectionRequestSequence === selectionRequestSequenceRef.current
+        && selectedSessionIdRef.current === session.sessionId
+      ) {
+        setBatches(nextBatches);
+        setRefreshError(null);
+      }
+    } catch {
+      if (
+        selectionRequestSequence === selectionRequestSequenceRef.current
+        && selectedSessionIdRef.current === session.sessionId
+      ) {
+        setRefreshError("선택한 세션의 micro-batch를 불러오지 못했습니다. 다시 선택하거나 새로고침해 주세요.");
+      }
+    }
   };
 
   const refreshNow = async () => {
@@ -198,7 +222,10 @@ export function ContinuousJobRunsPage({
       accessorKey: "sessionId",
       header: "세션 ID",
       cell: ({ row }) => (
-        <Button className="h-auto max-w-[210px] justify-start truncate px-0 text-left font-semibold" size="content" type="button" variant="link" onClick={() => selectSession(row.original)}>
+        <Button className="h-auto max-w-[210px] justify-start truncate px-0 text-left font-semibold" size="content" type="button" variant="link" onClick={(event) => {
+          event.stopPropagation();
+          void selectSession(row.original);
+        }}>
           {row.original.sessionId}
         </Button>
       ),
@@ -338,6 +365,7 @@ export function ContinuousJobRunsPage({
               data={sessions}
               emptyState={{ title: loading ? "세션 이력을 불러오는 중입니다." : "아직 실시간 실행 세션이 없습니다." }}
               getRowClassName={(row) => row.original.sessionId === selectedSessionId ? "bg-blue-50/70" : row.original.status === "failed" ? "bg-red-50/45" : undefined}
+              onRowClick={(row) => void selectSession(row.original)}
               pagination={{ label: "스트림 세션", pageSize: 5, showSummary: false }}
               renderRowActions={(row) => (
                 <IconButton label={`${row.original.sessionId} 세션 DAG 보기`} size="xs" variant="outline" onClick={() => openSessionDag(row.original)}>

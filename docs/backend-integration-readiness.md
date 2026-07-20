@@ -751,7 +751,7 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 
 ## Kafka Job engine routing readiness (#1073)
 
-- [x] 신규 Continuous create가 server-owned ClickHouse V2 engine/generation marker를 저장
+- [x] 신규 Continuous create가 배포 프로파일의 server-owned engine/generation marker를 저장
 - [x] marker 없는 기존 Continuous Job은 Spark V1로 보존
 - [x] V2 marker Job의 disabled/unready 상태는 Spark fallback 없이 fail closed
 - [x] 결정적 connector/keeper identity와 persisted generation 사용
@@ -759,3 +759,13 @@ V2 dimension 등록은 Catalog의 가변 길이 schema descriptor를 PostgreSQL 
 - [x] 신규 공개 Job API 기반 EKS MSK→Connect→ClickHouse lifecycle canary receipt
 
 2026-07-20 격리 EKS canary는 ClickHouse row 60→65, pause/resume, Connect Pod 교체 복구, 추가 적재 65→70, stop을 확인했다. rollback은 V2 task/workload 0, admission disabled, V2 PVC 2개 보존, V1 worker/lease 복구까지 완료했다. V1/V2 worker는 같은 Kafka control-plane lease를 공유하므로 동시 실행이 아니라 exact-one serial fence로 검증했다. 근거는 `deploy/eks-realtime-kafka-job-v2-receipt.json`이다.
+
+## EKS Realtime V1-only profile readiness (#1101)
+
+- [x] `deploymentProfile=realtime-v1-only`가 V2/Gold flag와 `realtimeV2` render를 schema에서 거부
+- [x] EKS web/API는 local intent 경로로 생성·조회·command를 받고 side effect는 exact-generation V1 worker만 수행
+- [x] profile 단독 render owner 0, 승인된 검증 generation에서 V1 worker 1·V2 resource 0
+- [x] 신규 Continuous create가 `runtimeEngine=spark_structured_streaming`을 저장
+- [x] 기존 V2 marker Job은 V1 fallback 없이 503 fail closed
+- [x] UI가 실시간 Spark/배치 Spark를 구분하고 V1-only에서 ClickHouse Gold action을 숨김
+- [x] V2 코드와 EKS PVC/PV/VolumeSnapshot 보존 계약 문서화

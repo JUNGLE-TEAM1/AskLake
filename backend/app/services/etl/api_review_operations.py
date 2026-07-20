@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.realtime_job_engine import selected_realtime_job_engine
+
 RUNTIME_NAMES = {
     'ApiError',
     'CallableKafkaRuntimeGateway',
@@ -336,11 +338,13 @@ def review_pipeline(
 
     source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
     source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
+    runtime_engine = selected_realtime_job_engine(settings)
+    processing_mode = ("실시간 · ClickHouse" if runtime_engine == "kafka_connect_clickhouse_v2" else "실시간 · Spark (기존 V1)") if request.execution_mode == "continuous" else "배치 · Spark"
 
     return ReviewSnapshot(
         basic_information=[
             review_entry("소스", source_display),
-            review_entry("처리 방식", "실시간 스트리밍" if request.execution_mode == "continuous" else "배치 처리"),
+            review_entry("처리 방식", processing_mode),
             review_entry("출력 데이터셋 이름", request.target_dataset),
             review_entry("설명", request.target_description),
         ],

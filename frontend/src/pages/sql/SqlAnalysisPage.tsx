@@ -811,7 +811,7 @@ export function SqlAnalysisPage({
           autocompleteCandidates={autocompleteCandidates}
           autocompleteIndex={autocompleteIndex}
           canExecute={canRunPreview}
-          continuousJoinAction={continuousSql.relationMix ? {
+          continuousJoinAction={continuousSql.relationMix && continuousSql.featureEnabled ? {
             onClick: continuousSql.open,
             pending: continuousSql.pending,
           } : undefined}

@@ -25,6 +25,7 @@ required_files=(
   "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
   "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
+  "$ROOT_DIR/deploy/profiles/realtime-v1-only.yaml"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -48,6 +49,7 @@ required_files=(
   "$ROOT_DIR/scripts/deploy-eks-trino-distributed.sh"
   "$ROOT_DIR/scripts/lib/verify_eks_trino_active_workers.py"
   "$ROOT_DIR/scripts/verify-eks-trino-distributed-live.sh"
+  "$ROOT_DIR/scripts/verify-eks-realtime-v1-only-profile.sh"
   "$VALUES_FILE"
 )
 
@@ -438,6 +440,7 @@ node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
+"$ROOT_DIR/scripts/verify-eks-realtime-v1-only-profile.sh"
 "$ROOT_DIR/scripts/verify-eks-realtime-v2-workload.sh"
 "$PYTHON_BIN" "$ROOT_DIR/scripts/verify-eks-realtime-v2-storage.py"
 echo "EKS workload contract verification passed."

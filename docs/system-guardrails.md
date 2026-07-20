@@ -87,6 +87,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Continuous runtime document storage | `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX` | required for split API/Spark volumes | EKS/API/worker/Spark가 서로 다른 local filesystem을 볼 때 local report path 사용 금지 | data-platform | private S3 prefix만 허용; command/report/ACK object 권한을 dataset warehouse와 분리 |
 | EKS Continuous Spark gateway | `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes` + Spark Operator RBAC | required when enabling EKS Continuous | mutable image tag, missing runtime S3 prefix, worker role without SparkApplication CRUD, 또는 SparkApplication에 JDBC secret 평문 삽입 금지 | data-platform | image digest, worker `sparkapplications` CRUD, driver/executor S3 access와 `secretKeyRef`를 rollout 전 확인 |
 | EKS Realtime V1 worker package | `asklake-workloads/realtimeV1` + `bash scripts/verify-eks-workloads.sh` | `enabled` | `CONTINUOUS_WORKER_SCOPE=kafka`, owner generation, exact MSK topic/group pair, private runtime/checkpoint prefix와 immutable images가 어긋나면 실패 | data-platform | Issue #1072에서 V1 Kafka/Spark owner를 보존하며 V2 worker가 Kafka scope를 claim하는 것을 금지한다. |
+| EKS Realtime V1-only profile | `deploy/profiles/realtime-v1-only.yaml` + `deploy/profiles/web-realtime-v1-only.yaml` + `scripts/verify-eks-realtime-v1-only-profile.sh` | `fail-closed/activation-overlay-required` | V2/Gold flag true, V2 endpoint/Secret/CA web 주입, V2 resource render, 승인·old-owner fence·generation 없는 V1 render, V1/V2 동시 owner, 신규 Job engine/UI label drift 시 실패 | data-platform | Issue #1101 pair1 기본. V2 코드·PVC·PV·VolumeSnapshot은 보존하고 runtime/API/UI만 비활성화한다. |
 | EKS ClickHouse Realtime data plane | `infra/eks/helm/asklake-realtime-data-plane` + `scripts/verify-eks-realtime-data-plane.sh` | `enabled` static gate, live approval required | default resource 0, shadow worker 0, immutable images, retained PVC/legacy immutable selector, six-account init Secret/TLS binding, Kafka Connect exact env/file keys, least-privilege NetworkPolicy/Pod Identity 또는 cutover acknowledgement가 어긋나면 실패 | data-platform | direct StatefulSet은 single-node staging topology이며 HA가 아니다. local empty-volume init·same-volume redeploy는 image 지속성 증거이지 EBS restore 증거가 아니다. 기존 `asklake-workloads` chart는 canonical PVC/Secret을 소유하지 않는다. |
 | EKS Realtime owner transfer | `docs/eks-clickhouse-realtime-gold-runbook.md` + canonical ownership manifest + live receipt | `manual` | legacy EC2 control loop 0, EKS V1 `kafka` owner/lease 1, EKS V2 `continuous_sql` owner/lease 1, V2 health, exact offset→GOLD→Dashboard evidence와 rollback revision 중 하나라도 없으면 cutover/승격 금지 | data-platform | chart cutover render는 transfer 증거가 아니다. `asklake-web` opt-in과 `asklake-realtime-v2` worker rollout을 같은 승인 window에서 수행하고 retained PVC identity를 바꾸지 않는다. |
 | Production legacy removal evidence | `Refactor Quality Gates / structural-ratchet` + `legacy-removal-evidence.json` | `enabled` | production register와 evidence가 어긋나거나 30일 미만/non-zero 관찰, evidence·승인 없는 제거 가능 상태면 실패 | maintainer | 현재 10경로 모두 관찰 미시작·승인 미요청, eligible 0개. runtime path 삭제·활성화는 하지 않음 |
@@ -265,7 +266,14 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 
 # Kafka Job engine routing guardrail (#1073)
 
-- 신규 `executionMode=continuous` Job의 engine은 backend가 ClickHouse V2로 영속화하며 Browser가 V1/V2를 선택하지 않는다.
-- marker가 없는 기존 Continuous Job만 Spark V1 호환 경로를 사용한다.
+- 신규 `executionMode=continuous` Job의 engine은 backend가 배포 프로파일에서 결정해 영속화하며 Browser가 V1/V2를 선택하지 않는다.
+- exact V2 flag/owner 세트는 ClickHouse V2, V1-only는 Spark V1 marker를 저장한다. marker가 없는 기존 Continuous Job도 Spark V1 호환 경로를 사용한다.
 - V2 marker Job에서 V2 flag/owner/readiness가 없으면 `CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE`로 실패하고 Spark로 자동 fallback하지 않는다.
 - EKS canary는 production과 다른 topic/group/generation/connector를 사용하고 기존 V1 checkpoint, V2 PVC/snapshot, offset을 삭제하지 않는다.
+
+# EKS Realtime V1-only guardrail (#1101)
+
+- `deploymentProfile=realtime-v1-only`는 EKS web/API의 local intent 경로는 열고 reconciliation은 worker에만 두며, V2 backend admission, Kafka Connect/ClickHouse/Keeper workload, Continuous SQL Gold action을 모두 비활성화한다.
+- profile 단독 render는 realtime owner 0개다. V1 activation에는 이전 exact owner fence, 승인, 새 generation을 담은 별도 private overlay가 필요하다.
+- V2 marker Job은 V1-only에서 실행하지 않고 503으로 fail closed한다. checkpoint나 runtime marker를 V1으로 바꾸지 않는다.
+- V2 asset/PVC/PV/VolumeSnapshot과 중지된 canary state는 삭제하지 않는다.

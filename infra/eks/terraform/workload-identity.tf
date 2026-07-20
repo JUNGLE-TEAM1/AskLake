@@ -20,14 +20,18 @@ locals {
     trino             = "trino"
     mskSmoke          = "msk-smoke"
     spark             = "spark"
+    realtimeV1Spark   = "realtime-v1-spark"
+    realtimeV1Worker  = "realtime-v1-worker"
     realtimeV2Connect = "realtime-v2-connect"
   }
 
   base_identity_policy_documents = local.identity_resources_ready ? {
-    backend  = local.workload_iam_policy_documents.backend
-    trino    = local.workload_iam_policy_documents.trino
-    mskSmoke = local.workload_iam_policy_documents.msk_smoke
-    spark    = local.workload_iam_policy_documents.spark
+    backend           = local.workload_iam_policy_documents.backend
+    trino             = local.workload_iam_policy_documents.trino
+    mskSmoke          = local.workload_iam_policy_documents.msk_smoke
+    spark             = local.workload_iam_policy_documents.spark
+    realtimeV1Spark   = local.workload_iam_policy_documents.realtime_v1_spark
+    realtimeV1Worker  = local.workload_iam_policy_documents.realtime_v1_worker
   } : {}
   active_identity_policy_documents = merge(
     local.base_identity_policy_documents,
@@ -112,6 +116,8 @@ check "workload_identity_policy_completeness" {
       "trino",
       "mskSmoke",
       "spark",
+      "realtimeV1Spark",
+      "realtimeV1Worker",
     ], local.msk_realtime_v2_identity == null ? [] : ["realtimeV2Connect"]))
     error_message = "workload identity requires exact base policy documents and the dedicated V2 Connect policy when a V2 generation is configured."
   }

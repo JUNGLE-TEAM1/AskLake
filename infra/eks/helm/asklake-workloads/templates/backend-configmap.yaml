@@ -23,6 +23,7 @@ data:
   S3_FORCE_PATH_STYLE: "false"
   ASKLAKE_KAFKA_BROKER: {{ .Values.backend.config.kafkaBroker | quote }}
   ASKLAKE_KAFKA_AUTH_MODE: {{ .Values.backend.config.kafkaAuthMode | quote }}
+  ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES: {{ .Values.backend.config.kafkaAllowedTopicPrefixes | quote }}
   ASKLAKE_SPARK_RUNNER: {{ .Values.backend.config.sparkRunner | quote }}
   ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: {{ .Values.backend.config.sparkExecutionLeaseSeconds | quote }}
   ASKLAKE_SPARK_KUBERNETES_NAMESPACE: {{ .Values.namespace | quote }}

@@ -1,20 +1,22 @@
 # Realtime Kafka Job engine routing
 
-Issue #1073은 사용자에게 내부 V1/V2 선택을 노출하지 않고 Kafka Job의 실행 방식으로 engine을 결정한다.
+Issue #1073의 V2 프로파일과 Issue #1101의 V1-only 프로파일은 사용자에게 내부 owner 전환을 노출하지 않고 배포 프로파일로 신규 Kafka Continuous Job의 engine을 결정한다.
 
 ## 생성 계약
 
 | 사용자 선택 | API 입력 | 서버가 저장하는 계약 | 실행 경로 |
 | --- | --- | --- | --- |
-| `실시간 · ClickHouse` | `executionMode=continuous` | `continuousConfig.runtimeEngine=kafka_connect_clickhouse_v2`, `runtimeGeneration=1` | Kafka Connect → ClickHouse V2 |
+| V1-only의 `실시간 · Spark (기존 V1)` | `executionMode=continuous` | `continuousConfig.runtimeEngine=spark_structured_streaming`, `runtimeGeneration=1` | Spark Structured Streaming → Iceberg V1 |
+| V2 프로파일의 `실시간 · ClickHouse` | `executionMode=continuous` | `continuousConfig.runtimeEngine=kafka_connect_clickhouse_v2`, `runtimeGeneration=1` | Kafka Connect → ClickHouse V2 |
 | `배치 · Spark` | `executionMode=snapshot` | Continuous engine marker 없음 | 기존 Spark batch |
 
-`runtimeEngine`과 `runtimeGeneration`은 서버 소유 값이다. Browser가 V1/V2를 선택하지 않는다. marker가 없는 기존 Continuous Job은 legacy Spark Structured Streaming V1으로 해석하며 자동 마이그레이션하지 않는다.
+`runtimeEngine`과 `runtimeGeneration`은 서버 소유 값이다. Browser가 V1/V2를 선택하지 않는다. exact V2 flag/owner 세트가 아니면 신규 Job은 V1 marker를 저장한다. marker가 없는 기존 Continuous Job도 legacy Spark Structured Streaming V1으로 해석하며 자동 마이그레이션하지 않는다.
 
 ## Fail-closed와 exact-one owner
 
 - V2 marker Job은 `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`가 모두 충족될 때만 시작·재개한다.
 - 위 조건이 없으면 `CLICKHOUSE_KAFKA_INGEST_V2_UNAVAILABLE`로 실패한다. 같은 Job을 Spark V1으로 자동 실행하지 않는다.
+- `deploymentProfile=realtime-v1-only`는 V2 admission/workload와 Continuous SQL Gold ClickHouse를 schema에서 끄며, V1 owner도 이전 owner fence·승인·새 generation 전에는 0개다.
 - 시작·재개는 `(broker, topic, consumerGroup)`의 active Continuous/Snapshot 충돌을 먼저 검사한다.
 - connector identity와 Keeper state path는 Job에 대해 결정적이며 persisted `runtimeGeneration`을 connector 등록과 owner 검증에 사용한다. connector name은 운영 object identity이고 Kafka `consumer.override.group.id`는 Job에 저장된 exact consumer group이므로 서로 대체하지 않는다.
 - command revision과 worker-attempt fencing이 이전 observation을 거부한다. 기존 V1 checkpoint는 삭제하거나 V2 state로 재사용하지 않는다.
@@ -27,7 +29,7 @@ V2가 실패하면 connector/offset/Keeper/ClickHouse state를 보존하고 Job�
 
 ## 검증 경계
 
-로컬 완료는 engine marker, legacy V1 보존, disabled fail-closed, connector idempotency, lifecycle와 frontend label/build 회귀를 뜻한다. EKS 완료는 신규 공개 Job 생성 API로 만든 격리 identity가 실제 MSK → Kafka Connect → ClickHouse row publication, restart recovery, pause/resume/stop, rollback을 통과하고 비밀 없는 receipt가 남았을 때만 주장한다.
+V1-only 로컬 완료는 profile Helm lint/render, V2 resource 0, exact-one V1 owner gate, 신규 V1 marker, 기존 V2 fail-closed, Gold action 비노출, frontend label/build 회귀를 뜻한다. EKS 실행 완료는 별도 승인 generation으로 실제 MSK → Spark → Iceberg와 checkpoint restart를 확인한 receipt가 있을 때만 주장한다. V2 EKS 완료는 신규 공개 Job 생성 API로 만든 격리 identity가 실제 MSK → Kafka Connect → ClickHouse row publication, restart recovery, pause/resume/stop, rollback을 통과하고 비밀 없는 receipt가 남았을 때만 주장한다.
 
 2026-07-20 격리 canary는 이 경계를 통과했다. 공개 create API가 만든 V2 Job은 exact owner/generation을 저장했고, connector/task RUNNING, ClickHouse 60→65건, pause/resume, Connect Pod 교체 후 RUNNING 복구, 추가 적재 65→70건, stop을 순서대로 확인했다. rollback은 V2 task/workload 0, API admission disabled, ClickHouse/Keeper PVC 보존, V1 worker 1 replica와 Kafka lease 재획득까지 확인했다. 비밀 없는 근거는 [EKS Realtime Kafka Job V2 receipt](../deploy/eks-realtime-kafka-job-v2-receipt.json)에 있다.
 

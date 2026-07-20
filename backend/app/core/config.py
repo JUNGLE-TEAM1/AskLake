@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     continuous_worker_generation: str | None = None
     # Web/API admission is separate from worker credentials. The external EKS
     # worker owns Kafka Connect and ClickHouse secrets.
+    kafka_continuous_v1_api_enabled: bool = False
+    kafka_continuous_v1_owner_generation: str | None = None
     kafka_continuous_v2_api_enabled: bool = False
     kafka_continuous_v2_owner_generation: str | None = None
     startup_schema_management_enabled: bool = True
@@ -375,6 +377,14 @@ class Settings(BaseSettings):
                 "and an explicit generation"
             )
         self.continuous_worker_generation = generation or None
+        v1_api_generation = str(self.kafka_continuous_v1_owner_generation or "").strip()
+        if v1_api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", v1_api_generation) is None:
+            raise ValueError("KAFKA_CONTINUOUS_V1_OWNER_GENERATION must be a lowercase generation token")
+        if self.kafka_continuous_v1_api_enabled and not v1_api_generation:
+            raise ValueError("KAFKA_CONTINUOUS_V1_API_ENABLED requires an owner generation")
+        if not self.kafka_continuous_v1_api_enabled and v1_api_generation:
+            raise ValueError("KAFKA_CONTINUOUS_V1_OWNER_GENERATION requires KAFKA_CONTINUOUS_V1_API_ENABLED")
+        self.kafka_continuous_v1_owner_generation = v1_api_generation or None
         api_generation = str(self.kafka_continuous_v2_owner_generation or "").strip()
         if api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", api_generation) is None:
             raise ValueError("KAFKA_CONTINUOUS_V2_OWNER_GENERATION must be a lowercase generation token")

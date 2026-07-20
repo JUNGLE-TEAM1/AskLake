@@ -34,6 +34,22 @@ def external_continuous_control_plane_enabled() -> bool:
     return settings.asklake_continuous_control_plane == "external_ec2"
 
 
+def continuous_runtime_reconciliation_enabled() -> bool:
+    """Return whether this process owns Continuous runtime side effects.
+
+    The EKS API persists commands while a dedicated worker reconciles them.  A
+    read from an API process configured as ``disabled`` must therefore remain
+    side-effect free; otherwise it can race the worker and record failures with
+    an incomplete API-only runtime environment.
+    """
+    if settings.continuous_control_plane not in {"embedded", "worker"}:
+        return False
+    return (
+        not external_continuous_control_plane_enabled()
+        or settings.continuous_control_plane == "worker"
+    )
+
+
 def clickhouse_v2_continuous_job(continuous_config: Any | None) -> bool:
     return (
         isinstance(continuous_config, dict)

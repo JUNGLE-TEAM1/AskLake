@@ -1,0 +1,18 @@
+# Pair1 EKS web/API overlay for the Spark Structured Streaming V1-only runtime.
+# ClickHouse V2 and Kafka Connect remain fail closed and no V2 Secret is mounted.
+deploymentProfile: realtime-v1-only
+
+backend:
+  realtime:
+    enabled: false
+    apiControlPlane: local
+    v1ApiEnabled: false
+    v1OwnerGeneration: ""
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    clickhouseV2Url: ""

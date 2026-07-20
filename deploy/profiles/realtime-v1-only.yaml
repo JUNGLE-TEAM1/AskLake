@@ -1,0 +1,34 @@
+# Pair1 EKS Realtime Kafka V1-only profile.
+#
+# Apply this after the environment values file. It deliberately renders no
+# realtime owner until a separate, private activation overlay supplies the
+# approved V1 generation and proves the previous owner is fenced.
+deploymentProfile: realtime-v1-only
+
+backend:
+  realtime:
+    enabled: false
+    apiControlPlane: local
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false
+    clickhouseRealtimeV2Enabled: false
+    kafkaConnectSinkEnabled: false
+    consumerOwner: disabled
+    kafkaConnectUrl: ""
+    clickhouseV2Url: ""
+
+realtimeV1:
+  enabled: false
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""
+
+realtimeV2:
+  enabled: false
+  recoveryMode: false
+  ownerTransfer:
+    approved: false
+    previousOwnerFenced: false
+    generation: ""

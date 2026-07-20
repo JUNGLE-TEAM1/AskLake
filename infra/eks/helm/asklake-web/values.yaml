@@ -1,4 +1,5 @@
 enabled: false
+deploymentProfile: standard
 namespace: asklake-dev
 environment: dev
 
@@ -55,9 +56,12 @@ backend:
   runtimeSecretName: asklake-backend-runtime
   trinoRuntimeSecretName: asklake-backend-runtime
   runtimeSecretTrinoCaKey: trino-ca.pem
+  kafkaAllowedTopicPrefixes: asklake.
   realtime:
     enabled: false
     apiControlPlane: external_ec2
+    v1ApiEnabled: false
+    v1OwnerGeneration: ""
     continuousSqlJoinEnabled: false
     dashboardSyncMode: polling
     realtimeEventsEnabled: false

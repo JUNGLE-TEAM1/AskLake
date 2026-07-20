@@ -121,6 +121,15 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
         and evidence.expected_worker_attempt_id
         and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id
     ):
+        if (
+            evidence.desired_state == "running"
+            and evidence.container_state in {"exited", "missing", "failed"}
+        ):
+            return ReconciliationDecision(
+                ReconciliationAction.RESTART_WORKER,
+                ReconciliationCertainty.CONFIRMED,
+                "stale report belongs to an older failed worker; restart the current intent",
+            )
         return ReconciliationDecision(
             ReconciliationAction.IGNORE_STALE_REPORT,
             ReconciliationCertainty.CONFIRMED,
@@ -164,7 +173,7 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
                 ReconciliationCertainty.UNCERTAIN,
                 "worker is active but has not published its first report",
             )
-        if evidence.container_state in {"exited", "missing"}:
+        if evidence.container_state in {"exited", "missing", "failed"}:
             return ReconciliationDecision(
                 ReconciliationAction.RESTART_WORKER,
                 ReconciliationCertainty.UNCERTAIN,

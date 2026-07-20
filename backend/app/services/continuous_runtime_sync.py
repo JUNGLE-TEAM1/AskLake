@@ -118,6 +118,37 @@ def assign_runtime_owner_claim(
     return metrics["ownerClaim"]
 
 
+def assign_runtime_admission_owner_claim(
+    runtime: Any,
+    *,
+    runtime_engine: str,
+    configured_settings: Any,
+    fencing_token: str,
+) -> dict[str, Any] | None:
+    candidates = {
+        "spark_structured_streaming": (
+            configured_settings.kafka_continuous_v1_api_enabled,
+            configured_settings.kafka_continuous_v1_owner_generation,
+            "eks-continuous-worker-v1",
+        ),
+        "kafka_connect_clickhouse_v2": (
+            configured_settings.kafka_continuous_v2_api_enabled,
+            configured_settings.kafka_continuous_v2_owner_generation,
+            "eks-kafka-connect-clickhouse-v2",
+        ),
+    }
+    enabled, generation, owner = candidates.get(runtime_engine, (False, None, None))
+    if not enabled or not generation or not owner:
+        return None
+    return assign_runtime_owner_claim(
+        runtime,
+        owner=owner,
+        generation=generation,
+        fencing_token=fencing_token,
+        state_revision=1,
+    )
+
+
 def runtime_matches_owner_claim(runtime: Any) -> bool:
     metrics = runtime.metrics if isinstance(runtime.metrics, dict) else {}
     claim = metrics.get("ownerClaim")

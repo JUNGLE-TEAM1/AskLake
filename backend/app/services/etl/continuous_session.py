@@ -12,6 +12,7 @@ RUNTIME_NAMES = {
     '_apply_continuous_runtime_report',
     'continuous_batch_dag_steps',
     'continuous_runtime_report_path',
+    'continuous_runtime_reconciliation_enabled',
     'continuous_session_dag_steps',
     'continuous_worker_status',
     'current_kafka_continuous_session',
@@ -406,6 +407,8 @@ def continuous_session_dag_steps(
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+    if not continuous_runtime_reconciliation_enabled():
+        return
     reconcile_continuous_runtime(
         db,
         job,
