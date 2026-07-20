@@ -47,7 +47,7 @@ class DashboardBindingMode(str, Enum):
 
 class DashboardBindingDeliveryStatus(str, Enum):
     PENDING = "pending"
-    RUNNING = "running"
+    CALCULATING = "calculating"
     APPLIED = "applied"
     DEGRADED = "degraded"
     FAILED = "failed"

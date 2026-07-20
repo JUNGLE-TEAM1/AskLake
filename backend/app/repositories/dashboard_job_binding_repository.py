@@ -55,3 +55,18 @@ class DashboardJobBindingRepository:
             DashboardBindingDeliveryModel.binding_id == binding_id,
             DashboardBindingDeliveryModel.dataset_revision == dataset_revision,
         )).first()
+
+    def list_active(self) -> list[DashboardJobBindingModel]:
+        return list(self.db.scalars(
+            select(DashboardJobBindingModel).where(
+                DashboardJobBindingModel.mode == "managed",
+                DashboardJobBindingModel.enabled.is_(True),
+            ).order_by(DashboardJobBindingModel.updated_at.asc())
+        ).all())
+
+    def list_deliveries(self, *, statuses: tuple[str, ...] = ("pending", "calculating")) -> list[DashboardBindingDeliveryModel]:
+        return list(self.db.scalars(
+            select(DashboardBindingDeliveryModel)
+            .where(DashboardBindingDeliveryModel.status.in_(statuses))
+            .order_by(DashboardBindingDeliveryModel.updated_at.asc())
+        ).all())

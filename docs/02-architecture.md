@@ -571,7 +571,7 @@ Job Run / micro-batch
 - `replace` publication은 full Widget recalculation, `append`는 지원 Widget의 delta merge를 우선 사용한다. `upsert`, `retract`, revision gap, schema identity 변경은 current serving 결과를 다시 읽는 full recalculation으로 fail safe한다.
 - Continuous SQL의 `output_committed -> catalog_ready -> dashboard_ready`는 기존 Catalog publication stage다. 실제 binding delivery 완료는 별도 `DashboardBindingDelivery`가 `applied`이고 모든 managed Widget의 `appliedRevision`이 Dataset 최신 revision 이상인 경우뿐이다.
 - Dashboard 계산 실패, Dashboard 삭제, 권한 회수는 binding을 `degraded` 또는 `failed`로 만들 수 있지만 이미 검증된 Job/Dataset publication을 rollback하거나 Job을 실패시키지 않는다. 마지막 성공 Widget 결과는 유지한다.
-- Phase 1은 `dashboard_job_bindings`/`dashboard_binding_deliveries` additive migration과 polymorphic `job_kind + job_id` binding API까지 구현한다. managed Dataset lock UI, delivery worker, EKS migration은 후속 phase이며 상세는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+- Phase 3은 `continuous_worker`가 공통 `dataset_revision_commits`를 소비해 enabled managed binding의 revision delivery를 만들고 draft/published Widget 계산을 advance한다. binding은 Job status나 `dashboard_ready`를 직접 소비하지 않으며, Widget 오류는 Job/Dataset publication을 rollback하지 않고 delivery만 `degraded`로 만든다. EKS migration은 후속 phase이며 상세는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
 
 ## 14) Realtime 2026 전환 아키텍처
 

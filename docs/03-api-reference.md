@@ -526,7 +526,7 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
-> Dashboard Job Binding Phase 1 API는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. delivery worker와 managed Dashboard UI는 아직 Phase 2~3 범위다.
+> Dashboard Job Binding Phase 1~3 API와 worker는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. `continuous_worker`는 검증된 `dataset_revision_commits` 뒤 delivery를 계산하며, browser 자동 갱신은 별도 후속 범위다.
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
