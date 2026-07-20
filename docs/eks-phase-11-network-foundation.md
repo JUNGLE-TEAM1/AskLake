@@ -8,7 +8,7 @@ Phase 11은 EKS Auto Mode workload가 실행될 VPC 배치를 코드로 만든�
 
 ## 2026-07-15 dev 적용 결과
 
-dev는 `network_mode=create`, `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`을 사용한다. EKS Pod에서 RDS `5432`, MSK `9098`, STS와 S3 HTTPS가 성공했고 잘못된 service port와 VPC 외부 source는 차단됐다. VPC DNS, private/public route와 public ingress 부재도 실제 AWS 상태로 확인했다.
+dev는 `network_mode=create`, `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`을 사용한다. 일반 outbound와 외부 API 접근을 위한 단일 NAT와 두 private route table의 기본 route는 유지한다. 2026-07-20 read-only 확인 시 S3 Gateway Endpoint와 S3 prefix-list route는 아직 0개이므로 S3 traffic은 기존 NAT 경로를 사용한다. 승인된 후속 적용에서는 별도 `enable_s3_gateway_endpoint` 선택으로만 S3 traffic을 우회하며, egress mode를 `hybrid`로 바꾸거나 Interface Endpoint를 추가하지 않는다. EKS Pod에서 RDS `5432`, MSK `9098`, STS와 S3 HTTPS가 성공했고 잘못된 service port와 VPC 외부 source는 차단됐다. VPC DNS, private/public route와 public ingress 부재도 실제 AWS 상태로 확인했다.
 
 Pod traffic enforcement는 `auto_mode_network_policy`를 선택했다. AWS 공식 ConfigMap으로 Auto Mode Network Policy Controller를 활성화하고 General/Spark NodeClass를 `DefaultAllow`로 명시했다. 임시 namespace에서 ingress deny와 정책 제거 후 복구를 검증했다. 실제 workload default-deny/allow 정책은 B의 Service·port 계약 전에는 만들지 않는다.
 
@@ -49,6 +49,8 @@ MVP 전용 VPC를 생성하려면 `private_egress_mode`를 반드시 선택해�
 
 `nat_gateway`는 private workload가 일반 internet destination에도 접근할 수 있어 운영이 단순하지만 시간당·처리량 비용이 발생한다. `nat_gateway_mode = "single"`은 비용이 낮지만 선택된 NAT AZ 장애와 cross-AZ traffic 위험이 있다. `per_az`는 AZ별 독립 route를 제공하지만 NAT 고정비가 AZ 수만큼 발생한다. 이 선택은 실제 가용성·비용 기준을 학습한 뒤 한다.
 
+`enable_s3_gateway_endpoint = true`는 NAT 모드와 독립적인 선택이다. Terraform이 소유한 모든 private route table을 같은 리전의 S3 Gateway Endpoint에 연결해 S3 prefix-list route를 추가한다. NAT Gateway, `0.0.0.0/0` route, STS와 non-AWS destination 경로는 변경하지 않으며 Interface Endpoint도 생성하지 않는다. AWS 문서 기준 Gateway Endpoint 사용에는 추가 요금이 없지만, S3 저장·요청 자체의 기존 요금은 별도다.
+
 ### VPC endpoints
 
 `vpc_endpoints`는 NAT 기본 route를 만들지 않는다. baseline은 EC2, ECR API/DKR, CloudWatch Logs, STS interface endpoint와 S3 gateway endpoint를 요구한다. interface endpoint마다 시간당·처리량 비용이 있고, 이 목록만으로 모든 AskLake workload 목적지가 자동 해결되지는 않는다.
@@ -58,6 +60,8 @@ Pod Identity를 선택하면 `eks-auth`, external Secret delivery를 선택하�
 ### Hybrid
 
 `hybrid`는 NAT와 선택 endpoint를 함께 사용한다. AWS service traffic을 endpoint로 보내면서 일반 outbound는 NAT로 처리할 수 있지만 route·DNS·고정비가 모두 늘어난다. 단순히 가장 안전한 기본값으로 취급하지 않는다.
+
+S3만 NAT에서 우회하려는 목적에는 `hybrid`를 사용하지 않는다. `hybrid`는 검토된 Interface Endpoint 최소 집합까지 필요한 별도 설계이고, S3-only 최적화는 NAT mode와 `enable_s3_gateway_endpoint=true` 조합으로 제한한다.
 
 ## Security group 경계
 
@@ -102,9 +106,20 @@ bash scripts/verify-eks-foundation.sh
 
 정적 완료 기준은 external/create 소유권 분리, 2개 이상 AZ의 결정적 subnet 계산, NAT single/per-AZ와 endpoint-only 경로, endpoint 최소 집합, EKS/MSK/RDS private placement, exact service port security group과 실패 조건이 mock test로 통과하는 것이다. dev는 plan/apply, EKS Pod scheduling, S3/STS, MSK `9098`, RDS `5432`, wrong-port와 외부 source negative smoke까지 통과했다. Kafka IAM 인증과 실제 workload별 NetworkPolicy/Service 연결은 후속 완료 기준이다.
 
+NAT + S3 Gateway Endpoint 실제 변경은 다음 추가 gate를 통과해야 한다.
+
+1. active SparkApplication/Job/Pod가 0이고 FastAPI·Collector·Airflow가 Ready다.
+2. 권위 있는 기존 dev state와 private tfvars를 사용한 refresh plan이 S3 Gateway Endpoint 생성 1개 외 변경·삭제를 만들지 않는다.
+3. plan에서 `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`, Interface Endpoint 증분 0, private route table 연결 2개를 확인한다.
+4. apply 뒤 endpoint는 `available`, 두 route table에는 S3 prefix-list route와 기존 NAT 기본 route가 함께 존재하며 blackhole route는 0이다.
+5. ALB/RDS/MSK/외부 API health가 유지되고 10GB bounded smoke가 Raw S3 read와 Output S3 write를 정확한 row/file 계약으로 통과한다.
+6. smoke와 같은 UTC window의 NAT Gateway `BytesInFromDestination`/`BytesOutToSource`를 적용 전 기준과 비교해 S3 대용량 traffic이 NAT에 귀속되지 않음을 확인한다.
+7. 위 조건을 모두 통과한 뒤에만 100GB Spark campaign을 재개한다.
+
 ## 공식 참고
 
 - [Amazon EKS VPC와 subnet 고려사항](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)
 - [Amazon EKS VPC와 subnet 요구사항](https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html)
 - [Interface VPC endpoint 생성](https://docs.aws.amazon.com/vpc/latest/privatelink/create-interface-endpoint.html)
+- [Amazon S3 Gateway Endpoint](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html)
 - [EKS Auto Mode Network Policy 사용](https://docs.aws.amazon.com/eks/latest/userguide/auto-net-pol.html)

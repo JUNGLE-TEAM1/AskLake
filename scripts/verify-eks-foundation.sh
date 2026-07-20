@@ -392,6 +392,7 @@ grep -q 'existing_auto_mode_enabled       = false' "$TERRAFORM_DIR/dev.tfvars.ex
 grep -q 'cluster_admin_principal_arn = null' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'network_mode               = "external"' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'private_egress_mode             = "undecided"' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'enable_s3_gateway_endpoint      = false' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'eks.amazonaws.com/pod-readiness-gate-inject: enabled' "$VALUES_FILE"
 grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
@@ -435,6 +436,11 @@ for network_contract in \
   fi
 done
 
+grep -Fq 'variable "enable_s3_gateway_endpoint"' "$TERRAFORM_DIR/network-foundation-variables.tf"
+grep -Fq 'use_s3_gateway_endpoint = local.use_endpoints || var.enable_s3_gateway_endpoint' \
+  "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq 'route_table_ids   = [for route_table in aws_route_table.private : route_table.id]' \
+  "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq '"kubernetes.io/role/elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq '"kubernetes.io/role/internal-elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq 'map_public_ip_on_launch = false' "$TERRAFORM_DIR/network-foundation.tf"

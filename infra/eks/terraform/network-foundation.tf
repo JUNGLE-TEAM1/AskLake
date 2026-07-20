@@ -1,7 +1,8 @@
 locals {
-  create_network = var.network_mode == "create"
-  use_nat_egress = contains(["nat_gateway", "hybrid"], var.private_egress_mode)
-  use_endpoints  = contains(["vpc_endpoints", "hybrid"], var.private_egress_mode)
+  create_network          = var.network_mode == "create"
+  use_nat_egress          = contains(["nat_gateway", "hybrid"], var.private_egress_mode)
+  use_endpoints           = contains(["vpc_endpoints", "hybrid"], var.private_egress_mode)
+  use_s3_gateway_endpoint = local.use_endpoints || var.enable_s3_gateway_endpoint
 
   public_subnet_cidrs = local.create_network ? [
     for netnum in var.public_subnet_netnums : cidrsubnet(var.vpc_cidr, var.subnet_newbits, netnum)
@@ -93,6 +94,13 @@ check "private_endpoint_selection" {
       local.use_endpoints ? length(setsubtract(local.required_private_endpoint_services, var.interface_vpc_endpoint_services)) == 0 : length(var.interface_vpc_endpoint_services) == 0
     )
     error_message = "endpoint egress requires ec2, ecr.api, ecr.dkr, logs, and sts; NAT-only egress must not create unreviewed interface endpoints."
+  }
+}
+
+check "s3_gateway_endpoint_ownership" {
+  assert {
+    condition     = !var.enable_s3_gateway_endpoint || local.create_network
+    error_message = "the optional S3 gateway endpoint can attach only to Terraform-owned private route tables."
   }
 }
 
@@ -256,7 +264,7 @@ resource "aws_vpc_endpoint" "interface" {
 }
 
 resource "aws_vpc_endpoint" "s3" {
-  count = local.create_network && local.use_endpoints ? 1 : 0
+  count = local.create_network && local.use_s3_gateway_endpoint ? 1 : 0
 
   vpc_id            = aws_vpc.mvp[0].id
   service_name      = "com.amazonaws.${var.aws_region}.s3"

@@ -183,6 +183,7 @@ ingress_dns_owner          = null
 # endpoint/hybrid requires the minimum private AWS service endpoint set.
 private_egress_mode             = "undecided"
 nat_gateway_mode                = "undecided"
+enable_s3_gateway_endpoint      = false
 interface_vpc_endpoint_services = []
 
 # Terraform does not install or take ownership of shared networking add-ons.
