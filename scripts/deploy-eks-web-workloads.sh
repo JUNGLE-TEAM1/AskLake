@@ -86,10 +86,6 @@ chmod 600 "$PREFLIGHT_DIR"/*.json
 node "$ROOT_DIR/scripts/verify-eks-ai-gateway-runtime.mjs" "$PREFLIGHT_DIR/backend-es.json" "$PREFLIGHT_DIR/gateway-es.json" \
   "$PREFLIGHT_DIR/backend-secret.json" "$PREFLIGHT_DIR/gateway-secret.json" "$PREFLIGHT_DIR/configmap.json"
 
-if grep -Fq 'name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "true"' "$RENDERED_FILE"; then
-  bash "$ROOT_DIR/scripts/verify-eks-realtime-v2-secrets.sh" \
-    "$ASKLAKE_EKS_NAMESPACE" "$PREFLIGHT_DIR/realtime-secrets"
-fi
 kubectl wait --for=condition=Ready node -l 'asklake.io/workload-class=general,kubernetes.io/arch=amd64' --timeout=30s >/dev/null || { echo "no Ready AMD64 node has the General placement label" >&2; exit 1; }
 helm upgrade --install asklake-web "$CHART_DIR" \
   --namespace "$ASKLAKE_EKS_NAMESPACE" --create-namespace=false \
@@ -110,20 +106,4 @@ with urllib.request.urlopen("http://127.0.0.1:8080/api/health/ai", timeout=20) a
 if response.status != 200 or payload.get("ok") is not True or payload.get("status") != "ready":
     raise SystemExit("Backend AI readiness did not converge")
 ' >/dev/null
-if grep -Fq 'name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "true"' "$RENDERED_FILE"; then
-  kubectl exec deployment/fastapi -n "$ASKLAKE_EKS_NAMESPACE" -- python -c '
-import json
-import urllib.request
-
-with urllib.request.urlopen("http://127.0.0.1:8080/api/health/realtime", timeout=20) as response:
-    payload = json.load(response)
-v2 = payload.get("v2") or {}
-if response.status != 200 or payload.get("ok") is not True or v2.get("ready") is not True or v2.get("status") != "ready":
-    raise SystemExit("Backend realtime V2 readiness did not converge")
-encoded = json.dumps(payload).lower()
-for forbidden in ("password", "secret", "token", "kafka-connect-v2:8083", "clickhouse-v2:8443"):
-    if forbidden in encoded:
-        raise SystemExit("Backend realtime health exposed a protected runtime detail")
-' >/dev/null
-fi
 echo "Web workloads, private AI Gateway, and Trino result collector are ready. Verify Dashboard Assistant, Query AI, replica distribution, restart recovery, and a terminal Query Run."

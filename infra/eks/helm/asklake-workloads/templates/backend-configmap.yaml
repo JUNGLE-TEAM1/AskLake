@@ -52,17 +52,6 @@ data:
   CONTINUOUS_SQL_JOIN_ENABLED: {{ .Values.backend.realtime.continuousSqlJoinEnabled | quote }}
   DASHBOARD_SYNC_MODE: {{ .Values.backend.realtime.dashboardSyncMode | quote }}
   REALTIME_EVENTS_ENABLED: {{ .Values.backend.realtime.realtimeEventsEnabled | quote }}
-  CLICKHOUSE_CONTINUOUS_JOIN_ENABLED: "false"
-  CLICKHOUSE_REALTIME_V2_ENABLED: {{ .Values.backend.realtime.clickhouseRealtimeV2Enabled | quote }}
-  KAFKA_CONNECT_SINK_ENABLED: {{ .Values.backend.realtime.kafkaConnectSinkEnabled | quote }}
-  CLICKHOUSE_REALTIME_CONSUMER_OWNER: {{ .Values.backend.realtime.consumerOwner | quote }}
-  KAFKA_CONNECT_URL: {{ .Values.backend.realtime.kafkaConnectUrl | quote }}
-  KAFKA_CONNECT_CONNECTOR_NAME: {{ .Values.backend.realtime.connectorName | quote }}
-  CLICKHOUSE_V2_URL: {{ .Values.backend.realtime.clickhouseV2Url | quote }}
-  CLICKHOUSE_V2_DATABASE: {{ .Values.backend.realtime.clickhouseV2Database | quote }}
-  CLICKHOUSE_V2_MATERIALIZER_USER: "asklake_v2_materializer"
-  CLICKHOUSE_V2_READER_USER: "asklake_v2_reader"
-  CLICKHOUSE_V2_TLS_CA_FILE: "/var/run/asklake/secrets/clickhouse-v2-ca.crt"
   AIRFLOW_API_BASE_URL: {{ .Values.backend.config.airflowApiBaseUrl | quote }}
   AIRFLOW_DAG_ID: {{ .Values.backend.config.airflowDagId | quote }}
   TRINO_ENABLED: {{ .Values.backend.config.trinoEnabled | quote }}

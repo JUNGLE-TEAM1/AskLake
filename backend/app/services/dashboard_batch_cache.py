@@ -32,7 +32,6 @@ def _sha256_json(value: Any) -> str:
 
 def dashboard_batch_dataset_version(payload: dict[str, Any]) -> str:
     return _sha256_json({
-        "clickhouseTable": payload.get("clickhouseTable"),
         "icebergSnapshotId": payload.get("icebergSnapshotId"),
         "icebergTable": payload.get("icebergTable"),
         "lastUpdated": payload.get("lastUpdated"),

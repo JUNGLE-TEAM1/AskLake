@@ -1,6 +1,0 @@
-apiVersion: v2
-name: asklake-realtime-data-plane
-description: Opt-in ClickHouse Realtime V2 data plane for AskLake EKS
-type: application
-version: 0.2.0
-appVersion: "0.1.0"

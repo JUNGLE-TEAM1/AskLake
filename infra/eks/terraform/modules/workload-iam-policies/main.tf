@@ -22,44 +22,6 @@ locals {
     )
   } : null
 
-  realtime_v2_connect = var.reference_msk && length(var.msk_realtime_v2_topic_arns) == 5 && length(var.msk_realtime_v2_group_arns) == 2 ? {
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ConnectToMskServerless"
-        Effect   = "Allow"
-        Action   = ["kafka-cluster:Connect"]
-        Resource = [var.msk_cluster_arn]
-      },
-      {
-        Sid      = "WriteDataIdempotently"
-        Effect   = "Allow"
-        Action   = ["kafka-cluster:WriteDataIdempotently"]
-        Resource = [var.msk_cluster_arn]
-      },
-      {
-        Sid    = "UseGenerationScopedTopics"
-        Effect = "Allow"
-        Action = [
-          "kafka-cluster:CreateTopic",
-          "kafka-cluster:DescribeTopic",
-          "kafka-cluster:ReadData",
-          "kafka-cluster:WriteData",
-        ]
-        Resource = var.msk_realtime_v2_topic_arns
-      },
-      {
-        Sid    = "UseGenerationScopedConsumerGroup"
-        Effect = "Allow"
-        Action = [
-          "kafka-cluster:DescribeGroup",
-          "kafka-cluster:AlterGroup",
-        ]
-        Resource = var.msk_realtime_v2_group_arns
-      },
-    ]
-  } : null
-
   external_fixture_producer = var.reference_msk ? {
     Version = "2012-10-17"
     Statement = [
@@ -433,6 +395,5 @@ locals {
     backend                   = local.backend
     realtime_v1_worker        = local.realtime_v1_worker
     trino                     = local.trino
-    realtime_v2_connect       = local.realtime_v2_connect
   }
 }

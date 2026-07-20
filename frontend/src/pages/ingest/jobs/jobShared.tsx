@@ -148,9 +148,7 @@ export function continuousRuntimeLabel(job: JobRowData) {
 
 export function continuousEngineLabel(job: JobRowData) {
   if (job.executionMode !== "continuous") return "배치 · Spark";
-  return job.continuousConfig?.runtimeEngine === "kafka_connect_clickhouse_v2"
-    ? "실시간 · ClickHouse"
-    : "실시간 · Spark (기존 V1)";
+  return "실시간 · Spark";
 }
 
 export function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {

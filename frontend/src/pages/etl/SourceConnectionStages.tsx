@@ -148,7 +148,7 @@ export function SourceConnectStage({
                 </button>
                 <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onUpdateContinuousConfig({})}>
                   <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
-                  <span className="kafka-execution-mode-copy"><strong>실시간 · Spark (기존 V1)</strong><span>Kafka 스트림을 지속 실행하는 Spark로 새 메시지를 수집</span></span>
+                  <span className="kafka-execution-mode-copy"><strong>실시간 · Spark</strong><span>Kafka 스트림을 지속 실행하는 Spark로 새 메시지를 수집</span></span>
                   <span className="kafka-execution-mode-tag">실시간</span>
                   {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                 </button>

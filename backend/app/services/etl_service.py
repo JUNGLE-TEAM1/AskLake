@@ -254,12 +254,6 @@ from app.application.source_connectors import (
     test_source_connector as execute_test_source_connector,
 )
 from app.core.config import settings
-from app.services.kafka_ingest_v2 import (
-    kafka_ingest_v2_enabled as clickhouse_kafka_ingest_v2_enabled,
-    kafka_ingest_v2_selected as clickhouse_kafka_ingest_v2_selected,
-    require_kafka_ingest_v2_ready,
-    run_clickhouse_kafka_ingest_v2,
-)
 from app.core.errors import ApiError
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,

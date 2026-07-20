@@ -63,40 +63,11 @@ spec:
             - {name: CONTINUOUS_SQL_JOIN_ENABLED, value: {{ .Values.backend.realtime.continuousSqlJoinEnabled | quote }}}
             - {name: DASHBOARD_SYNC_MODE, value: {{ .Values.backend.realtime.dashboardSyncMode | quote }}}
             - {name: REALTIME_EVENTS_ENABLED, value: {{ .Values.backend.realtime.realtimeEventsEnabled | quote }}}
-            - {name: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED, value: "false"}
-            - {name: CLICKHOUSE_REALTIME_V2_ENABLED, value: {{ .Values.backend.realtime.clickhouseRealtimeV2Enabled | quote }}}
-            - {name: KAFKA_CONNECT_SINK_ENABLED, value: {{ .Values.backend.realtime.kafkaConnectSinkEnabled | quote }}}
-            - {name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: {{ .Values.backend.realtime.consumerOwner | quote }}}
-            {{- if .Values.backend.realtime.enabled }}
-            - {name: KAFKA_CONNECT_URL, value: {{ .Values.backend.realtime.kafkaConnectUrl | quote }}}
-            - {name: KAFKA_CONNECT_CONNECTOR_NAME, value: {{ .Values.backend.realtime.connectorName | quote }}}
-            - {name: CLICKHOUSE_V2_URL, value: {{ .Values.backend.realtime.clickhouseV2Url | quote }}}
-            - {name: CLICKHOUSE_V2_DATABASE, value: {{ .Values.backend.realtime.clickhouseV2Database | quote }}}
-            - {name: CLICKHOUSE_V2_MATERIALIZER_USER, value: "asklake_v2_materializer"}
-            - name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.backend.realtime.runtimeSecret.name }}
-                  key: {{ .Values.backend.realtime.runtimeSecret.materializerPasswordKey }}
-            - {name: CLICKHOUSE_V2_READER_USER, value: "asklake_v2_reader"}
-            - name: CLICKHOUSE_V2_READER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.backend.realtime.runtimeSecret.name }}
-                  key: {{ .Values.backend.realtime.runtimeSecret.readerPasswordKey }}
-            - {name: CLICKHOUSE_V2_TLS_CA_FILE, value: "/var/run/asklake/secrets/clickhouse-v2-ca.crt"}
-            {{- end }}
           {{- end }}
           volumeMounts:
             - name: backend-runtime-files
               mountPath: /var/run/asklake/secrets
               readOnly: true
-            {{- if .Values.backend.realtime.enabled }}
-            - name: backend-realtime-files
-              mountPath: /var/run/asklake/secrets/clickhouse-v2-ca.crt
-              subPath: clickhouse-v2-ca.crt
-              readOnly: true
-            {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -121,15 +92,6 @@ spec:
             items:
               - key: {{ .Values.backend.runtimeSecretTrinoCaKey }}
                 path: trino-ca.pem
-        {{- if .Values.backend.realtime.enabled }}
-        - name: backend-realtime-files
-          secret:
-            secretName: {{ .Values.backend.realtime.runtimeSecret.name }}
-            defaultMode: 0400
-            items:
-              - key: {{ .Values.backend.realtime.runtimeSecret.caKey }}
-                path: clickhouse-v2-ca.crt
-        {{- end }}
 ---
 apiVersion: v1
 kind: Service

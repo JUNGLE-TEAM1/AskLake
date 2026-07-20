@@ -49,11 +49,7 @@ for safe_contract in \
   'name: KAFKA_CONTINUOUS_V1_OWNER_GENERATION, value: ""' \
   'name: CONTINUOUS_SQL_JOIN_ENABLED, value: "false"' \
   'name: DASHBOARD_SYNC_MODE, value: "polling"' \
-  'name: REALTIME_EVENTS_ENABLED, value: "false"' \
-  'name: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED, value: "false"' \
-  'name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "false"' \
-  'name: KAFKA_CONNECT_SINK_ENABLED, value: "false"' \
-  'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: "disabled"'; do
+  'name: REALTIME_EVENTS_ENABLED, value: "false"'; do
   grep -Fq "$safe_contract" "$WEB_RENDER" || {
     echo "V1-only web render is missing contract: $safe_contract" >&2
     exit 1
@@ -78,20 +74,12 @@ for invalid_v1_admission in \
   fi
 done
 
-if grep -Eq 'KAFKA_CONNECT_URL|CLICKHOUSE_V2_URL|CLICKHOUSE_V2_(MATERIALIZER|READER)_PASSWORD|asklake-realtime-runtime|clickhouse-v2-ca\.crt' "$WEB_RENDER"; then
-  echo "V1-only web render unexpectedly injects a ClickHouse V2 endpoint or Secret" >&2
-  exit 1
-fi
-
 for unsafe_override in \
   deploymentProfile=standard \
   backend.realtime.enabled=true \
   backend.realtime.apiControlPlane=external_ec2 \
   backend.realtime.continuousSqlJoinEnabled=true \
-  backend.realtime.realtimeEventsEnabled=true \
-  backend.realtime.clickhouseRealtimeV2Enabled=true \
-  backend.realtime.kafkaConnectSinkEnabled=true \
-  backend.realtime.consumerOwner=kafka_connect_v2; do
+  backend.realtime.realtimeEventsEnabled=true; do
   if "$HELM_BIN" template asklake-web-v1-only "$WEB_CHART_DIR" \
     -f "$WEB_ENV_VALUES" -f "$WEB_PROFILE_VALUES" \
     --set "$unsafe_override" >/dev/null 2>&1; then
@@ -116,20 +104,9 @@ test "$(grep -c 'name: asklake-realtime-v1-worker$' "$BASE_RENDER" || true)" -eq
 
 test "$(grep -c 'name: asklake-realtime-v1-worker$' "$ACTIVE_RENDER")" -eq 1
 test "$(grep -c '^kind: StatefulSet$' "$ACTIVE_RENDER" || true)" -eq 0
-for v2_resource in clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2 asklake-realtime-v2-worker; do
-  if grep -q "^  name: ${v2_resource}$" "$ACTIVE_RENDER"; then
-    echo "V1-only render unexpectedly contains V2 resource: $v2_resource" >&2
-    exit 1
-  fi
-done
-grep -q 'CLICKHOUSE_REALTIME_V2_ENABLED: "false"' "$ACTIVE_RENDER"
-grep -q 'KAFKA_CONNECT_SINK_ENABLED: "false"' "$ACTIVE_RENDER"
-grep -q 'CLICKHOUSE_REALTIME_CONSUMER_OWNER: "disabled"' "$ACTIVE_RENDER"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "local"' "$ACTIVE_RENDER"
 grep -q 'CONTINUOUS_CONTROL_PLANE: "disabled"' "$ACTIVE_RENDER"
-grep -q 'name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "false"' "$ACTIVE_RENDER"
-grep -q 'name: KAFKA_CONNECT_SINK_ENABLED, value: "false"' "$ACTIVE_RENDER"
-grep -q 'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: "disabled"' "$ACTIVE_RENDER"
+grep -q 'name: CONTINUOUS_WORKER_SCOPE, value: "all"' "$ACTIVE_RENDER"
 grep -q 'mountPath: /var/run/asklake/secrets' "$ACTIVE_RENDER"
 grep -q 'secretName: asklake-backend-runtime' "$ACTIVE_RENDER"
 grep -q 'path: trino-ca.pem' "$ACTIVE_RENDER"
@@ -151,10 +128,7 @@ fi
 for unsafe_override in \
   backend.realtime.enabled=true \
   backend.realtime.apiControlPlane=external_ec2 \
-  backend.realtime.continuousSqlJoinEnabled=true \
-  backend.realtime.clickhouseRealtimeV2Enabled=true \
-  backend.realtime.kafkaConnectSinkEnabled=true \
-  realtimeV2.enabled=true; do
+  backend.realtime.continuousSqlJoinEnabled=true; do
   if "$HELM_BIN" template asklake-v1-only "$CHART_DIR" \
     -f "$ENV_VALUES" -f "$PROFILE_VALUES" \
     --set "$unsafe_override" >/dev/null 2>&1; then

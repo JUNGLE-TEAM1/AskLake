@@ -266,26 +266,6 @@ services:
       CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS: ${CONTINUOUS_SQL_STATIC_BROADCAST_MAX_ROWS:-100000}
       CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS: ${CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS:-5000000}
       CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT: ${CONTINUOUS_SQL_MAX_OUTPUT_ROWS_PER_INPUT:-10}
-      CLICKHOUSE_CONTINUOUS_JOIN_ENABLED: ${CLICKHOUSE_CONTINUOUS_JOIN_ENABLED:-false}
-      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://clickhouse:8123}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-asklake}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-asklake}
-      CLICKHOUSE_QUERY_TIMEOUT_SECONDS: ${CLICKHOUSE_QUERY_TIMEOUT_SECONDS:-60}
-      CLICKHOUSE_INSERT_BATCH_ROWS: ${CLICKHOUSE_INSERT_BATCH_ROWS:-20000}
-      CLICKHOUSE_REALTIME_V2_ENABLED: ${CLICKHOUSE_REALTIME_V2_ENABLED:-true}
-      KAFKA_CONNECT_SINK_ENABLED: ${KAFKA_CONNECT_SINK_ENABLED:-true}
-      CLICKHOUSE_REALTIME_CONSUMER_OWNER: ${CLICKHOUSE_REALTIME_CONSUMER_OWNER:-kafka_connect_v2}
-      KAFKA_CONNECT_URL: ${KAFKA_CONNECT_URL-http://kafka-connect-v2:8083}
-      KAFKA_CONNECT_CONNECTOR_NAME: ${KAFKA_CONNECT_CONNECTOR_NAME:-asklake-clickhouse-realtime-v2}
-      CLICKHOUSE_V2_URL: ${CLICKHOUSE_V2_URL:-https://clickhouse-v2:8443}
-      CLICKHOUSE_V2_DATABASE: ${CLICKHOUSE_V2_DATABASE:-asklake_realtime_v2}
-      CLICKHOUSE_V2_MATERIALIZER_USER: ${CLICKHOUSE_V2_MATERIALIZER_USER:-asklake_v2_materializer}
-      CLICKHOUSE_V2_MATERIALIZER_PASSWORD: ${CLICKHOUSE_V2_MATERIALIZER_PASSWORD:-}
-      CLICKHOUSE_V2_READER_USER: ${CLICKHOUSE_V2_READER_USER:-asklake_v2_reader}
-      CLICKHOUSE_V2_READER_PASSWORD: ${CLICKHOUSE_V2_READER_PASSWORD:-}
-      CLICKHOUSE_V2_TLS_CA_FILE: ${CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE:-/run/secrets/clickhouse-v2-ca.crt}
-      CLICKHOUSE_REALTIME_V2_BATCH_MAX_POSITIONS: ${CLICKHOUSE_REALTIME_V2_BATCH_MAX_POSITIONS:-10000}
       REALTIME_EVENT_RETENTION_SECONDS: ${REALTIME_EVENT_RETENTION_SECONDS:-86400}
       REALTIME_EVENT_PAYLOAD_MAX_BYTES: ${REALTIME_EVENT_PAYLOAD_MAX_BYTES:-8192}
       REALTIME_REPLAY_LIMIT: ${REALTIME_REPLAY_LIMIT:-500}
@@ -362,10 +342,8 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/var/lib/asklake}/review-text-models:/var/lib/asklake/review-text-models:ro
       - ${ASKLAKE_REPLAY_HOST_INPUT_DIR:-/var/lib/asklake/replay-input}:${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}:ro
       - ${TRINO_TLS_CA_FILE:-/dev/null}:${TRINO_TLS_CA_CONTAINER_FILE:-/run/secrets/trino-ca.pem}:ro
-      - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:${CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE:-/run/secrets/clickhouse-v2-ca.crt}:ro
     networks:
       - default
-      - clickhouse_v2_internal
       - trino_internal
     healthcheck:
       test:
@@ -838,152 +816,9 @@ services:
       retries: 12
     networks:
       - default
-      - clickhouse_v2_internal
-
-  clickhouse:
-    profiles: ["clickhouse"]
-    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:25.8.28.1}
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-asklake}
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-replace-with-clickhouse-password}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-asklake}
-    expose:
-      - "8123"
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - ./clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
-    depends_on:
-      redpanda:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --user \"${CLICKHOUSE_USER:-asklake}\" --password \"${CLICKHOUSE_PASSWORD:-replace-with-clickhouse-password}\" --query 'SELECT 1' >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 20s
-
-  clickhouse-keeper-v2:
-    profiles: ["clickhouse-realtime-v2"]
-    image: ${CLICKHOUSE_V2_IMAGE:-clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49}
-    restart: unless-stopped
-    command: [clickhouse-keeper, --config-file=/etc/clickhouse-keeper/keeper-config.xml]
-    security_opt: [no-new-privileges:true]
-    expose: ["9181", "9234"]
-    volumes:
-      - clickhouse_keeper_v2_data:/var/lib/clickhouse-keeper
-      - ./clickhouse-v2/keeper-config.xml:/etc/clickhouse-keeper/keeper-config.xml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "clickhouse keeper-client --host 127.0.0.1 --port 9181 --query ruok 2>/dev/null | grep -q imok"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 20s
-    networks: [clickhouse_v2_internal]
-
-  clickhouse-v2:
-    profiles: ["clickhouse-realtime-v2"]
-    image: ${CLICKHOUSE_V2_IMAGE:-clickhouse/clickhouse-server:26.3.17.4@sha256:85c434814ac8905e5648027ce926f74ab067edd6aadbccb6c0c165cd3571ea49}
-    restart: unless-stopped
-    # Root exists only for secret staging and the official bootstrap. The
-    # pinned official entrypoint exec-drops the final server to 101:101.
-    user: "0:0"
-    security_opt: [no-new-privileges:true]
-    entrypoint: [/bin/bash, /usr/local/bin/asklake-clickhouse-v2-entrypoint.sh]
-    environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_V2_DATABASE:-asklake_realtime_v2}
-      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "1"
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
-      CLICKHOUSE_V2_DISABLE_PLAINTEXT_AFTER_INIT: "true"
-      CLICKHOUSE_V2_TLS_STAGING_REQUIRED: "true"
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_V2_ADMIN_PASSWORD:-replace-with-clickhouse-v2-admin-password}
-      CLICKHOUSE_USER: ${CLICKHOUSE_V2_ADMIN_USER:-asklake_v2_admin}
-      CLICKHOUSE_V2_INGEST_PASSWORD: ${CLICKHOUSE_V2_INGEST_PASSWORD:-replace-with-clickhouse-v2-ingest-password}
-      CLICKHOUSE_V2_MATERIALIZER_PASSWORD: ${CLICKHOUSE_V2_MATERIALIZER_PASSWORD:-replace-with-clickhouse-v2-materializer-password}
-      CLICKHOUSE_V2_READER_PASSWORD: ${CLICKHOUSE_V2_READER_PASSWORD:-replace-with-clickhouse-v2-reader-password}
-      CLICKHOUSE_V2_MIGRATION_PASSWORD: ${CLICKHOUSE_V2_MIGRATION_PASSWORD:-replace-with-clickhouse-v2-migration-password}
-      CLICKHOUSE_V2_OBSERVER_PASSWORD: ${CLICKHOUSE_V2_OBSERVER_PASSWORD:-replace-with-clickhouse-v2-observer-password}
-    expose: ["8443", "9440"]
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    tmpfs: ["/run/asklake-clickhouse-v2-secrets:rw,noexec,nosuid,nodev,mode=0700,uid=101,gid=101"]
-    volumes:
-      - clickhouse_v2_data:/var/lib/clickhouse
-      - ./clickhouse-v2/config.d/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
-      - ./clickhouse-v2/config.d/tls.xml:/etc/clickhouse-server/config.d/tls.xml:ro
-      - ./clickhouse-v2/client-config.xml:/etc/clickhouse-client/config.xml:ro
-      - ./clickhouse-v2/entrypoint.sh:/usr/local/bin/asklake-clickhouse-v2-entrypoint.sh:ro
-      - ./clickhouse-v2/initdb:/opt/asklake-clickhouse-v2-initdb:ro
-      - ${CLICKHOUSE_V2_TLS_CERT_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/server.crt:ro
-      - ${CLICKHOUSE_V2_TLS_KEY_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/server.key:ro
-      - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:/run/asklake-secrets-source/clickhouse-v2/ca.crt:ro
-    depends_on: {clickhouse-keeper-v2: {condition: service_healthy}}
-    healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --config-file /etc/clickhouse-client/config.xml --host clickhouse-v2 --secure --port 9440 --user asklake_v2_reader --password \"$$CLICKHOUSE_V2_READER_PASSWORD\" --query 'SELECT 1' >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-    networks: [clickhouse_v2_internal]
-
-  kafka-connect-v2:
-    profiles: ["clickhouse-realtime-v2"]
-    image: ${KAFKA_CONNECT_V2_IMAGE:-registry.example.invalid/asklake/kafka-connect-clickhouse@sha256:replace-with-immutable-digest}
-    restart: unless-stopped
-    # The image wrapper stages root-readable host files in tmpfs and then
-    # exec-drops the canonical Connect worker to appuser 1000:1000.
-    user: "0:0"
-    entrypoint: [/usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh]
-    security_opt: [no-new-privileges:true]
-    environment:
-      CONNECT_BOOTSTRAP_SERVERS: redpanda:9092
-      CONNECT_CONFIG_PROVIDERS: file
-      CONNECT_CONFIG_PROVIDERS_FILE_CLASS: org.apache.kafka.common.config.provider.FileConfigProvider
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
-      CONNECT_CONFIG_STORAGE_TOPIC: _asklake_clickhouse_v2_connect_configs
-      CONNECT_CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY: All
-      CONNECT_GROUP_ID: asklake-clickhouse-v2-connect
-      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
-      CONNECT_OFFSET_FLUSH_INTERVAL_MS: "10000"
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
-      CONNECT_OFFSET_STORAGE_TOPIC: _asklake_clickhouse_v2_connect_offsets
-      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
-      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect-v2
-      CONNECT_REST_PORT: "8083"
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
-      CONNECT_STATUS_STORAGE_TOPIC: _asklake_clickhouse_v2_connect_status
-      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-      KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED: "true"
-      KAFKA_HEAP_OPTS: ${KAFKA_CONNECT_V2_HEAP_OPTS:--Xms512m -Xmx1g}
-    expose: ["8083"]
-    tmpfs: ["/run/secrets:rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000"]
-    volumes:
-      - ${KAFKA_CONNECT_V2_SECRETS_FILE:-/dev/null}:/run/asklake-secrets-source/kafka-connect/asklake-clickhouse-v2.properties:ro
-      - ${CLICKHOUSE_V2_TLS_CA_FILE:-/dev/null}:/run/asklake-secrets-source/kafka-connect/clickhouse-v2-ca.crt:ro
-    depends_on: {redpanda: {condition: service_healthy}, clickhouse-v2: {condition: service_healthy}}
-    healthcheck:
-      test: ["CMD-SHELL", "/usr/sbin/chroot --userspec=1000:1000 / curl --fail --silent http://127.0.0.1:8083/connector-plugins | grep -q com.clickhouse.kafka.connect.ClickHouseSinkConnector"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
-    networks: [clickhouse_v2_internal]
 volumes:
   caddy_data:
   caddy_config:
-  clickhouse_keeper_v2_data:
-  clickhouse_v2_data:
-  clickhouse_data:
   postgres_data:
   airflow_postgres_data:
   mongo_data:
@@ -992,8 +827,6 @@ volumes:
   opensearch_data:
   embedding_worker_state:
 networks:
-  clickhouse_v2_internal:
-    internal: true
   trino_internal:
     internal: true
   trino_egress:

@@ -173,14 +173,6 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     physical_bindings = normalized_payload.get("physicalBindings")
     if not isinstance(physical_bindings, list):
         physical_bindings = []
-        clickhouse = normalized_payload.get("clickhouseTable")
-        if isinstance(clickhouse, dict) and clickhouse.get("database") and clickhouse.get("table"):
-            physical_bindings.append({
-                "role": "serving", "engine": "clickhouse", "status": "active",
-                "bindingEpoch": int(normalized_payload.get("bindingEpoch") or 0),
-                "versionId": normalized_payload.get("activeServingVersionId"),
-                "database": clickhouse["database"], "table": clickhouse["table"],
-            })
         query_engine = normalized_payload.get("queryEngineTable")
         if isinstance(query_engine, dict) and query_engine.get("catalog") and query_engine.get("schema") and query_engine.get("table"):
             physical_bindings.append({

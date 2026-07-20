@@ -7,8 +7,7 @@ VALUES_FILE="$ROOT_DIR/infra/eks/values/workloads/web.test.example.yaml"
 DEPLOY_SCRIPT="$ROOT_DIR/scripts/deploy-eks-web-workloads.sh"
 RENDERED_FILE="$(mktemp)"
 HPA_DISABLED_RENDERED="$(mktemp)"
-REALTIME_RENDERED="$(mktemp)"
-trap 'rm -f "$RENDERED_FILE" "$HPA_DISABLED_RENDERED" "$REALTIME_RENDERED"' EXIT
+trap 'rm -f "$RENDERED_FILE" "$HPA_DISABLED_RENDERED"' EXIT
 
 helm lint "$CHART_DIR"
 if [[ -n "$(helm template asklake-web "$CHART_DIR")" ]]; then
@@ -135,68 +134,6 @@ if [[ "$(grep -c 'asklake.io/runtime-config-revision: \"runtime-revision-test\"'
   exit 1
 fi
 
-if grep -Eq 'CLICKHOUSE_REALTIME_V2_ENABLED|KAFKA_CONNECT_SINK_ENABLED|asklake-realtime-runtime|clickhouse-v2-ca.crt' "$RENDERED_FILE"; then
-  echo "default web render must not inject ClickHouse V2 runtime configuration" >&2
-  exit 1
-fi
-
-realtime_backend_args=(
-  --set backend.realtime.enabled=true
-  --set backend.realtime.apiControlPlane=local
-  --set backend.realtime.continuousSqlJoinEnabled=true
-  --set backend.realtime.dashboardSyncMode=sse
-  --set backend.realtime.realtimeEventsEnabled=true
-  --set backend.realtime.clickhouseRealtimeV2Enabled=true
-  --set backend.realtime.kafkaConnectSinkEnabled=true
-  --set backend.realtime.consumerOwner=kafka_connect_v2
-  --set backend.realtime.kafkaConnectUrl=http://kafka-connect-v2:8083
-  --set backend.realtime.clickhouseV2Url=https://clickhouse-v2:8443
-)
-helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
-  "${realtime_backend_args[@]}" >"$REALTIME_RENDERED"
-for contract in \
-  'name: ASKLAKE_CONTINUOUS_CONTROL_PLANE, value: "local"' \
-  'name: CONTINUOUS_CONTROL_PLANE, value: "disabled"' \
-  'name: CONTINUOUS_SQL_JOIN_ENABLED, value: "true"' \
-  'name: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED, value: "false"' \
-  'name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "true"' \
-  'name: KAFKA_CONNECT_SINK_ENABLED, value: "true"' \
-  'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: "kafka_connect_v2"' \
-  'name: KAFKA_CONNECT_URL, value: "http://kafka-connect-v2:8083"' \
-  'name: CLICKHOUSE_V2_URL, value: "https://clickhouse-v2:8443"' \
-  'name: CLICKHOUSE_V2_MATERIALIZER_PASSWORD' \
-  'name: CLICKHOUSE_V2_READER_PASSWORD' \
-  'secretName: asklake-realtime-runtime' \
-  'path: clickhouse-v2-ca.crt'; do
-  grep -Fq "$contract" "$REALTIME_RENDERED" || {
-    echo "realtime FastAPI render is missing contract: $contract" >&2
-    exit 1
-  }
-done
-
-realtime_negative_cases=(
-  'backend.realtime.apiControlPlane=external_ec2'
-  'backend.realtime.continuousSqlJoinEnabled=false'
-  'backend.realtime.dashboardSyncMode=polling'
-  'backend.realtime.realtimeEventsEnabled=false'
-  'backend.realtime.clickhouseRealtimeV2Enabled=false'
-  'backend.realtime.kafkaConnectSinkEnabled=false'
-  'backend.realtime.consumerOwner=disabled'
-  'backend.realtime.kafkaConnectUrl=http://localhost:8083'
-  'backend.realtime.kafkaConnectUrl=https://public.example.invalid'
-  'backend.realtime.clickhouseV2Url=http://clickhouse-v2:8123'
-  'backend.realtime.clickhouseV2Url=https://localhost:8443'
-  'backend.realtime.runtimeSecret.name=asklake-backend-runtime'
-  'backend.realtime.runtimeSecret.caKey=server.key'
-)
-for override in "${realtime_negative_cases[@]}"; do
-  if helm template asklake-web "$CHART_DIR" -f "$VALUES_FILE" \
-    "${realtime_backend_args[@]}" --set "$override" >/dev/null 2>&1; then
-    echo "web schema accepted unsafe realtime override: $override" >&2
-    exit 1
-  fi
-done
-
 negative_cases=(
   'readiness.backendRuntimeBoundaryReady=false'
   'readiness.runtimeSecretReady=false'
@@ -321,24 +258,10 @@ fi
 for deploy_guard in \
   'externalsecret asklake-backend-runtime' \
   'externalsecret asklake-ai-gateway-runtime' \
-  'verify-eks-realtime-v2-secrets.sh' \
-  '/api/health/realtime' \
-  'Backend realtime V2 readiness did not converge' \
   'verify-eks-ai-gateway-runtime.mjs' \
   '/api/health/ai'; do
   grep -Fq "$deploy_guard" "$DEPLOY_SCRIPT" || {
     echo "web deployment script is missing fail-closed Gateway guard: $deploy_guard" >&2
-    exit 1
-  }
-done
-for realtime_secret_guard in \
-  'asklake-clickhouse-keeper-v2-config' \
-  'asklake-clickhouse-v2-config' \
-  'asklake-kafka-connect-v2-runtime' \
-  'asklake-realtime-runtime' \
-  'clickhouse-v2.${NAMESPACE}.svc.cluster.local'; do
-  grep -Fq "$realtime_secret_guard" "$ROOT_DIR/scripts/verify-eks-realtime-v2-secrets.sh" || {
-    echo "realtime secret verifier is missing fail-closed guard: $realtime_secret_guard" >&2
     exit 1
   }
 done

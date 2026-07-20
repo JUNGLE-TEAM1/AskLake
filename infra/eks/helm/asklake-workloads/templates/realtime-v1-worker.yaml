@@ -57,14 +57,11 @@ spec:
                 name: {{ .Values.backend.runtimeSecret.name }}
           env:
             - {name: CONTINUOUS_CONTROL_PLANE, value: "worker"}
-            - {name: CONTINUOUS_WORKER_SCOPE, value: "kafka"}
+            - {name: CONTINUOUS_WORKER_SCOPE, value: "all"}
             - {name: CONTINUOUS_WORKER_OWNER, value: "eks-continuous-worker-v1"}
             - {name: CONTINUOUS_WORKER_GENERATION, value: {{ $generation | quote }} }
             - {name: STARTUP_SCHEMA_MANAGEMENT_ENABLED, value: "false"}
             - {name: ASKLAKE_CONTINUOUS_SPARK_RUNNER, value: "kubernetes"}
-            - {name: CLICKHOUSE_REALTIME_V2_ENABLED, value: "false"}
-            - {name: KAFKA_CONNECT_SINK_ENABLED, value: "false"}
-            - {name: CLICKHOUSE_REALTIME_CONSUMER_OWNER, value: "disabled"}
             - {name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX, value: {{ $runtimePrefix | quote }}}
             - {name: ASKLAKE_SPARK_KUBERNETES_NAMESPACE, value: {{ .Values.namespace | quote }}}
             - {name: ASKLAKE_SPARK_KUBERNETES_IMAGE, value: "{{ required "Spark image repository is required" .Values.sparkApplication.image.repository }}@{{ required "Spark image digest is required" .Values.sparkApplication.image.digest }}"}

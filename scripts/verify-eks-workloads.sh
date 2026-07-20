@@ -331,14 +331,10 @@ grep -q 'asklake.io/previous-owner-fenced: "true"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'asklake.io/topic-prefix: "asklake.eks-realtime.fixture"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'asklake.io/consumer-group-prefix: "asklake-eks-realtime-v1"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: CONTINUOUS_WORKER_SCOPE' "$REALTIME_V1_RENDERED_FILE"
-grep -q 'value: "kafka"' "$REALTIME_V1_RENDERED_FILE"
+grep -q 'value: "all"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: CONTINUOUS_WORKER_OWNER' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "eks-continuous-worker-v1"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: CONTINUOUS_WORKER_GENERATION' "$REALTIME_V1_RENDERED_FILE"
-grep -q 'name: CLICKHOUSE_REALTIME_V2_ENABLED' "$REALTIME_V1_RENDERED_FILE"
-grep -q 'name: KAFKA_CONNECT_SINK_ENABLED' "$REALTIME_V1_RENDERED_FILE"
-grep -q 'name: CLICKHOUSE_REALTIME_CONSUMER_OWNER' "$REALTIME_V1_RENDERED_FILE"
-grep -q 'value: "disabled"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX' "$REALTIME_V1_RENDERED_FILE"
 grep -q 's3a://asklake-dev-output-example/continuous-runtime' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'serviceAccountName: asklake-realtime-v1-worker' "$REALTIME_V1_RENDERED_FILE"
@@ -347,8 +343,8 @@ grep -q 'value: "asklake-realtime-v1-spark"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'name: ASKLAKE_KAFKA_AUTH_MODE' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'value: "local:///opt/asklake/scripts/kafka_continuous_stream.py"' "$REALTIME_V1_RENDERED_FILE"
 grep -q 'local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar' "$REALTIME_V1_RENDERED_FILE"
-if grep -Eq 'app.kubernetes.io/component: (kafka-connect|clickhouse|keeper)' "$REALTIME_V1_RENDERED_FILE"; then
-  echo "selected V1 render unexpectedly contains a V2 workload" >&2
+if grep -Eq '^kind: (StatefulSet|PersistentVolumeClaim)$' "$REALTIME_V1_RENDERED_FILE"; then
+  echo "selected V1 render unexpectedly contains a stateful data-plane workload" >&2
   exit 1
 fi
 
@@ -441,6 +437,4 @@ PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixtur
 PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 "$ROOT_DIR/scripts/verify-eks-realtime-v1-only-profile.sh"
-"$ROOT_DIR/scripts/verify-eks-realtime-v2-workload.sh"
-"$PYTHON_BIN" "$ROOT_DIR/scripts/verify-eks-realtime-v2-storage.py"
 echo "EKS workload contract verification passed."

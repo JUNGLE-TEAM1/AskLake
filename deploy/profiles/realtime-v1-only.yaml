@@ -12,22 +12,9 @@ backend:
     continuousSqlJoinEnabled: false
     dashboardSyncMode: polling
     realtimeEventsEnabled: false
-    clickhouseRealtimeV2Enabled: false
-    kafkaConnectSinkEnabled: false
-    consumerOwner: disabled
-    kafkaConnectUrl: ""
-    clickhouseV2Url: ""
 
 realtimeV1:
   enabled: false
-  ownerTransfer:
-    approved: false
-    previousOwnerFenced: false
-    generation: ""
-
-realtimeV2:
-  enabled: false
-  recoveryMode: false
   ownerTransfer:
     approved: false
     previousOwnerFenced: false

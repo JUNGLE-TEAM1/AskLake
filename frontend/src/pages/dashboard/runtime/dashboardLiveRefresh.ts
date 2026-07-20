@@ -114,7 +114,7 @@ export function dashboardCursorFromFreshness(
 function cursorFromV2Event(event: RealtimeDatasetEventV2): DashboardDatasetCursor {
   return {
     bindingEpoch: event.payload.bindingEpoch,
-    engine: "clickhouse",
+    engine: "iceberg",
     eventCursor: event.eventId,
     pipelineVersionId: event.payload.pipelineVersionId,
     revision: event.aggregateRevision,

@@ -276,9 +276,6 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         "stopped",
         default_public_status="stopped",
     )
-    if config.get("runtimeEngine") == "kafka_connect_clickhouse_v2":
-        metrics = {**metrics, "runtimeEngine": "kafka_connect_clickhouse_v2",
-                   "runtimeGeneration": int(config.get("runtimeGeneration") or 1)}
     runtime = KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
@@ -292,7 +289,7 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     from app.services.continuous_runtime_sync import assign_runtime_admission_owner_claim
     assign_runtime_admission_owner_claim(
             runtime,
-            runtime_engine=str(config.get("runtimeEngine") or ""),
+            runtime_engine="spark_structured_streaming",
             configured_settings=settings,
             fencing_token=f"create-{uuid4()}",
     )

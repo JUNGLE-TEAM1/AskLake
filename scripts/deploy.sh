@@ -150,32 +150,6 @@ print("true" if str(enabled).strip().lower() == "true" else "false")
 '
 }
 
-remote_clickhouse_enabled() {
-  remote_compose 'config --format json' | "$PYTHON_BIN" -c '
-import json
-import sys
-
-try:
-    enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED")
-except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
-    raise SystemExit(1)
-print("true" if str(enabled).strip().lower() == "true" else "false")
-'
-}
-
-remote_clickhouse_v2_enabled() {
-  remote_compose 'config --format json' | "$PYTHON_BIN" -c '
-import json
-import sys
-
-try:
-    enabled = json.load(sys.stdin)["services"]["backend"]["environment"].get("CLICKHOUSE_REALTIME_V2_ENABLED")
-except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
-    raise SystemExit(1)
-print("true" if str(enabled).strip().lower() == "true" else "false")
-'
-}
-
 wait_for_ssh() {
   local host
   host="$(resolve_host)"
@@ -341,64 +315,10 @@ verify_trino_runtime() {
   die "Trino production readiness failed"
 }
 
-prepare_clickhouse_runtime() {
-  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
-    printf 'ClickHouse Continuous JOIN is disabled; removing any stale profiled runtime container.\n'
-    remote_compose 'rm -sf clickhouse'
-    return
-  fi
-  remote_compose 'up -d redpanda clickhouse'
-}
-
 bootstrap_metadata_schema() {
   remote_compose 'up -d --wait postgres'
   remote_compose 'run --rm --no-deps --build backend python -m alembic upgrade head'
   remote_compose 'run --rm --no-deps --build backend python scripts/migrate-metadata-schema.py'
-}
-
-prepare_clickhouse_v2_runtime() {
-  if [[ "$(remote_clickhouse_v2_enabled)" != "true" ]]; then
-    printf 'ClickHouse Realtime V2 is disabled; removing stale V2 runtime containers.\n'
-    remote_compose 'rm -sf kafka-connect-v2 clickhouse-v2 clickhouse-keeper-v2'
-    return
-  fi
-  remote_compose 'up -d --wait redpanda clickhouse-keeper-v2 clickhouse-v2 kafka-connect-v2'
-}
-
-verify_clickhouse_runtime() {
-  local attempt
-  if [[ "$(remote_clickhouse_enabled)" != "true" ]]; then
-    printf 'ClickHouse Continuous JOIN is disabled; runtime readiness check skipped.\n'
-    return
-  fi
-  for attempt in $(seq 1 12); do
-    if remote_compose 'exec -T backend python -c "from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient(); assert client.ping(); client.close()"'; then
-      return
-    fi
-    if [[ "$attempt" -lt 12 ]]; then
-      printf 'ClickHouse readiness is not ready yet (attempt %s/12).\n' "$attempt"
-      sleep 5
-    fi
-  done
-  die "ClickHouse production readiness failed"
-}
-
-verify_clickhouse_v2_runtime() {
-  local attempt
-  if [[ "$(remote_clickhouse_v2_enabled)" != "true" ]]; then
-    printf 'ClickHouse Realtime V2 is disabled; runtime readiness check skipped.\n'
-    return
-  fi
-  for attempt in $(seq 1 12); do
-    if remote_compose 'exec -T backend python -c "from app.realtime.application.ingest_service import RealtimeIngestService; from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient.realtime_v2_reader(); assert client.ping(); client.close(); assert RealtimeIngestService().probe().runtime_ready"'; then
-      return
-    fi
-    if [[ "$attempt" -lt 12 ]]; then
-      printf 'ClickHouse Realtime V2 readiness is not ready yet (attempt %s/12).\n' "$attempt"
-      sleep 5
-    fi
-  done
-  die "ClickHouse Realtime V2 production readiness failed"
 }
 
 DIAGNOSTIC_CHECKS=()
@@ -454,19 +374,6 @@ diagnose_trino_runtime() {
   fi
 }
 
-diagnose_clickhouse_runtime() {
-  local enabled
-
-  if ! enabled="$(remote_clickhouse_enabled 2>/dev/null)"; then
-    record_diagnostic_check clickhouse_runtime failed
-  elif [[ "$enabled" != "true" ]]; then
-    record_diagnostic_check clickhouse_runtime skipped
-  else
-    run_diagnostic_check clickhouse_runtime \
-      remote_compose 'exec -T backend python -c "from app.services.clickhouse_client import ClickHouseClient; client = ClickHouseClient(); assert client.ping(); client.close()"'
-  fi
-}
-
 write_deploy_diagnostic() {
   local app_url="$1"
   local instance_state_value="$2"
@@ -519,7 +426,6 @@ diagnose_stack() {
     record_diagnostic_check ai_health skipped
     record_diagnostic_check compose_status skipped
     record_diagnostic_check trino_runtime skipped
-    record_diagnostic_check clickhouse_runtime skipped
   else
     run_diagnostic_check deploy_env_preflight remote_deploy_preflight
     if [[ -n "$url" ]]; then
@@ -533,7 +439,6 @@ diagnose_stack() {
     fi
     run_diagnostic_check compose_status remote_compose 'ps --format json'
     diagnose_trino_runtime
-    diagnose_clickhouse_runtime
   fi
 
   if ! write_deploy_diagnostic "$url" "$state"; then
@@ -549,13 +454,9 @@ start_stack() {
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
-  prepare_clickhouse_runtime
-  prepare_clickhouse_v2_runtime
   remote_compose 'up -d'
   health_check
   verify_trino_runtime
-  verify_clickhouse_runtime
-  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 
@@ -588,13 +489,9 @@ deploy_stack() {
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
-  prepare_clickhouse_runtime
-  prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
-  verify_clickhouse_runtime
-  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 
@@ -603,13 +500,9 @@ restart_stack() {
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
-  prepare_clickhouse_runtime
-  prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
   health_check
   verify_trino_runtime
-  verify_clickhouse_runtime
-  verify_clickhouse_v2_runtime
   remote_compose 'ps'
 }
 

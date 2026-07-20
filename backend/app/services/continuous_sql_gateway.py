@@ -4,11 +4,8 @@ import hashlib
 import json
 from typing import Any, Protocol
 
-from app.core.config import Settings, settings
+from app.core.config import Settings
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
-from app.schemas.continuous_sql import continuous_sql_serving_mode
-from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
-from app.services.clickhouse_realtime_v2 import ClickHouseRealtimeV2WorkerGateway
 from app.services.node_bridge import run_node_bridge
 
 
@@ -88,19 +85,9 @@ class RoutedContinuousSqlWorkerGateway:
         runtime_settings: Settings | None = None,
         *,
         iceberg_gateway: ContinuousSqlWorkerGateway | None = None,
-        clickhouse_gateway: ContinuousSqlWorkerGateway | None = None,
-        clickhouse_v2_gateway: ContinuousSqlWorkerGateway | None = None,
     ) -> None:
-        resolved_settings = runtime_settings or settings
-        self.settings = resolved_settings
+        del runtime_settings
         self.iceberg_gateway = iceberg_gateway or NodeContinuousSqlWorkerGateway()
-        self.clickhouse_gateway = clickhouse_gateway or ClickHouseContinuousSqlWorkerGateway(
-            resolved_settings
-        )
-        self.clickhouse_v2_gateway = (
-            clickhouse_v2_gateway
-            or ClickHouseRealtimeV2WorkerGateway(resolved_settings)
-        )
 
     def manage(
         self,
@@ -109,17 +96,7 @@ class RoutedContinuousSqlWorkerGateway:
         action: str,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if continuous_sql_serving_mode(job) != "clickhouse":
-            gateway = self.iceberg_gateway
-        elif (
-            self.settings.clickhouse_realtime_v2_enabled
-            and self.settings.kafka_connect_sink_enabled
-            and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
-        ):
-            gateway = self.clickhouse_v2_gateway
-        else:
-            gateway = self.clickhouse_gateway
-        return gateway.manage(job, run, action, options)
+        return self.iceberg_gateway.manage(job, run, action, options)
 
 
 def canonical_hash(value: Any) -> str:

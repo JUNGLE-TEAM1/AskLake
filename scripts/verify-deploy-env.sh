@@ -109,76 +109,6 @@ case "$trino_enabled_value" in
     ;;
 esac
 
-continuous_sql_join_enabled_value="$(printf '%s' "$(env_value_for CONTINUOUS_SQL_JOIN_ENABLED)" | tr '[:upper:]' '[:lower:]')"
-case "$continuous_sql_join_enabled_value" in
-  true|1|yes)
-    continuous_sql_join_enabled=true
-    ;;
-  ""|false|0|no)
-    continuous_sql_join_enabled=false
-    ;;
-  *)
-    printf 'error: CONTINUOUS_SQL_JOIN_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-    ;;
-esac
-
-clickhouse_enabled_value="$(printf '%s' "$(env_value_for CLICKHOUSE_CONTINUOUS_JOIN_ENABLED)" | tr '[:upper:]' '[:lower:]')"
-case "$clickhouse_enabled_value" in
-  true|1|yes)
-    clickhouse_enabled=true
-    ;;
-  ""|false|0|no)
-    clickhouse_enabled=false
-    ;;
-  *)
-    printf 'error: CLICKHOUSE_CONTINUOUS_JOIN_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-    ;;
-esac
-
-clickhouse_v2_enabled_value="$(printf '%s' "$(env_value_for CLICKHOUSE_REALTIME_V2_ENABLED)" | tr '[:upper:]' '[:lower:]')"
-case "$clickhouse_v2_enabled_value" in
-  true|1|yes)
-    clickhouse_v2_enabled=true
-    ;;
-  ""|false|0|no)
-    clickhouse_v2_enabled=false
-    ;;
-  *)
-    printf 'error: CLICKHOUSE_REALTIME_V2_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-    ;;
-esac
-
-kafka_connect_enabled_value="$(printf '%s' "$(env_value_for KAFKA_CONNECT_SINK_ENABLED)" | tr '[:upper:]' '[:lower:]')"
-case "$kafka_connect_enabled_value" in
-  true|1|yes)
-    kafka_connect_enabled=true
-    ;;
-  ""|false|0|no)
-    kafka_connect_enabled=false
-    ;;
-  *)
-    printf 'error: KAFKA_CONNECT_SINK_ENABLED must be true or false in %s\n' "$ENV_FILE" >&2
-    exit 1
-    ;;
-esac
-
-clickhouse_consumer_owner="$(env_value_for CLICKHOUSE_REALTIME_CONSUMER_OWNER)"
-clickhouse_consumer_owner="${clickhouse_consumer_owner:-disabled}"
-case "$clickhouse_consumer_owner" in
-  disabled|kafka_engine_v1|kafka_connect_v2)
-    ;;
-  *)
-    printf 'error: CLICKHOUSE_REALTIME_CONSUMER_OWNER must be disabled, kafka_engine_v1, or kafka_connect_v2\n' >&2
-    exit 1
-    ;;
-esac
-
-kafka_connect_connector_name="$(env_value_for KAFKA_CONNECT_CONNECTOR_NAME)"
-kafka_connect_connector_name="${kafka_connect_connector_name:-asklake-clickhouse-realtime-v2}"
-
 has_compose_profile() {
   local requested_profile="$1"
   local configured_profiles
@@ -195,57 +125,6 @@ if [[ "$trino_enabled" == "true" ]]; then
 elif has_compose_profile trino; then
   printf 'error: COMPOSE_PROFILES must not include trino when TRINO_ENABLED=false\n' >&2
   exit 1
-fi
-
-
-if [[ "$clickhouse_enabled" == "true" ]]; then
-  [[ "$trino_enabled" == "true" ]] || {
-    printf 'error: TRINO_ENABLED must be true when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
-    exit 1
-  }
-  has_compose_profile clickhouse || {
-    printf 'error: COMPOSE_PROFILES must include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
-    exit 1
-  }
-elif has_compose_profile clickhouse; then
-  printf 'error: COMPOSE_PROFILES must not include clickhouse when CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=false\n' >&2
-  exit 1
-fi
-
-if has_compose_profile clickhouse-realtime-v2; then
-  clickhouse_v2_infra_enabled=true
-  command -v openssl >/dev/null 2>&1 || {
-    printf 'error: required ClickHouse V2 TLS preflight command not found: openssl\n' >&2
-    exit 1
-  }
-else
-  clickhouse_v2_infra_enabled=false
-fi
-
-if [[ "$clickhouse_v2_enabled" == "true" && "$clickhouse_v2_infra_enabled" != "true" ]]; then
-  printf 'error: COMPOSE_PROFILES must include clickhouse-realtime-v2 when CLICKHOUSE_REALTIME_V2_ENABLED=true\n' >&2
-  exit 1
-fi
-
-if [[ "$kafka_connect_enabled" == "true" || "$clickhouse_consumer_owner" == "kafka_connect_v2" ]]; then
-  [[ "$clickhouse_v2_enabled" == "true" \
-    && "$kafka_connect_enabled" == "true" \
-    && "$clickhouse_consumer_owner" == "kafka_connect_v2" \
-    && "$clickhouse_v2_infra_enabled" == "true" ]] || {
-    printf 'error: Kafka Connect V2 ownership requires V2, sink, owner, and Compose profile to be enabled together\n' >&2
-    exit 1
-  }
-  [[ "$clickhouse_enabled" == "false" ]] || {
-    printf 'error: Kafka Engine V1 and Kafka Connect V2 cannot own the same active generation\n' >&2
-    exit 1
-  }
-fi
-
-if [[ "$clickhouse_enabled" == "true" || "$clickhouse_consumer_owner" == "kafka_engine_v1" ]]; then
-  [[ "$continuous_sql_join_enabled" == "true" && "$clickhouse_enabled" == "true" ]] || {
-    printf 'error: Kafka Engine V1 requires CONTINUOUS_SQL_JOIN_ENABLED=true and CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true\n' >&2
-    exit 1
-  }
 fi
 
 required_keys=(
@@ -266,12 +145,9 @@ required_keys=(
   ASKLAKE_REPLAY_HOST_INPUT_DIR
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
-  OPENSEARCH_INITIAL_ADMIN_PASSWORD
-  OPENSEARCH_PASSWORD
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
-  RAG_WORKER_TOKEN
   VITE_API_BASE_URL
 )
 
@@ -326,134 +202,6 @@ if [[ "$trino_enabled" == "true" ]]; then
     TRINO_TLS_KEYSTORE_PASSWORD
     TRINO_USER
   )
-fi
-
-if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
-  required_keys+=(
-    CLICKHOUSE_V2_ADMIN_PASSWORD
-    CLICKHOUSE_V2_ADMIN_USER
-    CLICKHOUSE_V2_DATABASE
-    CLICKHOUSE_V2_IMAGE
-    CLICKHOUSE_V2_INGEST_PASSWORD
-    CLICKHOUSE_V2_MATERIALIZER_PASSWORD
-    CLICKHOUSE_V2_MATERIALIZER_USER
-    CLICKHOUSE_V2_MIGRATION_PASSWORD
-    CLICKHOUSE_V2_OBSERVER_PASSWORD
-    CLICKHOUSE_V2_READER_PASSWORD
-    CLICKHOUSE_V2_READER_USER
-    CLICKHOUSE_V2_URL
-    CLICKHOUSE_V2_TLS_CA_FILE
-    CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE
-    CLICKHOUSE_V2_TLS_CERT_FILE
-    CLICKHOUSE_V2_TLS_KEY_FILE
-    COMPOSE_PROFILES
-    KAFKA_CONNECT_V2_IMAGE
-    KAFKA_CONNECT_V2_SECRETS_FILE
-  )
-fi
-
-if [[ "$kafka_connect_enabled" == "true" ]]; then
-  required_keys+=(
-    KAFKA_CONNECT_CONNECTOR_NAME
-    KAFKA_CONNECT_URL
-  )
-fi
-
-if [[ "$clickhouse_enabled" == "true" ]]; then
-  required_keys+=(
-    CLICKHOUSE_DATABASE
-    CLICKHOUSE_PASSWORD
-    CLICKHOUSE_URL
-    CLICKHOUSE_USER
-  )
-fi
-
-if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
-  for key in CLICKHOUSE_V2_DATABASE CLICKHOUSE_V2_ADMIN_USER; do
-    value="$(env_value_for "$key")"
-    [[ "$value" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
-      printf 'error: %s must be a safe stable identifier\n' "$key" >&2
-      exit 1
-    }
-  done
-  clickhouse_v2_database_normalized="$(printf '%s' "$(env_value_for CLICKHOUSE_V2_DATABASE)" | tr '[:upper:]' '[:lower:]')"
-  case "$clickhouse_v2_database_normalized" in
-    default|information_schema|system)
-      printf 'error: CLICKHOUSE_V2_DATABASE must not use a built-in or reserved database name\n' >&2
-      exit 1
-      ;;
-  esac
-  clickhouse_v2_admin_user_normalized="$(printf '%s' "$(env_value_for CLICKHOUSE_V2_ADMIN_USER)" | tr '[:upper:]' '[:lower:]')"
-  case "$clickhouse_v2_admin_user_normalized" in
-    asklake_v2_ingest|asklake_v2_materializer|asklake_v2_reader|asklake_v2_migration|asklake_v2_observer|\
-    asklake_v2_ingest_role|asklake_v2_materializer_role|asklake_v2_reader_role|asklake_v2_migration_role|asklake_v2_observer_role)
-      printf 'error: CLICKHOUSE_V2_ADMIN_USER must be distinct from fixed runtime users and roles\n' >&2
-      exit 1
-      ;;
-  esac
-  for key in CLICKHOUSE_V2_IMAGE KAFKA_CONNECT_V2_IMAGE; do
-    value="$(env_value_for "$key")"
-    [[ "$value" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]] || {
-      printf 'error: %s must be an immutable image reference ending in @sha256:<64 lowercase hex>\n' "$key" >&2
-      exit 1
-    }
-  done
-  [[ "$(env_value_for CLICKHOUSE_V2_URL)" == "https://clickhouse-v2:8443" ]] || {
-    printf 'error: CLICKHOUSE_V2_URL must be the private https://clickhouse-v2:8443 origin\n' >&2
-    exit 1
-  }
-  [[ "$(env_value_for CLICKHOUSE_V2_MATERIALIZER_USER)" == "asklake_v2_materializer" ]] || {
-    printf 'error: CLICKHOUSE_V2_MATERIALIZER_USER must use the fixed materializer identity\n' >&2
-    exit 1
-  }
-  [[ "$(env_value_for CLICKHOUSE_V2_READER_USER)" == "asklake_v2_reader" ]] || {
-    printf 'error: CLICKHOUSE_V2_READER_USER must use the fixed reader identity\n' >&2
-    exit 1
-  }
-  [[ "$(env_value_for CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE)" == "/run/secrets/clickhouse-v2-ca.crt" ]] || {
-    printf 'error: CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE must use the fixed backend trust path\n' >&2
-    exit 1
-  }
-
-  clickhouse_v2_secrets=(
-    "$(env_value_for CLICKHOUSE_V2_ADMIN_PASSWORD)"
-    "$(env_value_for CLICKHOUSE_V2_INGEST_PASSWORD)"
-    "$(env_value_for CLICKHOUSE_V2_MATERIALIZER_PASSWORD)"
-    "$(env_value_for CLICKHOUSE_V2_READER_PASSWORD)"
-    "$(env_value_for CLICKHOUSE_V2_MIGRATION_PASSWORD)"
-    "$(env_value_for CLICKHOUSE_V2_OBSERVER_PASSWORD)"
-  )
-  for secret in "${clickhouse_v2_secrets[@]}"; do
-    if (( ${#secret} < 16 )) || [[ "$secret" == *replace-with-* ]]; then
-      printf 'error: every ClickHouse V2 account password must be a non-placeholder value with at least 16 characters\n' >&2
-      exit 1
-    fi
-  done
-  for left_index in "${!clickhouse_v2_secrets[@]}"; do
-    for right_index in "${!clickhouse_v2_secrets[@]}"; do
-      if (( left_index < right_index )) \
-        && [[ "${clickhouse_v2_secrets[$left_index]}" == "${clickhouse_v2_secrets[$right_index]}" ]]; then
-        printf 'error: ClickHouse V2 account passwords must be pairwise distinct\n' >&2
-        exit 1
-      fi
-    done
-  done
-fi
-
-if [[ "$kafka_connect_enabled" == "true" ]]; then
-  [[ "$(env_value_for KAFKA_CONNECT_URL)" == "http://kafka-connect-v2:8083" ]] || {
-    printf 'error: KAFKA_CONNECT_URL must be the private http://kafka-connect-v2:8083 origin\n' >&2
-    exit 1
-  }
-  [[ "$(env_value_for KAFKA_CONNECT_CONNECTOR_NAME)" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
-    printf 'error: KAFKA_CONNECT_CONNECTOR_NAME must be a safe stable connector identity\n' >&2
-    exit 1
-  }
-else
-  is_blank "$(env_value_for KAFKA_CONNECT_URL)" || {
-    printf 'error: KAFKA_CONNECT_URL must be blank when KAFKA_CONNECT_SINK_ENABLED=false\n' >&2
-    exit 1
-  }
 fi
 
 for key in "${required_keys[@]}"; do
@@ -534,28 +282,6 @@ if [[ "$trino_enabled" == "true" ]]; then
   done
 fi
 
-if [[ "$clickhouse_enabled" == "true" ]]; then
-  [[ "$(env_value_for CLICKHOUSE_URL)" == "http://clickhouse:8123" ]] || {
-    printf 'error: CLICKHOUSE_URL must be http://clickhouse:8123 for the production Compose service\n' >&2
-    exit 1
-  }
-  clickhouse_password="$(env_value_for CLICKHOUSE_PASSWORD)"
-  if (( ${#clickhouse_password} < 16 )) || [[ "$clickhouse_password" == *replace-with-* ]]; then
-    printf 'error: CLICKHOUSE_PASSWORD must be a non-placeholder value with at least 16 characters\n' >&2
-    exit 1
-  fi
-  clickhouse_database="$(env_value_for CLICKHOUSE_DATABASE)"
-  clickhouse_user="$(env_value_for CLICKHOUSE_USER)"
-  [[ "$clickhouse_database" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
-    printf 'error: CLICKHOUSE_DATABASE must be a safe identifier\n' >&2
-    exit 1
-  }
-  [[ "$clickhouse_user" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
-    printf 'error: CLICKHOUSE_USER must be a safe identifier\n' >&2
-    exit 1
-  }
-fi
-
 airflow_fernet_key="$(env_value_for AIRFLOW_FERNET_KEY)"
 if ! printf '%s' "$airflow_fernet_key" | python3 -c '
 import base64
@@ -627,11 +353,6 @@ if [[ "$backend_legacy_demo_users" != "$frontend_legacy_demo_users" ]]; then
   printf 'error: AUTH_LEGACY_DEMO_USERS_ENABLED and VITE_AUTH_LEGACY_DEMO_USERS_ENABLED must match in %s\n' "$ENV_FILE" >&2
   exit 1
 fi
-frontend_mock_mode="$(env_value_for VITE_USE_MOCK_API)"
-if [[ -n "$frontend_mock_mode" && "$frontend_mock_mode" != "false" ]]; then
-  printf 'error: VITE_USE_MOCK_API is no longer supported by the production frontend\n' >&2
-  exit 1
-fi
 
 app_domain="$(env_value_for APP_DOMAIN)"
 if [[ ! "$app_domain" =~ ^[A-Za-z0-9.-]+$ \
@@ -696,86 +417,6 @@ if [[ "$trino_enabled" == "true" ]]; then
   done
 fi
 
-if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
-  clickhouse_v2_tls_cert_file="$(env_value_for CLICKHOUSE_V2_TLS_CERT_FILE)"
-  clickhouse_v2_tls_key_file="$(env_value_for CLICKHOUSE_V2_TLS_KEY_FILE)"
-  clickhouse_v2_tls_ca_file="$(env_value_for CLICKHOUSE_V2_TLS_CA_FILE)"
-  require_host_file CLICKHOUSE_V2_TLS_CERT_FILE "$clickhouse_v2_tls_cert_file"
-  require_host_file CLICKHOUSE_V2_TLS_KEY_FILE "$clickhouse_v2_tls_key_file"
-  require_host_file CLICKHOUSE_V2_TLS_CA_FILE "$clickhouse_v2_tls_ca_file"
-  if ! openssl verify -CAfile "$clickhouse_v2_tls_ca_file" "$clickhouse_v2_tls_cert_file" >/dev/null 2>&1; then
-    printf 'error: CLICKHOUSE_V2_TLS_CERT_FILE must verify against CLICKHOUSE_V2_TLS_CA_FILE\n' >&2
-    exit 1
-  fi
-  if ! python3 - "$clickhouse_v2_tls_cert_file" <<'PY'
-import ssl
-import sys
-
-certificate = ssl._ssl._test_decode_cert(sys.argv[1])
-expected_name = "clickhouse-v2"
-dns_names = {
-    str(value).casefold()
-    for name_type, value in certificate.get("subjectAltName", ())
-    if name_type == "DNS"
-}
-if dns_names:
-    valid = expected_name in dns_names
-else:
-    common_names = {
-        str(value).casefold()
-        for relative_name in certificate.get("subject", ())
-        for name_type, value in relative_name
-        if name_type == "commonName"
-    }
-    valid = expected_name in common_names
-raise SystemExit(0 if valid else 1)
-PY
-  then
-    printf 'error: CLICKHOUSE_V2_TLS_CERT_FILE must include clickhouse-v2 in its SAN or subject name\n' >&2
-    exit 1
-  fi
-  clickhouse_v2_cert_pubkey_digest="$(openssl x509 -in "$clickhouse_v2_tls_cert_file" -pubkey -noout \
-    | openssl pkey -pubin -outform DER 2>/dev/null \
-    | openssl dgst -sha256)"
-  clickhouse_v2_key_pubkey_digest="$(openssl pkey -in "$clickhouse_v2_tls_key_file" -pubout -outform DER 2>/dev/null \
-    | openssl dgst -sha256)"
-  [[ -n "$clickhouse_v2_cert_pubkey_digest" \
-    && "$clickhouse_v2_cert_pubkey_digest" == "$clickhouse_v2_key_pubkey_digest" ]] || {
-    printf 'error: CLICKHOUSE_V2_TLS_KEY_FILE must match CLICKHOUSE_V2_TLS_CERT_FILE\n' >&2
-    exit 1
-  }
-  if ! python3 -c '
-import os
-import stat
-import sys
-
-mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode)
-raise SystemExit(0 if mode & 0o077 == 0 else 1)
-' "$clickhouse_v2_tls_key_file"; then
-    printf 'error: CLICKHOUSE_V2_TLS_KEY_FILE must not be group/world accessible\n' >&2
-    exit 1
-  fi
-  kafka_connect_v2_secrets_file="$(env_value_for KAFKA_CONNECT_V2_SECRETS_FILE)"
-  require_host_file KAFKA_CONNECT_V2_SECRETS_FILE "$kafka_connect_v2_secrets_file"
-  kafka_connect_v2_ingest_password="$(sed -n 's/^clickhouse\.ingest\.password=//p' "$kafka_connect_v2_secrets_file")"
-  [[ -n "$kafka_connect_v2_ingest_password" \
-    && "$kafka_connect_v2_ingest_password" == "$(env_value_for CLICKHOUSE_V2_INGEST_PASSWORD)" ]] || {
-    printf 'error: KAFKA_CONNECT_V2_SECRETS_FILE must contain the configured clickhouse.ingest.password\n' >&2
-    exit 1
-  }
-  if ! python3 -c '
-import os
-import stat
-import sys
-
-mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode)
-raise SystemExit(0 if mode & 0o077 == 0 else 1)
-' "$kafka_connect_v2_secrets_file"; then
-    printf 'error: KAFKA_CONNECT_V2_SECRETS_FILE must not be group/world accessible\n' >&2
-    exit 1
-  fi
-fi
-
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
 
 export ASKLAKE_PREFLIGHT_MINIO_ROOT_USER="$minio_root_user"
@@ -789,17 +430,6 @@ export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUC
 export ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET="$(env_value_for TRINO_RESULT_STORAGE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET="$(env_value_for TRINO_ICEBERG_WAREHOUSE_BUCKET)"
 export ASKLAKE_PREFLIGHT_TRINO_ENABLED="$trino_enabled"
-export ASKLAKE_PREFLIGHT_CONTINUOUS_SQL_JOIN_ENABLED="$continuous_sql_join_enabled"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED="$clickhouse_enabled"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_ENABLED="$clickhouse_v2_enabled"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_INFRA_ENABLED="$clickhouse_v2_infra_enabled"
-export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED="$kafka_connect_enabled"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER="$clickhouse_consumer_owner"
-export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL="$(env_value_for KAFKA_CONNECT_URL)"
-export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME="$kafka_connect_connector_name"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE="$(env_value_for CLICKHOUSE_V2_DATABASE)"
-export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE="$(env_value_for CLICKHOUSE_V2_IMAGE)"
-export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE="$(env_value_for KAFKA_CONNECT_V2_IMAGE)"
 
 compose_wiring_status=0
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json \
@@ -817,14 +447,6 @@ try:
     spark_worker = spark_worker_service.get("environment", {}) if spark_worker_service else None
     provider = os.environ["ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER"]
     trino_enabled = os.environ["ASKLAKE_PREFLIGHT_TRINO_ENABLED"] == "true"
-    continuous_sql_join_enabled = (
-        os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_SQL_JOIN_ENABLED"] == "true"
-    )
-    clickhouse_enabled = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED"] == "true"
-    clickhouse_v2_enabled = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_ENABLED"] == "true"
-    clickhouse_v2_infra_enabled = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_INFRA_ENABLED"] == "true"
-    kafka_connect_enabled = os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED"] == "true"
-    clickhouse_consumer_owner = os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER"]
     profiled_trino_services = {
         "trino", "trino-postgres-bootstrap", "trino-result-collector", "trino-result-cleanup"
     }
@@ -832,17 +454,6 @@ try:
         profiled_trino_services.issubset(services)
         if trino_enabled
         else profiled_trino_services.isdisjoint(services)
-    )
-    profile_wiring_valid = profile_wiring_valid and (
-        ("clickhouse" in services) if clickhouse_enabled else ("clickhouse" not in services)
-    )
-    profiled_clickhouse_v2_services = {
-        "clickhouse-keeper-v2", "clickhouse-v2", "kafka-connect-v2"
-    }
-    profile_wiring_valid = profile_wiring_valid and (
-        profiled_clickhouse_v2_services.issubset(services)
-        if clickhouse_v2_infra_enabled
-        else profiled_clickhouse_v2_services.isdisjoint(services)
     )
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
@@ -893,18 +504,6 @@ try:
             ))
         else:
             valid = valid and backend.get("TRINO_ENABLED") == "false"
-        if clickhouse_enabled:
-            clickhouse = services["clickhouse"]["environment"]
-            valid = valid and all((
-                continuous_sql_join_enabled,
-                backend.get("CONTINUOUS_SQL_JOIN_ENABLED") == "true",
-                backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "true",
-                backend.get("CLICKHOUSE_URL") == "http://clickhouse:8123",
-                backend.get("CLICKHOUSE_USER") == clickhouse.get("CLICKHOUSE_USER"),
-                backend.get("CLICKHOUSE_PASSWORD") == clickhouse.get("CLICKHOUSE_PASSWORD"),
-            ))
-        else:
-            valid = valid and backend.get("CLICKHOUSE_CONTINUOUS_JOIN_ENABLED") == "false"
     else:
         minio = services["minio"]["environment"]
         minio_init = services["minio-init"]["environment"]
@@ -927,101 +526,6 @@ try:
             spark_worker is None or spark_worker.get("MINIO_ACCESS_KEY") == expected["access_key"],
             spark_worker is None or spark_worker.get("MINIO_SECRET_KEY") == expected["secret_key"],
         ))
-    backend_runtime_services = tuple(
-        services[name] for name in ("backend", "continuous-worker") if name in services
-    )
-    valid = valid and all(
-        runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_V2_ENABLED")
-        == ("true" if clickhouse_v2_enabled else "false")
-        and runtime_service.get("environment", {}).get("KAFKA_CONNECT_SINK_ENABLED")
-        == ("true" if kafka_connect_enabled else "false")
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_CONSUMER_OWNER")
-        == clickhouse_consumer_owner
-        and runtime_service.get("environment", {}).get("KAFKA_CONNECT_URL")
-        == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL"]
-        and runtime_service.get("environment", {}).get("KAFKA_CONNECT_CONNECTOR_NAME")
-        == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME"]
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_URL")
-        == "https://clickhouse-v2:8443"
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_DATABASE")
-        == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE"]
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_MATERIALIZER_USER")
-        == "asklake_v2_materializer"
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_READER_USER")
-        == "asklake_v2_reader"
-        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_TLS_CA_FILE")
-        == "/run/secrets/clickhouse-v2-ca.crt"
-        for runtime_service in backend_runtime_services
-    )
-    if clickhouse_v2_infra_enabled:
-        clickhouse_v2 = services["clickhouse-v2"]
-        kafka_connect_v2 = services["kafka-connect-v2"]
-        keeper_v2 = services["clickhouse-keeper-v2"]
-        clickhouse_v2_environment = clickhouse_v2.get("environment", {})
-        kafka_connect_v2_environment = kafka_connect_v2.get("environment", {})
-        clickhouse_v2_bind_targets = {
-            volume.get("target")
-            for volume in clickhouse_v2.get("volumes", [])
-            if volume.get("type") == "bind" and volume.get("read_only") is True
-        }
-        kafka_connect_v2_bind_targets = {
-            volume.get("target")
-            for volume in kafka_connect_v2.get("volumes", [])
-            if volume.get("type") == "bind" and volume.get("read_only") is True
-        }
-        backend_networks = set(services["backend"].get("networks", {}))
-        redpanda_networks = set(services["redpanda"].get("networks", {}))
-        backend_ca_mounted = all(
-            any(
-                volume.get("target") == "/run/secrets/clickhouse-v2-ca.crt"
-                and volume.get("type") == "bind"
-                and volume.get("read_only") is True
-                for volume in runtime_service.get("volumes", [])
-            )
-            for runtime_service in backend_runtime_services
-        )
-        valid = valid and all((
-            backend_ca_mounted,
-            clickhouse_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE"],
-            kafka_connect_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE"],
-            "build" not in kafka_connect_v2,
-            clickhouse_v2.get("entrypoint") == [
-                "/bin/bash", "/usr/local/bin/asklake-clickhouse-v2-entrypoint.sh"
-            ],
-            clickhouse_v2.get("user") == "0:0",
-            "no-new-privileges:true" in clickhouse_v2.get("security_opt", []),
-            clickhouse_v2_environment.get("CLICKHOUSE_V2_TLS_STAGING_REQUIRED") == "true",
-            clickhouse_v2.get("tmpfs") == [
-                "/run/asklake-clickhouse-v2-secrets:rw,noexec,nosuid,nodev,mode=0700,uid=101,gid=101"
-            ],
-            {
-                "/run/asklake-secrets-source/clickhouse-v2/server.crt",
-                "/run/asklake-secrets-source/clickhouse-v2/server.key",
-                "/run/asklake-secrets-source/clickhouse-v2/ca.crt",
-            }.issubset(clickhouse_v2_bind_targets),
-            kafka_connect_v2.get("entrypoint") == [
-                "/usr/local/bin/asklake-kafka-connect-v2-entrypoint.sh"
-            ],
-            kafka_connect_v2.get("user") == "0:0",
-            "no-new-privileges:true" in kafka_connect_v2.get("security_opt", []),
-            kafka_connect_v2_environment.get("KAFKA_CONNECT_V2_TLS_CA_STAGING_REQUIRED") == "true",
-            kafka_connect_v2.get("tmpfs") == [
-                "/run/secrets:rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000"
-            ],
-            {
-                "/run/asklake-secrets-source/kafka-connect/asklake-clickhouse-v2.properties",
-                "/run/asklake-secrets-source/kafka-connect/clickhouse-v2-ca.crt",
-            }.issubset(kafka_connect_v2_bind_targets),
-            not clickhouse_v2.get("ports"),
-            not kafka_connect_v2.get("ports"),
-            {"8443", "9440"} == {str(port) for port in clickhouse_v2.get("expose", [])},
-            networks.get("clickhouse_v2_internal", {}).get("internal") is True,
-            "clickhouse_v2_internal" in backend_networks,
-            "clickhouse_v2_internal" in redpanda_networks,
-            set(clickhouse_v2.get("networks", {})) == {"clickhouse_v2_internal"},
-            set(kafka_connect_v2.get("networks", {})) == {"clickhouse_v2_internal"},
-            set(keeper_v2.get("networks", {})) == {"clickhouse_v2_internal"},
-        ))
 except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
     valid = False
 
@@ -1039,20 +543,9 @@ unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_RESULT_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_WAREHOUSE_BUCKET
 unset ASKLAKE_PREFLIGHT_TRINO_ENABLED
-unset ASKLAKE_PREFLIGHT_CONTINUOUS_SQL_JOIN_ENABLED
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_ENABLED
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_ENABLED
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_INFRA_ENABLED
-unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER
-unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL
-unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE
-unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE
-unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE
 
 if (( compose_wiring_status != 0 )); then
-  printf 'error: Compose wiring does not match the selected %s provider and feature-profile contract\n' "$storage_provider" >&2
+  printf 'error: Compose object-storage wiring does not match the selected %s provider contract\n' "$storage_provider" >&2
   exit 1
 fi
 

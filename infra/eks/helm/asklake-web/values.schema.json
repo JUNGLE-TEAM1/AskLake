@@ -59,12 +59,7 @@
                   "apiControlPlane": { "const": "local" },
                   "continuousSqlJoinEnabled": { "const": false },
                   "dashboardSyncMode": { "const": "polling" },
-                  "realtimeEventsEnabled": { "const": false },
-                  "clickhouseRealtimeV2Enabled": { "const": false },
-                  "kafkaConnectSinkEnabled": { "const": false },
-                  "consumerOwner": { "const": "disabled" },
-                  "kafkaConnectUrl": { "const": "" },
-                  "clickhouseV2Url": { "const": "" }
+                  "realtimeEventsEnabled": { "const": false }
                 }
               }
             }
@@ -287,7 +282,7 @@
     "backendRealtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "apiControlPlane", "v1ApiEnabled", "v1OwnerGeneration", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled", "clickhouseRealtimeV2Enabled", "kafkaConnectSinkEnabled", "consumerOwner", "kafkaConnectUrl", "connectorName", "clickhouseV2Url", "clickhouseV2Database", "runtimeSecret"],
+      "required": ["enabled", "apiControlPlane", "v1ApiEnabled", "v1OwnerGeneration", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled"],
       "properties": {
         "enabled": { "type": "boolean" },
         "apiControlPlane": { "type": "string", "enum": ["local", "external_ec2"] },
@@ -295,25 +290,7 @@
         "v1OwnerGeneration": { "type": "string", "pattern": "^$|^[a-z0-9][a-z0-9.-]{0,62}$" },
         "continuousSqlJoinEnabled": { "type": "boolean" },
         "dashboardSyncMode": { "type": "string", "enum": ["polling", "sse"] },
-        "realtimeEventsEnabled": { "type": "boolean" },
-        "clickhouseRealtimeV2Enabled": { "type": "boolean" },
-        "kafkaConnectSinkEnabled": { "type": "boolean" },
-        "consumerOwner": { "type": "string", "enum": ["disabled", "kafka_connect_v2"] },
-        "kafkaConnectUrl": { "type": "string" },
-        "connectorName": { "type": "string", "const": "asklake-clickhouse-realtime-v2" },
-        "clickhouseV2Url": { "type": "string" },
-        "clickhouseV2Database": { "type": "string", "const": "asklake_realtime_v2" },
-        "runtimeSecret": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["name", "materializerPasswordKey", "readerPasswordKey", "caKey"],
-          "properties": {
-            "name": { "type": "string", "const": "asklake-realtime-runtime" },
-            "materializerPasswordKey": { "type": "string", "const": "CLICKHOUSE_V2_MATERIALIZER_PASSWORD" },
-            "readerPasswordKey": { "type": "string", "const": "CLICKHOUSE_V2_READER_PASSWORD" },
-            "caKey": { "type": "string", "const": "clickhouse-v2-ca.crt" }
-          }
-        }
+        "realtimeEventsEnabled": { "type": "boolean" }
       },
       "allOf": [
         {
@@ -336,12 +313,7 @@
             "properties": {
               "continuousSqlJoinEnabled": { "const": false },
               "dashboardSyncMode": { "const": "polling" },
-              "realtimeEventsEnabled": { "const": false },
-              "clickhouseRealtimeV2Enabled": { "const": false },
-              "kafkaConnectSinkEnabled": { "const": false },
-              "consumerOwner": { "const": "disabled" },
-              "kafkaConnectUrl": { "const": "" },
-              "clickhouseV2Url": { "const": "" }
+              "realtimeEventsEnabled": { "const": false }
             }
           }
         },
@@ -352,14 +324,7 @@
               "apiControlPlane": { "const": "local" },
               "continuousSqlJoinEnabled": { "const": true },
               "dashboardSyncMode": { "const": "sse" },
-              "realtimeEventsEnabled": { "const": true },
-              "clickhouseRealtimeV2Enabled": { "const": true },
-              "v1ApiEnabled": { "const": false },
-              "v1OwnerGeneration": { "const": "" },
-              "kafkaConnectSinkEnabled": { "const": true },
-              "consumerOwner": { "const": "kafka_connect_v2" },
-              "kafkaConnectUrl": { "const": "http://kafka-connect-v2:8083" },
-              "clickhouseV2Url": { "const": "https://clickhouse-v2:8443" }
+              "realtimeEventsEnabled": { "const": true }
             }
           }
         }

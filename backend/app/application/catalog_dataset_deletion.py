@@ -56,7 +56,6 @@ from app.schemas.catalog import (
 )
 from app.schemas.common import ErrorCode
 from app.schemas.iceberg import IcebergWriterTarget
-from app.services.clickhouse_client import ClickHouseClient, qualified_clickhouse_table
 from app.services.governance_enforcement import require_governed_access
 from app.services.iceberg_writer_service import IcebergWriterService
 from app.services.lake_storage_service import LocalLakeStorageService
@@ -332,8 +331,6 @@ def add_artifact_ownership_blockers(
             table_parts = [item.strip('`" ') for item in artifact.location.split(".") if item.strip('`" ')]
             if len(table_parts) == 3 and table_parts[0] != settings.trino_catalog:
                 blockers.append(blocker("storage", artifact.location, artifact.location, "AskLake 관리 Iceberg catalog가 아닙니다."))
-        if artifact.kind == "clickhouse_table" and artifact.location.split(".", 1)[0].strip('`" ') != settings.clickhouse_database:
-            blockers.append(blocker("storage", artifact.location, artifact.location, "AskLake 관리 ClickHouse database가 아닙니다."))
 
 
 class CatalogPhysicalPurger:
@@ -347,8 +344,6 @@ class CatalogPhysicalPurger:
                 self._purge_storage(artifact.location, dataset)
             elif artifact.kind == "iceberg_table":
                 self._drop_rag_table(artifact.location)
-            elif artifact.kind == "clickhouse_table":
-                self._drop_clickhouse_artifact(artifact.location)
             elif artifact.kind == "opensearch_index":
                 self._delete_opensearch_index(artifact.location)
             elif artifact.kind in {"rag_parent_table", "rag_chunk_table"}:
@@ -367,23 +362,6 @@ class CatalogPhysicalPurger:
             partition_columns=[str(item) for item in value.get("partitionColumns") or []],
         )
         IcebergWriterService().drop_table(target)
-
-    def _drop_clickhouse_table(self, value: dict[str, Any]) -> None:
-        database = str(value.get("database") or "")
-        table = str(value.get("table") or "")
-        if database != settings.clickhouse_database:
-            raise RuntimeError("CATALOG_DATASET_UNMANAGED_CLICKHOUSE_TABLE")
-        client = ClickHouseClient()
-        try:
-            client.execute(f"DROP TABLE IF EXISTS {qualified_clickhouse_table(database, table)}", database=database)
-        finally:
-            client.close()
-
-    def _drop_clickhouse_artifact(self, location: str) -> None:
-        database, separator, table = location.partition(".")
-        if not separator or not database or not table:
-            raise RuntimeError("CATALOG_DATASET_INVALID_CLICKHOUSE_TABLE")
-        self._drop_clickhouse_table({"database": database, "table": table})
 
     def _drop_rag_table(self, location: str) -> None:
         parts = [item.strip('`" ') for item in location.split(".") if item.strip('`" ')]
@@ -516,12 +494,6 @@ def add_dataset_artifacts(artifacts: list[CatalogDatasetDeletionArtifact], paylo
         artifacts.append(CatalogDatasetDeletionArtifact(
             kind="iceberg_table",
             location=".".join(str(query_table.get(key) or "") for key in ("catalog", "schema", "table")),
-        ))
-    clickhouse_table = payload.get("clickhouseTable")
-    if isinstance(clickhouse_table, dict) and clickhouse_table.get("table"):
-        artifacts.append(CatalogDatasetDeletionArtifact(
-            kind="clickhouse_table",
-            location=f"{clickhouse_table.get('database')}.{clickhouse_table.get('table')}",
         ))
     if not (isinstance(query_table, dict) and query_table.get("format") == "iceberg") and payload.get("storageLocation"):
         artifacts.append(CatalogDatasetDeletionArtifact(kind="storage", location=str(payload["storageLocation"])))

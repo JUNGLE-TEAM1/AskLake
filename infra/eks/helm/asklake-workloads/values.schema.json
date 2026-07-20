@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["namespace", "deploymentProfile", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "realtimeV2", "trino"],
+  "required": ["namespace", "deploymentProfile", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "trino"],
   "properties": {
-    "namespace": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "namespace": {"type": "string", "const": "asklake-dev"},
     "deploymentProfile": {"type": "string", "enum": ["standard", "realtime-v1-only"]},
     "global": {
       "type": "object",
@@ -21,27 +21,9 @@
     "mskSmoke": {"$ref": "#/$defs/mskSmoke"},
     "sparkApplication": {"$ref": "#/$defs/sparkApplication"},
     "realtimeV1": {"$ref": "#/$defs/realtimeV1"},
-    "realtimeV2": {"$ref": "#/$defs/realtimeV2"},
     "trino": {"$ref": "#/$defs/trino"}
   },
   "allOf": [
-    {
-      "if": {
-        "properties": {
-          "realtimeV2": {
-            "properties": {"recoveryMode": {"const": true}}
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "namespace": {"pattern": "^asklake-v2-restore-[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
-        }
-      },
-      "else": {
-        "properties": {"namespace": {"const": "asklake-dev"}}
-      }
-    },
     {
       "not": {
         "properties": {
@@ -78,20 +60,9 @@
                   "apiControlPlane": {"const": "local"},
                   "continuousSqlJoinEnabled": {"const": false},
                   "dashboardSyncMode": {"const": "polling"},
-                  "realtimeEventsEnabled": {"const": false},
-                  "clickhouseRealtimeV2Enabled": {"const": false},
-                  "kafkaConnectSinkEnabled": {"const": false},
-                  "consumerOwner": {"const": "disabled"},
-                  "kafkaConnectUrl": {"const": ""},
-                  "clickhouseV2Url": {"const": ""}
+                  "realtimeEventsEnabled": {"const": false}
                 }
               }
-            }
-          },
-          "realtimeV2": {
-            "properties": {
-              "enabled": {"const": false},
-              "recoveryMode": {"const": false}
             }
           }
         }
@@ -242,31 +213,13 @@
     "backendRealtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "apiControlPlane", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled", "clickhouseRealtimeV2Enabled", "kafkaConnectSinkEnabled", "consumerOwner", "kafkaConnectUrl", "connectorName", "clickhouseV2Url", "clickhouseV2Database", "runtimeSecret"],
+      "required": ["enabled", "apiControlPlane", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled"],
       "properties": {
         "enabled": {"type": "boolean"},
         "apiControlPlane": {"type": "string", "enum": ["external_ec2", "local"]},
         "continuousSqlJoinEnabled": {"type": "boolean"},
         "dashboardSyncMode": {"type": "string", "enum": ["polling", "hybrid", "sse"]},
-        "realtimeEventsEnabled": {"type": "boolean"},
-        "clickhouseRealtimeV2Enabled": {"type": "boolean"},
-        "kafkaConnectSinkEnabled": {"type": "boolean"},
-        "consumerOwner": {"type": "string", "enum": ["disabled", "kafka_connect_v2"]},
-        "kafkaConnectUrl": {"type": "string"},
-        "connectorName": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
-        "clickhouseV2Url": {"type": "string"},
-        "clickhouseV2Database": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-        "runtimeSecret": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["name", "materializerPasswordKey", "readerPasswordKey", "caKey"],
-          "properties": {
-            "name": {"type": "string", "const": "asklake-realtime-runtime"},
-            "materializerPasswordKey": {"type": "string", "const": "CLICKHOUSE_V2_MATERIALIZER_PASSWORD"},
-            "readerPasswordKey": {"type": "string", "const": "CLICKHOUSE_V2_READER_PASSWORD"},
-            "caKey": {"type": "string", "const": "clickhouse-v2-ca.crt"}
-          }
-        }
+        "realtimeEventsEnabled": {"type": "boolean"}
       },
       "allOf": [
         {
@@ -275,12 +228,7 @@
             "properties": {
               "continuousSqlJoinEnabled": {"const": false},
               "dashboardSyncMode": {"const": "polling"},
-              "realtimeEventsEnabled": {"const": false},
-              "clickhouseRealtimeV2Enabled": {"const": false},
-              "kafkaConnectSinkEnabled": {"const": false},
-              "consumerOwner": {"const": "disabled"},
-              "kafkaConnectUrl": {"const": ""},
-              "clickhouseV2Url": {"const": ""}
+              "realtimeEventsEnabled": {"const": false}
             }
           }
         },
@@ -291,12 +239,7 @@
               "apiControlPlane": {"const": "local"},
               "continuousSqlJoinEnabled": {"const": true},
               "dashboardSyncMode": {"enum": ["hybrid", "sse"]},
-              "realtimeEventsEnabled": {"const": true},
-              "clickhouseRealtimeV2Enabled": {"const": true},
-              "kafkaConnectSinkEnabled": {"const": true},
-              "consumerOwner": {"const": "kafka_connect_v2"},
-              "kafkaConnectUrl": {"const": "http://kafka-connect-v2:8083"},
-              "clickhouseV2Url": {"const": "https://clickhouse-v2:8443"}
+              "realtimeEventsEnabled": {"const": true}
             }
           }
         }
@@ -575,94 +518,6 @@
           }
         },
         "resources": {"$ref": "#/$defs/resources"}
-      }
-    },
-    "realtimeV2": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["enabled", "recoveryMode", "ownerTransfer", "serviceAccounts", "images", "nodeSelector", "storage", "runtimeSecret", "msk", "clickhouse", "connect", "resources"],
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "recoveryMode": {"type": "boolean"},
-        "ownerTransfer": {
-          "type": "object", "additionalProperties": false,
-          "required": ["approved", "previousOwnerFenced", "generation"],
-          "properties": {
-            "approved": {"type": "boolean"},
-            "previousOwnerFenced": {"type": "boolean"},
-            "generation": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,40}$|^$"}
-          }
-        },
-        "serviceAccounts": {
-          "type": "object", "additionalProperties": false,
-          "required": ["worker", "connect"],
-          "properties": {
-            "worker": {"type": "string", "const": "asklake-realtime-v2-worker"},
-            "connect": {"type": "string", "const": "asklake-realtime-v2-connect"}
-          }
-        },
-        "images": {
-          "type": "object", "additionalProperties": false,
-          "required": ["clickhouse", "connect"],
-          "properties": {"clickhouse": {"$ref": "#/$defs/optionalImage"}, "connect": {"$ref": "#/$defs/optionalImage"}}
-        },
-        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
-        "storage": {
-          "type": "object", "additionalProperties": false,
-          "required": ["storageClassName", "clickhouseSize", "keeperSize", "restoreSnapshots"],
-          "properties": {
-            "storageClassName": {"type": "string"},
-            "clickhouseSize": {"type": "string", "pattern": "^[1-9][0-9]*Gi$"},
-            "keeperSize": {"type": "string", "pattern": "^[1-9][0-9]*Gi$"},
-            "restoreSnapshots": {
-              "type": "object", "additionalProperties": false,
-              "required": ["clickhouse", "keeper"],
-              "properties": {
-                "clickhouse": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$|^$"},
-                "keeper": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$|^$"}
-              }
-            }
-          }
-        },
-        "runtimeSecret": {
-          "type": "object", "additionalProperties": false, "required": ["name"],
-          "properties": {"name": {"type": "string", "const": "asklake-realtime-v2-runtime"}}
-        },
-        "msk": {
-          "type": "object", "additionalProperties": false,
-          "required": ["bootstrapSecretName", "bootstrapSecretKey", "iamAuthJar", "sourceTopicPrefix", "dlqTopicPrefix", "consumerGroupPrefix", "workerGroupPrefix", "internalTopicPrefix"],
-          "properties": {
-            "bootstrapSecretName": {"type": "string", "const": "asklake-msk-runtime"},
-            "bootstrapSecretKey": {"type": "string", "const": "bootstrapBrokersSaslIam"},
-            "iamAuthJar": {"type": "string", "const": "/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar"},
-            "sourceTopicPrefix": {"type": "string", "const": "asklake.eks-realtime.v2.fixture"},
-            "dlqTopicPrefix": {"type": "string", "const": "asklake.eks-realtime.v2.dlq"},
-            "consumerGroupPrefix": {"type": "string", "const": "asklake-eks-realtime-v2"},
-            "workerGroupPrefix": {"type": "string", "const": "asklake-eks-realtime-v2-worker"},
-            "internalTopicPrefix": {"type": "string", "const": "asklake-connect-v2"}
-          }
-        },
-        "clickhouse": {
-          "type": "object", "additionalProperties": false, "required": ["database", "serviceName"],
-          "properties": {
-            "database": {"type": "string", "const": "asklake_realtime_v2"},
-            "serviceName": {"type": "string", "const": "clickhouse-v2"}
-          }
-        },
-        "connect": {
-          "type": "object", "additionalProperties": false, "required": ["serviceName"],
-          "properties": {"serviceName": {"type": "string", "const": "kafka-connect-v2"}}
-        },
-        "resources": {
-          "type": "object", "additionalProperties": false,
-          "required": ["worker", "connect", "clickhouse", "keeper"],
-          "properties": {
-            "worker": {"$ref": "#/$defs/resources"},
-            "connect": {"$ref": "#/$defs/resources"},
-            "clickhouse": {"$ref": "#/$defs/resources"},
-            "keeper": {"$ref": "#/$defs/resources"}
-          }
-        }
       }
     },
     "bucketPrefix": {

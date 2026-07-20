@@ -116,7 +116,7 @@ class ContinuousWorkerScopeTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Settings(continuous_worker_scope="both-ish", _env_file=None)
 
-    def test_settings_require_generation_and_kafka_scope_for_eks_owner(self) -> None:
+    def test_settings_require_generation_and_all_scope_for_eks_owner(self) -> None:
         from pydantic import ValidationError
 
         from app.core.config import Settings
@@ -131,37 +131,15 @@ class ContinuousWorkerScopeTests(unittest.TestCase):
                 _env_file=None,
             )
         configured = Settings(
-            continuous_worker_owner="eks-kafka-connect-clickhouse-v2",
-            continuous_worker_scope="kafka",
-            continuous_worker_generation="v2-canary-g1",
+            continuous_worker_owner="eks-continuous-worker-v1",
+            continuous_worker_scope="all",
+            continuous_worker_generation="v1-canary-g1",
             _env_file=None,
         )
         self.assertEqual(
             configured.continuous_worker_owner,
-            "eks-kafka-connect-clickhouse-v2",
+            "eks-continuous-worker-v1",
         )
-
-    def test_settings_require_generation_and_continuous_sql_scope_for_v2_owner(self) -> None:
-        from pydantic import ValidationError
-
-        from app.core.config import Settings
-
-        with self.assertRaises(ValidationError):
-            Settings(continuous_worker_owner="eks-continuous-worker-v2", _env_file=None)
-        with self.assertRaises(ValidationError):
-            Settings(
-                continuous_worker_owner="eks-continuous-worker-v2",
-                continuous_worker_scope="kafka",
-                continuous_worker_generation="g1",
-                _env_file=None,
-            )
-        settings = Settings(
-            continuous_worker_owner="eks-continuous-worker-v2",
-            continuous_worker_scope="continuous_sql",
-            continuous_worker_generation="g1",
-            _env_file=None,
-        )
-        self.assertEqual(settings.continuous_worker_scope, "continuous_sql")
 
     def test_eks_owner_claim_must_match_full_runtime_identity(self) -> None:
         runtime = SimpleNamespace(
@@ -200,31 +178,6 @@ class ContinuousWorkerScopeTests(unittest.TestCase):
                 runtime, owner="eks-continuous-worker-v1", generation="g1",
                 fencing_token="fence", state_revision=1,
             )
-
-    def test_v2_owner_claim_uses_the_same_full_identity_fence(self) -> None:
-        runtime = SimpleNamespace(
-            broker="broker:9098",
-            topic="asklake.eks-realtime.v2.fixture.g1",
-            consumer_group_id="asklake-eks-realtime-v2-g1",
-            checkpoint_path="keepermap:///asklake/realtime-v2/connect-state/g1",
-            metrics={},
-            status="paused",
-        )
-        continuous_runtime_sync.assign_runtime_owner_claim(
-            runtime,
-            owner="eks-kafka-connect-clickhouse-v2",
-            generation="g1",
-            fencing_token="v2-fence-1",
-            state_revision=1,
-        )
-        expected_settings = SimpleNamespace(
-            continuous_worker_owner="eks-kafka-connect-clickhouse-v2",
-            continuous_worker_generation="g1",
-        )
-        with patch.object(continuous_runtime_sync, "settings", expected_settings):
-            self.assertTrue(continuous_runtime_sync.runtime_matches_owner_claim(runtime))
-            runtime.consumer_group_id = "asklake-eks-realtime-v2-other"
-            self.assertFalse(continuous_runtime_sync.runtime_matches_owner_claim(runtime))
 
     def test_strict_owner_skips_unclaimed_job_side_effects(self) -> None:
         job = SimpleNamespace(id="job-1", execution_mode="continuous")

@@ -253,21 +253,6 @@ class CatalogDeletionSafetyTest(unittest.TestCase):
             self.assertTrue(root.exists())
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep")
 
-    def test_clickhouse_artifact_is_purged_from_the_fresh_impact_snapshot(self) -> None:
-        row = deletion_row()
-        row.impact_snapshot = CatalogDatasetDeletionImpact(
-            artifacts=[{"kind": "clickhouse_table", "location": "asklake.ds_orders"}],
-            blockers=[],
-            can_delete=True,
-            dataset_id="ds_orders",
-            dataset_name="orders",
-            retained_resources=[],
-        ).model_dump(by_alias=True)
-        purger = CatalogPhysicalPurger()
-        with patch.object(purger, "_drop_clickhouse_table") as drop_table:
-            purger.purge(MagicMock(), row)
-        drop_table.assert_called_once_with({"database": "asklake", "table": "ds_orders"})
-
     def test_downstream_summary_labels_are_not_phantom_dataset_blockers(self) -> None:
         payload = dataset_payload()
         payload["downstream"] = ["SQL 분석", "대시보드"]

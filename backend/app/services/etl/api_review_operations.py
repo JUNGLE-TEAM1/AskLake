@@ -25,8 +25,6 @@ RUNTIME_NAMES = {
     'begin_kafka_continuous_session',
     'blocked_principal_for_actor',
     'bool',
-    'clickhouse_kafka_ingest_v2_enabled',
-    'clickhouse_kafka_ingest_v2_selected',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
     'dict',
@@ -58,7 +56,6 @@ RUNTIME_NAMES = {
     'persisted_stream_partition_cursors',
     'reconcile_pending_continuous_replay_catalog',
     'reconcile_stale_continuous_maintenance_runs',
-    'require_kafka_ingest_v2_ready',
     'require_no_active_continuous_maintenance',
     'resolve_internal_data_lake_source',
     'review_entry',
@@ -81,16 +78,14 @@ def command_kafka_continuous_job(
     command: str,
     actor: ActorContext,
 ) -> JobCommandResponse:
-    if command in {"startContinuous", "resumeContinuous"}:
-        require_kafka_ingest_v2_ready(job, settings)
     return execute_continuous_command(
         db,
         job,
         ContinuousCommandRequest(command=command, job_id=job.id),
         actor,
         worker=CallableKafkaRuntimeGateway(run_kafka_continuous_worker),
-        # The EKS web/API process persists command intent only. Kafka Connect
-        # and ClickHouse credentials stay in the exact-generation V2 worker.
+        # The EKS web/API process persists command intent; the V1 worker owns
+        # the external SparkApplication lifecycle.
         dispatch_worker=(
             settings.continuous_control_plane == "embedded"
             and not external_continuous_control_plane_enabled()
@@ -107,11 +102,7 @@ def command_kafka_continuous_job(
             fail_session=fail_kafka_continuous_session,
             mark_session_stopping=mark_kafka_continuous_session_stopping,
             with_permissions=with_job_permissions,
-            worker_kind=lambda current_job: (
-                "kafka_connect_clickhouse_v2"
-                if clickhouse_kafka_ingest_v2_selected(current_job)
-                else "spark_structured_streaming"
-            ),
+            worker_kind=lambda _current_job: "spark_structured_streaming",
         ),
     )
 
@@ -275,7 +266,7 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 def _processing_mode_label(execution_mode: str) -> str:
     if execution_mode != "continuous":
         return "배치 · Spark"
-    return "실시간 · ClickHouse" if selected_realtime_job_engine(settings) == "kafka_connect_clickhouse_v2" else "실시간 · Spark (기존 V1)"
+    return "실시간 · Spark"
 def review_pipeline(
     request: ReviewPipelineRequest,
     *,
