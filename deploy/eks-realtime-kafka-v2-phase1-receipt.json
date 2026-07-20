@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase1-image-and-static-contract",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "6e0b31f738c47114da247c9f908412be9ac686b7",
+  "platform": "linux/amd64",
+  "imageBuilds": {
+    "clickhouse": {
+      "source": "deploy/clickhouse-v2",
+      "localTag": "asklake/clickhouse-v2:phase1-local",
+      "localManifestDigest": "sha256:27cd5a32c7aed8bde77cec8ddfa6fb397c741e9a308bdcaf9d1ace9eccdd3878",
+      "status": "pass"
+    },
+    "kafkaConnect": {
+      "source": "deploy/kafka-connect",
+      "localTag": "asklake/kafka-connect-v2:phase1-local",
+      "localManifestDigest": "sha256:fc7d3b3409ebaa954ee90c8557ede73d6019ede3588b4a5565ad6ad4558d1a61",
+      "status": "pass",
+      "mskIamJar": "aws-msk-iam-auth-2.3.6-all.jar",
+      "mskIamJarPath": "/usr/share/java/cp-base-new/aws-msk-iam-auth-2.3.6-all.jar",
+      "pluginPathCollision": false,
+      "sinkVersion": "1.4.0"
+    },
+    "backend": {
+      "source": "backend",
+      "localTag": "asklake/backend:phase1-local",
+      "localManifestDigest": "sha256:dfaec31164b2c484028d31e6e680b23df9cdc405321f429fbe549ac657fe649e",
+      "status": "pass",
+      "importSmoke": "pass"
+    }
+  },
+  "staticContracts": {
+    "v2MachineContract": "pass",
+    "storageContract": "pass",
+    "helmWorkloadContract": "pass",
+    "dataPlaneStaticVerification": "pass",
+    "helmLint": "pass",
+    "imageReceiptContractTests": "pass",
+    "kafkaIamContractTests": "pass",
+    "liveEvidenceContractTests": "pass",
+    "gitDiffCheck": "pass"
+  },
+  "registryPush": {
+    "status": "blocked",
+    "reason": "No approved ECR registry/repository target or push credential was provided; local digests are not deployment receipts.",
+    "performed": false
+  },
+  "eksApply": {
+    "status": "blocked",
+    "reason": "Phase 0 live preflight remains blocked until ASKLAKE_EKS_CLUSTER_NAME and matching kubectl context are provided.",
+    "performed": false
+  },
+  "phase1Ready": false,
+  "productionHaClaimAllowed": false
+}
