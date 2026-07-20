@@ -300,3 +300,21 @@ JSON/YAML schema hunk나 해당 구현 경로는 없었다. 변경된 코드 3�
 checksum(실제 64자리 값) 검증 계약만 교정하며, 문서 변경은 Issue #1082의 Phase
 감사·런북 기록으로 한정된다. 공유 AWS/EKS mutation, pair1 직접 수정, PR/merge는
 없다.
+
+## 17. Phase 6 최종 로컬 완료·readiness 판정
+
+현재 작업 프롬프트의 Phase 5 전체 diff 감사 이후 최종 로컬 검증을 재실행했다.
+
+- HEAD와 `origin/feat-#1082` 일치: `8d084e7a`
+- `origin/pair1`: `69cab941`
+- realtime data-plane Helm/schema/negative: 통과
+- workloads, distributed Trino, V2 workload, Secret/TLS 계약: 통과
+- image receipt·Kafka·live-evidence 테스트: 14/14 통과
+- `git diff --check origin/pair1`: 통과
+- untracked 파일: 0개
+
+로컬 구현·정적 검증·운영 런북·범위 감사는 완료 상태다. 운영 활성화 readiness는
+Secret/TLS/Pod Identity source와 승인된 live shadow apply가 남아 있어 `ready for
+live approval`로 판정한다. `asklake-clickhouse-keeper-v2-config` ExternalSecret이
+준비되기 전에는 preflight가 계속 fail-closed하며, 이번 최종 Phase에서도 AWS/EKS
+apply, Kafka produce, EC2 중단, owner 전환은 0건이다.
