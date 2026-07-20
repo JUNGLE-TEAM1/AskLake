@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase5-lifecycle-recovery-rollback-gates",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "4205b0db4b09c2e2c5bd36ddd871029e1f4d7c80",
+  "mode": "local-contract-and-historical-receipt-audit",
+  "sharedMutationPerformed": false,
+  "localVerification": {
+    "continuousSqlRuntimeLifecycleTests": "35 pass",
+    "liveEvidenceNegativeTests": "5 pass",
+    "kafkaIamContractTests": "5 pass",
+    "historicalRestartOffsets": "pass",
+    "historicalDuplicateBoundaries": 0,
+    "historicalReadySnapshots": 2,
+    "historicalRollbackRunningTasks": 0,
+    "historicalRollbackOwnerClaims": 0,
+    "gitDiffCheck": "pass"
+  },
+  "lifecycleContract": {
+    "pauseResumePreservesGeneration": true,
+    "stopRequiresExplicitIntent": true,
+    "restartRequiresOffsetContinuity": true,
+    "pvcUidsMustBePreserved": true,
+    "restoreConsumerResources": 0,
+    "automaticCrossEngineFallback": false,
+    "offsetResetAllowed": false
+  },
+  "liveExecution": {
+    "status": "blocked",
+    "reason": "Phase 4 canary was not run because ASKLAKE_EKS_CLUSTER_NAME and live EKS preflight inputs are missing.",
+    "pauseResume": "not-run",
+    "stop": "not-run",
+    "podRestart": "not-run",
+    "snapshotRestore": "not-run",
+    "rollback": "not-run"
+  },
+  "phase5Ready": false,
+  "productionTransferAllowed": false
+}
