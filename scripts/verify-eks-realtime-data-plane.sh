@@ -64,7 +64,7 @@ node "$ROOT_DIR/scripts/verify-eks-realtime-v2-live-evidence.mjs" \
 bash "$ROOT_DIR/scripts/test-eks-realtime-v2-secrets.sh"
 
 grep -q 'aws-msk-iam-auth-2.3.6-all.jar' "$ROOT_DIR/deploy/kafka-connect/Dockerfile"
-grep -q 'sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c083' \
+grep -q 'sha256:de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08' \
   "$ROOT_DIR/deploy/kafka-connect/Dockerfile"
 grep -q 'kafka-cluster:Connect' "$ROOT_DIR/infra/eks/terraform/realtime-workload-identity.tf"
 grep -q 'kafka-cluster:WriteDataIdempotently' "$ROOT_DIR/infra/eks/terraform/realtime-workload-identity.tf"
