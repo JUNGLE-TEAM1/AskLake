@@ -909,7 +909,7 @@ Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived 
 
 Catalog dataset의 `materializationRuns` 항목은 `runId`, `jobId`, `status`, `createdAt`, `materializationMode`, `rowCount`, `storageSizeBytes`, `storageLocation`, `sourceKind`, `sourceLabel`을 포함한다. Kafka Continuous materialization은 추가로 `sourceBoundary`, `sourceRanges`, `icebergCommittedAt`, `icebergSnapshotId`, `queryEngineTable`, `publicationManifest`, schema/rule/runtime fingerprint, `transform`, `quality` 실행 결과를 반환하며 replay에도 같은 Rule 실행 정체성을 유지한다. history는 `icebergCommittedAt`, fallback `createdAt` 기준 newest-first로 정렬한다. 늦게 복구된 과거 snapshot은 history/합계만 보강하고 현재 schema/sample/quality/physical mapping을 되돌리지 않는다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 `snapshot`까지의 active segment 기준으로 계산한다. mode가 없는 legacy Kafka Run은 `delta`, 그 외 Run은 `snapshot`으로 해석한다.
 
-- Catalog row page와 Dashboard physical widget은 검증된 Iceberg Dataset을 `queryEngineTable`의 Trino table로 읽는다. Iceberg warehouse data file 직접 scan은 금지하며 legacy file-backed Dataset만 DuckDB compatibility path를 사용한다.
+- Catalog row page와 Dashboard physical widget은 검증된 Iceberg Dataset을 `queryEngineTable`의 Trino table로 읽는다. Dashboard Widget request/config는 Catalog 표기 field name을 유지하지만, backend는 Trino `DESCRIBE` 결과와 case-insensitive 일대일 매핑한 정확한 physical field name으로 SQL을 생성한다. case-insensitive collision은 `DASHBOARD_DATA_UNAVAILABLE`으로 안전하게 거절한다. Iceberg warehouse data file 직접 scan은 금지하며 legacy file-backed Dataset만 DuckDB compatibility path를 사용한다.
 - Iceberg-backed materialization run 삭제는 물리 snapshot 불일치를 막기 위해 `422 ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE`로 거절한다. legacy file-backed run metadata 삭제만 기존 재계산 계약을 유지한다.
 
 ### Pair A -> Pair C
