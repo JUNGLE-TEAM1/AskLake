@@ -1,6 +1,6 @@
 # Dashboard Job Binding V1 계약
 
-> 상태: Phase 0 결정 완료. 이 문서는 목표 계약이며, 아직 Dashboard binding API, DB migration, UI는 구현되지 않았다.
+> 상태: Phase 1 durable API 구현 완료. Widget Dataset lock UI와 revision delivery worker는 아직 구현되지 않았다.
 
 ## 1. 목적
 
@@ -92,7 +92,7 @@ Dashboard 계산 실패는 Dataset publication 또는 Job Run을 rollback하거�
 
 ## 6. Durable 모델과 API 방향
 
-Phase 1에서 아래 두 durable resource를 도입한다. 정확한 table/endpoint 이름은 구현 전 migration review에서 확정한다.
+Phase 1에서 아래 두 durable resource를 도입했다. Job 참조는 ETL과 Continuous SQL의 서로 다른 저장 모델을 수용하기 위해 `jobKind + jobId` 다형 참조를 사용한다.
 
 ```text
 DashboardJobBinding
@@ -106,7 +106,7 @@ DashboardBindingDelivery
 - errorCode, errorMessage
 ```
 
-예정 API는 다음 역할을 가진다. 아직 live endpoint가 아니다.
+현재 live API는 `/api/dashboard-job-bindings`에 있으며, `POST` 생성, `GET` 조회 (`jobId` 또는 `dashboardId` 필수), `GET /{bindingId}`, `POST /{bindingId}/detach`, `POST /{bindingId}/deliveries/{datasetRevision}/retry`를 제공한다. delivery 생성·계산은 Phase 3 worker가 담당하므로 지금은 재시도 가능한 기존 delivery 상태만 `pending`으로 되돌린다.
 
 | 역할 | 권한 | 비고 |
 | --- | --- | --- |
@@ -133,3 +133,10 @@ DashboardBindingDelivery
 - `dashboard_ready`와 Widget `appliedRevision` 완료를 혼동하지 않는다.
 - V1이 새/빈 Dashboard만 지원하고, managed Dashboard의 Dataset source를 고정한다는 UX가 명확하다.
 - EKS migration이 V1 기능 구현 범위에서 제외됐음이 명시된다.
+
+## 9. Phase 1 완료 조건
+
+- Alembic `0021_dashboard_job_bindings`가 `dashboard_job_bindings`, `dashboard_binding_deliveries`를 additive migration으로 생성한다.
+- binding 생성은 Job output Dataset 일치, Job/Dashboard `manage`, 새/빈 Dashboard 제약을 서버에서 검증한다.
+- Dashboard별 binding은 하나이며, 같은 요청 재시도는 idempotent하다. detach 뒤에는 같은 Dashboard binding record를 새 managed binding으로 재활성화할 수 있다.
+- API는 UI·delivery worker 없이도 binding 조회, detach, 실패 delivery retry 상태 전환을 제공한다.

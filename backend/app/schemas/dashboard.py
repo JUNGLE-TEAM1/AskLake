@@ -35,6 +35,24 @@ class DashboardRuntimeMode(str, Enum):
     DRAFT = "draft"
 
 
+class DashboardJobKind(str, Enum):
+    ETL = "etl"
+    CONTINUOUS_SQL = "continuous_sql"
+
+
+class DashboardBindingMode(str, Enum):
+    MANAGED = "managed"
+    DETACHED = "detached"
+
+
+class DashboardBindingDeliveryStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    APPLIED = "applied"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+
+
 class DashboardAssistantMode(str, Enum):
     DASHBOARD_QUESTION = "dashboard_question"
     VISUALIZATION_REQUEST = "visualization_request"
@@ -184,6 +202,43 @@ class UpdateDashboardRequest(CamelModel):
 
 class DeleteDashboardResponse(CamelModel):
     deleted_dashboard_id: str
+
+
+class DashboardJobBindingCreateRequest(CamelModel):
+    dashboard_id: str = Field(min_length=1, max_length=64)
+    job_id: str = Field(min_length=1, max_length=160)
+    job_kind: DashboardJobKind
+    output_dataset_id: str = Field(min_length=1, max_length=160)
+
+
+class DashboardJobBindingDelivery(CamelModel):
+    dataset_revision: int = Field(ge=0)
+    mutation_type: str
+    status: DashboardBindingDeliveryStatus
+    applied_revision: int | None = Field(default=None, ge=0)
+    calculated_at: str | None = None
+    attempt_count: int = Field(ge=0)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class DashboardJobBinding(CamelModel):
+    id: str
+    dashboard_id: str
+    job_id: str
+    job_kind: DashboardJobKind
+    output_dataset_id: str
+    mode: DashboardBindingMode
+    enabled: bool
+    created_by: str
+    detached_at: str | None = None
+    created_at: str
+    updated_at: str
+    latest_delivery: DashboardJobBindingDelivery | None = None
+
+
+class DashboardJobBindingList(CamelModel):
+    items: list[DashboardJobBinding] = Field(default_factory=list)
 
 
 class DashboardWidgetConfigBase(CamelModel):

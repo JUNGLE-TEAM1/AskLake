@@ -526,7 +526,7 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
-> Dashboard Job Binding은 Phase 0에서 제품·계약만 확정됐으며, 아래 live API 목록에는 아직 binding 생성, 해제, delivery 조회·재시도 endpoint가 없다. 예정 request/response와 권한 경계는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다. 구현 전에는 이 문서에 실제 endpoint와 response shape를 추가해야 한다.
+> Dashboard Job Binding Phase 1 API는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. delivery worker와 managed Dashboard UI는 아직 Phase 2~3 범위다.
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
@@ -537,6 +537,11 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/dashboards` | dashboard 목록 조회 |
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
+| `POST` | `/api/dashboard-job-bindings` | 빈 Dashboard에 Job output Dataset managed binding 생성 |
+| `GET` | `/api/dashboard-job-bindings?jobId=&jobKind=` 또는 `?dashboardId=` | Job 또는 Dashboard 기준 binding summary 조회 |
+| `GET` | `/api/dashboard-job-bindings/{bindingId}` | binding과 latest delivery 상태 조회 |
+| `POST` | `/api/dashboard-job-bindings/{bindingId}/detach` | binding을 detached로 전환하고 이후 delivery 중지 |
+| `POST` | `/api/dashboard-job-bindings/{bindingId}/deliveries/{datasetRevision}/retry` | 기존 failed/degraded delivery를 pending으로 재시도 요청 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision runtime 조회. `includeData=false`이면 shell만 반환 |
