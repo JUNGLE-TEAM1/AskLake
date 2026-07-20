@@ -1442,6 +1442,7 @@ def sync_airflow_run(
     run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
     run.airflow_state = dag_run.state
     previous_task_states = dict(run.task_states or {})
+    spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
     run.task_states = merge_airflow_task_state_snapshot(
         previous_task_states,
@@ -1449,7 +1450,6 @@ def sync_airflow_run(
     )
     run.last_synced_at = synced_at
     run.sync_error = None
-
     if run.status in TERMINAL_RUN_STATUSES and run.ended_at == "-":
         run.ended_at = synced_at
         run.duration = format_iso_duration(run.started_at, synced_at)

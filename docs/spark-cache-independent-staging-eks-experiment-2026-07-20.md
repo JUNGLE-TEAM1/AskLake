@@ -2,7 +2,7 @@
 
 작성일: 2026-07-20
 관련 이슈: #931
-상태: executor cache OOM 수정과 격리 EKS scale 검증 완료
+상태: executor cache OOM 수정, 격리 EKS scale, bounded publication 안전성 검증 완료
 
 ## 1. 목적과 범위
 
@@ -99,7 +99,13 @@ Runtime manifest는 다음 증거를 남긴다.
 - `verify:spark-s3-staging`: opt-in 실제 AWS S3A read/materialize/publish와
   current object/version cleanup
 - `verify:spark-iceberg-batch`: Iceberg snapshot/file identity와 commit 뒤 실패
-  rollback
+  rollback. 기존 current snapshot이 있는 table에 Quality `Fail Run`을 주입하고
+  current snapshot, snapshot 수, row count가 모두 그대로이며 Iceberg commit이
+  생성되지 않는 것도 확인한다.
+- `verify-airflow-catalog-reconciliation.py`: 실제 PostgreSQL에서 같은 Run
+  reconciliation의 materialization 1개 유지, Catalog transaction rollback,
+  Spark failure evidence 보존을 확인한다. fixture는 Iceberg physical 검증을
+  명시적으로 대체하고 Catalog transaction 경계만 검사한다.
 - `test:spark-kubernetes`: deterministic SparkApplication create/recover/cleanup
   계약
 
@@ -108,17 +114,41 @@ Unique canonical rule은 현재 compiler에서 `RULE_OPERATION_UNSUPPORTED`로 �
 저장된 manifest를 반환하고 새 SparkApplication을 만들지 않는 기존 control-plane
 계약을 유지한다.
 
-## 6. 후속 범위
+## 6. Publication 안전성 후속 실험
 
-다음 항목은 이번 격리 scale PR의 완료 주장에 포함하지 않는다.
+수정 revision `a7793a29`의 immutable Spark runtime을 dev EKS의 격리 bounded
+fixture Job에 적용했다. FastAPI runtime의 Spark image 설정만 실험 중 임시
+교체하고 실제 Airflow 제품 경로로 실행한 뒤 원래 digest로 복구했다. registry,
+cluster, Run, application, snapshot 식별자는 private mode-0600 evidence에만
+보관했다.
+
+| 검증 | 결과 |
+| --- | --- |
+| Spark / Iceberg / Trino / Catalog identity | 17/17 pass |
+| Spark input/output / Trino exact rows | 100 / 100 / 100 |
+| exact Iceberg data file | 1 |
+| 해당 Run의 Catalog materialization | 1 |
+| 같은 성공 Run retry | success |
+| retry generation / application UID / snapshot | 모두 변화 없음 |
+| retry Catalog materialization | 1개 유지 |
+| 임시 SparkApplication/Pod residue | 0 |
+| dev FastAPI runtime | 원래 image와 Ready 상태로 복구 |
+
+이 실험 준비 중 Catalog failure 뒤 Airflow 동기화 경로가 정의되지 않은
+`spark_result`를 참조하는 오류를 발견했다. polling lock 뒤 보존한
+`taskStates.sparkResult`를 사용하도록 수정하고, Quality 실패 단계와 오류가
+유지되는 회귀 test를 추가했다.
+
+## 7. 후속 범위
+
+다음 항목은 scale 및 bounded publication 검증의 완료 주장에 포함하지 않는다.
 
 1. 100GB staging과 최종 Iceberg/Trino의 event type 분포 대조
-2. 기존 Iceberg current snapshot이 있는 상태의 Quality-fail live 불변성
-3. Spark commit, Iceberg current snapshot과 Catalog snapshot/data-file identity의
+2. Spark commit, Iceberg current snapshot과 Catalog snapshot/data-file identity의
    100GB end-to-end 대조
-4. 동일 source boundary retry와 concurrent commit conflict의 EKS live fault 주입
-5. Spark event log 및 S3 request metric의 장기 보존
-6. workload profile별 executor/resource 선택 정책과 NodePool scale-in receipt
+3. concurrent commit conflict의 EKS live fault 주입
+4. Spark event log 및 S3 request metric의 장기 보존
+5. workload profile별 executor/resource 선택 정책과 NodePool scale-in receipt
 
 이 항목들은 staging으로 JVM OOM을 제거한 현재 변경과 분리해 후속 검증 및 운영
 hardening으로 진행한다.
