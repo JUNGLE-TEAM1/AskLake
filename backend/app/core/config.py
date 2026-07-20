@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     static_change_backfill_enabled: bool = False
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
     continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
+    continuous_sql_micro_batch_max_rows: int = Field(default=100, ge=1, le=100_000)
+    continuous_sql_static_pruning_max_keys: int = Field(default=100, ge=1, le=10_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
     clickhouse_continuous_join_enabled: bool = False
     clickhouse_realtime_v2_enabled: bool = False

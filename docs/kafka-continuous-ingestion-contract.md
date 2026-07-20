@@ -38,8 +38,8 @@ type KafkaExecutionMode = "snapshot" | "continuous";
 
 type KafkaContinuousConfig = {
   initialOffsetPolicy: "earliest" | "latest";
-  triggerIntervalSeconds: number; // default 30
-  maxOffsetsPerTrigger: number; // default 10000, total across partitions
+  triggerIntervalSeconds: number; // default 10
+  maxOffsetsPerTrigger: number; // default 100, total across partitions
   checkpointPath: string; // generated from immutable job/target identity
 };
 ```

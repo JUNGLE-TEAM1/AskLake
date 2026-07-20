@@ -70,6 +70,7 @@ from app.services.dashboard_physical_data import (
     dashboard_source_config,
     dashboard_widget_supports_incremental_merge,
     merge_dashboard_aggregate_states,
+    prune_dashboard_aggregate_state,
 )
 from app.services.dashboard_prepared_result import prepared_live_widget_response
 from app.services.dashboard_realtime_bridge import (
@@ -1006,6 +1007,7 @@ class DashboardRuntimeService:
         try:
             state = session.read_aggregate_state(widget_type.value, config)
             if state is not None:
+                state = prune_dashboard_aggregate_state(state)
                 return dashboard_result_from_aggregate_state(state), state
             return session.read_widget(widget_type.value, config), {}
         finally:

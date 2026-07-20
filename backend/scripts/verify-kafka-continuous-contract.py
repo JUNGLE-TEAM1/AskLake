@@ -134,8 +134,8 @@ def main() -> None:
     config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT")
     assert config == {
         "initialOffsetPolicy": "earliest",
-        "triggerIntervalSeconds": 30,
-        "maxOffsetsPerTrigger": 10000,
+        "triggerIntervalSeconds": 10,
+        "maxOffsetsPerTrigger": 100,
         "schemaEvolutionPolicy": {
             "additiveNullable": "allow",
             "missingRequired": "quarantine",

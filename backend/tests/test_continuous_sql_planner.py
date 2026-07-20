@@ -179,14 +179,26 @@ class ContinuousSqlPlannerTests(unittest.TestCase):
 
     def test_stateful_unbounded_and_nondeterministic_constructs_have_stable_errors(self) -> None:
         cases = [
-            ("CONTINUOUS_SQL_AGGREGATION_UNSUPPORTED", "SELECT COUNT(*) AS count_value FROM events e JOIN users u ON e.user_id = u.id"),
             ("CONTINUOUS_SQL_ORDER_BY_UNSUPPORTED", "SELECT e.event_id FROM events e JOIN users u ON e.user_id = u.id ORDER BY e.event_id"),
             ("CONTINUOUS_SQL_LIMIT_UNSUPPORTED", "SELECT e.event_id FROM events e JOIN users u ON e.user_id = u.id LIMIT 10"),
+            ("CONTINUOUS_SQL_DISTINCT_UNSUPPORTED", "SELECT COUNT(DISTINCT e.event_id) AS events FROM events e JOIN users u ON e.user_id = u.id"),
             ("CONTINUOUS_SQL_NONDETERMINISTIC_FUNCTION", "SELECT RANDOM() AS value FROM events e JOIN users u ON e.user_id = u.id"),
         ]
         for code, sql in cases:
             with self.subTest(code=code):
                 self.assert_error(code, sql)
+
+    def test_supported_aggregate_deltas_compile_without_window_fallback(self) -> None:
+        compiled = self.compile(
+            "SELECT u.name AS membership, COUNT(*) AS events, "
+            "COUNT_IF(e.amount > 0) AS purchases, SUM(e.amount) AS revenue, "
+            "MIN(e.amount) AS minimum, MAX(e.amount) AS maximum, AVG(e.amount) AS average "
+            "FROM events e JOIN users u ON e.user_id = u.id GROUP BY u.name"
+        )
+
+        self.assertTrue(compiled.plan["capabilities"]["aggregateDelta"])
+        self.assertIn("MAX(e.kafka_offset) AS kafka_offset", compiled.runtime_sql)
+        self.assertEqual(compiled.plan["outputSchema"][-1], ["average", "double"])
 
     def test_computed_projection_requires_alias_and_output_names_are_unique(self) -> None:
         self.assert_error(
@@ -253,14 +265,14 @@ class ContinuousSqlPlannerTests(unittest.TestCase):
             "SELECT e.event_id, u.id AS event_id FROM events e JOIN users u ON e.user_id = u.id",
         )
 
-    def test_continuous_sql_defaults_to_five_second_low_latency_trigger(self) -> None:
+    def test_continuous_sql_defaults_to_ten_second_bounded_trigger(self) -> None:
         request = ContinuousSqlPlanRequest(
             query="SELECT e.event_id, u.name AS user_name FROM events e JOIN users u ON e.user_id = u.id",
             relationDatasetIds=["dataset-events", "dataset-users"],
         )
 
-        self.assertEqual(request.trigger_interval_seconds, 5)
-        self.assertEqual(self.compile(request.query).plan["triggerIntervalSeconds"], 5)
+        self.assertEqual(request.trigger_interval_seconds, 10)
+        self.assertEqual(self.compile(request.query).plan["triggerIntervalSeconds"], 10)
 
 
 if __name__ == "__main__":

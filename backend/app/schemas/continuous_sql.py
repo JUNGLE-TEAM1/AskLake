@@ -10,7 +10,7 @@ from app.schemas.iceberg import IcebergWriterTarget
 
 ContinuousSqlStaticBindingPolicy = Literal["PINNED_AT_START", "LATEST_PER_BATCH"]
 ContinuousSqlServingMode = Literal["iceberg", "clickhouse"]
-CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 5
+CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 10
 ContinuousSqlDesiredState = Literal["stopped", "running", "paused"]
 ContinuousSqlObservedState = Literal[
     "starting",
@@ -124,6 +124,7 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
     output: ContinuousSqlOutput
     checkpoint_path: str | None = Field(default=None, max_length=2048)
     client_request_id: str | None = Field(default=None, max_length=160)
+    baseline_dataset_id: str | None = Field(default=None, min_length=1, max_length=160)
 
     @field_validator("checkpoint_path")
     @classmethod
@@ -139,6 +140,11 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
     def reject_clickhouse_checkpoint(self) -> "ContinuousSqlCreateRequest":
         if self.output.serving_mode == "clickhouse" and self.checkpoint_path is not None:
             raise ValueError("ClickHouse Continuous SQL does not accept checkpointPath")
+        if self.baseline_dataset_id is not None:
+            if self.output.serving_mode != "iceberg":
+                raise ValueError("Incremental baseline binding requires Iceberg serving")
+            if self.baseline_dataset_id != self.output.dataset_id:
+                raise ValueError("baselineDatasetId must equal output.datasetId")
         return self
 
 
@@ -237,6 +243,7 @@ class ContinuousSqlJob(CamelModel):
     last_error_code: str | None = None
     last_error_message: str | None = None
     active_run: ContinuousSqlRun | None = None
+    incremental_binding: dict[str, Any] | None = None
 
 
 class ContinuousSqlCommandRequest(CamelModel):

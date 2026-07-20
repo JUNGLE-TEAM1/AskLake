@@ -35,6 +35,7 @@ from app.services.dashboard_physical_data import (
     execute_dashboard_query,
     preflight_dashboard_s3_segments,
     dashboard_widget_supports_incremental_merge,
+    merge_dashboard_aggregate_states,
 )
 from app.services.dashboard_runtime_service import (
     DASHBOARD_DATA_FORBIDDEN,
@@ -454,20 +455,12 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             ],
         )
 
-    def test_only_additive_aggregations_are_incrementally_merged(self) -> None:
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "min", "valueKey": "amount"},
-        ))
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "max", "valueKey": "amount"},
-        ))
+    def test_mergeable_aggregations_are_incrementally_merged(self) -> None:
         self.assertFalse(dashboard_widget_supports_incremental_merge(
             "table",
             {"columns": ["amount"]},
         ))
-        for aggregation in ("count", "sum", "avg", "ratio"):
+        for aggregation in ("count", "sum", "avg", "ratio", "min", "max"):
             with self.subTest(aggregation=aggregation):
                 self.assertTrue(dashboard_widget_supports_incremental_merge(
                     "metric",
@@ -477,6 +470,39 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             "metric",
             {"aggregation": "distinct", "valueKey": "order_id"},
         ))
+
+    def test_rolling_day_state_evicts_expired_buckets_without_full_scan(self) -> None:
+        current = {
+            "version": 1,
+            "widgetType": "line_chart",
+            "aggregation": "ratio",
+            "dimensionKeys": ["event_date"],
+            "valueConfigKey": "yKey",
+            "valueAlias": "conversion_rate_pct",
+            "windowDays": 30,
+            "windowDimensionKey": "event_date",
+            "rows": [{
+                "event_date": "2026-06-01T00:00:00",
+                "__asklake_state_count": 100,
+                "__asklake_state_sum": 5,
+            }],
+        }
+        delta = {
+            **current,
+            "rows": [{
+                "event_date": "2026-07-01T00:00:00",
+                "__asklake_state_count": 100,
+                "__asklake_state_sum": 7,
+            }],
+        }
+
+        merged = merge_dashboard_aggregate_states(current, delta)
+
+        self.assertIsNotNone(merged)
+        self.assertEqual(
+            [row["event_date"] for row in merged["rows"]],
+            ["2026-07-01T00:00:00"],
+        )
 
     def test_table_preview_is_sorted_and_capped_before_browser_response(self) -> None:
         with TemporaryDirectory() as directory:

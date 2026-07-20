@@ -16,6 +16,7 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.models.continuous_sql import (
     ContinuousSqlCommandModel,
+    ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
 )
@@ -25,6 +26,10 @@ from app.repositories.continuous_sql_repository import (
     batch_to_schema,
     job_to_schema,
     jobs_to_schema,
+)
+from app.repositories.dashboard_live_repository import (
+    DashboardLiveRepository,
+    backfill_catalog_revision,
 )
 from app.schemas.common import ErrorCode
 from app.schemas.continuous_sql import (
@@ -59,7 +64,8 @@ from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
 )
-from app.services.iceberg_writer_service import build_iceberg_writer_target
+from app.schemas.iceberg import IcebergWriterTarget
+from app.services.iceberg_writer_service import IcebergWriterService, build_iceberg_writer_target
 
 
 logger = logging.getLogger(__name__)
@@ -150,23 +156,46 @@ class ContinuousSqlService:
                 status.HTTP_409_CONFLICT,
                 {"datasetId": request.output.dataset_id},
             )
-        if self.catalog_repository.get_dataset_payload(request.output.dataset_id) is not None:
+        existing_output = self.catalog_repository.get_dataset_payload(request.output.dataset_id)
+        if existing_output is not None and request.baseline_dataset_id is None:
             raise ApiError(
                 ErrorCode.CONFLICT,
                 "Continuous SQL output Dataset already exists in Catalog.",
                 status.HTTP_409_CONFLICT,
                 {"datasetId": request.output.dataset_id},
             )
+        if request.baseline_dataset_id is not None and existing_output is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "The Trino baseline Dataset does not exist in Catalog.",
+                status.HTTP_404_NOT_FOUND,
+                {"datasetId": request.baseline_dataset_id},
+            )
 
         compiled = self._compile(request, actor, api_path="/api/query/continuous-jobs")
         job_id = f"csql_{uuid4().hex}"
-        output_target, output_storage_path, checkpoint_path = self._resolve_create_output(
-            request,
-            job_id,
-        )
+        incremental_binding: ContinuousSqlIncrementalBindingModel | None = None
+        if request.baseline_dataset_id is not None:
+            (
+                output_target,
+                output_storage_path,
+                checkpoint_path,
+                incremental_binding,
+            ) = self._resolve_incremental_baseline(
+                request,
+                compiled.compiled_plan,
+                job_id,
+            )
+        else:
+            output_target, output_storage_path, checkpoint_path = self._resolve_create_output(
+                request,
+                job_id,
+            )
         compiled_plan = compiled_plan_with_serving_mode(
             compiled.compiled_plan,
             request.output.serving_mode,
+            job_id=job_id,
+            max_offsets_per_trigger=self.settings.continuous_sql_micro_batch_max_rows,
         )
         job = ContinuousSqlJobModel(
             id=job_id,
@@ -198,6 +227,8 @@ class ContinuousSqlService:
         )
         try:
             self.repository.add_job(job)
+            if incremental_binding is not None:
+                self.repository.add_incremental_binding(incremental_binding)
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
@@ -245,6 +276,160 @@ class ContinuousSqlService:
                 f"{output_storage_path}/_checkpoints/{job_id}"
             )
         return output_target, output_storage_path, checkpoint_path
+
+    def _resolve_incremental_baseline(
+        self,
+        request: ContinuousSqlCreateRequest,
+        compiled_plan: dict[str, Any],
+        job_id: str,
+    ) -> tuple[
+        IcebergWriterTarget,
+        str,
+        str,
+        ContinuousSqlIncrementalBindingModel,
+    ]:
+        dataset_id = str(request.baseline_dataset_id or "").strip()
+        payload = self.catalog_repository.get_dataset_payload(dataset_id) or {}
+        mapping = payload.get("queryEngineTable")
+        if (
+            str(payload.get("queryEngineStatus") or "").strip().lower() != "available"
+            or str(payload.get("storageFormat") or "").strip().lower() != "iceberg"
+            or not isinstance(mapping, dict)
+        ):
+            raise ApiError(
+                "CONTINUOUS_SQL_BASELINE_NOT_ICEBERG",
+                "The Trino baseline must be an available Iceberg Dataset.",
+                status.HTTP_409_CONFLICT,
+                {"datasetId": dataset_id},
+            )
+        output_schema = [
+            str(item[0]).strip().casefold()
+            for item in compiled_plan.get("outputSchema") or []
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+        ]
+        baseline_schema = {
+            str(item[0]).strip().casefold()
+            for item in payload.get("schema") or []
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+        }
+        missing = [column for column in output_schema if column not in baseline_schema]
+        if missing:
+            raise ApiError(
+                "CONTINUOUS_SQL_BASELINE_SCHEMA_MISMATCH",
+                "The Trino baseline is missing Continuous SQL output columns.",
+                status.HTTP_409_CONFLICT,
+                {"datasetId": dataset_id, "missingColumns": missing},
+            )
+        target = IcebergWriterTarget(
+            catalog=str(mapping.get("catalog") or "iceberg"),
+            namespace=str(mapping.get("schema") or mapping.get("namespace") or ""),
+            table=str(mapping.get("table") or ""),
+            write_mode="append",
+            partition_columns=list(dict.fromkeys([
+                *list(mapping.get("partitionColumns") or []),
+                "_asklake_run_id",
+            ])),
+        )
+        writer = IcebergWriterService()
+        writer.prepare_continuous_append_target(target)
+        baseline_snapshot_id, _committed_at, warehouse_location = writer.current_snapshot(target)
+        storage_path = str(
+            request.output.storage_path
+            or warehouse_location
+            or payload.get("storageLocation")
+        ).strip().rstrip("/")
+        if not storage_path.startswith(("s3://", "s3a://")):
+            raise ApiError(
+                "CONTINUOUS_SQL_BASELINE_STORAGE_INVALID",
+                "The Trino baseline does not expose an S3 Iceberg warehouse location.",
+                status.HTTP_409_CONFLICT,
+                {"datasetId": dataset_id},
+            )
+        checkpoint_path = request.checkpoint_path or f"{storage_path}/_checkpoints/{job_id}"
+
+        live = DashboardLiveRepository(self.db)
+        baseline_freshness = live.get_freshness(dataset_id)
+        if baseline_freshness is None:
+            baseline_commit = backfill_catalog_revision(
+                self.db,
+                dataset_id=dataset_id,
+                run_id=f"continuous-sql-baseline:{job_id}:{baseline_snapshot_id}",
+                storage_location=warehouse_location,
+                storage_format="iceberg",
+                materialization_mode="snapshot",
+                row_count=_catalog_row_count(payload.get("rows")),
+                next_check_after_ms=max(
+                    1_000,
+                    min(60_000, int(request.trigger_interval_seconds) * 500),
+                ),
+            )
+            baseline_revision = int(baseline_commit.revision)
+        else:
+            baseline_revision = int(baseline_freshness.latest_revision or 0)
+
+        source_relation = next(
+            (
+                item
+                for item in compiled_plan.get("relations") or []
+                if isinstance(item, dict) and item.get("mode") == "streaming"
+            ),
+            None,
+        )
+        if not isinstance(source_relation, dict):
+            raise ApiError(
+                "CONTINUOUS_SQL_SOURCE_BINDING_MISSING",
+                "Continuous SQL did not resolve one streaming source Dataset.",
+                status.HTTP_409_CONFLICT,
+            )
+        source_dataset_id = str(source_relation.get("datasetId") or "").strip()
+        source_freshness = live.get_freshness(source_dataset_id)
+        source_revision = int(source_freshness.latest_revision or 0) if source_freshness else 0
+        source_commits = live.list_commits(
+            source_dataset_id,
+            after_revision=max(-1, source_revision - 1),
+            through_revision=source_revision if source_revision > 0 else None,
+        )
+        source_commit = source_commits[-1] if source_commits else None
+        source = source_relation.get("streamingSource") or {}
+        next_offsets = live.list_stream_partition_cursors(
+            source_dataset_id,
+            topic=str(source.get("topic") or "") or None,
+        )
+        static_snapshots = [
+            {
+                "datasetId": str(item.get("datasetId") or ""),
+                "schemaFingerprint": str(item.get("schemaFingerprint") or ""),
+                "snapshotId": str(item.get("snapshotId") or ""),
+            }
+            for item in compiled_plan.get("relations") or []
+            if isinstance(item, dict) and item.get("mode") == "static"
+        ]
+        return (
+            target,
+            storage_path,
+            checkpoint_path,
+            ContinuousSqlIncrementalBindingModel(
+                job_id=job_id,
+                source_dataset_id=source_dataset_id,
+                baseline_dataset_id=dataset_id,
+                baseline_snapshot_id=baseline_snapshot_id,
+                baseline_revision=baseline_revision,
+                source_revision=source_revision,
+                source_run_id=str(source_commit.run_id) if source_commit is not None else None,
+                source_fingerprint=(
+                    str(source_commit.source_fingerprint)
+                    if source_commit is not None and source_commit.source_fingerprint
+                    else None
+                ),
+                source_ranges=(
+                    list(source_commit.source_ranges or []) if source_commit is not None else []
+                ),
+                static_snapshots=static_snapshots,
+                next_offsets=next_offsets,
+                output_revision=baseline_revision,
+                status="ready",
+            ),
+        )
 
     def list(self, actor: ActorContext) -> ContinuousSqlJobList:
         jobs = self.repository.list_jobs(owner=None if actor.is_admin else actor.name)
@@ -315,9 +500,16 @@ class ContinuousSqlService:
             worker_result: dict[str, Any] = {}
             if external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
-                worker_result = self.gateway.manage(job, run, "start")
+                worker_result = self.gateway.manage(
+                    job, run, "start", self._worker_start_options(job)
+                )
             elif external_action is not None:
-                worker_result = self.gateway.manage(job, run, external_action)
+                worker_result = self.gateway.manage(
+                    job,
+                    run,
+                    external_action,
+                    self._worker_start_options(job) if external_action == "start" else None,
+                )
             self._complete_command(job.id, run.run_id if run else None, command.id, request.command, worker_result)
         except ApiError as exc:
             self._fail_command(job.id, run.run_id if run else None, command.id, exc)
@@ -522,6 +714,7 @@ class ContinuousSqlService:
                 trigger_interval_seconds=request.trigger_interval_seconds,
                 static_broadcast_max_rows=self.settings.continuous_sql_static_broadcast_max_rows,
                 static_cache_max_rows=self.settings.continuous_sql_static_cache_max_rows,
+                static_pruning_max_keys=self.settings.continuous_sql_static_pruning_max_keys,
                 max_output_rows_per_input=self.settings.continuous_sql_max_output_rows_per_input,
             )
         except ContinuousSqlValidationError as exc:
@@ -580,6 +773,12 @@ class ContinuousSqlService:
         return run
 
     def _resolve_run_bindings(self, job: ContinuousSqlJobModel) -> list[dict[str, Any]]:
+        incremental = self.repository.get_incremental_binding(job.id)
+        pinned_by_dataset = {
+            str(item.get("datasetId") or ""): item
+            for item in (incremental.static_snapshots if incremental is not None else [])
+            if isinstance(item, dict)
+        }
         bindings: list[dict[str, Any]] = []
         for persisted in job.relation_bindings or []:
             if not isinstance(persisted, dict):
@@ -614,6 +813,16 @@ class ContinuousSqlService:
                         {"datasetId": dataset_id, "column": column},
                     )
             if current.mode == "static":
+                pinned = pinned_by_dataset.get(dataset_id)
+                if pinned is not None:
+                    if not str(pinned.get("snapshotId") or "").strip():
+                        raise ContinuousSqlValidationError(
+                            "CONTINUOUS_SQL_STATIC_SNAPSHOT_MISSING",
+                            "The incremental binding has no pinned static snapshot.",
+                            {"datasetId": dataset_id},
+                        )
+                    bindings.append(dict(pinned))
+                    continue
                 if not current.snapshot_id:
                     raise ContinuousSqlValidationError(
                         "CONTINUOUS_SQL_STATIC_SNAPSHOT_MISSING",
@@ -626,6 +835,36 @@ class ContinuousSqlService:
                     "snapshotId": current.snapshot_id,
                 })
         return bindings
+
+    def _worker_start_options(self, job: ContinuousSqlJobModel) -> dict[str, Any]:
+        binding = self.repository.get_incremental_binding(job.id)
+        options: dict[str, Any] = {
+            "maxOffsetsPerTrigger": int(self.settings.continuous_sql_micro_batch_max_rows),
+        }
+        if binding is None:
+            return options
+        next_offsets = list(binding.next_offsets or [])
+        options["streamPartitionCursors"] = next_offsets
+        starting_offsets: dict[str, dict[str, int]] = {}
+        for item in next_offsets:
+            if not isinstance(item, dict):
+                continue
+            topic = str(item.get("topic") or "").strip()
+            if not topic:
+                continue
+            try:
+                partition = str(int(item.get("partition")))
+                next_offset = int(item.get("nextOffset"))
+            except (TypeError, ValueError):
+                continue
+            starting_offsets.setdefault(topic, {})[partition] = next_offset
+        if starting_offsets:
+            options["initialOffsetPolicy"] = json.dumps(
+                starting_offsets,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        return options
 
     def _require_relation_access(
         self,
@@ -843,7 +1082,7 @@ class ContinuousSqlService:
 
     def _job_schema(self, job: ContinuousSqlJobModel) -> ContinuousSqlJob:
         run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
-        return job_to_schema(job, run)
+        return job_to_schema(job, run, self.repository.get_incremental_binding(job.id))
 
     @staticmethod
     def _invalid_transition(job: ContinuousSqlJobModel, command: str) -> None:
@@ -857,6 +1096,11 @@ class ContinuousSqlService:
                 "observedState": job.observed_state,
             },
         )
+
+
+def _catalog_row_count(value: Any) -> int:
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    return int(digits or 0)
 
 
 def worker_identity_error(
@@ -886,11 +1130,25 @@ def canonical_hash(value: Any) -> str:
 def compiled_plan_with_serving_mode(
     compiled_plan: dict[str, Any],
     serving_mode: str,
+    *,
+    job_id: str | None = None,
+    max_offsets_per_trigger: int | None = None,
 ) -> dict[str, Any]:
     plan_without_hash = {
         key: value for key, value in compiled_plan.items() if key != "planHash"
     }
     plan_without_hash["servingMode"] = serving_mode
+    streaming_source = plan_without_hash.get("streamingSource")
+    if isinstance(streaming_source, dict):
+        streaming_source = dict(streaming_source)
+        if job_id:
+            streaming_source["consumerGroupId"] = f"asklake-continuous-sql-{job_id}"
+        if max_offsets_per_trigger is not None:
+            streaming_source["maxOffsetsPerTrigger"] = max(
+                1,
+                int(max_offsets_per_trigger),
+            )
+        plan_without_hash["streamingSource"] = streaming_source
     return {
         **plan_without_hash,
         "planHash": canonical_hash(plan_without_hash),
