@@ -772,6 +772,38 @@ Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 
 
 `spark_job_run.py`는 배포 경로 호환 façade이고 Kafka bounded offset·MSK IAM·fixture row-count 구현은 `backend/scripts/runtime/spark_job_runtime.py`에 있다. `scripts/verify-eks-workloads.sh`는 façade의 존재와 실제 runtime 구현을 각각 검사해야 하며, 구현 문자열을 façade에 복제해 검증을 통과시키지 않는다. EKS lease와 Kubernetes identity helper를 변경하면 realtime architecture budget과 `tests.test_eks_execution_contract`, `tests.test_eks_runtime_boundary`, `tests.test_runtime_io_ports`, `npm run test:spark-kubernetes`를 함께 실행한다.
 
+Spark Resource Planner를 변경하면 pure planner와 S3 metadata fallback,
+Kubernetes application/recovery identity, terminal retry Plan 유지, Helm의
+`off` 기본값, `balanced-v1`의 384 partition budget, `standard-v1` executor
+profile과 최대 4 schema gate를 함께 검증한다. profile drift와 입력 metadata
+부재는 `enforce`에서도 baseline을 보존해야 한다. EKS에서는 10/100 GB shadow가
+통과하기 전 `enforce` 실험을 시작하지 않는다. 상세 계약은
+[Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
+
+Phase 3 준비는 `prepare-eks-spark-resource-planner-shadow-values.sh`와
+`prepare-eks-spark-resource-planner-shadow-web-values.sh`로 각각 Planner-only
+runtime 후보와 `runtimeConfigRevision`-only Web 후보를 만든다. 두 입력과 출력은
+Git-ignored mode `0600`이어야 한다.
+현재 live profile이나 Spark digest가 `standard-v1`과 formal receipt에 맞지 않으면
+먼저 `prepare-eks-spark-resource-planner-off-values.sh`와
+`prepare-eks-spark-resource-planner-off-web-values.sh`로 Planner를 `off`로 유지한
+image/profile 후보를 만든다. 이 후보는 누락되었거나 이미 승인값과 같은 설정만
+정렬하며 예상 밖 기존 값을 덮어쓰지 않는다.
+`preflight-eks-spark-resource-planner-shadow.sh`는 live/base exact match, image
+receipt, workload health, active Spark 0, 두 Helm server dry-run의 mutation 0을
+확인한다. `ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=off`는 선행 정렬 후보를,
+기본 `shadow`는 shadow 후보를 검사한다. 10/100GB 결과는
+`verify-eks-spark-resource-planner-shadow-evidence.mjs`로 검증한다. 실제 apply,
+image rollout과 각 Spark Run은 별도 승인 경계다. 전체 순서는
+[Phase 3 Shadow runbook](eks-spark-resource-planner-phase3-shadow-runbook.md)을
+따른다.
+
+Live FastAPI와 Collector는 `asklake-runtime-config` release가 소유하는
+`asklake-runtime` ConfigMap을 소비한다. 따라서 Planner mode·정책값·executor
+baseline과 새 Spark runtime digest는 private runtime-config values 한 revision에서
+함께 바꾸고, Backend/Collector image는 별도 `asklake-web` atomic rollout을
+사용한다. 두 release 중 하나만 갱신된 상태에서는 Run을 제출하지 않는다.
+
 동시 bounded fixture 검증은 A가 승인한 MSK group을 먼저 `asklake-runtime-config` release의 `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`에 exact group/table 쌍으로 추가한다. 기본 `asklake-eks-mvp-spark-v1 → eks_mvp_fixture` slot은 항상 포함하고 scale slot은 최대 4개만 더한다. group과 table 중복, wildcard/prefix, 기본 slot 제거, 5개 초과는 Backend와 Spark runtime이 모두 거부한다. 실제 private values를 만들기 전 A의 IAM group 범위 승인이 없으면 기본 slot을 여러 Job에 복제하지 말고 blocker로 남긴다.
 
 Terraform의 Spark MSK group 권한은 `msk_scale_consumer_groups`에 `49d163cfbaf1`부터 필요한 exact 값만 선택한다. 변수 validation은 `scale17-01..04` 외 값과 wildcard를 거부하고, IAM policy는 기본 group ARN과 선택한 group ARN만 `DescribeGroup`/`AlterGroup` resource로 렌더한다. 3개 실험에는 `01..03`만 사용하며 4번째는 3개로 Pending 증거를 만들 수 없을 때 별도 검토 후 추가한다.

@@ -17,7 +17,14 @@ import {
   sparkKubernetesAnnotations,
   sparkKubernetesApplicationName,
 } from "./sparkKubernetesIdentity.mjs";
+import {
+  sparkKubernetesResourcePlan,
+} from "./sparkResourcePlan.mjs";
 export { sparkKubernetesApplicationName } from "./sparkKubernetesIdentity.mjs";
+export {
+  sparkExecutorInstances,
+  SPARK_EXECUTOR_INSTANCES_MAX,
+} from "./sparkResourcePlan.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
@@ -42,7 +49,6 @@ export const SPARK_REST_BRIDGE_GRACE_MS = 30_000;
 export const EKS_MVP_FIXTURE_TOPIC = "asklake.eks-mvp.fixture.v1";
 export const EKS_MVP_FIXTURE_CONSUMER_GROUP = "asklake-eks-mvp-spark-v1";
 export const EKS_MVP_FIXTURE_SLOTS_ENV = "ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON";
-export const SPARK_EXECUTOR_INSTANCES_MAX = 4;
 const EKS_MVP_FIXTURE_ICEBERG_TABLE = "eks_mvp_fixture";
 const EKS_MVP_FIXTURE_MAX_SLOTS = 5;
 
@@ -285,7 +291,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
         environmentVariables: sparkEnvironment,
         jars,
         jobId: job.id,
-        packages,
+        packages, resourcePlan: options.sparkResourcePlan,
         runId, attemptGeneration: options.sparkAttemptGeneration,
       }),
       positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
@@ -470,19 +476,15 @@ function sparkKubernetesPodPlacement() {
 }
 
 export function createSparkKubernetesApplication({
-  appName, attemptGeneration = 1,
-  environmentVariables = {},
-  jars = [],
-  jobId,
-  packages = [],
-  runId,
+  appName, attemptGeneration = 1, environmentVariables = {}, jars = [],
+  jobId, packages = [], resourcePlan, runId,
 }, environment = process.env) {
   const namespace = String(environment.ASKLAKE_SPARK_KUBERNETES_NAMESPACE || "asklake-dev").trim();
   const serviceAccount = String(environment.ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT || "asklake-spark").trim();
   const image = requiredDigestImage(environment);
   const imageDigest = image.slice(image.lastIndexOf("@") + 1);
   const fixtureBatchId = String(environmentVariables.ASKLAKE_KAFKA_FIXTURE_BATCH_ID || "").trim();
-  const executorInstances = sparkExecutorInstances(environment);
+  const { annotations: resourcePlanAnnotations, appliedExecutors: executorInstances } = sparkKubernetesResourcePlan(resourcePlan, environment);
   const normalizedAttemptGeneration = normalizeSparkAttemptGeneration(attemptGeneration);
   const name = sparkKubernetesApplicationName(runId, normalizedAttemptGeneration);
   const runLabel = kubernetesIdentifier(runId).slice(0, 63).replace(/-+$/g, "") || "run";
@@ -511,7 +513,7 @@ export function createSparkKubernetesApplication({
     kind: "SparkApplication",
     metadata: {
       annotations: sparkKubernetesAnnotations({
-        executorInstances, fixtureBatchId, imageDigest, jobId, normalizedAttemptGeneration, runId,
+        executorInstances, fixtureBatchId, imageDigest, jobId, normalizedAttemptGeneration, resourcePlanAnnotations, runId,
       }),
       labels: {
         "app.kubernetes.io/name": "asklake-spark",
@@ -593,23 +595,6 @@ export function createSparkKubernetesApplication({
       type: "Python",
     },
   };
-}
-
-export function sparkExecutorInstances(environment = process.env) {
-  const raw = environment.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES;
-  if (raw === undefined || raw === null || String(raw).trim() === "") return 1;
-  const parsed = Number(raw);
-  if (
-    !Number.isSafeInteger(parsed)
-    || parsed < 1
-    || parsed > SPARK_EXECUTOR_INSTANCES_MAX
-  ) {
-    throw sparkConfigurationError(
-      "ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES "
-      + `must be an integer between 1 and ${SPARK_EXECUTOR_INSTANCES_MAX}.`,
-    );
-  }
-  return parsed;
 }
 
 export function runSparkKubernetesApplication(application, timeoutMs, environment = process.env, options = {}) {

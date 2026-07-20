@@ -26,6 +26,11 @@ data:
   ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES: {{ .Values.backend.config.kafkaAllowedTopicPrefixes | quote }}
   ASKLAKE_SPARK_RUNNER: {{ .Values.backend.config.sparkRunner | quote }}
   ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: {{ .Values.backend.config.sparkExecutionLeaseSeconds | quote }}
+  ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: {{ .Values.backend.config.sparkResourcePlannerMode | quote }}
+  ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: {{ .Values.backend.config.sparkResourceTargetPartitionBytes | int64 | quote }}
+  ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: {{ .Values.backend.config.sparkResourceTargetPartitionsPerExecutor | quote }}
+  ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: {{ .Values.backend.config.sparkResourceMinExecutors | quote }}
+  ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: {{ .Values.backend.config.sparkResourceMaxExecutors | quote }}
   ASKLAKE_SPARK_KUBERNETES_NAMESPACE: {{ .Values.namespace | quote }}
   ASKLAKE_SPARK_KUBERNETES_IMAGE: {{ printf "%s@%s" .Values.sparkApplication.image.repository .Values.sparkApplication.image.digest | quote }}
   ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT: {{ .Values.sparkApplication.serviceAccountName | quote }}

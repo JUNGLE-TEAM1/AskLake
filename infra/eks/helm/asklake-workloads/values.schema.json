@@ -279,7 +279,7 @@
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "sparkResourcePlannerMode", "sparkResourceTargetPartitionBytes", "sparkResourceTargetPartitionsPerExecutor", "sparkResourceMinExecutors", "sparkResourceMaxExecutors", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
           "properties": {
             "aiQueryProvider": {"type": "string", "enum": ["direct", "gateway"]},
             "airflowApiAuthMode": {"type": "string", "enum": ["api_token", "username_password"]},
@@ -295,6 +295,11 @@
             "allowedBuckets": {"type": "string", "minLength": 1},
             "sparkRunner": {"type": "string", "const": "kubernetes"},
             "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            "sparkResourcePlannerMode": {"type": "string", "enum": ["off", "shadow", "enforce"]},
+            "sparkResourceTargetPartitionBytes": {"type": "integer", "const": 134217728},
+            "sparkResourceTargetPartitionsPerExecutor": {"type": "integer", "const": 384},
+            "sparkResourceMinExecutors": {"type": "integer", "const": 1},
+            "sparkResourceMaxExecutors": {"type": "integer", "const": 4},
             "airflowApiBaseUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080$"},
             "airflowDagId": {"type": "string", "const": "asklake_etl_job"},
             "trinoEnabled": {"type": "boolean", "const": true},

@@ -24,6 +24,7 @@ SPARK_KUBERNETES_IMMUTABLE_IDENTITY_FIELDS = (
     "imageDigest",
     "attemptGeneration",
     "driverPodName",
+    "resourcePlanHash",
 )
 SPARK_KUBERNETES_TERMINAL_FAILURE_STATES = frozenset(
     {"FAILED", "SUBMISSION_FAILED"}
@@ -207,7 +208,14 @@ def normalize_spark_kubernetes_execution(
             job_id=job_id,
             run_id=run_id,
         )
-    for key in ("driverPodName", "driverPodPhase", "driverTerminationReason", "driverFinishedAt", "observedAt"):
+    for key in (
+        "driverPodName",
+        "driverPodPhase",
+        "driverTerminationReason",
+        "driverFinishedAt",
+        "observedAt",
+        "resourcePlanHash",
+    ):
         item = str(value.get(key) or "").strip()
         if item:
             normalized[key] = item
@@ -267,6 +275,19 @@ def persist_spark_kubernetes_execution_progress(
     if not isinstance(execution, dict) or execution.get("generation") != generation:
         raise run_execution_lease_lost(job_id, run_id)
     observed = normalize_spark_kubernetes_execution(progress, job_id=job_id, run_id=run_id)
+    resource_plan = execution.get("resourcePlan")
+    expected_plan_hash = (
+        str(resource_plan.get("planHash") or "").strip()
+        if isinstance(resource_plan, dict)
+        else ""
+    )
+    observed_plan_hash = str(observed.get("resourcePlanHash") or "").strip()
+    if expected_plan_hash != observed_plan_hash:
+        raise spark_execution_identity_mismatch(
+            "Spark Kubernetes execution Resource Plan hash does not match the persisted Run.",
+            job_id=job_id,
+            run_id=run_id,
+        )
     current = execution.get("kubernetesExecution")
     if isinstance(current, dict):
         observed = merge_spark_kubernetes_execution(

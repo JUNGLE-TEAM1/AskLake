@@ -42,6 +42,11 @@ backend:
     allowedBuckets: asklake-dev-raw-example,asklake-dev-output-example,asklake-dev-query-results-example
     sparkRunner: kubernetes
     sparkExecutionLeaseSeconds: 60
+    sparkResourcePlannerMode: "off"
+    sparkResourceTargetPartitionBytes: 134217728
+    sparkResourceTargetPartitionsPerExecutor: 384
+    sparkResourceMinExecutors: 1
+    sparkResourceMaxExecutors: 4
     airflowApiBaseUrl: http://airflow-apiserver:8080
     airflowDagId: asklake_etl_job
     trinoEnabled: true

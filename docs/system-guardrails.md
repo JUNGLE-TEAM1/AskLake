@@ -135,3 +135,15 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
   없으면 workload 활성화를 거부한다.
 - rollback은 새 generation과 보존된 checkpoint를 사용하며 checkpoint 삭제·rewind,
   dual-run, 다른 엔진으로 자동 전환을 금지한다.
+
+# EKS Spark Resource Planner promotion guardrail
+
+- 기본 mode는 `off`이며 입력 metadata 부재, unsupported executor profile,
+  Plan hash 또는 runtime ConfigMap revision drift에서는 baseline executor를 유지한다.
+- V1은 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다.
+- private runtime 후보는 Planner 관련 key만, Web 후보는
+  `backend.runtimeConfigRevision`만 변경해야 한다.
+- 10/100GB `shadow` evidence와 `off/1` 복구가 검증되기 전에는 `enforce`로
+  승격하지 않는다.
+- image rollout, runtime/Web Helm mutation과 비용 발생 Spark Run은 각각 별도
+  승인을 요구한다.
