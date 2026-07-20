@@ -127,6 +127,7 @@
     "verify:kafka-continuous-e2e": "node scripts/verify-kafka-continuous-e2e.mjs",
     "verify:kafka-continuous-iceberg": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} scripts/verify-kafka-continuous-iceberg.py",
     "verify:dashboard-live-postgres": "node scripts/run-python-verification.mjs scripts/verify-dashboard-live-postgres.py",
+    "verify:dashboard-job-binding-delivery": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_dashboard_binding_delivery_worker -v",
     "verify:kafka-continuous-soak": "node scripts/verify-kafka-continuous-soak.mjs",
     "verify:etl-e2e-recovery": "node scripts/run-python-verification.mjs scripts/verify-etl-e2e-recovery.py --profile pr",
     "verify:etl-e2e-recovery:release": "node scripts/run-python-verification.mjs scripts/verify-etl-e2e-recovery.py --profile release",

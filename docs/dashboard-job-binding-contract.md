@@ -154,3 +154,17 @@ DashboardBindingDelivery
 - worker는 enabled managed binding의 output Dataset에 기록된 `dataset_revision_commits`만 읽고, `(bindingId, revision)` unique delivery를 만든다.
 - draft/published revision에 존재하는 managed Dataset Widget을 계산해 모든 Widget이 target revision 이상이면 `applied`를 기록한다. 계산 실패 또는 뒤처진 Widget은 Dataset/Job을 rollback하지 않고 `degraded`로 남긴다.
 - `degraded` delivery는 명시적 retry API 호출로만 다시 `pending`이 된다. process 재시작 중 남은 `calculating` delivery는 안전하게 재시도한다.
+
+## 12. Phase 4 EC2 검증 절차
+
+실제 EC2 검증은 feature branch를 `dev`에 반영한 immutable commit으로만 수행한다. 로컬 worktree나 임의 production DB에 직접 수정해 검증하지 않는다.
+
+1. `scripts/deploy.sh status`로 EC2 instance와 `continuous-worker` 상태를 읽기 전용 확인한다.
+2. production Compose를 해당 commit으로 배포하고 metadata migration `0021_dashboard_job_bindings`가 적용됐는지 확인한다.
+3. Batch `replace` output에 binding과 Widget을 만든 뒤 revision, delivery `applied`, Widget `appliedRevision`을 기록한다.
+4. Continuous/Continuous SQL `append`를 두 번 발행하고 `(bindingId, revision)` delivery가 각각 한 행이며 마지막 Widget revision이 최신값인지 확인한다.
+5. `continuous-worker`와 backend를 각각 재시작한 뒤 동일 revision delivery가 중복 생성되지 않는지, stale `calculating`은 재시도되는지 확인한다.
+6. 물리 Dataset 접근 오류를 유도해 delivery만 `degraded`가 되고 Dataset/Job 상태는 성공으로 유지되는지 확인한다. retry API 후 Dataset publication 없이 `applied`가 되는지 확인한다.
+7. detach 후 새 revision을 발행해 추가 delivery가 생기지 않는지 확인하고, 생성한 fixture Job/Dashboard/Dataset만 정리한다.
+
+자동화한 worker regression은 `cd backend && npm run verify:dashboard-job-binding-delivery`이다. 이 명령은 EC2/Spark/Kafka를 변경하지 않으며, 실제 EC2 evidence는 위 순서로 별도 기록한다.
