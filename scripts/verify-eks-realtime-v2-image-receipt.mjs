@@ -68,7 +68,7 @@ for (const [key, component] of Object.entries(componentRepositories)) {
 if (receipt.artifacts?.clickhouseSinkVersion !== '1.4.0') {
   fail('ClickHouse Sink version must remain pinned to 1.4.0');
 }
-if (receipt.artifacts?.clickhouseSinkArchiveSha256 !== 'de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c083') {
+if (receipt.artifacts?.clickhouseSinkArchiveSha256 !== 'de63517a6275b4f112c0375f9246b2a78e8ad1a8fe88b1d096244bfc11981c08') {
   fail('ClickHouse Sink archive checksum does not match the reviewed artifact');
 }
 if (receipt.artifacts?.mskIamAuthVersion !== '2.3.6') {

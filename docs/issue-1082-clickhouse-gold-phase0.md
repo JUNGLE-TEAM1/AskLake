@@ -129,3 +129,21 @@ image pull이나 AWS/EKS mutation은 수행하지 않았다. AMD64 image receipt
 --exclude-standard`, `git diff --check origin/pair1`, JSON/YAML diff의 Airflow·Trino
 hunk 검색, secret signature 검색과 생성물 경로 검색을 사용했다. 문서 안의 Airflow
 및 Trino 언급은 보존·제외 범위를 설명하는 텍스트일 뿐 schema/chart 변경이 아니다.
+
+## 9. 재실행 Phase 0 live read-only 관찰
+
+목표모드 재실행에서 `asklake-dev` context를 변경 없이 조회했다.
+
+- 작업 브랜치: `feat-#1082`, HEAD `6c89de7f`
+- 기준 `origin/pair1`: `69cab941`
+- Helm `asklake-realtime-v2`: deployed revision 27이지만 현재 manifest에 V2 workload object는 없음
+- Realtime V1 worker: desired/ready `1/1`
+- ClickHouse/Keeper/Kafka Connect/V2 Continuous worker: 현재 workload 없음
+- ClickHouse/Keeper PVC: 각각 Bound로 보존
+- ClickHouse/Keeper VolumeSnapshot: 각각 `readyToUse=true`
+- live mutation: 0건
+
+저장소 밖 기존 receipt 두 개는 `linux/amd64` immutable digest 형식이지만 모두
+`gitRevision=0f1a9390...`으로 현재 pair1 기준과 다르다. 따라서 최신 pair1 이미지
+delivery receipt로 교체하기 전에는 배포 입력으로 사용하지 않는다. 로컬 ClickHouse와
+Kafka Connect image는 `arm64`이므로 `linux/amd64` 운영 receipt를 대체하지 않는다.
