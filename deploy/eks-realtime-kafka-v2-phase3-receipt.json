@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase3-api-runtime-activation-gates",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "29fab6a588cad8b979ff14530d03aaa4d8abcaa3",
+  "mode": "static-and-local-contract",
+  "sharedMutationPerformed": false,
+  "activationContract": {
+    "defaultV2Enabled": false,
+    "defaultConsumerOwner": "disabled",
+    "defaultDashboardSync": "polling",
+    "apiAdmissionRequiresBoundedGeneration": true,
+    "exactOneOwnerRequired": true,
+    "automaticCrossEngineFallback": false
+  },
+  "verification": {
+    "helmCutoverPositiveRender": "pass",
+    "helmCutoverMissingApproval": "pass-rejected",
+    "helmCutoverSplitEc2Owner": "pass-rejected",
+    "helmCutoverFencedV1": "pass-rejected",
+    "helmCutoverMissingGeneration": "pass-rejected",
+    "simultaneousV1V2": "pass-rejected",
+    "backendRealtimeFeatureFlags": "14 pass",
+    "controlPlaneOwnership": "pass",
+    "mvpContract": "pass",
+    "gitDiffCheck": "pass"
+  },
+  "liveActivation": {
+    "status": "blocked",
+    "reason": "Phase 2 EKS preflight is blocked until ASKLAKE_EKS_CLUSTER_NAME, matching kubectl context, private values and ECR receipts exist.",
+    "apiRollout": false,
+    "runtimeFlagMutation": false,
+    "ownerTransfer": false,
+    "eksMutation": false
+  },
+  "phase3Ready": false,
+  "productionTransferAllowed": false
+}
