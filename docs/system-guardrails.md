@@ -127,6 +127,16 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 
 # EKS Realtime V1-only guardrail (#1101)
 
+Backend immutable image preflight와 rollout은 live `asklake-web` profile을 먼저 읽고
+`standard`와 `realtime-v1-only`를 서로 다른 경계로 검증한다. `standard`에서는
+FastAPI 2개가 `external_ec2`이고 내부 Continuous process가 0이어야 하며 보존된
+외부 EC2 owner 검증도 통과해야 한다. `realtime-v1-only`에서는 FastAPI 2개가
+`local` control plane과 승인된 동일 owner generation을 사용하고 내부 Continuous
+process는 0이어야 한다. 이때 전용 `asklake-realtime-v1-worker`가 fenced previous
+owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 owner 검증을
+강제하지 않는다. 알 수 없는 profile, generation drift, worker 부재 또는 FastAPI
+내 중복 worker process는 image apply 전에 실패한다.
+
 - 신규 Kafka Continuous Job의 `runtimeEngine`은 `spark_structured_streaming`만 허용한다.
 - EKS realtime worker는 `CONTINUOUS_WORKER_SCOPE=all`이며 Kafka와 Continuous SQL control
   plane을 하나의 owner claim으로 소유한다.
