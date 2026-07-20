@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "issue": 1084,
+  "phase": "phase6-staged-rollout-monitoring-gates",
+  "capturedAt": "2026-07-20",
+  "gitRevision": "de8ac20b11c75a811610652ce70135cfb2950b9d",
+  "mode": "static-rollout-contract",
+  "sharedMutationPerformed": false,
+  "rolloutPolicy": {
+    "defaultV2Enabled": false,
+    "stages": ["shadow", "single-canary", "limited-users", "broader-users"],
+    "productionHaClaimAllowed": false,
+    "automaticCrossEngineFallback": false
+  },
+  "monitoringThresholds": {
+    "connectorFailedTasks": 0,
+    "offsetRegressions": 0,
+    "duplicateSourcePositions": 0,
+    "dataLoss": 0,
+    "dualOwnerClaims": 0,
+    "v2HealthReadyRequired": true,
+    "clickhouseFinalAndCatalogBoundaryMustMatch": true,
+    "finiteBatchSparkRegressionRequired": true
+  },
+  "staticVerification": {
+    "dataPlaneWrapper": "pass",
+    "liveEvidenceNegativeTests": "5 pass",
+    "kafkaIamContractTests": "5 pass",
+    "defaultRuntimeDisabled": "pass",
+    "rolloutRunbookMarkers": "pass",
+    "gitDiffCheck": "pass"
+  },
+  "liveRollout": {
+    "status": "blocked",
+    "reason": "Phase 4/5 live canary and EKS preflight are not complete; no user traffic or production identity was opened.",
+    "shadowApplied": false,
+    "limitedUsersOpened": false,
+    "broaderUsersOpened": false,
+    "monitoringStarted": false
+  },
+  "rollback": {
+    "armed": true,
+    "automatic": false,
+    "triggerOnAnyThresholdBreach": true,
+    "stateDeletionAllowed": false
+  },
+  "phase6Ready": false
+}
