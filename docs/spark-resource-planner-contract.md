@@ -27,6 +27,11 @@ recommendedExecutors = clamp(calculatedExecutors, minExecutors, maxExecutors)
 `appliedExecutors`가 기존 `ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES`와 같고,
 `enforce`에서만 `recommendedExecutors`와 같아진다.
 
+Live EKS에서는 `asklake-runtime-config` release가 Planner 정책,
+`ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES`와 Spark runtime digest를 소유한다.
+Backend/Collector image는 `asklake-web` release가 소유한다. 두 release를 같은
+승인 revision의 image receipt에 맞춘 뒤에만 새 Run을 제출한다.
+
 ## Run 소유권과 재시도
 
 Resource Plan의 source of truth는 RDS
