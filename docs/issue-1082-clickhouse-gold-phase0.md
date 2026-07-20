@@ -349,3 +349,22 @@ preflight가 하나라도 실패하면 apply하지 않는다. cutover 후 장애
 V2 worker를 0으로 유지하고 V1/EC2 canonical owner를 복원하며, PVC·offset·Catalog
 revision을 삭제하거나 reset하지 않는다. 이번 handoff에서도 AWS/EKS mutation,
 Kafka produce, EC2 중단 및 owner 전환은 0건이다.
+
+## 19. Phase 8 최종 종료·인수인계
+
+Phase 8 종료 시점의 최종 상태:
+
+- `feat-#1082` HEAD와 `origin/feat-#1082` 일치: `b5bdd10c`
+- `git diff --check origin/pair1`: 통과
+- `origin/pair1` 대비 변경은 이슈 감사 문서와 V2 checksum verifier/example 3개로 한정
+- untracked 파일, Airflow/Trino schema 교차 오염, secret/private key/credential,
+  생성물·임시 파일: 모두 0
+- 정적 Helm/schema/negative, workload, Secret/TLS, image receipt, Kafka, evidence,
+  운영 런북 검증: 통과
+
+인수인계 상태는 `local-complete / live-approval-pending`이다. 다음 담당자는 먼저
+`asklake-clickhouse-keeper-v2-config` ExternalSecret과 TLS/CA·Pod Identity·private
+values를 준비하고 `deploy-eks-realtime-v2.sh --preflight`를 실행한다. preflight PASS와
+별도 승인 없이는 `--apply`, Kafka fixture produce, EC2 quiesce, owner 전환을 실행하지
+않는다. live 실패 시 V2 worker 0, V1/EC2 canonical owner 복원, PVC·offset·Catalog
+revision 보존을 rollback 기준으로 삼는다.
