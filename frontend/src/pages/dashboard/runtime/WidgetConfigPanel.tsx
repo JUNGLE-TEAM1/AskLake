@@ -67,6 +67,7 @@ import {
 import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigValidation";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
+import { barChartFieldLabels } from "./barChartAxes";
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -611,6 +612,7 @@ export function WidgetConfigPanel({
   }, [editingWidget, initialCreateInputKey, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const barChartFields = barChartFieldLabels(currentConfig.orientation ?? "vertical");
   const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
   const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
   const radialRangeFloor = Math.min(0, radialRangeStart);
@@ -1016,12 +1018,19 @@ export function WidgetConfigPanel({
 
         {(type === "bar_chart" || type === "line_chart" || type === "area_chart") && (
           <>
-            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            {type === "bar_chart" && (
+              <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
+                  {orientationOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+              </WidgetSelectField>
+            )}
+            <WidgetSelectField label={type === "bar_chart" ? barChartFields.category : "X축"} value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
             </WidgetSelectField>
-            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            <WidgetSelectField label={type === "bar_chart" ? barChartFields.value : "Y축"} value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
@@ -1037,11 +1046,6 @@ export function WidgetConfigPanel({
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
-                    ))}
-                </WidgetSelectField>
-                <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
-                    {orientationOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                 </WidgetSelectField>
               </>

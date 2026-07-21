@@ -819,6 +819,8 @@ type DashboardRuntimeResponse = {
 };
 ```
 
+`BarChartWidgetConfig`의 키 역할은 `orientation`과 무관하다. `xKey`는 분류·그룹 기준이고 `yKey`는 집계할 숫자 값이다. `orientation: "vertical"`에서는 분류를 X축, 숫자 값을 Y축에 표시하고, `orientation: "horizontal"`에서는 분류를 Y축, 숫자 값을 X축에 표시한다. 가로 막대를 만들기 위해 `xKey`와 `yKey`를 교환하거나 문자열을 `yKey`로 전송하지 않는다.
+
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
