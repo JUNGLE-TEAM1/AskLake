@@ -13,6 +13,9 @@ from app.repositories.catalog_repository import CatalogRepository, dataset_model
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
+    CatalogDatasetFilterValue,
+    CatalogDatasetFilterValuesRequest,
+    CatalogDatasetFilterValuesResponse,
     CatalogDatasetListResponse,
     CatalogDatasetRowsResponse,
     CatalogDatasetResponse,
@@ -33,6 +36,7 @@ from app.services.lake_storage_service import (
     MaterializedDatasetResult,
 )
 from app.services.dataset_rows_service import read_dataset_rows
+from app.services.dashboard_physical_data import DashboardDatasetQuerySession
 from app.services.governance_enforcement import require_governed_access
 from app.services.sql_service import full_query_run_response_from_payload
 from app.services.materialization_projection import (
@@ -326,6 +330,57 @@ class CatalogService:
             dataset_for_latest_successful_materialization(dataset),
             limit=limit,
             offset=offset,
+        )
+
+    def get_dataset_filter_values(
+        self,
+        dataset_id: str,
+        request: CatalogDatasetFilterValuesRequest,
+        actor: ActorContext | None = None,
+    ) -> CatalogDatasetFilterValuesResponse:
+        actor_context = actor or ActorContext()
+        dataset = self.get_dataset(dataset_id, actor_context)
+        api_path = f"/api/catalog/datasets/{dataset_id}/filter-values/query"
+        require_governed_access(
+            self.repository.db,
+            actor_context,
+            action="query",
+            api_path=api_path,
+            http_method="POST",
+            metadata={"column": request.column, "owner": dataset.owner},
+            resource_id=dataset.id,
+            resource_name=dataset.name,
+            resource_type="dataset",
+        )
+        require_permission(
+            actor_context,
+            "query",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
+        readable_dataset = dataset_for_latest_successful_materialization(dataset)
+        session = DashboardDatasetQuerySession(readable_dataset)
+        try:
+            result = session.read_filter_values(
+                request.column,
+                context_filters=[
+                    item.model_dump(by_alias=True, exclude_none=True, mode="json")
+                    for item in request.context_filters
+                ],
+                search=request.search,
+                limit=request.limit,
+            )
+        finally:
+            session.close()
+        return CatalogDatasetFilterValuesResponse(
+            column=request.column,
+            dataset_id=dataset.id,
+            truncated=bool(result["truncated"]),
+            values=[
+                CatalogDatasetFilterValue(label=str(value), value=value)
+                for value in result["values"]
+            ],
         )
 
     def delete_materialization_run(
