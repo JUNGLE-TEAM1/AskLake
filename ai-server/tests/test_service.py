@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.config import Settings
 from app.llm_client import (
@@ -30,6 +31,14 @@ from app.schemas import (
 
 
 AUTH = {"Authorization": "Bearer test-token"}
+
+
+def test_internal_generation_prompt_has_room_for_multi_dataset_contracts() -> None:
+    request = GenerateRequest.model_validate({"prompt": "x" * 32_000})
+    assert len(request.prompt) == 32_000
+
+    with pytest.raises(ValidationError):
+        GenerateRequest.model_validate({"prompt": "x" * 32_001})
 
 
 def make_settings(**overrides: object) -> Settings:

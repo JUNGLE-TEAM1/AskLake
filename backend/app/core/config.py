@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     local_lake_storage_dir: str | None = None
     openai_api_key: str | None = None
     openai_assistant_enabled: bool = True
-    openai_assistant_model: str = "gpt-4o-mini"
+    openai_assistant_model: str = "gpt-4.1"
     openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
-    openai_query_ai_model: str = "gpt-4.1-mini"
+    openai_query_ai_model: str = "gpt-4.1"
     ai_query_provider: Literal["direct", "gateway"] = "direct"
     ai_gateway_base_url: str | None = None
     ai_gateway_generate_path: str = "/v1/generate"
@@ -96,10 +96,13 @@ class Settings(BaseSettings):
     dashboard_sync_mode: str = "polling"
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False
+    continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"
     latest_static_per_batch_enabled: bool = False
     static_change_backfill_enabled: bool = False
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
     continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
+    continuous_sql_micro_batch_max_rows: int = Field(default=100, ge=1, le=100_000)
+    continuous_sql_static_pruning_max_keys: int = Field(default=100, ge=1, le=10_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
     realtime_event_retention_seconds: int = Field(default=86_400, ge=60, le=604_800)
     realtime_event_payload_max_bytes: int = Field(default=8_192, ge=512, le=65_536)

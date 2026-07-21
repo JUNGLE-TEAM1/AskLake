@@ -137,6 +137,10 @@ export function WidgetFrame({
             </Button>
           </div>
         ) : (
+        <div
+          className="asklake-widget-refresh-content"
+          key={`widget-content-${widget.id}-${liveRevision ?? "static"}`}
+        >
           <WidgetRenderer
             assistantContext={assistantContext}
             widget={widget}
@@ -144,6 +148,7 @@ export function WidgetFrame({
             onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
             onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
           />
+        </div>
         )}
       </div>
       {isAiWorking && (

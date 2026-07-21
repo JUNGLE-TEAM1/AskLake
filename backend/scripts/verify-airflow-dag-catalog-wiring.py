@@ -58,14 +58,60 @@ def load_dag_module():
         return module
 
 
-def main() -> None:
-    module = load_dag_module()
-    dag_source = DAG_PATH.read_text(encoding="utf-8")
+def verify_active_spark_retry(module, conf: dict, spark_result: dict) -> None:
+    spark_attempts = 0
+
+    def active_then_success(request, timeout):
+        nonlocal spark_attempts
+        spark_attempts += 1
+        if spark_attempts < 3:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                409,
+                "Spark still active",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"code":"SPARK_RUN_ALREADY_EXECUTING"}}'),
+            )
+        return FakeResponse(spark_result)
+
+    with patch.dict(
+        os.environ,
+        {
+            "ASKLAKE_EXECUTION_API_BASE_URL": "http://asklake-backend:8080",
+            "ASKLAKE_EXECUTION_API_TOKEN": "phase3-token",
+            "ASKLAKE_SPARK_ACTIVE_RETRY_SECONDS": "1",
+            "ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS": "60",
+        },
+        clear=False,
+    ), patch.object(module.urllib.request, "urlopen", side_effect=active_then_success), patch.object(
+        module.time, "sleep"
+    ) as sleep:
+        resumed_result = module.execute_spark_run(conf)
+
+    assert resumed_result == spark_result
+    assert spark_attempts == 3
+    assert sleep.call_count == 2
+
+
+def verify_task_retry_configuration(dag_source: str) -> None:
+    assert '''@task(
+        task_id="spark_process_write",
+        retries=4,
+        retry_delay=timedelta(seconds=15),
+        retry_exponential_backoff=True,
+        max_retry_delay=timedelta(minutes=2),
+    )''' in dag_source, "spark_process_write must survive transient backend DNS and restart windows."
     assert '''@task(
         task_id="publish_run_result",
         retries=2,
         retry_delay=timedelta(seconds=30),
     )''' in dag_source, "publish_run_result must retry Catalog reconciliation without rerunning Spark."
+
+
+def main() -> None:
+    module = load_dag_module()
+    dag_source = DAG_PATH.read_text(encoding="utf-8")
+    verify_task_retry_configuration(dag_source)
     source_boundary = {
         "broker": "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098",
         "checkpointPath": "s3a://asklake-output/eks-mvp/checkpoints/run-phase3",
@@ -146,6 +192,8 @@ def main() -> None:
     assert published["catalogDatasetId"] == "dataset-phase3"
     assert published["catalogReconciledAt"] == "2026-07-11T00:00:00Z"
     assert "dataset" not in published
+
+    verify_active_spark_retry(module, conf, spark_result)
 
     smoke_conf = {**conf, "executionMode": "smoke"}
     with patch.object(module, "reconcile_catalog_run") as reconcile:

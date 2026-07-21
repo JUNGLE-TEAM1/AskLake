@@ -22,6 +22,7 @@ from app.schemas.dashboard import (
     DashboardStatus,
     DashboardWidgetAggregation,
     DashboardWidgetFormat,
+    DashboardWidgetFilter,
     DashboardWidgetLayout,
     DraftLayoutItem,
     MetricWidgetConfig,
@@ -202,6 +203,12 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
                     title="Revenue",
                     config=MetricWidgetConfig(
                         aggregation=DashboardWidgetAggregation.SUM,
+                        filters=[DashboardWidgetFilter(
+                            id="membership-filter",
+                            column="membership",
+                            operator="eq",
+                            value="vip",
+                        )],
                         value_key="value",
                         format=DashboardWidgetFormat.CURRENCY,
                     ),
@@ -220,6 +227,8 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
             )
             self.assertEqual(widget.config.aggregation, DashboardWidgetAggregation.SUM)
             self.assertEqual(widget.config.format, DashboardWidgetFormat.CURRENCY)
+            self.assertEqual(widget.config.filters[0].column, "membership")
+            self.assertEqual(widget.config.filters[0].value, "vip")
             self.assertEqual(widget.data, [{"value": 7}])
 
             published = service.publish_dashboard(self.dashboard_id, actor)
@@ -249,6 +258,8 @@ class DashboardRuntimePersistenceTests(unittest.TestCase):
             published_widget = published_widgets[0]
             self.assertEqual(published_runtime.mode, DashboardRuntimeMode.PUBLISHED)
             self.assertTrue(published_runtime.dashboard.has_published_revision)
+            self.assertEqual(published_widget.config.filters[0].column, "membership")
+            self.assertEqual(published_widget.config.filters[0].value, "vip")
             self.assertEqual(
                 published_widget.layout.model_dump(by_alias=True, exclude_none=True),
                 {"x": 2, "y": 3, "w": 6, "h": 4},

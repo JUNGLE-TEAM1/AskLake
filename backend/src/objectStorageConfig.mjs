@@ -7,6 +7,11 @@ function fieldValue(fields, label) {
     : "";
 }
 
+function credentialFieldValue(fields, label) {
+  const value = fieldValue(fields, label);
+  return /^(?:\*+|•+|●+|·+|\[?redacted\]?|masked)$/i.test(value) ? "" : value;
+}
+
 function parseBoolean(value, fallback) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized) return fallback;
@@ -30,7 +35,12 @@ export function objectStorageProvider(fields = []) {
     || MINIO_PROVIDER;
   const normalized = configured.trim().toLowerCase();
   if (["aws", "amazon s3", "s3"].includes(normalized)) return AWS_PROVIDER;
-  if (["minio", "minio/s3"].includes(normalized)) return MINIO_PROVIDER;
+  if ([
+    "minio",
+    "minio/s3",
+    "minio / s3 compatible",
+    "minio/s3 compatible",
+  ].includes(normalized)) return MINIO_PROVIDER;
   throw new Error(`Unsupported object storage provider: ${configured}`);
 }
 
@@ -56,10 +66,10 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
   );
 
   const accessKeyId = isMinio
-    ? fieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || ""
+    ? credentialFieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || ""
     : "";
   const secretAccessKey = isMinio
-    ? fieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || ""
+    ? credentialFieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || ""
     : "";
 
   return {
@@ -69,6 +79,25 @@ export function resolveObjectStorageConfig(fields = [], { docker = false } = {})
     provider,
     region,
     secretAccessKey,
+  };
+}
+
+// Spark REST submissions cannot carry storage secrets.  The driver therefore
+// inherits credentials from the worker process.  Local MinIO deployments may
+// deliberately expose those same credentials through the standard AWS SDK
+// environment while using an S3-compatible endpoint, so credential identity
+// checks must understand both environment naming conventions.
+export function resolveInheritedObjectStorageCredentials(fields = [], { docker = false } = {}) {
+  const config = resolveObjectStorageConfig(fields, { docker });
+  if (config.accessKeyId || config.secretAccessKey) {
+    return {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    };
+  }
+  return {
+    accessKeyId: String(process.env.AWS_ACCESS_KEY_ID || "").trim(),
+    secretAccessKey: String(process.env.AWS_SECRET_ACCESS_KEY || "").trim(),
   };
 }
 
@@ -108,6 +137,17 @@ export function objectStorageDockerEnv(fields = []) {
     }
   }
   return entries.filter(([, value]) => value !== undefined && value !== null && String(value) !== "");
+}
+
+export function objectStorageDockerEnvWithoutCredentials(fields = []) {
+  const credentialNames = new Set([
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+  ]);
+  return objectStorageDockerEnv(fields).filter(([name]) => !credentialNames.has(name));
 }
 
 export function toDockerEnvArgs(entries) {

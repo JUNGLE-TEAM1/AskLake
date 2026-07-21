@@ -107,3 +107,55 @@ SELECT
 FROM ranked
 GROUP BY rating_count_decile
 ORDER BY rating_count_decile;
+
+-- 7. Category purchase-click intent
+SELECT
+  p.category,
+  SUM(e.event_type = 'product_click') AS clicks,
+  SUM(e.event_type = 'add_to_cart') AS carts,
+  SUM(e.event_type = 'purchase_click') AS purchase_clicks,
+  ROUND(100.0 * SUM(e.event_type = 'add_to_cart') /
+        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_cart_pct,
+  ROUND(100.0 * SUM(e.event_type = 'purchase_click') /
+        NULLIF(SUM(e.event_type = 'product_click'), 0), 2) AS click_to_purchase_pct
+FROM click_events e
+JOIN products p ON p.product_id = e.product_id
+GROUP BY p.category
+ORDER BY click_to_purchase_pct DESC;
+
+-- 8. Daily event counts in long form
+WITH daily AS (
+  SELECT
+    SUBSTR(event_time, 1, 10) AS event_date,
+    SUM(event_type = 'product_impression') AS impressions,
+    SUM(event_type = 'product_click') AS clicks,
+    SUM(event_type = 'add_to_cart') AS carts,
+    SUM(event_type = 'purchase_click') AS purchase_clicks
+  FROM click_events
+  GROUP BY SUBSTR(event_time, 1, 10)
+)
+SELECT event_date, 'impressions' AS metric_name, impressions AS metric_value FROM daily
+UNION ALL
+SELECT event_date, 'clicks', clicks FROM daily
+UNION ALL
+SELECT event_date, 'carts', carts FROM daily
+UNION ALL
+SELECT event_date, 'purchase_clicks', purchase_clicks FROM daily
+ORDER BY event_date, metric_name;
+
+-- 9. Daily funnel rates
+SELECT
+  SUBSTR(event_time, 1, 10) AS event_date,
+  SUM(event_type = 'product_impression') AS impressions,
+  SUM(event_type = 'product_click') AS clicks,
+  SUM(event_type = 'add_to_cart') AS carts,
+  SUM(event_type = 'purchase_click') AS purchase_clicks,
+  ROUND(100.0 * SUM(event_type = 'product_click') /
+        NULLIF(SUM(event_type = 'product_impression'), 0), 2) AS ctr_pct,
+  ROUND(100.0 * SUM(event_type = 'add_to_cart') /
+        NULLIF(SUM(event_type = 'product_click'), 0), 2) AS click_to_cart_pct,
+  ROUND(100.0 * SUM(event_type = 'purchase_click') /
+        NULLIF(SUM(event_type = 'add_to_cart'), 0), 2) AS cart_to_purchase_click_pct
+FROM click_events
+GROUP BY SUBSTR(event_time, 1, 10)
+ORDER BY event_date;

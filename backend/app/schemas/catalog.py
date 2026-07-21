@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from app.schemas.common import CamelModel, CursorPageMeta
+from app.schemas.dashboard import DashboardWidgetFilter
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
@@ -195,6 +196,28 @@ class CatalogDatasetRowsResponse(CamelModel):
     returned_rows: int
     row_count: int
     rows: list[list[str]]
+
+
+class CatalogDatasetFilterValuesRequest(CamelModel):
+    column: str = Field(min_length=1, max_length=255)
+    search: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=50, ge=1, le=100)
+    context_filters: list[DashboardWidgetFilter] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+
+class CatalogDatasetFilterValue(CamelModel):
+    label: str
+    value: Any
+
+
+class CatalogDatasetFilterValuesResponse(CamelModel):
+    column: str
+    dataset_id: str
+    truncated: bool = False
+    values: list[CatalogDatasetFilterValue] = Field(default_factory=list)
 
 
 class VerifyCatalogUniqueKeyRequest(CamelModel):

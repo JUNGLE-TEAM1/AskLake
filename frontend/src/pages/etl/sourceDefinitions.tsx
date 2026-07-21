@@ -108,7 +108,7 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
       info: "",
     },
     "File / S3": {
-      title: "Amazon S3 연결 설정",
+      title: `${OBJECT_STORAGE_PROVIDER_LABEL} 연결 설정`,
       description: OBJECT_STORAGE_IS_AWS
         ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
         : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
@@ -128,7 +128,7 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
       logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
-      assetsTitle: "Amazon S3 파일 탐색",
+      assetsTitle: `${OBJECT_STORAGE_PROVIDER_LABEL} 파일 탐색`,
       assets: [],
       previewTitle: "데이터 미리보기",
       previewNote: "파일을 선택하면 일부 데이터를 가져와 표시합니다.",

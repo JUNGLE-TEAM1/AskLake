@@ -17,6 +17,7 @@ class LoginRequest(CamelModel):
 
 class AuthSessionResponse(CamelModel):
     authenticated: bool
+    public_signup_enabled: bool
     user: CurrentUserResponse | None = None
 
 

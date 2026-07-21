@@ -41,6 +41,7 @@ Catalog terminal publication은 `datasetId`, materialization version, storage lo
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6b | P1 | `GET /api/catalog/datasets/{datasetId}/rows` | 최신 성공 materialization sample page 조회 |
+| 6d | P1 | `POST /api/catalog/datasets/{datasetId}/filter-values/query` | Dashboard 위젯 필터의 bounded distinct 값 조회 |
 | 6c | P1 | `GET /api/catalog/datasets/{datasetId}/deletion-impact`, `DELETE /api/catalog/datasets/{datasetId}`, `GET /api/catalog/dataset-deletions/{deletionId}` | 목록 직접 Dataset 삭제 영향도·작업 상태 |
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
@@ -194,6 +195,7 @@ Resource/action 기준:
 | `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
 | `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
 | `GET /api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 상세 열람 후 실제 row를 query하므로 두 검사를 모두 통과 |
+| `POST /api/catalog/datasets/{datasetId}/filter-values/query` | `view` + `query` | Dataset schema와 물리 데이터에서 필터 후보값을 조회 |
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
@@ -940,7 +942,7 @@ Continuous widget은 이 batch cache를 거치지 않습니다. 기존 `dashboar
 - 이후 전체 누적 기준 `count`/`sum`/`avg`는 revision 한 개씩 `_asklake_run_id = commit.run_id`인 행만 Trino 집계해 `calculation_state`에 합치고, 실제로 처리한 revision까지만 같은 transaction으로 저장합니다. row가 존재하는 commit의 delta 집계가 비어 있으면 revision만 전진시키지 않고 같은 Catalog snapshot 전체 재계산으로 fallback합니다. 다음 요청은 그 다음 revision부터 이어갑니다.
 - backfill/legacy/non-delta revision, `min`/`max`, table, revision gap, 내부 run ID가 없는 과거 table, 10,000개 초과 group은 Catalog snapshot 전체를 재계산합니다. snapshot commit의 누적 table을 단일 delta처럼 state에 더하거나 기존 state를 부분 결과로 reset하지 않습니다.
 - Iceberg full 계산은 Trino query timeout 경계를 적용합니다. 매우 큰 최초 baseline은 후속 aggregate snapshot/bootstrap이 필요합니다. 전환 전 file-backed full 계산은 기본 256 objects, 512 MiB, 15초 원격 scan 경계를 적용하며, 미게시 batch를 포함할 수 있는 raw `_batches` wildcard로 우회하지 않습니다.
-- 최근 N분·슬라이딩 시간창과 만료 행 차감은 이 계산 계약에 포함하지 않습니다.
+- 날짜 차원의 `windowDays`는 최신 bucket 기준으로 만료 aggregate bucket을 상태에서 제거합니다. 행 단위 임의 슬라이딩 window는 지원하지 않습니다.
 - 결과와 `applied_revision`은 한 transaction으로 저장합니다.
 - 계산 시작 시 Catalog row를 먼저, freshness row를 다음으로 잠급니다. ETL commit과 같은 순서이고 full query를 Catalog Iceberg snapshot에 고정하므로 물리 데이터와 revision이 서로 다른 시점으로 섞이지 않습니다.
 - 계산이 실패하면 이전 `result_payload`/`applied_revision`을 유지합니다. 새 calculation version 계산이 실패한 경우에도 같은 widget·같은 dataset의 직전 성공 버전만 표시 fallback으로 사용합니다. 다른 dataset의 과거 결과는 반환하지 않습니다.
@@ -1685,7 +1687,7 @@ Kafka Engine table은 source payload를 `JSONEachRow`로 추정하지 않고 메
 
 pause는 Kafka table과 ingest/JOIN materialized view만 제거하고 안정적인 consumer group 이름, raw/output/static table을 보존한다. pause 중 topic에 쌓인 event는 resume에서 같은 consumer group offset 뒤부터 처리한다. Catalog Dataset은 raw offset과 query 가능한 output row가 확인된 첫 publication 이후에만 생성되며, start 응답이나 빈 table 생성만으로 게시 완료로 간주하지 않는다.
 
-`triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL validate/create request에서 생략하면 5초다. 기존 persisted Job의 주기와 일반 Kafka Continuous 기본값은 변경하지 않는다. 이 값은 micro-batch 시작 주기이며 end-to-end 반영 시간에는 Spark JOIN, Iceberg commit, Trino exact-count, Catalog/Dashboard publication이 추가된다.
+`triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL validate/create request에서 생략하면 10초다. 기존 persisted Job의 주기와 일반 Kafka Continuous 기본값은 변경하지 않는다. 이 값은 micro-batch 시작 주기이며 end-to-end 반영 시간에는 Spark JOIN, Iceberg commit, Trino exact-count, Catalog/Dashboard publication이 추가된다.
 
 새 Continuous SQL output Iceberg table의 partition spec에는 사용자 schema에 노출하지 않는 `_asklake_run_id` identity partition을 추가한다. publication의 exact snapshot row-count와 Dashboard revision delta는 이 partition을 조건으로 해당 batch file만 가지치기할 수 있다. 이미 생성된 output table은 자동으로 partition evolution하지 않고 기존 spec을 유지하며, 이 경우에도 exact `_asklake_run_id` 검증 계약은 그대로 유지된다.
 

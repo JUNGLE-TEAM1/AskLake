@@ -71,7 +71,9 @@ from app.services.dashboard_physical_data import (
     dashboard_source_config,
     dashboard_widget_supports_incremental_merge,
     merge_dashboard_aggregate_states,
+    prune_dashboard_aggregate_state,
 )
+from app.services.dashboard_prepared_result import prepared_live_widget_response
 from app.services.dashboard_realtime_bridge import (
     append_dashboard_published_event,
     dashboard_datetime_to_iso,
@@ -102,10 +104,13 @@ class DashboardRuntimeService:
         catalog_repository: CatalogRepository,
         live_repository: DashboardLiveRepository | None = None,
         batch_result_repository: DashboardBatchResultRepository | None = None,
+        *,
+        prepared_live_results_only: bool = True,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.live_repository = live_repository
+        self.prepared_live_results_only = prepared_live_results_only
         repository_db = getattr(repository, "db", None)
         self.batch_result_repository = batch_result_repository or (
             DashboardBatchResultRepository(repository_db)
@@ -796,10 +801,14 @@ class DashboardRuntimeService:
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
         dataset_id = str(widget.dataset_id)
-        # ETL publishes Catalog metadata and freshness in one transaction while
-        # locking Catalog first. Use the same lock order so a widget can never
-        # pair an old S3 run list with a newer applied revision.
-        payload = self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        # Browser refreshes only read the last prepared result and must never
+        # wait behind a background calculation's row locks. Calculating workers
+        # retain the Catalog -> freshness -> result lock order.
+        payload = (
+            self.catalog_repository.get_dataset_payload(dataset_id)
+            if self.prepared_live_results_only
+            else self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        )
         catalog_payloads[dataset_id] = payload
         if payload is None:
             return self._live_widget_response(
@@ -811,10 +820,11 @@ class DashboardRuntimeService:
                 },
                 data=[],
             )
-
-        freshness = self.live_repository.get_freshness(dataset_id, for_update=True)
+        freshness = self.live_repository.get_freshness(
+            dataset_id,
+            for_update=not self.prepared_live_results_only,
+        )
         latest_revision = int(freshness.latest_revision or 0) if freshness is not None else 0
-
         if dataset_id not in session_errors:
             try:
                 dataset = dataset_with_persisted_permission_grants(
@@ -848,7 +858,6 @@ class DashboardRuntimeService:
                 config={**config, "error": error_code, "errorMessage": error_message},
                 data=[],
             )
-
         calculation_version = self._widget_calculation_version(
             widget_type,
             dataset_id,
@@ -858,13 +867,18 @@ class DashboardRuntimeService:
         saved = self.live_repository.get_widget_result(
             widget.id,
             calculation_version,
-            for_update=True,
+            for_update=not self.prepared_live_results_only,
         )
         saved_payload = dict(saved.result_payload or {}) if saved is not None else None
         saved_state = dict(saved.calculation_state or {}) if saved is not None else None
         saved_revision = int(saved.applied_revision or 0) if saved is not None else None
         saved_calculated_at = saved.calculated_at if saved is not None else None
         source_config = dashboard_source_config(config)
+        if self.prepared_live_results_only:
+            return prepared_live_widget_response(
+                self.live_repository, widget, config, calculation_version,
+                saved_payload, saved_revision, saved_calculated_at,
+            )
         if saved is not None and int(saved.applied_revision or 0) >= latest_revision:
             self.live_repository.db.commit()
             return self._live_widget_response(
@@ -875,7 +889,6 @@ class DashboardRuntimeService:
                 calculation_version=calculation_version,
                 calculated_at=saved_calculated_at,
             )
-
         computed_result: dict[str, Any] | None = None
         computed_state: dict[str, Any] = {}
         calculation_mode = "full"
@@ -907,7 +920,6 @@ class DashboardRuntimeService:
                     remote_budget=remote_budget, expected_binding_epoch=_binding_epoch(freshness),
                 )
                 calculation_mode = "full"
-
             persisted = self.live_repository.save_widget_result(
                 widget_id=widget.id,
                 calculation_version=calculation_version,
@@ -1010,6 +1022,7 @@ class DashboardRuntimeService:
         try:
             state = session.read_aggregate_state(widget_type.value, config)
             if state is not None:
+                state = prune_dashboard_aggregate_state(state)
                 return dashboard_result_from_aggregate_state(state), state
             return session.read_widget(widget_type.value, config), {}
         finally:

@@ -17,13 +17,33 @@ export type DashboardRuntimeWidgetType =
   | "heatmap_chart"
   | "treemap_chart";
 export type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
-export type DashboardWidgetDateUnit = "day" | "month" | "year";
+export type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 export type DashboardWidgetPlaceholderKind = "visualization_request" | "text";
+export type DashboardWidgetFilterOperator =
+  | "eq"
+  | "in"
+  | "contains"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "between"
+  | "is_null"
+  | "is_not_null";
+export type DashboardWidgetFilterValue = string | number | boolean;
+
+export type DashboardWidgetFilter = {
+  column: string;
+  id: string;
+  operator: DashboardWidgetFilterOperator;
+  value?: DashboardWidgetFilterValue;
+  values?: DashboardWidgetFilterValue[];
+};
 
 export type DashboardWidgetColorConfig = {
   colors: string[];
@@ -35,6 +55,7 @@ export type DashboardWidgetConfigBase = {
   description?: string;
   error?: string;
   errorMessage?: string;
+  filters?: DashboardWidgetFilter[];
   placeholderKind?: DashboardWidgetPlaceholderKind;
   prompt?: string;
   sourceConfig?: Record<string, unknown>;

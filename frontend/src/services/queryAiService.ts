@@ -22,6 +22,18 @@ export type QueryAiSuggestion = {
   generationAttempts?: number;
   regenerationCount?: number;
   generatorVersion?: string;
+  joinEvidence?: Array<{
+    source: string;
+    relationshipType: string;
+    leftDatasetId: string;
+    leftDatasetName: string;
+    rightDatasetId: string;
+    rightDatasetName: string;
+    columnPairs: Array<{
+      leftColumn: string;
+      rightColumn: string;
+    }>;
+  }>;
   promptVersion?: string;
   mode: QueryAiMode;
   requestId: string;

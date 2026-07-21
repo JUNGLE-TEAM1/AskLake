@@ -17,6 +17,9 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
 from app.repositories.dashboard_live_repository import (
     STREAM_COMMIT_KIND,
+    DashboardLiveRepository,
+    kafka_source_fingerprint,
+    normalize_kafka_source_ranges,
     save_catalog_dataset_and_revision,
 )
 from app.schemas.iceberg import IcebergWriterTarget
@@ -49,7 +52,30 @@ class ContinuousSqlPublicationService:
     ) -> ContinuousSqlBatchModel:
         evidence = validate_publication_identity(job, run, publication)
         batch = self._stage_manifest_batch(job, run, evidence)
-        if batch.stage == "dashboard_ready" or evidence["rowCount"] == 0:
+        source_commits = self._source_commits_for_evidence(job, evidence)
+        if source_commits is False:
+            batch.last_error_code = "CONTINUOUS_SQL_SOURCE_COMMIT_PENDING"
+            batch.last_error_message = "Waiting for the matching Kafka Dataset revision commit."
+            self.db.add(batch)
+            self.db.commit()
+            return batch
+        if source_commits == [] and batch.stage != "dashboard_ready":
+            batch.stage = "failed"
+            batch.last_error_code = "CONTINUOUS_SQL_SOURCE_RANGE_ALREADY_APPLIED"
+            batch.last_error_message = "This Kafka source fingerprint was already applied."
+            self.db.add(batch)
+            self.db.commit()
+            return batch
+        if batch.stage == "dashboard_ready":
+            self._advance_incremental_binding(
+                job,
+                evidence,
+                source_commits,
+                int(batch.dataset_revision or 0),
+            )
+            return batch
+        if evidence["rowCount"] == 0:
+            self._advance_incremental_binding(job, evidence, source_commits, 0)
             return batch
 
         verified = self._verify_output_commit(job, run, evidence)
@@ -179,7 +205,101 @@ class ContinuousSqlPublicationService:
         batch.last_error_message = None
         self.db.add(batch)
         self.db.commit()
+        self._advance_incremental_binding(
+            job,
+            evidence,
+            self._source_commits_for_evidence(job, evidence),
+            int(commit_record.revision),
+        )
         return batch
+
+    def _source_commits_for_evidence(
+        self,
+        job: ContinuousSqlJobModel,
+        evidence: dict[str, Any],
+    ) -> list[Any] | bool | None:
+        binding = self.repository.get_incremental_binding(job.id)
+        if binding is None:
+            return None
+        target_ranges = normalize_kafka_source_ranges(
+            evidence.get("sourceRanges"),
+            required=True,
+        )
+        if (
+            binding.source_fingerprint
+            and binding.source_fingerprint == kafka_source_fingerprint(target_ranges)
+        ):
+            return []
+        live = DashboardLiveRepository(self.db, ensure_schema=False)
+        commits = live.list_commits(
+            binding.source_dataset_id,
+            after_revision=int(binding.source_revision or 0),
+        )
+        selected: list[Any] = []
+        collected: list[dict[str, Any]] = []
+        for commit in commits:
+            if str(commit.commit_kind or "").strip().lower() != STREAM_COMMIT_KIND:
+                continue
+            selected.append(commit)
+            collected.extend(list(commit.source_ranges or []))
+            coverage = _source_range_coverage(collected)
+            target = _source_range_coverage(target_ranges)
+            if _coverage_contains(coverage, target):
+                return selected
+        return False
+
+    def _advance_incremental_binding(
+        self,
+        job: ContinuousSqlJobModel,
+        evidence: dict[str, Any],
+        source_commits: list[Any] | bool | None,
+        output_revision: int,
+    ) -> None:
+        if source_commits is None:
+            return
+        if source_commits is False:
+            raise ContinuousSqlPublicationError("CONTINUOUS_SQL_SOURCE_COMMIT_PENDING")
+        if not source_commits:
+            return
+        binding = self.repository.get_incremental_binding(job.id, for_update=True)
+        if binding is None:
+            return
+        source_ranges = normalize_kafka_source_ranges(
+            evidence.get("sourceRanges"),
+            required=True,
+        )
+        next_offsets = _merge_next_offsets(
+            list(binding.next_offsets or []),
+            _next_offsets(source_ranges),
+        )
+        completed_commit = next(
+            (
+                commit
+                for commit in reversed(source_commits)
+                if _source_ranges_consumed(commit.source_ranges, next_offsets)
+            ),
+            None,
+        )
+        if (
+            completed_commit is not None
+            and int(completed_commit.revision) > int(binding.source_revision or 0)
+        ):
+            binding.source_revision = int(completed_commit.revision)
+            binding.source_run_id = str(completed_commit.run_id)
+        binding.source_fingerprint = kafka_source_fingerprint(source_ranges)
+        binding.source_ranges = source_ranges
+        binding.next_offsets = next_offsets
+        binding.output_revision = max(int(binding.output_revision or 0), output_revision)
+        binding.processed_rows = int(binding.processed_rows or 0) + _source_row_count(source_ranges)
+        binding.processed_static_keys = int(binding.processed_static_keys or 0) + min(
+            _source_row_count(source_ranges),
+            int(job.compiled_plan.get("staticPruningMaxKeys") or 100),
+        )
+        binding.status = "ready"
+        binding.last_error_code = None
+        binding.last_error_message = None
+        self.db.add(binding)
+        self.db.commit()
 
     def _catalog_dataset(
         self,
@@ -374,3 +494,104 @@ def validate_publication_identity(
 def parse_display_count(value: Any) -> int:
     digits = "".join(character for character in str(value or "") if character.isdigit())
     return int(digits or 0)
+
+
+def _source_range_coverage(
+    source_ranges: list[dict[str, Any]],
+) -> tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...]:
+    grouped: dict[tuple[str, int], list[tuple[int, int]]] = {}
+    for item in normalize_kafka_source_ranges(source_ranges, required=True):
+        grouped.setdefault((str(item["topic"]), int(item["partition"])), []).append(
+            (int(item["startOffset"]), int(item["endOffset"]))
+        )
+    result: list[tuple[str, int, tuple[tuple[int, int], ...]]] = []
+    for (topic, partition), ranges in sorted(grouped.items()):
+        merged: list[tuple[int, int]] = []
+        for start_offset, end_offset in sorted(ranges):
+            if merged and start_offset == merged[-1][1]:
+                merged[-1] = (merged[-1][0], end_offset)
+            else:
+                merged.append((start_offset, end_offset))
+        result.append((topic, partition, tuple(merged)))
+    return tuple(result)
+
+
+def _coverage_contains(
+    available: tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...],
+    target: tuple[tuple[str, int, tuple[tuple[int, int], ...]], ...],
+) -> bool:
+    available_map = {
+        (topic, partition): ranges
+        for topic, partition, ranges in available
+    }
+    return all(
+        any(
+            available_start <= target_start and available_end >= target_end
+            for available_start, available_end in available_map.get(
+                (topic, partition),
+                (),
+            )
+        )
+        for topic, partition, ranges in target
+        for target_start, target_end in ranges
+    )
+
+
+def _source_row_count(source_ranges: list[dict[str, Any]]) -> int:
+    return sum(
+        int(item["endOffset"]) - int(item["startOffset"])
+        for item in normalize_kafka_source_ranges(source_ranges, required=True)
+    )
+
+
+def _next_offsets(source_ranges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    next_by_partition: dict[tuple[str, int], int] = {}
+    for item in normalize_kafka_source_ranges(source_ranges, required=True):
+        key = (str(item["topic"]), int(item["partition"]))
+        next_by_partition[key] = max(
+            next_by_partition.get(key, 0),
+            int(item["endOffset"]),
+        )
+    return [
+        {"topic": topic, "partition": partition, "nextOffset": next_offset}
+        for (topic, partition), next_offset in sorted(next_by_partition.items())
+    ]
+
+
+def _merge_next_offsets(
+    previous: list[dict[str, Any]],
+    current: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    next_by_partition: dict[tuple[str, int], int] = {}
+    for item in [*previous, *current]:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("topic") or ""), int(item.get("partition") or 0))
+        if not key[0]:
+            continue
+        next_by_partition[key] = max(
+            next_by_partition.get(key, 0),
+            int(item.get("nextOffset") or 0),
+        )
+    return [
+        {"topic": topic, "partition": partition, "nextOffset": next_offset}
+        for (topic, partition), next_offset in sorted(next_by_partition.items())
+    ]
+
+
+def _source_ranges_consumed(
+    source_ranges: list[dict[str, Any]],
+    next_offsets: list[dict[str, Any]],
+) -> bool:
+    cursors = {
+        (str(item.get("topic") or ""), int(item.get("partition") or 0)): int(
+            item.get("nextOffset") or 0
+        )
+        for item in next_offsets
+        if isinstance(item, dict)
+    }
+    return all(
+        cursors.get((str(item["topic"]), int(item["partition"])), -1)
+        >= int(item["endOffset"])
+        for item in normalize_kafka_source_ranges(source_ranges, required=True)
+    )

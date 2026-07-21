@@ -10,6 +10,7 @@ import {
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
   planDashboardRealtimeRefresh,
+  publishedDashboardUsesManualRefresh,
   staleDashboardWidgetIds,
 } from "../src/pages/dashboard/runtime/dashboardLiveRefresh.ts";
 import type { RealtimeDatasetEventV2 } from "../src/services/realtimeEvents.ts";
@@ -33,6 +34,10 @@ function metricWidget(overrides: Partial<Extract<DashboardRuntimeWidget, { type:
     ...overrides,
   } satisfies Extract<DashboardRuntimeWidget, { type: "metric" }>;
 }
+
+test("published dashboards apply prepared revisions only on manual refresh", () => {
+  assert.equal(publishedDashboardUsesManualRefresh(), true);
+});
 
 function publishedRuntime(widgets: DashboardRuntimeWidget[] = [metricWidget()]): DashboardRuntimeResponse {
   return {

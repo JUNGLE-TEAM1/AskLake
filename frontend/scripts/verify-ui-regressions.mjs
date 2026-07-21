@@ -205,15 +205,17 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
+    name: "Authentication UI uses the backend signup policy and hides demo credentials by default",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
       /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
-      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /publicSignupEnabled: boolean;/,
       /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
+      /data-testid="auth-signup-tab"/,
       /demoDefaultsEnabled\s*\? <small>Admin/,
     ],
+    forbiddenPatterns: [/VITE_AUTH_PUBLIC_SIGNUP/],
   },
   {
     name: "Authentication failures stay server-side instead of creating browser-local users",
@@ -1354,6 +1356,12 @@ const checks = [
       /minStepsBetweenThumbs=\{1\}/,
       /onValueChange=\{\(\[min = 0, max = 100\]\) => patchCurrentConfig\(\{ min, max \}\)\}/,
       /value=\{\[radialRangeStart, radialRangeEnd\]\}/,
+    ],
+  },
+  {
+    name: "Dashboard radial range validation remains in the shared widget validator",
+    file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
+    patterns: [
       /최솟값은 최댓값보다 작아야 합니다/,
     ],
   },
@@ -1549,7 +1557,7 @@ const checks = [
     patterns: [
       /const nextDatasetId = patch\.datasetId \?\? widget\.datasetId \?\? selectedDatasetId \?\? null;/,
       /const nextData = cloneDatasetRows\(dashboardDatasets, nextDatasetId\);/,
-      /activeDatasetId: selectedDatasetId,/,
+      /activeDatasetId:\s*inspectorMode === "assistant"\s*\?\s*assistantDatasetIds\[0\] \?\? null\s*:\s*selectedDatasetId,/,
     ],
   },
   {
@@ -1565,14 +1573,14 @@ const checks = [
     name: "Widget config updates include selected dataset rows",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
-      /function cloneDatasetRows\(dataset: DashboardDatasetOption \| null \| undefined\)/,
-      /data: cloneDatasetRows\(selectedDataset\),/,
-      /await onCreateWidget\(\{\s*\.\.\.nextInput,\s*data: cloneDatasetRows\(selectedDataset\),/s,
+      /function cloneDatasetRows\(\s*dataset: DashboardDatasetOption \| null \| undefined,\s*filters: DashboardWidgetFilter\[\],\s*\)/,
+      /data: cloneDatasetRows\(selectedDataset, currentConfig\.filters \?\? \[\]\),/,
+      /await onCreateWidget\(\{\s*\.\.\.nextInput,\s*data: cloneDatasetRows\(selectedDataset, currentConfig\.filters \?\? \[\]\),/s,
     ],
   },
   {
     name: "Count visualization settings do not require a numeric value column",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
     patterns: [
       /const usesCount = config\.aggregation === "count";/,
       /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,

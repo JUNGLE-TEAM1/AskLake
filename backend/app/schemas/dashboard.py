@@ -1,10 +1,22 @@
 from enum import Enum
+import re
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
+
+
+def _reject_corrupt_dashboard_title(value: str | None) -> str | None:
+    if value is None:
+        return value
+    # Reject titles made entirely from whitespace, punctuation, or Unicode
+    # replacement characters. This catches mojibake such as "???? (??)"
+    # while still allowing a valid title that happens to contain punctuation.
+    if value.strip() and not re.search(r"[^\W_\ufffd]", value, re.UNICODE):
+        raise ValueError("Dashboard title contains only replacement characters.")
+    return value
 
 
 class DashboardStatus(str, Enum):
@@ -53,11 +65,72 @@ class DashboardWidgetAggregation(str, Enum):
     SUM = "sum"
     AVG = "avg"
     COUNT = "count"
+    RATIO = "ratio"
     MIN = "min"
     MAX = "max"
 
 
+class DashboardWidgetFilterOperator(str, Enum):
+    EQ = "eq"
+    IN = "in"
+    CONTAINS = "contains"
+    GT = "gt"
+    GTE = "gte"
+    LT = "lt"
+    LTE = "lte"
+    BETWEEN = "between"
+    IS_NULL = "is_null"
+    IS_NOT_NULL = "is_not_null"
+
+
+DashboardWidgetFilterScalar = str | int | float | bool
+
+
+class DashboardWidgetFilter(CamelModel):
+    id: str = Field(min_length=1, max_length=255)
+    column: str = Field(min_length=1, max_length=255)
+    operator: DashboardWidgetFilterOperator
+    value: DashboardWidgetFilterScalar | None = None
+    values: list[DashboardWidgetFilterScalar] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+    )
+
+    @model_validator(mode="after")
+    def validate_value_shape(self):
+        operator = DashboardWidgetFilterOperator(self.operator)
+        if operator in {
+            DashboardWidgetFilterOperator.IS_NULL,
+            DashboardWidgetFilterOperator.IS_NOT_NULL,
+        }:
+            if self.value is not None or self.values is not None:
+                raise ValueError(f"Dashboard {operator.value} filter does not accept values")
+            return self
+        if operator == DashboardWidgetFilterOperator.IN:
+            if not self.values:
+                raise ValueError("Dashboard IN filter requires values")
+            if self.value is not None:
+                raise ValueError("Dashboard IN filter accepts values only")
+            return self
+        if operator == DashboardWidgetFilterOperator.BETWEEN:
+            if not self.values or len(self.values) != 2:
+                raise ValueError("Dashboard BETWEEN filter requires exactly two values")
+            if self.value is not None:
+                raise ValueError("Dashboard BETWEEN filter accepts values only")
+            return self
+        if self.value is None:
+            raise ValueError(f"Dashboard {operator.value} filter requires a value")
+        if self.values is not None:
+            raise ValueError(f"Dashboard {operator.value} filter accepts one value only")
+        if operator == DashboardWidgetFilterOperator.CONTAINS and not isinstance(self.value, str):
+            raise ValueError("Dashboard CONTAINS filter requires a string value")
+        return self
+
+
 class DashboardWidgetDateUnit(str, Enum):
+    MINUTE = "minute"
+    HOUR = "hour"
     DAY = "day"
     MONTH = "month"
     YEAR = "year"
@@ -154,6 +227,8 @@ class CreateDashboardRequest(CamelModel):
     owner: str | None = None
     sql_run_id: str | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardCardResponse(CamelModel):
     dashboard: DashboardCard
@@ -161,6 +236,8 @@ class DashboardCardResponse(CamelModel):
 
 class UpdateDashboardRequest(CamelModel):
     title: str
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DeleteDashboardResponse(CamelModel):
@@ -175,7 +252,45 @@ class DashboardWidgetConfigBase(CamelModel):
     error_message: str | None = None
     placeholder_kind: str | None = None
     prompt: str | None = None
+    numerator_value: str | None = None
+    denominator_value: str | None = None
+    filters: list[DashboardWidgetFilter] = Field(default_factory=list, max_length=5)
+    window_days: int | None = Field(default=None, ge=1, le=3_650)
     source_config: dict[str, Any] | None = None
+
+    @field_validator("filters")
+    @classmethod
+    def validate_unique_filter_ids(
+        cls,
+        value: list[DashboardWidgetFilter],
+    ) -> list[DashboardWidgetFilter]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Dashboard widget filter IDs must be unique")
+        return value
+
+    @field_validator("source_config")
+    @classmethod
+    def validate_source_config_filters(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None or "filters" not in value:
+            return value
+        raw_filters = value.get("filters")
+        if not isinstance(raw_filters, list) or len(raw_filters) > 5:
+            raise ValueError("Dashboard sourceConfig filters must be a list with at most 5 items")
+        filters = [DashboardWidgetFilter.model_validate(item) for item in raw_filters]
+        ids = [item.id for item in filters]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Dashboard widget filter IDs must be unique")
+        return {
+            **value,
+            "filters": [
+                item.model_dump(by_alias=True, exclude_none=True, mode="json")
+                for item in filters
+            ],
+        }
 
 
 class DashboardWidgetColorConfig(CamelModel):
@@ -186,12 +301,16 @@ class DashboardWidgetColorConfig(CamelModel):
 
 
 class MetricWidgetConfig(DashboardWidgetConfigBase):
+    model_config = ConfigDict(json_schema_mode_override="validation")
+
     aggregation: DashboardWidgetAggregation
     value_key: str
     format: DashboardWidgetFormat | None = None
 
 
 class TableWidgetConfig(DashboardWidgetConfigBase):
+    model_config = ConfigDict(json_schema_mode_override="validation")
+
     columns: list[str]
     limit: int | None = Field(default=None, ge=1)
     sort_direction: SortDirection | None = None
@@ -382,6 +501,8 @@ class DashboardWidgetQueryResponse(CamelModel):
 class CreateDraftPageRequest(CamelModel):
     title: str
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardPageResponse(CamelModel):
     id: str
@@ -392,6 +513,8 @@ class DashboardPageResponse(CamelModel):
 class UpdateDraftPageRequest(CamelModel):
     title: str
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class CreateDraftWidgetRequest(CamelModel):
     type: DashboardRuntimeWidgetType
@@ -401,6 +524,8 @@ class CreateDraftWidgetRequest(CamelModel):
     config: DashboardRuntimeWidgetConfig | None = None
     data: list[dict[str, Any]] | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class UpdateDraftWidgetRequest(CamelModel):
     type: DashboardRuntimeWidgetType | None = None
@@ -408,6 +533,8 @@ class UpdateDraftWidgetRequest(CamelModel):
     dataset_id: str | None = None
     config: DashboardRuntimeWidgetConfig | None = None
     data: list[dict[str, Any]] | None = None
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DashboardWidgetMutationResponse(CamelModel):
@@ -464,6 +591,7 @@ class DashboardAssistantRequest(CamelModel):
     widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list, max_length=100)
     semantic_model_id: str | None = Field(default=None, max_length=255)
     current_dataset_id: str | None = Field(default=None, max_length=255)
+    selected_dataset_ids: list[str] = Field(default_factory=list, max_length=20)
     surface: Literal["dashboard", "catalog", "semantic"] = "dashboard"
 
 
@@ -473,12 +601,16 @@ class DashboardAssistantWidgetPatch(CamelModel):
     dataset_id: str | None = Field(default=None, max_length=255)
     config: dict[str, Any] | None = None
 
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
+
 
 class DashboardAssistantCreateWidgetInput(CamelModel):
     title: str = Field(max_length=255)
     type: DashboardRuntimeWidgetType
     dataset_id: str = Field(max_length=255)
     config: dict[str, Any]
+
+    _validate_title = field_validator("title")(_reject_corrupt_dashboard_title)
 
 
 class DashboardAssistantCreateWidgetAction(CamelModel):

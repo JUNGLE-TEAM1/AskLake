@@ -54,7 +54,7 @@ class NodeContinuousSqlWorkerGateway:
                 "initialOffsetPolicy": source.get("initialOffsetPolicy") or "earliest",
                 "initialSchemaState": {},
                 "jobId": job.id,
-                "maxOffsetsPerTrigger": source.get("maxOffsetsPerTrigger") or 10_000,
+                "maxOffsetsPerTrigger": source.get("maxOffsetsPerTrigger") or 100,
                 "outputPath": job.output_storage_path,
                 "recordParsing": source.get("recordParsing") or {},
                 "ruleContractVersion": "1.0",

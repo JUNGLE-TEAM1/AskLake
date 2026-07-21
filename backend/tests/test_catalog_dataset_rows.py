@@ -13,6 +13,7 @@ from app.core.errors import ApiError
 from app.main import create_app
 from app.schemas.common import ErrorCode
 from app.schemas.catalog import (
+    CatalogDatasetFilterValuesRequest,
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
     DatasetMaterializationRun,
@@ -24,6 +25,7 @@ from app.services.catalog_service import (
     dataset_for_latest_successful_materialization,
     with_dataset_permissions,
 )
+from app.services.catalog_filter_values_service import query_catalog_dataset_filter_values
 from app.services.dataset_rows_service import read_dataset_rows
 
 
@@ -145,6 +147,55 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         self.assertIs(actual, expected)
         get_dataset.assert_called_once_with(self.dataset.id, actor)
         read_rows.assert_called_once_with(self.dataset, limit=25, offset=50)
+
+    def test_catalog_service_queries_dynamic_filter_values_with_query_permission(self) -> None:
+        actor = ActorContext()
+        service = CatalogService(
+            lake_storage=None,
+            repository=SimpleNamespace(db=object()),  # type: ignore[arg-type]
+            sql_repository=None,
+        )
+        request = CatalogDatasetFilterValuesRequest.model_validate({
+            "column": "label",
+            "contextFilters": [{
+                "id": "id-filter",
+                "column": "id",
+                "operator": "gte",
+                "value": 10,
+            }],
+            "limit": 25,
+            "search": "row",
+        })
+        query_session = SimpleNamespace(
+            close=lambda: None,
+            read_filter_values=lambda *_args, **_kwargs: {
+                "truncated": False,
+                "values": ["row-10", "row-11"],
+            },
+        )
+
+        with (
+            patch.object(service, "get_dataset", return_value=self.dataset) as get_dataset,
+            patch("app.services.catalog_filter_values_service.require_governed_access") as governed_access,
+            patch("app.services.catalog_filter_values_service.require_permission") as permission,
+            patch(
+                "app.services.catalog_filter_values_service.DashboardDatasetQuerySession",
+                return_value=query_session,
+            ) as session_class,
+        ):
+            actual = query_catalog_dataset_filter_values(
+                service,
+                self.dataset.id,
+                request,
+                actor,
+            )
+
+        self.assertEqual(actual.dataset_id, self.dataset.id)
+        self.assertEqual([item.value for item in actual.values], ["row-10", "row-11"])
+        get_dataset.assert_called_once_with(self.dataset.id, actor)
+        governed_access.assert_called_once()
+        permission.assert_called_once()
+        session_class.assert_called_once_with(self.dataset)
 
     def test_declared_but_missing_materialization_is_not_reported_as_actual_data(self) -> None:
         missing_dataset = build_dataset(

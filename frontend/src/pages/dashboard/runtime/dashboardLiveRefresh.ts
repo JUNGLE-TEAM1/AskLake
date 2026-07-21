@@ -12,6 +12,10 @@ export const DASHBOARD_LIVE_REFRESH_MAX_MS = 60_000;
 export const DASHBOARD_LIVE_REFRESH_MIN_MS = 1_000;
 export const DASHBOARD_LIVE_CATCH_UP_MS = 250;
 
+export function publishedDashboardUsesManualRefresh() {
+  return true;
+}
+
 export type DashboardLivePollingStrategy = "normal" | "safety" | "suspended";
 export type DashboardLiveDataState = "fresh" | "stale" | "degraded";
 

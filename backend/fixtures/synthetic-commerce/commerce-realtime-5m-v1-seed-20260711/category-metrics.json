@@ -1,0 +1,118 @@
+{
+  "categories": [
+    {
+      "category": "Computers & Accessories",
+      "state": "steady",
+      "baseline_click_to_purchase_pct": 5.79,
+      "target_click_to_purchase_pct": 5.79,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 58,
+      "click_to_purchase_pct": 5.8,
+      "delta_pp": 0.01
+    },
+    {
+      "category": "Camera & Photo",
+      "state": "steady",
+      "baseline_click_to_purchase_pct": 6.08,
+      "target_click_to_purchase_pct": 6.08,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 61,
+      "click_to_purchase_pct": 6.1,
+      "delta_pp": 0.02
+    },
+    {
+      "category": "Television & Video",
+      "state": "down",
+      "baseline_click_to_purchase_pct": 4.27,
+      "target_click_to_purchase_pct": 2.5,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 25,
+      "click_to_purchase_pct": 2.5,
+      "delta_pp": -1.77
+    },
+    {
+      "category": "Headphones, Earbuds & Accessories",
+      "state": "up",
+      "baseline_click_to_purchase_pct": 7.62,
+      "target_click_to_purchase_pct": 11.62,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 116,
+      "click_to_purchase_pct": 11.6,
+      "delta_pp": 3.98
+    },
+    {
+      "category": "Home Audio",
+      "state": "steady",
+      "baseline_click_to_purchase_pct": 6.03,
+      "target_click_to_purchase_pct": 6.03,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 60,
+      "click_to_purchase_pct": 6.0,
+      "delta_pp": -0.03
+    },
+    {
+      "category": "Car & Vehicle Electronics",
+      "state": "down",
+      "baseline_click_to_purchase_pct": 4.08,
+      "target_click_to_purchase_pct": 2.5,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 25,
+      "click_to_purchase_pct": 2.5,
+      "delta_pp": -1.58
+    },
+    {
+      "category": "Portable Audio & Video",
+      "state": "down",
+      "baseline_click_to_purchase_pct": 4.32,
+      "target_click_to_purchase_pct": 2.5,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 25,
+      "click_to_purchase_pct": 2.5,
+      "delta_pp": -1.82
+    },
+    {
+      "category": "Wearable Technology",
+      "state": "up",
+      "baseline_click_to_purchase_pct": 8.02,
+      "target_click_to_purchase_pct": 12.02,
+      "impressions": 3000,
+      "clicks": 1000,
+      "carts": 220,
+      "purchase_clicks": 120,
+      "click_to_purchase_pct": 12.0,
+      "delta_pp": 3.98
+    }
+  ],
+  "checks": [
+    {
+      "name": "minimum samples per category",
+      "passed": true
+    },
+    {
+      "name": "at least one category is 3pp above baseline",
+      "passed": true
+    },
+    {
+      "name": "at least one category stays within 1pp of baseline",
+      "passed": true
+    },
+    {
+      "name": "at least one category is below baseline",
+      "passed": true
+    }
+  ]
+}

@@ -95,7 +95,7 @@ Published Dashboard `GET /api/dashboards/{dashboardId}/published` 응답에는 s
 
 요청은 `{ "columns": ["user_id"] }`이고 응답은 `verified`, `totalRows`, `invalidKeyRows`, `distinctKeys`, 갱신된 `dataset`을 포함한다. 실패는 `CATALOG_UNIQUE_KEY_VERIFICATION_FAILED`와 동일 count를 반환하며 SQL 문에 별도 metadata 구문을 넣지 않는다.
 
-validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 5초다. 명시한 기존 request와 저장된 Job 값은 바꾸지 않는다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
+validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindingPolicy`, `triggerIntervalSeconds`를 사용한다. `triggerIntervalSeconds`는 1~3,600초이고 새 Continuous SQL request의 기본값은 10초다. 기존 Trino JOIN 결과를 증분 기준점으로 사용할 때 create에 `baselineDatasetId`를 보내며, 이 값은 append할 `output.datasetId`와 같아야 한다. create는 `name`, `clientRequestId`와 아래 두 output mode 중 하나를 추가한다.
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
@@ -123,6 +123,8 @@ Iceberg Dataset rows에서 Trino coordinator가 응답하지 않으면 HTTP 502 
 Kafka `POST /api/etl/sources/test`와 Snapshot ingest consumer는 uncompressed 및 Snappy-compressed record batch를 지원한다. Source test는 consumer 오류를 빈 metadata preview로 바꾸지 않는다. 첫 메시지 이후 최소 샘플 수에 도달하면 idle window로 종료하고, 도달하지 못해도 bounded settle window 뒤 현재 샘플을 반환한다. 응답의 `rawPreviewLines`는 broker에서 읽은 Kafka `value` 문자열을 순서대로 보존하며 JSON envelope의 nested field를 공백 로그로 재구성하지 않는다. JSON/JSONL이면 `requiresRecordParsing=false`로 Schema 단계로 이동하고, 실제 raw text value일 때만 `detectedFormat=TXT`, `requiresRecordParsing=true`로 레코드 구조화 단계를 연다.
 
 `POST /api/etl/jobs/{jobId}/commands`의 일반 배치 `run`/`retry`는 Airflow 접수 직후 `queued` 또는 `running` 상태를 응답한다. Airflow의 `spark_process_write` task가 bearer token으로 FastAPI internal execution API를 호출해 실제 PySpark 처리를 수행한다. Backend는 `AIRFLOW_RUN_SYNC_INTERVAL_SECONDS`(기본 5초)마다 active Snapshot Run을 Airflow와 동기화해 DB에 저장하고, Jobs 화면은 `GET /api/etl/jobs/statuses` 한 요청으로 여러 Job의 최종 Run/DAG/Spark 상태를 읽는다.
+
+`spark_process_write`는 backend 컨테이너 교체 중 발생하는 Docker DNS, connection refused, timeout 같은 transport 실패를 15초부터 최대 2분까지 지수 backoff로 4회 재시도한다. 같은 `runId` 재호출은 저장된 성공 Spark 결과를 재사용하고 active execution은 대기한다. Spark worker 교체로 REST driver가 `FAILED`/`KILLED`/`ERROR`가 된 경우에는 다음 task retry가 terminal submission state와 실패 report를 폐기하고 같은 논리 Run의 새 driver를 제출한다.
 
 `jobKind=trino_sql_materialization` Job의 `run`/`retry`/`cancelRun`은 Airflow/Spark가 아니라 Trino materializer와 durable collector를 사용한다. 매 Run은 고유 Iceberg table에 full-refresh CTAS하고 `DESCRIBE` 성공 후 안정적인 Catalog Dataset mapping을 교체한다. 실패·취소는 이전 정상 mapping을 변경하지 않는다.
 
@@ -239,7 +241,7 @@ type DashboardRuntimeWidgetType =
   | "heatmap_chart"
   | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
-type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 
@@ -395,6 +397,29 @@ type DashboardRuntimeResponse = {
 
 Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한다. Iceberg Dataset은 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용한 Trino query로 읽고, 전환 전 CSV/JSON/JSONL/Parquet segment만 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 file segment는 allowlist와 누적 byte/object 예산을 통과해야 하고 모든 query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
 
+위젯 `config.filters`는 최대 5개의 AND 조건이다. 문자열 컬럼은 `eq`, `in`, `contains`, 숫자·날짜 컬럼은 `eq`, `gt`, `gte`, `lt`, `lte`, `between`, 모든 타입은 `is_null`, `is_not_null`을 사용한다. Backend는 Dataset schema의 컬럼·타입과 허용 연산자를 대조하고 값만 안전한 SQL literal로 컴파일하며 raw SQL filter를 받지 않는다. 같은 filter predicate를 table, aggregate, Continuous baseline/delta에 적용하고 `sourceConfig` 계산 hash에 포함한다.
+
+```http
+POST /api/catalog/datasets/{datasetId}/filter-values/query
+Content-Type: application/json
+
+{
+  "column": "subcategory",
+  "search": "watch",
+  "limit": 50,
+  "contextFilters": [
+    {
+      "id": "category-filter",
+      "column": "category",
+      "operator": "eq",
+      "value": "Wearable Technology"
+    }
+  ]
+}
+```
+
+응답은 `{ datasetId, column, values: [{ label, value }], truncated }`다. `limit`은 `1..100`이고 Dataset `view`와 `query` 권한이 모두 필요하다. `contextFilters`는 최대 5개이며 먼저 적용되므로 category 선택 뒤 subcategory 후보를 전용 계층 metadata 없이 동적으로 좁힐 수 있다. 요청 변경 시 frontend는 이전 요청을 취소하고 300ms debounce 뒤 최신 요청만 적용한다.
+
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 
 ### Kafka Continuous Dashboard Refresh Contract
@@ -459,7 +484,7 @@ Content-Type: application/json
 
 `calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
 
-전체 누적 기준 `count`/`sum`/`avg`는 새 widget에서 Catalog `icebergSnapshotId`에 고정한 전체 데이터로 기준값을 한 번 만든다. 이후 revision은 한 개씩 `_asklake_run_id = commit.run_id`인 행만 Trino 집계해 기존 계산 상태에 병합하고 성공한 revision까지만 저장한다. row가 존재하는 commit의 delta 집계가 비어 있으면 revision만 전진시키지 않고 같은 Catalog snapshot 전체 재계산으로 fallback한다. backfill/legacy/non-delta revision, `min`/`max`, table, revision gap, 내부 run ID가 없는 과거 table, 고카디널리티는 같은 Catalog snapshot 전체 재계산으로 fallback한다. Iceberg full scan은 query timeout 경계를 적용하므로 매우 큰 최초 baseline은 별도 aggregate snapshot/bootstrap이 필요하다. 전환 전 file-backed full scan에는 기본 256 objects, 512 MiB, 15초 한계가 있다. 최근 N분·슬라이딩 시간창은 지원하지 않는다. 결과는 집계 최대 500 group이다. table의 backend 상한은 500행이며 현재 UI 설정은 기본 10행, 최대 100행이다.
+`count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
 Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 그대로면 빠른 catch-up을 중지한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다. Continuous published 위젯은 `실시간 · R{appliedRevision}` 배지와 revision 변경 pulse를 표시하며, bar chart는 숫자 data label과 dynamic animation으로 갱신을 시각화한다. 이 배지는 SSE/WebSocket 연결 상태가 아니라 마지막으로 성공 적용된 PostgreSQL dataset revision을 나타낸다.
 
