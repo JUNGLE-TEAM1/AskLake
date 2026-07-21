@@ -2,7 +2,7 @@ from enum import Enum
 import re
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -86,6 +86,64 @@ class DashboardWidgetAggregation(str, Enum):
     RATIO = "ratio"
     MIN = "min"
     MAX = "max"
+
+
+class DashboardWidgetFilterOperator(str, Enum):
+    EQ = "eq"
+    IN = "in"
+    CONTAINS = "contains"
+    GT = "gt"
+    GTE = "gte"
+    LT = "lt"
+    LTE = "lte"
+    BETWEEN = "between"
+    IS_NULL = "is_null"
+    IS_NOT_NULL = "is_not_null"
+
+
+DashboardWidgetFilterScalar = str | int | float | bool
+
+
+class DashboardWidgetFilter(CamelModel):
+    id: str = Field(min_length=1, max_length=255)
+    column: str = Field(min_length=1, max_length=255)
+    operator: DashboardWidgetFilterOperator
+    value: DashboardWidgetFilterScalar | None = None
+    values: list[DashboardWidgetFilterScalar] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+    )
+
+    @model_validator(mode="after")
+    def validate_value_shape(self):
+        operator = DashboardWidgetFilterOperator(self.operator)
+        if operator in {
+            DashboardWidgetFilterOperator.IS_NULL,
+            DashboardWidgetFilterOperator.IS_NOT_NULL,
+        }:
+            if self.value is not None or self.values is not None:
+                raise ValueError(f"Dashboard {operator.value} filter does not accept values")
+            return self
+        if operator == DashboardWidgetFilterOperator.IN:
+            if not self.values:
+                raise ValueError("Dashboard IN filter requires values")
+            if self.value is not None:
+                raise ValueError("Dashboard IN filter accepts values only")
+            return self
+        if operator == DashboardWidgetFilterOperator.BETWEEN:
+            if not self.values or len(self.values) != 2:
+                raise ValueError("Dashboard BETWEEN filter requires exactly two values")
+            if self.value is not None:
+                raise ValueError("Dashboard BETWEEN filter accepts values only")
+            return self
+        if self.value is None:
+            raise ValueError(f"Dashboard {operator.value} filter requires a value")
+        if self.values is not None:
+            raise ValueError(f"Dashboard {operator.value} filter accepts one value only")
+        if operator == DashboardWidgetFilterOperator.CONTAINS and not isinstance(self.value, str):
+            raise ValueError("Dashboard CONTAINS filter requires a string value")
+        return self
 
 
 class DashboardWidgetDateUnit(str, Enum):
@@ -262,8 +320,43 @@ class DashboardWidgetConfigBase(CamelModel):
     prompt: str | None = None
     numerator_value: str | None = None
     denominator_value: str | None = None
+    filters: list[DashboardWidgetFilter] = Field(default_factory=list, max_length=5)
     window_days: int | None = Field(default=None, ge=1, le=3_650)
     source_config: dict[str, Any] | None = None
+
+    @field_validator("filters")
+    @classmethod
+    def validate_unique_filter_ids(
+        cls,
+        value: list[DashboardWidgetFilter],
+    ) -> list[DashboardWidgetFilter]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Dashboard widget filter IDs must be unique")
+        return value
+
+    @field_validator("source_config")
+    @classmethod
+    def validate_source_config_filters(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None or "filters" not in value:
+            return value
+        raw_filters = value.get("filters")
+        if not isinstance(raw_filters, list) or len(raw_filters) > 5:
+            raise ValueError("Dashboard sourceConfig filters must be a list with at most 5 items")
+        filters = [DashboardWidgetFilter.model_validate(item) for item in raw_filters]
+        ids = [item.id for item in filters]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Dashboard widget filter IDs must be unique")
+        return {
+            **value,
+            "filters": [
+                item.model_dump(by_alias=True, exclude_none=True, mode="json")
+                for item in filters
+            ],
+        }
 
 
 class DashboardWidgetColorConfig(CamelModel):
