@@ -497,6 +497,8 @@ class ContinuousSqlService:
             if continuous_sql_serving_mode(job) == "clickhouse":
                 self._require_clickhouse_enabled()
             self._require_relation_access(job, actor)
+        if request.command in {"start", "recover"}:
+            self._require_execution_tree_runner(job)
         fingerprint = canonical_hash({"command": request.command})
         existing_command = self.repository.get_command(job.id, request.command_id)
         if existing_command is not None:
@@ -544,10 +546,11 @@ class ContinuousSqlService:
             self.db.add(run)
         self.db.commit()
 
+        started_realtime_children: list[str] = []
         try:
             worker_result: dict[str, Any] = {}
             if external_action in {"start", "recover"}:
-                self._start_execution_tree_children(job, actor)
+                started_realtime_children = self._start_execution_tree_children(job, actor)
             if external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
                 worker_result = self.gateway.manage(
@@ -572,6 +575,14 @@ class ContinuousSqlService:
                 self._manage_execution_tree_realtime_children(job, actor, "resumeContinuous")
             self._complete_command(job.id, run.run_id if run else None, command.id, request.command, worker_result)
         except ApiError as exc:
+            if started_realtime_children:
+                tree_run = self.repository.active_tree_run(job.id)
+                if tree_run is not None:
+                    self._stop_started_realtime_children(
+                        tree_run,
+                        started_realtime_children,
+                        actor,
+                    )
             self._fail_command(job.id, run.run_id if run else None, command.id, exc)
             raise
 
@@ -588,7 +599,7 @@ class ContinuousSqlService:
         self,
         job: ContinuousSqlJobModel,
         actor: ActorContext,
-    ) -> None:
+    ) -> list[str]:
         """Start existing producer Jobs before the parent worker is submitted.
 
         Phase 4 deliberately reuses the ETL command path instead of copying
@@ -598,7 +609,7 @@ class ContinuousSqlService:
         """
         tree_run = self.repository.active_tree_run(job.id)
         if tree_run is None:
-            return
+            return []
         dependencies = self.repository.list_dependencies(job.id)
         by_child = {
             item.child_job_id: item
@@ -666,6 +677,29 @@ class ContinuousSqlService:
                     "causeCode": cause_code,
                 },
             ) from exc
+        return started_realtime
+
+    @staticmethod
+    def _uses_dataset_revision_inputs(job: ContinuousSqlJobModel) -> bool:
+        return str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision"
+
+    def _require_execution_tree_runner(self, job: ContinuousSqlJobModel) -> None:
+        """Fail before taking locks or starting children until Phase 2 exists.
+
+        The legacy runner is deliberately not a fallback: using it would make
+        this SQL Job a second Kafka consumer and violate producer ownership.
+        """
+        if not self._uses_dataset_revision_inputs(job):
+            return
+        raise ApiError(
+            "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED",
+            "This SQL execution-tree Job requires the revision transform runner, which is not available yet. No producer Job was started.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job.id, "executionInputMode": "dataset_revision"},
+            stage="execution_tree",
+            retryable=False,
+            user_message="이 SQL Job의 Dataset revision 실행기는 아직 준비되지 않았습니다. 연결된 producer Job은 시작하지 않았습니다.",
+        )
 
     def _stop_started_realtime_children(
         self,

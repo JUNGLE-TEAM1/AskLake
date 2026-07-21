@@ -17,6 +17,7 @@ from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlDependencyModel,
     ContinuousSqlTreeJobLockModel,
+    ContinuousSqlTreeNodeRunModel,
     ContinuousSqlTreeRunModel,
 )
 from app.models.etl import ETLJobModel
@@ -263,6 +264,123 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertTrue(all(
                 not item.active
                 for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
+            ))
+
+    def test_dataset_revision_tree_rejects_before_starting_any_child(self) -> None:
+        events: list[str] = []
+
+        class Gateway:
+            def manage(self, _job, _run, action, _options=None):
+                events.append(f"parent:{action}")
+                return {"containerState": "running"}
+
+        def child_commander(_db, child_id, command, _actor, **_context):
+            events.append(f"{child_id}:{command}")
+            return SimpleNamespace(run=None, processing_result={})
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            job.compiled_plan = {"executionInputMode": "dataset_revision"}
+            db.add(job)
+            db.commit()
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=Gateway(),
+                child_commander=child_commander,
+            )
+
+            with self.assertRaises(ApiError) as raised:
+                service.command(
+                    job.id,
+                    ContinuousSqlCommandRequest(command="start", commandId="start-needs-runner"),
+                    ActorContext(name="owner", role="admin"),
+                )
+
+            self.assertEqual(raised.exception.code, "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED")
+            self.assertEqual(events, [])
+            self.assertEqual(db.scalar(select(ContinuousSqlTreeRunModel)), None)
+            self.assertEqual(db.scalar(select(ContinuousSqlTreeJobLockModel)), None)
+
+    def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
+        events: list[str] = []
+
+        class Gateway:
+            def manage(self, _job, _run, action, _options=None):
+                events.append(f"parent:{action}")
+                if action == "start":
+                    raise ApiError(
+                        "PARENT_START_FAILED",
+                        "parent worker start failed",
+                        status.HTTP_502_BAD_GATEWAY,
+                    )
+                return {"containerState": "missing"}
+
+        def child_commander(_db, child_id, command, _actor, **_context):
+            events.append(f"{child_id}:{command}")
+            if command == "startContinuous":
+                return SimpleNamespace(
+                    run=None,
+                    processing_result={"runtimeStatus": "starting", "workerResult": {"workerAttemptId": "child-worker"}},
+                )
+            return SimpleNamespace(
+                run=None,
+                processing_result={"runtimeStatus": "stopping"},
+            )
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=Gateway(),
+                child_commander=child_commander,
+            )
+
+            with self.assertRaises(ApiError) as raised:
+                service.command(
+                    job.id,
+                    ContinuousSqlCommandRequest(command="start", commandId="start-parent-fails"),
+                    ActorContext(name="owner", role="admin"),
+                )
+
+            self.assertEqual(raised.exception.code, "PARENT_START_FAILED")
+            self.assertEqual(
+                events,
+                [
+                    "JOB-REALTIME:startContinuous",
+                    "parent:start",
+                    "JOB-REALTIME:stopContinuous",
+                ],
+            )
+            refreshed = service.repository.get_job(job.id)
+            self.assertEqual(refreshed.observed_state, "failed")
+            self.assertIsNone(service.repository.active_tree_run(job.id))
+            self.assertTrue(all(
+                not item.active
+                for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
+            ))
+            tree = db.scalar(select(ContinuousSqlTreeRunModel))
+            self.assertEqual(tree.status, "failed")
+            self.assertTrue(all(
+                item.status == "failed"
+                for item in db.scalars(select(ContinuousSqlTreeNodeRunModel)).all()
             ))
 
     def test_start_command_persists_tree_before_starting_worker(self) -> None:

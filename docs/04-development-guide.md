@@ -1033,12 +1033,13 @@ Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/
 2. Phase 1에서 Catalog Dataset의 authoritative producer metadata와 SQL dependency binding을 additive persistence로 도입한다. 완료 기준은 migration upgrade/downgrade, 새 DB session 재조회, Catalog 정규화 column 우선순위와 빈 `dependencyBindings` 호환성이다.
 3. Phase 2에서 backend가 Dataset ID와 정규화 Catalog metadata로 정확한 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다. frontend 이름/tag 추정은 제거하고 create는 dependency를 Job과 같은 transaction에 저장한다. 완료 기준은 producer 불일치/누락 오류, validate binding, 새 session create 재조회와 UI authoritative 분류 테스트다.
 4. Phase 3에서 tree run/node run과 atomic parent-child lock/lease/fencing을 구현한다. 완료 기준은 정렬된 전체 lock set, active standalone 충돌, 부분 lock rollback, 만료 takeover generation, fencing hash 응답, ETL command/update/delete 차단과 migration downgrade다.
-5. Phase 4에서 SQL parent start/recover가 lock commit 뒤 실행 가능한 batch child `run`, realtime child `startContinuous`를 먼저 요청하고 node Run/session identity를 저장한다. child failure는 parent worker 시작 전 tree failure로 처리한다. Dataset revision 대기와 transform은 Phase 5 범위다.
-6. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
-7. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다. parent pause/stop/resume은 active tree의 realtime child에만 각각 `pauseContinuous`/`stopContinuous`/`resumeContinuous`를 전파하며, batch child를 다시 실행하거나 tree 밖 standalone Job을 제어하지 않는다. child lifecycle control 실패는 node에 durable `failed` evidence로 남기되, 이미 수락된 parent stop을 되돌려 "실행 중"으로 만들지 않는다.
-8. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다. Continuous SQL dialog는 streaming producer Dataset, static Dataset, output engine과 생성 후 `activeTreeRun.nodes`를 읽기 전용으로 표시한다. SQL-owned Kafka trigger/offset 설정 UI는 노출하지 않으며 수집 크기·주기는 producer Job 설정을 따른다.
-9. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다. Continuous control worker도 Dashboard precompute를 수행하지 않으며, 최초 pending Widget 계산과 사용자가 누른 새로고침만 `/widgets/query`를 호출한다.
-10. Phase 9에서 legacy direct-consumer Continuous SQL Job의 명시적 운영 처리와 live E2E/rollout gate를 완료한다. 기존 Job은 자동 마이그레이션하지 않는다.
+5. Phase 4 안전 보정은 revision runner가 없는 `dataset_revision` Job을 child dispatch 전에 fail-closed하고, parent worker start 실패 시 이번 tree run에서 시작한 realtime child만 보상 stop한 뒤 tree/node/lock을 terminal failure로 끝낸다. legacy direct-Kafka Job에는 이 gate를 적용하지 않는다.
+6. Phase 4에서 SQL parent start/recover가 lock commit 뒤 실행 가능한 batch child `run`, realtime child `startContinuous`를 먼저 요청하고 node Run/session identity를 저장한다. child failure는 parent worker 시작 전 tree failure로 처리한다. Dataset revision 대기와 transform은 Phase 5 범위다.
+7. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
+8. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다. parent pause/stop/resume은 active tree의 realtime child에만 각각 `pauseContinuous`/`stopContinuous`/`resumeContinuous`를 전파하며, batch child를 다시 실행하거나 tree 밖 standalone Job을 제어하지 않는다. child lifecycle control 실패는 node에 durable `failed` evidence로 남기되, 이미 수락된 parent stop을 되돌려 "실행 중"으로 만들지 않는다.
+9. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다. Continuous SQL dialog는 streaming producer Dataset, static Dataset, output engine과 생성 후 `activeTreeRun.nodes`를 읽기 전용으로 표시한다. SQL-owned Kafka trigger/offset 설정 UI는 노출하지 않으며 수집 크기·주기는 producer Job 설정을 따른다.
+10. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다. Continuous control worker도 Dashboard precompute를 수행하지 않으며, 최초 pending Widget 계산과 사용자가 누른 새로고침만 `/widgets/query`를 호출한다.
+11. Phase 9에서 legacy direct-consumer Continuous SQL Job의 명시적 운영 처리와 live E2E/rollout gate를 완료한다. 기존 Job은 자동 마이그레이션하지 않는다.
 
 Phase 0 정적 계약 검증은 다음 명령으로 실행한다.
 

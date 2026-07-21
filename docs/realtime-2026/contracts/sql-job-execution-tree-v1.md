@@ -3,7 +3,7 @@
 - 이슈: #1117
 - 상태: Phase 4 parent-owned child dispatch 구현, revision transform은 legacy
 - 기준 commit: `a234abea`
-- runtime 상태: 아직 legacy direct-consumer 경로다. 이 문서는 후속 Phase의 target contract다.
+- runtime 상태: Phase 0에서는 revision transform runner가 없으므로 `dataset_revision` parent start를 child dispatch 전에 fail-closed한다. legacy direct-consumer 경로는 기존 Job에만 남으며 이 문서는 후속 Phase의 target contract다.
 - 결정 기록: [ADR-003](../adr/003-sql-job-execution-tree-ownership.md)
 
 ## 1. 현재 기준선과 전환 목표
@@ -194,4 +194,4 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 - Phase 8: output revision과 Dashboard 수동 새로고침 회귀
 - Phase 9: legacy migration, E2E, 성능과 rollout gate
 
-Phase 5 전에는 legacy direct Kafka consumer를 제거하지 않는다. Phase 3 lock 없이 parent가 child를 실행하지 않는다.
+Phase 5 전에는 legacy direct Kafka consumer를 제거하지 않는다. Phase 3 lock 없이 parent가 child를 실행하지 않는다. Phase 0에서는 revision runner 부재로 parent worker start가 실패할 때 이미 이번 tree run에서 시작한 realtime child를 역순 stop하고 tree lock/node run을 terminal failure로 종료한다. runner가 없는 알려진 `dataset_revision` Job은 child dispatch 전에 `409 CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED`로 거절한다.
