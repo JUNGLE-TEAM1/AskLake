@@ -26,6 +26,8 @@ data:
   ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES: {{ .Values.backend.config.kafkaAllowedTopicPrefixes | quote }}
   ASKLAKE_SPARK_RUNNER: {{ .Values.backend.config.sparkRunner | quote }}
   ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: {{ .Values.backend.config.sparkExecutionLeaseSeconds | quote }}
+  ASKLAKE_SPARK_EVENT_LOG_ENABLED: {{ .Values.backend.config.sparkEventLogEnabled | quote }}
+  ASKLAKE_SPARK_EVENT_LOG_PREFIX: {{ .Values.backend.config.sparkEventLogPrefix | quote }}
   ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: {{ .Values.backend.config.sparkResourcePlannerMode | quote }}
   ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: {{ .Values.backend.config.sparkResourceTargetPartitionBytes | int64 | quote }}
   ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: {{ .Values.backend.config.sparkResourceTargetPartitionsPerExecutor | quote }}

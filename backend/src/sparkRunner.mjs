@@ -11,6 +11,7 @@ import {
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
+import { sparkApplicationConfiguration } from "./sparkApplicationConfig.mjs";
 import {
   kubernetesIdentifier,
   normalizeSparkAttemptGeneration,
@@ -584,12 +585,7 @@ export function createSparkKubernetesApplication({
       mode: "cluster",
       pythonVersion: "3",
       restartPolicy: { type: "Never" },
-      sparkConf: {
-        "spark.app.name": String(appName || `asklake-${runLabel}`),
-        "spark.jars.ivy": "/tmp/.ivy2",
-        "spark.kubernetes.executor.deleteOnTermination": "true",
-        "spark.sql.shuffle.partitions": String(environment.ASKLAKE_SPARK_SQL_SHUFFLE_PARTITIONS || "32"),
-      },
+      sparkConf: sparkApplicationConfiguration({ appName, environment, runId, runLabel }),
       sparkVersion: String(environment.ASKLAKE_SPARK_VERSION || "4.0.1"),
       timeToLiveSeconds: 3_600,
       type: "Python",

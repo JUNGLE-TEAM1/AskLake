@@ -70,9 +70,13 @@ revision이 달라 공식 1↔2 비교에는 재사용하지 않았다. executor
 남았고 OOM, severity error, spill log marker는 `0`이었다. 실제 분할은
 `materializationFileCount=724`, `sqlShufflePartitions=32`로 확인했다.
 
-다만 dev cluster에는 Kubernetes Pod Metrics API가 없고 CloudWatch
-`ContainerInsights` Pod metric도 발행되지 않았다. Spark event log도 활성화되어 있지
-않아 다음 값은 이번 MVP의 객관적 수치로 주장하지 않는다.
+당시 실행에서는 Kubernetes Pod Metrics API를 읽지 못했고 CloudWatch
+`ContainerInsights` Pod metric도 발행되지 않았다. 2026-07-21 후속 read-only 진단에서
+Metrics Server add-on과 API discovery는 정상이고 add-on Pod도 Ready였지만, 실험
+관찰자의 기존 EKS access policy가 `pods.metrics.k8s.io` list를 거부한 것이 확인됐다.
+따라서 이전 기록의 "Metrics API 부재" 판정은 "관찰자 RBAC 부재"로 정정한다. Spark
+event log도 당시 활성화되어 있지 않아 다음 값은 이번 MVP의 객관적 수치로 주장하지
+않는다.
 
 - executor CPU·memory 사용률과 throttling
 - shuffle read/write byte

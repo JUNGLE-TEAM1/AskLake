@@ -56,6 +56,116 @@ mock_provider "aws" {
   }
 }
 
+run "bounded_100gb_benchmark_observability_contract" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories  = false
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    pod_identity_agent_ready    = true
+    observability_mode          = "eks_addon"
+    observability_addon_version = "v6.3.0-eksbuild.1"
+    observability_owner         = "pair-a"
+
+    benchmark_observability_reader_enabled = true
+    benchmark_observability_owner          = "pair-a"
+    benchmark_observability_reader_trusted_principal_arns = [
+      "arn:aws:iam::111122223333:user/asklake-deployer",
+    ]
+    benchmark_observability_reader_assumer_iam_user_names = [
+      "asklake-deployer",
+    ]
+    benchmark_s3_request_metrics_prefixes = {
+      raw    = "raw/100gb/input.jsonl"
+      output = "output/100gb"
+    }
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role.benchmark_observability_reader) == 1 &&
+      length(aws_iam_policy.benchmark_observability_reader) == 1 &&
+      length(aws_iam_policy.benchmark_observability_reader_assume) == 1 &&
+      length(aws_iam_user_policy_attachment.benchmark_observability_reader_assume) == 1 &&
+      length(aws_eks_access_entry.benchmark_observability_reader) == 1 &&
+      length(aws_s3_bucket_metric.benchmark_100gb) == 2
+    )
+    error_message = "Bounded benchmark observability must create one dedicated reader identity and exactly two S3 prefix metric filters."
+  }
+
+  assert {
+    condition = (
+      output.benchmark_observability_handoff.ready_for_apply &&
+      output.benchmark_observability_handoff.kubernetes_group == "asklake:observability-readers" &&
+      toset(output.benchmark_observability_handoff.s3_metric_filters) == toset(["raw", "output"])
+    )
+    error_message = "Benchmark observability handoff must expose the reviewed RBAC group and exact metric filter set."
+  }
+
+  assert {
+    condition = (
+      !strcontains(aws_iam_policy.benchmark_observability_reader[0].policy, "secrets") &&
+      !strcontains(aws_iam_policy.benchmark_observability_reader[0].policy, "s3:GetObject") &&
+      !strcontains(aws_iam_policy.benchmark_observability_reader[0].policy, "s3:PutObject")
+    )
+    error_message = "The dedicated benchmark reader must not gain Secret or S3 object read/write access."
+  }
+}
+
+run "reject_benchmark_metric_prefix_outside_storage_boundary" {
+  command = plan
+
+  variables {
+    environment              = "dev"
+    owner                    = "pair-a"
+    resource_lifecycle       = "mvp-owned"
+    cluster_mode             = "create"
+    control_plane_subnet_ids = ["subnet-test-a", "subnet-test-b"]
+    create_ecr_repositories  = false
+
+    storage_mode = "existing"
+    storage_bucket_names = {
+      raw           = "asklake-dev-111122223333-raw"
+      output        = "asklake-dev-111122223333-output"
+      warehouse     = "asklake-dev-111122223333-warehouse"
+      query_results = "asklake-dev-111122223333-query-results"
+    }
+
+    pod_identity_agent_ready    = true
+    observability_mode          = "eks_addon"
+    observability_addon_version = "v6.3.0-eksbuild.1"
+    observability_owner         = "pair-a"
+
+    benchmark_observability_reader_enabled = true
+    benchmark_observability_owner          = "pair-a"
+    benchmark_observability_reader_trusted_principal_arns = [
+      "arn:aws:iam::111122223333:user/asklake-deployer",
+    ]
+    benchmark_observability_reader_assumer_iam_user_names = [
+      "asklake-deployer",
+    ]
+    benchmark_s3_request_metrics_prefixes = {
+      raw    = "outside/100gb/input.jsonl"
+      output = "output/100gb"
+    }
+  }
+
+  expect_failures = [check.benchmark_observability_s3_prefix_boundary]
+}
+
 variables {
   existing_auto_mode_enabled       = true
   existing_auto_mode_node_role_arn = "arn:aws:iam::111122223333:role/asklake-existing-auto-node"
@@ -422,6 +532,11 @@ run "created_network_single_nat_contract" {
   }
 
   assert {
+    condition     = length(aws_vpc_endpoint.s3) == 0 && length(aws_vpc_endpoint.interface) == 0
+    error_message = "the NAT-only default must not create Gateway or Interface VPC endpoints."
+  }
+
+  assert {
     condition     = !aws_subnet.public["ap-northeast-2a"].map_public_ip_on_launch
     error_message = "public ALB subnets must not automatically assign public IPs to arbitrary resources."
   }
@@ -448,6 +563,54 @@ run "created_network_single_nat_contract" {
   assert {
     condition     = output.phase11_network_handoff.kubernetes_api.private_operator_path == "required-before-kubectl"
     error_message = "private-only Kubernetes API must keep the operator/CI access path as an explicit deployment gate."
+  }
+}
+
+run "created_network_single_nat_with_s3_gateway_contract" {
+  command = apply
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "mvp-owned"
+    cluster_mode               = "create"
+    network_mode               = "create"
+    vpc_cidr                   = "10.49.0.0/16"
+    network_availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+    subnet_newbits             = 8
+    public_subnet_netnums      = [0, 1]
+    private_subnet_netnums     = [10, 11]
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    enable_s3_gateway_endpoint = true
+    create_ecr_repositories    = false
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.private) == 1 && length(aws_route.private_nat) == 2
+    error_message = "adding the S3 Gateway Endpoint must preserve the single NAT Gateway and both private default routes."
+  }
+
+  assert {
+    condition     = length(aws_vpc_endpoint.interface) == 0
+    error_message = "the independent S3 Gateway Endpoint option must not create Interface Endpoints."
+  }
+
+  assert {
+    condition = (
+      length(aws_vpc_endpoint.s3) == 1 &&
+      length(aws_vpc_endpoint.s3[0].route_table_ids) == 2
+    )
+    error_message = "the S3 Gateway Endpoint must attach to both Terraform-owned private route tables."
+  }
+
+  assert {
+    condition = (
+      output.phase11_network_handoff.private_egress.mode == "nat_gateway" &&
+      output.phase11_network_handoff.private_egress.nat_gateway_mode == "single" &&
+      output.phase11_network_handoff.private_egress.s3_gateway_endpoint
+    )
+    error_message = "the handoff must report single NAT plus the independently enabled S3 Gateway Endpoint."
   }
 }
 
@@ -561,6 +724,25 @@ run "reject_network_creation_for_existing_cluster" {
   }
 
   expect_failures = [check.network_creation_ownership]
+}
+
+run "reject_s3_gateway_endpoint_for_external_network" {
+  command = plan
+
+  variables {
+    environment                = "dev"
+    owner                      = "pair-a"
+    resource_lifecycle         = "external"
+    cluster_mode               = "existing"
+    existing_cluster_name      = "shared-dev"
+    network_mode               = "external"
+    private_egress_mode        = "nat_gateway"
+    nat_gateway_mode           = "single"
+    enable_s3_gateway_endpoint = true
+    create_ecr_repositories    = false
+  }
+
+  expect_failures = [check.s3_gateway_endpoint_ownership]
 }
 
 run "reject_created_network_without_egress_choice" {

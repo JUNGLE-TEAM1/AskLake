@@ -69,6 +69,12 @@ variable "nat_gateway_mode" {
   }
 }
 
+variable "enable_s3_gateway_endpoint" {
+  description = "Create an S3 Gateway VPC Endpoint on every Terraform-owned private route table without enabling interface endpoints. Endpoint-only and hybrid egress enable it automatically."
+  type        = bool
+  default     = false
+}
+
 variable "interface_vpc_endpoint_services" {
   description = "Explicit interface endpoint suffixes selected after workload and hourly-cost review. S3 gateway is managed separately."
   type        = set(string)

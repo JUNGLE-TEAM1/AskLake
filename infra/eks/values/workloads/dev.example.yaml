@@ -42,6 +42,8 @@ backend:
     allowedBuckets: asklake-dev-raw-example,asklake-dev-output-example,asklake-dev-query-results-example
     sparkRunner: kubernetes
     sparkExecutionLeaseSeconds: 60
+    sparkEventLogEnabled: false
+    sparkEventLogPrefix: spark-events
     sparkResourcePlannerMode: "off"
     sparkResourceTargetPartitionBytes: 134217728
     sparkResourceTargetPartitionsPerExecutor: 384

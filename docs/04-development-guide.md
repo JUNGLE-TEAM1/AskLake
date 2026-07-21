@@ -790,7 +790,34 @@ python -m pytest -q tests/test_spark_resource_plan.py \
   tests/test_eks_runtime_boundary.py \
   tests/test_eks_execution_contract.py
 node --test scripts/spark-kubernetes-client.test.mjs
+node --test ../scripts/test-eks-spark-event-log-values.mjs \
+  ../scripts/test-spark-event-log-summary.mjs \
+  ../scripts/test-eks-day17-scale-observer.mjs
 ```
+
+Phase 7 관측은 [Resource Planner Phase 7 관측 계약](eks-spark-resource-planner-phase7-observability.md)을
+따른다. Metrics Server add-on의 `ACTIVE`만으로 완료 처리하지 않고 전용 observer role로
+namespace Pod Metrics API를 실제 조회해야 한다. `asklake-foundation`의
+`observabilityRbac.enabled=true`는 `asklake-dev`의 Pod·Event·Deployment·HPA·
+SparkApplication과 Pod Metrics read만 허용한다. observer는 cluster-wide Event 대신
+해당 namespace Event만 조회한다. 이 Role을 만드는 주체는 해당 권한을 이미 보유하거나
+RBAC `escalate`가 가능한 기존 cluster-admin principal이어야 한다. namespace-scoped EKS
+Admin access policy만 가진 운영자를 임시 cluster-admin으로 올려 우회하지 않는다.
+
+Spark event log 후보는 `build-eks-spark-event-log-values.mjs`로 만들며 enable 후보는
+Planner `off`, executor `1`, 기존 AWS Output bucket/prefix를 요구한다. event log는
+기본 `false`이고 enable/disable 후보에서 바뀌는 key는
+`ASKLAKE_SPARK_EVENT_LOG_ENABLED`, `ASKLAKE_SPARK_EVENT_LOG_PREFIX`뿐이어야 한다.
+10GB 실행 중 `watch-eks-day17-scale.mjs --record <repo 밖 경로>`로 Pod CPU·memory를
+mode `0600` JSONL에 기록하고, 종료된 uncompressed Spark event log는
+`summarize-spark-event-log.mjs`로 task·executor·shuffle·spill·peak memory summary로
+변환한다. 원본 event log와 private summary는 tracked 문서에 넣지 않는다.
+
+dev Terraform plan에는 적용 당시의 Git 제외 S3 endpoint·benchmark observer override를
+반드시 함께 전달한다. 이를 누락한 plan이 기존 Gateway Endpoint, S3 metric filter 또는
+observer identity 삭제를 제안하면 apply하지 않는다. 정상 plan은
+`private_egress_mode=nat_gateway`, single NAT, S3 Gateway Endpoint와 두 private route
+table 연결, Interface Endpoint 0을 그대로 보존해야 한다.
 
 Phase 3 준비는 `prepare-eks-spark-resource-planner-shadow-values.sh`와
 `prepare-eks-spark-resource-planner-shadow-web-values.sh`로 각각 Planner-only

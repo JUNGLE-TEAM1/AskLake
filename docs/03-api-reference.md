@@ -802,6 +802,8 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | --- | --- | --- |
 | `ASKLAKE_CONTINUOUS_CONTROL_PLANE` | `external_ec2` | Kafka Continuous 제어권과 상태는 EC2에 남기고 EKS 접근을 차단한다. |
 | `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
+| `ASKLAKE_SPARK_EVENT_LOG_ENABLED` | `false` | 기본은 비활성이다. Phase 7 bounded 관측에서만 `true`로 바꿔 task/shuffle/spill event를 S3에 기록한다. |
+| `ASKLAKE_SPARK_EVENT_LOG_PREFIX` | `spark-events` | Output prefix 아래의 고정 하위 경로다. 실제 Run 경로는 원본 ID 대신 `sha256(runId)`를 사용한다. |
 | `ASKLAKE_SPARK_RESOURCE_PLANNER_MODE` | `off` | `off`, `shadow`, `enforce`. 최초 적용은 계산만 기록하는 `shadow`다. |
 | `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES` | `134217728` | 예상 Spark read partition 크기다. |
 | `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR` | `384` | 이력이 없을 때 `history-sla-cost-v1` 크기 seed에서 executor 하나가 담당하도록 계획하는 partition 수다. |

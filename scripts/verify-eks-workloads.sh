@@ -19,6 +19,7 @@ required_files=(
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.test.mjs"
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+  "$ROOT_DIR/backend/src/sparkApplicationConfig.mjs"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
   "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
@@ -34,6 +35,7 @@ required_files=(
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-enforce-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-enforce-web-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-hybrid-activation-values.mjs"
+  "$ROOT_DIR/scripts/build-eks-spark-event-log-values.mjs"
   "$ROOT_DIR/scripts/deploy-eks-spark-hybrid-activation.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-web-values.sh"
@@ -50,6 +52,9 @@ required_files=(
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-hybrid-activation-values.mjs"
+  "$ROOT_DIR/scripts/test-eks-spark-event-log-values.mjs"
+  "$ROOT_DIR/scripts/summarize-spark-event-log.mjs"
+  "$ROOT_DIR/scripts/test-spark-event-log-summary.mjs"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -347,6 +352,8 @@ grep -q 'value: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthMana
 grep -q 'path: /v1/info' "$RENDERED_FILE"
 grep -q 'ASKLAKE_CONTINUOUS_CONTROL_PLANE: "external_ec2"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: "60"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_EVENT_LOG_ENABLED: "false"' "$RENDERED_FILE"
+grep -q 'ASKLAKE_SPARK_EVENT_LOG_PREFIX: "spark-events"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "off"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728"' "$RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "384"' "$RENDERED_FILE"
@@ -521,6 +528,8 @@ grep -q 'ASKLAKE_ALB_STEADY_TIMEOUT_SECONDS:-600' "$ROOT_DIR/scripts/deploy-eks-
 grep -q 'ALB_STEADY_REQUIRED_SUCCESSES=3' "$ROOT_DIR/scripts/deploy-eks-spark-hybrid-activation.sh"
 bash -n "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
 node --check "$ROOT_DIR/scripts/build-eks-spark-hybrid-activation-values.mjs"
+node --check "$ROOT_DIR/scripts/build-eks-spark-event-log-values.mjs"
+node --check "$ROOT_DIR/scripts/summarize-spark-event-log.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
@@ -530,6 +539,8 @@ node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-enforce-web-val
 node --check "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
 node --test \
   "$ROOT_DIR/scripts/test-eks-spark-hybrid-activation-values.mjs" \
+  "$ROOT_DIR/scripts/test-eks-spark-event-log-values.mjs" \
+  "$ROOT_DIR/scripts/test-spark-event-log-summary.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-off-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-enforce-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs" \

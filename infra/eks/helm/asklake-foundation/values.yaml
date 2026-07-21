@@ -12,6 +12,10 @@ namespace:
   name: asklake-dev
   labels: {}
 
+observabilityRbac:
+  enabled: false
+  kubernetesGroup: asklake:observability-readers
+
 serviceAccounts:
   frontend:
     create: true

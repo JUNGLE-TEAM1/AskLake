@@ -10,11 +10,11 @@
         "backend/app/services/etl_service.py": 2270,
         "backend/scripts/run_eks_day17_hpa_race.py": 1303,
         "backend/scripts/runtime/spark_job_runtime.py": 1747,
-        "backend/src/sparkRunner.mjs": 1626
+        "backend/src/sparkRunner.mjs": 1622
       },
       "oversizedJavascriptFunctions": {
         "backend/scripts/ingest-kafka-reviews.mjs::ingestReviews": 153,
-        "backend/src/sparkRunner.mjs::createSparkKubernetesApplication": 118,
+        "backend/src/sparkRunner.mjs::createSparkKubernetesApplication": 113,
         "backend/src/sparkRunner.mjs::runSparkPipelineWithSource": 220
       },
       "oversizedPythonFunctions": {

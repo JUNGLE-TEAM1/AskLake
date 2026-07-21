@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { kafkaSecurityOptions } from "../src/kafka-codecs.mjs";
+import { sparkEventLogConfiguration } from "../src/sparkApplicationConfig.mjs";
 import {
   createSparkKubernetesApplication,
   EKS_MVP_FIXTURE_SLOTS_ENV,
@@ -166,6 +167,7 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   assert.equal(first.spec.executor.coreLimit, "3");
   assert.equal(first.spec.executor.instances, 4);
   assert.equal(first.spec.sparkConf["spark.jars.ivy"], "/tmp/.ivy2");
+  assert.equal(first.spec.sparkConf["spark.eventLog.enabled"], undefined);
   const expectedPlacement = {
     nodeSelector: {
       "asklake.io/workload-class": "spark",
@@ -189,6 +191,48 @@ test("Kubernetes Spark application uses deterministic identity and Secret refere
   });
   assert.equal("value" in jdbcPassword, false);
   assert.equal(JSON.stringify(first).includes("replace-with-secret"), false);
+});
+
+test("Spark event logging is opt-in, run-scoped, and rejects unreviewed S3 paths", () => {
+  const application = applicationFixture(1, undefined, {
+    ASKLAKE_SPARK_EVENT_LOG_ENABLED: "true",
+    ASKLAKE_SPARK_EVENT_LOG_PREFIX: "spark-events",
+    ASKLAKE_SPARK_OUTPUT_BUCKET: "asklake-dev-output-example",
+    ASKLAKE_SPARK_OUTPUT_PREFIX: "asklake-output",
+  });
+  const runHash = createHash("sha256").update(RUN_ID).digest("hex");
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(application.spec.sparkConf).filter(([key]) => key.startsWith("spark.eventLog") || key === "spark.executor.processTreeMetrics.enabled")),
+    {
+      "spark.eventLog.compress": "false",
+      "spark.eventLog.dir": `s3a://asklake-dev-output-example/asklake-output/spark-events/${runHash}/`,
+      "spark.eventLog.enabled": "true",
+      "spark.eventLog.logStageExecutorMetrics": "true",
+      "spark.executor.processTreeMetrics.enabled": "true",
+    },
+  );
+  assert.doesNotMatch(application.spec.sparkConf["spark.eventLog.dir"], new RegExp(RUN_ID));
+
+  assert.throws(
+    () => sparkEventLogConfiguration(RUN_ID, { ASKLAKE_SPARK_EVENT_LOG_ENABLED: "yes" }),
+    /must be true or false/,
+  );
+  assert.throws(
+    () => sparkEventLogConfiguration(RUN_ID, {
+      ASKLAKE_SPARK_EVENT_LOG_ENABLED: "true",
+      ASKLAKE_SPARK_EVENT_LOG_PREFIX: "arbitrary",
+      ASKLAKE_SPARK_OUTPUT_BUCKET: "asklake-dev-output-example",
+      ASKLAKE_SPARK_OUTPUT_PREFIX: "asklake-output",
+    }),
+    /must be spark-events/,
+  );
+  assert.throws(
+    () => sparkEventLogConfiguration(RUN_ID, {
+      ASKLAKE_SPARK_EVENT_LOG_ENABLED: "true",
+      ASKLAKE_SPARK_OUTPUT_BUCKET: "invalid/bucket",
+    }),
+    /valid S3 bucket/,
+  );
 });
 
 test("Kubernetes Spark terminal replacement uses a bounded generation suffix", () => {

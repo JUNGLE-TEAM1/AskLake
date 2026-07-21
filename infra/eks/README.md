@@ -140,7 +140,7 @@ Phase 8은 한 JSON을 기준으로 FastAPI, AI Gateway, Airflow, Spark, Trino�
 
 Phase 10은 신규 EKS를 Auto Mode로 전환하고 기존 Managed Node Group 코드를 제거한다. 기존 cluster 경로는 외부 확인 없이는 닫혀 있고, General/Spark custom NodePool과 실제 AWS smoke는 완료로 간주하지 않는다. 상세 기준은 [Phase 10 EKS Auto Mode Foundation](../../docs/eks-phase-10-auto-mode-foundation.md)을 따른다.
 
-Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB는 후속이다. custom NodePool 구조는 Phase 12로 이어진다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
+Phase 11은 외부 network 참조와 MVP-owned VPC 생성을 분리하고 public/private subnet, NAT 또는 VPC endpoint egress, EKS/MSK/RDS private placement와 exact port security group을 추가한다. dev는 single NAT를 유지하면서 `enable_s3_gateway_endpoint=true`로 S3 Gateway Endpoint만 독립 활성화한다. 실제 CIDR/AZ/egress 비용 선택은 example에 기본값으로 넣지 않으며 ALB는 후속이다. custom NodePool 구조는 Phase 12로 이어진다. 상세 기준은 [Phase 11 VPC와 Private Network Foundation](../../docs/eks-phase-11-network-foundation.md)을 따른다.
 
 Phase 12는 custom NodeClass용 전용 node role/access entry와 General/Spark NodePool chart를 추가한다. 기본 렌더는 비어 있고 테스트 fixture의 숫자는 운영 권장값이 아니다. 실제 workload selector, 비용·용량·disruption 선택과 apply/scheduling/scale smoke는 [Phase 12 Auto Mode NodeClass와 NodePool](../../docs/eks-phase-12-auto-mode-node-pools.md)을 따른다.
 
@@ -158,6 +158,18 @@ Application Signals, Classic, OTel native log, standalone Fluent Bit/ADOT과 Nod
 network로 전환해야 한다. 실제 application log는 유입되지만 OTel metric exporter의
 일부 HTTP 400 metric drop은 후속 gate이며, 상세 결과는
 [Day 18 Phase 2 적용 기록](../../docs/eks-day18-observability-live-evidence.md)을 따른다.
+
+Resource Planner Phase 7 실험 관찰자는 기존 개인 EKS access entry를 확장하지 않는다.
+기존 `benchmark_observability_reader_enabled` Terraform 계약이 이미 적용된 별도
+`benchmark-observer` read-only IAM role과 EKS access entry를 계속 소유하고,
+`observabilityRbac.enabled=true`인 Foundation release가
+`asklake:observability-readers` group에 `asklake-dev` Pod/Event/Deployment/HPA/
+SparkApplication/Pod Metrics read만 부여한다. operator의 role/user identity는 Git 제외
+private override var file에만 둔다. Spark event log는 기존 Output prefix 아래
+`spark-events/<sha256(runId)>/`에 opt-in으로 기록하며 기본값은 `false`다. 자세한
+apply·10GB 중단·복구 기준은
+[Resource Planner Phase 7 관측 계약](../../docs/eks-spark-resource-planner-phase7-observability.md)을
+따른다.
 
 Day 18 Phase 3에서 짧은 실측을 24시간으로 보정한 결과 기존 control-plane/RDS와
 OTel cluster-wide application log의 합산이 비용 경계를 넘을 가능성이 확인됐다.

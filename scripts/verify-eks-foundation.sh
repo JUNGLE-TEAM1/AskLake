@@ -12,8 +12,9 @@ TERRAFORM_DIR="$ROOT_DIR/infra/eks/terraform"
 RENDERED_FILE="$(mktemp)"
 IRSA_RENDERED_FILE="$(mktemp)"
 POD_IDENTITY_RENDERED_FILE="$(mktemp)"
+OBSERVABILITY_RENDERED_FILE="$(mktemp)"
 TERRAFORM_DATA_DIR="$(mktemp -d)"
-trap 'rm -f "$RENDERED_FILE" "$IRSA_RENDERED_FILE" "$POD_IDENTITY_RENDERED_FILE"; rm -rf "$TERRAFORM_DATA_DIR"' EXIT
+trap 'rm -f "$RENDERED_FILE" "$IRSA_RENDERED_FILE" "$POD_IDENTITY_RENDERED_FILE" "$OBSERVABILITY_RENDERED_FILE"; rm -rf "$TERRAFORM_DATA_DIR"' EXIT
 
 required_files=(
   "$ROOT_DIR/infra/eks/README.md"
@@ -39,6 +40,7 @@ required_files=(
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.schema.json"
   "$CHART_DIR/templates/backend-rbac.yaml"
+  "$CHART_DIR/templates/observability-rbac.yaml"
   "$CHART_DIR/templates/spark-driver-rbac.yaml"
   "$INGRESS_CHART_DIR/Chart.yaml"
   "$INGRESS_CHART_DIR/values.schema.json"
@@ -200,6 +202,8 @@ helm lint "$CHART_DIR" -f "$VALUES_FILE"
 helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" >"$RENDERED_FILE"
 helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" -f "$IRSA_VALUES_FILE" >"$IRSA_RENDERED_FILE"
 helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" -f "$POD_IDENTITY_VALUES_FILE" >"$POD_IDENTITY_RENDERED_FILE"
+helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
+  --set observabilityRbac.enabled=true >"$OBSERVABILITY_RENDERED_FILE"
 
 if helm template asklake-foundation "$CHART_DIR" -f "$VALUES_FILE" \
   --set global.kafkaRuntime=redpanda >/dev/null 2>&1; then
@@ -333,6 +337,18 @@ fi
 
 grep -q 'name: asklake-backend-sparkapplications' "$RENDERED_FILE"
 grep -q 'resources: \["sparkapplications"\]' "$RENDERED_FILE"
+
+if grep -q 'name: asklake-observability-reader' "$RENDERED_FILE"; then
+  echo "observability reader RBAC must stay disabled by default" >&2
+  exit 1
+fi
+
+[[ "$(grep -c '^kind: Role$' "$OBSERVABILITY_RENDERED_FILE")" -eq 3 ]]
+[[ "$(grep -c '^kind: RoleBinding$' "$OBSERVABILITY_RENDERED_FILE")" -eq 3 ]]
+grep -q 'name: asklake-observability-reader' "$OBSERVABILITY_RENDERED_FILE"
+grep -q 'apiGroups: \["metrics.k8s.io"\]' "$OBSERVABILITY_RENDERED_FILE"
+grep -q 'resources: \["pods"\]' "$OBSERVABILITY_RENDERED_FILE"
+grep -q 'name: "asklake:observability-readers"' "$OBSERVABILITY_RENDERED_FILE"
 grep -q 'verbs: \["create", "get", "list", "watch", "delete"\]' "$RENDERED_FILE"
 grep -q 'resources: \["pods/log"\]' "$RENDERED_FILE"
 grep -q 'name: asklake-spark-driver' "$RENDERED_FILE"
@@ -392,6 +408,7 @@ grep -q 'existing_auto_mode_enabled       = false' "$TERRAFORM_DIR/dev.tfvars.ex
 grep -q 'cluster_admin_principal_arn = null' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'network_mode               = "external"' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'private_egress_mode             = "undecided"' "$TERRAFORM_DIR/dev.tfvars.example"
+grep -q 'enable_s3_gateway_endpoint      = false' "$TERRAFORM_DIR/dev.tfvars.example"
 grep -q 'eks.amazonaws.com/pod-readiness-gate-inject: enabled' "$VALUES_FILE"
 grep -q 'ASKLAKE_RDS_BOOTSTRAP_CONFIRM=create-three-isolated-databases' \
   "$ROOT_DIR/scripts/bootstrap-eks-rds-databases.sh"
@@ -435,6 +452,11 @@ for network_contract in \
   fi
 done
 
+grep -Fq 'variable "enable_s3_gateway_endpoint"' "$TERRAFORM_DIR/network-foundation-variables.tf"
+grep -Fq 'use_s3_gateway_endpoint = local.use_endpoints || var.enable_s3_gateway_endpoint' \
+  "$TERRAFORM_DIR/network-foundation.tf"
+grep -Fq 'route_table_ids   = [for route_table in aws_route_table.private : route_table.id]' \
+  "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq '"kubernetes.io/role/elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq '"kubernetes.io/role/internal-elb" = "1"' "$TERRAFORM_DIR/network-foundation.tf"
 grep -Fq 'map_public_ip_on_launch = false' "$TERRAFORM_DIR/network-foundation.tf"
