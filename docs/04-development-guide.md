@@ -1205,4 +1205,6 @@ npm run build
 Continuous SQL reconciliation을 한 process가 소유한다. workload 활성화에는 이전 owner
 fence, 명시적 승인, 새 generation이 모두 필요하다. 배포 뒤에는 worker 1개, 같은
 identity의 active claim 1개, SparkApplication checkpoint 재개, Iceberg snapshot과 Catalog
-publication을 함께 확인한다.
+publication을 함께 확인한다. Backend 검증은 V2-era Catalog payload의 retired
+`serving/clickhouse` binding을 read path에서 격리하고 유효한 `archive/trino` binding을
+보존하는 호환성 회귀도 함께 실행한다.

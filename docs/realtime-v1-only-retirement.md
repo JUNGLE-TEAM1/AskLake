@@ -17,6 +17,11 @@ Compose, Helm, Terraform, 배포 스크립트와 운영 문서에서 제거한�
 이 파일들은 실행 runtime이나 재활성화 자산이 아니다. 이미 적용된 DB의 downgrade나
 revision chain 단절을 피하기 위한 immutable schema history다.
 
+Catalog JSONB에도 V2 시기의 `serving/clickhouse` physical binding이 남을 수 있다. 현재
+Backend는 persisted payload를 자동 수정하지 않고 read path에서 해당 retired binding과
+malformed entry를 제외한다. 유효한 `archive/trino` binding과 Dataset metadata는 유지하며,
+legacy row 하나가 Catalog 목록 전체를 실패시키지 않아야 한다.
+
 ## 안전 불변식
 
 - V1 worker가 Kafka Continuous와 Continuous SQL control plane을 `all` scope로 단독 소유한다.

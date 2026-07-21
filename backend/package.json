@@ -16,7 +16,7 @@
     "verify:refactor-release-plan": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py",
     "verify:refactor-release-execution": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/release_readiness.py --execution",
     "verify:control-plane-ownership": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/control_plane_ownership.py",
-    "verify:eks-realtime-v1-only-profile": "../scripts/verify-eks-realtime-v1-only-profile.sh && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_realtime_v1_only_profile -v",
+    "verify:eks-realtime-v1-only-profile": "../scripts/verify-eks-realtime-v1-only-profile.sh && PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_realtime_v1_only_profile tests.test_catalog_payload_compatibility -v",
     "verify:spark-kubernetes-client": "node --test scripts/verify-spark-kubernetes-client.mjs",
     "verify:kubernetes-continuous-contract": "node --test scripts/verify-kubernetes-continuous-contract.mjs",
     "verify:legacy-removal-evidence": "node scripts/run-python-verification.mjs ../scripts/refactor_audit/legacy_removal_evidence.py",

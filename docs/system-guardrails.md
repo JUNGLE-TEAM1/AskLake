@@ -150,6 +150,10 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
   없으면 workload 활성화를 거부한다.
 - rollback은 새 generation과 보존된 checkpoint를 사용하며 checkpoint 삭제·rewind,
   dual-run, 다른 엔진으로 자동 전환을 금지한다.
+- V2 은퇴 전 Catalog JSONB의 `serving/clickhouse` physical binding은 원본을 삭제하지 않고
+  read normalization에서 제외한다. 현재 유효한 `archive/trino` binding과 Dataset metadata는
+  보존하며, legacy 또는 malformed entry 하나가 Catalog 목록 전체를 500으로 만들면 rollout
+  No-Go다.
 
 # EKS Spark Resource Planner promotion guardrail
 
