@@ -5,6 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, Check, Filter, ListChecks, Plus, Search, X } from "lucide-react";
 
 import { SourceBrandIcon } from "../../../components/source/SourceBrand";
+import { PageHeaderActions } from "@/components/layout/Topbar";
 
 import { Button } from "@/components/ui/button";
 
@@ -95,12 +96,12 @@ export function JobsLandingPage({
 
   return (
     <div className="jobs-landing">
-      <div className="flex min-h-10 items-center justify-end" data-page-actions="jobs">
-        <Button type="button" onClick={onCreate}>
+      <PageHeaderActions>
+        <Button className="app-page-primary-action" size="sm" type="button" onClick={onCreate}>
           <Plus size={16} />
           새 수집/처리 생성
         </Button>
-      </div>
+      </PageHeaderActions>
       <div className="content-main jobs-panel-stack">
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
