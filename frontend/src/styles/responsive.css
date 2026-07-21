@@ -169,8 +169,18 @@
   }
 
   .etl-wizard-breadcrumb {
-    width: 100%;
-    padding: 5px 16px;
+    overflow: hidden;
+    padding: 5px 0 5px 16px;
+  }
+
+  .etl-wizard-header-actions {
+    padding-right: 16px;
+  }
+
+  .etl-wizard-header-actions .creation-top-actions .primary-button,
+  .etl-wizard-header-actions .creation-top-actions .secondary-button {
+    min-width: 58px;
+    padding: 0 10px;
   }
 
   .page-body {

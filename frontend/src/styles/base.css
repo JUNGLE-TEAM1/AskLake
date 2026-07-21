@@ -426,16 +426,19 @@ p {
   min-width: 0;
   min-height: 52px;
   align-items: center;
+  gap: 12px;
+  justify-content: space-between;
   border-bottom: 1px solid #dee1e6;
   background: #fff;
 }
 
 .etl-wizard-breadcrumb {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 6px;
-  padding: 6px clamp(20px, 2.5vw, 40px);
+  padding: 6px 0 6px clamp(20px, 2.5vw, 40px);
   color: #475569;
   font-size: 13px;
   font-weight: 700;
@@ -521,6 +524,32 @@ p {
   font-size: 10px;
   font-weight: 800;
   padding: 2px 6px;
+}
+
+.etl-wizard-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding-right: clamp(20px, 2.5vw, 40px);
+}
+
+.etl-wizard-header-actions .creation-top-actions,
+.etl-wizard-header-actions .creation-top-actions.is-split {
+  width: auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.etl-wizard-header-actions .creation-top-actions.is-split > :last-child {
+  margin-left: 0;
+}
+
+.etl-wizard-header-actions .creation-top-actions .primary-button,
+.etl-wizard-header-actions .creation-top-actions .secondary-button {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 .stepper-inner {

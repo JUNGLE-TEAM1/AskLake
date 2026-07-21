@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { ETL_WIZARD_HEADER_ACTIONS_ID } from "./EtlWizardHeaderActionsPortal";
 
 type EtlWizardHeaderProps = {
   activeIndex: number;
@@ -74,6 +75,11 @@ export function EtlWizardHeader({
           </DropdownMenuContent>
         </DropdownMenu>
       </nav>
+      <div
+        aria-label="단계 이동"
+        className="etl-wizard-header-actions"
+        id={ETL_WIZARD_HEADER_ACTIONS_ID}
+      />
     </header>
   );
 }

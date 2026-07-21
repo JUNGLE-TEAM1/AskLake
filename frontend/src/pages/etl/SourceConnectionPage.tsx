@@ -837,7 +837,7 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={sourceNextDisabled} showPrev={false} split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceNextDisabled} split onPrev={onPrev} onNext={goNext} />}
       className="source-creation-flow"
     >
       <section className="panel hegun-console-panel source-connect-panel source-workbench-panel" aria-label="소스 선택 및 연결">

@@ -5,6 +5,7 @@ import { CommandBar } from "@/components/ui/command-bar";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
+import { EtlWizardHeaderActionsPortal } from "../layout/EtlWizardHeaderActionsPortal";
 
 export function CreationFlowLayout({
   actions,
@@ -24,13 +25,15 @@ export function CreationFlowLayout({
     .join(" ");
 
   return (
-    <div className={layoutClassName}>
-      <div className="content-main">
-        {actions && <div className="creation-flow-topbar">{actions}</div>}
-        {children}
+    <>
+      {actions && <EtlWizardHeaderActionsPortal>{actions}</EtlWizardHeaderActionsPortal>}
+      <div className={layoutClassName}>
+        <div className="content-main">
+          {children}
+        </div>
+        {side ?? null}
       </div>
-      {side ?? null}
-    </div>
+    </>
   );
 }
 

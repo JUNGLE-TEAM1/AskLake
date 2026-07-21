@@ -51,6 +51,9 @@ test("previously completed steps remain reachable after moving backward", () => 
 test("ETL wizard exposes its steps from a compact breadcrumb menu without a duplicate source heading", () => {
   const app = read("src/App.tsx");
   const header = read("src/components/layout/EtlWizardHeader.tsx");
+  const headerActionsPortal = read("src/components/layout/EtlWizardHeaderActionsPortal.tsx");
+  const creationFlow = read("src/components/creation/CreationFlow.tsx");
+  const schemaPage = read("src/pages/etl/SchemaInferencePage.tsx");
   const sourcePage = read("src/pages/etl/SourceConnectionPage.tsx");
   const styles = read("src/styles/base.css");
 
@@ -62,8 +65,14 @@ test("ETL wizard exposes its steps from a compact breadcrumb menu without a dupl
   assert.match(header, /isStepDisabled\(index\)/);
   assert.match(header, /onStepSelect\(index\)/);
   assert.doesNotMatch(header, /<Stepper/);
+  assert.match(header, /id=\{ETL_WIZARD_HEADER_ACTIONS_ID\}/);
+  assert.match(headerActionsPortal, /createPortal\(children, target\)/);
+  assert.match(creationFlow, /<EtlWizardHeaderActionsPortal>\{actions\}<\/EtlWizardHeaderActionsPortal>/);
+  assert.match(schemaPage, /<EtlWizardHeaderActionsPortal>/);
+  assert.doesNotMatch(schemaPage, /schema-bottom-bar schema-top-actions/);
   assert.doesNotMatch(sourcePage, /title="소스 연결"/);
   assert.match(styles, /\.etl-wizard-header\s*\{[\s\S]*?min-height: 52px;/);
+  assert.match(styles, /\.etl-wizard-header-actions \.creation-top-actions/);
   assert.doesNotMatch(styles, /\.stepper\.compact/);
   assert.match(styles, /\.page-body\[data-etl-route\]:not\(\.schema-body\)/);
 });
