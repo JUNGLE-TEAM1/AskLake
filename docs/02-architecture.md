@@ -253,7 +253,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - `/login`은 `AuthPage`와 `/api/auth/*` session API를 사용하고, workspace hydrate는 session actor 확인 이후 시작한다.
 - `AdminConsolePage`는 admin actor에게만 노출하고 `/api/admin/*`를 통해 사용자·그룹·permission grant·governance control·감사 로그를 관리한다.
 - 검색/카탈로그의 `분석 기준` view는 독립 AI 대화 메뉴를 대신해 Semantic Model과 RAG 준비 상태를 관리한다. `/catalog?view=semantic`에서 Catalog Dataset 선택, metric·dimension 정의, RAG 분류·승인·색인·작업 이력을 실제 backend endpoint로 처리한다. `/semantic-layer`와 기존 `/ai`는 같은 화면으로 redirect하는 legacy 호환 route이며, 화면은 제공받은 Catalog 목록을 schema context로 사용하되 Semantic Model과 RAG 상태를 frontend fixture로 성공 처리하지 않는다.
-- 수집/처리 Transform 화면의 필드 transform은 사용자가 quick function 또는 expression을 직접 선택/입력하는 범위로 둔다. 여러 quick function은 현재 SQL 표현식을 다음 함수가 감싸는 단일 중첩 표현식으로 합성하고, 선택된 quick function을 다시 누르면 해당 wrapper만 제거한다. 편집기와 필드 행은 적용된 함수 선택 상태와 최종 SQL 표현식을 동일하게 표시한다. AI 기반 field transform/SQL transform 보조 버튼은 SQL 분석 Query AI와 역할이 겹치고 backend 계약이 없으므로 현재 MVP 화면에 노출하지 않는다.
+- 수집/처리 Transform 화면의 필드 transform은 사용자가 quick function을 선택하거나 scalar SQL expression을 직접 입력하는 범위로 둔다. 여러 quick function은 현재 SQL 표현식을 다음 함수가 감싸는 단일 중첩 표현식으로 합성하고, 선택된 quick function을 다시 누르면 해당 wrapper만 제거한다. 편집기와 필드 행은 적용된 함수 선택 상태와 최종 SQL 표현식을 동일하게 표시한다. 결과 미리보기는 원본 source sample을 변경하지 않고 현재 transform step을 순서대로 적용하며, quick function뿐 아니라 저장된 AI 작성 또는 사용자 직접 입력 SQL expression도 같은 출력 계산에 사용한다. 품질 검사는 이 변환된 출력 projection을 기준으로 다시 계산한다.
 
 라우팅은 `frontend/src/main.tsx`에서 React Router Declarative Mode의 `BrowserRouter`를 사용한다. `/`는 shell 밖의 랜딩이고 `/login` 및 workspace route는 `App`의 session guard를 통과한다.
 

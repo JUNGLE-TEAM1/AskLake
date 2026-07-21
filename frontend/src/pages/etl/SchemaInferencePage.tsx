@@ -382,6 +382,7 @@ export function SchemaInferencePage({
             columns={schemaColumns}
             qualityRules={draft.quality.rules}
             sampleRows={schemaSampleRows}
+            transformSteps={draft.transform.steps}
           />
         ) : null}
 
