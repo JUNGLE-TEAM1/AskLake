@@ -611,8 +611,12 @@ export function App() {
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
-        {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-        {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
+        {(toast || apiPending || (activeDataLoading && activeDataHasRows)) && (
+          <div className="app-notification-stack">
+            {toast && <div className={`app-toast ${toast.tone}`} role="status">{toast.message}</div>}
+            {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending" role="status">{pendingMessage}</div>}
+          </div>
+        )}
         {wizardFlows.includes(activeFlow) && (
           <EtlWizardHeader
             activeIndex={wizardActiveIndex}

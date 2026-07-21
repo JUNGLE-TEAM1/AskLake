@@ -60,6 +60,8 @@ test("ETL wizard exposes its steps from a compact breadcrumb menu without a dupl
   const styles = read("src/styles/base.css");
 
   assert.match(app, /<EtlWizardHeader/);
+  assert.match(app, /className="app-notification-stack"/);
+  assert.match(app, /className=\{`app-toast \$\{toast\.tone\}`\} role="status"/);
   assert.match(header, /aria-label="탐색 경로"/);
   assert.match(header, />\s*수집\/처리\s*</);
   assert.match(header, /새 수집\/처리 생성/);
@@ -79,6 +81,8 @@ test("ETL wizard exposes its steps from a compact breadcrumb menu without a dupl
   assert.doesNotMatch(sourcePage, /title="소스 연결"/);
   assert.match(styles, /\.etl-wizard-header\s*\{[\s\S]*?min-height: 52px;/);
   assert.match(styles, /\.etl-wizard-header-actions \.creation-top-actions/);
+  assert.match(styles, /\.app-notification-stack\s*\{[\s\S]*?bottom: 24px;/);
+  assert.doesNotMatch(styles, /\.app-toast\s*\{[^}]*\btop:/);
   assert.doesNotMatch(styles, /\.stepper\.compact/);
   assert.match(styles, /\.page-body\[data-etl-route\]:not\(\.schema-body\)/);
 });

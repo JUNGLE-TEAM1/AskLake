@@ -145,6 +145,11 @@
 }
 
 @media (max-width: 780px) {
+  .app-notification-stack {
+    right: 16px;
+    bottom: 16px;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }

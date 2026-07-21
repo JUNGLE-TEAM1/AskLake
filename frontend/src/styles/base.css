@@ -375,11 +375,18 @@ p {
   padding: 4px 8px;
 }
 
-.app-toast {
+.app-notification-stack {
   position: fixed;
-  top: 78px;
+  bottom: 24px;
   right: 28px;
   z-index: 40;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.app-toast {
   max-width: min(420px, calc(100vw - 48px));
   border: 1px solid #bfdbfe;
   border-radius: 10px;
@@ -389,6 +396,7 @@ p {
   font-size: 14px;
   font-weight: 700;
   padding: 13px 16px;
+  pointer-events: auto;
 }
 
 .app-toast.success {
@@ -400,10 +408,6 @@ p {
 }
 
 .app-api-pending {
-  position: fixed;
-  top: 126px;
-  right: 28px;
-  z-index: 39;
   border: 1px solid #dee1e6;
   border-radius: 999px;
   background: #171a1f;
@@ -412,6 +416,7 @@ p {
   font-size: 12px;
   font-weight: 800;
   padding: 8px 12px;
+  pointer-events: auto;
 }
 
 .stepper {
