@@ -301,7 +301,11 @@ def commit_airflow_catalog_reconciliation(
 ) -> AirflowCatalogReconciliationResponse:
     job, run = airflow_catalog_identity(db, job_id, run_id)
     dataset_id = str(job.dataset_id or "").strip()
-    existing_dataset = etl_repository.get_dataset_by_id_for_update(db, dataset_id)
+    existing_dataset = etl_repository.get_dataset_by_id_for_update(
+        db,
+        dataset_id,
+        publication_created_at=run.created_at,
+    )
     name_match = etl_repository.get_dataset_by_name(db, job.target)
     if name_match is not None and name_match.id != dataset_id:
         raise hooks.catalog_reconciliation_error(

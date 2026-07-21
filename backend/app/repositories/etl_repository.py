@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import inspect, select, text
@@ -293,7 +294,12 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
     return db.get(CatalogDatasetModel, dataset_id)
 
 
-def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
+def get_dataset_by_id_for_update(
+    db: Session,
+    dataset_id: str,
+    *,
+    publication_created_at: datetime | None = None,
+) -> CatalogDatasetModel | None:
     ensure_schema(db)
     model = db.scalar(
         select(CatalogDatasetModel)
@@ -302,7 +308,11 @@ def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDataset
     )
     from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
 
-    ensure_catalog_publication_allowed(db, dataset_id)
+    ensure_catalog_publication_allowed(
+        db,
+        dataset_id,
+        publication_created_at=publication_created_at,
+    )
     return model
 
 
