@@ -5,18 +5,20 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import duckdb
+from fastapi.testclient import TestClient
 
-from app.core.auth_context import ActorContext
+from app.api.catalog import get_catalog_service
+from app.core.auth_context import ActorContext, get_actor_context
 from app.core.errors import ApiError
+from app.main import create_app
+from app.schemas.common import ErrorCode
 from app.schemas.catalog import (
     CatalogDatasetFilterValuesRequest,
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
-    ClickHouseTableRef,
     DatasetMaterializationRun,
 )
 from app.schemas.permissions import ResourcePermissions
-from app.services.clickhouse_client import ClickHouseRows
 from app.schemas.trino import TrinoClientPage
 from app.services.catalog_service import (
     CatalogService,
@@ -45,24 +47,6 @@ class FakeCatalogRowsTrinoClient:
 
     def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
         raise AssertionError("fixture query should fit in one Trino page")
-
-
-class FakeCatalogRowsClickHouseClient:
-    def __init__(self) -> None:
-        self.queries: list[str] = []
-        self.closed = False
-
-    def query(self, query: str, **_kwargs) -> ClickHouseRows:
-        self.queries.append(query)
-        if "count()" in query:
-            return ClickHouseRows(columns=["row_count"], rows=[[3]])
-        return ClickHouseRows(
-            columns=["event_time", "level"],
-            rows=[["2026-07-19T07:30:00Z", "INFO"]],
-        )
-
-    def close(self) -> None:
-        self.closed = True
 
 
 def build_dataset(storage_location: str) -> CatalogDatasetResponse:
@@ -287,64 +271,126 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         )
         self.assertTrue(all("_asklake_" not in query for query in client.queries))
 
-    def test_clickhouse_dataset_rows_use_the_realtime_v2_reader(self) -> None:
+    def test_iceberg_trino_api_error_is_wrapped_without_masking_the_cause(self) -> None:
+        sensitive_message = (
+            "Trino at https://private-query.example.internal failed; "
+            "token=do-not-expose; query=SELECT * FROM private_table"
+        )
         dataset = self.dataset.model_copy(update={
-            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
-            "physical_bindings": [{
-                "role": "serving",
-                "engine": "clickhouse",
-                "status": "active",
-                "bindingEpoch": 1,
-                "versionId": "kiv2-job",
-                "pipelineVersionId": "kiv2-job",
-                "database": "asklake_v2",
-                "table": "raw_events_v2_current",
-            }],
-            "schema_": [["event_time", "Timestamp"], ["level", "String"]],
-            "storage_format": "clickhouse",
-            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
-            "streaming_source": {"topic": "events.v2"},
+            "query_engine_status": "available",
+            "query_engine_table": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_rows_fixture",
+                "format": "iceberg",
+            },
+            "storage_format": "iceberg",
+            "storage_location": "s3://warehouse/asklake/catalog_rows_fixture",
         })
-        client = FakeCatalogRowsClickHouseClient()
-
-        with patch(
-            "app.services.dataset_rows_service.ClickHouseClient.realtime_v2_reader",
-            return_value=client,
-        ) as reader:
-            page = read_dataset_rows(dataset, limit=1, offset=0)
-
-        reader.assert_called_once_with()
-        self.assertEqual(page.row_count, 3)
-        self.assertEqual(page.rows, [["2026-07-19T07:30:00Z", "INFO"]])
-        self.assertTrue(client.closed)
-        self.assertTrue(all("kafka_topic = 'events.v2'" in query for query in client.queries))
-
-    def test_clickhouse_dataset_query_permission_does_not_require_trino_registration(self) -> None:
-        dataset = self.dataset.model_copy(update={
-            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
-            "query_engine_status": "unavailable",
-            "query_engine_table": None,
-            "storage_format": "clickhouse",
-            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
-        })
-        permissions = ResourcePermissions(
-            canView=True,
-            canQuery=True,
-            computedFor="Admin User",
-            enforced=True,
+        client = SimpleNamespace(
+            submit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                ApiError(ErrorCode.BACKEND_TIMEOUT, sensitive_message, 503)
+            )
         )
 
-        with (
-            patch("app.services.catalog_service.settings.trino_enabled", True),
-            patch(
-                "app.services.catalog_service.permissions_for_actor_with_governance",
-                return_value=permissions,
-            ),
-        ):
-            projected = with_dataset_permissions(dataset, ActorContext(role="admin"), object())
+        with self.assertRaises(ApiError) as raised:
+            read_dataset_rows(
+                dataset,
+                limit=1,
+                offset=0,
+                trino_client=client,  # type: ignore[arg-type]
+            )
 
-        self.assertTrue(projected.permissions.can_query)
-        self.assertFalse(projected.query_engine_required)
+        self.assertEqual(raised.exception.code, "SQL_STORAGE_ERROR")
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(
+            raised.exception.message,
+            "Catalog Iceberg dataset rows could not be read",
+        )
+        self.assertEqual(
+            raised.exception.details,
+            {"datasetId": dataset.id, "reason": "BACKEND_TIMEOUT"},
+        )
+        self.assertNotIn(sensitive_message, raised.exception.message)
+        self.assertNotIn(sensitive_message, str(raised.exception.details))
+        self.assertIsInstance(raised.exception.__cause__, ApiError)
+        self.assertEqual(raised.exception.__cause__.code, ErrorCode.BACKEND_TIMEOUT)
+
+    def test_rows_endpoint_returns_sanitized_http_502_envelope(self) -> None:
+        sensitive_message = (
+            "Trino at https://private-query.example.internal failed; "
+            "token=do-not-expose; query=SELECT * FROM private_table"
+        )
+
+        dataset = self.dataset.model_copy(update={
+            "query_engine_status": "available",
+            "query_engine_table": {
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "catalog_rows_fixture",
+                "format": "iceberg",
+            },
+            "storage_format": "iceberg",
+            "storage_location": "s3://warehouse/asklake/catalog_rows_fixture",
+        })
+        client = SimpleNamespace(
+            submit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                ApiError("TRINO_UNAVAILABLE", sensitive_message, 503)
+            )
+        )
+
+        class FailingCatalogService:
+            def get_dataset_rows(self, dataset_id, _actor, *, limit, offset):
+                self_dataset = dataset.model_copy(update={"id": dataset_id})
+                return read_dataset_rows(
+                    self_dataset,
+                    limit=limit,
+                    offset=offset,
+                    trino_client=client,  # type: ignore[arg-type]
+                )
+
+        app = create_app()
+        app.dependency_overrides[get_catalog_service] = FailingCatalogService
+        app.dependency_overrides[get_actor_context] = lambda: ActorContext(
+            name="catalog-reader",
+            role="viewer",
+        )
+
+        response = TestClient(app).get(
+            "/api/catalog/datasets/catalog_rows_fixture/rows?limit=1&offset=0"
+        )
+
+        self.assertEqual(response.status_code, 502)
+        error = response.json()["error"]
+        self.assertEqual(
+            {
+                "code": error["code"],
+                "details": error["details"],
+                "message": error["message"],
+            },
+            {
+                "code": "SQL_STORAGE_ERROR",
+                "details": {
+                    "datasetId": "catalog_rows_fixture",
+                    "reason": "TRINO_UNAVAILABLE",
+                },
+                "message": "Catalog Iceberg dataset rows could not be read",
+            },
+        )
+        self.assertEqual(error["stage"], "api")
+        self.assertTrue(error["retryable"])
+        self.assertEqual(
+            error["operatorMessage"],
+            "Catalog Iceberg dataset rows could not be read",
+        )
+        self.assertEqual(
+            error["userMessage"],
+            "Catalog Iceberg dataset rows could not be read",
+        )
+        self.assertTrue(error["diagnosticId"])
+        self.assertNotIn(sensitive_message, response.text)
+        self.assertNotIn("private-query.example.internal", response.text)
+        self.assertNotIn("do-not-expose", response.text)
 
 if __name__ == "__main__":
     unittest.main()

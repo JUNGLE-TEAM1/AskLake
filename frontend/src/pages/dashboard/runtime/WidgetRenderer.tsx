@@ -21,7 +21,6 @@ import {
   type DashboardAssistantCreateWidgetAction,
   type DashboardAssistantResponse,
   type DashboardAssistantUpdateWidgetAction,
-  dashboardEvidenceSummary,
   type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
@@ -885,10 +884,7 @@ function VisualizationRequestWidget({
       }
       if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setRequestTone("success");
-      setMessage([
-        "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
-        dashboardEvidenceSummary(response),
-      ].filter(Boolean).join(" "));
+      setMessage("AI가 생성한 시각화 변경을 편집기에 적용했습니다.");
       setIsPromptEditing(false);
     } catch (error) {
       if (lease && !requests.current.isCurrent(lease)) return;

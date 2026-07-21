@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: asklake-rds-bootstrap
+  namespace: asklake-dev
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asklake-rds-bootstrap
+        app.kubernetes.io/part-of: asklake
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: bootstrap
+          image: postgres:16-bookworm
+          command:
+            - bash
+            - /workspace/scripts/bootstrap-eks-rds-databases.sh
+          envFrom:
+            - configMapRef:
+                name: asklake-rds-bootstrap-runtime
+            - secretRef:
+                name: asklake-rds-bootstrap
+          env:
+            - name: PGDATABASE
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /var/run/asklake/rds-ca/global-bundle.pem
+            - name: ASKLAKE_RDS_BOOTSTRAP_CONFIRM
+              value: create-three-isolated-databases
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: bootstrap-scripts
+              mountPath: /workspace/scripts/bootstrap-eks-rds-databases.sh
+              subPath: bootstrap-eks-rds-databases.sh
+              readOnly: true
+            - name: bootstrap-scripts
+              mountPath: /workspace/infra/eks/bootstrap/rds/bootstrap-databases.sql
+              subPath: bootstrap-databases.sql
+              readOnly: true
+            - name: rds-ca
+              mountPath: /var/run/asklake/rds-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: bootstrap-scripts
+          configMap:
+            name: asklake-rds-bootstrap-scripts
+            defaultMode: 0555
+        - name: rds-ca
+          configMap:
+            name: asklake-rds-ca
+        - name: tmp
+          emptyDir: {}

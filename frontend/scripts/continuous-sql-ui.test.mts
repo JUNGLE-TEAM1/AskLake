@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildClickHouseOutputIdentity,
+  buildContinuousSqlOutputIdentity,
   getContinuousSqlUniqueKeyIssue,
   getContinuousSqlRelationMix,
   isStreamingCatalogDataset,
@@ -73,13 +73,12 @@ test("does not infer streaming inputs from legacy names, tags, or materializatio
   assert.equal(getContinuousSqlRelationMix([legacy, staticDataset]), null);
 });
 
-test("creates safe unique ClickHouse output identifiers", () => {
-  const first = buildClickHouseOutputIdentity();
-  const second = buildClickHouseOutputIdentity();
+test("creates safe unique Continuous SQL dataset identifiers", () => {
+  const first = buildContinuousSqlOutputIdentity();
+  const second = buildContinuousSqlOutputIdentity();
 
   assert.match(first.datasetId, /^continuous-\d+-[a-z0-9]+$/);
-  assert.match(first.table, /^live_join_\d+_[a-z0-9]+$/);
-  assert.notEqual(first.table, second.table);
+  assert.notEqual(first.datasetId, second.datasetId);
 });
 
 test("extracts a static JOIN key issue for automatic Catalog verification", () => {

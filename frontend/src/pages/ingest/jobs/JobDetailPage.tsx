@@ -26,7 +26,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 
 import type { JobCommand, JobRowData } from "../../../types";
 import { JobEndpointCard, JobEndpointItem, OperationSummaryItem, OutputSchemaRow, OwnerIdentity, PipelineFlowNode, QualityRuleRow, TransformRuleRow, compactSourceConfigItems, detailKeyValueListClassName, fallbackJobStats, formatOperationalDelay, formatOperationalRate, getJobExecutionDisplay, getRuleActionLabel, outputSchemaColumns, qualityRuleColumns, transformRuleColumns, validationTypeLabelMap } from "./jobDetailModel";
-import { JobDetailActionIcon, continuousRuntimeLabel, continuousSchemaStatusLabels, formatCompactDateTime, formatJobSchedule, formatNextScheduledRun, getJobDetailActionClassName, getJobDetailActions, getJobScheduleKind, getJobStatusDisplay, isContinuousKafkaJob, isRealtimeJob, jobActionDisabled, realtimeHealthMeta, runStatusMeta } from "./jobShared";
+import { JobDetailActionIcon, continuousEngineLabel, continuousRuntimeLabel, continuousSchemaStatusLabels, formatCompactDateTime, formatJobSchedule, formatNextScheduledRun, getJobDetailActionClassName, getJobDetailActions, getJobScheduleKind, getJobStatusDisplay, isContinuousKafkaJob, isRealtimeJob, jobActionDisabled, realtimeHealthMeta, runStatusMeta } from "./jobShared";
 
 export function JobDetailHeader({
   backLabel,
@@ -384,7 +384,7 @@ export function JobDetailPage({
               <KeyValueList
                 className={detailKeyValueListClassName}
                 items={[
-                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : getJobScheduleKind(job) === "none" ? "수동 실행" : "반복 스케줄" },
+                  { label: "실행 유형", value: isRealtimeJob(job) ? continuousEngineLabel(job) : getJobScheduleKind(job) === "none" ? "수동 실행 · Spark" : "반복 스케줄 · Spark" },
                   { label: "주기", value: formatJobSchedule(job.schedule) },
                   { label: "다음 실행", value: formatNextScheduledRun(job) },
                   { label: "재시도 정책", value: retrySummary },

@@ -5,6 +5,7 @@ export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "cancele
 export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
 export type KafkaExecutionMode = "snapshot" | "continuous";
+export type KafkaRuntimeEngine = "spark_structured_streaming";
 export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
 export type ContinuousDesiredRuntimeState = "running" | "paused" | "stopped";
 export type ContinuousObservedRuntimeState = "unknown" | "starting" | "running" | "stopping" | "stopped" | "failed";
@@ -210,7 +211,11 @@ export type JobRowData = {
   sourceLabel?: string;
   sourceType?: string;
   executionMode?: KafkaExecutionMode;
-  continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
+  continuousConfig?: KafkaContinuousConfigDraft & {
+    checkpointPath?: string;
+    runtimeEngine?: KafkaRuntimeEngine;
+    runtimeGeneration?: number;
+  };
   continuousRuntime?: KafkaContinuousRuntime | null;
   recordParsing?: RecordParsingDraft;
   schemaColumns?: SchemaColumnDraft[];

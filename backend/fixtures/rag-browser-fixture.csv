@@ -1,4 +1,0 @@
-review_id,product_name,review_text,seller_response,rating,created_at,active,secret_note
-r-001,무선 이어폰,"음질은 좋지만 배송이 예정일보다 일주일 늦었습니다. 배터리는 여섯 시간 정도 갑니다.","배송 지연에 대해 사과드리고 보상 쿠폰을 발급했습니다.",3,2026-07-01,true,internal-only
-r-002,블루투스 스피커,"소리는 선명하고 설치도 쉬웠습니다. 포장은 안전하게 도착했습니다.","좋은 사용 경험을 남겨주셔서 감사합니다.",5,2026-07-02,true,internal-only
-r-003,노트북 거치대,"조립 설명이 부족했고 배송 상자가 찌그러졌습니다. 환불을 요청했습니다.","환불 절차를 안내하고 회수 접수를 완료했습니다.",2,2026-07-03,false,internal-only

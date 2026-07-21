@@ -34,11 +34,10 @@ export function buildContinuousSqlOutputName(streamingDataset: CatalogDataset) {
   return `${streamingDataset.name}_live_join`;
 }
 
-export function buildClickHouseOutputIdentity() {
+export function buildContinuousSqlOutputIdentity() {
   const timestamp = Date.now();
   const random = Math.random().toString(36).slice(2, 8);
   return {
     datasetId: `continuous-${timestamp}-${random}`,
-    table: `live_join_${timestamp}_${random}`,
   };
 }

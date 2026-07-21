@@ -1,0 +1,88 @@
+{{- if .Values.realtimeV1.enabled }}
+{{- if not .Values.realtimeV1.ownerTransfer.approved }}
+{{- fail "realtimeV1 requires an approved owner transfer" }}
+{{- end }}
+{{- if not .Values.realtimeV1.ownerTransfer.previousOwnerFenced }}
+{{- fail "realtimeV1 requires proof that the previous EC2 Kafka owner is fenced" }}
+{{- end }}
+{{- $generation := required "realtimeV1.ownerTransfer.generation is required" .Values.realtimeV1.ownerTransfer.generation }}
+{{- $runtimePrefix := printf "s3a://%s/%s" .Values.realtimeV1.runtimeDocument.bucket (.Values.realtimeV1.runtimeDocument.prefix | trimAll "/") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-realtime-v1-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: realtime-v1-worker
+  annotations:
+    asklake.io/selected-path: v1-spark-structured-streaming
+    asklake.io/owner-generation: {{ $generation | quote }}
+    asklake.io/previous-owner: ec2-continuous-worker
+    asklake.io/previous-owner-fenced: "true"
+    asklake.io/topic-prefix: {{ .Values.realtimeV1.kafka.topicPrefix | quote }}
+    asklake.io/consumer-group-prefix: {{ .Values.realtimeV1.kafka.consumerGroupPrefix | quote }}
+spec:
+  replicas: {{ .Values.realtimeV1.replicas }}
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "realtime-v1-worker" "release" .Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "realtime-v1-worker" "release" .Release.Name) | nindent 8 }}
+        asklake.io/owner-generation: {{ $generation | quote }}
+      annotations:
+        asklake.io/selected-path: v1-spark-structured-streaming
+        asklake.io/previous-owner-fenced: "true"
+        asklake.io/runtime-document-prefix: {{ .Values.realtimeV1.runtimeDocument.prefix | quote }}
+    spec:
+      serviceAccountName: {{ .Values.realtimeV1.serviceAccountName }}
+      automountServiceAccountToken: true
+      nodeSelector:
+        {{- toYaml .Values.realtimeV1.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: realtime-v1-worker
+          image: "{{ required "backend image repository is required" .Values.backend.image.repository }}@{{ required "backend image digest is required" .Values.backend.image.digest }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["python", "-m", "app.continuous_worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.realtimeV1.runtimeConfigMapName }}
+            - secretRef:
+                name: {{ .Values.backend.runtimeSecret.name }}
+          env:
+            - {name: CONTINUOUS_CONTROL_PLANE, value: "worker"}
+            - {name: CONTINUOUS_WORKER_SCOPE, value: "all"}
+            - {name: CONTINUOUS_WORKER_OWNER, value: "eks-continuous-worker-v1"}
+            - {name: CONTINUOUS_WORKER_GENERATION, value: {{ $generation | quote }} }
+            - {name: STARTUP_SCHEMA_MANAGEMENT_ENABLED, value: "false"}
+            - {name: ASKLAKE_CONTINUOUS_SPARK_RUNNER, value: "kubernetes"}
+            - {name: ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX, value: {{ $runtimePrefix | quote }}}
+            - {name: ASKLAKE_SPARK_KUBERNETES_NAMESPACE, value: {{ .Values.namespace | quote }}}
+            - {name: ASKLAKE_SPARK_KUBERNETES_IMAGE, value: "{{ required "Spark image repository is required" .Values.sparkApplication.image.repository }}@{{ required "Spark image digest is required" .Values.sparkApplication.image.digest }}"}
+            - {name: ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT, value: {{ .Values.realtimeV1.spark.serviceAccountName | quote }}}
+            - {name: ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME, value: {{ .Values.realtimeV1.spark.runtimeSecretName | quote }}}
+            - {name: ASKLAKE_SPARK_CONTINUOUS_SCRIPT, value: {{ .Values.realtimeV1.spark.mainApplicationFile | quote }}}
+            - {name: ASKLAKE_SPARK_MSK_IAM_AUTH_JAR, value: {{ .Values.realtimeV1.kafka.iamAuthJar | quote }}}
+            - {name: ASKLAKE_KAFKA_AUTH_MODE, value: {{ .Values.realtimeV1.kafka.authMode | quote }}}
+            - {name: ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR, value: {{ .Values.sparkApplication.nodeSelector | toJson | quote }}}
+            - {name: ASKLAKE_SPARK_KUBERNETES_TOLERATIONS, value: {{ .Values.sparkApplication.tolerations | toJson | quote }}}
+          volumeMounts:
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
+              readOnly: true
+          resources:
+            {{- toYaml .Values.realtimeV1.resources | nindent 12 }}
+      volumes:
+        - name: backend-runtime-files
+          secret:
+            secretName: {{ .Values.backend.runtimeSecret.name }}
+            items:
+              - key: {{ .Values.backend.runtimeSecret.trinoCaKey }}
+                path: trino-ca.pem
+{{- end }}

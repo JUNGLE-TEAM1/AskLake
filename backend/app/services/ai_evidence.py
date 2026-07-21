@@ -15,7 +15,7 @@ def validate_used_evidence_ids(
     value: object,
     rag_context: dict[str, Any] | None,
 ) -> list[str]:
-    """Validate model-reported evidence against the exact supplied RAG candidates."""
+    """Validate model-reported evidence against the exact compatibility candidates."""
 
     if not isinstance(value, list) or len(value) > MAX_USED_EVIDENCE:
         raise ValueError("AI usedEvidenceIds must be a bounded list")
@@ -35,7 +35,7 @@ def validate_used_evidence_ids(
         if isinstance(source, dict) and str(source.get("documentId") or "").strip()
     }
     if any(evidence_id not in candidate_ids for evidence_id in normalized):
-        raise ValueError("AI cited evidence outside the supplied RAG context")
+        raise ValueError("AI cited evidence outside the supplied retrieval context")
     fallback_ids = {
         str(source.get("documentId") or "").strip()
         for source in sources or []
@@ -52,7 +52,7 @@ def retain_used_rag_evidence(
     rag_context: dict[str, Any] | None,
     used_evidence_ids: list[str],
 ) -> dict[str, Any] | None:
-    """Return RAG metadata with only sources the generation says it actually used."""
+    """Return compatibility metadata with only verified sources the generation used."""
 
     if not isinstance(rag_context, dict):
         return None

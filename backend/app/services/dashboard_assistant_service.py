@@ -237,8 +237,6 @@ class DashboardAssistantService:
         if not request.semantic_model_id and not request.current_dataset_id:
             return None
         db = getattr(self.runtime_repository, "db", None)
-        if db is None:
-            return {"sources": [], "retrieval": {"mode": "hybrid", "status": "unavailable", "provenance": "semantic_layer_rag"}}
         return build_semantic_rag_context(
             db=db,
             settings=self.settings,
@@ -313,7 +311,7 @@ def _build_visualization_retry_prompt(prompt: str) -> str:
         "- visualization_request에는 create_widget 또는 update_widget action을 정확히 하나 반환하세요.",
         "- availableDatasets에 있는 datasetId와 columns만 사용하세요.",
         "- 막대그래프 요청에는 유효한 xKey, yKey, aggregation을 포함한 전체 config를 반환하세요.",
-        "- 실제로 사용한 RAG 문서가 없으면 usedEvidenceIds를 빈 배열로 반환하세요.",
+        "- retrieval은 비활성화되어 있으므로 usedEvidenceIds는 빈 배열로 반환하세요.",
     ))
     return _bounded_retry_prompt(prompt, instructions)
 
@@ -332,7 +330,7 @@ def _build_visualization_guard_retry_prompt(prompt: str, warnings: list[str]) ->
         "- create_widget 또는 update_widget action을 정확히 하나 반환하세요.",
         "- create_widget은 title, type, datasetId, 완전한 config를 모두 포함하세요.",
         "- update_widget은 현재 값과 실제로 다른 patch 필드를 하나 이상 포함하세요.",
-        "- 실제로 사용한 RAG 문서가 없으면 usedEvidenceIds를 빈 배열로 반환하세요.",
+        "- retrieval은 비활성화되어 있으므로 usedEvidenceIds는 빈 배열로 반환하세요.",
     ))
     return _bounded_retry_prompt(prompt, instructions)
 
@@ -343,7 +341,7 @@ def _build_dashboard_question_retry_prompt(prompt: str) -> str:
         "- dashboard_question에는 report action만 반환하거나, 답할 근거가 없으면 actions를 빈 배열로 반환하세요.",
         "- create_widget 또는 update_widget action을 반환하지 마세요.",
         "- 모든 nullable action 필드와 usedEvidenceIds를 strict JSON schema에 맞게 반환하세요.",
-        "- 실제로 사용한 RAG 문서가 없으면 usedEvidenceIds를 빈 배열로 반환하세요.",
+        "- retrieval은 비활성화되어 있으므로 usedEvidenceIds는 빈 배열로 반환하세요.",
     ))
     return _bounded_retry_prompt(prompt, instructions)
 

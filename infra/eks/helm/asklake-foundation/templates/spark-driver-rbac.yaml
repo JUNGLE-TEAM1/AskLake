@@ -1,0 +1,37 @@
+{{- if .Values.serviceAccounts.spark.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.serviceAccounts.spark.name }}-driver
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["create", "get", "list", "delete", "deletecollection"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "delete", "deletecollection"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.serviceAccounts.spark.name }}-driver
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.spark.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.serviceAccounts.spark.name }}-driver
+{{- end }}

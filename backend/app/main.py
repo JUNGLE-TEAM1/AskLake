@@ -107,7 +107,10 @@ async def lifespan(_app: FastAPI):
     background_tasks = [snapshot_airflow_task, scheduled_task, review_analysis_task]
     if settings.catalog_deletion_worker_enabled:
         background_tasks.append(asyncio.create_task(catalog_deletion_worker_loop()))
-    if settings.continuous_control_plane == "embedded":
+    if (
+        settings.continuous_control_plane == "embedded"
+        and settings.asklake_continuous_control_plane != "external_ec2"
+    ):
         background_tasks.append(asyncio.create_task(continuous_runtime_sync_loop()))
     if settings.realtime_events_enabled:
         background_tasks.append(asyncio.create_task(

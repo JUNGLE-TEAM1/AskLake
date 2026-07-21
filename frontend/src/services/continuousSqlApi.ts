@@ -43,7 +43,7 @@ export type ContinuousSqlJob = {
   observedState: "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed" | "recovering";
   outputDatasetId: string;
   outputDatasetName: string;
-  servingMode: "iceberg" | "clickhouse";
+  servingMode: "iceberg";
 };
 
 export type ContinuousSqlTreeRun = {
@@ -84,23 +84,7 @@ export type ContinuousSqlTreeRun = {
   triggerType: "parent_tree" | "standalone";
 };
 
-export type CreateClickHouseContinuousSqlRequest = ContinuousSqlPlanRequest & {
-  clientRequestId: string;
-  name: string;
-  output: {
-    clickhouseTarget: {
-      database: string;
-      engine: "clickhouse";
-      table: string;
-    };
-    datasetId: string;
-    datasetName: string;
-    layer: "GOLD";
-    servingMode: "clickhouse";
-  };
-};
-
-export type CreateIcebergContinuousSqlRequest = ContinuousSqlPlanRequest & {
+export type CreateContinuousSqlRequest = ContinuousSqlPlanRequest & {
   clientRequestId: string;
   name: string;
   output: {
@@ -110,10 +94,6 @@ export type CreateIcebergContinuousSqlRequest = ContinuousSqlPlanRequest & {
     servingMode: "iceberg";
   };
 };
-
-export type CreateContinuousSqlRequest =
-  | CreateClickHouseContinuousSqlRequest
-  | CreateIcebergContinuousSqlRequest;
 
 export type ContinuousSqlCommandResponse = {
   command: "start" | "pause" | "resume" | "stop" | "recover";
@@ -140,10 +120,6 @@ export function verifyAndRegisterCatalogUniqueKey(datasetId: string, columns: st
     { columns },
     { timeoutMs: 620_000 },
   );
-}
-
-export function createClickHouseContinuousSqlJob(request: CreateClickHouseContinuousSqlRequest) {
-  return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
 }
 
 export function createContinuousSqlJob(request: CreateContinuousSqlRequest) {

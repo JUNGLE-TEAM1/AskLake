@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from fastapi import status
@@ -22,6 +23,7 @@ from app.models import ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import AirflowCatalogReconciliationResponse
+from app.services.eks_execution_contract import run_execution_lease_lost
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +224,8 @@ def reconcile_airflow_catalog(
                 run_id=run_id,
             )
 
+    catalog_started_at = hooks.iso_now()
+    catalog_started_monotonic = perf_counter()
     spark_result = task_states.get("sparkResult")
     if not isinstance(spark_result, dict) or spark_result.get("status") != "success":
         raise ApiError(
@@ -257,14 +261,32 @@ def reconcile_airflow_catalog(
             result=enriched_result,
             retry_on_create_conflict=True,
             hooks=hooks,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
         )
     except ApiError as exc:
         if str(exc.code) == "CATALOG_RECONCILIATION_FAILED":
-            persist_catalog_reconciliation_failure(db, run_id, dataset_id, exc.message, hooks=hooks)
+            persist_catalog_reconciliation_failure(
+                db,
+                run_id,
+                dataset_id,
+                exc.message,
+                hooks=hooks,
+                timing_started_at=catalog_started_at,
+                timing_started_monotonic=catalog_started_monotonic,
+            )
         raise
     except Exception as exc:
         message = hooks.compact_storage_text(exc, limit=1800)
-        persist_catalog_reconciliation_failure(db, run_id, dataset_id, message, hooks=hooks)
+        persist_catalog_reconciliation_failure(
+            db,
+            run_id,
+            dataset_id,
+            message,
+            hooks=hooks,
+            timing_started_at=catalog_started_at,
+            timing_started_monotonic=catalog_started_monotonic,
+        )
         raise hooks.catalog_reconciliation_error(
             "Catalog reconciliation failed.",
             {"jobId": job_id, "runId": run_id, "reason": message},
@@ -298,8 +320,37 @@ def commit_airflow_catalog_reconciliation(
     result: dict[str, Any],
     retry_on_create_conflict: bool,
     hooks: AirflowCatalogReconciliationHooks,
+    owner: str | None = None,
+    generation: int | None = None,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> AirflowCatalogReconciliationResponse:
-    job, run = airflow_catalog_identity(db, job_id, run_id)
+    if owner is not None or generation is not None:
+        if owner is None or generation is None:
+            raise ValueError("owner and generation must be provided together")
+        run = etl_repository.get_run_for_execution_fence(
+            db,
+            run_id,
+            owner=owner,
+            generation=generation,
+        )
+        if run is None:
+            raise run_execution_lease_lost(job_id, run_id)
+        job = etl_repository.get_job_for_update(db, job_id)
+        if (
+            job is None
+            or run.job_id != job.id
+            or run.airflow_dag_run_id != run_id
+        ):
+            db.rollback()
+            raise ApiError(
+                "AIRFLOW_RUN_MISMATCH",
+                "Catalog reconciliation does not match a persisted AskLake Run.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job_id, "runId": run_id},
+            )
+    else:
+        job, run = airflow_catalog_identity(db, job_id, run_id)
     dataset_id = str(job.dataset_id or "").strip()
     existing_dataset = etl_repository.get_dataset_by_id_for_update(
         db,
@@ -314,15 +365,23 @@ def commit_airflow_catalog_reconciliation(
         )
 
     reconciled_at = hooks.iso_now()
+    duration_ms = (
+        max(0, round((perf_counter() - timing_started_monotonic) * 1000))
+        if timing_started_monotonic is not None
+        else 0
+    )
     dataset_model = hooks.dataset_from_spark_result(job, result, existing_dataset)
     iceberg_commit = result.get("icebergCommit") if isinstance(result.get("icebergCommit"), dict) else {}
     catalog_result = {
         "dataFileCount": hooks.parse_count_value(result.get("dataFileCount")),
         "datasetId": dataset_id,
+        "durationMs": duration_ms,
+        "endedAt": reconciled_at,
         "icebergSnapshotId": hooks.optional_string(iceberg_commit.get("snapshotId")),
         "parquetObjectCount": hooks.parse_count_value(result.get("parquetObjectCount")),
         "reconciledAt": reconciled_at,
         "runId": run_id,
+        "startedAt": timing_started_at or reconciled_at,
         "status": "success",
         "storageLocation": result.get("materializationOutputPath") or result.get("outputPath"),
         "storageSizeBytes": hooks.parse_count_value(result.get("storageSizeBytes")),
@@ -332,6 +391,9 @@ def commit_airflow_catalog_reconciliation(
         "sparkResult": result,
         "catalogResult": catalog_result,
     }
+    if owner is not None:
+        run.execution_owner = None
+        run.execution_lease_expires_at = None
 
     try:
         _, _, dataset = etl_repository.save_command_result(db, job, run, dataset_model)
@@ -345,6 +407,10 @@ def commit_airflow_catalog_reconciliation(
                 result=result,
                 retry_on_create_conflict=False,
                 hooks=hooks,
+                owner=owner,
+                generation=generation,
+                timing_started_at=timing_started_at,
+                timing_started_monotonic=timing_started_monotonic,
             )
         raise
 
@@ -364,10 +430,24 @@ def persist_catalog_reconciliation_failure(
     message: str,
     *,
     hooks: AirflowCatalogReconciliationHooks,
+    owner: str | None = None,
+    generation: int | None = None,
+    timing_started_at: str | None = None,
+    timing_started_monotonic: float | None = None,
 ) -> None:
     try:
         db.rollback()
-        run = etl_repository.get_run_model(db, run_id)
+        if owner is not None or generation is not None:
+            if owner is None or generation is None:
+                raise ValueError("owner and generation must be provided together")
+            run = etl_repository.get_run_for_execution_fence(
+                db,
+                run_id,
+                owner=owner,
+                generation=generation,
+            )
+        else:
+            run = etl_repository.get_run_model(db, run_id)
         if run is None:
             return
         failed_at = hooks.iso_now()
@@ -376,14 +456,27 @@ def persist_catalog_reconciliation_failure(
             **(run.task_states or {}),
             "catalogResult": {
                 "datasetId": dataset_id,
+                "durationMs": (
+                    max(
+                        0,
+                        round((perf_counter() - timing_started_monotonic) * 1000),
+                    )
+                    if timing_started_monotonic is not None
+                    else 0
+                ),
+                "endedAt": failed_at,
                 "error": compact_message,
                 "failedAt": failed_at,
                 "runId": run_id,
+                "startedAt": timing_started_at or failed_at,
                 "status": "failed",
             },
         }
         run.failed_stage = "Catalog reconciliation"
         run.error_summary = compact_message
+        if owner is not None:
+            run.execution_owner = None
+            run.execution_lease_expires_at = None
         db.add(run)
         db.commit()
     except Exception:

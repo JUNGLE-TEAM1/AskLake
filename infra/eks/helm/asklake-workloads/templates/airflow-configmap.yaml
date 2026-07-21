@@ -1,0 +1,22 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asklake-airflow-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow
+data:
+  AIRFLOW__CORE__EXECUTOR: {{ .Values.airflow.config.executor | quote }}
+  AIRFLOW__CORE__AUTH_MANAGER: {{ .Values.airflow.config.authManager | quote }}
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__EXECUTION_API_SERVER_URL: {{ .Values.airflow.config.executionApiServerUrl | quote }}
+  AIRFLOW__API_AUTH__JWT_ISSUER: {{ .Values.airflow.config.jwtIssuer | quote }}
+  AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+  AIRFLOW_INTERNAL_BASE_URL: {{ .Values.airflow.config.internalBaseUrl | quote }}
+  AIRFLOW_INTERNAL_TIMEOUT_SECONDS: {{ .Values.airflow.config.internalTimeoutSeconds | quote }}
+  ASKLAKE_EXECUTION_API_BASE_URL: {{ .Values.airflow.config.executionApiBaseUrl | quote }}
+  ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS: {{ .Values.airflow.config.executionApiTimeoutSeconds | quote }}
+{{- end }}

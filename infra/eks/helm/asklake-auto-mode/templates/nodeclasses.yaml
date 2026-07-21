@@ -1,0 +1,29 @@
+{{- if .Values.enabled }}
+{{- $role := required "nodeRoleName is required when enabled" .Values.nodeRoleName -}}
+{{- $environment := required "environment is required when enabled" .Values.environment -}}
+{{- if eq (len .Values.selectors.subnets) 0 }}{{ fail "selectors.subnets must contain reviewed private subnet tags" }}{{ end -}}
+{{- if eq (len .Values.selectors.securityGroups) 0 }}{{ fail "selectors.securityGroups must contain reviewed node security group tags" }}{{ end -}}
+{{- range $name := list "general" "spark" }}
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: asklake-{{ $name }}
+  labels:
+    {{- include "asklake-auto-mode.labels" $ | nindent 4 }}
+spec:
+  role: {{ $role | quote }}
+  subnetSelectorTerms:
+    - tags:
+        {{- toYaml $.Values.selectors.subnets | nindent 8 }}
+  securityGroupSelectorTerms:
+    - tags:
+        {{- toYaml $.Values.selectors.securityGroups | nindent 8 }}
+  {{- with $.Values.networkPolicy.mode }}
+  networkPolicy: {{ . }}
+  {{- end }}
+  {{- with $.Values.networkPolicy.eventLogs }}
+  networkPolicyEventLogs: {{ . }}
+  {{- end }}
+---
+{{ end }}
+{{ end }}

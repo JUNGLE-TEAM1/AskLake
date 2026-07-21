@@ -49,8 +49,6 @@ npm run measure:dashboard-performance
 - shell 10회는 가상 물리 저장소를 한 번도 열지 않았다.
 - cache를 한 번 채운 뒤 같은 widget을 10회 읽어도 물리 저장소를 다시 열지 않았다.
 
-실제 S3, Trino, ClickHouse, 네트워크, 대형 Dataset의 운영 응답 시간을 뜻하지 않는다. 운영 배포 전에는 같은 Dashboard ID와 같은 Dataset version으로 브라우저 Network timing, backend `dashboard_widget_data` 로그의 `durationMs`, cache hit/miss counter를 함께 측정해야 한다.
-
 ## 자동 검증 명령
 
 ```bash
@@ -67,9 +65,3 @@ npm run build
 ```
 
 ## 아직 운영 환경에서 확인할 것
-
-- 실제 배포 Dashboard의 shell 응답과 선택 page 전체 표시 시간
-- S3/Trino/ClickHouse Dataset별 첫 계산 시간
-- 여러 backend instance가 같은 PostgreSQL cache를 읽는지
-- 7일 정리 정책에서 table 크기와 cache hit 비율
-- 장애 시 PR revert 또는 cache table 무시 절차

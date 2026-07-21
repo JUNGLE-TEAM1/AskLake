@@ -55,7 +55,7 @@
 ## 감사 기준
 
 - 감사일: `2026-07-16`
-- 실제 배포 환경: AWS EC2 `i-0573d3ffce42e2eb6`
+- 실제 배포 환경: AWS EC2 `<redacted-ec2-instance>`
 - 배포 경로: `/opt/asklake-release`
 - 배포 branch: `dev`
 - 배포 commit: `06fbe213eaa56506fd7bebf26c6c5739004d03aa`
@@ -616,7 +616,7 @@ data: {"schemaVersion":1,"reason":"cursor_expired","minAvailableCursor":"918500"
 ## AskLake 배포 코드 스파게티 감사 보고서
 
 - 감사일: 2026-07-16
-- 대상 환경: AWS EC2 `i-0573d3ffce42e2eb6`의 `/opt/asklake-release`
+- 대상 환경: AWS EC2 `<redacted-ec2-instance>`의 `/opt/asklake-release`
 - 실제 배포 브랜치: `dev`
 - 실제 배포 커밋: `06fbe213eaa56506fd7bebf26c6c5739004d03aa`
 - 배포 커밋 제목: `Merge pull request #787 from JUNGLE-TEAM1/codex/kafka-raw-preview-visible`

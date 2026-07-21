@@ -1,4 +1,5 @@
 import importlib
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import sys
@@ -20,6 +21,7 @@ try:
         sql_module = ModuleType("pyspark.sql")
         functions_module = ModuleType("pyspark.sql.functions")
         types_module = ModuleType("pyspark.sql.types")
+        pyspark_module.StorageLevel = SimpleNamespace(MEMORY_AND_DISK="MEMORY_AND_DISK")
         functions_module.lit = Mock(name="lit")
         functions_module.current_timestamp = Mock(name="current_timestamp")
         sql_module.SparkSession = object
@@ -39,6 +41,11 @@ finally:
 from scripts.spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
+)
+from runtime.spark_hybrid_execution import (
+    DirectCacheInitializationError,
+    initialize_direct_cache,
+    prepare_hybrid_frame,
 )
 
 
@@ -85,6 +92,10 @@ class FakeFrame:
     schema = SimpleNamespace(fields=[])
     write = FakeWriter()
 
+    def __init__(self) -> None:
+        self.persist = Mock(return_value=self)
+        self.unpersist = Mock(return_value=self)
+
     def count(self) -> int:
         return 1
 
@@ -97,6 +108,9 @@ class FakeFrame:
     def withColumn(self, _name: str, _value):
         return self
 
+    def inputFiles(self) -> list[str]:
+        return []
+
 
 class FakeSpark:
     def __init__(self, frame: FakeFrame) -> None:
@@ -105,6 +119,105 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_partial_source_byte_measurement_disables_direct_cache(self) -> None:
+        filesystem = Mock()
+        filesystem.getFileStatus.side_effect = [
+            SimpleNamespace(getLen=Mock(return_value=5)),
+            RuntimeError("metadata unavailable"),
+        ]
+        path_factory = Mock(side_effect=lambda _value: SimpleNamespace(
+            getFileSystem=Mock(return_value=filesystem),
+        ))
+        spark = SimpleNamespace(
+            sparkContext=SimpleNamespace(
+                _jsc=SimpleNamespace(hadoopConfiguration=Mock(return_value=object())),
+            ),
+            _jvm=SimpleNamespace(org=SimpleNamespace(apache=SimpleNamespace(
+                hadoop=SimpleNamespace(fs=SimpleNamespace(Path=path_factory)),
+            ))),
+        )
+
+        with patch("builtins.print") as print_mock:
+            reported_bytes, decision_bytes = spark_job_run.measure_source_bytes(
+                spark,
+                ["s3a://raw/small.jsonl", "s3a://raw/large.jsonl"],
+                25,
+            )
+
+        self.assertEqual(reported_bytes, 25)
+        self.assertIsNone(decision_bytes)
+        self.assertEqual(filesystem.getFileStatus.call_count, 2)
+        print_mock.assert_called_once()
+
+        source_frame = FakeFrame()
+        staged_frame = FakeFrame()
+        materialize = Mock(return_value=staged_frame)
+        summarize = Mock(return_value=(7, []))
+        spark_resources = {}
+        result = prepare_hybrid_frame(
+            decision_bytes,
+            10,
+            source_frame,
+            [],
+            spark_resources,
+            "MEMORY_AND_DISK",
+            summarize,
+            materialize,
+        )
+
+        self.assertIs(result[0], staged_frame)
+        materialize.assert_called_once_with(source_frame)
+        source_frame.persist.assert_not_called()
+        self.assertEqual(
+            spark_resources["directCacheDecisionReason"],
+            "source_size_unavailable",
+        )
+        self.assertFalse(spark_resources["directCacheEligible"])
+
+    def test_direct_cache_initialization_failure_refuses_hidden_source_rescan(self) -> None:
+        cached_frame = FakeFrame()
+        fallback_frame = FakeFrame()
+        spark = FakeSpark(fallback_frame)
+        spark_resources = {}
+        cached_frames = []
+
+        with (
+            patch.object(
+                spark_job_run,
+                "schema_contract_summary",
+                side_effect=RuntimeError("cache warmup failed"),
+            ) as summarize,
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(
+                DirectCacheInitializationError,
+                "stopped before fallback",
+            ):
+                initialize_direct_cache(
+                    cached_frame,
+                    cached_frames,
+                    spark_resources,
+                    spark_job_run.StorageLevel.MEMORY_AND_DISK,
+                    lambda candidate: spark_job_run.schema_contract_summary(
+                        candidate,
+                        [],
+                    ),
+                )
+
+        self.assertEqual(summarize.call_count, 1)
+        cached_frame.persist.assert_called_once_with(
+            spark_job_run.StorageLevel.MEMORY_AND_DISK
+        )
+        cached_frame.unpersist.assert_called_once_with(blocking=False)
+        spark.read.parquet.assert_not_called()
+        self.assertEqual(cached_frames, [])
+        self.assertEqual(spark_resources["cacheStorageLevel"], "NONE")
+        self.assertEqual(spark_resources["directCacheInitializationStatus"], "failed")
+        self.assertEqual(
+            spark_resources["directCacheFailureReason"],
+            "cache_initialization_failed",
+        )
+
     def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
         frame = FakeFrame()
         spark = SimpleNamespace(table=Mock(return_value=frame))
@@ -165,7 +278,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
                 return SimpleNamespace(collect=lambda: [{"snapshot_id": "123"}])
             self.assertIn("WHERE CAST(snapshot_id AS STRING) = '123'", query)
             return SimpleNamespace(collect=lambda: [{
+                "added_data_file_count": "2",
                 "committed_at": "2026-07-14T00:00:00Z",
+                "data_file_count": "7",
                 "manifest_list": "s3://warehouse/reviews/metadata/snap-123.avro",
                 "snapshot_id": "123",
             }])
@@ -175,6 +290,8 @@ class SparkSourceIdentityTests(unittest.TestCase):
         snapshot = spark_job_run.current_iceberg_snapshot(spark, target)
 
         self.assertEqual(snapshot["snapshotId"], "123")
+        self.assertEqual(snapshot["dataFileCount"], 7)
+        self.assertEqual(snapshot["addedDataFileCount"], 2)
         self.assertEqual(spark.sql.call_count, 2)
 
     def test_kafka_snapshot_retry_reuses_existing_iceberg_commit(self) -> None:
@@ -193,7 +310,9 @@ class SparkSourceIdentityTests(unittest.TestCase):
             "snapshotId": "kafka_snapshot_1234",
         }
         committed = {
+            "addedDataFileCount": 1,
             "committedAt": "2026-07-14T00:00:00Z",
+            "dataFileCount": 4,
             "snapshotId": "999",
             "warehouseLocation": "s3://asklake-warehouse/warehouse/reviews_snapshot",
         }
@@ -218,7 +337,90 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(result["operation"], "reuse")
         self.assertEqual(result["snapshotId"], "999")
         self.assertEqual(result["sourceBoundary"], boundary)
+        self.assertFalse(result["_rollbackRequired"])
         frame.writeTo.assert_not_called()
+
+    def test_kafka_snapshot_retry_reuses_existing_iceberg_commit_for_replace_target(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        frame = SimpleNamespace(writeTo=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "eks_mvp_fixture",
+            "tableUri": "iceberg://iceberg/asklake/eks_mvp_fixture",
+            "writeMode": "replace",
+        }
+        boundary = {
+            "kind": "kafka_snapshot",
+            "snapshotId": "run_cp4_retry_001",
+        }
+        committed = {
+            "addedDataFileCount": 1,
+            "committedAt": "2026-07-16T09:00:00Z",
+            "dataFileCount": 4,
+            "snapshotId": "676467971672461132",
+            "warehouseLocation": "s3://asklake-warehouse/warehouse/eks_mvp_fixture",
+        }
+
+        with (
+            patch.object(spark_job_run, "iceberg_table_exists", return_value=True),
+            patch.object(spark_job_run, "latest_iceberg_snapshot", return_value=committed),
+            patch.object(spark_job_run, "iceberg_source_boundary_exists", return_value=True),
+        ):
+            result = spark_job_run.commit_iceberg_table(
+                spark,
+                frame,
+                target,
+                job_id="JOB-EKS-MVP",
+                run_id="run_cp4_retry_001",
+                partition_columns=[],
+                schema_fingerprint="schema-v1",
+                rule_fingerprint="rules-v1",
+                source_boundary=boundary,
+            )
+
+        self.assertEqual(result["operation"], "reuse")
+        self.assertEqual(result["snapshotId"], "676467971672461132")
+        self.assertEqual(result["sourceBoundary"], boundary)
+        self.assertFalse(result["_rollbackRequired"])
+        frame.writeTo.assert_not_called()
+
+    def test_iceberg_output_file_count_uses_exact_current_snapshot_summary(self) -> None:
+        spark = SimpleNamespace()
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "table": "reviews_batch",
+        }
+        snapshot = {
+            "addedDataFileCount": 4,
+            "committedAt": "2026-07-14T00:00:00Z",
+            "dataFileCount": 69,
+            "snapshotId": "123",
+            "warehouseLocation": "s3://warehouse/reviews",
+        }
+
+        with (
+            patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="123"),
+            patch.object(spark_job_run, "iceberg_snapshot", return_value=snapshot) as exact,
+        ):
+            count = spark_job_run.iceberg_output_file_count(spark, target, "123")
+
+        self.assertEqual(count, 69)
+        exact.assert_called_once_with(spark, target, "123")
+
+    def test_iceberg_output_file_count_rejects_main_ref_drift(self) -> None:
+        spark = SimpleNamespace()
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "table": "reviews_batch",
+        }
+
+        with patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="124"):
+            with self.assertRaisesRegex(RuntimeError, "ICEBERG_CURRENT_SNAPSHOT_MISMATCH"):
+                spark_job_run.iceberg_output_file_count(spark, target, "123")
 
     def test_iceberg_rollback_uses_fully_qualified_table_name(self) -> None:
         spark = SimpleNamespace(sql=Mock())
@@ -234,13 +436,40 @@ class SparkSourceIdentityTests(unittest.TestCase):
 
         with (
             patch.object(spark_job_run, "spark_iceberg_catalog_name", return_value="asklake"),
-            patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="123"),
+            patch.object(spark_job_run, "current_iceberg_snapshot_id", side_effect=["456", "123"]),
         ):
-            spark_job_run.rollback_iceberg_commit(spark, target, previous_snapshot)
+            spark_job_run.rollback_iceberg_commit(
+                spark,
+                target,
+                previous_snapshot,
+                committed_snapshot_id="456",
+            )
 
         sql = spark.sql.call_args.args[0]
         self.assertIn("table => 'asklake.asklake.reviews_batch'", sql)
         self.assertIn("snapshot_id => 123", sql)
+
+    def test_iceberg_rollback_refuses_to_mutate_after_snapshot_drift(self) -> None:
+        spark = SimpleNamespace(sql=Mock())
+        target = {
+            "catalog": "iceberg",
+            "namespace": "asklake",
+            "partitionColumns": [],
+            "table": "reviews_batch",
+            "tableUri": "iceberg://iceberg/asklake/reviews_batch",
+            "writeMode": "replace",
+        }
+
+        with patch.object(spark_job_run, "current_iceberg_snapshot_id", return_value="789"):
+            with self.assertRaisesRegex(RuntimeError, "ICEBERG_ROLLBACK_SNAPSHOT_DRIFT"):
+                spark_job_run.rollback_iceberg_commit(
+                    spark,
+                    target,
+                    {"snapshotId": "123"},
+                    committed_snapshot_id="456",
+                )
+
+        spark.sql.assert_not_called()
 
     def test_matching_versioned_identity_is_verified_before_read(self) -> None:
         expected = identity("incoming/a.jsonl", version_id="version-1")
@@ -373,33 +602,53 @@ class SparkSourceIdentityTests(unittest.TestCase):
         original_publish = spark_job_run.publish_spark_paths
         spark_job_run.delete_spark_path = lambda _spark, _path: None
         spark_job_run.publish_spark_paths = lambda _spark, _staging, _output, _quarantine: None
-        with (
-            patch.dict(os.environ, environment, clear=True),
-            patch.object(spark_job_run, "load_spark_job_manifest", return_value={"sourceCollection": collection}),
-            patch.object(spark_job_run, "make_spark", return_value=spark),
-            patch.object(
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, environment, clear=True))
+            stack.enter_context(patch.object(
+                spark_job_run,
+                "load_spark_job_manifest",
+                return_value={"sourceCollection": collection},
+            ))
+            stack.enter_context(patch.object(spark_job_run, "make_spark", return_value=spark))
+            verify = stack.enter_context(patch.object(
                 spark_job_run,
                 "verify_spark_source_inventory",
                 side_effect=[None, ValueError("SOURCE_OBJECT_IDENTITY_MISMATCH key=incoming/a.jsonl phase=after_read")],
-            ) as verify,
-            patch.object(spark_job_run, "read_source", return_value=frame),
-            patch.object(spark_job_run, "normalize_columns", return_value=frame),
-            patch.object(spark_job_run, "apply_schema_contract_with_count", return_value=(frame, 1)),
-            patch.object(spark_job_run, "apply_transform_steps", return_value=frame),
-            patch.object(spark_job_run, "select_final_schema_columns", return_value=frame),
-            patch.object(spark_job_run, "resolve_partition_columns", return_value=[]),
-            patch.object(spark_job_run, "plan_review_row_analysis_checks", return_value=[]),
-            patch.object(spark_job_run, "evaluate_quality_rules", return_value={"status": "pass"}),
-            patch.object(spark_job_run, "evaluate_custom_csv_classifier_checks", return_value=[]),
-            patch.object(spark_job_run, "evaluate_review_row_analysis_checks", return_value=[]),
-            patch.object(spark_job_run, "text_structuring_manifest", return_value={"definition": {"columns": []}}),
-            patch.object(spark_job_run, "collect_sample_rows", return_value=[]),
-            patch.object(spark_job_run, "write_report", write_report),
-            patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[]) as cleanup,
-            patch.object(spark_job_run.F, "lit", return_value="run-1"),
-            patch.object(spark_job_run.F, "current_timestamp", return_value="now"),
-            patch("builtins.print"),
-        ):
+            ))
+            for name, value in (
+                ("read_source", frame),
+                ("normalize_columns", frame),
+                ("apply_transform_steps", frame),
+                ("select_final_schema_columns", frame),
+                ("resolve_partition_columns", []),
+                ("plan_review_row_analysis_checks", []),
+                ("evaluate_quality_rules", {"status": "pass"}),
+                ("evaluate_custom_csv_classifier_checks", []),
+                ("evaluate_review_row_analysis_checks", []),
+                ("text_structuring_manifest", {"definition": {"columns": []}}),
+                ("collect_sample_rows", []),
+            ):
+                stack.enter_context(patch.object(spark_job_run, name, return_value=value))
+            stack.enter_context(patch.object(
+                spark_job_run,
+                "project_schema_contract",
+                return_value=(frame, []),
+            ))
+            stack.enter_context(patch.object(
+                spark_job_run,
+                "schema_contract_summary",
+                return_value=(1, []),
+            ))
+            stack.enter_context(patch.object(spark_job_run, "write_report", write_report))
+            cleanup = stack.enter_context(
+                patch.object(spark_job_run, "cleanup_failed_output_paths", return_value=[])
+            )
+            materialization_cleanup = stack.enter_context(
+                patch.object(spark_job_run, "cleanup_spark_paths", return_value=[])
+            )
+            stack.enter_context(patch.object(spark_job_run.F, "lit", return_value="run-1"))
+            stack.enter_context(patch.object(spark_job_run.F, "current_timestamp", return_value="now"))
+            stack.enter_context(patch("builtins.print"))
             exit_code = spark_job_run.main()
         spark_job_run.delete_spark_path = original_delete
         spark_job_run.publish_spark_paths = original_publish
@@ -411,7 +660,13 @@ class SparkSourceIdentityTests(unittest.TestCase):
         self.assertEqual(report["failedStage"], "Source Inventory")
         self.assertIn("phase=after_read", report["error"])
         self.assertEqual(report["outputCleanup"], {"errors": [], "status": "success"})
-        cleanup.assert_called_once_with(spark, "s3a://m3-output/run-1.__staging__run-1")
+        self.assertEqual(report["sparkResources"]["materializationCleanupStatus"], "success")
+        cleanup.assert_not_called()
+        materialization_cleanup.assert_called_once_with(
+            spark,
+            ["s3a://m3-output/run-1.__materialization__run-1"],
+        )
+        self.assertEqual(frame.unpersist.call_count, 0)
         spark.stop.assert_called_once_with()
 
     def test_identity_status_checks_use_bounded_concurrency_and_keep_path_order(self) -> None:

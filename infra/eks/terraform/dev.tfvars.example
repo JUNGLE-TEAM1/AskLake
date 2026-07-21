@@ -1,0 +1,218 @@
+aws_region  = "ap-northeast-2"
+environment = "dev"
+name_prefix = "asklake"
+owner              = "REPLACE_WITH_TEAM_OWNER"
+resource_lifecycle = "mvp-owned"
+
+# Choose only after read-only inventory and ownership review.
+cluster_mode          = "existing"
+existing_cluster_name = "REPLACE_WITH_EXISTING_CLUSTER"
+
+# For cluster_mode = "create", remove existing_cluster_name and provide reviewed
+# subnets in at least two Availability Zones. This example intentionally does
+# not contain real subnet IDs.
+control_plane_subnet_ids = []
+
+# Phase 11 keeps existing/shared networking external by default. To create an
+# MVP-owned VPC with a new cluster, select non-overlapping CIDRs and at least
+# two real Availability Zones after inventory. Do not copy these placeholders.
+network_mode               = "external"
+vpc_cidr                   = null
+network_availability_zones = []
+subnet_newbits             = null
+public_subnet_netnums      = []
+private_subnet_netnums     = []
+external_public_subnet_ids = []
+
+endpoint_private_access = true
+endpoint_public_access  = false
+public_access_cidrs     = []
+
+# New clusters use EKS Auto Mode with AWS-managed system/general-purpose pools.
+# Existing clusters must be confirmed externally and provide their Auto Mode
+# node role; this state does not import or mutate an existing cluster.
+existing_auto_mode_enabled       = false
+existing_auto_mode_node_role_arn = null
+auto_mode_builtin_node_pools     = ["system", "general-purpose"]
+
+# Phase 12 custom General/Spark NodeClasses and NodePools are fail-closed.
+# For a new MVP-owned cluster, use create only after reviewing the actual
+# workload capacity/disruption values in the Helm release. Existing clusters
+# use external-confirmed only after the platform owner creates the EC2 access
+# entry and associates AmazonEKSAutoNodePolicy with this exact role.
+custom_node_pool_mode             = "disabled"
+existing_custom_node_role_name    = null
+existing_custom_node_role_arn     = null
+existing_custom_node_access_ready = false
+
+# New clusters disable implicit creator-admin access and require an explicit
+# IAM role/user access entry. Never use an STS assumed-role session ARN.
+cluster_admin_principal_arn = null
+
+# These repositories are MVP-owned. Set false when an external platform team
+# provides repositories and pass their URLs through the deployment environment.
+create_ecr_repositories = true
+
+# Keep null until the team approves image retention and deletion behavior.
+ecr_untagged_retention_days = null
+
+namespace = "asklake-dev"
+
+# Trino contract references are safe to keep in tfvars, but actual ARN/digest
+# values remain null until image delivery and workload identity are approved.
+trino_image_digest                  = null
+trino_irsa_role_arn                 = null
+trino_service_name                  = "asklake-trino"
+trino_service_port                  = 8443
+trino_tls_auth_secret_name          = "asklake-trino-tls-auth"
+trino_jdbc_secret_name              = "asklake-trino-iceberg-jdbc"
+trino_iceberg_catalog_database      = "iceberg_catalog"
+trino_rds_endpoint_reference        = "TRINO_ICEBERG_JDBC_URL"
+trino_rds_security_group_reference  = null
+trino_warehouse_bucket_reference    = "TRINO_ICEBERG_WAREHOUSE_BUCKET"
+trino_warehouse_prefix_reference    = "TRINO_ICEBERG_WAREHOUSE_PREFIX"
+
+# Phase 3 data plane is opt-in. Keep every mode disabled until Phase 2
+# inventory, ownership, private network, cost and destroy gates are approved.
+msk_mode     = "disabled"
+rds_mode     = "disabled"
+storage_mode = "disabled"
+
+# For msk_mode = "create", provide at least two reviewed private subnet IDs
+# and an explicit client security group. Topic creation is an operational
+# bootstrap step; Terraform only fixes the isolated topic/group contract.
+msk_subnet_ids          = []
+msk_security_group_ids  = []
+msk_test_topic          = "asklake.eks-mvp.fixture.v1"
+msk_test_consumer_group = "asklake-eks-mvp-spark-v1"
+# Keep empty outside the Day 17 isolated scale experiment. When approved,
+# select only the exact scale17 groups required by the test; never use a prefix
+# or wildcard.
+msk_scale_consumer_groups = []
+# Keep empty until the exact-one owner transfer is approved. Add one exact
+# generation-scoped V1 topic/group pair for canary and at most one rollback
+# rehearsal pair. Topic and group suffixes must be the same generation.
+msk_realtime_topics         = []
+msk_realtime_consumer_groups = []
+
+# For rds_mode = "create", select the instance class and optional engine
+# version only after workload/cost review. Terraform creates asklake_app;
+# airflow_metadata and iceberg_catalog are created by a later DB bootstrap.
+rds_subnet_ids         = []
+rds_security_group_ids = []
+rds_instance_class     = null
+rds_engine_version     = null
+rds_multi_az           = false
+rds_allocated_storage_gib          = 20
+rds_max_allocated_storage_gib      = 100
+rds_backup_retention_days          = 7
+rds_backup_window                  = "18:00-18:30"
+rds_maintenance_window             = "sun:19:00-sun:20:00"
+rds_enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+rds_final_snapshot_identifier      = null
+
+# For storage_mode = "existing", "managed-existing", or "create", replace every
+# empty value with deployment-owned names. managed-existing is only for buckets
+# that will be imported into this state; the bucket resources have destroy
+# protection and remain shared-preserved. AES256 is the no-extra-key baseline.
+# Switching to aws:kms requires a reviewed key ARN and workload KMS permissions.
+storage_bucket_names = {
+  raw           = ""
+  output        = ""
+  warehouse     = ""
+  query_results = ""
+}
+storage_prefixes = {
+  # Dedicated Raw/Output buckets may use "*" when existing Dataset paths span
+  # multiple top-level prefixes. The IAM resource boundary remains that exact
+  # bucket; Warehouse and Query Result stay on explicit prefixes.
+  raw                = "raw"
+  output             = "*"
+  warehouse          = "warehouse"
+  query_results      = "query-results"
+  checkpoint         = "checkpoints"
+  quarantine         = "quarantine"
+  evidence           = "evidence"
+  continuous_runtime = "continuous-runtime"
+}
+storage_sse_algorithm = "AES256"
+storage_kms_key_arn   = null
+
+# Phase 4 workload identity is another explicit selection gate. Leave disabled
+# until the team studies IRSA vs EKS Pod Identity in the actual cluster.
+workload_identity_mode = "disabled"
+
+# IRSA reuses an already reviewed IAM OIDC provider. This application state
+# does not create or assume ownership of a shared provider. For a new cluster,
+# create the cluster first, review/create its OIDC provider with the platform
+# owner, and enable identity only in the following reviewed plan.
+irsa_oidc_provider_arn = null
+
+# Pod Identity can be selected only after the platform owner confirms that the
+# EKS Pod Identity Agent is installed and managed.
+pod_identity_agent_ready = false
+
+# Phase 13 uses the EKS Auto Mode managed ALB controller. Keep it disabled
+# until public/internal subnets, target/address type and listener protocol are
+# reviewed. HTTP uses the generated ALB DNS name; HTTPS additionally requires
+# a DNS owner and ACM certificate. Terraform does not create the ALB itself.
+ingress_mode               = "disabled"
+alb_exposure               = null
+alb_target_type            = null
+alb_ip_address_type        = null
+ingress_listener_protocol  = null
+ingress_host               = null
+ingress_certificate_arn    = null
+ingress_dns_owner          = null
+
+# Study NAT Gateway versus VPC endpoints and the cluster CNI enforcement
+# capabilities before replacing these values. network_mode=create requires an
+# explicit egress choice. NAT requires single/per_az cost/availability choice;
+# endpoint/hybrid requires the minimum private AWS service endpoint set.
+private_egress_mode             = "undecided"
+nat_gateway_mode                = "undecided"
+interface_vpc_endpoint_services = []
+
+# Terraform does not install or take ownership of shared networking add-ons.
+pod_network_enforcement = "undecided"
+
+# Phase 8 fixes Secret names and key names only. It never accepts Secret values.
+# Study controller lifecycle, source ownership, rotation and rollback before
+# selecting external_secrets or workflow_sync for the actual environment.
+secret_delivery_mode     = "disabled"
+secret_controller_ready  = false
+secret_controller_owner  = null
+secret_rotation_owner    = null
+secret_source_prefix     = null
+external_secrets_namespace       = "external-secrets"
+external_secrets_service_account = "asklake-external-secrets"
+
+# These remain separate learning/selection gates. Do not infer them from the
+# Secret delivery choice. Gateway mode also needs a separately approved AI
+# provider workload contract before the full-service Secret gate can open.
+airflow_api_auth_mode               = "username_password"
+ai_runtime_mode                     = "gateway"
+ai_provider_workload_contract_ready = true
+
+# Day 14 Metrics Server is an EKS community add-on. Keep disabled until the
+# target cluster exists, then query its compatible versions and record the
+# reviewed exact version and lifecycle owner. Use external only when another
+# owner already operates it and has supplied runtime evidence.
+metrics_server_mode               = "disabled"
+metrics_server_addon_version      = null
+metrics_server_owner              = null
+external_metrics_server_confirmed = false
+
+# Day 18 uses the managed CloudWatch Observability EKS add-on with OTel-only
+# Container Insights and a dedicated Pod Identity. Keep disabled until the
+# exact cluster-compatible version/schema, log-group imports and owner are
+# reviewed. Application Signals, Classic dual publish and standalone agents
+# remain disabled by contract.
+observability_mode                        = "disabled"
+observability_addon_version               = null
+observability_owner                       = null
+observability_application_retention_days  = 7
+observability_control_plane_retention_days = 7
+observability_rds_retention_days          = 7
+observability_daily_log_ingest_warning_gib = 3
+observability_stored_log_warning_gib       = 20

@@ -1,0 +1,54 @@
+{{- if .Values.frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend" "release" .Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "frontend" "release" .Release.Name) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.frontend.serviceAccountName }}
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.frontend.nodeSelector | nindent 8 }}
+      containers:
+        - name: frontend
+          image: "{{ required "frontend image repository is required" .Values.frontend.image.repository }}@{{ required "frontend image digest is required" .Values.frontend.image.digest }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+{{- end }}

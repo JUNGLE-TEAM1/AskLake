@@ -25,10 +25,6 @@ from app.schemas.realtime import (
     RealtimeIngestConnectorRequest,
     RealtimeStatusResponse,
 )
-from app.realtime.application.ingest_service import RealtimeIngestService
-from app.realtime.domain.source_position import SourcePosition
-from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
-from app.realtime.repositories.receipt_repository import ReceiptRepository
 from app.services.auth_service import SESSION_COOKIE_NAME
 from app.services.dashboard_card_service import with_dashboard_permissions
 from app.services.realtime_event_contract import REALTIME_SCOPE_ID
@@ -128,6 +124,9 @@ def get_realtime_ingest_status(
     state = resolve_realtime_feature_state(settings)
     if not state.clickhouse_realtime_v2_enabled:
         return {"enabled": False, "ready": False, "status": "disabled"}
+    from app.realtime.application.ingest_service import RealtimeIngestService
+    from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+
     try:
         probe = RealtimeIngestService().probe()
     except (KafkaConnectError, ValueError):
@@ -153,6 +152,9 @@ def register_realtime_ingest_connector(
             "ClickHouse Realtime V2 is disabled.",
             status.HTTP_409_CONFLICT,
         )
+    from app.realtime.application.ingest_service import RealtimeIngestService
+    from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+
     try:
         return RealtimeIngestService().register(
             topic=request.topic,
@@ -178,6 +180,15 @@ def approve_realtime_ingest_skip(
     actor: ActorContext = Depends(get_actor_context),
 ) -> dict[str, object]:
     _require_realtime_operator(actor)
+    if not settings.clickhouse_realtime_v2_enabled:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "ClickHouse Realtime V2 is disabled.",
+            status.HTTP_409_CONFLICT,
+        )
+    from app.realtime.domain.source_position import SourcePosition
+    from app.realtime.repositories.receipt_repository import ReceiptRepository
+
     position = SourcePosition(topic, partition, offset)
     with SessionLocal() as db:
         approved = ReceiptRepository(db).approve_skip(

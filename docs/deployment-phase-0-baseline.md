@@ -22,8 +22,6 @@ Phase 0의 목적은 배포가 성공했다고 판단할 근거와 실패 시 �
 
 ## 2. 현재 배포 기준선
 
-현재 `scripts/deploy.sh deploy`는 EC2를 준비하고, 원격 `dev`를 fast-forward pull한 뒤 `deploy/docker-compose.prod.yml`을 `up -d --build`로 기동한다. 이후 public app URL의 frontend/backend/AI health, 선택된 Trino 및 ClickHouse readiness를 확인한다. 실제 secret과 EC2 식별자는 repo 밖의 `deploy/.env`와 `deploy/ec2.env`에만 둔다.
-
 현재 runtime 소유 경계는 다음과 같다.
 
 | 영역 | 현재 owner | 확인해야 하는 증적 |
@@ -51,14 +49,6 @@ Phase 0의 목적은 배포가 성공했다고 판단할 근거와 실패 시 �
 ## 4. 다음 Phase의 완료 판정
 
 후속 Phase가 배포 성공을 선언하려면 아래를 같은 release record에 남겨야 한다.
-
-1. Compose config와 deploy env preflight가 성공한다.
-2. canonical public URL에서 redirect 정책을 고려한 `/api/health` JSON이 `.ok=true`, `.database.ok=true`를 반환한다.
-3. 필요한 경우 AI, Trino, ClickHouse readiness가 해당 feature flag와 일치한다.
-4. Spark runtime path guard와 Spark REST submission/terminal state가 확인된다.
-5. 활성 Kafka Continuous session은 새 heartbeat와 증가한 batch 또는 consumed/stored counter를 보인다. `starting` 상태만으로 성공 처리하지 않는다.
-6. deploy/restart 중 request path 또는 worker hot path가 schema DDL을 실행하지 않는다는 검증이 있다.
-7. 실패하면 어떤 health gate가 실패했는지와 rollback 또는 operator action이 bounded diagnostic으로 남는다.
 
 ## 5. 운영 확인 순서
 

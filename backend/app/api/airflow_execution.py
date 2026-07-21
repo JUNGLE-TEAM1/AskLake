@@ -11,6 +11,10 @@ from app.schemas.etl import (
     AirflowCatalogReconciliationResponse,
     AirflowSparkExecutionRequest,
 )
+from app.schemas.eks_execution import AirflowMskAuthorizationFaultRequest
+from app.application.eks_msk_fault_execution import (
+    record_eks_msk_authorization_fault,
+)
 from app.services import etl_service
 
 router = APIRouter(prefix="/internal/airflow", tags=["internal-airflow"])
@@ -47,6 +51,25 @@ def execute_spark_run(
         job_id=request.job_id,
         run_id=run_id,
         command=request.command,
+        airflow_source_boundary=request.source_boundary,
+    )
+
+
+@router.post("/spark-runs/{run_id}/fault-attempts/msk-authorization", response_model=dict)
+def record_msk_authorization_fault(
+    run_id: str,
+    request: AirflowMskAuthorizationFaultRequest,
+    _: None = Depends(require_airflow_execution_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    return record_eks_msk_authorization_fault(
+        db,
+        acknowledged_records=request.acknowledged_records,
+        attempted_records=request.attempted_records,
+        category=request.category,
+        evidence_sha256=request.evidence_sha256,
+        job_id=request.job_id,
+        run_id=run_id,
     )
 
 

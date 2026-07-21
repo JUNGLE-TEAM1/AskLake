@@ -1,0 +1,12 @@
+# EKS dev web/API overlay for the Spark Structured Streaming V1-only runtime.
+deploymentProfile: realtime-v1-only
+
+backend:
+  realtime:
+    enabled: false
+    apiControlPlane: local
+    v1ApiEnabled: false
+    v1OwnerGeneration: ""
+    continuousSqlJoinEnabled: false
+    dashboardSyncMode: polling
+    realtimeEventsEnabled: false

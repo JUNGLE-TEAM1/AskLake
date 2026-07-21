@@ -17,6 +17,7 @@ DEPLOY_BRANCH="${ASKLAKE_DEPLOY_BRANCH:-dev}"
 APP_URL="${ASKLAKE_APP_URL:-}"
 COMPOSE_FILE="${ASKLAKE_COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
 COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env}"
+COMPOSE_PROJECT_NAME="${ASKLAKE_COMPOSE_PROJECT_NAME:-}"
 HEALTH_PATH="${ASKLAKE_HEALTH_PATH:-/api/health}"
 AI_HEALTH_PATH="${ASKLAKE_AI_HEALTH_PATH:-/api/health/ai}"
 HEALTH_RETRIES="${ASKLAKE_HEALTH_RETRIES:-18}"
@@ -41,6 +42,7 @@ Commands:
 
 Required:
   ASKLAKE_EC2_INSTANCE_ID  EC2 instance id, for example i-xxxxxxxxxxxxxxxxx.
+  ASKLAKE_COMPOSE_PROJECT_NAME Exact existing Compose project name.
 
 Optional:
   AWS_REGION               Default: ap-northeast-2
@@ -48,7 +50,7 @@ Optional:
   ASKLAKE_EC2_USER         Default: ec2-user
   ASKLAKE_SSH_KEY          Default: \$HOME/.ssh/asklake-ec2.pem
   ASKLAKE_DEPLOY_PATH      Default: /opt/asklake
-  ASKLAKE_DEPLOY_BRANCH    Default: dev
+  ASKLAKE_DEPLOY_BRANCH    Must be dev (default: dev)
   ASKLAKE_APP_URL          Default: https://<resolved-host>, or http://<ipv4-host>
   ASKLAKE_HEALTH_RETRIES   Default: 18
   ASKLAKE_HEALTH_RETRY_DELAY Default: 5 seconds
@@ -67,6 +69,11 @@ need_command() {
 
 require_instance_id() {
   [[ -n "$EC2_INSTANCE_ID" ]] || die "ASKLAKE_EC2_INSTANCE_ID is required"
+}
+
+require_deploy_branch() {
+  [[ "$DEPLOY_BRANCH" == "dev" ]] \
+    || die "EC2 deployment source branch must be dev"
 }
 
 instance_field() {
@@ -120,7 +127,10 @@ ssh_run() {
 }
 
 compose_cmd() {
-  printf 'docker compose --env-file %q -f %q' "$COMPOSE_ENV_FILE" "$COMPOSE_FILE"
+  [[ "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || \
+    die "ASKLAKE_COMPOSE_PROJECT_NAME must be a lowercase Compose project name"
+  printf 'docker compose --project-name %q --env-file %q -f %q' \
+    "$COMPOSE_PROJECT_NAME" "$COMPOSE_ENV_FILE" "$COMPOSE_FILE"
 }
 
 remote_compose() {
@@ -130,6 +140,15 @@ remote_compose() {
 
 remote_deploy_preflight() {
   ssh_run "cd '$DEPLOY_PATH' && bash scripts/verify-deploy-env.sh '$COMPOSE_ENV_FILE' '$COMPOSE_FILE'"
+}
+
+verify_remote_dev_checkout() {
+  ssh_run "cd '$DEPLOY_PATH' && git fetch origin dev && git symbolic-ref --short HEAD | grep -Fxq dev && if git status --porcelain --untracked-files=all | grep -q .; then echo 'error: remote deploy checkout is dirty' >&2; exit 1; fi && git merge-base --is-ancestor HEAD origin/dev && git merge-base --is-ancestor origin/dev HEAD && git rev-parse HEAD"
+}
+
+update_remote_dev_checkout() {
+  ssh_run "cd '$DEPLOY_PATH' && if git status --porcelain --untracked-files=all | grep -q .; then echo 'error: remote deploy checkout is dirty' >&2; exit 1; fi && git fetch origin dev && git checkout dev && git pull --ff-only origin dev"
+  verify_remote_dev_checkout
 }
 
 airflow_execution_token_hash() {
@@ -567,7 +586,9 @@ diagnose_stack() {
 }
 
 start_stack() {
+  require_deploy_branch
   ensure_started
+  verify_remote_dev_checkout
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
@@ -606,8 +627,9 @@ stop_stack() {
 }
 
 deploy_stack() {
+  require_deploy_branch
   ensure_started
-  ssh_run "cd '$DEPLOY_PATH' && git fetch origin '$DEPLOY_BRANCH' && git checkout '$DEPLOY_BRANCH' && git pull --ff-only origin '$DEPLOY_BRANCH'"
+  update_remote_dev_checkout
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
@@ -623,7 +645,9 @@ deploy_stack() {
 }
 
 restart_stack() {
+  require_deploy_branch
   ensure_started
+  verify_remote_dev_checkout
   remote_deploy_preflight
   bootstrap_metadata_schema
   bootstrap_trino_dependencies
@@ -667,6 +691,10 @@ main() {
       usage
       exit 0
       ;;
+  esac
+
+  case "$command" in
+    start|deploy|restart) require_deploy_branch ;;
   esac
 
   need_command "$AWS_BIN"

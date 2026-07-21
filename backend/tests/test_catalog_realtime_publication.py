@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -188,7 +190,7 @@ class CatalogRealtimePublicationTests(unittest.TestCase):
                 "SELECT last_applied_offset FROM realtime_partition_checkpoints"
             )).scalar_one(), -1)
 
-    def test_catalog_schema_preserves_legacy_archive_as_dual_binding(self) -> None:
+    def test_ec2_catalog_schema_preserves_legacy_archive_as_dual_binding(self) -> None:
         payload = {
             "createdBy": None, "description": "", "downstream": [], "freshness": "latest",
             "id": "legacy", "layer": "GOLD", "lastUpdated": "", "name": "legacy",
@@ -202,7 +204,13 @@ class CatalogRealtimePublicationTests(unittest.TestCase):
             },
             "clickhouseTable": {"database": "asklake_realtime_v2", "table": "serving_current_v2"},
         }
-        normalized = dataset_model_to_payload(CatalogDatasetModel(id="legacy", payload=payload))
+        with patch(
+            "app.repositories.catalog_repository.settings",
+            SimpleNamespace(clickhouse_realtime_v2_enabled=True),
+        ):
+            normalized = dataset_model_to_payload(
+                CatalogDatasetModel(id="legacy", payload=payload)
+            )
         response = CatalogDatasetResponse.model_validate(normalized)
         self.assertEqual({item.role for item in response.physical_bindings}, {"archive", "serving"})
 

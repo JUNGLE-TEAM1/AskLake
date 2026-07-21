@@ -1,17 +1,12 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import duckdb
 
+from app.core.config import settings
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse, CatalogDatasetRowsResponse
-from app.services.clickhouse_client import (
-    ClickHouseClient,
-    ClickHouseError,
-    qualified_clickhouse_table,
-    quote_clickhouse_identifier,
-)
-from app.services.dashboard_clickhouse_binding import clickhouse_v2_query_binding
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
     iceberg_dataset_table,
@@ -38,11 +33,16 @@ def read_dataset_rows(
     limit: int,
     offset: int,
     trino_client: TrinoClient | None = None,
-    clickhouse_client: ClickHouseClient | None = None,
+    clickhouse_client: Any | None = None,
 ) -> CatalogDatasetRowsResponse:
     """Read one bounded page from the dataset's current materialization."""
 
     if str(dataset.storage_format or "").strip().casefold() == "clickhouse":
+        if clickhouse_client is None and not settings.clickhouse_realtime_v2_enabled:
+            raise sql_storage_error(
+                "Catalog ClickHouse dataset rows are disabled for this deployment",
+                {"datasetId": dataset.id},
+            )
         return read_clickhouse_dataset_rows(
             dataset,
             limit=limit,
@@ -123,8 +123,20 @@ def read_clickhouse_dataset_rows(
     *,
     limit: int,
     offset: int,
-    client: ClickHouseClient | None = None,
+    client: Any | None = None,
 ) -> CatalogDatasetRowsResponse:
+    if client is None and not settings.clickhouse_realtime_v2_enabled:
+        raise sql_storage_error(
+            "Catalog ClickHouse dataset rows are disabled for this deployment",
+            {"datasetId": dataset.id},
+        )
+    from app.services.clickhouse_client import (
+        ClickHouseClient,
+        qualified_clickhouse_table,
+        quote_clickhouse_identifier,
+    )
+    from app.services.dashboard_clickhouse_binding import clickhouse_v2_query_binding
+
     v2_binding = clickhouse_v2_query_binding(dataset, expected_binding_epoch=None)
     target = dataset.clickhouse_table
     if v2_binding is None and target is None:
@@ -160,7 +172,7 @@ def read_clickhouse_dataset_rows(
         page = resolved_client.query(
             f"SELECT {projection} FROM {table} LIMIT {int(limit)} OFFSET {int(offset)}"
         )
-    except (ClickHouseError, RuntimeError, TypeError, ValueError) as error:
+    except (RuntimeError, TypeError, ValueError) as error:
         raise sql_storage_error(
             "Catalog ClickHouse dataset rows could not be read",
             {"datasetId": dataset.id, "reason": str(error)[:500]},

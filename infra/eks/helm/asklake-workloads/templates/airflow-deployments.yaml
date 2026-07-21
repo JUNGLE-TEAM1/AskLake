@@ -1,0 +1,129 @@
+{{- if .Values.airflow.enabled }}
+{{- $root := . }}
+{{- range $component := list "apiserver" "scheduler" "dag-processor" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-airflow-{{ $component }}
+  namespace: {{ $root.Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: airflow-{{ $component }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component) "release" $root.Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $root.Template.BasePath "/airflow-configmap.yaml") $root | sha256sum }}
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" (printf "airflow-%s" $component) "release" $root.Release.Name) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $root.Values.airflow.serviceAccountName }}
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml $root.Values.airflow.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: airflow-{{ $component }}
+          image: "{{ required "airflow image repository is required" $root.Values.airflow.image.repository }}@{{ required "airflow image digest is required" $root.Values.airflow.image.digest }}"
+          imagePullPolicy: {{ $root.Values.airflow.image.pullPolicy }}
+          args:
+            {{- if eq $component "apiserver" }}
+            - api-server
+            {{- else if eq $component "dag-processor" }}
+            - dag-processor
+            {{- else }}
+            - scheduler
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: asklake-airflow-config
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.airflow.runtimeSecret.name }}
+                  key: {{ $root.Values.airflow.runtimeSecret.keys.databaseUrl }}
+            - name: ASKLAKE_EXECUTION_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.airflow.runtimeSecret.name }}
+                  key: {{ $root.Values.airflow.runtimeSecret.keys.executionApiToken }}
+            - name: AIRFLOW_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.airflow.runtimeSecret.name }}
+                  key: {{ $root.Values.airflow.runtimeSecret.keys.internalToken }}
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.airflow.runtimeSecret.name }}
+                  key: {{ $root.Values.airflow.runtimeSecret.keys.fernetKey }}
+            - name: AIRFLOW__API_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.airflow.runtimeSecret.name }}
+                  key: {{ $root.Values.airflow.runtimeSecret.keys.jwtSecret }}
+          volumeMounts:
+            - name: rds-ca
+              mountPath: {{ dir $root.Values.airflow.config.rdsCaMountPath | quote }}
+              readOnly: true
+          {{- if eq $component "apiserver" }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet: {path: /api/v2/monitor/health, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /api/v2/monitor/health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: {path: /api/v2/monitor/health, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $root.Values.airflow.resources.apiServer | nindent 12 }}
+          {{- else if eq $component "dag-processor" }}
+          livenessProbe:
+            exec:
+              command: ["airflow", "jobs", "check", "--job-type", "DagProcessorJob"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 8
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml $root.Values.airflow.resources.dagProcessor | nindent 12 }}
+          {{- else }}
+          livenessProbe:
+            exec:
+              command: ["airflow", "jobs", "check", "--job-type", "SchedulerJob"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 8
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml $root.Values.airflow.resources.scheduler | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: {{ $root.Values.airflow.config.rdsCaConfigMapName }}
+            items:
+              - key: {{ $root.Values.airflow.config.rdsCaKey }}
+                path: {{ base $root.Values.airflow.config.rdsCaMountPath }}
+{{- end }}
+{{- end }}

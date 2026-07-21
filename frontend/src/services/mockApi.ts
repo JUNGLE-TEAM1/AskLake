@@ -370,14 +370,14 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   const normalizedTags = normalizeDerivedDatasetTags(
     isSqlResultSource
       ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
-      : ["#customer", "#RAG", "#리뷰"],
+      : ["#customer", "#리뷰"],
   );
 
   const dataset: CatalogDataset = {
     description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
       : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
-    downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
+    downstream: ["SQL 분석", "대시보드", "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
     layer: draftPipeline.target.layer,

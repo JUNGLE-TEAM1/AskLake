@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from app.application.source_connectors import (
     list_source_assets,
-    test_source_connector as run_source_connector,
+    test_source_connector as execute_source_connector_test,
 )
 from app.infrastructure.source_connectors import (
     NodeSourceConnectorGateway,
@@ -94,7 +94,7 @@ class SourceConnectorApplicationTests(unittest.TestCase):
             "sourceType": "File / S3",
         })
 
-        response = run_source_connector(request, gateway=gateway)
+        response = execute_source_connector_test(request, gateway=gateway)
 
         self.assertEqual(response.status, "success")
         self.assertEqual(response.draft_patch.source.source_label, "raw/orders")
@@ -126,7 +126,7 @@ class SourceConnectorApplicationTests(unittest.TestCase):
         request = SourceConnectorRequest(sourceType="Kafka", sourceConfig=[])
 
         with self.assertRaises(ValidationError):
-            run_source_connector(request, gateway=gateway)
+            execute_source_connector_test(request, gateway=gateway)
 
 
 class NodeSourceConnectorGatewayTests(unittest.TestCase):
