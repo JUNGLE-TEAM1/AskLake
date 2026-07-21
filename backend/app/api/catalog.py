@@ -29,6 +29,7 @@ from app.application.catalog_dataset_deletion import (
 )
 from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
+from app.services.catalog_filter_values_service import query_catalog_dataset_filter_values
 from app.services.lake_storage_service import LocalLakeStorageService
 from app.services.trino_materialization_service import TrinoMaterializationService
 
@@ -132,7 +133,7 @@ def query_dataset_filter_values(
     service: Annotated[CatalogService, Depends(get_catalog_service)],
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> CatalogDatasetFilterValuesResponse:
-    return service.get_dataset_filter_values(dataset_id, request, actor)
+    return query_catalog_dataset_filter_values(service, dataset_id, request, actor)
 
 
 @router.get("/datasets/{dataset_id}/lineage", response_model=LineageGraphResponse)

@@ -186,7 +186,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 
 - `Refactor Quality Gates`는 `dev`/`main` PR에서 구조 ratchet과 API/persisted/bridge/legacy 계약을 검사한다.
 - 기존 1,000줄 file과 100줄 Python·JavaScript/TypeScript function은 `docs/refactor-2026/quality-gate-baseline.json`을 넘겨 키울 수 없다.
-- 2026-07-18 기준표는 이미 `dev`에 병합된 구조와 일치하도록 `800de67c`에서 다시 동기화했다. #919에서 선행 병합된 Catalog unique-key 검증과 ClickHouse 확인 스크립트의 현재 크기만 반영하며, RAG 신규 파일·함수는 예외 없이 1,000줄/100줄 제한을 지킨다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
+- 2026-07-21 기준표는 `feat-#1106`의 필터 기능 이식 전 상태(`18fb51f`)에서 다시 수집했다. 기존 브랜치의 구조 부채만 현재 상한으로 기록했으며, 이번 변경으로 커진 `dashboard_physical_data.py`는 공통 헬퍼로 분리해 기준보다 작게 유지했다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
 - 새 import cycle과 문서 없는 API/schema·CI/deploy 변경을 금지한다.
 - baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
