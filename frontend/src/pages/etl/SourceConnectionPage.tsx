@@ -53,6 +53,37 @@ import {
   upsertSourceFields
 } from "./sourceModel";
 
+function resetSourceDependentDraft(): DraftPipelinePatch {
+  return {
+    quality: {
+      invalidRows: [],
+      rules: [],
+      score: undefined,
+      status: "idle",
+      summary: "스키마 확인 후 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
+    },
+    schema: {
+      columns: [],
+      sampleRows: [],
+      schemaFingerprint: undefined,
+      summary: "소스 변경 · 스키마 재확인 필요",
+    },
+    transform: {
+      outputColumns: [],
+      steps: [],
+      summary: "스키마 확인 후 변환 규칙을 설정하세요.",
+    },
+  };
+}
+
 export function SourceConnectionPage({
   draft,
   onAction,
@@ -332,10 +363,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -398,10 +426,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
   };
 
   const updateCollectionConfig = (patches: Array<[string, string]>) => {

@@ -11,6 +11,7 @@ export {
   ETL_DRAFT_REDACTED_VALUE,
   hydrateEtlDraft,
   normalizeEtlDraft,
+  sanitizeLiveEtlDraft,
   serializeEtlDraft,
 } from "../state/etlDraftState";
 export type { EtlDraftEnvelope } from "../state/etlDraftState";

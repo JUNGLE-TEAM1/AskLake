@@ -114,6 +114,43 @@ export function hydrateEtlDraft(serialized: string | null | undefined, fallback:
   }
 }
 
+export function sanitizeLiveEtlDraft(draft: DraftPipeline): DraftPipeline {
+  const normalized = normalizeEtlDraft(draft);
+  const schemaColumns = new Set(
+    normalized.schema.columns.flatMap((column) => [column.sourceName, column.targetName]).filter(Boolean),
+  );
+  const qualityRules = normalized.quality.rules.filter((rule) => (
+    !rule.id.startsWith("mock-")
+    && (!rule.targetColumn || schemaColumns.size === 0 || schemaColumns.has(rule.targetColumn))
+  ));
+  const transformSteps = normalized.transform.steps.filter((step) => (
+    !step.id.startsWith("mock-")
+    && (!step.input || schemaColumns.size === 0 || schemaColumns.has(step.input))
+  ));
+  const transformOutputNames = new Set([
+    ...schemaColumns,
+    ...transformSteps.flatMap((step) => [step.input, step.output]).filter(Boolean),
+  ]);
+
+  return {
+    ...normalized,
+    quality: {
+      ...normalized.quality,
+      invalidRows: qualityRules.length === normalized.quality.rules.length ? normalized.quality.invalidRows : [],
+      rules: qualityRules,
+      score: qualityRules.length === normalized.quality.rules.length ? normalized.quality.score : undefined,
+      status: qualityRules.length === normalized.quality.rules.length ? normalized.quality.status : "idle",
+      summary: qualityRules.length > 0 ? normalized.quality.summary : "데이터 품질 규칙을 설정하세요.",
+    },
+    transform: {
+      ...normalized.transform,
+      outputColumns: normalized.transform.outputColumns.filter(([name]) => transformOutputNames.has(name)),
+      steps: transformSteps,
+      summary: transformSteps.length > 0 ? normalized.transform.summary : "변환 규칙을 설정하세요.",
+    },
+  };
+}
+
 function normalizeRetryPolicy(policy: RetryPolicyDraft): RetryPolicyDraft {
   const backoffStrategy = policy.backoffStrategy === "fixed" ? "fixed" : "exponential";
   const initialRetryDelayMinutes = clampInteger(policy.initialRetryDelayMinutes ?? policy.retryIntervalMinutes, 1, 1, 1440);

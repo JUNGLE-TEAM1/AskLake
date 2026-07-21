@@ -2,7 +2,7 @@
 
 import { apiConfig } from "../../services/apiClient";
 
-import { hydrateEtlDraft, serializeEtlDraft } from "../../services/draftPipelineContract";
+import { hydrateEtlDraft, sanitizeLiveEtlDraft, serializeEtlDraft } from "../../services/draftPipelineContract";
 
 import type { DraftPipeline } from "../../types";
 
@@ -11,7 +11,8 @@ export const etlDraftStorageKey = "asklake.etlDraft.v1";
 export function loadStoredEtlDraft(fallback: DraftPipeline) {
   if (typeof window === "undefined") return hydrateEtlDraft(null, fallback);
   try {
-    return hydrateEtlDraft(window.localStorage.getItem(etlDraftStorageKey), fallback);
+    const hydrated = hydrateEtlDraft(window.localStorage.getItem(etlDraftStorageKey), fallback);
+    return apiConfig.useMock ? hydrated : sanitizeLiveEtlDraft(hydrated);
   } catch {
     return hydrateEtlDraft(null, fallback);
   }
