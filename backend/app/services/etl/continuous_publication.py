@@ -286,7 +286,7 @@ def read_continuous_stream_manifest(
             if not manifest_line:
                 continue
             manifest = json.loads(manifest_line)
-            if not isinstance(manifest, dict) or optional_string(manifest.get("batchId")) != batch_id:
+            if not isinstance(manifest, dict) or optional_int(manifest.get("batchId")) != optional_int(batch_id):
                 return None
             manifest["manifestPath"] = f"s3a://{bucket}/{manifest_key}"
             if nonnegative_int(manifest.get("storedCount"), 0) > 0:

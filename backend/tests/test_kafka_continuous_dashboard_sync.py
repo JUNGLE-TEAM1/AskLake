@@ -159,7 +159,7 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
 
     def test_committed_stream_manifest_can_be_recovered_from_s3(self) -> None:
         manifest = {
-            "batchId": 7,
+            "batchId": 0,
             "sourceRanges": [{
                 "topic": "orders",
                 "partition": 0,
@@ -177,8 +177,8 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
                 return {
                     "Contents": [
                         {"Key": "orders/_batch-manifests/batch_id=7/_SUCCESS", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=7/part-00000.json", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=7/part-00003.json", "Size": 512},
+                        {"Key": "orders/_batch-manifests/batch_id=0/part-00000.json", "Size": 0},
+                        {"Key": "orders/_batch-manifests/batch_id=0/part-00003.json", "Size": 512},
                     ],
                 }
 
@@ -202,15 +202,15 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
             "build_catalog_s3_client",
             return_value=FakeS3Client(),
         ):
-            recovered = etl_service.read_continuous_stream_manifest(job, "7")
+            recovered = etl_service.read_continuous_stream_manifest(job, "0")
 
         self.assertIsNotNone(recovered)
         self.assertEqual(
             recovered["batchId"],
-            7,
+            0,
         )
-        self.assertEqual(recovered["manifestPath"], "s3a://lake/orders/_batch-manifests/batch_id=7")
-        self.assertEqual(recovered["dataPath"], "s3a://lake/orders/_batches/batch_id=7")
+        self.assertEqual(recovered["manifestPath"], "s3a://lake/orders/_batch-manifests/batch_id=0")
+        self.assertEqual(recovered["dataPath"], "s3a://lake/orders/_batches/batch_id=0")
 
     def test_incomplete_last_batch_evidence_falls_back_to_committed_manifest(self) -> None:
         recovered = {
