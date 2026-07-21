@@ -528,7 +528,7 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 
 ### 화면별 AI runtime 확인
 
-독립 `AI 활용` 메뉴는 없다. SQL 분석의 `Nessie로 SQL 작성`, Dashboard Assistant, 수집/처리 변환 AI, Semantic Layer의 RAG, 리뷰 분석이 private AI Gateway를 공유한다.
+독립 `AI 활용` 메뉴는 없다. SQL 분석의 `AI로 SQL 작성`, Dashboard Assistant, 수집/처리 변환 AI, Semantic Layer의 RAG, 리뷰 분석이 private AI Gateway를 공유한다.
 
 수동 확인은 다음 순서로 한다.
 
