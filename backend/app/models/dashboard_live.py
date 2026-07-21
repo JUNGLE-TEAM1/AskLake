@@ -67,6 +67,11 @@ class DatasetRevisionCommitModel(Base):
     source_ranges: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, nullable=False, default=list)
     source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manifest_location: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # A Dataset revision is only a safe SQL-transform input when it can be
+    # resolved to the exact physical snapshot that was published.  Keep this
+    # separate from the mutable Catalog payload, whose latest snapshot may
+    # advance before a dependent SQL tree consumes the revision.
+    snapshot_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     materialization_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     source_boundary: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
     serving_engine: Mapped[str | None] = mapped_column(String(32), nullable=True)

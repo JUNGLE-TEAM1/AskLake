@@ -1,9 +1,9 @@
 # SQL Job 실행 트리 V1 계약
 
 - 이슈: #1117
-- 상태: Phase 4 parent-owned child dispatch 구현, revision transform은 legacy
+- 상태: parent-owned child dispatch와 revision-snapshot transform executor 구현
 - 기준 commit: `a234abea`
-- runtime 상태: 아직 legacy direct-consumer 경로다. 이 문서는 후속 Phase의 target contract다.
+- runtime 상태: `dataset_revision` parent는 Kafka worker 대신 in-process revision executor를 사용한다. producer Dataset의 queryable Iceberg snapshot이 아직 없으면 parent는 `starting` 상태에서 대기하며, legacy direct-consumer 경로는 기존 Job에만 남는다.
 - 결정 기록: [ADR-003](../adr/003-sql-job-execution-tree-ownership.md)
 
 ## 1. 현재 기준선과 전환 목표
@@ -66,6 +66,43 @@ Phase 1에서 다음 의미의 durable dependency를 `continuous_sql_dependencie
 - `required`: V1 JOIN relation은 모두 `true`
 
 V1 parent start는 모든 producer child를 실행한다. 이미 존재하는 snapshot을 임의로 최신이라고 추정해 producer 실행을 건너뛰지 않는다. 추후 `reuse_snapshot` batch 정책은 별도 제품 결정과 API version 없이 노출하지 않는다.
+
+### Revision transform runner private request
+
+revision runner 준비 단계는 SQL parent가 Kafka 연결 정보를 다시 받지 않도록 아래 private worker request를 고정한다. 이 payload는 public API response가 아니며 `treeFencingToken`은 worker 전달 경로에서만 사용하고 browser/API에는 노출하지 않는다.
+
+```json
+{
+  "executionInputMode": "dataset_revision",
+  "treeRunId": "tree_123",
+  "treeFencingToken": "private-fence",
+  "sqlJobId": "csql_123",
+  "continuousSqlRunId": "csqlrun_123",
+  "runGeneration": 1,
+  "inputDatasets": [
+    {
+      "inputDatasetId": "ds_clicks",
+      "inputType": "realtime",
+      "childJobId": "JOB-1234",
+      "executionPolicy": "run_on_tree_start",
+      "required": true,
+      "revision": 42
+    },
+    {
+      "inputDatasetId": "ds_users",
+      "inputType": "static",
+      "executionPolicy": "reuse_snapshot",
+      "required": true,
+      "snapshotId": "iceberg-snapshot-101"
+    }
+  ],
+  "staticBindings": [{"datasetId": "ds_users", "snapshotId": "iceberg-snapshot-101"}],
+  "outputDatasetId": "ds_output",
+  "outputTarget": {"catalog": "iceberg", "namespace": "datasets", "table": "output"}
+}
+```
+
+`broker`, `topic`, `consumerGroupId`, Kafka offset과 trigger/max-offset은 이 payload에 절대 포함하지 않는다. realtime revision은 tree run의 `inputDatasetRevisions`에서, static snapshot은 parent Run의 `staticBindings`에서만 읽는다. `dataset_revision_commits.snapshot_id`는 revision이 가리키는 정확한 Iceberg snapshot을 저장한다. `ContinuousSqlRevisionRunner`는 required producer input의 revision과 snapshot을 함께 검증하고 revision 번호를 tree/node에 고정한 뒤, Trino Iceberg `FOR VERSION AS OF` transform과 verified output revision publication을 수행한다. snapshot이 없는 legacy revision은 `CONTINUOUS_SQL_INPUT_REVISION_PENDING`으로 대기한다.
 
 Catalog/API는 frontend 판정을 위해 다음 authoritative field를 additive하게 제공한다. Phase 1부터 새 ETL/Trino SQL/Continuous SQL publication은 정규화 Catalog column과 payload를 함께 저장하며, 정규화 column이 오래된 payload보다 우선한다. 기존 Dataset은 자동 추정 backfill하지 않는다.
 
@@ -194,4 +231,4 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 - Phase 8: output revision과 Dashboard 수동 새로고침 회귀
 - Phase 9: legacy migration, E2E, 성능과 rollout gate
 
-Phase 5 전에는 legacy direct Kafka consumer를 제거하지 않는다. Phase 3 lock 없이 parent가 child를 실행하지 않는다.
+legacy direct Kafka consumer는 dependency가 없는 기존 Job에만 남긴다. Phase 3 lock 없이 parent가 child를 실행하지 않는다. managed `dataset_revision` Job은 child dispatch 뒤 Kafka worker를 만들지 않고 revision executor identity로 시작한다. 첫 queryable snapshot 전에는 `starting`을 유지하고, transform 또는 output publication 실패 시 parent tree를 failed로 종료한다.
