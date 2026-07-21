@@ -366,7 +366,11 @@ def save_command_result(
 ) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
     ensure_schema(db)
     if dataset is not None:
-        get_dataset_by_id_for_update(db, dataset.id)
+        get_dataset_by_id_for_update(
+            db,
+            dataset.id,
+            publication_created_at=run.created_at if run is not None else None,
+        )
     merged_dataset = db.merge(dataset) if dataset is not None else None
     if run is not None:
         db.add(run)
