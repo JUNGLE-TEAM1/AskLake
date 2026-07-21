@@ -1605,7 +1605,8 @@ const checks = [
     file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
     patterns: [
       /const usesCount = config\.aggregation === "count";/,
-      /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /type === "bar_chart" && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /\(type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
       /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],

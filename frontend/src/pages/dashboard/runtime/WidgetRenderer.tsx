@@ -37,6 +37,11 @@ import {
 } from "./timeSeries";
 import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
+import {
+  barChartAxisLabelFormatters,
+  formatChartAxisNumber,
+  formatChartCategoryAxisLabel,
+} from "./barChartAxes";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -104,18 +109,6 @@ export function formatCell(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return new Intl.NumberFormat("ko-KR").format(value);
   return String(value);
-}
-
-function formatCategoryAxisLabel(value: unknown) {
-  const text = String(value ?? "");
-  const dayMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (dayMatch) return `${dayMatch[1].slice(2)}.${dayMatch[2]}.${dayMatch[3]}`;
-
-  const monthMatch = text.match(/^(\d{4})-(\d{2})$/);
-  if (monthMatch) return `${monthMatch[1].slice(2)}.${monthMatch[2]}`;
-
-  if (text.length > 10) return `${text.slice(0, 9)}...`;
-  return text;
 }
 
 function firstNumericKey(row: SimpleRow | undefined) {
@@ -452,13 +445,6 @@ function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, select
   return null;
 }
 
-function formatAxisNumber(value: number) {
-  return new Intl.NumberFormat("ko-KR", {
-    maximumFractionDigits: 1,
-    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
-  }).format(value);
-}
-
 function buildBaseChartOptions(color: string): ApexOptions {
   return {
     chart: {
@@ -549,7 +535,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
         color: "#cbd5e1",
       },
       labels: {
-        formatter: (value) => formatCategoryAxisLabel(value),
+        formatter: (value) => formatChartCategoryAxisLabel(value),
         hideOverlappingLabels: true,
         maxHeight: 42,
         offsetY: 4,
@@ -567,7 +553,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
     },
     yaxis: {
       labels: {
-        formatter: (value: number) => formatAxisNumber(value),
+        formatter: (value: number) => formatChartAxisNumber(value),
         style: {
           colors: "#64748b",
           fontSize: "11px",
@@ -1122,6 +1108,10 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const orientation = widget.config.orientation ?? "vertical";
+  const isHorizontal = orientation === "horizontal";
+  const axisFormatters = barChartAxisLabelFormatters(orientation);
+  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1135,13 +1125,25 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        horizontal: widget.config.orientation === "horizontal",
+        horizontal: isHorizontal,
         columnWidth: "48%",
       },
     },
     xaxis: {
       ...baseOptions.xaxis,
       categories: chartData.categories,
+      labels: {
+        ...baseOptions.xaxis?.labels,
+        formatter: axisFormatters.x,
+      },
+    },
+    yaxis: {
+      ...baseYAxis,
+      labels: {
+        ...baseYAxis?.labels,
+        formatter: axisFormatters.y,
+        ...(isHorizontal ? { maxWidth: 220 } : {}),
+      },
     },
   };
 
@@ -1418,7 +1420,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
           },
           value: {
             color: "#0f172a",
-            formatter: (value: number) => `${formatAxisNumber(value)}%`,
+            formatter: (value: number) => `${formatChartAxisNumber(value)}%`,
             fontSize: "24px",
             fontWeight: 900,
           },
