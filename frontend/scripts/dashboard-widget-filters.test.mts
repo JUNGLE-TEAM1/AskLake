@@ -4,6 +4,7 @@ import test from "node:test";
 import type { DashboardWidgetFilter } from "../src/types/dashboard.ts";
 import {
   MAX_DASHBOARD_WIDGET_FILTERS,
+  applyDashboardWidgetFilters,
   dashboardContextFilters,
   dashboardFilterInputValue,
   dashboardFilterOperatorOptions,
@@ -111,6 +112,22 @@ test("local SQL-result values are dynamically narrowed by previous conditions", 
   );
 
   assert.deepEqual(result, { truncated: false, values: ["Fitness Trackers"] });
+});
+
+test("SQL-result widget rows apply the persisted filters before rendering", () => {
+  const rows = applyDashboardWidgetFilters(
+    [
+      { category: "Wearable Technology", subcategory: "Smartwatches" },
+      { category: "Wearable Technology", subcategory: "Fitness Trackers" },
+      { category: "Electronics", subcategory: "Smartwatches" },
+    ],
+    [{ id: "category-filter", column: "category", operator: "eq", value: "Wearable Technology" }],
+  );
+
+  assert.deepEqual(rows, [
+    { category: "Wearable Technology", subcategory: "Smartwatches" },
+    { category: "Wearable Technology", subcategory: "Fitness Trackers" },
+  ]);
 });
 
 test("SQL result identifiers are not misclassified as dates", () => {

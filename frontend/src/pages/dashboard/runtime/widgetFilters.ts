@@ -224,6 +224,16 @@ export function localDashboardFilterValues(
   };
 }
 
+export function applyDashboardWidgetFilters(
+  rows: Array<Record<string, unknown>>,
+  filters: DashboardWidgetFilter[],
+) {
+  const activeFilters = normalizeDashboardWidgetFilters(filters);
+  return rows.filter((row) => (
+    activeFilters.every((filter) => dashboardRowMatchesFilter(row, filter))
+  ));
+}
+
 function dashboardRowMatchesFilter(
   row: Record<string, unknown>,
   filter: DashboardWidgetFilter,
