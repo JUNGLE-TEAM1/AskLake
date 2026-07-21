@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -100,6 +101,11 @@ class CatalogDeletionRepositoryTest(unittest.TestCase):
             with self.assertRaises(ApiError) as raised:
                 ensure_catalog_publication_allowed(db, "ds_orders")
             self.assertEqual(raised.exception.code, "DATASET_DELETION_FENCED")
+            ensure_catalog_publication_allowed(
+                db,
+                "ds_orders",
+                publication_created_at=row.created_at + timedelta(seconds=1),
+            )
 
 
 class CatalogPublicationFenceTest(unittest.TestCase):
@@ -117,7 +123,7 @@ class CatalogPublicationFenceTest(unittest.TestCase):
             patch("app.repositories.catalog_deletion_repository.ensure_catalog_publication_allowed") as etl_fence,
         ):
             etl_repository.get_dataset_by_id_for_update(db, "ds_orders")
-        etl_fence.assert_called_once_with(db, "ds_orders")
+        etl_fence.assert_called_once_with(db, "ds_orders", publication_created_at=None)
 
 
 class CatalogDeletionWorkerTest(unittest.TestCase):
