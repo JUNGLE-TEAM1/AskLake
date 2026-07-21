@@ -270,7 +270,7 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
                 for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
             ))
 
-    def test_dataset_revision_tree_rejects_before_starting_any_child(self) -> None:
+    def test_dataset_revision_tree_starts_without_a_sql_owned_kafka_worker(self) -> None:
         events: list[str] = []
 
         class Gateway:
@@ -281,6 +281,11 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
         def child_commander(_db, child_id, command, _actor, **_context):
             events.append(f"{child_id}:{command}")
             return SimpleNamespace(run=None, processing_result={})
+
+        class RevisionRunner:
+            def start(self, _job, _run):
+                events.append("revision-runner:start")
+                return {"containerState": "running", "containerId": "revision-runner"}
 
         with Session(self.engine) as db:
             db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
@@ -300,19 +305,18 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
                 runtime_settings=self.settings,
                 gateway=Gateway(),
                 child_commander=child_commander,
+                revision_runner=RevisionRunner(),
             )
 
-            with self.assertRaises(ApiError) as raised:
-                service.command(
-                    job.id,
-                    ContinuousSqlCommandRequest(command="start", commandId="start-needs-runner"),
-                    ActorContext(name="owner", role="admin"),
-                )
+            response = service.command(
+                job.id,
+                ContinuousSqlCommandRequest(command="start", commandId="start-revision-runner"),
+                ActorContext(name="owner", role="admin"),
+            )
 
-            self.assertEqual(raised.exception.code, "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED")
-            self.assertEqual(events, [])
-            self.assertEqual(db.scalar(select(ContinuousSqlTreeRunModel)), None)
-            self.assertEqual(db.scalar(select(ContinuousSqlTreeJobLockModel)), None)
+            self.assertEqual(response.job.observed_state, "running")
+            self.assertEqual(events, ["JOB-REALTIME:startContinuous", "revision-runner:start"])
+            self.assertIsNotNone(db.scalar(select(ContinuousSqlTreeRunModel)))
 
     def test_revision_transform_request_uses_only_dataset_revisions_and_snapshots(self) -> None:
         with Session(self.engine) as db:
@@ -450,6 +454,30 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertEqual(tree.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
             child = next(item for item in repository.list_tree_nodes(tree.tree_run_id) if item.job_id == "JOB-REALTIME")
             self.assertEqual(child.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
+
+    def test_revision_runner_builds_snapshot_only_trino_transform(self) -> None:
+        with Session(self.engine) as db:
+            job = parent_job("csql-parent", "output-parent")
+            job.compiled_plan = {
+                "relations": [{
+                    "datasetId": "dataset-realtime",
+                    "queryEngineTable": {
+                        "catalog": "iceberg", "schema": "datasets", "table": "events",
+                    },
+                }],
+                "runtimeSql": 'SELECT * FROM "__asklake_relation_0"',
+            }
+            select_sql = ContinuousSqlRevisionRunner(db)._transform_select(
+                job,
+                [{"datasetId": "dataset-realtime", "revision": 7, "snapshotId": "101"}],
+                "run-output-1",
+            )
+
+            self.assertIn('"__asklake_relation_0" AS (SELECT * FROM "iceberg"."datasets"."events" FOR VERSION AS OF 101)', select_sql)
+            self.assertIn("'run-output-1'", select_sql)
+            self.assertIn('"_asklake_run_id"', select_sql)
+            self.assertNotIn("kafka:9092", select_sql)
+            self.assertNotIn("consumerGroup", select_sql)
 
     def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
         events: list[str] = []

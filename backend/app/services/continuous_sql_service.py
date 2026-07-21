@@ -73,6 +73,7 @@ from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
 )
+from app.services.continuous_sql_revision_runner import ContinuousSqlRevisionRunner
 from app.schemas.iceberg import IcebergWriterTarget
 from app.services.iceberg_writer_service import IcebergWriterService, build_iceberg_writer_target
 
@@ -89,12 +90,14 @@ class ContinuousSqlService:
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
         clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
+        revision_runner: ContinuousSqlRevisionRunner | None = None,
         child_commander: Callable[..., Any] | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
         self.repository = ContinuousSqlRepository(db)
         self.catalog_repository = CatalogRepository(db)
+        self.revision_runner = revision_runner or ContinuousSqlRevisionRunner(db)
         self.catalog_resolver = ContinuousSqlCatalogResolver(
             db,
             allow_clickhouse_streaming=(
@@ -499,8 +502,6 @@ class ContinuousSqlService:
             if continuous_sql_serving_mode(job) == "clickhouse":
                 self._require_clickhouse_enabled()
             self._require_relation_access(job, actor)
-        if request.command in {"start", "recover"}:
-            self._require_execution_tree_runner(job)
         fingerprint = canonical_hash({"command": request.command})
         existing_command = self.repository.get_command(job.id, request.command_id)
         if existing_command is not None:
@@ -553,7 +554,11 @@ class ContinuousSqlService:
             worker_result: dict[str, Any] = {}
             if external_action in {"start", "recover"}:
                 started_realtime_children = self._start_execution_tree_children(job, actor)
-            if external_action == "recover":
+            if self._uses_dataset_revision_inputs(job) and external_action in {"start", "recover"}:
+                worker_result = self.revision_runner.start(job, run)
+            elif self._uses_dataset_revision_inputs(job) and external_action in {"pause", "stop"}:
+                worker_result = {"containerState": "exited", "containerId": job.worker_id}
+            elif external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
                 worker_result = self.gateway.manage(
                     job, run, "start", self._worker_start_options(job, run)
@@ -684,24 +689,6 @@ class ContinuousSqlService:
     @staticmethod
     def _uses_dataset_revision_inputs(job: ContinuousSqlJobModel) -> bool:
         return str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision"
-
-    def _require_execution_tree_runner(self, job: ContinuousSqlJobModel) -> None:
-        """Fail before taking locks or starting children until Phase 2 exists.
-
-        The legacy runner is deliberately not a fallback: using it would make
-        this SQL Job a second Kafka consumer and violate producer ownership.
-        """
-        if not self._uses_dataset_revision_inputs(job):
-            return
-        raise ApiError(
-            "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED",
-            "This SQL execution-tree Job requires the revision transform runner, which is not available yet. No producer Job was started.",
-            status.HTTP_409_CONFLICT,
-            {"jobId": job.id, "executionInputMode": "dataset_revision"},
-            stage="execution_tree",
-            retryable=False,
-            user_message="이 SQL Job의 Dataset revision 실행기는 아직 준비되지 않았습니다. 연결된 producer Job은 시작하지 않았습니다.",
-        )
 
     def _stop_started_realtime_children(
         self,
@@ -988,6 +975,39 @@ class ContinuousSqlService:
 
     def reconcile(self, job: ContinuousSqlJobModel) -> ContinuousSqlJobModel:
         run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
+        if self._uses_dataset_revision_inputs(job) and run is not None:
+            try:
+                if job.desired_state == "running":
+                    self.revision_runner.reconcile(job, run)
+                job.observed_state = "running" if job.desired_state == "running" else job.desired_state
+                run.status = job.observed_state
+                job.last_error_code = None
+                job.last_error_message = None
+                run.last_error_code = None
+                run.last_error_message = None
+            except ApiError as exc:
+                if str(exc.code) == "CONTINUOUS_SQL_INPUT_REVISION_PENDING":
+                    job.observed_state = "starting"
+                    run.status = "starting"
+                    job.last_error_code = None
+                    job.last_error_message = None
+                else:
+                    job.observed_state = "failed"
+                    run.status = "failed"
+                    job.last_error_code = str(exc.code)
+                    job.last_error_message = exc.message
+                    run.last_error_code = str(exc.code)
+                    run.last_error_message = exc.message
+            self._sync_execution_tree_status(
+                job,
+                status_value=job.observed_state,
+                terminal=job.observed_state in {"stopped", "failed"},
+                error_code=job.last_error_code,
+                error_message=job.last_error_message,
+            )
+            self.db.add_all([job, run])
+            self.db.commit()
+            return job
         try:
             worker = self.gateway.manage(job, run, "status")
         except ApiError as exc:

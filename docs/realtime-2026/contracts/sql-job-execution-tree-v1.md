@@ -1,9 +1,9 @@
 # SQL Job 실행 트리 V1 계약
 
 - 이슈: #1117
-- 상태: Phase 4 parent-owned child dispatch 구현, revision transform은 legacy
+- 상태: parent-owned child dispatch와 revision-snapshot transform executor 구현
 - 기준 commit: `a234abea`
-- runtime 상태: revision input pinning은 구현됐지만 transform executor는 아직 연결하지 않았다. 따라서 `dataset_revision` parent start는 child dispatch 전에 fail-closed한다. legacy direct-consumer 경로는 기존 Job에만 남으며 이 문서는 후속 Phase의 target contract다.
+- runtime 상태: `dataset_revision` parent는 Kafka worker 대신 in-process revision executor를 사용한다. producer Dataset의 queryable Iceberg snapshot이 아직 없으면 parent는 `starting` 상태에서 대기하며, legacy direct-consumer 경로는 기존 Job에만 남는다.
 - 결정 기록: [ADR-003](../adr/003-sql-job-execution-tree-ownership.md)
 
 ## 1. 현재 기준선과 전환 목표
@@ -102,7 +102,7 @@ revision runner 준비 단계는 SQL parent가 Kafka 연결 정보를 다시 받
 }
 ```
 
-`broker`, `topic`, `consumerGroupId`, Kafka offset과 trigger/max-offset은 이 payload에 절대 포함하지 않는다. realtime revision은 tree run의 `inputDatasetRevisions`에서, static snapshot은 parent Run의 `staticBindings`에서만 읽는다. `dataset_revision_commits.snapshot_id`는 revision이 가리키는 정확한 Iceberg snapshot을 저장한다. `ContinuousSqlRevisionRunner`는 required producer input의 revision과 snapshot을 함께 검증하고 revision 번호를 tree/node에 고정한다. snapshot이 없는 legacy revision은 `CONTINUOUS_SQL_INPUT_REVISION_PENDING`으로 transform 대상에서 제외된다. 실제 transform executor 연결은 후속 Phase의 책임이다.
+`broker`, `topic`, `consumerGroupId`, Kafka offset과 trigger/max-offset은 이 payload에 절대 포함하지 않는다. realtime revision은 tree run의 `inputDatasetRevisions`에서, static snapshot은 parent Run의 `staticBindings`에서만 읽는다. `dataset_revision_commits.snapshot_id`는 revision이 가리키는 정확한 Iceberg snapshot을 저장한다. `ContinuousSqlRevisionRunner`는 required producer input의 revision과 snapshot을 함께 검증하고 revision 번호를 tree/node에 고정한 뒤, Trino Iceberg `FOR VERSION AS OF` transform과 verified output revision publication을 수행한다. snapshot이 없는 legacy revision은 `CONTINUOUS_SQL_INPUT_REVISION_PENDING`으로 대기한다.
 
 Catalog/API는 frontend 판정을 위해 다음 authoritative field를 additive하게 제공한다. Phase 1부터 새 ETL/Trino SQL/Continuous SQL publication은 정규화 Catalog column과 payload를 함께 저장하며, 정규화 column이 오래된 payload보다 우선한다. 기존 Dataset은 자동 추정 backfill하지 않는다.
 
@@ -231,4 +231,4 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 - Phase 8: output revision과 Dashboard 수동 새로고침 회귀
 - Phase 9: legacy migration, E2E, 성능과 rollout gate
 
-Phase 5 전에는 legacy direct Kafka consumer를 제거하지 않는다. Phase 3 lock 없이 parent가 child를 실행하지 않는다. Phase 0에서는 revision runner 부재로 parent worker start가 실패할 때 이미 이번 tree run에서 시작한 realtime child를 역순 stop하고 tree lock/node run을 terminal failure로 종료한다. runner가 없는 알려진 `dataset_revision` Job은 child dispatch 전에 `409 CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED`로 거절한다.
+legacy direct Kafka consumer는 dependency가 없는 기존 Job에만 남긴다. Phase 3 lock 없이 parent가 child를 실행하지 않는다. managed `dataset_revision` Job은 child dispatch 뒤 Kafka worker를 만들지 않고 revision executor identity로 시작한다. 첫 queryable snapshot 전에는 `starting`을 유지하고, transform 또는 output publication 실패 시 parent tree를 failed로 종료한다.
