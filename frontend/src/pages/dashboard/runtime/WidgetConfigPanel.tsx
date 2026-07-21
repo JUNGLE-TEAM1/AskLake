@@ -44,6 +44,7 @@ import type {
   DashboardWidgetAggregation,
   DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
+  DashboardWidgetFilter,
   DashboardWidgetFormat,
   DashboardWidgetLineCurve,
   DashboardWidgetOrientation,
@@ -56,6 +57,13 @@ import type {
   DashboardWidgetColorSlotFocus,
   UpdateDraftWidgetFormInput,
 } from "./dashboardRuntimeTypes";
+import { WidgetFilterEditor } from "./WidgetFilterEditor";
+import {
+  dashboardWidgetFiltersFromConfig,
+  normalizeDashboardWidgetFilters,
+  reconcileDashboardWidgetFilters,
+  validateDashboardWidgetFilters,
+} from "./widgetFilters";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
 
@@ -65,6 +73,7 @@ type WidgetConfigDraft = {
   curve?: DashboardWidgetLineCurve;
   dateUnit?: DashboardWidgetDateUnit;
   format?: DashboardWidgetFormat;
+  filters?: DashboardWidgetFilter[];
   groupKey?: string;
   labelKey?: string;
   limit?: number;
@@ -248,6 +257,7 @@ function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConf
     curve: configString(editableConfig, "curve") as DashboardWidgetLineCurve | undefined,
     dateUnit: configString(editableConfig, "dateUnit") as DashboardWidgetDateUnit | undefined,
     format: configString(editableConfig, "format") as DashboardWidgetFormat | undefined,
+    filters: dashboardWidgetFiltersFromConfig(configRecord(editableConfig).filters),
     labelKey: configString(editableConfig, "labelKey"),
     limit: configNumber(editableConfig, "limit"),
     max: configNumber(editableConfig, "max"),
@@ -280,6 +290,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     area_chart: {
       aggregation: "sum",
       dateUnit: defaultTimeBucket,
+      filters: [],
       seriesKey: "",
       stacked: false,
       xKey: firstName(lineXAxisColumns),
@@ -287,6 +298,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     bar_chart: {
       aggregation: "sum",
+      filters: [],
       groupKey: "",
       orientation: "vertical",
       xKey: dimensionFallback,
@@ -294,11 +306,13 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     donut_chart: {
       aggregation: "sum",
+      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
     heatmap_chart: {
       aggregation: "sum",
+      filters: [],
       valueKey: numericFallback,
       xKey: dimensionFallback,
       yKey: firstName(categoricalColumns.length > 1 ? categoricalColumns.slice(1) : dimensionColumns),
@@ -307,22 +321,26 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       aggregation: "sum",
       curve: "smooth",
       dateUnit: defaultTimeBucket,
+      filters: [],
       seriesKey: "",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
     metric: {
       aggregation: "sum",
+      filters: [],
       format: "number",
       valueKey: numericFallback,
     },
     pie_chart: {
       aggregation: "sum",
+      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
     radial_bar_chart: {
       aggregation: "avg",
+      filters: [],
       format: "percent",
       labelKey: categoryFallback,
       max: 100,
@@ -331,19 +349,25 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     table: {
       columns: tableColumns,
+      filters: [],
       limit: 100,
       sortDirection: "asc",
       sortKey: tableColumns[0] ?? "",
     },
     treemap_chart: {
       aggregation: "sum",
+      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
   };
 }
 
-function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
+function validateConfig(
+  type: DashboardRuntimeWidgetType,
+  config: WidgetConfigDraft,
+  columns: DashboardDatasetColumn[] = [],
+) {
   const usesCount = config.aggregation === "count";
   if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
@@ -358,6 +382,8 @@ function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDr
   if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
+  const filterError = validateDashboardWidgetFilters(config.filters ?? [], columns);
+  if (filterError) return filterError;
   return null;
 }
 
@@ -368,6 +394,7 @@ function buildConfig(
 ): DashboardRuntimeWidgetConfig {
   const base = {
     description: common.description,
+    filters: normalizeDashboardWidgetFilters(config.filters ?? []),
   };
   const chartBase = {
     ...base,
@@ -385,8 +412,8 @@ function buildConfig(
 
   if (type === "table") {
     return {
+      ...base,
       columns: config.columns ?? [],
-      description: common.description,
       limit: config.limit,
       sortDirection: config.sortDirection,
       sortKey: config.sortKey || undefined,
@@ -592,11 +619,17 @@ export function WidgetConfigPanel({
       const defaultConfigs: Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>> = selectedDataset
         ? createDefaultConfigs(selectedDataset)
         : {};
+      const restoredConfig = configDraftFromConfig(editingWidget.config);
       setConfigsByType({
         ...defaultConfigs,
         [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
           ? defaultConfigs[editingWidget.type] ?? {}
-          : configDraftFromConfig(editingWidget.config),
+          : {
+              ...restoredConfig,
+              filters: selectedDataset
+                ? reconcileDashboardWidgetFilters(restoredConfig.filters ?? [], selectedDataset.columns)
+                : restoredConfig.filters ?? [],
+            },
       });
       return;
     }
@@ -605,13 +638,20 @@ export function WidgetConfigPanel({
       ? initialCreateInput
       : null;
     if (initialInput && selectedDataset) {
+      const restoredConfig = configDraftFromConfig(initialInput.config);
       setType(initialInput.type);
       setTitle(initialInput.title);
       setDescription(configString(initialInput.config, "description") ?? "");
       setColor(configColor(initialInput.config));
       setConfigsByType({
         ...createDefaultConfigs(selectedDataset),
-        [initialInput.type]: configDraftFromConfig(initialInput.config),
+        [initialInput.type]: {
+          ...restoredConfig,
+          filters: reconcileDashboardWidgetFilters(
+            restoredConfig.filters ?? [],
+            selectedDataset.columns,
+          ),
+        },
       });
       return;
     }
@@ -674,7 +714,7 @@ export function WidgetConfigPanel({
   const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
   const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
-    ? validateConfig(type, currentConfig)
+    ? validateConfig(type, currentConfig, columnGroups.allColumns)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean(
     (isEditMode || (selectedDatasetId && selectedDataset))
@@ -750,7 +790,7 @@ export function WidgetConfigPanel({
       return;
     }
 
-    const error = validateConfig(type, currentConfig);
+    const error = validateConfig(type, currentConfig, columnGroups.allColumns);
     if (error) {
       setFormError(error);
       return;
@@ -1176,6 +1216,14 @@ export function WidgetConfigPanel({
             </WidgetSelectField>
           </>
         )}
+
+        {selectedDataset ? (
+          <WidgetFilterEditor
+            dataset={selectedDataset}
+            filters={currentConfig.filters ?? []}
+            onChange={(filters) => patchCurrentConfig({ filters })}
+          />
+        ) : null}
 
         {(formError || validationMessage) && <FieldError>{formError ?? validationMessage}</FieldError>}
 
