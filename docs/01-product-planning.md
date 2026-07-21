@@ -91,7 +91,7 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 6. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
 7. 사용자가 PostgreSQL Snapshot Job을 실행하거나 재실행하면 스키마 Preview 행 수와 무관하게 선택한 기본 테이블 전체를 일관된 DB snapshot으로 읽는다.
 8. 일반 Snapshot Job의 성공 결과는 새 물리 경로에 전체 데이터로 저장하고, Catalog의 현재 Dataset은 최신 성공 snapshot만 가리킨다. 이전 성공 snapshot은 실행 이력으로 보존하지만 현재 행 수와 기본 SQL 조회에는 합산하지 않는다.
-9. 사용자가 Prefix Job을 실행하면 Spark는 같은 제외 규칙으로 prefix의 모든 데이터 파일을 읽고 실제 입력 파일 수·전체 입력 바이트·전체 입력 행 수를 Run manifest에 기록한다.
+9. 사용자가 Prefix Job을 실행하면 Spark는 같은 제외 규칙으로 prefix의 모든 데이터 파일을 읽고 실제 입력 파일 수·전체 입력 바이트·전체 입력 행 수를 Run manifest에 기록한다. 일반 Snapshot은 원본의 exact byte가 운영자가 설정한 실험 한도 이하일 때 projected DataFrame을 memory/disk cache로 직접 재사용하고, 그 밖에는 run 전용 Parquet staging을 만든다. 기본 한도는 0이므로 staging-only이며 직접 cache 준비 실패는 원본 재스캔을 숨긴 fallback 없이 Run을 실패시킨다.
 10. 사용자가 File/S3 TXT, Kafka Snapshot 또는 Kafka Continuous raw text Job을 실행하면 runtime은 Preview와 같은 구조화 규칙을 전체 입력에 다시 적용한다.
 11. 모든 비어 있지 않은 행의 필드 개수가 확정된 컬럼 수와 같을 때만 target을 쓰고 Catalog dataset을 생성 또는 갱신한다. 불일치가 있으면 Run을 실패시키고 Catalog materialization을 만들지 않는다.
 12. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.

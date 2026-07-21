@@ -30,6 +30,7 @@ from runtime.kafka_state import (  # noqa: E402
     normalize_stream_partition_cursors,
     stream_partition_cursor_payload,
 )
+from runtime.spark_hybrid_execution import hybrid_execution_decision  # noqa: E402
 
 
 class RuntimeScriptContractTests(unittest.TestCase):
@@ -90,8 +91,12 @@ class RuntimeScriptContractTests(unittest.TestCase):
             "ASKLAKE_SPARK_OUTPUT_PATH": "s3a://output/events",
             "ASKLAKE_SPARK_RUN_ID": "run-1",
             "ASKLAKE_SPARK_RUN_ROW_LIMIT": "100",
+            "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES": "1048576",
         })
-        self.assertEqual((spark.source_format, spark.row_limit), ("jsonl", 100))
+        self.assertEqual(
+            (spark.source_format, spark.row_limit, spark.direct_cache_max_source_bytes),
+            ("jsonl", 100, 1048576),
+        )
 
         kafka = KafkaWorkerConfig.from_environment({
             "ASKLAKE_CONTINUOUS_JOB_ID": "job-1",
@@ -103,6 +108,34 @@ class RuntimeScriptContractTests(unittest.TestCase):
             "ASKLAKE_CONTINUOUS_TRIGGER_SECONDS": "5",
         })
         self.assertEqual((kafka.topic, kafka.trigger_seconds), ("events", 5))
+
+    def test_hybrid_policy_fails_closed_until_an_exact_small_source_is_known(self) -> None:
+        self.assertEqual(
+            hybrid_execution_decision(100, 0),
+            hybrid_execution_decision(None, 0),
+        )
+        self.assertEqual(
+            hybrid_execution_decision(None, 100).reason,
+            "source_size_unavailable",
+        )
+        self.assertEqual(hybrid_execution_decision(0, 100).reason, "empty_source")
+        self.assertEqual(hybrid_execution_decision(101, 100).reason, "above_threshold")
+        self.assertTrue(hybrid_execution_decision(100, 100).use_direct_cache)
+
+        base_environment = {
+            "ASKLAKE_SPARK_OUTPUT_PATH": "s3a://output/events",
+            "ASKLAKE_SPARK_RUN_ID": "run-1",
+            "ASKLAKE_SPARK_SOURCE_FORMAT": "jsonl",
+            "ASKLAKE_SPARK_SOURCE_PATH": "s3a://raw/events",
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES must be zero or greater",
+        ):
+            SparkJobConfig.from_environment({
+                **base_environment,
+                "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES": "-1",
+            })
 
     def test_partition_cursor_state_is_normalized_deterministically(self) -> None:
         cursors = normalize_stream_partition_cursors([

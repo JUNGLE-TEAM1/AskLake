@@ -42,6 +42,11 @@ from scripts.spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
 )
+from runtime.spark_hybrid_execution import (
+    DirectCacheInitializationError,
+    initialize_direct_cache,
+    prepare_hybrid_frame,
+)
 
 
 def identity(
@@ -114,6 +119,105 @@ class FakeSpark:
 
 
 class SparkSourceIdentityTests(unittest.TestCase):
+    def test_partial_source_byte_measurement_disables_direct_cache(self) -> None:
+        filesystem = Mock()
+        filesystem.getFileStatus.side_effect = [
+            SimpleNamespace(getLen=Mock(return_value=5)),
+            RuntimeError("metadata unavailable"),
+        ]
+        path_factory = Mock(side_effect=lambda _value: SimpleNamespace(
+            getFileSystem=Mock(return_value=filesystem),
+        ))
+        spark = SimpleNamespace(
+            sparkContext=SimpleNamespace(
+                _jsc=SimpleNamespace(hadoopConfiguration=Mock(return_value=object())),
+            ),
+            _jvm=SimpleNamespace(org=SimpleNamespace(apache=SimpleNamespace(
+                hadoop=SimpleNamespace(fs=SimpleNamespace(Path=path_factory)),
+            ))),
+        )
+
+        with patch("builtins.print") as print_mock:
+            reported_bytes, decision_bytes = spark_job_run.measure_source_bytes(
+                spark,
+                ["s3a://raw/small.jsonl", "s3a://raw/large.jsonl"],
+                25,
+            )
+
+        self.assertEqual(reported_bytes, 25)
+        self.assertIsNone(decision_bytes)
+        self.assertEqual(filesystem.getFileStatus.call_count, 2)
+        print_mock.assert_called_once()
+
+        source_frame = FakeFrame()
+        staged_frame = FakeFrame()
+        materialize = Mock(return_value=staged_frame)
+        summarize = Mock(return_value=(7, []))
+        spark_resources = {}
+        result = prepare_hybrid_frame(
+            decision_bytes,
+            10,
+            source_frame,
+            [],
+            spark_resources,
+            "MEMORY_AND_DISK",
+            summarize,
+            materialize,
+        )
+
+        self.assertIs(result[0], staged_frame)
+        materialize.assert_called_once_with(source_frame)
+        source_frame.persist.assert_not_called()
+        self.assertEqual(
+            spark_resources["directCacheDecisionReason"],
+            "source_size_unavailable",
+        )
+        self.assertFalse(spark_resources["directCacheEligible"])
+
+    def test_direct_cache_initialization_failure_refuses_hidden_source_rescan(self) -> None:
+        cached_frame = FakeFrame()
+        fallback_frame = FakeFrame()
+        spark = FakeSpark(fallback_frame)
+        spark_resources = {}
+        cached_frames = []
+
+        with (
+            patch.object(
+                spark_job_run,
+                "schema_contract_summary",
+                side_effect=RuntimeError("cache warmup failed"),
+            ) as summarize,
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(
+                DirectCacheInitializationError,
+                "stopped before fallback",
+            ):
+                initialize_direct_cache(
+                    cached_frame,
+                    cached_frames,
+                    spark_resources,
+                    spark_job_run.StorageLevel.MEMORY_AND_DISK,
+                    lambda candidate: spark_job_run.schema_contract_summary(
+                        candidate,
+                        [],
+                    ),
+                )
+
+        self.assertEqual(summarize.call_count, 1)
+        cached_frame.persist.assert_called_once_with(
+            spark_job_run.StorageLevel.MEMORY_AND_DISK
+        )
+        cached_frame.unpersist.assert_called_once_with(blocking=False)
+        spark.read.parquet.assert_not_called()
+        self.assertEqual(cached_frames, [])
+        self.assertEqual(spark_resources["cacheStorageLevel"], "NONE")
+        self.assertEqual(spark_resources["directCacheInitializationStatus"], "failed")
+        self.assertEqual(
+            spark_resources["directCacheFailureReason"],
+            "cache_initialization_failed",
+        )
+
     def test_iceberg_source_manifest_paths_are_normalized_to_quoted_table_identifiers(self) -> None:
         frame = FakeFrame()
         spark = SimpleNamespace(table=Mock(return_value=frame))

@@ -40,6 +40,7 @@ from runtime.spark_iceberg_identifiers import (
     required_iceberg_identifier,
 )
 from runtime.spark_materialization_staging import RunScopedParquetStaging, spark_staging_path
+from runtime.spark_hybrid_execution import prepare_hybrid_frame, release_all_cached_frames
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
@@ -66,35 +67,9 @@ def finish_phase(phase_timings, name, phase):
     }
 
 
-def persist_reusable_frame(frame):
-    return frame.persist(StorageLevel.MEMORY_AND_DISK)
-
-
-def release_cached_frame(frame, cached_frames):
-    if frame is None:
-        return
-    for index, cached in enumerate(cached_frames):
-        if cached is frame:
-            cached_frames.pop(index)
-            try:
-                cached.unpersist(blocking=False)
-            except Exception as exc:
-                print(f"Spark cache cleanup failed: {exc}", file=sys.stderr)
-            return
-
-
-def release_all_cached_frames(cached_frames):
-    while cached_frames:
-        cached = cached_frames.pop()
-        try:
-            cached.unpersist(blocking=False)
-        except Exception as exc:
-            print(f"Spark cache cleanup failed: {exc}", file=sys.stderr)
-
-
 def spark_resource_manifest(spark):
     return {
-        "cacheStorageLevel": "MEMORY_AND_DISK",
+        "cacheStorageLevel": "NONE",
         "defaultParallelism": spark_runtime_integer(
             lambda: spark.sparkContext.defaultParallelism,
             1,
@@ -206,8 +181,8 @@ def main():
         )
         input_files = sorted(source_df.inputFiles())
         input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
-        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
-            source_collection.get("expectedTotalBytes") or 0
+        input_bytes, direct_cache_source_bytes = measure_source_bytes(
+            spark, input_files, source_collection.get("expectedTotalBytes")
         )
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
@@ -230,10 +205,10 @@ def main():
         delete_spark_path(spark, staging_path)
         delete_spark_path(spark, materialization.path)
         quarantine_staging_path = f"{staging_path}_quarantine"
-        staged_df = materialization.materialize(spark, contracted_df, phase_timings, spark_resources)
-        input_rows, null_required = schema_contract_summary(
-            staged_df,
-            required_targets,
+        staged_df, input_rows, null_required = prepare_hybrid_frame(
+            direct_cache_source_bytes, config.direct_cache_max_source_bytes, contracted_df, cached_frames, spark_resources,
+            StorageLevel.MEMORY_AND_DISK, lambda frame: schema_contract_summary(frame, required_targets),
+            lambda frame: materialization.materialize(spark, frame, phase_timings, spark_resources),
         )
         if null_required:
             raise ValueError(
@@ -1180,17 +1155,17 @@ def verify_spark_source_inventory(spark, source_path, source_collection, *, phas
         raise ValueError(f"{exc} phase={phase}") from exc
 
 
-def source_file_bytes(spark, paths):
-    total = 0
-    configuration = spark.sparkContext._jsc.hadoopConfiguration()
+def measure_source_bytes(spark, paths, inventory_bytes):
+    fallback_bytes, total = int(inventory_bytes or 0), 0
+    if not paths: return fallback_bytes, fallback_bytes
     for value in paths:
         try:
             path = spark._jvm.org.apache.hadoop.fs.Path(value)
-            total += int(path.getFileSystem(configuration).getFileStatus(path).getLen())
-        except Exception:
-            continue
-    return total
-
+            total += int(path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()).getFileStatus(path).getLen())
+        except Exception as exc:
+            print(f"Spark source byte measurement is incomplete; direct cache is disabled: path={value} error={exc}", file=sys.stderr)
+            return fallback_bytes, None
+    return total, total
 
 def read_source(
     spark,
@@ -1492,7 +1467,7 @@ def apply_schema_contract_with_count(
 ):
     contracted, required_targets = project_schema_contract(frame, schema_columns, transform_steps)
     if persist:
-        contracted = persist_reusable_frame(contracted)
+        contracted = contracted.persist(StorageLevel.MEMORY_AND_DISK)
     try:
         input_rows, null_required = schema_contract_summary(contracted, required_targets)
     except Exception:

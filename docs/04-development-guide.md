@@ -266,7 +266,7 @@ backend의 `npm run verify:rule-compiler`는 FastAPI와 local Node compiler의 �
 
 `npm run verify:schema-transform-rules`는 Visual Transform의 rename/cast/default/null guard 순서, canonical parameter, portable operation, 초기 pass-through를 실제 adapter 함수로 검증한다.
 
-`npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용해 실행 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인하며, 실제 JSONL `FileScanRDD` 로그를 세어 단일 cast transform-only Snapshot의 raw source read가 전체 pipeline에서 정확히 1회인지 회귀 검증한다. `npm run verify:kafka-target-projection`은 Job의 범용 JSON object 파싱, nested field projection, legacy review 필수 계약을 함께 확인하고 `npm run verify:target-mode-contract`은 mode별 layer/format 선제 검증을 확인한다. `npm run verify:kafka-review-scheduled-ingest`는 Job identity가 없는 direct JSONL compatibility 경로를 검증하고, Kafka Snapshot Job의 Iceberg/Catalog/offset E2E는 `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-snapshot-iceberg`로 확인한다. Continuous 변경 시에는 `npm run verify:kafka-continuous-rules`와 `ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg`로 Rule, checkpoint, Iceberg append/retry/Catalog 계약을 확인한다.
+`npm run verify:snapshot-rule-conformance`는 같은 JSON fixture를 Node Kafka runtime과 실제 Spark 4 DataFrame runtime에 적용해 실행 의미의 동등성을 검증한다. `npm run verify:snapshot-spark-pipeline`은 `spark_job_run.py`를 직접 실행해 drop/quarantine/set-null 결과가 Parquet에 반영되고 portable/SQL 혼합 `Fail Batch` target과 staging 경로가 남지 않는지 확인한다. 또한 `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=1`인 staging control과 충분한 source byte 한도의 direct-cache candidate에서 실제 JSONL `FileScanRDD` 로그를 세어 정상 raw source read가 각각 정확히 1회인지 회귀 검증한다. direct-cache candidate는 materialization file과 timing이 0이고, staging control은 run-scoped Parquet를 생성·정리해야 한다. process 기본값은 0이며 검증된 dev EKS 활성값은 10GiB다. 활성값은 아래 runtime ConfigMap과 Backend/Spark 동일 revision 승격 절차로만 적용한다.
 
 `npm run verify:spark-schema-contract`는 실제 Spark 4에서 필수 컬럼 1개와 10개를 검증할 때 내부 job 수가 동일한지 확인해, 컬럼별 action 대신 하나의 집계 action을 사용하는 계약을 검증한다. 같은 verifier는 Quality rule 1개와 10개도 aggregate action 수가 같아야 한다. JSON/JSONL은 승인된 `schemaColumns`와 transform input path로 명시적 reader schema를 만들며, `properties.position` 같은 중첩 필드는 물리 target alias로 펼친다. DataFrame 생성 시 schema inference Spark job이 없어야 하고 null과 cast 실패가 있는 경우에는 기존과 같이 실패한 필수 컬럼 이름을 모두 보고하고 target write 전에 중단해야 한다. cache는 `MEMORY_AND_DISK`이며 성공, `Fail Batch`, 예외 모두에서 해제돼야 한다.
 
@@ -833,6 +833,33 @@ Phase 4 fixture producer는 `prepare-eks-day16-fixture-producer-identity.sh`로 
 Phase 5 private handoff는 `scripts/prepare-eks-day16-a-handoff.sh`로 생성하고 exact EKS context에서 `scripts/verify-eks-day16-a-handoff.sh --audit`로 검사한다. 실제 reference는 `*.handoff.json`, `*.runtime-secret-contract.json`, `*.private-values.json`, `*.fixture-receipt.json` Git 제외 파일에만 둔다. 모든 Day 16 실행기는 `ASKLAKE_IMAGE_RECEIPT`로 현재 private formal receipt를 명시해야 하며 파일이 Git 제외·미추적·`0600`인지 확인하고 과거 revision의 암묵적 기본값을 사용하지 않는다. audit은 현재 blocker를 보고하고 `--ready`는 전체 server dry-run, decision-aware full-service Secret과 live `asklake-runtime` ConfigMap의 승인된 Helm owner/exact image까지 준비돼야 통과한다. owner가 미정인 ConfigMap을 임의 adopt하지 않는다. 모든 blocker가 0인 뒤 confirmation을 준 `scripts/promote-eks-day16-a-handoff.sh`만 private handoff를 `ready-for-deploy`로 올린다. [Phase 5 검증 기록](eks-day16-a-handoff.md)과 [Phase 6 promotion gate 기록](eks-day16-phase6-promotion-gate.md)을 따른다.
 
 현재 `asklake-runtime` owner는 전용 `asklake-runtime-config` release로 확정됐다. `scripts/prepare-eks-runtime-config-values.sh`가 live ConfigMap을 Git 제외 `0600` values로 내보내고, `scripts/deploy-eks-runtime-config-release.sh`가 live/render canonical hash 일치와 Helm server dry-run을 통과한 경우에만 ownership을 인수한다. 이후 `scripts/verify-eks-runtime-config-release.sh`는 단독 release annotation, exact data hash와 workload 무변경을 확인한다. 실제 dev 전환은 data 변경 없이 완료됐다.
+
+10GiB Spark hybrid를 dev EKS 공용 경로에 활성화할 때는 PR revision의 formal image
+receipt를 먼저 만든다. `prepare-eks-spark-hybrid-activation-values.sh --capture-live`는
+현재 ConfigMap과 `asklake-web` values를 Git 제외 mode `0600` base로 캡처하고, receipt의
+Backend/Spark immutable image와 `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=10737418240`
+만 후보에 반영한다. Web 후보는 Backend image와 runtime data hash에서 만든
+`spark-hybrid-<hash>` revision만 바꾼다. active SparkApplication이 0일 때만 preflight와
+apply를 허용하며 server dry-run은 cluster mutation 0이어야 한다.
+
+```bash
+export ASKLAKE_IMAGE_RECEIPT='<private current-revision image receipt>'
+export KUBECONFIG='<validated dev kubeconfig>'
+bash scripts/prepare-eks-spark-hybrid-activation-values.sh --capture-live
+bash scripts/deploy-eks-spark-hybrid-activation.sh --preflight
+ASKLAKE_SPARK_HYBRID_ACTIVATION_CONFIRM=activate-10gib-spark-hybrid \
+  bash scripts/deploy-eks-spark-hybrid-activation.sh --apply
+```
+
+apply는 runtime ConfigMap을 먼저 올린 뒤 FastAPI 2개와 Collector 1개를 같은 revision으로
+rollout한다. 중간 또는 사후 검증이 실패하면 두 Helm release를 이전 revision으로
+복구한다. 성공 판정은 새 Pod의
+실제 env가 10GiB인지, Backend/Spark image가 같은 receipt인지, ALB가 steady인지,
+새 SparkApplication driver env에 같은 값이 전달되는지를 모두 확인한 뒤 내린다.
+롤아웃 직후 정상적인 target draining, Ready EndpointSlice 수렴, healthy floor 수렴은
+최대 10분 동안 15초 간격으로 기다리고, steady가 3회 연속 관찰되어야 성공한다.
+그 밖의 ALB 오류는 즉시 실패하며,
+제한 시간 안에 steady가 되지 않아도 두 Helm release를 직전 revision으로 되돌린다.
 
 EKS의 목표 AI runtime은 `gateway`다. 기존 direct 13-key 전환기는 rollback 호환 경로이며 새 배포의 정상 경로가 아니다. Gateway 전환은 provider-key-free Backend exact 15-key, 별도 Gateway exact 3-key, service/MCP token 동일성, `AI_QUERY_PROVIDER=gateway`, private Service URL과 immutable Gateway image를 모두 만족해야 한다. `deploy-eks-web-workloads.sh --apply`는 이 계약을 fail-closed로 확인하며 live apply 뒤 `/api/health/ai`, Dashboard Assistant, Query AI를 별도 smoke한다. Secret 값은 command output, evidence 또는 Git에 남기지 않는다.
 

@@ -45,6 +45,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
+| Spark direct-cache threshold | process 기본값과 rollback은 0이다. dev 활성값 10GiB는 10GB direct-cache와 100GB staging의 raw read 1회·OOM·executor replacement·residue 0 근거가 있는 동일 Backend/Spark image receipt에만 적용한다. 임의 다른 값, active Spark가 있는 apply, ConfigMap만 바꾸고 FastAPI/Collector revision을 갱신하지 않는 부분 활성화를 금지한다. ALB steady 검증은 정상 rollout의 draining·EndpointSlice·healthy floor 수렴만 최대 10분까지 bounded retry하고 15초 간격 3회 연속 steady를 요구하며, 그 밖의 계약 위반이나 제한 시간 초과는 전체 활성화를 rollback한다. |
 
 ### What Is Deferred
 
@@ -63,6 +64,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | Deploy readiness failed | GitHub Actions artifact의 JSON record와 실패한 `compose_config`, `backend_image`, `backend_dependencies`, `backend_python_dependencies`, `backend_runtime_contract`, `frontend_image` step을 확인한다. 로컬 재현은 `bash scripts/verify-deploy-readiness.sh`로 한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
+| Spark direct cache was skipped or failed | Spark result의 `source.inputBytes`, `directCacheMaxSourceBytes`, `directCacheDecisionReason`, `directCacheInitializationStatus`, `directCacheFallbackCount`를 확인한다. 크기 미확인이나 한도 초과를 우회해 강제 cache하지 않으며, 초기화 실패를 staging fallback으로 바꿔 원본 재읽기를 숨기지 않는다. |
 | Spark Planner가 AWS S3 입력을 `input_size_unavailable`로 기록 | FastAPI workload identity의 직접 `HEAD`와 `S3_ALLOWED_BUCKETS`를 먼저 확인한다. AWS native S3는 custom endpoint를 저장하거나 `S3_ALLOWED_ENDPOINTS`를 요구하지 않으며, custom endpoint를 쓰는 Source만 endpoint allowlist를 가져야 한다. |
 | Admin audit contract failed | `cd backend && npm run verify:admin-audit-contract`로 `query_run`, 레거시 `unknown`, OpenAPI inline/local-ref 의미 호환성과 frontend 타입 집합을 확인한다. session 기반 실제 HTTP 흐름은 `npm run verify:identity-admin`, 부분 실패 UI는 `cd frontend && npm run test:admin-console-load`로 확인한다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |

@@ -168,7 +168,7 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   );
   const sparkEnvironment = {
     ...storageEnvironment,
-    ...kafkaFixtureEnvironment,
+    ...kafkaFixtureEnvironment, ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES: process.env.ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES || "0",
     ASKLAKE_SPARK_SOURCE_PATH: source.path,
     ASKLAKE_SPARK_SOURCE_FORMAT: source.format,
     ASKLAKE_SPARK_OUTPUT_PATH: output.sparkPath,

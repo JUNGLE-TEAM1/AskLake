@@ -26,7 +26,10 @@ class RunScopedParquetStaging:
             self.write_started = True
             frame.write.mode("overwrite").parquet(self.path)
             staged_frame = spark.read.parquet(self.path)
-            spark_resources["materializationFileCount"] = len(staged_frame.inputFiles())
+            materialization_files = staged_frame.inputFiles()
+            spark_resources["materializationBytes"] = None
+            spark_resources["materializationFileCount"] = len(materialization_files)
+            spark_resources["materializationSizeStatus"] = "not_measured_by_strategy"
             return staged_frame
         finally:
             phase_timings["materializationStaging"] = {
