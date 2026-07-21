@@ -45,8 +45,7 @@ export function CatalogPage({
 
   return (
     <div className="catalog-explorer-with-view">
-      {viewSwitcher}
-      <CatalogExplorerPage {...catalogProps} />
+      <CatalogExplorerPage {...catalogProps} viewSwitcher={viewSwitcher} />
     </div>
   );
 }
