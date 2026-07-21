@@ -40,6 +40,7 @@ Catalog terminal publication은 `datasetId`, materialization version, storage lo
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6b | P1 | `GET /api/catalog/datasets/{datasetId}/rows` | 최신 성공 materialization sample page 조회 |
+| 6d | P1 | `POST /api/catalog/datasets/{datasetId}/filter-values/query` | Dashboard 위젯 필터의 bounded distinct 값 조회 |
 | 6c | P1 | `GET /api/catalog/datasets/{datasetId}/deletion-impact`, `DELETE /api/catalog/datasets/{datasetId}`, `GET /api/catalog/dataset-deletions/{deletionId}` | 목록 직접 Dataset 삭제 영향도·작업 상태 |
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
@@ -192,6 +193,7 @@ Resource/action 기준:
 | `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
 | `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
 | `GET /api/catalog/datasets/{datasetId}/rows` | `view` + `query` | 상세 열람 후 실제 row를 query하므로 두 검사를 모두 통과 |
+| `POST /api/catalog/datasets/{datasetId}/filter-values/query` | `view` + `query` | Dataset schema와 물리 데이터에서 필터 후보값을 조회 |
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
@@ -2477,6 +2479,49 @@ Runtime/permission:
 - `rowCount`는 고정한 snapshot의 전체 행 수, `returnedRows`는 현재 page 행 수입니다. `offset == rowCount`이면 빈 `rows`와 `hasNext=false`를 반환합니다. 이 API는 preview용 offset pagination이며 정렬 key를 받지 않으므로 서로 다른 요청 사이의 안정적인 row order는 보장하지 않습니다.
 - 스키마 상세 modal은 스키마와 row page를 함께 표시하고, 새로고침·첫/이전/다음/마지막 page·수평 스크롤·고정 header를 제공합니다. modal을 닫아도 Catalog 검색/필터 상태는 유지합니다.
 
+#### 8.2.2 Dashboard 필터 후보값 조회
+
+`POST /api/catalog/datasets/{datasetId}/filter-values/query`
+
+선택한 Dataset 컬럼의 실제 고유값을 bounded query로 반환합니다. 컬럼명이나 category 값은 서버·클라이언트에 하드코딩하지 않습니다. `contextFilters`는 현재 조건보다 앞에 있는 완성된 위젯 필터만 전달하며, 해당 조건을 먼저 적용한 뒤 후보값을 조회합니다.
+
+Request:
+
+```json
+{
+  "column": "subcategory",
+  "search": "watch",
+  "limit": 50,
+  "contextFilters": [
+    {
+      "id": "category-filter",
+      "column": "category",
+      "operator": "eq",
+      "value": "Wearable Technology"
+    }
+  ]
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "datasetId": "ds_commerce_conversion",
+  "column": "subcategory",
+  "values": [
+    { "label": "Smartwatches", "value": "Smartwatches" }
+  ],
+  "truncated": false
+}
+```
+
+- `limit`은 기본 50, 최대 100입니다. 서버는 `limit + 1`개까지만 확인해 `truncated`를 계산합니다.
+- Dataset `view`와 `query` 권한, governance 제한, Dashboard 원격 scan/timeout 예산을 모두 적용합니다.
+- `column`과 `contextFilters[].column`은 Catalog schema와 실제 readable column의 교집합에 있어야 합니다.
+- 알 수 없는 컬럼, 타입에 맞지 않는 연산자·값은 `422 DASHBOARD_WIDGET_CONFIG_INVALID`입니다.
+- 문자열 검색은 대소문자를 구분하지 않는 포함 조건이며 값과 검색어는 SQL literal로 처리합니다.
+
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 
 ```ts
@@ -2816,11 +2861,30 @@ type DashboardWidgetColorConfig = {
   colors: string[];
 };
 
+type DashboardWidgetFilter = {
+  id: string;
+  column: string;
+  operator:
+    | "eq"
+    | "in"
+    | "contains"
+    | "gt"
+    | "gte"
+    | "lt"
+    | "lte"
+    | "between"
+    | "is_null"
+    | "is_not_null";
+  value?: string | number | boolean;
+  values?: Array<string | number | boolean>;
+};
+
 type DashboardWidgetConfigBase = {
   body?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  filters?: DashboardWidgetFilter[];
   placeholderKind?: "visualization_request" | "text";
   prompt?: string;
 };
