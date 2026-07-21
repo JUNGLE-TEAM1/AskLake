@@ -677,3 +677,6 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 ## Kafka Job engine routing readiness (#1073)
 
 ## EKS Realtime V1-only profile readiness (#1101)
+
+- [x] ETL job operation이 `managed_kafka_source_config` pure domain dependency를 직접 import하고,
+  S3 source config 보존과 Kafka server-owned consumer group 적용을 함께 회귀 검증한다 (#1133).

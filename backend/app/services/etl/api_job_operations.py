@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.kafka_source_identity import managed_kafka_source_config
+
 RUNTIME_NAMES = {
     'ActorContext',
     'ApiError',
@@ -74,7 +76,6 @@ RUNTIME_NAMES = {
     'list',
     'make_dataset_id',
     'make_job_id',
-    'managed_kafka_source_config',
     'map_create_request_to_job',
     'max',
     'nonnegative_int',
