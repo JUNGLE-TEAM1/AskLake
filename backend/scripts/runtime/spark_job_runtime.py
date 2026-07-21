@@ -181,8 +181,8 @@ def main():
         )
         input_files = sorted(source_df.inputFiles())
         input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
-        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
-            source_collection.get("expectedTotalBytes") or 0
+        input_bytes, direct_cache_source_bytes = measure_source_bytes(
+            spark, input_files, source_collection.get("expectedTotalBytes")
         )
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
@@ -206,7 +206,7 @@ def main():
         delete_spark_path(spark, materialization.path)
         quarantine_staging_path = f"{staging_path}_quarantine"
         staged_df, input_rows, null_required = prepare_hybrid_frame(
-            input_bytes, config.direct_cache_max_source_bytes, contracted_df, cached_frames, spark_resources,
+            direct_cache_source_bytes, config.direct_cache_max_source_bytes, contracted_df, cached_frames, spark_resources,
             StorageLevel.MEMORY_AND_DISK, lambda frame: schema_contract_summary(frame, required_targets),
             lambda frame: materialization.materialize(spark, frame, phase_timings, spark_resources),
         )
@@ -1155,17 +1155,17 @@ def verify_spark_source_inventory(spark, source_path, source_collection, *, phas
         raise ValueError(f"{exc} phase={phase}") from exc
 
 
-def source_file_bytes(spark, paths):
-    total = 0
-    configuration = spark.sparkContext._jsc.hadoopConfiguration()
+def measure_source_bytes(spark, paths, inventory_bytes):
+    fallback_bytes, total = int(inventory_bytes or 0), 0
+    if not paths: return fallback_bytes, fallback_bytes
     for value in paths:
         try:
             path = spark._jvm.org.apache.hadoop.fs.Path(value)
-            total += int(path.getFileSystem(configuration).getFileStatus(path).getLen())
-        except Exception:
-            continue
-    return total
-
+            total += int(path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()).getFileStatus(path).getLen())
+        except Exception as exc:
+            print(f"Spark source byte measurement is incomplete; direct cache is disabled: path={value} error={exc}", file=sys.stderr)
+            return fallback_bytes, None
+    return total, total
 
 def read_source(
     spark,
