@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -16,7 +17,9 @@ from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlDependencyModel,
+    ContinuousSqlRunModel,
     ContinuousSqlTreeJobLockModel,
+    ContinuousSqlTreeNodeRunModel,
     ContinuousSqlTreeRunModel,
 )
 from app.models.etl import ETLJobModel
@@ -28,6 +31,8 @@ from app.repositories.execution_tree_lock_repository import (
     require_standalone_job_unlocked,
     require_tree_owned_job,
 )
+from app.repositories.dashboard_live_repository import DashboardLiveRepository
+from app.services.continuous_sql_revision_runner import ContinuousSqlRevisionRunner
 from app.services.continuous_sql_service import ContinuousSqlService
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from tests.test_dashboard_job_binding_schema_removal import _run_alembic
@@ -35,7 +40,7 @@ from tests.test_sql_execution_tree_persistence import continuous_job
 
 
 PREVIOUS_REVISION = "0023_sql_job_execution_tree_persistence"
-HEAD_REVISION = "0024_sql_execution_tree_locking"
+HEAD_REVISION = "0025_dataset_revision_snapshot_identity"
 
 
 def producer_job(job_id: str, dataset_id: str, *, status: str = "scheduled") -> ETLJobModel:
@@ -263,6 +268,288 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertTrue(all(
                 not item.active
                 for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
+            ))
+
+    def test_dataset_revision_tree_starts_without_a_sql_owned_kafka_worker(self) -> None:
+        events: list[str] = []
+
+        class Gateway:
+            def manage(self, _job, _run, action, _options=None):
+                events.append(f"parent:{action}")
+                return {"containerState": "running"}
+
+        def child_commander(_db, child_id, command, _actor, **_context):
+            events.append(f"{child_id}:{command}")
+            return SimpleNamespace(run=None, processing_result={})
+
+        class RevisionRunner:
+            def start(self, _job, _run):
+                events.append("revision-runner:start")
+                return {"containerState": "running", "containerId": "revision-runner"}
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            job.compiled_plan = {"executionInputMode": "dataset_revision"}
+            db.add(job)
+            db.commit()
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=Gateway(),
+                child_commander=child_commander,
+                revision_runner=RevisionRunner(),
+            )
+
+            response = service.command(
+                job.id,
+                ContinuousSqlCommandRequest(command="start", commandId="start-revision-runner"),
+                ActorContext(name="owner", role="admin"),
+            )
+
+            self.assertEqual(response.job.observed_state, "running")
+            self.assertEqual(events, ["JOB-REALTIME:startContinuous", "revision-runner:start"])
+            self.assertIsNotNone(db.scalar(select(ContinuousSqlTreeRunModel)))
+
+    def test_revision_transform_request_uses_only_dataset_revisions_and_snapshots(self) -> None:
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            job.compiled_plan = {
+                "executionInputMode": "dataset_revision",
+                "streamingSource": {
+                    "broker": "kafka:9092",
+                    "topic": "events",
+                    "consumerGroupId": "must-not-leak",
+                    "maxOffsetsPerTrigger": 100,
+                },
+            }
+            repository = ContinuousSqlRepository(db)
+            repository.replace_dependencies(job.id, [
+                ContinuousSqlDependencyModel(
+                    sql_job_id=job.id,
+                    input_dataset_id="dataset-JOB-REALTIME",
+                    child_job_id="JOB-REALTIME",
+                    input_type="realtime",
+                    execution_policy="run_on_tree_start",
+                    required=True,
+                ),
+                ContinuousSqlDependencyModel(
+                    sql_job_id=job.id,
+                    input_dataset_id="dataset-static",
+                    child_job_id=None,
+                    input_type="static",
+                    execution_policy="reuse_snapshot",
+                    required=True,
+                ),
+            ])
+            db.add(job)
+            db.commit()
+            service = ContinuousSqlService(db, runtime_settings=self.settings)
+            run = service._new_run(job, observed_state="starting")
+            run.static_bindings = [{"datasetId": "dataset-static", "snapshotId": "snap-101"}]
+            tree = service._acquire_execution_tree(job, run)
+            tree.input_dataset_revisions = {"dataset-JOB-REALTIME": 42}
+            db.add_all([run, tree])
+            db.commit()
+
+            payload = service._revision_transform_request(job, run).model_dump(
+                by_alias=True,
+                mode="json",
+            )
+
+            self.assertEqual(payload["executionInputMode"], "dataset_revision")
+            self.assertEqual(payload["treeRunId"], tree.tree_run_id)
+            self.assertEqual(payload["continuousSqlRunId"], run.run_id)
+            self.assertEqual(payload["inputDatasets"], [
+                {
+                    "inputDatasetId": "dataset-JOB-REALTIME",
+                    "inputType": "realtime",
+                    "childJobId": "JOB-REALTIME",
+                    "executionPolicy": "run_on_tree_start",
+                    "required": True,
+                    "revision": 42,
+                    "snapshotId": None,
+                },
+                {
+                    "inputDatasetId": "dataset-static",
+                    "inputType": "static",
+                    "childJobId": None,
+                    "executionPolicy": "reuse_snapshot",
+                    "required": True,
+                    "revision": None,
+                    "snapshotId": "snap-101",
+                },
+            ])
+            serialized = json.dumps(payload, sort_keys=True)
+            self.assertNotIn("kafka:9092", serialized)
+            self.assertNotIn("consumerGroupId", serialized)
+            self.assertNotIn("maxOffsetsPerTrigger", serialized)
+
+    def test_revision_runner_pins_exact_revision_snapshot_on_tree(self) -> None:
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            repository = ContinuousSqlRepository(db)
+            run = ContinuousSqlRunModel(
+                run_id="run-1", job_id=job.id, generation=1, fencing_token="fence-1",
+                plan_hash=job.plan_hash, status="starting", static_bindings=[],
+                checkpoint_path=job.checkpoint_path, started_at="2026-07-21T00:00:00+00:00",
+            )
+            repository.add_run(run)
+            tree = ContinuousSqlTreeRunModel(
+                tree_run_id="tree-1", sql_job_id=job.id,
+                continuous_sql_run_id=run.run_id, generation=1, trigger_type="parent_tree",
+                status="starting", fencing_token="tree-fence",
+                lease_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+                input_dataset_revisions={}, started_at="2026-07-21T00:00:00+00:00",
+            )
+            repository.add_tree_run(tree)
+            repository.add_tree_nodes([
+                ContinuousSqlTreeNodeRunModel(
+                    node_run_id="node-parent", tree_run_id=tree.tree_run_id,
+                    job_id=job.id, node_type="parent", input_dataset_revisions={},
+                    started_at="2026-07-21T00:00:00+00:00",
+                ),
+                ContinuousSqlTreeNodeRunModel(
+                    node_run_id="node-child", tree_run_id=tree.tree_run_id,
+                    job_id="JOB-REALTIME", node_type="realtime", input_dataset_revisions={},
+                    started_at="2026-07-21T00:00:00+00:00",
+                ),
+            ])
+            DashboardLiveRepository(db).record_dataset_commit(
+                dataset_id="dataset-JOB-REALTIME", run_id="producer-run-7",
+                storage_location="s3a://lake/realtime", storage_format="iceberg",
+                materialization_mode="delta", row_count=10, next_check_after_ms=1_000,
+                commit_kind="legacy", snapshot_id="snapshot-7",
+            )
+            db.commit()
+
+            pinned = ContinuousSqlRevisionRunner(db).pin_inputs(job, run)
+
+            self.assertEqual(pinned[0].dataset_id, "dataset-JOB-REALTIME")
+            self.assertEqual(pinned[0].revision, 1)
+            self.assertEqual(pinned[0].snapshot_id, "snapshot-7")
+            self.assertEqual(tree.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
+            child = next(item for item in repository.list_tree_nodes(tree.tree_run_id) if item.job_id == "JOB-REALTIME")
+            self.assertEqual(child.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
+
+    def test_revision_runner_builds_snapshot_only_trino_transform(self) -> None:
+        with Session(self.engine) as db:
+            job = parent_job("csql-parent", "output-parent")
+            job.compiled_plan = {
+                "relations": [{
+                    "datasetId": "dataset-realtime",
+                    "queryEngineTable": {
+                        "catalog": "iceberg", "schema": "datasets", "table": "events",
+                    },
+                }],
+                "runtimeSql": 'SELECT * FROM "__asklake_relation_0"',
+            }
+            select_sql = ContinuousSqlRevisionRunner(db)._transform_select(
+                job,
+                [{"datasetId": "dataset-realtime", "revision": 7, "snapshotId": "101"}],
+                "run-output-1",
+            )
+
+            self.assertIn('"__asklake_relation_0" AS (SELECT * FROM "iceberg"."datasets"."events" FOR VERSION AS OF 101)', select_sql)
+            self.assertIn("'run-output-1'", select_sql)
+            self.assertIn('"_asklake_run_id"', select_sql)
+            self.assertNotIn("kafka:9092", select_sql)
+            self.assertNotIn("consumerGroup", select_sql)
+
+    def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
+        events: list[str] = []
+
+        class Gateway:
+            def manage(self, _job, _run, action, _options=None):
+                events.append(f"parent:{action}")
+                if action == "start":
+                    raise ApiError(
+                        "PARENT_START_FAILED",
+                        "parent worker start failed",
+                        status.HTTP_502_BAD_GATEWAY,
+                    )
+                return {"containerState": "missing"}
+
+        def child_commander(_db, child_id, command, _actor, **_context):
+            events.append(f"{child_id}:{command}")
+            if command == "startContinuous":
+                return SimpleNamespace(
+                    run=None,
+                    processing_result={"runtimeStatus": "starting", "workerResult": {"workerAttemptId": "child-worker"}},
+                )
+            return SimpleNamespace(
+                run=None,
+                processing_result={"runtimeStatus": "stopping"},
+            )
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=Gateway(),
+                child_commander=child_commander,
+            )
+
+            with self.assertRaises(ApiError) as raised:
+                service.command(
+                    job.id,
+                    ContinuousSqlCommandRequest(command="start", commandId="start-parent-fails"),
+                    ActorContext(name="owner", role="admin"),
+                )
+
+            self.assertEqual(raised.exception.code, "PARENT_START_FAILED")
+            self.assertEqual(
+                events,
+                [
+                    "JOB-REALTIME:startContinuous",
+                    "parent:start",
+                    "JOB-REALTIME:stopContinuous",
+                ],
+            )
+            refreshed = service.repository.get_job(job.id)
+            self.assertEqual(refreshed.observed_state, "failed")
+            self.assertIsNone(service.repository.active_tree_run(job.id))
+            self.assertTrue(all(
+                not item.active
+                for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
+            ))
+            tree = db.scalar(select(ContinuousSqlTreeRunModel))
+            self.assertEqual(tree.status, "failed")
+            self.assertTrue(all(
+                item.status == "failed"
+                for item in db.scalars(select(ContinuousSqlTreeNodeRunModel)).all()
             ))
 
     def test_start_command_persists_tree_before_starting_worker(self) -> None:

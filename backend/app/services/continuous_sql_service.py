@@ -48,6 +48,8 @@ from app.schemas.continuous_sql import (
     ContinuousSqlJobList,
     ContinuousSqlPlanRequest,
     ContinuousSqlPlanResponse,
+    ContinuousSqlRevisionInput,
+    ContinuousSqlRevisionTransformRequest,
     ContinuousSqlRelationBinding,
     continuous_sql_serving_mode,
 )
@@ -71,6 +73,7 @@ from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
 )
+from app.services.continuous_sql_revision_runner import ContinuousSqlRevisionRunner
 from app.schemas.iceberg import IcebergWriterTarget
 from app.services.iceberg_writer_service import IcebergWriterService, build_iceberg_writer_target
 
@@ -87,12 +90,14 @@ class ContinuousSqlService:
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
         clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
+        revision_runner: ContinuousSqlRevisionRunner | None = None,
         child_commander: Callable[..., Any] | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
         self.repository = ContinuousSqlRepository(db)
         self.catalog_repository = CatalogRepository(db)
+        self.revision_runner = revision_runner or ContinuousSqlRevisionRunner(db)
         self.catalog_resolver = ContinuousSqlCatalogResolver(
             db,
             allow_clickhouse_streaming=(
@@ -544,21 +549,26 @@ class ContinuousSqlService:
             self.db.add(run)
         self.db.commit()
 
+        started_realtime_children: list[str] = []
         try:
             worker_result: dict[str, Any] = {}
             if external_action in {"start", "recover"}:
-                self._start_execution_tree_children(job, actor)
-            if external_action == "recover":
+                started_realtime_children = self._start_execution_tree_children(job, actor)
+            if self._uses_dataset_revision_inputs(job) and external_action in {"start", "recover"}:
+                worker_result = self.revision_runner.start(job, run)
+            elif self._uses_dataset_revision_inputs(job) and external_action in {"pause", "stop"}:
+                worker_result = {"containerState": "exited", "containerId": job.worker_id}
+            elif external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
                 worker_result = self.gateway.manage(
-                    job, run, "start", self._worker_start_options(job)
+                    job, run, "start", self._worker_start_options(job, run)
                 )
             elif external_action is not None:
                 worker_result = self.gateway.manage(
                     job,
                     run,
                     external_action,
-                    self._worker_start_options(job) if external_action == "start" else None,
+                    self._worker_start_options(job, run) if external_action == "start" else None,
                 )
             # The parent owns lifecycle only for realtime children that it
             # locked and started as part of this tree.  Batch children are
@@ -572,6 +582,14 @@ class ContinuousSqlService:
                 self._manage_execution_tree_realtime_children(job, actor, "resumeContinuous")
             self._complete_command(job.id, run.run_id if run else None, command.id, request.command, worker_result)
         except ApiError as exc:
+            if started_realtime_children:
+                tree_run = self.repository.active_tree_run(job.id)
+                if tree_run is not None:
+                    self._stop_started_realtime_children(
+                        tree_run,
+                        started_realtime_children,
+                        actor,
+                    )
             self._fail_command(job.id, run.run_id if run else None, command.id, exc)
             raise
 
@@ -588,7 +606,7 @@ class ContinuousSqlService:
         self,
         job: ContinuousSqlJobModel,
         actor: ActorContext,
-    ) -> None:
+    ) -> list[str]:
         """Start existing producer Jobs before the parent worker is submitted.
 
         Phase 4 deliberately reuses the ETL command path instead of copying
@@ -598,7 +616,7 @@ class ContinuousSqlService:
         """
         tree_run = self.repository.active_tree_run(job.id)
         if tree_run is None:
-            return
+            return []
         dependencies = self.repository.list_dependencies(job.id)
         by_child = {
             item.child_job_id: item
@@ -666,6 +684,11 @@ class ContinuousSqlService:
                     "causeCode": cause_code,
                 },
             ) from exc
+        return started_realtime
+
+    @staticmethod
+    def _uses_dataset_revision_inputs(job: ContinuousSqlJobModel) -> bool:
+        return str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision"
 
     def _stop_started_realtime_children(
         self,
@@ -952,6 +975,39 @@ class ContinuousSqlService:
 
     def reconcile(self, job: ContinuousSqlJobModel) -> ContinuousSqlJobModel:
         run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
+        if self._uses_dataset_revision_inputs(job) and run is not None:
+            try:
+                if job.desired_state == "running":
+                    self.revision_runner.reconcile(job, run)
+                job.observed_state = "running" if job.desired_state == "running" else job.desired_state
+                run.status = job.observed_state
+                job.last_error_code = None
+                job.last_error_message = None
+                run.last_error_code = None
+                run.last_error_message = None
+            except ApiError as exc:
+                if str(exc.code) == "CONTINUOUS_SQL_INPUT_REVISION_PENDING":
+                    job.observed_state = "starting"
+                    run.status = "starting"
+                    job.last_error_code = None
+                    job.last_error_message = None
+                else:
+                    job.observed_state = "failed"
+                    run.status = "failed"
+                    job.last_error_code = str(exc.code)
+                    job.last_error_message = exc.message
+                    run.last_error_code = str(exc.code)
+                    run.last_error_message = exc.message
+            self._sync_execution_tree_status(
+                job,
+                status_value=job.observed_state,
+                terminal=job.observed_state in {"stopped", "failed"},
+                error_code=job.last_error_code,
+                error_message=job.last_error_message,
+            )
+            self.db.add_all([job, run])
+            self.db.commit()
+            return job
         try:
             worker = self.gateway.manage(job, run, "status")
         except ApiError as exc:
@@ -1237,11 +1293,25 @@ class ContinuousSqlService:
                 })
         return bindings
 
-    def _worker_start_options(self, job: ContinuousSqlJobModel) -> dict[str, Any]:
-        if str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision":
-            # Revision-driven execution receives its cursor from durable
-            # Dataset commits, never from Kafka offsets.
-            return {}
+    def _worker_start_options(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel | None,
+    ) -> dict[str, Any]:
+        if self._uses_dataset_revision_inputs(job):
+            if run is None:
+                raise ApiError(
+                    "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                    "Dataset-revision SQL execution requires a durable parent run.",
+                    status.HTTP_409_CONFLICT,
+                    {"jobId": job.id},
+                )
+            return {
+                "revisionTransform": self._revision_transform_request(job, run).model_dump(
+                    mode="json",
+                    by_alias=True,
+                ),
+            }
         binding = self.repository.get_incremental_binding(job.id)
         options: dict[str, Any] = {
             "maxOffsetsPerTrigger": int(self.settings.continuous_sql_micro_batch_max_rows),
@@ -1270,6 +1340,62 @@ class ContinuousSqlService:
                 separators=(",", ":"),
             )
         return options
+
+    def _revision_transform_request(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+    ) -> ContinuousSqlRevisionTransformRequest:
+        """Build the private Phase 1 runner payload from durable tree state.
+
+        Phase 2 will populate realtime revisions and submit this payload to
+        the revision runner.  Keeping construction here makes it impossible
+        for that runner to recover Kafka connection ownership from the SQL
+        compiled plan.
+        """
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None or tree_run.continuous_sql_run_id != run.run_id:
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                "Dataset-revision SQL execution requires an active owned execution tree.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "runId": run.run_id},
+            )
+        static_by_dataset = {
+            str(item.get("datasetId") or ""): item
+            for item in run.static_bindings or []
+            if isinstance(item, dict) and str(item.get("datasetId") or "")
+        }
+        revisions = dict(tree_run.input_dataset_revisions or {})
+        inputs: list[ContinuousSqlRevisionInput] = []
+        for dependency in self.repository.list_dependencies(job.id):
+            raw_revision = revisions.get(dependency.input_dataset_id)
+            revision = (
+                int(raw_revision)
+                if isinstance(raw_revision, int) and not isinstance(raw_revision, bool)
+                else None
+            )
+            static_binding = static_by_dataset.get(dependency.input_dataset_id) or {}
+            inputs.append(ContinuousSqlRevisionInput(
+                input_dataset_id=dependency.input_dataset_id,
+                input_type=dependency.input_type,
+                child_job_id=dependency.child_job_id,
+                execution_policy=dependency.execution_policy,
+                required=bool(dependency.required),
+                revision=revision,
+                snapshot_id=str(static_binding.get("snapshotId") or "") or None,
+            ))
+        return ContinuousSqlRevisionTransformRequest(
+            tree_run_id=tree_run.tree_run_id,
+            tree_fencing_token=tree_run.fencing_token,
+            sql_job_id=job.id,
+            continuous_sql_run_id=run.run_id,
+            run_generation=int(run.generation),
+            input_datasets=inputs,
+            static_bindings=[dict(item) for item in run.static_bindings or [] if isinstance(item, dict)],
+            output_dataset_id=job.output_dataset_id,
+            output_target=dict(job.output_target or {}),
+        )
 
     def _require_relation_access(
         self,

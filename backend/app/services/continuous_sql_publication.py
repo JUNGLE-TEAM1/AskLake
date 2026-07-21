@@ -195,6 +195,7 @@ class ContinuousSqlPublicationService:
             source_ranges=evidence["sourceRanges"],
             commit_kind=STREAM_COMMIT_KIND,
             manifest_location=evidence["manifestPath"],
+            snapshot_id=verified.snapshot_id,
         )
         batch = self.repository.get_batch(job.id, run.generation, evidence["batchId"])
         if batch is None:
