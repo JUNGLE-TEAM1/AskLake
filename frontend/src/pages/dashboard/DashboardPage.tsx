@@ -6,6 +6,7 @@ import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
+import { useDashboardAutoRefresh } from "./runtime/useDashboardAutoRefresh";
 import { useDraftPageMutations } from "./runtime/useDraftPageMutations";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -70,12 +71,14 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
 };
 
 export function DashboardPage({
+  currentUserId,
   dataset,
   entry,
   sqlResult,
   onAction,
   onRuntimeNavigate,
 }: {
+  currentUserId: string;
   dataset: CatalogDataset;
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
@@ -162,6 +165,7 @@ export function DashboardPage({
     pages: runtimePages,
     publishedRuntime,
     refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
     retryWidgetData,
     runtimeError,
     runtimeLoading,
@@ -170,6 +174,16 @@ export function DashboardPage({
     setPublishedRuntime,
     setSelectedPageId: setSelectedRuntimePageId,
   } = runtimeResources;
+  const activeRuntime = runtimeSelection.mode === "published" ? publishedRuntime : draftRuntime;
+  const dashboardAutoRefresh = useDashboardAutoRefresh({
+    active: view === "runtime",
+    currentUserId,
+    dashboardId: runtimeSelection.dashboardId,
+    refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
+    runtime: activeRuntime,
+    selectedPageId: selectedRuntimePageId,
+  });
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -614,6 +628,7 @@ export function DashboardPage({
       publishDraft: publishDraftRuntime,
       redoLayout: layoutHistory.redo,
       refresh: refreshRuntimeDashboard,
+      setAutoRefreshEnabled: dashboardAutoRefresh.setEnabled,
       renamePage: pageMutations.renamePage,
       renameTitle: renameRuntimeDashboardTitle,
       retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
@@ -651,6 +666,9 @@ export function DashboardPage({
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,
+      autoRefreshEnabled: dashboardAutoRefresh.enabled,
+      autoRefreshError: dashboardAutoRefresh.errorMessage,
+      autoRefreshStatus: dashboardAutoRefresh.status,
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,

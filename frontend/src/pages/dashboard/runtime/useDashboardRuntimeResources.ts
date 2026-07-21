@@ -80,7 +80,7 @@ export function useDashboardRuntimeResources({
     },
     [mode, setDraftRuntime, setPublishedRuntime],
   );
-  const { refreshCurrentPageWidgetData, retryWidgetData } = useDashboardWidgetData({
+  const { refreshCurrentPageWidgetData, refreshWidgetDataForDatasets, retryWidgetData } = useDashboardWidgetData({
     active,
     dashboardId,
     mode,
@@ -91,7 +91,7 @@ export function useDashboardRuntimeResources({
 
   return {
     draftError, draftLoading, draftRuntime, loadDraftRuntime, loadPublishedRuntime,
-    pages, publishedRuntime, refreshCurrentPageWidgetData,
+    pages, publishedRuntime, refreshCurrentPageWidgetData, refreshWidgetDataForDatasets,
     retryWidgetData, runtimeError, runtimeLoading, selectedPageId,
     setDraftError, setDraftRuntime, setPublishedRuntime, setSelectedPageId,
   };

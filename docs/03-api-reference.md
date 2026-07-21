@@ -102,7 +102,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
-- `DASHBOARD_AUTO_REFRESH_ENABLED`: 이전 자동 갱신 배포와의 설정 호환 필드다. 현재 Dashboard frontend는 값과 무관하게 보기·편집 모드 모두 수동 새로고침만 사용한다.
+- `DASHBOARD_AUTO_REFRESH_ENABLED`: `true`일 때 사용자·Dashboard별 자동 갱신 토글을 허용한다. `REALTIME_EVENTS_ENABLED=true` 및 effective `DASHBOARD_SYNC_MODE=hybrid|sse`가 함께 충족돼야 SSE 구독을 시작하며, 그렇지 않으면 수동 새로고침을 유지하고 오류 사유를 표시한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. Production Compose 기본값은 `true`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. Production Compose 기본값은 `true`이며 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
 - `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Kafka Engine V1 worker의 kill switch다. Production Compose는 V2의 단일 consumer ownership을 위해 기본값을 `false`로 둔다.
@@ -194,7 +194,7 @@ FastAPI schema 구현 기준:
 }
 ```
 
-`dashboardAutoRefreshEnabled`는 이전 배포 진단 호환 필드이며 현재 Dashboard frontend는 이 값으로 polling/SSE를 시작하지 않는다. 보기·편집 모드 모두 진입 및 상단 수동 새로고침에서 Widget query API를 사용한다. `continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
+`dashboardAutoRefreshEnabled`는 Dashboard별 자동 갱신 토글의 서버 허용 여부다. 토글이 켜져 있고 `realtimeEventsEnabled=true`, `dashboardSyncMode=hybrid|sse`이면 보기·편집 모드 모두 현재 페이지의 Dataset만 SSE로 구독한다. 이벤트는 해당 Dataset Widget의 REST 재조회를 요청하는 무효화 신호일 뿐 결과 데이터를 직접 전달하지 않는다. 조건이 맞지 않거나 연결이 끊기면 polling fallback은 시작하지 않으며 수동 새로고침을 유지한다. `continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
 
 V2 owner가 활성화된 Continuous SQL validate/create는 streaming Dataset의 active ClickHouse binding을 fact relation으로 해석한다. streaming relation은 `queryEngineStatus=unavailable`이어도 `storageFormat=clickhouse`, 완전한 `clickhouseTable`, 동일한 active `physicalBindings`가 모두 있어야 한다. static JOIN relation은 기존처럼 available Iceberg query-engine table과 committed snapshot이 필요하다.
 
@@ -917,7 +917,7 @@ Content-Type: application/json
 
 `count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
-Frontend는 보기·편집 모드 모두에서 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 최초 `pending` Widget과 사용자가 상단 새로고침을 누른 현재 페이지의 Dataset Widget만 `widgets/query`로 요청한다. draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. 응답 revision이 현재 값보다 낮거나 Widget signature가 달라지면 폐기한다. route unmount 시 in-flight 요청을 취소하며, 갱신 실패는 이전 widget result를 유지한다.
+Frontend는 보기·편집 모드 모두에서 최초 `pending` Widget과 사용자가 상단 새로고침을 누른 현재 페이지의 Dataset Widget을 `widgets/query`로 요청한다. 자동 갱신은 사용자·Dashboard별 토글과 feature flag가 모두 허용된 경우에만 현재 페이지 Dataset의 SSE revision event를 구독하며, 영향받은 Widget만 700ms debounce 후 재조회한다. polling fallback과 background prefetch는 사용하지 않는다. draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. 응답 revision이 현재 값보다 낮거나 Widget signature가 달라지면 폐기한다. hidden tab·route unmount·토글 OFF에서는 subscription과 in-flight 요청을 정리하며, visible 복귀 시 현재 페이지를 한 번 최신화한다. 갱신 실패는 이전 widget result를 유지한다.
 
 ### Pair A -> Pair B
 

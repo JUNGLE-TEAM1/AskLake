@@ -774,7 +774,7 @@ cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard는 기능 플래그와 무관하게 보기·편집 모드 모두 수동 새로고침만 사용하고, 현재 페이지 Dataset Widget을 명시적으로 query한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard는 기본 수동 새로고침을 유지하되, `DASHBOARD_AUTO_REFRESH_ENABLED=true`, `REALTIME_EVENTS_ENABLED=true`, effective `DASHBOARD_SYNC_MODE=hybrid|sse`인 경우 사용자·Dashboard별 토글로 보기·편집 모드의 현재 페이지 Dataset SSE 구독을 켤 수 있다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
 API/worker와 Spark driver가 같은 mounted report directory를 공유하지 않는 배포(EKS SparkApplication 등)는 두 process에 같은 private S3 prefix를 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>`로 설정한다. `s3://`도 API 설정에서 허용한다. 이 prefix에는 runtime report, command, catalog ACK가 저장되므로 warehouse나 일반 dataset prefix와 분리하고 해당 workload role에 그 prefix의 `GetObject`, `PutObject`, `ListBucket`만 부여한다. 로컬 Compose는 이 값을 비워 mounted local report directory를 계속 사용한다.
 
@@ -1015,9 +1015,9 @@ PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본
 
 ### Dashboard Job Binding 제거 순서
 
-Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. 제거 작업은 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다.
+Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. Job binding 제거와 기본 수동 갱신의 경계는 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따르며, 자동 갱신은 그 Dataset 연결을 변경하지 않는 선택적 SSE invalidation layer다.
 
-1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일하고 자동 polling/SSE/background prefetch를 제거한다.
+1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일한다. 자동 갱신은 opt-in SSE invalidation으로만 허용하며 polling/background prefetch는 추가하지 않는다.
 2. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 Dashboard 연동 옵션과 자동 Dashboard 생성을 제거한다. Dashboard runtime은 binding을 조회하지 않고 Dataset selector와 Assistant의 managed lock을 제거한다.
 3. Phase 2 frontend gate는 `npm run test:dashboard-job-binding-removal`, Dashboard 관련 회귀 테스트와 production build다.
 4. Phase 3에서 binding router/schema/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거한다. `npm run verify:dashboard-job-binding-removal`로 OpenAPI와 runtime 참조가 다시 생기지 않는지 검증한다.
