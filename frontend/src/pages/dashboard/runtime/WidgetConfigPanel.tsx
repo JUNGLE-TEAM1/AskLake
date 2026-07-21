@@ -59,35 +59,14 @@ import type {
 } from "./dashboardRuntimeTypes";
 import { WidgetFilterEditor } from "./WidgetFilterEditor";
 import {
+  applyDashboardWidgetFilters,
   dashboardWidgetFiltersFromConfig,
   normalizeDashboardWidgetFilters,
   reconcileDashboardWidgetFilters,
-  validateDashboardWidgetFilters,
 } from "./widgetFilters";
+import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigValidation";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
-
-type WidgetConfigDraft = {
-  aggregation?: DashboardWidgetAggregation;
-  columns?: string[];
-  curve?: DashboardWidgetLineCurve;
-  dateUnit?: DashboardWidgetDateUnit;
-  format?: DashboardWidgetFormat;
-  filters?: DashboardWidgetFilter[];
-  groupKey?: string;
-  labelKey?: string;
-  limit?: number;
-  max?: number;
-  min?: number;
-  orientation?: DashboardWidgetOrientation;
-  seriesKey?: string;
-  sortDirection?: DashboardWidgetSortDirection;
-  sortKey?: string;
-  stacked?: boolean;
-  valueKey?: string;
-  xKey?: string;
-  yKey?: string;
-};
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -290,7 +269,6 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     area_chart: {
       aggregation: "sum",
       dateUnit: defaultTimeBucket,
-      filters: [],
       seriesKey: "",
       stacked: false,
       xKey: firstName(lineXAxisColumns),
@@ -298,7 +276,6 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     bar_chart: {
       aggregation: "sum",
-      filters: [],
       groupKey: "",
       orientation: "vertical",
       xKey: dimensionFallback,
@@ -306,13 +283,11 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     donut_chart: {
       aggregation: "sum",
-      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
     heatmap_chart: {
       aggregation: "sum",
-      filters: [],
       valueKey: numericFallback,
       xKey: dimensionFallback,
       yKey: firstName(categoricalColumns.length > 1 ? categoricalColumns.slice(1) : dimensionColumns),
@@ -321,26 +296,22 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       aggregation: "sum",
       curve: "smooth",
       dateUnit: defaultTimeBucket,
-      filters: [],
       seriesKey: "",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
     metric: {
       aggregation: "sum",
-      filters: [],
       format: "number",
       valueKey: numericFallback,
     },
     pie_chart: {
       aggregation: "sum",
-      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
     radial_bar_chart: {
       aggregation: "avg",
-      filters: [],
       format: "percent",
       labelKey: categoryFallback,
       max: 100,
@@ -349,42 +320,16 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
     },
     table: {
       columns: tableColumns,
-      filters: [],
       limit: 100,
       sortDirection: "asc",
       sortKey: tableColumns[0] ?? "",
     },
     treemap_chart: {
       aggregation: "sum",
-      filters: [],
       labelKey: categoryFallback,
       valueKey: numericFallback,
     },
   };
-}
-
-function validateConfig(
-  type: DashboardRuntimeWidgetType,
-  config: WidgetConfigDraft,
-  columns: DashboardDatasetColumn[] = [],
-) {
-  const usesCount = config.aggregation === "count";
-  if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
-  if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
-  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
-    return "X축과 Y축 컬럼을 선택해 주세요.";
-  }
-  if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || (!usesCount && !config.valueKey))) {
-    return "분류와 값 컬럼을 선택해 주세요.";
-  }
-  if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
-  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
-  if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
-    return "X축, Y축, 값 컬럼을 선택해 주세요.";
-  }
-  const filterError = validateDashboardWidgetFilters(config.filters ?? [], columns);
-  if (filterError) return filterError;
-  return null;
 }
 
 function buildConfig(
@@ -527,8 +472,12 @@ function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null | un
   return widget ? configRecord(widget.config).placeholderKind === "visualization_request" : false;
 }
 
-function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
-  return dataset?.rows?.map((row) => ({ ...row }));
+function cloneDatasetRows(
+  dataset: DashboardDatasetOption | null | undefined,
+  filters: DashboardWidgetFilter[],
+) {
+  if (!dataset?.rows) return undefined;
+  return applyDashboardWidgetFilters(dataset.rows, filters).map((row) => ({ ...row }));
 }
 
 export function WidgetConfigPanel({
@@ -712,7 +661,7 @@ export function WidgetConfigPanel({
   const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
   const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
-    ? validateConfig(type, currentConfig, columnGroups.allColumns)
+    ? validateWidgetConfig(type, currentConfig, columnGroups.allColumns)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean(
     (isEditMode || (selectedDatasetId && selectedDataset))
@@ -788,7 +737,7 @@ export function WidgetConfigPanel({
       return;
     }
 
-    const error = validateConfig(type, currentConfig, columnGroups.allColumns);
+    const error = validateWidgetConfig(type, currentConfig, columnGroups.allColumns);
     if (error) {
       setFormError(error);
       return;
@@ -811,7 +760,7 @@ export function WidgetConfigPanel({
     if (editingWidget && onUpdateWidget) {
       await onUpdateWidget(editingWidget.id, {
         ...nextInput,
-        data: cloneDatasetRows(selectedDataset),
+        data: cloneDatasetRows(selectedDataset, currentConfig.filters ?? []),
         datasetId: nextDatasetId,
       });
       return;
@@ -824,7 +773,7 @@ export function WidgetConfigPanel({
 
     await onCreateWidget({
       ...nextInput,
-      data: cloneDatasetRows(selectedDataset),
+      data: cloneDatasetRows(selectedDataset, currentConfig.filters ?? []),
       datasetId: selectedDatasetId,
     });
     setTitle("");
