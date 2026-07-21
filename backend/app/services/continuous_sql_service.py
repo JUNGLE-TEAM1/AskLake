@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import status
@@ -52,6 +52,7 @@ from app.schemas.continuous_sql import (
     continuous_sql_serving_mode,
 )
 from app.services.continuous_sql_catalog import ContinuousSqlCatalogResolver
+from app.services.etl_service import command_job as command_etl_job
 from app.services.clickhouse_continuous_publication import (
     ClickHouseContinuousSqlPublicationService,
 )
@@ -86,6 +87,7 @@ class ContinuousSqlService:
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
         clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
+        child_commander: Callable[..., Any] | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
@@ -106,6 +108,7 @@ class ContinuousSqlService:
             clickhouse_publication_service
             or ClickHouseContinuousSqlPublicationService(db)
         )
+        self.child_commander = child_commander or command_etl_job
 
     def validate(
         self,
@@ -536,6 +539,8 @@ class ContinuousSqlService:
 
         try:
             worker_result: dict[str, Any] = {}
+            if external_action in {"start", "recover"}:
+                self._start_execution_tree_children(job, actor)
             if external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
                 worker_result = self.gateway.manage(
@@ -561,6 +566,133 @@ class ContinuousSqlService:
             command_id=request.command_id,
             job=self._job_schema(refreshed),
         )
+
+    def _start_execution_tree_children(
+        self,
+        job: ContinuousSqlJobModel,
+        actor: ActorContext,
+    ) -> None:
+        """Start existing producer Jobs before the parent worker is submitted.
+
+        Phase 4 deliberately reuses the ETL command path instead of copying
+        Kafka settings or creating a SQL-owned consumer.  The exact dataset
+        revision wait and transform are Phase 5; this phase makes ownership,
+        dispatch order, durable node state, and failure propagation explicit.
+        """
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        dependencies = self.repository.list_dependencies(job.id)
+        by_child = {
+            item.child_job_id: item
+            for item in dependencies
+            if item.child_job_id is not None
+        }
+        nodes = {
+            item.job_id: item
+            for item in self.repository.list_tree_nodes(tree_run.tree_run_id)
+        }
+        # Batch output must be requested before the realtime producer.  This
+        # preserves the target execution order while leaving revision pinning
+        # and transform dispatch to Phase 5.
+        ordered_children = sorted(
+            by_child,
+            key=lambda child_id: (
+                0 if by_child[child_id].input_type == "batch" else 1,
+                child_id,
+            ),
+        )
+        started_realtime: list[str] = []
+        current_node: ContinuousSqlTreeNodeRunModel | None = None
+        try:
+            for child_id in ordered_children:
+                dependency = by_child[child_id]
+                current_node = nodes.get(child_id)
+                if current_node is None:
+                    raise ApiError(
+                        "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                        "The SQL execution tree is missing a producer node.",
+                        status.HTTP_409_CONFLICT,
+                        {"jobId": job.id, "childJobId": child_id},
+                    )
+                command = "startContinuous" if dependency.input_type == "realtime" else "run"
+                current_node.status = "starting"
+                self.db.add(current_node)
+                response = self.child_commander(
+                    self.db,
+                    child_id,
+                    command,
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+                current_node.producer_run_id = self._producer_run_id(response)
+                current_node.status = self._producer_node_status(response, dependency.input_type)
+                self.db.add(current_node)
+                if dependency.input_type == "realtime":
+                    started_realtime.append(child_id)
+        except Exception as exc:
+            if current_node is not None:
+                current_node.status = "failed"
+                current_node.ended_at = utc_now()
+                self.db.add(current_node)
+            self._stop_started_realtime_children(tree_run, started_realtime, actor)
+            cause_code = str(exc.code) if isinstance(exc, ApiError) else "INTERNAL_ERROR"
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                "A required producer Job could not be started for the SQL execution tree.",
+                status.HTTP_409_CONFLICT,
+                {
+                    "jobId": job.id,
+                    "childJobId": current_node.job_id if current_node is not None else None,
+                    "causeCode": cause_code,
+                },
+            ) from exc
+
+    def _stop_started_realtime_children(
+        self,
+        tree_run: ContinuousSqlTreeRunModel,
+        child_ids: list[str],
+        actor: ActorContext,
+    ) -> None:
+        for child_id in reversed(child_ids):
+            try:
+                self.child_commander(
+                    self.db,
+                    child_id,
+                    "stopContinuous",
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+            except ApiError:
+                logger.exception(
+                    "SQL execution tree could not compensate realtime child start",
+                    extra={"treeRunId": tree_run.tree_run_id, "jobId": child_id},
+                )
+
+    @staticmethod
+    def _producer_run_id(response: Any) -> str | None:
+        run = getattr(response, "run", None)
+        run_id = getattr(run, "run_id", None) or getattr(run, "runId", None)
+        if run_id:
+            return str(run_id)
+        result = getattr(response, "processing_result", None) or {}
+        worker_result = result.get("workerResult") if isinstance(result, dict) else None
+        if isinstance(worker_result, dict):
+            return str(worker_result.get("workerAttemptId") or worker_result.get("containerId") or "") or None
+        return None
+
+    @staticmethod
+    def _producer_node_status(response: Any, input_type: str) -> str:
+        if input_type == "batch":
+            run = getattr(response, "run", None)
+            return str(getattr(run, "status", None) or "queued")
+        result = getattr(response, "processing_result", None) or {}
+        runtime_status = result.get("runtimeStatus") if isinstance(result, dict) else None
+        return str(runtime_status or "starting")
 
     def _acquire_execution_tree(
         self,

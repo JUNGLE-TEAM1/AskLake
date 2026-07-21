@@ -160,6 +160,30 @@ def main() -> None:
         for token in tokens:
             require(contents, token, f"Phase 3 evidence in {relative_path}")
 
+    phase_four_evidence = {
+        "backend/app/services/continuous_sql_service.py": (
+            "_start_execution_tree_children",
+            "_stop_started_realtime_children",
+            "tree_fencing_token",
+        ),
+        "backend/app/services/etl_service.py": (
+            "tree_run_id",
+            "require_tree_owned_job",
+        ),
+        "backend/app/repositories/execution_tree_lock_repository.py": (
+            "require_tree_owned_job",
+            "fencing_token",
+        ),
+        "backend/tests/test_sql_execution_tree_locking.py": (
+            "test_parent_starts_batch_then_realtime_child_before_sql_worker",
+            "test_child_start_failure_skips_parent_worker_and_releases_tree_locks",
+        ),
+    }
+    for relative_path, tokens in phase_four_evidence.items():
+        contents = read(relative_path)
+        for token in tokens:
+            require(contents, token, f"Phase 4 evidence in {relative_path}")
+
     print("CONTINUOUS_SQL_EXECUTION_TREE_CONTRACT_OK")
 
 

@@ -1,7 +1,7 @@
 # SQL Job 실행 트리 V1 계약
 
 - 이슈: #1117
-- 상태: Phase 3 tree run/atomic lock 구현, runtime transform은 legacy
+- 상태: Phase 4 parent-owned child dispatch 구현, revision transform은 legacy
 - 기준 commit: `a234abea`
 - runtime 상태: 아직 legacy direct-consumer 경로다. 이 문서는 후속 Phase의 target contract다.
 - 결정 기록: [ADR-003](../adr/003-sql-job-execution-tree-ownership.md)
@@ -187,7 +187,7 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 - Phase 1: producer metadata와 dependency persistence (완료)
 - Phase 2: backend validation/create 계약과 frontend authoritative 분류 (완료)
 - Phase 3: tree run, atomic lock, lease/fencing (완료)
-- Phase 4: parent 중심 child orchestration과 즉시 start 연결
+- Phase 4: parent 중심 child orchestration과 즉시 start 연결 (완료)
 - Phase 5: direct Kafka consumer 제거와 revision-driven transform
 - Phase 6: stop/pause/resume/failure/recovery
 - Phase 7: SQL/Job UI와 read-only producer 설정

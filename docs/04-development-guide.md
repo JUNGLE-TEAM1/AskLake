@@ -1033,7 +1033,7 @@ Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/
 2. Phase 1에서 Catalog Dataset의 authoritative producer metadata와 SQL dependency binding을 additive persistence로 도입한다. 완료 기준은 migration upgrade/downgrade, 새 DB session 재조회, Catalog 정규화 column 우선순위와 빈 `dependencyBindings` 호환성이다.
 3. Phase 2에서 backend가 Dataset ID와 정규화 Catalog metadata로 정확한 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다. frontend 이름/tag 추정은 제거하고 create는 dependency를 Job과 같은 transaction에 저장한다. 완료 기준은 producer 불일치/누락 오류, validate binding, 새 session create 재조회와 UI authoritative 분류 테스트다.
 4. Phase 3에서 tree run/node run과 atomic parent-child lock/lease/fencing을 구현한다. 완료 기준은 정렬된 전체 lock set, active standalone 충돌, 부분 lock rollback, 만료 takeover generation, fencing hash 응답, ETL command/update/delete 차단과 migration downgrade다.
-5. Phase 4에서 SQL parent 시작이 실행 가능한 child를 먼저 시작하고 준비된 Dataset revision을 기준으로 transform을 실행하도록 orchestration한다.
+5. Phase 4에서 SQL parent start/recover가 lock commit 뒤 실행 가능한 batch child `run`, realtime child `startContinuous`를 먼저 요청하고 node Run/session identity를 저장한다. child failure는 parent worker 시작 전 tree failure로 처리한다. Dataset revision 대기와 transform은 Phase 5 범위다.
 6. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
 7. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다.
 8. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다.
@@ -1074,6 +1074,8 @@ PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest \
   tests.test_etl_job_write_commands \
   tests.test_continuous_sql_runtime_contract -v
 ```
+
+Phase 4는 같은 `tests.test_sql_execution_tree_locking`에서 batch → realtime child dispatch 순서, matching fence internal command context, child failure 시 parent worker 미시작과 tree lock 해제를 검증한다. Phase 5 전에는 legacy SQL direct-consumer transform이 유지된다.
 
 ## 7) Pair Ownership
 

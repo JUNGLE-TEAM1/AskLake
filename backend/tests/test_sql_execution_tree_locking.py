@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
+from fastapi import status
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
@@ -23,7 +24,10 @@ from app.repositories.continuous_sql_repository import (
     ContinuousSqlRepository,
     job_to_schema_with_tree,
 )
-from app.repositories.execution_tree_lock_repository import require_standalone_job_unlocked
+from app.repositories.execution_tree_lock_repository import (
+    require_standalone_job_unlocked,
+    require_tree_owned_job,
+)
 from app.services.continuous_sql_service import ContinuousSqlService
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from tests.test_dashboard_job_binding_schema_removal import _run_alembic
@@ -88,7 +92,15 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.engine.dispose()
 
-    def _seed_parent(self, db: Session, job_id: str, output_id: str, child_ids: list[str]):
+    def _seed_parent(
+        self,
+        db: Session,
+        job_id: str,
+        output_id: str,
+        child_ids: list[str],
+        *,
+        input_types: dict[str, str] | None = None,
+    ):
         repository = ContinuousSqlRepository(db)
         job = repository.add_job(parent_job(job_id, output_id))
         repository.replace_dependencies(job.id, [
@@ -96,7 +108,7 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
                 sql_job_id=job.id,
                 input_dataset_id=f"dataset-{child_id}",
                 child_job_id=child_id,
-                input_type="batch",
+                input_type=(input_types or {}).get(child_id, "batch"),
                 execution_policy="run_on_tree_start",
                 required=True,
             )
@@ -136,6 +148,122 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             with self.assertRaises(ApiError) as raised:
                 require_standalone_job_unlocked(db, "JOB-A", action="command:run")
             self.assertEqual(raised.exception.code, "CONTINUOUS_SQL_DEPENDENCY_CONFLICT")
+            require_tree_owned_job(
+                db,
+                "JOB-A",
+                tree_run_id=tree.tree_run_id,
+                fencing_token=tree.fencing_token,
+                action="command:run",
+            )
+            with self.assertRaises(ApiError) as wrong_owner:
+                require_tree_owned_job(
+                    db,
+                    "JOB-A",
+                    tree_run_id=tree.tree_run_id,
+                    fencing_token="stale-fence",
+                    action="command:run",
+                )
+            self.assertEqual(wrong_owner.exception.code, "CONTINUOUS_SQL_DEPENDENCY_CONFLICT")
+
+    def test_parent_starts_batch_then_realtime_child_before_sql_worker(self) -> None:
+        events: list[str] = []
+
+        class Gateway:
+            def manage(self, _job, _run, action, _options=None):
+                events.append(f"parent:{action}")
+                return {"containerState": "running", "containerId": "parent-worker"}
+
+        def child_commander(_db, child_id, command, _actor, **context):
+            self.assertEqual(context["tree_run_id"].startswith("tree_csql-parent_"), True)
+            self.assertTrue(context["tree_fencing_token"])
+            events.append(f"{child_id}:{command}")
+            if command == "run":
+                return SimpleNamespace(
+                    run=SimpleNamespace(run_id=f"run-{child_id}", status="queued"),
+                    processing_result={},
+                )
+            return SimpleNamespace(
+                run=None,
+                processing_result={"runtimeStatus": "starting", "workerResult": {"workerAttemptId": f"worker-{child_id}"}},
+            )
+
+        with Session(self.engine) as db:
+            db.add_all([
+                producer_job("JOB-BATCH", "dataset-JOB-BATCH"),
+                producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"),
+            ])
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME", "JOB-BATCH"],
+                input_types={"JOB-REALTIME": "realtime", "JOB-BATCH": "batch"},
+            )
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=Gateway(),
+                child_commander=child_commander,
+            )
+
+            response = service.command(
+                job.id,
+                ContinuousSqlCommandRequest(command="start", commandId="start-tree-children"),
+                ActorContext(name="owner", role="admin"),
+            )
+
+            self.assertEqual(
+                events,
+                ["JOB-BATCH:run", "JOB-REALTIME:startContinuous", "parent:start"],
+            )
+            nodes = {node.job_id: node for node in response.job.active_tree_run.nodes}
+            self.assertEqual(nodes["JOB-BATCH"].producer_run_id, "run-JOB-BATCH")
+            self.assertEqual(nodes["JOB-BATCH"].status, "queued")
+            self.assertEqual(nodes["JOB-REALTIME"].producer_run_id, "worker-JOB-REALTIME")
+            self.assertEqual(nodes["JOB-REALTIME"].status, "starting")
+
+    def test_child_start_failure_skips_parent_worker_and_releases_tree_locks(self) -> None:
+        class Gateway:
+            def __init__(self) -> None:
+                self.start_calls = 0
+
+            def manage(self, _job, _run, action, _options=None):
+                if action == "start":
+                    self.start_calls += 1
+                return {"containerState": "running"}
+
+        def child_commander(_db, _child_id, _command, _actor, **_context):
+            raise ApiError("KAFKA_START_FAILED", "producer start failed", status.HTTP_502_BAD_GATEWAY)
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-A", "dataset-JOB-A"))
+            db.commit()
+            job = self._seed_parent(db, "csql-parent", "output-parent", ["JOB-A"])
+            gateway = Gateway()
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                gateway=gateway,
+                child_commander=child_commander,
+            )
+
+            with self.assertRaises(ApiError) as raised:
+                service.command(
+                    job.id,
+                    ContinuousSqlCommandRequest(command="start", commandId="start-tree-child-fails"),
+                    ActorContext(name="owner", role="admin"),
+                )
+
+            self.assertEqual(raised.exception.code, "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE")
+            self.assertEqual(gateway.start_calls, 0)
+            refreshed = service.repository.get_job(job.id)
+            self.assertEqual(refreshed.observed_state, "failed")
+            self.assertIsNone(service.repository.active_tree_run(job.id))
+            self.assertTrue(all(
+                not item.active
+                for item in db.scalars(select(ContinuousSqlTreeJobLockModel)).all()
+            ))
 
     def test_start_command_persists_tree_before_starting_worker(self) -> None:
         class Gateway:
@@ -160,6 +288,10 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
                 db,
                 runtime_settings=self.settings,
                 gateway=gateway,
+                child_commander=lambda _db, child_id, _command, _actor, **_context: SimpleNamespace(
+                    run=SimpleNamespace(run_id=f"run-{child_id}", status="queued"),
+                    processing_result={},
+                ),
             )
 
             response = service.command(
