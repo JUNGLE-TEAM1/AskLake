@@ -166,6 +166,10 @@ def query_published_dashboard_widgets(
         DashboardRuntimeRepository(db),
         CatalogRepository(db),
         live_repository,
+        # The published runtime GET is intentionally read-only and can return
+        # pending while a result is absent. This explicit widget-query action
+        # is the bounded calculation path that must materialize that result.
+        prepared_live_results_only=False,
     )
     return DashboardWidgetQueryResponse(
         widgets=service.query_widgets(

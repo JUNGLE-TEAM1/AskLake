@@ -13,7 +13,7 @@ export const DASHBOARD_LIVE_REFRESH_MIN_MS = 1_000;
 export const DASHBOARD_LIVE_CATCH_UP_MS = 250;
 
 export function publishedDashboardUsesManualRefresh() {
-  return true;
+  return false;
 }
 
 export type DashboardLivePollingStrategy = "normal" | "safety" | "suspended";
@@ -157,7 +157,6 @@ export function dashboardLiveDatasetIds(
   if (
     !runtime
     || runtime.dashboard.id !== dashboardId
-    || runtime.mode !== "published"
     || !runtime.revision
   ) {
     return [];
@@ -167,8 +166,7 @@ export function dashboardLiveDatasetIds(
     Object.values(runtime.widgetsByPageId)
       .flat()
       .filter((widget) => (
-        widget.liveRefresh === true
-        && widget.dataStatus !== "pending"
+        widget.dataStatus !== "pending"
         && widget.dataStatus !== "loading"
         && Boolean(widget.datasetId)
       ))
@@ -180,11 +178,10 @@ export function staleDashboardWidgetIds(
   runtime: DashboardRuntimeResponse | null,
   freshness: DashboardDatasetFreshness[],
 ) {
-  if (!runtime || runtime.mode !== "published") return [];
+  if (!runtime) return [];
 
   const latestRevisionByDatasetId = new Map(
     freshness
-      .filter((dataset) => dataset.isContinuous)
       .map((dataset) => [dataset.datasetId, dataset.latestRevision] as const),
   );
 
@@ -192,8 +189,7 @@ export function staleDashboardWidgetIds(
     .flat()
     .filter((widget) => {
       if (
-        widget.liveRefresh !== true
-        || widget.dataStatus === "pending"
+        widget.dataStatus === "pending"
         || widget.dataStatus === "loading"
         || !widget.datasetId
       ) return false;
@@ -222,6 +218,9 @@ export function mergePublishedDashboardWidgets(
       widgets.map((widget) => {
         const refreshed = refreshedById.get(widget.id);
         if (!refreshed) return widget;
+        const currentRevision = typeof widget.appliedRevision === "number" ? widget.appliedRevision : 0;
+        const refreshedRevision = typeof refreshed.appliedRevision === "number" ? refreshed.appliedRevision : 0;
+        if (refreshedRevision < currentRevision) return widget;
         changed = true;
         return { ...widget, ...refreshed } as DashboardRuntimeWidget;
       }),

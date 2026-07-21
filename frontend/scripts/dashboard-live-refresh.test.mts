@@ -35,8 +35,8 @@ function metricWidget(overrides: Partial<Extract<DashboardRuntimeWidget, { type:
   } satisfies Extract<DashboardRuntimeWidget, { type: "metric" }>;
 }
 
-test("published dashboards apply prepared revisions only on manual refresh", () => {
-  assert.equal(publishedDashboardUsesManualRefresh(), true);
+test("automatic revision refresh remains opt-in", () => {
+  assert.equal(publishedDashboardUsesManualRefresh(), false);
 });
 
 function publishedRuntime(widgets: DashboardRuntimeWidget[] = [metricWidget()]): DashboardRuntimeResponse {
@@ -139,16 +139,16 @@ test("an open SSE stream suspends polling while hybrid keeps only a safety poll"
   assert.equal(dashboardLivePollingStrategy("sse", "fallback_polling"), "normal");
 });
 
-test("published runtime groups each live dataset once", () => {
+test("runtime groups each dashboard dataset once in both view and edit modes", () => {
   const runtime = publishedRuntime([
     metricWidget({ id: "widget-1" }),
     metricWidget({ id: "widget-2" }),
     metricWidget({ datasetId: "orders", id: "widget-3", liveRefresh: false }),
   ]);
 
-  assert.deepEqual(dashboardLiveDatasetIds(runtime, "dashboard-1"), ["clickstream_events"]);
+  assert.deepEqual(dashboardLiveDatasetIds(runtime, "dashboard-1"), ["clickstream_events", "orders"]);
   assert.deepEqual(dashboardLiveDatasetIds(runtime, "another-dashboard"), []);
-  assert.deepEqual(dashboardLiveDatasetIds({ ...runtime, mode: "draft" }, "dashboard-1"), []);
+  assert.deepEqual(dashboardLiveDatasetIds({ ...runtime, mode: "draft" }, "dashboard-1"), ["clickstream_events", "orders"]);
 });
 
 test("live polling waits until the selected widget has loaded its first result", () => {
@@ -166,7 +166,7 @@ test("live polling waits until the selected widget has loaded its first result",
   }]), []);
 });
 
-test("only widgets behind a newer continuous dataset revision are refreshed", () => {
+test("only widgets behind a newer dataset revision are refreshed", () => {
   const runtime = publishedRuntime([
     metricWidget({ appliedRevision: 4, id: "stale" }),
     metricWidget({ appliedRevision: 5, id: "current" }),
@@ -188,7 +188,7 @@ test("only widgets behind a newer continuous dataset revision are refreshed", ()
       nextCheckAfterMs: 60_000,
       updatedAt: "2026-07-14T00:00:05Z",
     },
-  ]), ["stale"]);
+  ]), ["stale", "snapshot"]);
 });
 
 test("a refreshed widget replaces only its result and keeps the rest of the runtime", () => {
@@ -207,6 +207,13 @@ test("a refreshed widget replaces only its result and keeps the rest of the runt
   assert.equal(merged?.widgetsByPageId["page-1"][0].appliedRevision, 5);
   assert.equal(merged?.widgetsByPageId["page-1"][1], untouched);
   assert.equal(mergePublishedDashboardWidgets(runtime, "another-dashboard", [refreshed]), runtime);
+});
+
+test("an older widget response cannot overwrite a newer applied revision", () => {
+  const runtime = publishedRuntime([metricWidget({ appliedRevision: 8 })]);
+  const merged = mergePublishedDashboardWidgets(runtime, "dashboard-1", [metricWidget({ appliedRevision: 7, data: [{ value: 7 }] })]);
+  assert.equal(merged, runtime);
+  assert.deepEqual(merged?.widgetsByPageId["page-1"][0].data, [{ value: 4 }]);
 });
 
 test("partial widget revisions stay in fast catch-up until they reach freshness", () => {

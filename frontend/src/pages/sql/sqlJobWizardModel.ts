@@ -68,6 +68,7 @@ export type SqlJobWizardSourceContext = {
 export type SqlJobWizardCreateRequest = {
   configuration: SqlJobWizardConfiguration;
   context: SqlJobWizardSourceContext;
+  dashboardBinding?: { title: string };
 };
 
 export type SqlJobWizardProjectGroup = { id: string; name: string };

@@ -11,7 +11,10 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import {
@@ -79,6 +82,8 @@ export function SqlJobWizardDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [storagePathTouched, setStoragePathTouched] = useState(false);
+  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
+  const [dashboardTitle, setDashboardTitle] = useState("");
   const previousContextRef = useRef<string | null>(null);
   const contextKey = `${baseDataset.id}:${resultDraft.runId}`;
   const activeStep = wizardSteps[stepIndex];
@@ -102,6 +107,8 @@ export function SqlJobWizardDialog({
     setShowErrors(false);
     setSubmitError(null);
     setStoragePathTouched(false);
+    setDashboardBindingEnabled(false);
+    setDashboardTitle("");
   }, [baseDataset, contextKey, defaultMetadata, open, resultDraft]);
 
   const updateDataset = (patch: Partial<SqlJobWizardDatasetInfo>) => {
@@ -168,7 +175,13 @@ export function SqlJobWizardDialog({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const created = await onCreate(createSqlJobRequest(baseDataset, resultDraft, configuration));
+      const request = createSqlJobRequest(baseDataset, resultDraft, configuration);
+      if (dashboardBindingEnabled) {
+        request.dashboardBinding = {
+          title: dashboardTitle.trim() || `${configuration.dataset.name.trim() || "SQL 결과"} Dashboard`,
+        };
+      }
+      const created = await onCreate(request);
       if (created !== false) onClose();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "처리 Job 생성 요청을 완료하지 못했습니다.");
@@ -266,7 +279,7 @@ export function SqlJobWizardDialog({
           />
         ) : null}
 
-        {activeStep.id === "review" ? (
+        {activeStep.id === "review" ? <>
           <SqlJobReviewStep
             baseDataset={baseDataset}
             configuration={configuration}
@@ -277,7 +290,14 @@ export function SqlJobWizardDialog({
             runtime={runtime}
             showErrors={showErrors}
           />
-        ) : null}
+          <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+            <label className="flex cursor-pointer items-start gap-3" htmlFor="sql-dashboard-binding-enabled">
+              <Checkbox checked={dashboardBindingEnabled} disabled={isBusy} id="sql-dashboard-binding-enabled" onCheckedChange={(checked) => setDashboardBindingEnabled(checked === true)} />
+              <span className="grid gap-1"><strong className="text-sm text-slate-900">결과를 Dashboard에 자동 반영</strong><small className="text-sm leading-5 text-slate-500">새 Dashboard를 만들고 출력 Dataset을 고정합니다.</small></span>
+            </label>
+            {dashboardBindingEnabled ? <Field className="mt-5 rounded-lg border border-blue-100 bg-white p-4"><FieldLabel htmlFor="sql-dashboard-title">Dashboard 이름</FieldLabel><Input id="sql-dashboard-title" className="mt-2" disabled={isBusy} maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${configuration.dataset.name || "SQL 결과"} Dashboard`} /><FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 계속 편집할 수 있습니다.</FieldDescription></Field> : null}
+          </section>
+        </> : null}
       </div>
     </DialogShell>
   );

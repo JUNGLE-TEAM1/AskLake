@@ -92,16 +92,6 @@ export function WidgetFrame({
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         <div className="asklake-widget-header-actions">
-          {liveRevision !== null && (
-            <span
-              aria-live="polite"
-              className="asklake-widget-live-status"
-              title={`데이터셋 revision ${liveRevision.toLocaleString("ko-KR")}까지 반영됨`}
-            >
-              <span aria-hidden="true" className="asklake-widget-live-dot" />
-              실시간
-            </span>
-          )}
           {editable && selected && (
             <Button
               aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}

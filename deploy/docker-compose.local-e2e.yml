@@ -21,7 +21,6 @@ x-local-app-runtime-env: &local-app-runtime-env
   CLICKHOUSE_REALTIME_CONSUMER_OWNER: "disabled"
   CLICKHOUSE_REALTIME_V2_ENABLED: "false"
   KAFKA_CONNECT_SINK_ENABLED: "false"
-  OPENSEARCH_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
   TRINO_AUTH_PASSWORD: ""
   TRINO_AUTH_USERNAME: ""
   TRINO_BASE_URL: "http://trino:8080"
@@ -82,19 +81,7 @@ services:
     environment:
       <<: *local-object-storage-env
 
-  opensearch:
-    environment:
-      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
-
-  embedding-worker:
-    environment:
-      OPENSEARCH_PASSWORD: ${ASKLAKE_LOCAL_OPENSEARCH_PASSWORD:-AskLake-Local-OpenSearch-2026!}
-
   continuous-worker:
-    environment:
-      <<: *local-app-runtime-env
-
-  rag-artifact-cleanup:
     environment:
       <<: *local-app-runtime-env
 

@@ -1,4 +1,5 @@
 import type { CatalogDataset, SqlResultDraft } from "../../../types";
+import type { DashboardJobBinding } from "../../../services/dashboardJobBindingApi";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 const SQL_DATE_COLUMN_PATTERN = /(^|_)(date|time|at|day|month|year)($|_)/;
@@ -80,6 +81,18 @@ export function sqlResultToDashboardOption(sqlResult: SqlResultDraft): Dashboard
     name: sqlResult.datasetName,
     rows,
     status: "available",
+  };
+}
+
+export function bindingOutputToDashboardOption(binding: DashboardJobBinding): DashboardDatasetOption | null {
+  const output = binding.outputDataset;
+  if (!output || output.id !== binding.outputDatasetId) return null;
+  return {
+    columns: output.schema.map(([name, type]) => ({ name, type: dashboardColumnType(type) })),
+    id: output.id,
+    layer: output.layer,
+    name: output.name,
+    status: output.status,
   };
 }
 

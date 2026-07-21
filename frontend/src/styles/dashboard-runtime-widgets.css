@@ -178,33 +178,6 @@
   gap: 8px;
 }
 
-.asklake-widget-frame header .asklake-widget-live-status {
-  display: inline-flex;
-  min-height: 26px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  padding: 4px 9px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0;
-  line-height: 1;
-  text-transform: none;
-  white-space: nowrap;
-}
-
-.asklake-widget-frame header .asklake-widget-live-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .asklake-widget-live-pulse,
   .asklake-widget-refresh-content {

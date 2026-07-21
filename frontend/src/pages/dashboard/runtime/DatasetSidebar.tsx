@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2, X } from "lucide-react";
+import { AlertCircle, CalendarDays, Database, Hash, LetterText, Pin, Server, Table2, X } from "lucide-react";
 import type { NodeApi } from "react-arborist";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -20,6 +20,7 @@ type DatasetSidebarProps = {
   onClose?: () => void;
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
+  lockedDatasetId?: string | null;
   selectedDatasetId: string | null;
   selectedDatasetIds?: string[];
 };
@@ -146,6 +147,7 @@ export function DatasetSidebar({
   onClose,
   onSelectColumn,
   onSelectDataset,
+  lockedDatasetId = null,
   selectedDatasetId,
   selectedDatasetIds,
 }: DatasetSidebarProps) {
@@ -207,9 +209,9 @@ export function DatasetSidebar({
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  selected: selectedDatasetIds !== undefined
+                  selected: dataset.id === lockedDatasetId || (selectedDatasetIds !== undefined
                     ? selectedDatasetIds.includes(dataset.id)
-                    : dataset.id === selectedDatasetId,
+                    : dataset.id === selectedDatasetId),
                   title: dataset.name,
                 };
               }),
@@ -272,7 +274,7 @@ export function DatasetSidebar({
       label: "system",
       title: "system",
     },
-  ], [datasets, selectedDatasetId, selectedDatasetIds, totalColumnCount, totalMetricCount]);
+  ], [datasets, lockedDatasetId, selectedDatasetId, selectedDatasetIds, totalColumnCount, totalMetricCount]);
 
   return (
     <aside
@@ -288,8 +290,8 @@ export function DatasetSidebar({
           </IconButton>
         ) : undefined}
         className="min-h-0 p-4"
-        description="위젯에 연결할 데이터셋과 필드를 선택하세요."
-        icon={<Database />}
+        description={lockedDatasetId ? "Job 출력 Dataset이 선택된 상태로 고정됩니다." : "위젯에 연결할 데이터셋과 필드를 선택하세요."}
+        icon={lockedDatasetId ? <Pin /> : <Database />}
         iconVariant="outline"
         title="데이터"
       />
@@ -341,7 +343,7 @@ export function DatasetSidebar({
             onNodePress={(node: NodeApi<DatasetTreeNode>) => {
               const item = node.data;
               if (item.kind === "dataset" && item.datasetId) {
-                onSelectDataset(item.datasetId);
+                if (item.datasetId !== lockedDatasetId) onSelectDataset(item.datasetId);
                 return;
               }
               if (item.kind !== "column" || !item.datasetId || !item.columnName) return;

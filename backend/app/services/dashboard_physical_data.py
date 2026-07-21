@@ -125,6 +125,9 @@ class DashboardDatasetQuerySession:
         self.connection: duckdb.DuckDBPyConnection | None = None
         self.trino_client: TrinoClient | None = None
         self.clickhouse_client: ClickHouseClient | None = None
+        # Keys remain the Catalog-facing field names used by saved Widget and
+        # Assistant configs. Values are the exact physical names used in SQL.
+        self.column_map: dict[str, str] = {}
         self._aggregate_where_sql = ""
         self.binding_epoch: int | None = None
         self.revision_delta_available = iceberg_run_id is None
@@ -160,9 +163,11 @@ class DashboardDatasetQuerySession:
                         f"{quote_duckdb_string_literal(iceberg_run_id)}"
                     )
                     self.revision_delta_available = True
-                self.columns = set(iceberg_dataset_user_columns(dataset)).intersection(
-                    physical_columns
+                self.column_map = dashboard_catalog_physical_column_map(
+                    iceberg_dataset_user_columns(dataset),
+                    physical_columns,
                 )
+                self.columns = set(self.column_map)
                 if not self.columns:
                     raise ValueError("Iceberg dataset does not expose Catalog user columns")
                 return
@@ -190,6 +195,7 @@ class DashboardDatasetQuerySession:
                     timeout_seconds=self.query_timeout_seconds,
                 ).fetchall()
             }
+            self.column_map = {column: column for column in self.columns}
         except ApiError:
             if self.connection is not None:
                 self.connection.close()
@@ -213,6 +219,7 @@ class DashboardDatasetQuerySession:
         )
         if v2_binding is not None:
             self.table, self.query_table, self.columns, self.binding_epoch = v2_binding
+            self.column_map = {column: column for column in self.columns}
             self.clickhouse_client = (
                 clickhouse_client or ClickHouseClient.realtime_v2_reader()
             )
@@ -236,6 +243,7 @@ class DashboardDatasetQuerySession:
         self.columns = set(clickhouse_dataset_user_columns(dataset)).intersection(
             physical_columns
         )
+        self.column_map = {column: column for column in self.columns}
         if not self.columns:
             raise ValueError("ClickHouse dataset does not expose Catalog user columns")
         self.revision_delta_available = False
@@ -250,7 +258,12 @@ class DashboardDatasetQuerySession:
     def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
         source_config = dashboard_source_config(config)
         if widget_type == "table":
-            query = dashboard_table_query(self.query_table, self.columns, source_config)
+            query = dashboard_table_query(
+                self.query_table,
+                self.columns,
+                source_config,
+                physical_columns=self.column_map,
+            )
             data_mode = "server_preview"
             runtime_config = dict(source_config)
         else:
@@ -259,6 +272,7 @@ class DashboardDatasetQuerySession:
                 self.columns,
                 widget_type,
                 source_config,
+                physical_columns=self.column_map,
             )
             data_mode = "server_aggregated"
 
@@ -321,6 +335,7 @@ class DashboardDatasetQuerySession:
             widget_type,
             source_config,
             where_sql=self._aggregate_where_sql,
+            physical_columns=self.column_map,
         )
         try:
             if self.trino_client is not None:
@@ -376,7 +391,59 @@ def dashboard_iceberg_snapshot_version(dataset: Any) -> str | None:
     return str(int(normalized))
 
 
-def dashboard_table_query(table: str, columns: set[str], config: dict[str, Any]) -> str:
+def dashboard_catalog_physical_column_map(
+    catalog_columns: list[str],
+    physical_columns: set[str],
+) -> dict[str, str]:
+    """Map Catalog-facing column names to exact physical SQL identifiers.
+
+    Catalog retains the user-facing field spelling, while Iceberg/Trino can
+    normalize field names during materialization. Never guess when either
+    schema has case-insensitive collisions.
+    """
+    catalog_by_fold: dict[str, list[str]] = {}
+    for column in catalog_columns:
+        if not isinstance(column, str) or not column.strip():
+            continue
+        catalog_by_fold.setdefault(column.casefold(), []).append(column)
+    physical_by_fold: dict[str, list[str]] = {}
+    for column in physical_columns:
+        if not column.strip():
+            continue
+        physical_by_fold.setdefault(column.casefold(), []).append(column)
+
+    mapped: dict[str, str] = {}
+    for normalized, catalog_names in catalog_by_fold.items():
+        if len(catalog_names) != 1:
+            raise ValueError(
+                f"Catalog schema has ambiguous case-insensitive column: {normalized}"
+            )
+        physical_names = physical_by_fold.get(normalized, [])
+        if len(physical_names) > 1:
+            raise ValueError(
+                f"Physical schema has ambiguous case-insensitive column: {normalized}"
+            )
+        if physical_names:
+            mapped[catalog_names[0]] = physical_names[0]
+    return mapped
+
+
+def dashboard_physical_column(
+    column: str,
+    columns: set[str],
+    physical_columns: Mapping[str, str] | None,
+) -> str:
+    require_dashboard_column(column, columns)
+    return (physical_columns or {}).get(column, column)
+
+
+def dashboard_table_query(
+    table: str,
+    columns: set[str],
+    config: dict[str, Any],
+    *,
+    physical_columns: Mapping[str, str] | None = None,
+) -> str:
     requested_columns = config.get("columns")
     selected = (
         [value for value in requested_columns if isinstance(value, str) and value]
@@ -390,13 +457,21 @@ def dashboard_table_query(table: str, columns: set[str], config: dict[str, Any])
     for column in selected:
         require_dashboard_column(column, columns)
 
-    select_sql = ", ".join(quote_duckdb_identifier(column) for column in selected)
+    select_parts = []
+    for column in selected:
+        physical_column = dashboard_physical_column(column, columns, physical_columns)
+        expression = quote_duckdb_identifier(physical_column)
+        select_parts.append(
+            expression if physical_column == column
+            else f"{expression} AS {quote_duckdb_identifier(column)}"
+        )
+    select_sql = ", ".join(select_parts)
     sort_key = config.get("sortKey") or config.get("sort_key")
     order_sql = ""
     if isinstance(sort_key, str) and sort_key:
-        require_dashboard_column(sort_key, columns)
+        physical_sort_key = dashboard_physical_column(sort_key, columns, physical_columns)
         direction = str(config.get("sortDirection") or config.get("sort_direction") or "asc").lower()
-        order_sql = f" ORDER BY {quote_duckdb_identifier(sort_key)} {'DESC' if direction == 'desc' else 'ASC'} NULLS LAST"
+        order_sql = f" ORDER BY {quote_duckdb_identifier(physical_sort_key)} {'DESC' if direction == 'desc' else 'ASC'} NULLS LAST"
     limit = dashboard_row_limit(config.get("limit"), default=100, maximum=DASHBOARD_TABLE_ROW_LIMIT)
     return f"SELECT {select_sql} FROM {table}{order_sql} LIMIT {limit}"
 
@@ -406,6 +481,8 @@ def dashboard_aggregation_query(
     columns: set[str],
     widget_type: str,
     config: dict[str, Any],
+    *,
+    physical_columns: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
     if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
@@ -419,8 +496,9 @@ def dashboard_aggregation_query(
     for column, date_unit in dimension_specs:
         if not column:
             continue
-        require_dashboard_column(column, columns)
-        expression = quote_duckdb_identifier(column)
+        expression = quote_duckdb_identifier(
+            dashboard_physical_column(column, columns, physical_columns)
+        )
         if date_unit in DASHBOARD_TIME_BUCKET_UNITS:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
             time_dimension_filters.append(f"{expression} IS NOT NULL")
@@ -432,7 +510,7 @@ def dashboard_aggregation_query(
     if aggregation != "count":
         if not isinstance(configured_value_key, str) or not configured_value_key:
             raise ValueError(f"Dashboard {widget_type} requires {value_config_key}")
-        require_dashboard_column(configured_value_key, columns)
+        dashboard_physical_column(configured_value_key, columns, physical_columns)
 
     value_alias = (
         DASHBOARD_VALUE_ALIAS
@@ -440,9 +518,13 @@ def dashboard_aggregation_query(
         else str(configured_value_key)
     )
     aggregate_expression = (
-        dashboard_ratio_expression(str(configured_value_key), config)
+        dashboard_ratio_expression(
+            str(configured_value_key), config, physical_columns=physical_columns,
+        )
         if aggregation == "ratio"
-        else dashboard_aggregate_expression(aggregation, configured_value_key)
+        else dashboard_aggregate_expression(
+            aggregation, configured_value_key, physical_columns=physical_columns,
+        )
     )
     select_parts.append(f"{aggregate_expression} AS {quote_duckdb_identifier(value_alias)}")
 
@@ -488,6 +570,7 @@ def dashboard_aggregate_state_query(
     config: dict[str, Any],
     *,
     where_sql: str = "",
+    physical_columns: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
     if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
@@ -501,8 +584,9 @@ def dashboard_aggregate_state_query(
     for column, date_unit in dimension_specs:
         if not column:
             continue
-        require_dashboard_column(column, columns)
-        expression = quote_duckdb_identifier(column)
+        expression = quote_duckdb_identifier(
+            dashboard_physical_column(column, columns, physical_columns)
+        )
         if date_unit in DASHBOARD_TIME_BUCKET_UNITS:
             expression = f"date_trunc('{date_unit}', TRY_CAST({expression} AS TIMESTAMP))"
             time_dimension_filters.append(f"{expression} IS NOT NULL")
@@ -514,7 +598,7 @@ def dashboard_aggregate_state_query(
     if aggregation != "count":
         if not isinstance(configured_value_key, str) or not configured_value_key:
             raise ValueError(f"Dashboard {widget_type} requires {value_config_key}")
-        require_dashboard_column(configured_value_key, columns)
+        dashboard_physical_column(configured_value_key, columns, physical_columns)
 
     value_alias = (
         DASHBOARD_VALUE_ALIAS
@@ -529,7 +613,9 @@ def dashboard_aggregate_state_query(
             "CAST(NULL AS DOUBLE) AS __asklake_state_max",
         ])
     elif aggregation == "ratio":
-        value_column = quote_duckdb_identifier(str(configured_value_key))
+        value_column = quote_duckdb_identifier(
+            dashboard_physical_column(str(configured_value_key), columns, physical_columns)
+        )
         numerator_value, denominator_value = dashboard_ratio_values(config)
         select_parts.extend([
             f"SUM(CASE WHEN CAST({value_column} AS VARCHAR) = {quote_duckdb_string_literal(denominator_value)} THEN 1 ELSE 0 END) AS __asklake_state_count",
@@ -538,7 +624,11 @@ def dashboard_aggregate_state_query(
             "CAST(NULL AS DOUBLE) AS __asklake_state_max",
         ])
     else:
-        numeric_value = f"TRY_CAST({quote_duckdb_identifier(str(configured_value_key))} AS DOUBLE)"
+        numeric_value = (
+            "TRY_CAST("
+            f"{quote_duckdb_identifier(dashboard_physical_column(str(configured_value_key), columns, physical_columns))} "
+            "AS DOUBLE)"
+        )
         select_parts.extend([
             f"COUNT({numeric_value}) AS __asklake_state_count",
             f"SUM({numeric_value}) AS __asklake_state_sum",
@@ -784,10 +874,15 @@ def dashboard_widget_query_fields(
     raise ValueError(f"Unsupported dashboard widget type: {widget_type}")
 
 
-def dashboard_aggregate_expression(aggregation: str, value_key: Any) -> str:
+def dashboard_aggregate_expression(
+    aggregation: str,
+    value_key: Any,
+    *,
+    physical_columns: Mapping[str, str] | None = None,
+) -> str:
     if aggregation == "count":
         return "COUNT(*)"
-    column = quote_duckdb_identifier(str(value_key))
+    column = quote_duckdb_identifier((physical_columns or {}).get(str(value_key), str(value_key)))
     function = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
     return f"{function}(TRY_CAST({column} AS DOUBLE))"
 
@@ -802,9 +897,14 @@ def dashboard_ratio_values(config: dict[str, Any]) -> tuple[str, str]:
     return numerator, denominator
 
 
-def dashboard_ratio_expression(value_key: str, config: dict[str, Any]) -> str:
+def dashboard_ratio_expression(
+    value_key: str,
+    config: dict[str, Any],
+    *,
+    physical_columns: Mapping[str, str] | None = None,
+) -> str:
     numerator, denominator = dashboard_ratio_values(config)
-    column = quote_duckdb_identifier(value_key)
+    column = quote_duckdb_identifier((physical_columns or {}).get(value_key, value_key))
     numerator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(numerator)} THEN 1 ELSE 0 END)"
     denominator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(denominator)} THEN 1 ELSE 0 END)"
     return f"100.0 * {numerator_count} / NULLIF({denominator_count}, 0)"

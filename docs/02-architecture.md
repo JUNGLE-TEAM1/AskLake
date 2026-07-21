@@ -1,5 +1,7 @@
 # 02. Architecture
 
+> 2026-07-20부터 RAG/OpenSearch/embedding worker는 제품 아키텍처에서 제거됐다. 아래의 과거 RAG 서술은 migration 및 이전 운영 기록을 위한 이력이며, 현재 runtime 경로가 아니다.
+
 AI Gateway/MCP 경계와 파일별 변경 계획은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 따른다. 공개 Query AI route는 FastAPI가 소유하고, Gateway는 내부 Compose network에서만 접근한다.
 
 이 문서는 AskLake의 현재 frontend baseline, FastAPI 전환 경계, 그리고 Pair별 backend ownership을 함께 기록한다.
@@ -186,7 +188,7 @@ Continuous micro-batch 발행은 `app.application.continuous_publication`이 out
 
 Continuous worker report는 모든 과거 publication을 메모리에 누적하지 않는다. durable batch manifest가 복구 source of truth이고 report에는 Catalog가 아직 확인하지 않은 가장 오래된 publication을 `ASKLAKE_CONTINUOUS_PUBLICATION_WINDOW` 크기만큼만 노출한다. Backend가 ack cursor를 전진시키면 worker는 durable manifest에서 다음 window를 채운다. worker가 이미 종료돼 report window가 바뀌지 않는 경우에도 backend는 ack 이후 S3의 완료된 manifest ID를 다시 나열하고, report의 마지막 publication `_SUCCESS`가 확인된 경우에만 복구를 계속한다. 따라서 장기 실행 중 Catalog 장애나 terminal report 축약이 있어도 메모리는 bounded되고 미반영 snapshot은 유실되지 않는다.
 
-Catalog row 조회와 Dashboard 물리 widget 조회는 `storageFormat=iceberg`, `queryEngineStatus=available`, 완전한 `queryEngineTable`이 모두 확인된 Dataset을 Trino table로 읽는다. Iceberg warehouse의 Parquet object를 직접 glob하지 않는다. Catalog row API는 `$refs`의 `main` snapshot을 요청당 한 번 고정해 count/page를 같은 snapshot에서 읽고, Catalog 사용자 schema를 명시 projection해 `_asklake_*` 내부 marker를 숨긴다. Dashboard full 계산도 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용하고, revision delta는 같은 snapshot에서 `_asklake_run_id`로 해당 Run만 고른다. offset pagination은 preview 용도이며 별도 sort key가 없으므로 요청 간 안정 순서를 보장하지 않는다. Dashboard는 Catalog schema와 물리 `DESCRIBE` 교집합만 집계하고 전체 wall-clock timeout 뒤 Trino query를 취소한다. 전환 전 CSV/JSON/JSONL/Parquet Dataset만 기존 DuckDB compatibility reader를 사용한다. Materialization history는 `icebergCommittedAt`, fallback `createdAt` 기준 newest-first이며 늦게 복구된 과거 snapshot은 history/합계만 보강하고 현재 schema, sample, quality와 physical mapping을 되돌리지 않는다.
+Catalog row 조회와 Dashboard 물리 widget 조회는 `storageFormat=iceberg`, `queryEngineStatus=available`, 완전한 `queryEngineTable`이 모두 확인된 Dataset을 Trino table로 읽는다. Iceberg warehouse의 Parquet object를 직접 glob하지 않는다. Catalog row API는 `$refs`의 `main` snapshot을 요청당 한 번 고정해 count/page를 같은 snapshot에서 읽고, Catalog 사용자 schema를 명시 projection해 `_asklake_*` 내부 marker를 숨긴다. Dashboard full 계산도 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용하고, revision delta는 같은 snapshot에서 `_asklake_run_id`로 해당 Run만 고른다. Dashboard는 Catalog-facing field name을 Widget UI와 저장 config에 유지하되, Trino `DESCRIBE` physical field와 case-insensitive로 일대일 매핑한 정확한 physical identifier로만 SQL을 만든다. 어느 한쪽 schema에 case-insensitive 충돌이 있으면 임의로 고르지 않고 안전하게 widget query를 거절한다. offset pagination은 preview 용도이며 별도 sort key가 없으므로 요청 간 안정 순서를 보장하지 않는다. 전환 전 CSV/JSON/JSONL/Parquet Dataset만 기존 DuckDB compatibility reader를 사용한다. Materialization history는 `icebergCommittedAt`, fallback `createdAt` 기준 newest-first이며 늦게 복구된 과거 snapshot은 history/합계만 보강하고 현재 schema, sample, quality와 physical mapping을 되돌리지 않는다.
 
 Issue #567은 현재 차단을 즉시 제거하지 않고 일반 Snapshot, Kafka Snapshot, Kafka Continuous가 공유할 canonical Rule과 타입 계약을 먼저 확정한 뒤 지원 operation을 단계적으로 Continuous에 연결한다. Kafka offset capture/commit과 checkpoint 책임은 각 입력 경로에 유지하고 Transform/Quality 의미와 단계 결과만 통일한다. 구현 및 검증 순서는 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)을 따른다.
 
@@ -513,6 +515,8 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 
 ## 13) Kafka Continuous 대시보드 자동 갱신 경계
 
+Dashboard runtime은 보기와 편집 mode에 공통 freshness → targeted widget query 경로를 둔다. published는 SSE/hybrid event를 low-latency trigger로 사용하고 polling으로 failover하며, draft는 polling만 사용한다. draft 응답은 widget의 server-calculated data, `appliedRevision`, `calculatedAt`만 교체하고 local draft config/layout/title/selection은 유지한다. hidden tab 및 route unmount에서는 in-flight request, timer, event subscription을 정리한다.
+
 Kafka 수집 hot path는 바꾸지 않는다. 기존 Spark Structured Streaming이 checkpoint 기준 micro-batch를 backend-owned Iceberg table에 append하고 완료 manifest를 게시하면, backend control-plane이 exact Iceberg commit을 Trino로 검증해 Catalog에 반영한 다음에만 대시보드 리비전을 공개한다.
 
 ```text
@@ -553,6 +557,26 @@ Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 pol
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 
+## Dashboard Job Binding 경계
+
+Dashboard Job Binding은 Continuous SQL 또는 Kafka만의 별도 Dashboard Job이 아니다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL이 검증된 Dataset revision을 publication한 뒤 공통으로 연결하는 downstream binding이다. Job 실행 엔진은 Dataset revision 이전의 물리 write·검증·복구를 소유하고, binding worker는 revision 이후의 Dashboard delivery만 소유한다.
+
+```text
+Job Run / micro-batch
+→ verified Dataset revision publication
+→ DashboardJobBinding delivery
+→ managed Widget calculation
+→ widget appliedRevision
+```
+
+- V1 binding은 새 Dashboard 또는 Widget이 없는 빈 Dashboard 하나와 Job output Dataset 하나를 연결한다. Dashboard가 `managed`일 때 모든 Widget은 Dashboard-level output Dataset을 상속하며 Widget 생성·삭제·시각화 편집은 허용하지만 Dataset selector는 잠근다.
+- binding은 Job/Dashboard `manage` 권한으로 생성·해제하며, Widget 계산과 runtime read는 기존 Dataset `query`, Dashboard `view` 권한을 다시 검사한다.
+- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`와 durable realtime event는 계속 canonical source다. binding은 경쟁 revision/event source를 만들지 않는다.
+- `replace` publication은 full Widget recalculation, `append`는 지원 Widget의 delta merge를 우선 사용한다. `upsert`, `retract`, revision gap, schema identity 변경은 current serving 결과를 다시 읽는 full recalculation으로 fail safe한다.
+- Continuous SQL의 `output_committed -> catalog_ready -> dashboard_ready`는 기존 Catalog publication stage다. 실제 binding delivery 완료는 별도 `DashboardBindingDelivery`가 `applied`이고 모든 managed Widget의 `appliedRevision`이 Dataset 최신 revision 이상인 경우뿐이다.
+- Dashboard 계산 실패, Dashboard 삭제, 권한 회수는 binding을 `degraded` 또는 `failed`로 만들 수 있지만 이미 검증된 Job/Dataset publication을 rollback하거나 Job을 실패시키지 않는다. 마지막 성공 Widget 결과는 유지한다.
+- Phase 3은 `continuous_worker`가 공통 `dataset_revision_commits`를 소비해 enabled managed binding의 revision delivery를 만들고 draft/published Widget 계산을 advance한다. binding은 Job status나 `dashboard_ready`를 직접 소비하지 않으며, Widget 오류는 Job/Dataset publication을 rollback하지 않고 delivery만 `degraded`로 만든다. EKS migration은 후속 phase이며 상세는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+
 ## 14) Realtime 2026 전환 아키텍처
 
 Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. Production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE 경로를 기본 활성화하고, 같은 generation의 중복 소비를 막기 위해 Kafka Engine V1은 비활성화한다.
@@ -585,7 +609,7 @@ Spark/Iceberg commit
 - Catalog Dataset revision과 durable event는 exact Iceberg snapshot 및 `_asklake_run_id` 행 수 검증 뒤 같은 transaction에 기록한다. worker ACK는 이 transaction 이후이며 ACK 실패는 publication을 되돌리지 않고 retry한다.
 - stale worker/report/publication은 plan hash, Run generation과 fencing hash가 하나라도 다르면 거절한다. fencing token 원문은 worker bridge에만 전달하고 public API에는 hash만 노출한다.
 - ClickHouse serving mode는 기존 planner·Job/Run/Batch/command table을 재사용하는 선택적 worker adapter다. `servingMode` 기본값은 `iceberg`이며 ClickHouse flag가 꺼진 배포와 기존 payload의 의미는 바뀌지 않는다.
-- 현재 Production Compose 기본은 `CONTINUOUS_SQL_SERVING_MODE=iceberg`, `COMPOSE_PROFILES=trino`, ClickHouse v1/v2 flag off다. SQL 화면은 backend mode를 따라 Spark/Iceberg Job을 만들고 Dashboard는 준비된 revision을 수동 새로고침에서만 표시한다.
+- 현재 Production Compose 기본은 `CONTINUOUS_SQL_SERVING_MODE=iceberg`, `COMPOSE_PROFILES=trino`, ClickHouse v1/v2 flag off다. `DASHBOARD_AUTO_REFRESH_ENABLED=false`에서는 SQL 화면이 backend mode를 따라 Spark/Iceberg Job을 만들고 Dashboard 보기·편집 모드가 준비된 revision을 상단 수동 새로고침에서만 표시한다.
 - ClickHouse hot path는 `Kafka Engine -> ingest Materialized View -> raw ReplacingMergeTree -> JOIN Materialized View -> output ReplacingMergeTree` 순서다. raw와 output은 `(kafka_partition, kafka_offset)` identity를 사용하고 Dashboard와 Catalog rows reader는 output을 `FINAL`로 읽는다. 따라서 INNER JOIN의 미매칭 입력도 raw offset 경계에는 남고 output에는 노출되지 않는다.
 - static relation은 Run 시작 시 고정한 Iceberg snapshot을 Trino로 bounded read해 ClickHouse local MergeTree에 적재한다. ClickHouse mode는 `PINNED_AT_START`만 허용하며 static snapshot 변경은 기존 행을 backfill하지 않고 새 Run의 이후 입력부터 적용한다.
 - ClickHouse publication은 raw input offset range와 output row count를 구분해 PostgreSQL Catalog revision/event에 기록한다. ClickHouse output은 일반 Trino SQL table로 가장하지 않고 `queryEngineStatus=unavailable`, `clickhouseTable` mapping을 사용하며 Dashboard·Catalog row API만 전용 reader로 조회한다.

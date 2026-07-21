@@ -1,5 +1,7 @@
 # System Guardrails
 
+> 2026-07-20 제품 결정: RAG/OpenSearch/embedding worker는 폐기했다. 배포 Compose는 해당 service·secret·health dependency를 포함해서는 안 되며, 기존 volume은 별도 승인 없이는 삭제하지 않는다.
+
 - Production keeps `STARTUP_SCHEMA_MANAGEMENT_ENABLED=false`; API and worker repositories must not run schema DDL at request time. Metadata schema changes are applied by the explicit deployment migration before services start.
 
 AI service guardrails, secret isolation, private Compose networking, and deployment health checks are defined in [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md).

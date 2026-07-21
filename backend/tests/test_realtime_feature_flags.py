@@ -19,6 +19,7 @@ from app.realtime.infrastructure.kafka_connect_gateway import ConnectorProbe
 
 REALTIME_ENV_KEYS = {
     "DASHBOARD_SYNC_MODE",
+    "DASHBOARD_AUTO_REFRESH_ENABLED",
     "REALTIME_EVENTS_ENABLED",
     "CONTINUOUS_SQL_JOIN_ENABLED",
     "CONTINUOUS_SQL_SERVING_MODE",
@@ -52,6 +53,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         state = resolve_realtime_feature_state(settings_with_env())
 
         self.assertEqual(state.dashboard_sync_mode, "polling")
+        self.assertFalse(state.dashboard_auto_refresh_enabled)
         self.assertFalse(state.realtime_events_enabled)
         self.assertFalse(state.continuous_sql_join_enabled)
         self.assertEqual(state.continuous_sql_serving_mode, "iceberg")
@@ -269,6 +271,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
     def test_diagnostic_response_uses_resolved_state(self) -> None:
         configured = settings_with_env(
             DASHBOARD_SYNC_MODE="hybrid",
+            DASHBOARD_AUTO_REFRESH_ENABLED="true",
             REALTIME_EVENTS_ENABLED="true",
             CONTINUOUS_SQL_JOIN_ENABLED="true",
             CLICKHOUSE_CONTINUOUS_JOIN_ENABLED="true",
@@ -279,6 +282,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             response = get_realtime_feature_config(actor)
 
         self.assertEqual(response.dashboard_sync_mode, "hybrid")
+        self.assertTrue(response.dashboard_auto_refresh_enabled)
         self.assertTrue(response.realtime_events_enabled)
         self.assertTrue(response.continuous_sql_join_enabled)
         self.assertEqual(response.continuous_sql_serving_mode, "iceberg")

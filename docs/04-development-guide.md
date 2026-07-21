@@ -1,5 +1,7 @@
 # 04. Development Guide
 
+> RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
+
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
 
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
@@ -772,7 +774,7 @@ cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard 자동 갱신은 `DASHBOARD_AUTO_REFRESH_ENABLED`로 별도 통제하며 기본 `false`에서는 보기·편집 모드 모두 수동 새로고침만 사용한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
 API/worker와 Spark driver가 같은 mounted report directory를 공유하지 않는 배포(EKS SparkApplication 등)는 두 process에 같은 private S3 prefix를 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>`로 설정한다. `s3://`도 API 설정에서 허용한다. 이 prefix에는 runtime report, command, catalog ACK가 저장되므로 warehouse나 일반 dataset prefix와 분리하고 해당 workload role에 그 prefix의 `GetObject`, `PutObject`, `ListBucket`만 부여한다. 로컬 Compose는 이 값을 비워 mounted local report directory를 계속 사용한다.
 
@@ -1010,6 +1012,18 @@ PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본
 
 상태값을 다룰 때는 API와 frontend internal state에 영어 canonical value를 사용한다.
 화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
+
+### Dashboard Job Binding 구현 순서
+
+Dashboard Job Binding은 실행 엔진 변경이나 EKS migration과 같은 PR에 섞지 않는다. [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)의 순서를 따른다.
+
+1. Phase 0에서 새/빈 Dashboard만 지원하는 V1 범위, Dashboard-level Dataset lock, `latestRevision`/`appliedRevision` 완료 조건과 권한 경계를 문서로 확인한다.
+2. Phase 1에서 binding/delivery migration, repository, schema와 `/api/dashboard-job-bindings` Job/Dashboard API를 만든다. API는 empty Dashboard, output Dataset 일치와 Job/Dashboard 권한을 검사하고 `201` 전 transaction commit으로 새 session 재조회가 가능해야 한다.
+3. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 공통 선택적 연동 UI와 managed Dashboard source lock을 구현한다. 새 Dashboard 생성과 binding은 Job 생성 성공 뒤 API가 반환한 output Dataset ID만 사용하며, binding 실패는 Job 결과를 rollback하지 않는다. Widget 시각화 편집은 유지한다. detach UX는 binding API를 사용하는 Dashboard 관리 화면 후속 작업이다.
+4. Phase 3에서 검증된 Dataset revision publication 뒤 delivery worker를 연결한다. Dashboard 실패가 Job publication을 rollback하지 않는지 확인한다.
+5. Phase 4에서 `npm run verify:dashboard-job-binding-delivery`로 idempotency/degraded/retry/detach worker regression을 먼저 확인하고, `dev` immutable commit을 EC2에 배포한 뒤 Batch `replace`, Continuous `append`, worker/backend restart, duplicate revision, Dashboard 계산 실패와 detach를 E2E 검증한다. 실제 EC2 preflight와 fixture 정리 순서는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+6. 보기 모드는 SSE/hybrid trigger와 polling fallback으로, 편집 모드는 polling으로 자동 갱신한다. 두 모드 모두 revision이 전진한 Dataset의 widget만 `widgets/query`로 요청하며, 편집 모드 검증에서는 config/layout/title/선택 상태가 바뀌지 않는지 함께 확인한다.
+7. Phase 6에서 제품 contract를 바꾸지 않고 EKS runtime parity를 검증한다.
 
 ## 7) Pair Ownership
 

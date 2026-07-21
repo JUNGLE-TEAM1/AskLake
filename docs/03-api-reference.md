@@ -1,5 +1,7 @@
 # 03. API Reference
 
+> RAG Dataset API(`/api/catalog/datasets/{datasetId}/rag/*`)는 2026-07-20에 제거됐다. SQL AI와 Dashboard Assistant의 retrieval 응답은 `mode=disabled`, `status=disabled`, 빈 `sources`를 반환한다.
+
 Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.
 
 이 문서는 AskLake API/interface 계약의 상위 진입점이다.
@@ -61,6 +63,7 @@ TRINO_PROGRESS_POLL_SECONDS=0.5
 TRINO_PROGRESS_TIMEOUT_SECONDS=1
 TRINO_CLEANUP_POLL_SECONDS=3600
 DASHBOARD_SYNC_MODE=sse
+DASHBOARD_AUTO_REFRESH_ENABLED=false
 REALTIME_EVENTS_ENABLED=true
 CONTINUOUS_SQL_JOIN_ENABLED=true
 CONTINUOUS_SQL_SERVING_MODE=iceberg
@@ -99,6 +102,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
+- `DASHBOARD_AUTO_REFRESH_ENABLED`: Dashboard 보기·편집 모드의 background polling/SSE widget refresh opt-in이다. 기본 `false`에서는 두 모드 모두 상단 수동 새로고침만 데이터를 다시 읽는다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. Production Compose 기본값은 `true`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. Production Compose 기본값은 `true`이며 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
 - `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Kafka Engine V1 worker의 kill switch다. Production Compose는 V2의 단일 consumer ownership을 위해 기본값을 `false`로 둔다.
@@ -172,6 +176,7 @@ FastAPI schema 구현 기준:
 ```json
 {
   "dashboardSyncMode": "polling",
+  "dashboardAutoRefreshEnabled": false,
   "realtimeEventsEnabled": false,
   "continuousSqlJoinEnabled": false,
   "continuousSqlServingMode": "iceberg",
@@ -189,7 +194,7 @@ FastAPI schema 구현 기준:
 }
 ```
 
-`continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
+`dashboardAutoRefreshEnabled=false`이면 Dashboard 보기·편집 모드는 background polling/SSE widget refresh를 시작하지 않고 수동 새로고침만 사용한다. `continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
 
 V2 owner가 활성화된 Continuous SQL validate/create는 streaming Dataset의 active ClickHouse binding을 fact relation으로 해석한다. streaming relation은 `queryEngineStatus=unavailable`이어도 `storageFormat=clickhouse`, 완전한 `clickhouseTable`, 동일한 active `physicalBindings`가 모두 있어야 한다. static JOIN relation은 기존처럼 available Iceberg query-engine table과 committed snapshot이 필요하다.
 
@@ -526,6 +531,8 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
+> Dashboard Job Binding Phase 1~3 API와 worker는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. `continuous_worker`는 검증된 `dataset_revision_commits` 뒤 delivery를 계산하며, browser는 보기·편집 모드 모두에서 freshness polling으로 revision을 감지하고 영향 받은 widget만 재계산한다.
+
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
 | `POST` | `/api/auth/login` | 활성 상태인 계정 로그인과 `asklake_session` 쿠키 발급. Demo 계정의 생성·복구 및 UI 기본값 노출은 paired opt-in으로 제어 |
@@ -535,6 +542,11 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/dashboards` | dashboard 목록 조회 |
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
+| `POST` | `/api/dashboard-job-bindings` | 빈 Dashboard에 ETL 또는 Continuous SQL Job output Dataset managed binding을 transaction commit 후 생성 |
+| `GET` | `/api/dashboard-job-bindings?jobId=&jobKind=` 또는 `?dashboardId=` | Job 또는 Dashboard 기준 binding summary 조회 |
+| `GET` | `/api/dashboard-job-bindings/{bindingId}` | binding과 latest delivery 상태 조회 |
+| `POST` | `/api/dashboard-job-bindings/{bindingId}/detach` | binding을 detached로 전환하고 이후 delivery 중지 |
+| `POST` | `/api/dashboard-job-bindings/{bindingId}/deliveries/{datasetRevision}/retry` | 기존 failed/degraded delivery를 pending으로 재시도 요청 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision runtime 조회. `includeData=false`이면 shell만 반환 |
@@ -858,13 +870,13 @@ Content-Type: application/json
 }
 ```
 
-`widgetIds`는 1~100개다. Dashboard `view`와 각 Dataset `query` 권한을 재검사하고, 현재 published revision에 없는 widget ID가 포함되면 `404`를 반환한다. 응답은 `widgets: DashboardRuntimeWidget[]`이며 Continuous widget은 `liveRefresh=true`, `appliedRevision`, `calculationVersion`, `calculatedAt`을 포함한다.
+`widgetIds`는 1~100개다. Dashboard `view`와 각 Dataset `query` 권한을 재검사하고, 현재 published revision에 없는 widget ID가 포함되면 `404`를 반환한다. published runtime의 초기 `GET`은 저장된 결과만 읽으므로, 결과가 없는 새 widget은 `pending`으로 응답할 수 있다. 이 `POST`는 그 pending widget을 실제로 계산·저장하고 `ready` 또는 `error`로 전이시키는 bounded 계산 경로이며, 단순 cache read가 아니다. 응답은 `widgets: DashboardRuntimeWidget[]`이며 Continuous widget은 `liveRefresh=true`, `appliedRevision`, `calculationVersion`, `calculatedAt`을 포함한다.
 
 `calculationVersion`은 `contractVersion + datasetId + widgetType + sourceConfig + schemaIdentity`를 canonical JSON으로 만든 SHA-256이다. `schemaIdentity`는 Catalog `schemaFingerprint`를 우선하고 없으면 schema 전체를 사용한다.
 
 `count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
-Frontend는 published `/dashboards/{dashboardId}`에서만 polling한다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 그대로면 빠른 catch-up을 중지한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer를 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다. 계산 버전 변경 직후 새 계산이 실패해도 같은 widget·같은 dataset의 직전 성공 result만 반환한다. Continuous published 위젯은 `실시간 · R{appliedRevision}` 배지와 revision 변경 pulse를 표시하며, bar chart는 숫자 data label과 dynamic animation으로 갱신을 시각화한다. 이 배지는 SSE/WebSocket 연결 상태가 아니라 마지막으로 성공 적용된 PostgreSQL dataset revision을 나타낸다.
+Frontend는 보기·편집 모드 모두에서 Dataset freshness를 polling한다. published는 SSE/hybrid 변경 알림을 빠른 trigger로 추가로 사용하고 연결 실패 시 polling으로 복귀한다. revision이 전진한 Dataset의 영향 widget만 `widgets/query`로 요청하며, draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 현재 값보다 낮으면 폐기한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer와 subscription을 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다.
 
 ### Pair A -> Pair B
 
@@ -900,7 +912,7 @@ Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived 
 
 Catalog dataset의 `materializationRuns` 항목은 `runId`, `jobId`, `status`, `createdAt`, `materializationMode`, `rowCount`, `storageSizeBytes`, `storageLocation`, `sourceKind`, `sourceLabel`을 포함한다. Kafka Continuous materialization은 추가로 `sourceBoundary`, `sourceRanges`, `icebergCommittedAt`, `icebergSnapshotId`, `queryEngineTable`, `publicationManifest`, schema/rule/runtime fingerprint, `transform`, `quality` 실행 결과를 반환하며 replay에도 같은 Rule 실행 정체성을 유지한다. history는 `icebergCommittedAt`, fallback `createdAt` 기준 newest-first로 정렬한다. 늦게 복구된 과거 snapshot은 history/합계만 보강하고 현재 schema/sample/quality/physical mapping을 되돌리지 않는다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 newest-first 성공 history에서 첫 `snapshot`까지의 active segment 기준으로 계산한다. mode가 없는 legacy Kafka Run은 `delta`, 그 외 Run은 `snapshot`으로 해석한다.
 
-- Catalog row page와 Dashboard physical widget은 검증된 Iceberg Dataset을 `queryEngineTable`의 Trino table로 읽는다. Iceberg warehouse data file 직접 scan은 금지하며 legacy file-backed Dataset만 DuckDB compatibility path를 사용한다.
+- Catalog row page와 Dashboard physical widget은 검증된 Iceberg Dataset을 `queryEngineTable`의 Trino table로 읽는다. Dashboard Widget request/config는 Catalog 표기 field name을 유지하지만, backend는 Trino `DESCRIBE` 결과와 case-insensitive 일대일 매핑한 정확한 physical field name으로 SQL을 생성한다. case-insensitive collision은 `DASHBOARD_DATA_UNAVAILABLE`으로 안전하게 거절한다. Iceberg warehouse data file 직접 scan은 금지하며 legacy file-backed Dataset만 DuckDB compatibility path를 사용한다.
 - Iceberg-backed materialization run 삭제는 물리 snapshot 불일치를 막기 위해 `422 ICEBERG_MATERIALIZATION_DELETE_UNAVAILABLE`로 거절한다. legacy file-backed run metadata 삭제만 기존 재계산 계약을 유지한다.
 
 ### Pair A -> Pair C

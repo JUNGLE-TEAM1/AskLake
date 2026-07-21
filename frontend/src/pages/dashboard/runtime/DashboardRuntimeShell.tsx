@@ -30,6 +30,7 @@ type RuntimeNotice = {
 
 export function DashboardRuntimeShell({
   children,
+  autoRefreshEnabled = false,
   datasetSidebar,
   datasetSidebarOpen = false,
   hasPublishedRevision,
@@ -63,6 +64,7 @@ export function DashboardRuntimeShell({
   title,
 }: {
   children: ReactNode;
+  autoRefreshEnabled?: boolean;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
@@ -142,6 +144,7 @@ export function DashboardRuntimeShell({
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
         hasPublishedRevision={hasPublishedRevision}
+        autoRefreshEnabled={autoRefreshEnabled}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
@@ -156,7 +159,7 @@ export function DashboardRuntimeShell({
         onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
-      {mode === "published" && realtimeDataState && realtimeDataState !== "fresh" ? (
+      {realtimeDataState && realtimeDataState !== "fresh" ? (
         <Alert
           aria-live="polite"
           className={`asklake-dashboard-runtime-notice ${realtimeDataState === "degraded" ? "error" : ""}`}
@@ -165,8 +168,8 @@ export function DashboardRuntimeShell({
         >
           <AlertDescription>
             {realtimeDataState === "degraded"
-              ? "최신 데이터 확인에 실패했습니다. 마지막으로 확인된 결과를 표시하고 있으며 수동 새로고침이 필요할 수 있습니다."
-              : "실시간 동기화가 지연되어 마지막으로 확인된 결과를 표시하고 있습니다."}
+              ? "최신 데이터 확인에 실패했습니다. 마지막 성공 결과를 유지하며 자동으로 다시 시도합니다."
+              : "데이터 변경을 확인하고 있습니다. 편집 중인 구성과 레이아웃은 바꾸지 않습니다."}
           </AlertDescription>
         </Alert>
       ) : null}

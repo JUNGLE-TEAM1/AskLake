@@ -30,6 +30,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 ## 4) 현재 MVP 범위
 
+### RAG 제외 결정 (2026-07-20)
+
+RAG, VectorDB/OpenSearch, embedding worker와 RAG 색인 API/UI는 현재 제품 범위에서 제거한다. AI SQL·Dashboard Assistant는 Catalog와 Semantic Model만 사용하며, retrieval evidence는 만들거나 표시하지 않는다. 이미 배포된 RAG DB migration과 데이터 볼륨은 호환·복구 이력으로 보존하되 새 runtime은 이를 기동하거나 참조하지 않는다.
+
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
 - `/` AskLake 랜딩과 session login 진입
@@ -57,6 +61,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 성공한 Trino preview 결과 화면은 CSV 다운로드와 반복 SQL Job 생성을 제공한다. CSV는 on-demand 전체 결과 `run`이 완료된 뒤 해당 저장 page를 stream하고, 반복 SQL Job 생성은 전체 결과 저장을 기다리지 않고 preview의 SQL·Dataset context·출력 컬럼을 recipe로 저장한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
 - 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다. 편집 진입 시 왼쪽 데이터 패널은 닫힌 상태로 시작하고, 데이터 패널과 오른쪽 설정 패널은 명시적 버튼으로 열고 닫되 선택·편집 상태를 유지한다.
+- Dataset을 생성하는 Job은 선택적으로 `결과를 Dashboard에 자동 반영`할 수 있다. V1은 새 Dashboard 또는 Widget이 없는 빈 Dashboard만 대상으로 하며, 연결된 Dashboard의 Dataset source는 Job output Dataset으로 고정한다. 사용자는 Widget과 시각화 설정을 자유롭게 편집할 수 있지만 Dataset을 바꾸려면 binding을 명시적으로 해제해야 한다. Batch와 Continuous는 실행 방식은 달라도 검증된 Dataset revision 이후 같은 Dashboard delivery 계약을 사용한다. 서버 기준 반영 완료는 모든 managed Widget의 `appliedRevision`이 output Dataset의 최신 revision에 도달한 때이며, Dashboard 계산 실패는 원본 Job/Dataset publication을 실패시키지 않는다. 상세 계약은 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
 - Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. V2 Kafka hot-ingest는 Kafka Connect가 ClickHouse `raw_events_v2`에 기록한 원문과 offset을 즉시 읽고, 장기 S3/MinIO archive는 이 빠른 수집 경로와 별도인 Bronze archive 범위다.
 - Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 최초 Trino JOIN snapshot과 Kafka cursor를 기준점으로 저장하고 이후 10초·최대 100행 micro-batch의 신규 key만 static snapshot과 JOIN한다. 작은 static snapshot은 재사용하고 큰 snapshot은 JOIN key로 가지치기하며 Dashboard는 미리 계산된 결과만 읽는다.
 - 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Continuous SQL Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.

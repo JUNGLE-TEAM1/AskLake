@@ -22,6 +22,7 @@ from app.models.dashboard_runtime import (
     DashboardRevision,
     DashboardWidget,
 )
+from app.models.dashboard_job_binding import DashboardBindingDeliveryModel, DashboardJobBindingModel
 from app.models.etl import (
     ContinuousControlLeaseModel,
     ETLJobModel,
@@ -80,6 +81,8 @@ __all__ = [
     "DashboardPage",
     "DashboardRevision",
     "DashboardWidget",
+    "DashboardJobBindingModel",
+    "DashboardBindingDeliveryModel",
     "ETLJobModel",
     "ETLRunModel",
     "ReviewAnalysisRunModel",

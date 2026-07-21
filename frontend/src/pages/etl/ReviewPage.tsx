@@ -1,6 +1,9 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/data-table";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { ValidationList } from "@/components/ui/validation-list";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -38,7 +41,7 @@ export function ReviewPage({
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
-  onCreate: () => void;
+  onCreate: (dashboardBinding?: { title: string }) => void;
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
 }) {
@@ -46,6 +49,8 @@ export function ReviewPage({
   const [reviewLoading, setReviewLoading] = useState(true);
   const [reviewError, setReviewError] = useState("");
   const [reviewRetryCount, setReviewRetryCount] = useState(0);
+  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
+  const [dashboardTitle, setDashboardTitle] = useState("");
   const reviewRequestKey = getReviewSnapshotRequestKey(buildReviewSnapshotRequest(draft));
   const reviewRequest = useMemo(
     () => JSON.parse(reviewRequestKey) as ReviewSnapshotRequest,
@@ -96,7 +101,7 @@ export function ReviewPage({
   return (
     <CreationFlowLayout
       variant="review"
-      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} split onPrev={() => onEdit("target")} onNext={onCreate} />}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} split onPrev={() => onEdit("target")} onNext={() => onCreate(dashboardBindingEnabled ? { title: dashboardTitle.trim() || `${draft.target.datasetName.trim() || "Job 결과"} Dashboard` } : undefined)} />}
     >
         <EtlStepHeader
           className="etl-step-standalone-header"
@@ -125,6 +130,23 @@ export function ReviewPage({
                 value,
               }))}
             />
+          </section>
+
+          <section className="etl-review-card">
+            <EtlSectionHeader icon={<Database />} title="Dashboard 연동" />
+            <div className="bg-slate-50/70 p-5">
+              <label className="flex cursor-pointer items-start gap-3" htmlFor="etl-dashboard-binding-enabled">
+                <Checkbox checked={dashboardBindingEnabled} id="etl-dashboard-binding-enabled" onCheckedChange={(checked) => setDashboardBindingEnabled(checked === true)} />
+                <span className="grid gap-1"><strong className="text-sm text-slate-900">결과를 Dashboard에 자동 반영</strong><small className="text-sm leading-5 text-slate-500">새 Dashboard를 만들고 출력 Dataset을 고정합니다.</small></span>
+              </label>
+              {dashboardBindingEnabled ? (
+                <Field className="mt-5 rounded-lg border border-blue-100 bg-white p-4">
+                  <FieldLabel htmlFor="etl-dashboard-title">Dashboard 이름</FieldLabel>
+                  <Input id="etl-dashboard-title" className="mt-2" maxLength={160} value={dashboardTitle} onChange={(event) => setDashboardTitle(event.target.value)} placeholder={`${draft.target.datasetName || "Job 결과"} Dashboard`} />
+                  <FieldDescription>첫 실행 후 차트를 만들 수 있고, Widget과 시각화 설정은 계속 편집할 수 있습니다.</FieldDescription>
+                </Field>
+              ) : null}
+            </div>
           </section>
 
           <section className="etl-review-card">
