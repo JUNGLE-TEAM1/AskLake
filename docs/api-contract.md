@@ -205,6 +205,7 @@ Resource/action 기준:
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
 | `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
+| `DELETE /api/etl/jobs/{jobId}` | `delete` | Job과 해당 Job이 게시한 Catalog Dataset 등록을 원자적으로 제거 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
 | `GET /api/datasets/{datasetId}/freshness` | Dataset `query` | 새 S3/Catalog revision 확인 전 dataset 권한 재검사 |
@@ -1594,6 +1595,12 @@ Rules:
 - 수정 request의 canonical Rule도 create와 같은 compiler를 통과해야 하며, 실패 시 기존 Job payload를 변경하지 않는다.
 - 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
 - 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
+
+### 7.5.1 작업 삭제
+
+`DELETE /api/etl/jobs/{jobId}`는 Job 삭제 권한과 active Run/Continuous runtime 검증을 통과한 뒤 하나의 DB transaction으로 처리한다. `catalog_datasets.producer_job_id`가 삭제 Job ID와 일치하는 Dataset 등록은 Dataset permission grant와 resource lock metadata를 포함해 함께 제거한다. 따라서 해당 Job이 게시한 Dataset은 Catalog, SQL 분석의 Dataset 선택 목록, 다음 hydrate 결과에서 다시 나타나지 않는다.
+
+이 cascade는 Catalog metadata만 제거한다. Iceberg/S3/ClickHouse의 물리 결과와 별도 Dataset deletion receipt는 Job 삭제로 정리하지 않는다. 물리 purge가 필요할 때만 이름 확인과 impact 검사를 거치는 `DELETE /api/catalog/datasets/{datasetId}?confirmName=...`를 사용한다. 다른 Job이 게시했거나 `producerJobId`가 없는 legacy Dataset은 추정으로 삭제하지 않는다.
 
 ### 7.6 작업 명령
 

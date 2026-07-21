@@ -110,6 +110,8 @@ class EtlJobDeleteTests(unittest.TestCase):
             ],
         )
         self.db = Session(self.engine)
+        self.db.execute(text("CREATE TABLE catalog_datasets (id TEXT PRIMARY KEY, producer_job_id TEXT)"))
+        self.db.commit()
 
     def tearDown(self) -> None:
         self.db.close()
@@ -141,6 +143,42 @@ class EtlJobDeleteTests(unittest.TestCase):
         ))
         self.assertIsNotNone(audit_event)
         self.assertEqual(audit_event.result, "success")
+
+    def test_delete_removes_only_catalog_dataset_produced_by_job(self) -> None:
+        job = delete_fixture_job("JOB-CATALOG-CASCADE")
+        produced_dataset_id = "DATASET-PRODUCED-BY-DELETED-JOB"
+        unrelated_dataset_id = "DATASET-UNRELATED"
+        dataset_grant = PermissionGrantModel(
+            id="grant-produced-dataset",
+            resource_type="dataset",
+            resource_id=produced_dataset_id,
+            principal_type="user",
+            principal_id="Test Admin",
+            actions=["view", "query"],
+            source="test",
+        )
+        dataset_grant_id = dataset_grant.id
+        self.db.add_all([job, dataset_grant])
+        self.db.execute(
+            text("INSERT INTO catalog_datasets (id, producer_job_id) VALUES (:id, :job_id)"),
+            {"id": produced_dataset_id, "job_id": job.id},
+        )
+        self.db.execute(
+            text("INSERT INTO catalog_datasets (id, producer_job_id) VALUES (:id, :job_id)"),
+            {"id": unrelated_dataset_id, "job_id": "JOB-OTHER"},
+        )
+        self.db.commit()
+
+        with patch("app.repositories.etl_repository.ensure_schema", return_value=None):
+            deleted_job_id = delete_job(self.db, job.id, ActorContext(name="Test Admin", role="admin"))
+
+        self.assertEqual(deleted_job_id, job.id)
+        self.assertIsNone(self.db.scalar(text("SELECT id FROM catalog_datasets WHERE id = :id"), {"id": produced_dataset_id}))
+        self.assertEqual(
+            self.db.scalar(text("SELECT id FROM catalog_datasets WHERE id = :id"), {"id": unrelated_dataset_id}),
+            unrelated_dataset_id,
+        )
+        self.assertIsNone(self.db.get(PermissionGrantModel, dataset_grant_id))
 
     def test_delete_authorizes_before_disclosing_active_run(self) -> None:
         job = delete_fixture_job("JOB-ACTIVE-PRIVATE")
