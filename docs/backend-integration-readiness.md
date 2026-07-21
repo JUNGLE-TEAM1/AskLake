@@ -5,7 +5,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
-현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다.
+현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. 현재 구현은 Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영의 legacy direct-consumer 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다. Issue #1117 목표는 SQL JOIN Job을 실행 트리 parent/root로 두고 기존 Dataset producer Job을 child로 재사용하는 구조이며, Phase 0에서는 [목표 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)만 고정하고 runtime은 아직 전환하지 않는다.
 
 ## 1. 현재 연결 상태
 
@@ -433,7 +433,7 @@ Dashboard runtime service는 실제 `catalog_datasets.payload`를 우선 조회�
 Kafka Continuous dataset의 published widget은 PostgreSQL `dataset_freshness`, `dataset_revision_commits`, `dataset_kafka_partition_cursors`, `dashboard_widget_results`를 사용한다. Worker는 source range와 fingerprint로 중복·부분 겹침을 막고 exact Iceberg run을 검증한 뒤 revision을 올린다. `count`/`sum`/`avg`/`min`/`max`/`ratio`는 baseline 뒤 delta만 병합하며 날짜 `windowDays`는 만료 bucket을 상태에서 제거한다. worker가 `dashboard_widget_results`를 먼저 갱신하므로 published 조회는 JOIN이나 Trino를 실행하지 않는다.
 위젯 `config.filters`는 최대 5개의 AND 조건을 저장한다. 후보 컬럼은 선택 Dataset schema, 문자열 후보값은 물리 Dataset distinct 조회에서 가져오며 앞 조건을 `contextFilters`로 적용한다. Backend의 공통 predicate compiler는 컬럼·타입·연산자를 검증하고 table, batch aggregate, Continuous baseline/delta에 같은 조건을 적용한다. 필터는 `sourceConfig` 계산 version에 포함되므로 조건 변경 시 이전 batch cache와 Continuous aggregate state를 재사용하지 않는다.
 Catalog ACK가 바뀔 때 worker는 전체 manifest 이력을 반복 조회하지 않고 bounded report window에서 승인된 batch를 제거한 뒤 부족한 다음 구간만 채운다. 재시작 복구는 committed manifest bulk read 한 번으로 수행한다. Backend의 S3 manifest 복구는 Spark가 만든 0-byte `part-*` 파일을 건너뛰고 실제 JSON row가 있는 part를 읽는다. 작은 Continuous micro-batch는 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS=4`, `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`을 기본으로 사용하며 일반 batch의 shuffle 설정은 유지한다.
-Continuous SQL은 10초·최대 100행을 기본으로 사용한다. `baselineDatasetId`가 있으면 최초 Trino JOIN snapshot, source revision/offset, static snapshot을 durable binding으로 저장하고 이후 신규 Kafka 범위와 필요한 static key만 JOIN한다. output의 `_asklake_run_id` partition으로 exact-count와 Dashboard delta scan을 가지치기하며 published widget 결과는 worker가 미리 계산한다.
+현재 legacy Continuous SQL API는 trigger 생략 시 10초·최대 100행을 기본으로 사용하고 SQL 분석 frontend는 5초를 명시적으로 제출한다. `baselineDatasetId`가 있으면 최초 Trino JOIN snapshot, source revision/offset, static snapshot을 durable runtime binding으로 저장하고 이후 신규 Kafka 범위와 필요한 static key만 JOIN한다. output의 `_asklake_run_id` partition으로 exact-count를 가지치기한다. Issue #1117 목표에서는 SQL-owned trigger/max-message와 Kafka consumer를 제거하고 producer Job의 revision/manifest cursor를 사용하며, Dashboard는 Widget Dataset을 수동 조회할 뿐 execution tree를 시작하거나 감시하지 않는다.
 `seed_dashboard_demo`에는 커머스 데모용 원본 dataset 2개(`commerce_orders_daily`, `commerce_marketing_spend_daily`)와 조인 결과처럼 보이는 `gold_commerce_channel_roi` GOLD dataset이 포함된다.
 
 Runtime table 보강 코드는 Alembic migration 도입 전까지 로컬 PostgreSQL smoke를 막지 않기 위한 임시 안전장치다. `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`에 `created_at`, `updated_at`, JSON snapshot 컬럼이 빠져 있으면 repository에서 `ADD COLUMN IF NOT EXISTS`로 보강하지만, 장기 운영 기준의 source of truth는 후속 Alembic migration으로 옮겨야 한다.
@@ -591,6 +591,19 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [ ] 민감 데이터 판정이 필요하면 frontend 컬럼명 정규식이 아닌 별도 backend 분류 결과 계약 추가
 
 ## Realtime 2026 foundation readiness
+
+### SQL Job 실행 트리 #1117 readiness
+
+- [x] Phase 0 execution ownership ADR, V1 계약, 제품/아키텍처/API 문서 기준선
+- [x] Phase 0 legacy direct-consumer 증적과 정적 contract verifier
+- [ ] Dataset producer metadata와 SQL dependency persistence
+- [ ] backend producer resolution과 realtime 1개 + batch/static N개 validation
+- [ ] atomic tree lock/lease/fencing과 tree run/node run
+- [ ] parent orchestration과 SQL-owned Kafka consumer 제거
+- [ ] lifecycle/recovery/UI 및 output revision 회귀
+- [ ] legacy Job 운영 처리, live E2E와 rollout gate
+
+Phase 0 검증은 `cd backend && npm run verify:continuous-sql-execution-tree-contract`로 실행한다. 이 통과는 runtime 전환 완료를 의미하지 않는다.
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
 - [x] SSE notification + REST refetch, durable cursor, resync ADR

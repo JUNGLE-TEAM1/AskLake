@@ -261,6 +261,21 @@ SQL 분석 frontend는 stopped Job create가 성공하면 별도 `start` command
 
 SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 10초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
 
+#### Issue #1117 planned 실행 트리 확장
+
+> Phase 0 계약이며 아직 live OpenAPI field가 아니다. 현재 request/response와 direct Kafka consumer runtime은 후속 Phase 전까지 유지한다.
+
+- frontend create/validate request는 계속 `relationDatasetIds`만 보내고 producer Job ID를 보내지 않는다.
+- backend는 Dataset ID에서 producer Job을 resolve하고 validate/create response에 additive `dependencyBindings`를 제공한다.
+- Job/Run response는 후속 Phase에서 additive `executionTree`, `treeRun`, node state와 `inputDatasetRevisions`를 제공한다.
+- Catalog Dataset은 additive `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`를 authoritative metadata로 제공한다.
+- realtime Dataset에 runnable producer Job이 없으면 `422 CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`다.
+- standalone/tree lock이 충돌하면 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`이며 일부 child만 실행하지 않는다.
+- SQL parent는 별도 Kafka consumer group을 만들지 않고 producer Dataset revision/manifest를 처리한다.
+- Dashboard Binding과 자동 감시는 다시 추가하지 않는다. output Dataset은 일반 Catalog source이며 보기·편집 모두 수동 Widget query를 사용한다.
+
+상세 target contract는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+
 Canonical status values:
 
 | Resource | Field | Values |

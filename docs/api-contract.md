@@ -4282,6 +4282,37 @@ compiled plan은 `staticCacheMaxRows`와 relation별 서버 계산 `cacheHint`�
 
 기존 `/api/query/runs` 및 Kafka Continuous ETL API는 변경하지 않는다. Continuous SQL feature flag가 꺼져 있으면 validate/create/start/resume/recover는 `409 CONTINUOUS_SQL_DISABLED`로 fail closed한다.
 
+### Issue #1117 SQL Job 실행 트리 planned contract
+
+이 절은 Phase 0 target contract다. 아직 OpenAPI, DB schema 또는 현재 direct-consumer runtime이 구현한 field로 간주하지 않는다. 구현은 기존 endpoint를 additive하게 확장하며 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)의 순서를 따른다.
+
+validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. backend는 Dataset ID에서 producer를 resolve하고 response/persisted plan에 다음 의미의 `dependencyBindings`를 추가한다.
+
+```json
+{
+  "sqlJobId": "csql_123",
+  "inputDatasetId": "ds_clicks",
+  "childJobId": "JOB-1234",
+  "inputType": "realtime",
+  "executionPolicy": "run_on_tree_start",
+  "required": true
+}
+```
+
+Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`를 추가한다. 이 field가 도입된 뒤 frontend는 표시 이름, description, tag 또는 upstream 문자열로 streaming 여부를 추정하지 않는다.
+
+Job/Run response에는 additive `executionTree`, active `treeRun`, node state와 `inputDatasetRevisions`를 추가한다. parent full-tree start는 parent와 producer child lock을 한 transaction에서 모두 획득하고, 충돌하면 lock과 child 실행을 하나도 남기지 않은 채 다음 오류를 반환한다.
+
+- `422 CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`: realtime Dataset에 runnable Kafka Continuous producer Job이 없음
+- `422 CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`: realtime cardinality 또는 input type이 V1 범위를 벗어남
+- `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`: standalone/tree owner lock 충돌
+- `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`: required child를 실행할 수 없음
+- `409 CONTINUOUS_SQL_INPUT_REVISION_UNAVAILABLE`: required Dataset revision/snapshot을 고정할 수 없음
+
+SQL parent는 Kafka source identity를 복사해 새 consumer group을 만들지 않는다. producer child가 게시한 Dataset revision/manifest cursor를 사용하고 output commit과 Catalog revision publication 뒤에만 cursor를 전진시킨다. parent가 시작한 realtime child는 parent stop에서 함께 정지한다. tree lock이 없을 때 child standalone 실행은 유지하며 child command가 parent를 자동 시작하지 않는다.
+
+Dashboard Job Binding, managed Dataset lock과 자동 revision watcher는 이 확장에 포함하지 않는다. SQL output은 일반 Catalog Dataset으로 게시되고 Dashboard 보기·편집 모드는 Widget이 저장한 Dataset ID를 사용자의 수동 새로고침에서 조회한다.
+
 ## Internal runtime compatibility contract
 
 Spark/Kafka production entrypoint 경로, 기존 CLI/environment 입력, exit 의미와 public ETL API shape는 유지한다. runtime report에는 optional `runtimeReportSchemaVersion`, Continuous checkpoint contract에는 optional `contractSchemaVersion`, batch manifest에는 optional `manifestSchemaVersion`이 추가된다. 필드가 없는 기존 문서는 version 0으로 읽으며 기존 consumer는 새 필드를 무시할 수 있다.

@@ -1025,6 +1025,28 @@ Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. 제
 6. 기존 Dashboard/revision/page/widget ID와 Widget `dataset_id`가 보존되고 수동 새로고침이 성공하는지 확인한다.
 7. `npm run verify:dashboard-job-binding-schema-removal`로 fresh upgrade, populated schema 차단, 명시적 upgrade, empty-schema downgrade와 재-upgrade를 검증한다.
 
+### SQL Job 실행 트리 구현 순서
+
+Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)과 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)을 따른다. SQL JOIN Job이 실행 트리의 parent/root이고, 선택된 Dataset을 생산하는 기존 Kafka/Batch Job이 child다. 데이터 흐름은 child Job → input Dataset revision → SQL transform → output Dataset revision이며, frontend가 Dataset 이름·tag로 producer를 추정하거나 `childJobId`를 제출하지 않는다.
+
+1. Phase 0에서 현재 direct-consumer 구현을 characterization하고 execution ownership, dependency, lock, revision, manual Dashboard 경계를 문서와 정적 verifier로 고정한다.
+2. Phase 1에서 Catalog Dataset의 authoritative producer metadata와 SQL dependency binding을 additive persistence로 도입한다.
+3. Phase 2에서 backend가 Dataset ID로 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다.
+4. Phase 3에서 tree run/node run과 atomic parent-child lock/lease/fencing을 구현한다.
+5. Phase 4에서 SQL parent 시작이 실행 가능한 child를 먼저 시작하고 준비된 Dataset revision을 기준으로 transform을 실행하도록 orchestration한다.
+6. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
+7. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다.
+8. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다.
+9. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다.
+10. Phase 9에서 legacy direct-consumer Continuous SQL Job의 명시적 운영 처리와 live E2E/rollout gate를 완료한다. 기존 Job은 자동 마이그레이션하지 않는다.
+
+Phase 0 정적 계약 검증은 다음 명령으로 실행한다.
+
+```bash
+cd backend
+npm run verify:continuous-sql-execution-tree-contract
+```
+
 ## 7) Pair Ownership
 
 4일 데모 마일스톤은 2인 3개 Pair 기준으로 운영한다.
@@ -1315,7 +1337,7 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 두 경로를 사용한다. cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
+현재 legacy Continuous SQL latency tuning은 API에서 trigger를 생략하면 10초를 사용하고 SQL 분석 frontend가 5초를 명시적으로 제출하며, `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`를 함께 사용한다. Issue #1117 목표 구조에서는 SQL Job이 trigger/max-message를 소유하지 않고 연결된 producer Job의 수집 설정과 Dataset revision을 따른다. 전환 전 cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
 
 ClickHouse mode의 정적 snapshot 적재 기본 한도는 relation당 15,000,000행이고 insert batch는 20,000행이다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 실제 운영 데이터가 한도를 넘으면 값을 무조건 올리지 말고 dimension 크기·참조 열·ClickHouse 메모리와 disk를 먼저 확인한다. 동일 snapshot의 참조 열 table은 resume에서 재사용되며 source count와 local count가 다르면 truncate 후 다시 적재한다.
 
