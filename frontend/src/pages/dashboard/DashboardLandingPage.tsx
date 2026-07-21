@@ -7,7 +7,6 @@ import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfir
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
 import { DashboardTable } from "./components/DashboardTable";
-import { PageHeaderActions } from "@/components/layout/Topbar";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 import type { SavedDashboardCard } from "../../types";
 
@@ -97,22 +96,20 @@ export function DashboardLandingPage({
 }) {
   return (
     <div className="dashboard-page dashboard-list-page">
-      <PageHeaderActions>
-        <Button
-          className="app-page-primary-action"
-          disabled={isCreatingDashboard}
-          type="button"
-          size="sm"
-          variant="primary"
-          onClick={onCreateDashboard}
-        >
-          <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
-        </Button>
-      </PageHeaderActions>
-
       <div className="dashboard-panel-stack">
         <Panel className="dashboard-table-list">
           <PanelHeader
+            actions={
+              <Button
+                disabled={isCreatingDashboard}
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={onCreateDashboard}
+              >
+                <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+              </Button>
+            }
             icon={<ListChecks size={16} />}
             iconVariant="outline"
             size="section"
