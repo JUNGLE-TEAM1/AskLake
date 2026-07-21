@@ -105,6 +105,24 @@ def execute_continuous_command(
     if runtime is None:
         runtime = hooks.runtime_from_job(job)
 
+    if command == "stopContinuous" and runtime.status in {"stopping", "stopped"}:
+        saved_job = etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return JobCommandResponse(
+            action=CONTINUOUS_ACTION_BY_COMMAND[command],
+            api_path=f"/api/etl/jobs/{job.id}/commands",
+            job=hooks.with_permissions(db, saved_job, actor),
+            processing_result={
+                "controlPlaneOnly": not dispatch_worker,
+                "idempotent": True,
+                "runtimeStatus": runtime.status,
+                "worker": hooks.worker_kind(job),
+                "workerResult": {
+                    "alreadyRequested": runtime.status == "stopping",
+                    "alreadyTerminal": runtime.status == "stopped",
+                },
+            },
+        )
+
     if command in {"startContinuous", "resumeContinuous"}:
         job, runtime = _lock_start_resources(db, job, runtime, hooks)
         transition = command_transition(runtime.status, command)
@@ -237,7 +255,14 @@ def _dispatch_terminal(
             "worker": hooks.worker_kind(job),
         }
     try:
-        return worker.command(job, runtime, verb)
+        contract = runtime_contract_projection(
+            runtime.metrics,
+            public_status=runtime.status,
+            legacy_error=runtime.last_error,
+        )
+        worker_attempt_id = _optional_string(contract.get("fencingToken"))
+        options = {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
+        return worker.command(job, runtime, verb, options)
     except ApiError as exc:
         runtime.metrics = record_runtime_error(
             runtime.metrics,

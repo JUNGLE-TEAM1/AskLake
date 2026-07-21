@@ -25,9 +25,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 
 import type { JobCommand, JobRowData } from "../../../types";
-import { jobStatusMeta } from "../../../utils/statusMeta";
 import { JobEndpointCard, JobEndpointItem, OperationSummaryItem, OutputSchemaRow, OwnerIdentity, PipelineFlowNode, QualityRuleRow, TransformRuleRow, compactSourceConfigItems, detailKeyValueListClassName, fallbackJobStats, formatOperationalDelay, formatOperationalRate, getJobExecutionDisplay, getRuleActionLabel, outputSchemaColumns, qualityRuleColumns, transformRuleColumns, validationTypeLabelMap } from "./jobDetailModel";
-import { JobDetailActionIcon, continuousRuntimeLabel, continuousSchemaStatusLabels, formatCompactDateTime, formatJobSchedule, formatNextScheduledRun, getJobDetailActionClassName, getJobDetailActions, getJobScheduleKind, getJobStatusTone, isContinuousKafkaJob, isRealtimeJob, jobActionDisabled, realtimeHealthMeta, runStatusMeta } from "./jobShared";
+import { JobDetailActionIcon, continuousRuntimeLabel, continuousSchemaStatusLabels, formatCompactDateTime, formatJobSchedule, formatNextScheduledRun, getJobDetailActionClassName, getJobDetailActions, getJobScheduleKind, getJobStatusDisplay, isContinuousKafkaJob, isRealtimeJob, jobActionDisabled, realtimeHealthMeta, runStatusMeta } from "./jobShared";
 
 export function JobDetailHeader({
   backLabel,
@@ -40,6 +39,7 @@ export function JobDetailHeader({
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
 }) {
+  const statusDisplay = getJobStatusDisplay(job);
   const runAction = (action: JobCommand) => {
     onCommand(job, action);
   };
@@ -82,9 +82,9 @@ export function JobDetailHeader({
         title={(
           <>
             <span>{job.target}</span>
-            <StatusBadge className="min-w-0 justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-semibold" tone={getJobStatusTone(job.status)}>
-              {job.status === "running" && <Spinner className="size-3.5" aria-label="실행 중" />}
-              {jobStatusMeta[job.status].label}
+            <StatusBadge className="min-w-0 justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-semibold" tone={statusDisplay.tone}>
+              {statusDisplay.spinning && <Spinner className="size-3.5" aria-label={statusDisplay.label} />}
+              {statusDisplay.label}
             </StatusBadge>
           </>
         )}
@@ -117,28 +117,31 @@ export function JobDetailPage({
   const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
   const executionDisplay = getJobExecutionDisplay(job);
+  const statusDisplay = getJobStatusDisplay(job);
   const latestRun = job.runHistory?.[0];
   const activeRun = latestRun?.status === "running" ? latestRun : undefined;
   const latestRunTimestamp = latestRun?.endedAt || latestRun?.startedAt || job.lastRun;
   const processSummary = job.transformSteps?.length
     ? `${job.transformSteps.length}개 변환 규칙`
     : "처리 설정 적용";
-  const currentStatusTone = job.status === "failed"
+  const currentStatusTone = statusDisplay.status === "failed"
     ? "danger"
-    : job.status === "running"
+    : statusDisplay.status === "running"
       ? "running"
       : "scheduled";
-  const currentStatusDetail = job.status === "failed"
+  const currentStatusDetail = statusDisplay.status === "failed"
     ? executionDisplay.summary
-    : job.status === "running"
-      ? job.progress?.label ?? "처리 진행 중"
-      : job.status === "paused"
-        ? "수동 재개 필요"
-        : job.status === "stopped"
-          ? realtime ? "실시간 수집 중지" : "스케줄 일시중지"
-          : job.status === "canceled"
-            ? "최근 실행 취소"
-            : "자동 실행 활성";
+    : isContinuousKafkaJob(job)
+      ? job.progress?.label ?? statusDisplay.label
+      : job.status === "running"
+        ? job.progress?.label ?? "처리 진행 중"
+        : job.status === "paused"
+          ? "수동 재개 필요"
+          : job.status === "stopped"
+            ? realtime ? "실시간 수집 중지" : "스케줄 일시중지"
+            : job.status === "canceled"
+              ? "최근 실행 취소"
+              : "자동 실행 활성";
   const outputSchemaRows: OutputSchemaRow[] = (job.transformOutputColumns ?? []).map(([field, type], index) => ({
     field,
     index: index + 1,
@@ -226,7 +229,7 @@ export function JobDetailPage({
               detail={currentStatusDetail}
               label="현재 상태"
               tone={currentStatusTone}
-              value={jobStatusMeta[job.status].label}
+              value={statusDisplay.label}
             />
             <OperationSummaryItem
               detail={activeRun

@@ -26,7 +26,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
 import type { JobRowData, JobStats } from "../../../types";
 import { jobStatusMeta } from "../../../utils/statusMeta";
-import { formatCompactDateTime, getJobStatusTone, getLatestProblemRun, getLatestRunOutcome, isContinuousKafkaJob, isRealtimeJob } from "./jobShared";
+import { formatCompactDateTime, getJobStatusDisplay, getLatestProblemRun, getLatestRunOutcome, isContinuousKafkaJob, isRealtimeJob } from "./jobShared";
 import { normalizeWhitespace } from "./jobText";
 
 export { normalizeWhitespace } from "./jobText";
@@ -102,6 +102,7 @@ export function truncateText(value: string, maxLength: number) {
 }
 
 export function StatusPill({ job }: { job: JobRowData }) {
+  const statusDisplay = getJobStatusDisplay(job);
   const showExecutionProgress = job.status === "running"
     && !isContinuousKafkaJob(job)
     && !isRealtimeJob(job)
@@ -119,10 +120,10 @@ export function StatusPill({ job }: { job: JobRowData }) {
           "min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold",
           showExecutionProgress && "self-end translate-y-0.5",
         )}
-        tone={getJobStatusTone(job.status)}
+        tone={statusDisplay.tone}
       >
-        {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
-        {jobStatusMeta[job.status].label}
+        {statusDisplay.spinning && <Spinner className="size-4" aria-label={statusDisplay.label} />}
+        {statusDisplay.label}
       </StatusBadge>
       {showExecutionProgress && job.progress ? (
         <div className="w-full self-end text-left">

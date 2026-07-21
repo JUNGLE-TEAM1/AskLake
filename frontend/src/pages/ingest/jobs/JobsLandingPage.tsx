@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import type { AuditResult, JobCommand, JobListFacets, JobListQuery, JobRowData, JobScheduleKind, JobStatus } from "../../../types";
 
 import { OwnerIdentity, StatusPill, getJobListSourceDisplay, hasLatestSuccessfulRun } from "./jobDetailModel";
-import { JobListActionIcon, JobListActionKind, JobMetric, JobMetricTone, JobsTableRow, LatestRunModalSelection, filterJobsBySearch, formatJobLastRun, formatJobSchedule, formatNextScheduledRun, getJobActionButtonVariant, getJobListActionButtonClassName, getJobListActions, getJobMetrics, getJobTableRowClassName, getJobsQueryPath, getLatestRunOutcome, getNextScheduledRunDate, hasSameStatuses, matchesJobListQuery } from "./jobShared";
+import { JobListActionIcon, JobListActionKind, JobMetric, JobMetricTone, JobsTableRow, LatestRunModalSelection, filterJobsBySearch, formatJobLastRun, formatJobSchedule, formatNextScheduledRun, getJobActionButtonVariant, getJobListActionButtonClassName, getJobListActions, getJobMetrics, getJobStatusDisplay, getJobTableRowClassName, getJobsQueryPath, getLatestRunOutcome, getNextScheduledRunDate, hasSameStatuses, matchesJobListQuery } from "./jobShared";
 import { RunDagModal } from "./SnapshotJobRunsPage";
 
 export function JobsLandingPage({
@@ -630,7 +630,7 @@ export function JobsTableSection({
             icon: <Plus size={22} />,
             title: emptyTitle ?? "생성된 수집/처리 작업이 없습니다.",
           }}
-          getRowClassName={(row) => getJobTableRowClassName(row.original.job.status)}
+          getRowClassName={(row) => getJobTableRowClassName(getJobStatusDisplay(row.original.job).status)}
           getRowId={(row) => row.job.id}
           isLoading={isLoading}
           pagination={{ label: title, pageSize: 5, showSummary: false }}

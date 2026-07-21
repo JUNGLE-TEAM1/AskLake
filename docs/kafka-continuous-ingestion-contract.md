@@ -145,10 +145,12 @@ type JobCommand =
 - `pauseContinuous`: records pause intent and signals the worker to stop after its current checkpointed micro-batch.
 - `resumeContinuous`: persists a resume request for the durable checkpoint.
 - `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
+- `stopContinuous` is idempotent while the runtime is already `stopping` or `stopped`; the duplicate request does not advance `stateRevision`. A terminal `unknown` runner state remains transitional and retryable. The control-plane owner reuses the active fencing token and finalizes only after `exited`, `missing`, or `not_running` evidence.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
 - Command responses identify the actual worker: `spark_structured_streaming` on the legacy path or `kafka_connect_clickhouse_v2` on the V2 path. An external control plane still returns the selected worker while deferring the side effect. Spark worker heartbeats and counters are written to the Spark report volume, while V2 uses Connector state and ClickHouse offsets. An exited, missing, or stale active worker transitions to `failed`. Failure accounting is keyed by worker attempt and reason, so polling the same terminal attempt does not repeatedly increment `failedCount`. Heartbeat cleanup uses an internal terminate signal and cannot be mistaken for an operator stop.
 - Every accepted command increments `continuousRuntime.stateRevision`. Worker observations keep that revision and are accepted only for the active fencing token; reports created before fencing metadata existed remain readable for backward compatibility.
+- Job list/detail status uses `continuousRuntime.status` for Continuous Jobs, so a durable transition is displayed as `시작 중`, `일시정지 중`, or `중지 중` instead of the compatibility `job.status=running`. The stopped facet counts only terminal `job.status=stopped` rows.
 
 ## 6. Mutual Exclusion and Backfill
 

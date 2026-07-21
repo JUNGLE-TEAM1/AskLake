@@ -1553,6 +1553,17 @@ cd backend
 npm run verify:etl-e2e-recovery
 ```
 
+Kafka Continuous terminal 전이 또는 목록·상세 상태 projection을 변경하면 빠른 프로필 전에 아래 unit/프론트 계약을 실행한다. `stopping + unknown + stale report`, 동일 fence stop 재요청, `not_running` terminal commit, 중복 stop idempotency와 `중지 중` UI를 함께 보호한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_continuous_application_use_cases tests.test_continuous_runtime_contract tests.test_continuous_maintenance_fencing tests.test_kafka_continuous_dashboard_sync -v
+
+cd ../frontend
+npm run test:continuous-runtime-contract
+npm run build
+```
+
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.
 
 시나리오를 추가할 때는 [하네스 계약](refactor-2026/contracts/etl-e2e-recovery-harness.md)에 따라 initial state, injection, expected state, timeout, automatic/operator recovery, evidence를 모두 정의한다. fixed sleep이나 화면 문구/CSS selector로 완료를 판정하지 않는다.

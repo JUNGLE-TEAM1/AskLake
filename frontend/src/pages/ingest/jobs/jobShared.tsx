@@ -3,6 +3,7 @@
 import { Calendar, CalendarOff, Info, Pencil, Play, RefreshCw, Square, Trash2, X, Zap } from "lucide-react";
 
 import { canRunJobCommand } from "../../../utils/permissions";
+import { continuousRuntimeStatusDisplay, continuousRuntimeStatusLabels } from "../../../services/continuousRuntimeContract";
 
 import { type StatusBadgeTone } from "@/components/ui/status-badge";
 
@@ -43,6 +44,22 @@ export function getJobStatusTone(status: JobStatus): StatusBadgeTone {
   if (status === "paused") return "warning";
   if (status === "stopped") return "warning";
   return "default";
+}
+
+export function getJobStatusDisplay(job: JobRowData) {
+  const continuousDisplay = continuousRuntimeStatusDisplay(job);
+  if (continuousDisplay) {
+    return {
+      ...continuousDisplay,
+      tone: getJobStatusTone(continuousDisplay.status),
+    };
+  }
+  return {
+    label: jobStatusMeta[job.status].label,
+    spinning: job.status === "running",
+    status: job.status,
+    tone: getJobStatusTone(job.status),
+  };
 }
 
 export function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
@@ -123,15 +140,7 @@ export function isContinuousKafkaJob(job: JobRowData) {
   return job.executionMode === "continuous";
 }
 
-export const continuousRuntimeStatusLabels: Record<string, string> = {
-  failed: "실패",
-  paused: "일시정지",
-  pausing: "일시정지 중",
-  running: "실행 중",
-  starting: "시작 중",
-  stopped: "중지",
-  stopping: "중지 중",
-};
+export { continuousRuntimeStatusLabels };
 
 export const continuousSchemaStatusLabels: Record<string, string> = {
   drift_detected: "변경 감지",
