@@ -1,3 +1,5 @@
+import { castSchemaPreviewValue, evaluateSchemaPreviewExpression } from "./schemaPreviewExpression";
+
 export type TransformQualitySeverity = "Warning" | "Error";
 export type TransformQualityFailureAction = "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
 
@@ -173,7 +175,9 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
       return inputValue.trim() ? { failed: false, value: inputValue } : { failed: true, value: "" };
     }
     if (operation.includes("sql expression")) {
-      return { failed: false, value: inputValue };
+      const expression = step.params || inputValue;
+      const result = evaluateSchemaPreviewExpression(expression, row, inputValue);
+      return { failed: !result.supported, value: result.value };
     }
     if (operation.includes("custom csv classifier") || operation.includes("csv classifier")) {
       return { failed: false, value: classifyCustomCsvValue(row, step, inputValue) };
@@ -192,13 +196,12 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
     if (operation.includes("lower") || operation.includes("trim")) {
       return { failed: false, value: inputValue.trim().toLowerCase() };
     }
-    if (operation.includes("decimal") || operation.includes("cast")) {
-      const value = Number(inputValue);
-      return Number.isFinite(value) ? { failed: false, value: value.toFixed(2) } : { failed: true, value: "" };
-    }
     if (operation.includes("timestamp") || operation.includes("date")) {
       const value = new Date(inputValue);
       return Number.isNaN(value.getTime()) ? { failed: true, value: "" } : { failed: false, value: value.toISOString().replace("T", " ").replace(".000Z", " UTC") };
+    }
+    if (operation.includes("decimal") || operation.includes("cast")) {
+      return castSchemaPreviewValue(inputValue, step.params || operation.replace(/^.*cast\s*/i, ""));
     }
     if (operation.includes("mask")) {
       return { failed: false, value: maskPhoneNumber(inputValue) };

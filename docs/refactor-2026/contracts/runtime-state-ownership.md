@@ -65,7 +65,7 @@ stateDiagram-v2
 | `pauseContinuous` | `starting`, `running` | `paused` | `pausing` |
 | `stopContinuous` | `starting`, `running`, `pausing`, `paused`, `failed` | `stopped` | `stopping` |
 
-중복 start/resume의 active 상태는 기존처럼 `409`; 잘못된 pause/stop 상태는 `422`다. Command가 commit될 때 `stateRevision`이 증가한다. Worker heartbeat와 batch 관찰은 같은 command revision 안에서 revision을 증가시키지 않는다.
+중복 start/resume의 active 상태는 기존처럼 `409`; 잘못된 pause/stop 상태는 `422`다. 단, `stopping`/`stopped`의 중복 `stopContinuous`는 멱등 성공이며 새 command revision이나 worker side effect를 만들지 않는다. Command가 commit될 때 `stateRevision`이 증가한다. Worker heartbeat와 batch 관찰, 동일 terminal intent 재신호는 같은 command revision 안에서 revision을 증가시키지 않는다.
 
 ## Fencing 규칙
 
@@ -74,6 +74,7 @@ stateDiagram-v2
 3. 다른 token의 report는 runtime counter, checkpoint, public status를 갱신하지 않고 `reconciliation/stale_worker_observation`으로 기록한다.
 4. contract 도입 전 report처럼 한쪽 token이 없으면 하위 호환을 위해 허용한다.
 5. 새 command revision과 worker attempt를 받은 frontend는 더 작은 revision의 polling response를 적용하지 않는다. 같은 revision은 서버 `updatedAt`이 더 최신일 때만 적용한다.
+6. terminal intent에서 runner가 `unknown`이면 active fence로 pause/stop을 다시 제출하되 terminal 성공을 추측하지 않는다. `exited`, `missing`, `not_running` 중 하나가 확인될 때만 terminal observation을 저장하고, 이전 fence의 report는 Job을 다시 active 상태로 만들 수 없다.
 
 ## 오류 계약
 

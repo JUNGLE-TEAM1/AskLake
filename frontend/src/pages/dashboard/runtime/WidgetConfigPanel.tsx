@@ -780,6 +780,17 @@ export function WidgetConfigPanel({
     setDescription("");
   };
 
+  if (selectedDataset?.status === "preparing" && !editingWidget) {
+    return (
+      <SettingsPanel
+        className="asklake-widget-config-panel empty"
+        description="연결된 Job의 첫 실행이 완료되면 실제 데이터로 차트를 만들 수 있습니다."
+        headerClassName="asklake-widget-config-heading asklake-widget-config-empty-heading"
+        title="출력 Dataset을 준비하고 있습니다"
+      />
+    );
+  }
+
   if (!selectedDataset && !editingWidget) {
     return (
       <SettingsPanel

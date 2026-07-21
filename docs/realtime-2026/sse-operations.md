@@ -1,5 +1,7 @@
 # Dashboard SSE 운영 계약
 
+> 상태: backend 호환·운영 관찰 계약. 2026-07-21부터 Dashboard frontend는 이 endpoint를 구독하지 않고 보기·편집 화면 진입 및 수동 새로고침에서 Widget REST query만 호출한다. 아래 polling 전환표는 자동 갱신 기능을 다시 도입할 때의 과거 운영 설계다.
+
 ## Endpoint와 인증
 
 ```text
@@ -48,6 +50,8 @@ System event는 client control 용도이며 refetch 대상 데이터가 아니�
 5. cursor가 retention보다 오래됐거나 backlog가 replay limit를 넘으면 full snapshot resync한다.
 
 ## Polling 전환
+
+현재 Dashboard frontend에는 아래 mode별 polling 동작이 구현되어 있지 않다.
 
 | effective mode | SSE open | polling 동작 |
 |---|---|---|

@@ -15,6 +15,7 @@ from app.domain.continuous_runtime import (
     record_runtime_error,
     record_runtime_observation,
     runtime_contract_projection,
+    observed_state_from_evidence,
 )
 from app.models.etl import KafkaContinuousRuntimeModel
 from app.repositories.etl_repository import continuous_runtime_to_schema
@@ -70,6 +71,12 @@ class ContinuousCommandPolicyTests(unittest.TestCase):
 
 
 class ContinuousObservationPolicyTests(unittest.TestCase):
+    def test_not_running_is_a_stopped_observation(self) -> None:
+        self.assertEqual(
+            observed_state_from_evidence(None, "not_running"),
+            ContinuousObservedState.STOPPED,
+        )
+
     def test_public_status_is_derived_from_desired_and_observed_state(self) -> None:
         cases = [
             (ContinuousDesiredState.RUNNING, ContinuousObservedState.STARTING, ContinuousPublicStatus.STARTING),

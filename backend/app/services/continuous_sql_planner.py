@@ -46,6 +46,11 @@ class CatalogRelation:
     streaming_source: dict[str, Any] | None
     unique_key_sets: tuple[tuple[str, ...], ...]
     estimated_row_count: int | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
 
     @property
     def schema_by_name(self) -> dict[str, tuple[str, str]]:
@@ -809,6 +814,11 @@ def relation_binding_payload(
         "streamingSource": relation.streaming_source,
         "uniqueKeySets": [list(item) for item in relation.unique_key_sets],
         "estimatedRowCount": relation.estimated_row_count,
+        "producerJobId": relation.producer_job_id,
+        "producerJobKind": relation.producer_job_kind,
+        "executionMode": relation.execution_mode,
+        "sourceKind": relation.source_kind,
+        "runtimeStatus": relation.runtime_status,
         "broadcastHint": broadcast_hint,
         "cacheHint": cache_hint,
         "referencedColumns": sorted(referenced, key=normalize_identifier),

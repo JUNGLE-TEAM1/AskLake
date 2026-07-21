@@ -30,6 +30,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 ## 4) 현재 MVP 범위
 
+### RAG 제외 결정 (2026-07-20)
+
+RAG, VectorDB/OpenSearch, embedding worker와 RAG 색인 API/UI는 현재 제품 범위에서 제거한다. AI SQL·Dashboard Assistant는 Catalog와 Semantic Model만 사용하며, retrieval evidence는 만들거나 표시하지 않는다. 이미 배포된 RAG DB migration과 데이터 볼륨은 호환·복구 이력으로 보존하되 새 runtime은 이를 기동하거나 참조하지 않는다.
+
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
 - `/` AskLake 랜딩과 session login 진입
@@ -53,13 +57,14 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - AI 활용 메뉴의 ChatGPT형 대화 UI: Catalog Dataset 컨텍스트를 고르는 대화 화면을 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - Issue #567은 일반 Snapshot, Kafka Snapshot, Kafka Continuous의 스키마 타입과 Transform/Quality 실행 계약을 통합한다. 작업은 [Transform/Quality 공통 실행 통합 계획](transform-quality-unification-plan.md)의 Phase별 검증 게이트를 따르며, 전체 검증 전까지 Draft PR로 유지한다.
-- DuckDB compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출한다.
+- DuckDB compatibility 결과 기반 처리 Job 생성: SQL 화면의 다단계 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료한 뒤 기존 Job 생성 API를 호출하고 생성된 Job에 첫 `run` command를 보낸다.
 - 성공한 Trino preview 결과 화면은 CSV 다운로드와 반복 SQL Job 생성을 제공한다. CSV는 on-demand 전체 결과 `run`이 완료된 뒤 해당 저장 page를 stream하고, 반복 SQL Job 생성은 전체 결과 저장을 기다리지 않고 preview의 SQL·Dataset context·출력 컬럼을 recipe로 저장한다. 1회성 Iceberg CTAS materialization API는 별도 운영 경로로 유지하며 이 화면에서 노출하지 않는다.
-- 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
+- 반복 Trino SQL Job은 결과 page를 복사하지 않고 SQL recipe, 실행 actor, 스케줄, target metadata를 저장한 뒤 첫 `run` command를 보낸다. 생성과 실행은 별도 요청이므로 첫 실행 실패가 durable Job을 삭제하거나 생성 성공을 되돌리지 않으며, UI는 부분 성공을 안내한다. 수동/예약 Run마다 전체 SQL을 다시 실행해 같은 논리 Dataset을 검증된 새 Iceberg table version으로 갱신한다.
 - Dashboard 목록/빌더/런타임은 FastAPI API를 우선 사용하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다. 편집 진입 시 왼쪽 데이터 패널은 닫힌 상태로 시작하고, 데이터 패널과 오른쪽 설정 패널은 명시적 버튼으로 열고 닫되 선택·편집 상태를 유지한다.
+- Dashboard는 Job과 별도 binding을 만들지 않는다. 각 Widget이 저장한 Catalog Dataset ID가 연결의 source of truth이며, 사용자는 Dashboard 편집기에서 권한이 있는 Dataset을 자유롭게 선택한다. ETL·반복 SQL·Continuous SQL 생성 화면은 Dashboard 자동 생성이나 Dataset 고정 옵션을 제공하지 않는다. 기존 Job output도 Catalog Dataset으로 게시된 뒤 일반 Dashboard source로 선택한다.
 - Dashboard 위젯은 선택한 단일 Dataset의 schema 컬럼으로 최대 5개의 AND 필터를 설정할 수 있다. 문자열 값 후보는 물리 Dataset의 bounded distinct 조회로 동적으로 제공하고 앞선 조건을 context로 적용하므로, category/subcategory 같은 계층도 전용 하드코딩 없이 같은 Dataset에서 좁혀진다. 숫자·날짜 컬럼은 타입별 비교·범위 입력을 사용하며 저장된 필터는 batch와 Continuous 계산에 동일하게 적용한다.
-- Kafka Continuous 데이터셋을 연결한 published Dashboard는 기본 polling을 유지하되, 배포 기능 플래그에 따라 durable SSE 변경 알림과 targeted REST refetch를 사용하는 hybrid/SSE mode로 단계 전환한다. SSE는 위젯 데이터 본문을 운반하지 않으며 연결 실패·cursor 만료·기능 비활성 시 기존 adaptive polling으로 복귀한다. V2 Kafka hot-ingest는 Kafka Connect가 ClickHouse `raw_events_v2`에 기록한 원문과 offset을 즉시 읽고, 장기 S3/MinIO archive는 이 빠른 수집 경로와 별도인 Bronze archive 범위다.
-- Continuous SQL V1은 streaming relation 1개와 static relation 1개 이상을 INNER/LEFT equality JOIN으로 처리한다. 최초 Trino JOIN snapshot과 Kafka cursor를 기준점으로 저장하고 이후 10초·최대 100행 micro-batch의 신규 key만 static snapshot과 JOIN한다. 작은 static snapshot은 재사용하고 큰 snapshot은 JOIN key로 가지치기하며 Dashboard는 미리 계산된 결과만 읽는다.
+- Dashboard는 보기·편집 모드 모두 기본 수동 갱신이며 상단 토글로 사용자·Dashboard별 자동 갱신을 선택할 수 있다. 진입하거나 페이지를 처음 선택할 때는 모드와 무관하게 현재 페이지 Dataset Widget을 최신 물리 데이터로 조회하고, 수동 새로고침은 항상 같은 Widget query를 다시 실행한다. 자동 모드는 화면에 보이는 페이지 Widget의 Dataset만 SSE로 임시 구독하고 revision event를 무효화 신호로 사용해 영향받은 Widget REST query만 debounce 재실행한다. hidden tab·화면 이탈·토글 OFF에서는 연결을 닫고 polling fallback은 하지 않으며, 실패하면 마지막 성공 결과와 수동 새로고침을 유지한다. V2 Kafka hot-ingest는 Kafka Connect가 ClickHouse `raw_events_v2`에 기록한 원문과 offset을 즉시 읽고, 장기 S3/MinIO archive는 이 빠른 수집 경로와 별도인 Bronze archive 범위다.
+- Issue #1117의 Continuous SQL V1 target은 streaming Dataset 1개와 batch/static Dataset 1개 이상을 INNER/LEFT equality JOIN한다. SQL JOIN Job이 실행 트리의 부모이고, 선택 Dataset을 생산하는 기존 Kafka/Batch Job이 자식이다. 부모 start가 자식을 실행하고 검증된 input Dataset revision을 고정한 뒤 SQL transform과 output Dataset revision을 게시한다. SQL Job은 같은 Kafka topic의 별도 consumer group을 만들지 않는다. Phase 0은 이 계약만 고정하며 현재 direct-consumer runtime 전환은 후속 Phase에서 수행한다. 상세 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 - 선택적 ClickHouse serving mode는 `CONTINUOUS_SQL_JOIN_ENABLED=true`, `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`, request `servingMode=clickhouse`가 모두 충족된 Continuous SQL Job에만 적용한다. Kafka 원문과 offset을 ClickHouse raw MergeTree에 먼저 기록하고 고정된 Iceberg snapshot을 적재한 static table과 JOIN한 뒤, JOIN 결과 Dataset을 기존 Dashboard 위젯 계약으로 조회한다. ClickHouse 장애 시 같은 Run을 다른 엔진으로 자동 전환하지 않는다.
 - 일반 Kafka Continuous Job은 `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`일 때 Spark Structured Streaming 대신 Kafka Connect → ClickHouse `raw_events_v2` 경로를 사용한다. start 시 Catalog Dataset은 `preparing`으로 만들어지고, 해당 topic의 첫 offset이 확인되면 `available`과 revision/SSE event를 같은 publication transaction으로 기록해 Dashboard source와 위젯 조회가 열린다. 세 조건 중 하나라도 꺼지면 기존 Spark/Iceberg Continuous 경로를 유지한다.
 - 감사 로그와 toast feedback
@@ -79,7 +84,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 cursor 결과 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run을 1회성 Iceberg Dataset 또는 반복 full-refresh Trino SQL Job으로 연결 | Medium | `docs/api-contract.md` |
-| Kafka Dashboard 자동 갱신 | S3+Catalog 성공 리비전, PostgreSQL 위젯 결과, published 화면 adaptive polling을 연결 | High | `docs/kafka-postgresql-dashboard-sync.md` |
+| Dashboard 수동 최신화 | S3+Catalog 성공 리비전과 PostgreSQL 위젯 결과를 보기·편집 화면 진입 및 사용자의 현재 페이지 새로고침으로 조회 | High | `docs/kafka-postgresql-dashboard-sync.md` |
 | Local session auth | 로그인, 회원가입, session 확인, 로그아웃과 현재 사용자 조회 | High | `docs/api-contract.md` |
 | Phase 0 admin | 사용자·그룹·permission grant·governance control·감사 로그 조회/관리 | Medium | `docs/api-contract.md` |
 
@@ -112,10 +117,13 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ### Flow A. 수집/처리 생성
 
+위자드 상단은 왼쪽의 `수집/처리 > 새 수집/처리 생성 > 현재 단계` 탐색 경로와 오른쪽의 `이전`, `다음` 이동 action으로 통일한다. 현재 단계를 누르면 완료·현재·잠금 상태가 표시된 전체 단계 목록이 열리며, 허용된 단계로 바로 이동할 수 있다. 작업 영역을 가리는 전체 폭 단계 표시줄이나 헤더의 임시 저장 action은 사용하지 않는다.
+
 1. 사용자는 이름과 아이콘에 집중한 source connector 카드에서 소스를 선택하고 연결을 검증한 뒤 탐색 목록에서 단일 파일, 같은 형식의 파일 조각이 모인 prefix, 테이블 또는 컬렉션을 명시적으로 선택해 해당 대상의 제한 샘플을 확인한다. 폴더 펼치기는 탐색 동작이고 prefix 데이터셋 선택은 별도 action이다. 연결 검증만으로 임의 대상을 자동 선택하지 않는다.
 2. Prefix 데이터셋은 임의로 흩어진 파일 선택이 아니라 한 prefix 아래 같은 형식과 호환 스키마를 가진 파일 집합이다. `_SUCCESS`, `manifest.json`, 숨김 파일과 선택 형식이 아닌 객체는 입력에서 제외하며, Preview는 결정적인 대표 파일과 전체 데이터 파일 수·용량을 표시한다.
 3. 소스에 이름 있는 필드가 있으면 바로 Schema 단계로 이동한다. MinIO/S3 TXT 또는 Kafka raw text처럼 필드명이 없는 원시 레코드이면 조건부 `레코드 구조화` 단계에서 연속 공백(`\\s+`) 분리, 헤더 여부, 컬럼명과 타입 초안을 확정한다. Kafka raw text Preview와 레코드 구조화 화면은 원문·설정·결과에 집중하며, 이미 본문에서 확인 가능한 형식과 행·컬럼 수를 헤더 배지나 별도 소스 요약으로 반복하지 않는다. 레코드 구조화 화면은 소스 종류와 감지 필드 수에 관계없이 `AI 필드 자동 추론` action을 일관되게 노출한다. 현재 action은 실제 AI 호출이 아닌 발표용 규칙 기반 데모로, 10필드 클릭 로그에서 약 1초의 분석 상태 후 `event_time`, `event_id`, `user_id`, `session_id`, `event_type`, `product_id`, `page_url`, `device_type`, `referrer`, `properties.position` 컬럼명과 타입 초안을 적용한다. 다른 필드 수에는 프리셋을 적용하지 않으며, 적용 결과는 사용자가 검증하고 수정할 수 있다. 화면에는 중복 소스 요약과 섹션별 행·정상 건수·컬럼 수를 따로 표시하지 않으며, 긴 `원본 샘플`과 `결과 미리보기`는 사용자가 접거나 펼칠 수 있다.
 4. 사용자는 schema, rule, schedule, permission, target을 설정한다.
+   - Schema의 `결과 미리보기`는 원본 샘플을 변경하지 않고 현재 필드명, 타입, 기본값, 빠른 변환 및 AI SQL 변환식을 순서대로 적용한 출력값과 그 출력값 기준 품질 검사 결과를 보여준다.
    - Schema의 `필수값`과 `누락 시 기본값`은 한 흐름으로 동작한다. 누락된 값은 기본값으로 먼저 채우고, 그 뒤에도 비어 있는 필수값은 실행을 실패시킨다.
    - 필수 필드에는 중복되는 `누락값 검사`를 별도로 노출하지 않는다. 선택 품질 검사의 실패 처리는 기록 후 계속, 실행 실패, 행 제외, 격리, 문제 값을 NULL로 변경 중 실제 실행 action만 설정한다.
    - 빠른 권한 프리셋은 `조회 전용`, `실행 가능`, `운영 가능`, `직접 설정` 이름만 같은 높이와 정렬로 표시하고, 상세 허용 작업은 아래 권한 편집 영역에서 확인한다.
@@ -138,10 +146,10 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 6. SQL editor와 결과/차트 영역은 데스크톱에서 확대된 작업 높이를 사용하고, 좁은 화면에서는 자동 높이로 전환한다. Trino 실행 평가와 실행 과정은 editor 아래의 독립 블록으로 늘어나지 않고 결과 panel의 세 번째 `실행 정보` 탭에서 확인한다.
 7. `실행 정보`는 preview의 실행 전 평가와 `쿼리 실행`, `첫 결과 준비` 경과·실제 처리량만 표시한다. 전체 결과가 필요한 action은 별도 `run`을 만들며 서로 다른 run의 시간과 진행률을 하나로 합치지 않는다.
 8. 사용자가 `전체 보기`를 누르면 별도 전체 결과 run을 시작하거나 재사용하고, 준비된 signed-cursor page부터 100행씩 탐색한다. `CSV 다운로드`는 같은 전체 결과 run이 완료될 때까지 비동기로 기다린 뒤 서버 stream을 시작한다. Backend는 사용자별 실행 이력 조회·재열기 API를 유지하되, 이번 SQL 분석 UI 범위는 현재 실행과 화면에 보존된 결과에 한정하며 별도 최근 실행 선택 목록은 노출하지 않는다.
-9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe만 저장하고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 실패·취소 시 마지막 정상 mapping을 유지한다.
+9. 성공한 Trino preview Run은 전체 결과 저장과 무관하게 반복 SQL Job으로 만들 수 있다. Job 생성은 SQL recipe를 저장한 뒤 별도 `run` command를 한 번 보내고, 실제 Job Run 시 권한을 다시 확인해 고유 Iceberg table에 full-refresh CTAS한 뒤 검증된 mapping만 교체한다. 첫 실행 실패에도 Job은 남고 실패·취소 시 마지막 정상 mapping을 유지한다.
 10. 실행 결과가 있으면 왼쪽 `차트 생성하기`에서 Dashboard와 같은 위젯 설정으로 소스, 유형, 필드, 집계, 색상을 설정하고 오른쪽 `차트 보기`/`데이터 미리보기`에서 전환한다. Trino page 차트는 현재 표시 범위만 임시로 시각화한다.
 11. DuckDB compatibility 결과는 SQL 화면의 처리 Job 모달에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 완료해 기존 Job 생성 API로 연결한다.
-12. 선택 관계가 Kafka streaming Dataset 1개와 static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. 사용자가 출력 카탈로그 이름과 시작 간격을 확인하면 deployment serving mode에 맞는 GOLD output Job을 생성하고 즉시 start command를 보낸다. 기본 mode는 Spark/Iceberg이며 Kafka micro-batch와 고정된 정적 Iceberg snapshot을 JOIN해 Catalog revision을 게시한다. 출력 Dataset은 첫 batch publication 뒤 `available`로 전환되어 Dashboard source에 나타난다. 일반 `실행`으로 만든 Trino preview와 반복 SQL Job은 이 연속 처리 경로로 자동 승격하지 않는다.
+12. 선택 관계가 streaming Dataset 1개와 batch/static Dataset 1개 이상이면 editor action의 `실시간 JOIN 만들기`에서 현재 SQL을 Continuous SQL로 검증한다. frontend는 Dataset ID만 보내고 backend가 producer Job을 resolve한다. 생성된 GOLD SQL Job에는 producer dependency가 저장되며 create 성공 뒤 start command를 즉시 한 번 보낸다. start 실패는 durable Job을 삭제하지 않는다. 실행 트리 전환 전의 기존 Job은 legacy direct-consumer 의미를 유지하며 자동 재연결하지 않는다. 일반 `실행`으로 만든 Trino preview와 실시간 Dataset 기반 반복 배치 SQL은 이 연속 처리 경로로 자동 승격하지 않는다.
 
 ### Flow C. FastAPI live backend 연결
 
@@ -155,15 +163,15 @@ Job 생성·수정 시 화면이 관리하는 grant는 `permission_grants` table
 
 ### Flow D. Continuous SQL stream-static JOIN
 
-1. 사용자는 query 가능한 Catalog Dataset 중 Kafka Continuous streaming relation 1개와 static Iceberg relation 1개 이상을 선택한다.
-2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key type과 static unique-key evidence를 실행 전에 검사한다.
-   유일키 증적만 없는 경우 사용자가 SQL이나 Catalog metadata를 직접 수정하지 않는다. JOIN 생성 UI가 정적 Iceberg 원본의 null·빈 값·중복을 정확히 검사해 증적을 등록하고 검증부터 Job 시작까지 자동 재시도한다.
-3. 생성된 Job은 기본적으로 stopped 상태이며 명시적 start command에서 Run generation, fencing, checkpoint와 static snapshot set을 고정한다.
-4. 기본 Iceberg mode에서는 각 Kafka micro-batch가 고정된 static snapshot과 JOIN되고 input offsets·snapshot set·output commit이 하나의 batch lineage로 남는다. Catalog row 통계가 cache 한도 이하인 불변 snapshot은 Spark memory/disk에 재사용한다. `LATEST_PER_BATCH`는 별도 기능 플래그가 켜진 Iceberg mode에서만 허용한다.
-5. ClickHouse mode에서는 Kafka Engine의 전용 consumer group이 원문 메시지를 `RawBLOB`으로 받고 저장된 JSON/공백 레코드 구조화 계약을 적용해 raw MergeTree에 먼저 기록한다. cascading Materialized View가 `PINNED_AT_START` static snapshot과 JOIN해 output ReplacingMergeTree에 쓴다. raw와 output은 `partition + offset`으로 중복을 제거하며 `INNER JOIN`에서 결과가 없는 입력도 raw offset lineage에는 남는다.
-6. 기본 Iceberg mode의 새 output table은 내부 `_asklake_run_id`를 partition column으로 사용해 해당 batch만 Trino가 가지치기하도록 한다. ClickHouse mode의 Dashboard query는 output table을 `FINAL`로 읽고 Catalog user schema만 노출한다.
-7. Iceberg mode는 exact snapshot·행 수 검증 후, ClickHouse mode는 raw offset boundary와 query 가능한 output count 확인 후에만 Catalog revision과 Dashboard change event를 공개한다. publication 재시도는 같은 source range를 다시 올리지 않는다.
-8. 지원 범위와 rollback은 `docs/realtime-2026/contracts/continuous-sql-v1.md`와 `docs/clickhouse-dashboard-join-plan.md`를 따른다.
+1. 사용자는 query 가능한 Catalog Dataset 중 realtime relation 1개와 batch/static relation 1개 이상을 선택한다.
+2. `POST /api/query/continuous-jobs/validate`가 SQL AST, 권한, relation mode, schema, equality key와 backend-resolved producer Job을 실행 전에 검사한다. producer Job이 없는 realtime Dataset은 거절하고 query 가능한 jobless static Dataset은 허용한다.
+3. 생성된 SQL JOIN Job은 실행 트리의 부모가 되고 input Dataset producer Job은 자식 dependency로 저장된다. frontend는 producer Job ID를 추정하거나 제출하지 않는다.
+4. create 성공 뒤 start command를 즉시 한 번 보낸다. start는 parent/child lock을 원자적으로 획득한 뒤 Kafka/Batch 자식을 실행하고 jobless static snapshot을 고정한다. 충돌 시 일부 자식만 실행하지 않고 전체 start를 거절하며 생성된 Job은 유지한다.
+5. Kafka 자식만 broker/topic/consumer group과 고급 설정을 소유한다. SQL parent는 별도 Kafka consumer를 만들지 않고 검증된 Dataset revision/manifest를 transform 입력으로 사용한다.
+6. parent가 시작한 realtime 자식은 parent stop에서 함께 정지한다. tree lock이 없을 때 자식 Job은 기존처럼 standalone 실행할 수 있고, 자식 standalone command가 SQL parent를 자동 시작하지 않는다.
+7. SQL output은 물리 검증 뒤 Catalog Dataset revision으로 게시한다. input cursor는 output commit과 publication 성공 이후에만 전진하며 같은 revision 재시도는 중복 output을 만들지 않는다.
+8. Dashboard는 Job과 binding하지 않는다. Widget이 선택한 Dataset ID를 보기·편집 모드의 진입 또는 상단 수동 새로고침에서 조회하며 upstream Job을 실행하지 않는다.
+9. 지원 범위와 legacy 전환은 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다. 현재 direct-consumer Continuous SQL Job은 자동 migration하지 않는다.
 
 ## 7) 성공 기준
 

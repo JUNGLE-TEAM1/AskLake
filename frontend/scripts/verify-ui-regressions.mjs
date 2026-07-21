@@ -611,7 +611,7 @@ const checks = [
     patterns: [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
-      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
+      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false, runAfterCreate: true \}\);/,
       /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
@@ -2053,7 +2053,7 @@ const checks = [
       /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
       /canNavigateToWizardStep\(\{/,
       /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
-      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /<EtlWizardHeader[\s\S]*isStepDisabled=\{/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,

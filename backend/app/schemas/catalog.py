@@ -132,7 +132,9 @@ class CatalogDatasetResponse(CamelModel):
     next_refresh: str
     owner: str
     quality: str
-    rag: bool
+    # Kept only to deserialize Catalog payloads created before RAG was removed.
+    # New runtime paths neither create nor consume RAG metadata.
+    rag: bool = False
     rows: str
     sample_rows: list[list[str]]
     schema_: list[tuple[str, str]] = Field(alias="schema")
@@ -157,6 +159,11 @@ class CatalogDatasetResponse(CamelModel):
     unique_key_columns: list[str] = Field(default_factory=list)
     unique_key_sets: list[list[str]] = Field(default_factory=list)
     relation_mode: Literal["streaming", "static"] | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
     streaming_source: dict[str, Any] | None = None
     iceberg_snapshot_id: str | None = None
     schema_fingerprint: str | None = None

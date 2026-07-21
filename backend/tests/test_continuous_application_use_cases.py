@@ -32,13 +32,23 @@ class FakeWorker:
         self.events = events
         self.lose_start_response = lose_start_response
 
-    def command(self, _job, _runtime, action, _options=None):
-        self.events.append(f"worker:{action}")
+    def command(self, _job, _runtime, action, options=None):
+        self.events.append(f"worker:{action}:{(options or {}).get('workerAttemptId', '')}")
         if action == "start" and self.lose_start_response:
             raise ApiError("BACKEND_BRIDGE_TIMEOUT", "response lost", 504)
         if action == "status":
             return {"containerState": "running", "workerAttemptId": "attempt-recovered"}
         return {"containerState": "starting", "workerAttemptId": "attempt-1"}
+
+
+class TerminalWorker:
+    def __init__(self, results) -> None:
+        self.results = list(results)
+        self.calls = []
+
+    def command(self, _job, _runtime, action, options=None):
+        self.calls.append((action, options or {}))
+        return self.results.pop(0)
 
 
 class KafkaRuntimeGatewayCompatibilityTests(unittest.TestCase):
@@ -130,14 +140,18 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
     def test_desired_state_is_committed_before_worker_submission(self) -> None:
         events, current_runtime, result = self.execute()
 
-        self.assertEqual(events, ["save", "worker:start", "save"])
+        self.assertEqual(events[0], "save")
+        self.assertTrue(events[1].startswith("worker:start:start-"))
+        self.assertEqual(events[2], "save")
         self.assertEqual(current_runtime.status, "starting")
         self.assertEqual(result["processing_result"]["runtimeStatus"], "starting")
 
     def test_lost_start_response_is_reconciled_without_duplicate_submission(self) -> None:
         events, current_runtime, result = self.execute(lose_start_response=True)
 
-        self.assertEqual(events, ["save", "worker:start", "worker:status", "save"])
+        self.assertEqual(events[0], "save")
+        self.assertTrue(events[1].startswith("worker:start:start-"))
+        self.assertEqual(events[2:], ["worker:status:", "save"])
         self.assertEqual(current_runtime.failed_count, 0)
         self.assertTrue(result["processing_result"]["workerResult"]["submissionRecovered"])
 
@@ -166,6 +180,93 @@ class ContinuousCommandUseCaseTests(unittest.TestCase):
             result["processing_result"]["workerResult"]["worker"],
             "kafka_connect_clickhouse_v2",
         )
+
+    def test_duplicate_stop_is_idempotent_for_transitional_and_terminal_states(self) -> None:
+        for status_value in ("stopping", "stopped"):
+            with self.subTest(status=status_value):
+                current_runtime = runtime(status=status_value)
+                current_runtime.metrics = record_runtime_command(
+                    {"currentWorkerAttemptId": "attempt-current"},
+                    command_transition("running", "stopContinuous"),
+                )
+                previous_revision = current_runtime.metrics["runtimeContract"]["stateRevision"]
+                worker = TerminalWorker([])
+                saves = []
+
+                with (
+                    patch.object(
+                        continuous_commands.etl_repository,
+                        "lock_kafka_continuous_runtime",
+                        return_value=current_runtime,
+                    ),
+                    patch.object(
+                        continuous_commands.etl_repository,
+                        "save_kafka_continuous_command",
+                        side_effect=lambda _db, saved_job, _runtime: saves.append("save") or saved_job,
+                    ),
+                    patch.object(
+                        continuous_commands,
+                        "JobCommandResponse",
+                        side_effect=lambda **payload: payload,
+                    ),
+                ):
+                    result = execute_continuous_command(
+                        SimpleNamespace(),
+                        job(),
+                        ContinuousCommandRequest(command="stopContinuous", job_id="job-1"),
+                        SimpleNamespace(),
+                        worker=worker,
+                        hooks=hooks(),
+                    )
+
+                self.assertEqual(saves, ["save"])
+                self.assertEqual(worker.calls, [])
+                self.assertTrue(result["processing_result"]["idempotent"])
+                self.assertEqual(
+                    current_runtime.metrics["runtimeContract"]["stateRevision"],
+                    previous_revision,
+                )
+
+    def test_stop_dispatch_uses_the_active_worker_fence(self) -> None:
+        current_runtime = runtime(status="running")
+        current_runtime.metrics = record_runtime_command(
+            {},
+            command_transition("stopped", "startContinuous"),
+            worker_attempt_id="attempt-current",
+        )
+        worker = TerminalWorker([{
+            "containerState": "stopRequested",
+            "requestedAction": "stop",
+        }])
+
+        with (
+            patch.object(
+                continuous_commands.etl_repository,
+                "lock_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_commands.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda _db, saved_job, _runtime: saved_job,
+            ),
+            patch.object(
+                continuous_commands,
+                "JobCommandResponse",
+                side_effect=lambda **payload: payload,
+            ),
+        ):
+            result = execute_continuous_command(
+                SimpleNamespace(),
+                job(),
+                ContinuousCommandRequest(command="stopContinuous", job_id="job-1"),
+                SimpleNamespace(),
+                worker=worker,
+                hooks=hooks(),
+            )
+
+        self.assertEqual(worker.calls, [("stop", {"workerAttemptId": "attempt-current"})])
+        self.assertEqual(result["processing_result"]["runtimeStatus"], "stopping")
 
 
 class ContinuousReconciliationPolicyTests(unittest.TestCase):
@@ -197,6 +298,166 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         ))
         self.assertEqual(decision.action, ReconciliationAction.APPLY_TERMINAL_INTENT)
         self.assertEqual(decision.terminal_status, "stopped")
+
+    def test_unknown_worker_with_terminal_intent_waits_instead_of_ignoring_stale_report(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            desired_state="stopped",
+            public_status="stopping",
+            container_state="unknown",
+            report_state=JsonDocumentState.FOUND,
+            expected_worker_attempt_id="attempt-current",
+            observed_worker_attempt_id="attempt-old",
+        ))
+
+        self.assertEqual(
+            decision.action,
+            ReconciliationAction.WAIT_FOR_TERMINAL_CONFIRMATION,
+        )
+        self.assertEqual(decision.certainty, ReconciliationCertainty.UNCERTAIN)
+
+    def test_not_running_is_authoritative_terminal_evidence(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            desired_state="stopped",
+            public_status="stopping",
+            container_state="not_running",
+        ))
+
+        self.assertEqual(decision.action, ReconciliationAction.APPLY_TERMINAL_INTENT)
+        self.assertEqual(decision.terminal_status, "stopped")
+
+    def test_committed_terminal_state_does_not_trust_an_unknown_runner(self) -> None:
+        decision = decide_reconciliation(self.evidence(
+            desired_state="stopped",
+            public_status="stopped",
+            container_state="unknown",
+            report_state=JsonDocumentState.FOUND,
+            expected_worker_attempt_id="attempt-current",
+            observed_worker_attempt_id="attempt-old",
+        ))
+
+        self.assertEqual(
+            decision.action,
+            ReconciliationAction.WAIT_FOR_TERMINAL_CONFIRMATION,
+        )
+
+    def test_reconciler_reissues_fenced_stop_and_commits_confirmed_terminal_state(self) -> None:
+        current_runtime = runtime(status="stopping")
+        current_runtime.metrics = record_runtime_command(
+            {"currentWorkerAttemptId": "attempt-current"},
+            command_transition("running", "stopContinuous"),
+        )
+        current_job = job()
+        current_job.status = "running"
+        worker = TerminalWorker([{
+            "containerState": "not_running",
+            "requestedAction": "stop",
+        }])
+        events = []
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(state=JsonDocumentState.MISSING),
+            worker_status=lambda _job, _runtime: {"containerState": "unknown"},
+            materialize_batch=lambda *_args, **_kwargs: events.append("materialize"),
+            sync_session=lambda *_args, **_kwargs: events.append("sync"),
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: self.fail("missing report must not be applied"),
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            reconcile_continuous_runtime(
+                None,
+                current_job,
+                worker=worker,
+                hooks=reconciliation_hooks,
+            )
+
+        self.assertEqual(worker.calls, [("stop", {"workerAttemptId": "attempt-current"})])
+        self.assertEqual(current_runtime.status, "stopped")
+        self.assertEqual(current_job.status, "stopped")
+        self.assertEqual(current_job.progress, None)
+        self.assertEqual(events, ["materialize", "sync", "save"])
+        self.assertEqual(
+            current_runtime.metrics["lastReconciliation"]["action"],
+            ReconciliationAction.APPLY_TERMINAL_INTENT.value,
+        )
+
+    def test_unknown_terminal_state_is_retryable_and_reuses_the_same_fence(self) -> None:
+        current_runtime = runtime(status="stopping")
+        current_runtime.metrics = record_runtime_command(
+            {"currentWorkerAttemptId": "attempt-current"},
+            command_transition("running", "stopContinuous"),
+        )
+        current_job = job()
+        current_job.status = "running"
+        worker = TerminalWorker([
+            {"containerState": "stopRequested", "requestedAction": "stop"},
+            {"containerState": "stopRequested", "requestedAction": "stop"},
+        ])
+        events = []
+        reconciliation_hooks = ContinuousReconciliationHooks(
+            reconcile_stale_maintenance=lambda *_args, **_kwargs: None,
+            reconcile_pending_replay=lambda *_args, **_kwargs: None,
+            report_path=lambda _job_id: Path("unused"),
+            read_report=lambda _path: JsonDocument(
+                state=JsonDocumentState.FOUND,
+                value={"workerAttemptId": "attempt-old", "status": "stopping"},
+            ),
+            worker_status=lambda _job, _runtime: {"containerState": "unknown"},
+            materialize_batch=lambda *_args, **_kwargs: None,
+            sync_session=lambda *_args, **_kwargs: events.append("sync"),
+            write_ack=lambda *_args, **_kwargs: None,
+            mark_failed=lambda *_args, **_kwargs: None,
+            apply_report=lambda *_args, **_kwargs: self.fail("stale report must not be applied"),
+        )
+
+        with (
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "get_kafka_continuous_runtime",
+                return_value=current_runtime,
+            ),
+            patch.object(
+                continuous_reconciliation.etl_repository,
+                "save_kafka_continuous_command",
+                side_effect=lambda *_args: events.append("save"),
+            ),
+        ):
+            for _ in range(2):
+                reconcile_continuous_runtime(
+                    None,
+                    current_job,
+                    worker=worker,
+                    hooks=reconciliation_hooks,
+                )
+
+        self.assertEqual(worker.calls, [
+            ("stop", {"workerAttemptId": "attempt-current"}),
+            ("stop", {"workerAttemptId": "attempt-current"}),
+        ])
+        self.assertEqual(current_runtime.status, "stopping")
+        self.assertEqual(current_job.status, "running")
+        self.assertEqual(current_job.progress["label"], "중지 확인 중")
+        error = current_runtime.metrics["runtimeContract"]["lastError"]
+        self.assertEqual(error["code"], "terminal_worker_state_unknown")
+        self.assertTrue(error["retryable"])
+        self.assertEqual(
+            current_runtime.metrics["lastReconciliation"]["action"],
+            ReconciliationAction.WAIT_FOR_TERMINAL_CONFIRMATION.value,
+        )
 
     def test_new_running_intent_beats_stale_stop_from_previous_worker(self) -> None:
         decision = decide_reconciliation(self.evidence(
@@ -256,7 +517,8 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
                 hooks=reconciliation_hooks,
             )
 
-        self.assertEqual(events, ["worker:start", "save"])
+        self.assertTrue(events[0].startswith("worker:start:start-new-intent"))
+        self.assertEqual(events[1:], ["save"])
         self.assertEqual(current_runtime.status, "starting")
         self.assertEqual(current_job.status, "running")
         self.assertEqual(
@@ -272,6 +534,18 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
             observed_worker_attempt_id="old",
         ))
         self.assertEqual(decision.action, ReconciliationAction.IGNORE_STALE_REPORT)
+
+    def test_terminal_or_unknown_stale_report_restarts_the_current_fenced_attempt(self) -> None:
+        for container_state in ("exited", "missing", "unknown"):
+            with self.subTest(container_state=container_state):
+                decision = decide_reconciliation(self.evidence(
+                    container_state=container_state,
+                    expected_worker_attempt_id="start-current",
+                    observed_worker_attempt_id="old-attempt",
+                ))
+
+                self.assertEqual(decision.action, ReconciliationAction.RESTART_WORKER)
+                self.assertEqual(decision.certainty, ReconciliationCertainty.CONFIRMED)
 
     def test_partial_publication_uses_current_report_for_resume(self) -> None:
         decision = decide_reconciliation(self.evidence(

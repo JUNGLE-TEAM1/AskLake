@@ -4,10 +4,6 @@
     overflow: visible;
   }
 
-  .schema-shell .topbar {
-    min-height: 64px;
-  }
-
   .schema-shell .stepper-inner {
     height: auto;
   }
@@ -145,6 +141,11 @@
 }
 
 @media (max-width: 780px) {
+  .app-notification-stack {
+    right: 16px;
+    bottom: 16px;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }
@@ -158,13 +159,48 @@
     height: auto;
   }
 
+  .topbar {
+    min-height: 64px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+  }
+
+  .topbar-end {
+    margin-left: auto;
+  }
+
   .stepper-inner {
     height: auto;
     justify-content: flex-start;
     padding: 18px 20px;
   }
 
+  .etl-wizard-header {
+    min-height: 48px;
+  }
+
+  .etl-wizard-breadcrumb {
+    overflow: hidden;
+    padding: 5px 0 5px 16px;
+  }
+
+  .etl-wizard-header-actions {
+    padding-right: 16px;
+  }
+
+  .etl-wizard-header-actions .creation-top-actions .primary-button,
+  .etl-wizard-header-actions .creation-top-actions .secondary-button {
+    min-width: 58px;
+    padding: 0 10px;
+  }
+
   .page-body {
+    padding: 20px;
+  }
+
+  .page-body.catalog-body,
+  .page-body.sql-body {
     padding: 20px;
   }
 

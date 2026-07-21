@@ -6,6 +6,7 @@ import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
+import { useDashboardAutoRefresh } from "./runtime/useDashboardAutoRefresh";
 import { useDraftPageMutations } from "./runtime/useDraftPageMutations";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -70,12 +71,14 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
 };
 
 export function DashboardPage({
+  currentUserId,
   dataset,
   entry,
   sqlResult,
   onAction,
   onRuntimeNavigate,
 }: {
+  currentUserId: string;
   dataset: CatalogDataset;
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
@@ -119,8 +122,8 @@ export function DashboardPage({
   const availableDashboardDatasets = useMemo(
     () => {
       const datasets = sqlDashboardDataset
-      ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
-      : dashboardDatasets;
+        ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
+        : dashboardDatasets;
       return datasets.filter((item) => !deletedDatasetIds.has(item.id));
     },
     [dashboardDatasets, deletedDatasetIds, sqlDashboardDataset],
@@ -161,8 +164,8 @@ export function DashboardPage({
     loadPublishedRuntime,
     pages: runtimePages,
     publishedRuntime,
-    realtimeConnectionState,
-    realtimeDataState,
+    refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
     retryWidgetData,
     runtimeError,
     runtimeLoading,
@@ -171,6 +174,16 @@ export function DashboardPage({
     setPublishedRuntime,
     setSelectedPageId: setSelectedRuntimePageId,
   } = runtimeResources;
+  const activeRuntime = runtimeSelection.mode === "published" ? publishedRuntime : draftRuntime;
+  const dashboardAutoRefresh = useDashboardAutoRefresh({
+    active: view === "runtime",
+    currentUserId,
+    dashboardId: runtimeSelection.dashboardId,
+    refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
+    runtime: activeRuntime,
+    selectedPageId: selectedRuntimePageId,
+  });
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -460,17 +473,20 @@ export function DashboardPage({
 
   const refreshRuntimeDashboard = async () => {
     setIsRefreshingRuntime(true);
-    const runtime = runtimeSelection.mode === "published"
-      ? await loadPublishedRuntime(runtimeSelection.dashboardId, {
-        preferPrefetched: true,
-        silent: true,
-      })
-      : await loadDraftRuntime(runtimeSelection.dashboardId);
-    setIsRefreshingRuntime(false);
-    setRuntimeNotice(runtime
-      ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
-      : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
-    onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
+    try {
+      const refreshed = await refreshCurrentPageWidgetData();
+      setRuntimeNotice(refreshed
+        ? { message: "현재 페이지의 위젯 데이터를 새로고침했습니다.", tone: "info" }
+        : { message: "일부 위젯을 새로고침하지 못했습니다. 마지막 성공 결과를 유지합니다.", tone: "error" });
+      onAction(
+        refreshed ? "dashboard.runtime.refreshed" : "dashboard.runtime.refresh_failed",
+        `/api/dashboards/${runtimeSelection.dashboardId}/widgets/query`,
+        runtimeSelection.dashboardId,
+        refreshed ? undefined : "failed",
+      );
+    } finally {
+      setIsRefreshingRuntime(false);
+    }
   };
 
   const shareRuntimeDashboard = () => {
@@ -612,6 +628,7 @@ export function DashboardPage({
       publishDraft: publishDraftRuntime,
       redoLayout: layoutHistory.redo,
       refresh: refreshRuntimeDashboard,
+      setAutoRefreshEnabled: dashboardAutoRefresh.setEnabled,
       renamePage: pageMutations.renamePage,
       renameTitle: renameRuntimeDashboardTitle,
       retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
@@ -649,12 +666,13 @@ export function DashboardPage({
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,
+      autoRefreshEnabled: dashboardAutoRefresh.enabled,
+      autoRefreshError: dashboardAutoRefresh.errorMessage,
+      autoRefreshStatus: dashboardAutoRefresh.status,
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,
       publishedRuntime,
-      realtimeConnectionState,
-      realtimeDataState,
       renamingPageId: pageMutations.renamingPageId,
       runtimeError,
       runtimeLoading,

@@ -118,6 +118,12 @@ def ensure_catalog_schema(db: Session) -> None:
             "status": "VARCHAR(64)",
             "freshness": "VARCHAR(64)",
             "source": "VARCHAR(255)",
+            "producer_job_id": "VARCHAR(160)",
+            "producer_job_kind": "VARCHAR(64)",
+            "execution_mode": "VARCHAR(32)",
+            "source_kind": "VARCHAR(64)",
+            "relation_mode": "VARCHAR(32)",
+            "runtime_status": "VARCHAR(64)",
             "source_manifest": "JSON",
             "rows": "VARCHAR(120)",
             "size": "VARCHAR(120)",
@@ -140,10 +146,7 @@ def ensure_catalog_schema(db: Session) -> None:
 
 
 def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
-    if model.payload:
-        return normalize_dataset_payload(model.payload)
-
-    return normalize_dataset_payload({
+    payload = dict(model.payload or {
         "description": model.description or "",
         "downstream": model.downstream or [],
         "freshness": model.freshness or "latest",
@@ -166,10 +169,26 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "tags": model.tags or [],
         "upstream": model.upstream or [],
     })
+    authoritative_metadata = {
+        "producerJobId": model.producer_job_id,
+        "producerJobKind": model.producer_job_kind,
+        "executionMode": model.execution_mode,
+        "sourceKind": model.source_kind,
+        "relationMode": model.relation_mode,
+        "runtimeStatus": model.runtime_status,
+    }
+    for key, value in authoritative_metadata.items():
+        if value is not None:
+            payload[key] = value
+    return normalize_dataset_payload(payload)
 
 
 def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_payload = dict(payload)
+    # RAG is no longer a product/runtime capability. Older durable Catalog
+    # payloads may omit this former field, so retain a harmless compatibility
+    # default instead of making the whole Catalog list fail validation.
+    normalized_payload.setdefault("rag", False)
     physical_bindings = normalized_payload.get("physicalBindings")
     if not isinstance(physical_bindings, list):
         physical_bindings = []
@@ -230,6 +249,12 @@ def dataset_payload_to_model_values(payload: dict[str, Any]) -> dict[str, Any]:
         "status": payload.get("status"),
         "freshness": payload.get("freshness"),
         "source": payload.get("source"),
+        "producer_job_id": payload.get("producerJobId") or payload.get("producer_job_id"),
+        "producer_job_kind": payload.get("producerJobKind") or payload.get("producer_job_kind"),
+        "execution_mode": payload.get("executionMode") or payload.get("execution_mode"),
+        "source_kind": payload.get("sourceKind") or payload.get("source_kind"),
+        "relation_mode": payload.get("relationMode") or payload.get("relation_mode"),
+        "runtime_status": payload.get("runtimeStatus") or payload.get("runtime_status"),
         "source_manifest": payload.get("sourceManifest") or payload.get("source_manifest"),
         "rows": payload.get("rows"),
         "size": payload.get("size"),

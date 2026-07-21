@@ -177,6 +177,7 @@ export default function SchemaTransformEditor({
   sourceTabs = null,
   allSources = [], // All source nodes info: [{ id, datasetId, name, schema }]
   allowSqlTransform = true,
+  headerActions = null,
   portableTransforms = true,
   transformsDisabled = false,
 }) {
@@ -759,6 +760,7 @@ export default function SchemaTransformEditor({
   return (
     <div className="flex flex-col overflow-hidden bg-gray-50 rounded-lg border border-gray-200">
       <EtlStepHeader
+        actions={headerActions}
         icon={<SlidersHorizontal />}
         title="변환 설정"
       />

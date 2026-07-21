@@ -96,22 +96,20 @@ export function DashboardLandingPage({
 }) {
   return (
     <div className="dashboard-page dashboard-list-page">
-      <div className="dashboard-list-actions">
-        <Button
-          className="primary-button dashboard-create-button"
-          disabled={isCreatingDashboard}
-          type="button"
-          size="sm"
-          variant="primary"
-          onClick={onCreateDashboard}
-        >
-          <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
-        </Button>
-      </div>
-
       <div className="dashboard-panel-stack">
         <Panel className="dashboard-table-list">
           <PanelHeader
+            actions={
+              <Button
+                disabled={isCreatingDashboard}
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={onCreateDashboard}
+              >
+                <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+              </Button>
+            }
             icon={<ListChecks size={16} />}
             iconVariant="outline"
             size="section"

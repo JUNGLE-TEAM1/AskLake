@@ -50,9 +50,14 @@ def dashboard_ratio_values(config: dict[str, Any]) -> tuple[str, str]:
     return numerator, denominator
 
 
-def dashboard_ratio_expression(value_key: str, config: dict[str, Any]) -> str:
+def dashboard_ratio_expression(
+    value_key: str,
+    config: dict[str, Any],
+    *,
+    physical_columns: Mapping[str, str] | None = None,
+) -> str:
     numerator, denominator = dashboard_ratio_values(config)
-    column = _quote_identifier(value_key)
+    column = _quote_identifier((physical_columns or {}).get(value_key, value_key))
     numerator_count = (
         f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {_quote_literal(numerator)} "
         "THEN 1 ELSE 0 END)"
@@ -95,6 +100,7 @@ def dashboard_widget_filter_predicates(
     config: Mapping[str, Any],
     columns: set[str],
     column_types: Mapping[str, str] | None = None,
+    physical_columns: Mapping[str, str] | None = None,
 ) -> list[str]:
     raw_filters = config.get("filters")
     if raw_filters is None:
@@ -120,11 +126,15 @@ def dashboard_widget_filter_predicates(
         seen_ids.add(filter_id)
 
         column = str(raw_filter.get("column") or "").strip()
-        require_dashboard_column(column, columns)
+        physical_column = dashboard_physical_column(
+            column,
+            columns,
+            physical_columns,
+        )
         operator = str(raw_filter.get("operator") or "").strip().lower()
         predicates.append(
             _dashboard_widget_filter_predicate(
-                _quote_identifier(column),
+                _quote_identifier(physical_column),
                 resolved_column_types.get(column, "string"),
                 operator,
                 raw_filter,
@@ -196,17 +206,23 @@ def read_dashboard_filter_values(
     limit: int = 50,
 ) -> dict[str, Any]:
     try:
-        require_dashboard_column(column, session.columns)
+        physical_columns = getattr(session, "column_map", None)
+        physical_column = dashboard_physical_column(
+            column,
+            session.columns,
+            physical_columns,
+        )
         resolved_limit = dashboard_row_limit(
             limit,
             default=50,
             maximum=DASHBOARD_FILTER_VALUE_LIMIT,
         )
-        column_sql = _quote_identifier(column)
+        column_sql = _quote_identifier(physical_column)
         filter_parts = dashboard_widget_filter_predicates(
             {"filters": context_filters or []},
             session.columns,
             dashboard_dataset_column_types(session.dataset, session.columns),
+            physical_columns,
         )
         filter_parts.append(f"{column_sql} IS NOT NULL")
         normalized_search = str(search or "").strip()
@@ -260,6 +276,45 @@ def read_dashboard_filter_values(
 def require_dashboard_column(column: str, columns: set[str]) -> None:
     if column not in columns:
         raise ValueError(f"Dashboard column does not exist: {column}")
+
+
+def dashboard_catalog_physical_column_map(
+    catalog_columns: list[str],
+    physical_columns: set[str],
+) -> dict[str, str]:
+    """Map Catalog-facing names to the exact physical SQL identifiers."""
+    catalog_by_fold: dict[str, list[str]] = {}
+    for column in catalog_columns:
+        if isinstance(column, str) and column.strip():
+            catalog_by_fold.setdefault(column.casefold(), []).append(column)
+    physical_by_fold: dict[str, list[str]] = {}
+    for column in physical_columns:
+        if column.strip():
+            physical_by_fold.setdefault(column.casefold(), []).append(column)
+
+    mapped: dict[str, str] = {}
+    for normalized, catalog_names in catalog_by_fold.items():
+        if len(catalog_names) != 1:
+            raise ValueError(
+                f"Catalog schema has ambiguous case-insensitive column: {normalized}"
+            )
+        physical_names = physical_by_fold.get(normalized, [])
+        if len(physical_names) > 1:
+            raise ValueError(
+                f"Physical schema has ambiguous case-insensitive column: {normalized}"
+            )
+        if physical_names:
+            mapped[catalog_names[0]] = physical_names[0]
+    return mapped
+
+
+def dashboard_physical_column(
+    column: str,
+    columns: set[str],
+    physical_columns: Mapping[str, str] | None,
+) -> str:
+    require_dashboard_column(column, columns)
+    return (physical_columns or {}).get(column, column)
 
 
 def dashboard_row_limit(value: Any, *, default: int, maximum: int) -> int:

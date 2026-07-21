@@ -627,6 +627,7 @@ def _publish_continuous_dashboard_revision(
             source_ranges=inputs.source_ranges,
             commit_kind=STREAM_COMMIT_KIND,
             manifest_location=inputs.manifest_path,
+            snapshot_id=str(output.verified_result.get("icebergSnapshotId") or "") or None,
         )
     db.commit()
 

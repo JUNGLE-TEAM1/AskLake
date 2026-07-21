@@ -3,61 +3,58 @@ import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
-
-const REALTIME_STATUS: Record<RealtimeConnectionState, {
-  label: string;
-  tone: "default" | "muted" | "success" | "warning";
-}> = {
-  closed: { label: "수동 새로고침", tone: "muted" },
-  connecting: { label: "실시간 연결 중", tone: "default" },
-  degraded: { label: "재연결 중", tone: "warning" },
-  fallback_polling: { label: "폴링 복구", tone: "warning" },
-  open: { label: "실시간", tone: "success" },
-};
+import { Switch } from "@/components/ui/switch";
+import {
+  dashboardAutoRefreshStatusCopy,
+  type DashboardAutoRefreshStatus,
+} from "./dashboardAutoRefresh";
 
 export function DashboardTopBar({
+  autoRefreshEnabled,
+  autoRefreshError,
+  autoRefreshStatus,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
   isRenaming = false,
   mode,
   onOpenDraft,
+  onAutoRefreshChange,
   onOpenPublished,
   onPublishDraft,
   onRefresh,
   onRenameTitle,
   onShare,
-  realtimeConnectionState,
-  realtimeDataState,
   title,
 }: {
+  autoRefreshEnabled: boolean;
+  autoRefreshError?: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
   isRenaming?: boolean;
   mode: "published" | "draft";
   onOpenDraft?: () => void;
+  onAutoRefreshChange: (enabled: boolean) => void;
   onOpenPublished?: () => void;
   onPublishDraft?: () => void;
   onRefresh?: () => void;
   onRenameTitle?: (title: string) => Promise<void> | void;
   onShare?: () => void;
-  realtimeConnectionState?: RealtimeConnectionState;
-  realtimeDataState?: DashboardLiveDataState;
   title: string;
 }) {
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
-  const realtimeStatus = realtimeDataState === "degraded"
-    ? { label: "최신 데이터 확인 필요", tone: "warning" as const }
-    : realtimeDataState === "stale"
-      ? { label: "데이터 지연", tone: "warning" as const }
-      : realtimeConnectionState
-        ? REALTIME_STATUS[realtimeConnectionState]
-        : null;
+  const autoRefreshStatusLabel = dashboardAutoRefreshStatusCopy(autoRefreshStatus);
+  const autoRefreshStatusTone = autoRefreshStatus === "active"
+    ? "success"
+    : autoRefreshStatus === "error"
+      ? "danger"
+      : autoRefreshStatus === "connecting"
+        ? "warning"
+        : "muted";
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -105,14 +102,13 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
-            {mode === "published" && realtimeStatus ? (
-              <StatusBadge
-                aria-label={`대시보드 동기화 상태: ${realtimeStatus.label}`}
-                tone={realtimeStatus.tone}
-              >
-                {realtimeStatus.label}
-              </StatusBadge>
-            ) : null}
+            <StatusBadge
+              aria-label={`대시보드 동기화 상태: ${autoRefreshStatusLabel}`}
+              title={autoRefreshError ?? autoRefreshStatusLabel}
+              tone={autoRefreshStatusTone}
+            >
+              {autoRefreshStatusLabel}
+            </StatusBadge>
             {canRename && (
               <Button
                 className="asklake-dashboard-title-edit-button"
@@ -129,6 +125,14 @@ export function DashboardTopBar({
         )}
       </div>
       <div className="asklake-dashboard-actions">
+        <label className="asklake-dashboard-auto-refresh-toggle">
+          <span>자동 갱신</span>
+          <Switch
+            aria-label="대시보드 자동 갱신"
+            checked={autoRefreshEnabled}
+            onCheckedChange={onAutoRefreshChange}
+          />
+        </label>
         {mode === "published" ? (
           <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />

@@ -114,6 +114,28 @@ class ContinuousSqlServiceModeTests(unittest.TestCase):
             canonical_hash({key: value for key, value in resolved.items() if key != "planHash"}),
         )
 
+    def test_dataset_revision_plan_does_not_retain_sql_kafka_ownership(self) -> None:
+        resolved = compiled_plan_with_serving_mode(
+            {
+                "planVersion": "continuous-sql.v1",
+                "runtimeSql": "SELECT 1",
+                "streamingSource": {
+                    "datasetId": "events",
+                    "broker": "kafka:9092",
+                    "topic": "events",
+                    "consumerGroupId": "source-group",
+                    "maxOffsetsPerTrigger": 100,
+                },
+            },
+            "iceberg",
+            job_id="csql-tree",
+            max_offsets_per_trigger=100,
+            execution_input_mode="dataset_revision",
+        )
+
+        self.assertEqual(resolved["executionInputMode"], "dataset_revision")
+        self.assertEqual(resolved["streamingSource"], {"datasetId": "events"})
+
     def test_iceberg_deployment_rejects_clickhouse_job_creation(self) -> None:
         request = ContinuousSqlCreateRequest.model_validate({
             "query": "SELECT e.id FROM events e JOIN users u ON e.user_id = u.id",

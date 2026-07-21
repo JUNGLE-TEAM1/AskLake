@@ -671,7 +671,7 @@ Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creat
 
 `CLICKHOUSE_REALTIME_V2_ENABLED=true`, `KAFKA_CONNECT_SINK_ENABLED=true`, `CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2`가 모두 설정된 일반 Kafka Continuous Job은 같은 command API를 유지하되 Spark Structured Streaming을 시작하지 않는다. control-plane worker가 Kafka Connect raw sink를 등록·재개하고 `raw_events_v2_current`의 해당 topic/partition/offset을 관찰한다. `startContinuous` 직후 Catalog Dataset은 pending serving binding과 `status=preparing`으로 저장되며, 첫 offset은 active binding, `status=available`, `dataset_freshness`, `dataset_revision_commits`, schema-v2 `dataset.revision.committed` event를 같은 transaction으로 게시한다. Dashboard reader는 active binding과 `streamingSource.topic`으로 ClickHouse raw view를 제한한다. V2 상태는 Spark runtime report 대신 Connector state와 ClickHouse offset을 `continuousRuntime`에 직접 투영하고 `processingResult.worker`는 `kafka_connect_clickhouse_v2`다. 이 hot-ingest slice는 S3/Iceberg archive를 만들지 않는다.
 
-`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. In an embedded local runtime they launch or signal a Spark Structured Streaming worker. In production web/API mode they first persist intent and return `processingResult.controlPlaneOnly=true`; the separately deployed, PostgreSQL-lease-owning Continuous worker alone performs the Spark side effect. Both modes reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Start/resume also passes PostgreSQL topic/partition `nextOffset` watermarks; `foreachBatch` filters older offsets before any write so a full duplicate is skipped and a partial overlap publishes only the unseen suffix. Each non-empty filtered batch derives a deterministic Run/source boundary from Job, checkpoint, consumer identity, a durable publication sequence and offset ranges, then appends `_asklake_run_id`-marked rows to the persisted Iceberg target. Spark raw batch ID is diagnostic only. A failure after Iceberg commit and before manifest/checkpoint completion reuses the same committed marker on retry instead of appending duplicates. Job hydrate verifies the exact reported snapshot and exact `_asklake_run_id` row count through Trino before Catalog cursor advancement and does this reconciliation before worker liveness failure handling. A terminal stale report window is recovered by listing completed S3 manifests after the acknowledged cursor; an incomplete last manifest never advances the ACK. An exited/missing/stale worker becomes `failed` only while active, and intentional pause/stop exits complete as `paused`/`stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. In an embedded local runtime they launch or signal a Spark Structured Streaming worker. In production web/API mode they first persist intent and return `processingResult.controlPlaneOnly=true`; the separately deployed, PostgreSQL-lease-owning Continuous worker alone performs the Spark side effect. The committed `fencingToken` is sent to the runner as its worker attempt ID on both paths. Thus an old REST report is ignored, but if that stale worker is `exited`/`missing`, or its runner state is `unknown` after a control-plane redeploy, while the durable desired state remains `running`, reconciliation submits the current fenced attempt rather than leaving the Job in `starting`. For committed pause/stop intent, `unknown` is not terminal evidence: the reconciler reissues the same fenced command idempotently, keeps `pausing`/`stopping` with retryable `terminal_worker_state_unknown`, and commits Job/runtime/session as `paused`/`stopped` only after `exited`, `missing`, or `not_running` is authoritative. Repeated `stopContinuous` while already `stopping` or `stopped` returns an idempotent success without incrementing `stateRevision`. Both modes reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Start/resume also passes PostgreSQL topic/partition `nextOffset` watermarks; `foreachBatch` filters older offsets before any write so a full duplicate is skipped and a partial overlap publishes only the unseen suffix. Each non-empty filtered batch derives a deterministic Run/source boundary from Job, checkpoint, consumer identity, a durable publication sequence and offset ranges, then appends `_asklake_run_id`-marked rows to the persisted Iceberg target. Spark raw batch ID is diagnostic only. A failure after Iceberg commit and before manifest/checkpoint completion reuses the same committed marker on retry instead of appending duplicates. Job hydrate verifies the exact reported snapshot and exact `_asklake_run_id` row count through Trino before Catalog cursor advancement and does this reconciliation before worker liveness failure handling. A terminal stale report window is recovered by listing completed S3 manifests after the acknowledged cursor; an incomplete last manifest never advances the ACK. An exited/missing/stale worker becomes `failed` only while active, and intentional pause/stop exits complete as `paused`/`stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 When `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX` is an `s3://` or `s3a://` URI, runtime report, command, and Catalog ACK documents are shared S3 objects rather than local files. The API reads/writes them through the configured S3-compatible client and the Spark driver uses Hadoop S3A. The documents are status/command transport only; PostgreSQL `desiredState`, `stateRevision`, and `workerAttemptId` remain the command-order and fencing authority.
 
@@ -868,7 +868,7 @@ type TrinoQueryValidationResponse = {
 };
 ```
 
-`POST /api/etl/sql-jobs`는 성공한 Trino Query Run에서 반복 실행용 SQL recipe Job을 생성합니다. source Run 제출자 또는 admin만 호출할 수 있고, Dataset을 조회할 수 있더라도 다른 사용자의 Run이면 `403`을 반환합니다. request의 query/base/reference identity도 persisted Run과 정확히 일치해야 합니다.
+`POST /api/etl/sql-jobs`는 성공한 Trino Query Run에서 stopped 반복 실행용 SQL recipe Job을 생성합니다. source Run 제출자 또는 admin만 호출할 수 있고, Dataset을 조회할 수 있더라도 다른 사용자의 Run이면 `403`을 반환합니다. request의 query/base/reference identity도 persisted Run과 정확히 일치해야 합니다. SQL 분석 frontend는 `201`의 Job을 먼저 상태에 보존한 뒤 `POST /api/etl/jobs/{jobId}/commands`에 `{ "command": "run" }`을 한 번 보낸다. command 실패는 create를 rollback하지 않고 부분 성공으로 표시하며 사용자는 같은 Job을 작업 목록에서 다시 실행할 수 있다. DuckDB compatibility SQL 처리 Job도 `POST /api/etl/jobs` create 성공 뒤 같은 첫 `run` command를 사용한다.
 
 ```ts
 type CreateTrinoSqlJobRequest = {
@@ -2521,6 +2521,7 @@ Response `200 OK`:
 - `column`과 `contextFilters[].column`은 Catalog schema와 실제 readable column의 교집합에 있어야 합니다.
 - 알 수 없는 컬럼, 타입에 맞지 않는 연산자·값은 `422 DASHBOARD_WIDGET_CONFIG_INVALID`입니다.
 - 문자열 검색은 대소문자를 구분하지 않는 포함 조건이며 값과 검색어는 SQL literal로 처리합니다.
+- 물리 값 조회 실패는 빈 `values` 성공 응답으로 바꾸지 않습니다. Frontend는 오류와 직접 값 입력 fallback을 제공할 수 있지만 Catalog `sampleRows`를 후보로 사용하지 않으며, 저장된 Widget의 실제 계산은 계속 backend 물리 데이터 조회 계약을 따릅니다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 
@@ -3414,7 +3415,7 @@ Request:
 }
 ```
 
-`mode`는 `published`가 기본값이며 `draft`도 지원합니다. `widgetIds`는 `1..100`개이고 해당 mode의 현재 revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Published는 Dashboard `view`, draft는 Dashboard `manage` 권한이 필요하며 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다.
+`mode`는 `published`가 기본값이며 `draft`도 지원합니다. `widgetIds`는 `1..100`개이고 해당 mode의 현재 revision에 속한 widget만 요청할 수 있습니다. 없는 widget ID가 포함되면 `404 NOT_FOUND`입니다. Published는 Dashboard `view`, draft는 Dashboard `manage` 권한이 필요하며 연결된 Dataset `query` 권한을 물리 storage 접근 전에 다시 검사합니다. Published runtime 초기 `GET`은 저장된 결과를 읽는 read-only 경로라 새 widget을 `pending`으로 반환할 수 있고, 이 `POST`가 그 widget을 잠금·계산·저장하여 `ready` 또는 `error`로 전이시키는 유일한 browser 계산 경로입니다.
 
 Response `200 OK`:
 
@@ -4123,6 +4124,21 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
+
+## Legacy Dashboard Job Binding 제거 계약
+
+> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic migration `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다. 현재 head는 후속 additive migration을 포함할 수 있다.
+
+Dashboard와 Job 사이에 새 binding을 만들지 않는다. ETL, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 검증된 Catalog Dataset revision을 publication하고, Dashboard Widget이 저장한 `dataset_id`가 사용자가 선택한 연결의 source of truth다.
+
+Dashboard 편집기는 권한이 있는 Catalog Dataset을 제공하며 binding 상태로 Dataset selector를 잠그지 않는다. Widget create/update와 Assistant action은 명시적으로 선택된 Dataset을 사용한다. 화면 진입 및 수동 새로고침은 현재 페이지 Widget query를 실행하고 계산 실패 시 마지막 성공 결과를 유지한다.
+
+`dashboard_job_bindings`와 `dashboard_binding_deliveries`는 제품 계약이나 durable runtime resource가 아니다. migration은 `dashboard_binding_deliveries`를 먼저 삭제하고 `dashboard_job_bindings`를 삭제한다. 기존 row가 있으면 기본 upgrade는 중단되며, Phase 3 backend/worker replica 교체와 backup을 확인한 운영자가 migration process에 `ASKLAKE_CONFIRM_DROP_DASHBOARD_JOB_BINDINGS=true`를 준 경우에만 삭제한다. downgrade는 빈 호환 schema만 복원하므로 과거 row 복구에는 backup이 필요하다.
+
+`replace`는 full recalculation, `append`는 지원 Widget의 delta merge, `upsert`/`retract`/revision gap/schema identity 변경은 full recalculation을 사용한다. 이 계산 계약은 Widget의 `dataset_id`, Dataset freshness/revision commit과 `dashboard_widget_results`에만 적용되며 binding delivery를 만들지 않는다.
+
+제거된 endpoint와 모델의 상세 형식은 과거 기록인 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)에 남긴다. 실제 schema 제거 순서와 데이터 보존 기준은 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다.
+
 ## ETL Permission create-flow contract
 
 ETL Permission 화면은 더 이상 하드코딩 사용자 목록을 source of truth로 사용하지 않는다. 다만 그룹 후보는 현재 backend의 `DEMO_GROUPS` 고정 정의이며, 사용자 후보만 `auth_users` table을 우선 사용한다.
@@ -4162,6 +4178,7 @@ type PermissionGrant = {
 | 필드 | 타입 | 계약 |
 |---|---|---|
 | dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
+| dashboardAutoRefreshEnabled | boolean | 이전 배포 진단 호환 필드. 현재 Dashboard frontend는 값과 무관하게 수동 새로고침만 사용 |
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | continuousSqlServingMode | iceberg \| clickhouse | 새 Continuous SQL Job에 허용되는 deployment serving mode |
@@ -4177,7 +4194,7 @@ type PermissionGrant = {
 | reconnectRetryMs | integer | EventSource retry hint, 현재 3000 |
 | safetyPollAfterMs | integer | hybrid open 상태의 safety refresh 하한, 현재 60000 |
 
-이 API는 Connect URL, connector name, 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
+이 API는 Connect URL, connector name, 설정 원문, credential, secret을 반환하지 않는다. Dashboard frontend는 이 응답의 자동 갱신 필드로 polling/SSE를 시작하지 않으며 정적 SQL과 Kafka Continuous ingestion 계약에는 영향을 주지 않는다.
 
 ### GET /api/realtime/events
 
@@ -4230,6 +4247,8 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
 
+SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
+
 `output.servingMode`의 기본값은 `iceberg`다. Iceberg mode는 `storagePath`와 append `icebergTarget`을 함께 보내거나 둘 다 생략하며, 생략 시 backend가 `ASKLAKE_SPARK_OUTPUT_BUCKET`, Trino catalog/schema와 Dataset identity에서 target·checkpoint를 생성한다. 요청 mode가 `CONTINUOUS_SQL_SERVING_MODE`와 다르면 `422 CONTINUOUS_SQL_SERVING_MODE_DISABLED`다. `clickhouse` mode는 배포 mode와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`가 모두 맞을 때만 허용하며 output shape는 다음과 같다.
 
 ```json
@@ -4263,6 +4282,49 @@ compiled plan은 `staticCacheMaxRows`와 relation별 서버 계산 `cacheHint`�
 새 Continuous SQL output과 baseline-bound 기존 Iceberg table의 partition spec에는 사용자 schema에 노출하지 않는 `_asklake_run_id` identity partition을 추가한다. publication의 exact snapshot row-count와 Dashboard revision delta는 이 partition을 조건으로 해당 batch file만 가지치기한다.
 
 기존 `/api/query/runs` 및 Kafka Continuous ETL API는 변경하지 않는다. Continuous SQL feature flag가 꺼져 있으면 validate/create/start/resume/recover는 `409 CONTINUOUS_SQL_DISABLED`로 fail closed한다.
+
+### Issue #1117 SQL Job 실행 트리 contract
+
+Phase 1 producer metadata/dependency persistence에 이어 Phase 2는 validate/create의 authoritative producer resolution을 구현했다. runtime은 아직 direct-consumer이며 lock과 orchestration은 후속 Phase다. 구현 순서는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+
+validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. backend는 Catalog 정규화 column과 실제 Dataset-producing Job의 ID, Dataset ID, kind, execution/source mode를 대조한다. validate와 Continuous SQL Job response는 다음 `dependencyBindings`를 반환한다. validate의 `sqlJobId`는 `null`이고 create/GET은 같은 transaction으로 commit된 실제 ID다.
+
+```json
+{
+  "sqlJobId": "csql_123",
+  "inputDatasetId": "ds_clicks",
+  "childJobId": "JOB-1234",
+  "inputType": "realtime",
+  "executionPolicy": "run_on_tree_start",
+  "required": true
+}
+```
+
+Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`가 추가됐다. 새 ETL/Trino SQL/Continuous SQL publication은 JSON payload와 정규화 column을 함께 쓰고 read에서는 정규화 column이 우선한다. 기존 Dataset은 자동 backfill하지 않는다. Phase 2 frontend와 backend 모두 이름, tag, source 문자열, materialization run으로 relation mode나 producer를 추정하지 않는다.
+
+streaming input은 `relationMode=streaming`, 실제 Kafka Continuous `producerJobId`, 일치하는 `producerJobKind`, `executionMode=continuous`, `sourceKind=kafka`가 모두 필요하다. static input은 일치하는 batch producer가 있으면 `batch/run_on_tree_start`, producer metadata가 전혀 없는 queryable snapshot이면 `static/reuse_snapshot`이다. 일부만 있는 producer metadata, 다른 Dataset을 생산하는 Job, static으로 위장한 Continuous producer는 `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`다. streaming producer 누락/해결 실패는 `CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`다.
+
+Phase 2 이전에 생성되어 durable dependency가 비어 있는 legacy direct-consumer Job의 재시작만 예외다. 이 경우 새 producer를 추정하지 않고 Job에 이미 저장된 relation mode와 streaming source를 현재 Catalog schema/snapshot 검증에 사용한다. 이 호환 경로는 validate/create 또는 새 Job에 적용되지 않으며 기존 Job을 tree-managed Job으로 자동 변환하지 않는다.
+
+Phase 3 migration `0024_sql_execution_tree_locking`은 tree run, node run, cross-Job lock table을 추가한다. dependency가 있는 Continuous SQL parent의 start/recover는 SQL parent와 모든 producer child ID를 정렬하고 관련 Job row를 `FOR UPDATE`로 잠근 뒤 전체 lock set을 같은 transaction에서 획득한다. active standalone child, active unexpired tree lock 또는 producer 삭제가 하나라도 확인되면 새 continuous run, tree/node row와 앞서 획득한 lock을 전부 rollback한다.
+
+Job response의 additive `executionTree`는 active tree ID와 잠긴 Job ID를, `activeTreeRun`은 `treeRunId`, generation, `triggerType=parent_tree`, status, `fencingTokenHash`, `leaseExpiresAt`, `inputDatasetRevisions`, `nodes`, `locks`를 반환한다. parent node의 `parentRunId`는 null이고 child node는 tree run ID를 가진다. lock API는 generation과 fencing hash만 노출하며 raw token을 반환하지 않는다. reconcile은 현재 fence의 전체 lock set만 갱신하고, stop/failure는 현재 fence와 일치하는 lock만 해제한다. lease가 만료되면 다음 owner가 generation을 증가시켜 takeover할 수 있고 stale owner는 새 lock을 해제하거나 상태를 되돌릴 수 없다.
+
+tree-owned ETL Job은 standalone lifecycle command, update, delete를 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`로 거절한다. 반대로 standalone Job row가 먼저 running/paused 상태를 확정하면 parent start가 같은 오류로 거절된다. Phase 4 parent start/recover는 tree lock commit 뒤 existing batch child에 `run`, realtime child에 `startContinuous`를 batch → realtime 순서로 요청한다. 이 internal command는 matching `treeRunId`와 raw fencing token을 server-side로만 제시해 tree-owned child를 통과하며 public ETL API request에 이 field를 추가하지 않는다. child response의 Run/session identity와 requested status는 tree node에 저장한다. child가 실패하면 parent SQL worker는 시작하지 않고 `CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`로 tree를 failed/released 처리한다. revision wait/transform과 legacy direct-consumer 제거는 Phase 5다. lock lease는 `CONTINUOUS_SQL_TREE_LOCK_LEASE_SECONDS`(기본 120초)이며 active parent reconcile에서 갱신한다.
+
+DB migration `0023_sql_job_execution_tree_persistence`는 `catalog_datasets`에 위 6개 nullable column을 추가하고 `continuous_sql_dependencies`를 생성한다. dependency는 `(sql_job_id, input_dataset_id)`가 identity이며 producer child는 `run_on_tree_start`, jobless static은 `reuse_snapshot`만 허용한다.
+
+Job/Run response에는 additive `executionTree`, active `treeRun`, node state와 `inputDatasetRevisions`를 추가한다. parent full-tree start는 parent와 producer child lock을 한 transaction에서 모두 획득하고, 충돌하면 lock과 child 실행을 하나도 남기지 않은 채 다음 오류를 반환한다.
+
+- `422 CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`: realtime Dataset에 runnable Kafka Continuous producer Job이 없음
+- `422 CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`: realtime cardinality 또는 input type이 V1 범위를 벗어남
+- `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`: standalone/tree owner lock 충돌
+- `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`: required child를 실행할 수 없음
+- `409 CONTINUOUS_SQL_INPUT_REVISION_UNAVAILABLE`: required Dataset revision/snapshot을 고정할 수 없음
+
+SQL parent는 Kafka source identity를 복사해 새 consumer group을 만들지 않는다. producer child가 게시한 Dataset revision/manifest cursor를 사용하고 output commit과 Catalog revision publication 뒤에만 cursor를 전진시킨다. parent가 시작한 realtime child는 active tree와 matching fence 안에서만 parent pause/stop/resume에 따라 함께 pause/stop/resume한다. batch child는 이미 고정된 revision이므로 lifecycle 전파로 다시 실행하지 않는다. child lifecycle control 실패는 node `failed` evidence로 저장하지만 parent stop 자체를 rollback하지 않는다. tree lock이 없을 때 child standalone 실행은 유지하며 child command가 parent를 자동 시작하지 않는다.
+
+Dashboard Job Binding, managed Dataset lock과 자동 revision watcher는 이 확장에 포함하지 않는다. SQL output은 일반 Catalog Dataset으로 게시되고 Dashboard 보기·편집 모드는 Widget이 저장한 Dataset ID를 사용자의 수동 새로고침에서 조회한다.
 
 ## Internal runtime compatibility contract
 

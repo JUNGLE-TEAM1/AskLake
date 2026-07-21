@@ -3,6 +3,9 @@ import test from "node:test";
 
 import {
   dashboardWidgetDataRequests,
+  dashboardWidgetDataRefreshRequests,
+  dashboardWidgetDataRefreshRequestsForDatasets,
+  dashboardPageDatasetIds,
   dashboardWidgetDataSignature,
   mergeDashboardWidgetData,
   runDashboardWidgetDataQueue,
@@ -65,6 +68,35 @@ test("only the selected page is requested and widgets sharing a dataset are grou
     ["widget-3"],
   ]);
   assert.equal(requests.flatMap((request) => request.widgetIds).includes("widget-4"), false);
+});
+
+test("manual refresh requests every Dataset widget on the selected page", () => {
+  const current = runtime();
+  current.widgetsByPageId["page-1"] = current.widgetsByPageId["page-1"].map((item) => ({
+    ...item,
+    data: [{ value: 3 }],
+    dataStatus: "ready",
+  }));
+
+  const requests = dashboardWidgetDataRefreshRequests(current, "page-1");
+
+  assert.deepEqual(requests.map((request) => request.widgetIds), [
+    ["widget-1", "widget-2"],
+    ["widget-3"],
+  ]);
+  assert.equal(requests.flatMap((request) => request.widgetIds).includes("widget-4"), false);
+});
+
+test("automatic invalidation refreshes only widgets for changed Datasets", () => {
+  const current = runtime();
+  const requests = dashboardWidgetDataRefreshRequestsForDatasets(
+    current,
+    "page-1",
+    ["users"],
+  );
+
+  assert.deepEqual(dashboardPageDatasetIds(current, "page-1"), ["orders", "users"]);
+  assert.deepEqual(requests.map((request) => request.widgetIds), [["widget-3"]]);
 });
 
 test("one widget result replaces only that widget and preserves unrelated object identity", () => {

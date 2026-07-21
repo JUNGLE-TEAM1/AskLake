@@ -177,6 +177,39 @@ class FakeDashboardTrinoClient:
         raise AssertionError("fixture query should fit in one Trino page")
 
 
+class CaseMismatchedIcebergTrinoClient(FakeDashboardTrinoClient):
+    """Catalog uses title case while the materialized Iceberg fields are lowercase."""
+
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        self.queries.append(query)
+        if query.startswith("DESCRIBE"):
+            return TrinoClientPage(
+                columns=["Column", "Type"],
+                rows=[
+                    ["topic", "varchar"],
+                    ["partition", "bigint"],
+                    ["leader", "bigint"],
+                    ["_asklake_run_id", "varchar"],
+                ],
+                queryId="describe",
+            )
+        if "COUNT(*)" in query and "GROUP BY" not in query:
+            return TrinoClientPage(
+                columns=[DASHBOARD_VALUE_ALIAS], rows=[[10_000]], queryId="metric",
+            )
+        if "GROUP BY" in query:
+            return TrinoClientPage(
+                columns=["Topic", DASHBOARD_VALUE_ALIAS],
+                rows=[["reviews.raw", 10_000]],
+                queryId="bar-chart",
+            )
+        return TrinoClientPage(
+            columns=["Topic", "Partition", "Leader"],
+            rows=[["reviews.raw", 0, 0]],
+            queryId="table",
+        )
+
+
 class EndlessDashboardTrinoClient:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
@@ -259,6 +292,49 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertIn('GROUP BY "category"', client.queries[1])
         self.assertNotIn("GROUP BY ALL", client.queries[1])
         self.assertNotIn("_asklake_run_id", client.queries[1])
+
+    def test_iceberg_case_mismatched_catalog_columns_use_physical_sql_names(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["schema"] = [["Topic", "string"], ["Partition", "number"], ["Leader", "number"]]
+        client = CaseMismatchedIcebergTrinoClient()
+        session = DashboardDatasetQuerySession(dataset, trino_client=client)  # type: ignore[arg-type]
+        try:
+            metric = session.read_widget("metric", {"aggregation": "count"})
+            chart = session.read_widget("bar_chart", {
+                "aggregation": "count", "xKey": "Topic", "yKey": "Partition",
+            })
+            table = session.read_widget("table", {
+                "columns": ["Topic", "Partition", "Leader"], "sortKey": "Partition",
+            })
+        finally:
+            session.close()
+
+        self.assertEqual(metric["data"], [{DASHBOARD_VALUE_ALIAS: 10_000}])
+        self.assertEqual(chart["data"], [{"Topic": "reviews.raw", DASHBOARD_VALUE_ALIAS: 10_000}])
+        self.assertEqual(table["data"], [{"Topic": "reviews.raw", "Partition": 0, "Leader": 0}])
+        self.assertEqual(session.columns, {"Topic", "Partition", "Leader"})
+        self.assertIn('"topic" AS "Topic"', client.queries[2])
+        self.assertIn('GROUP BY "topic"', client.queries[2])
+        self.assertIn('"partition" AS "Partition"', client.queries[3])
+        self.assertIn('ORDER BY "partition" ASC', client.queries[3])
+
+    def test_iceberg_case_insensitive_physical_collision_is_rejected(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["schema"] = [["Topic", "string"]]
+
+        class CollisionClient(CaseMismatchedIcebergTrinoClient):
+            def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+                self.queries.append(query)
+                return TrinoClientPage(
+                    columns=["Column", "Type"],
+                    rows=[["Topic", "varchar"], ["topic", "varchar"]],
+                    queryId="describe",
+                )
+
+        with self.assertRaisesRegex(ApiError, "physical data could not be read") as raised:
+            DashboardDatasetQuerySession(dataset, trino_client=CollisionClient())  # type: ignore[arg-type]
+
+        self.assertIn("ambiguous case-insensitive column", str(raised.exception.details))
 
     def test_iceberg_aggregate_state_uses_trino_with_explicit_group_by(self) -> None:
         client = FakeDashboardTrinoClient()

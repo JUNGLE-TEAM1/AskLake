@@ -290,15 +290,16 @@ class DashboardRuntimeService:
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = dashboard_widget_type_enum(request.type)
+        dataset_id = request.dataset_id
         widget = self.repository.create_widget(
             page.id,
             widget_type=widget_type.value,
             title=request.title,
-            dataset_id=request.dataset_id,
+            dataset_id=dataset_id,
             query_id=None,
             layout=self._layout_to_json(request.layout or default_dashboard_widget_layout()),
             config=self._config_to_json(widget_type, request.config),
-            data=self._resolve_widget_data(request.data, request.dataset_id),
+            data=self._resolve_widget_data(request.data, dataset_id),
         )
         self.repository.db.commit()
         return self._build_widget_mutation_response(
@@ -325,20 +326,21 @@ class DashboardRuntimeService:
         next_config = None
         if request.config is not None or type_changed:
             next_config = self._config_to_json(next_type, request.config)
+        next_dataset_id = request.dataset_id if "dataset_id" in request.model_fields_set else widget.dataset_id
         next_data = None
         update_data = False
         if "data" in request.model_fields_set:
-            next_data = self._resolve_widget_data(request.data, request.dataset_id)
+            next_data = self._resolve_widget_data(request.data, next_dataset_id)
             update_data = True
         elif "dataset_id" in request.model_fields_set:
-            next_data = self._resolve_widget_data(None, request.dataset_id)
+            next_data = self._resolve_widget_data(None, next_dataset_id)
             update_data = True
         widget = self.repository.update_widget(
             widget,
             widget_type=next_type.value if type_changed else None,
             title=request.title,
             update_title="title" in request.model_fields_set,
-            dataset_id=request.dataset_id,
+            dataset_id=next_dataset_id,
             update_dataset_id="dataset_id" in request.model_fields_set,
             config=next_config,
             data=next_data,

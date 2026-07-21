@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo } from "react";
 import SchemaTransformEditor from "../../components/etl/SchemaTransformEditor.jsx";
 import "../../styles/schema-transform-source.css";
@@ -31,6 +32,7 @@ type SchemaTransformColumn = {
 type SchemaTransformWorkbenchProps = {
   columns: SchemaColumnDraft[];
   executionMode?: KafkaExecutionMode;
+  headerActions?: ReactNode;
   sampleRows: string[][];
   selectedIndex: number;
   sourceFormat: string;
@@ -50,6 +52,7 @@ const FIELD_OPERATIONS = new Set(["rename", "cast", "default_value", "null_guard
 export function SchemaTransformWorkbench({
   columns,
   executionMode = "snapshot",
+  headerActions,
   sampleRows,
   selectedIndex,
   sourceFormat,
@@ -131,6 +134,7 @@ export function SchemaTransformWorkbench({
         <SchemaTransformEditor
           allSources={allSources}
           allowSqlTransform={!continuous && !isKafka}
+          headerActions={headerActions}
           initialCustomSql={transformSteps.find((step) => step.operation === "SQL Expression")?.params ?? ""}
           initialTargetSchema={targetSchema}
           qualityRules={qualityRules}

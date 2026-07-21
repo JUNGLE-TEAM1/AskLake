@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   continuousRuntimeErrorMessage,
+  continuousRuntimeStatusDisplay,
   isContinuousRuntimeTransition,
   shouldAcceptContinuousRuntimeUpdate,
 } from "../src/services/continuousRuntimeContract.ts";
@@ -57,6 +58,27 @@ test("only server transitional statuses keep command polling active", () => {
   for (const status of ["running", "paused", "stopped", "failed"] as const) {
     assert.equal(isContinuousRuntimeTransition(job({ continuousRuntime: runtime({ status }) })), false);
   }
+});
+
+test("continuous status display projects stopping separately from generic running", () => {
+  assert.deepEqual(
+    continuousRuntimeStatusDisplay(job({
+      status: "running",
+      continuousRuntime: runtime({ status: "stopping" }),
+    })),
+    { label: "중지 중", spinning: true, status: "stopped" },
+  );
+  assert.deepEqual(
+    continuousRuntimeStatusDisplay(job({
+      status: "stopped",
+      continuousRuntime: runtime({ status: "stopped" }),
+    })),
+    { label: "중지", spinning: false, status: "stopped" },
+  );
+  assert.equal(
+    continuousRuntimeStatusDisplay(job({ executionMode: "scheduled", continuousRuntime: undefined })),
+    null,
+  );
 });
 
 test("an older command revision cannot overwrite the current runtime", () => {

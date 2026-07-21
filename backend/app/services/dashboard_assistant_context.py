@@ -115,10 +115,12 @@ def build_assistant_context(
     max_sample_rows: int,
 ) -> AssistantDashboardContext:
     datasets = _available_dataset_contexts(catalog_repository, actor, max_sample_rows)
-    allowed_dataset_ids = {dataset.id for dataset in datasets}
     dashboard_id = request.dashboard_id
     if not dashboard_id:
+        allowed_dataset_ids = {dataset.id for dataset in datasets}
         return _request_fallback_context(request, datasets, allowed_dataset_ids)
+
+    allowed_dataset_ids = {dataset.id for dataset in datasets}
 
     dashboard_meta = runtime_repository.get_dashboard_meta(dashboard_id)
     revision = (

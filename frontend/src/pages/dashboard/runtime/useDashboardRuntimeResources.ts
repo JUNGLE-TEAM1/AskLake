@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DashboardRuntimeMode } from "../../../types";
 import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
-import { usePreparedPublishedDashboard } from "./usePreparedPublishedDashboard";
-import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
 import { useDashboardWidgetData } from "./useDashboardWidgetData";
 import { onCatalogDatasetDeleted } from "../../../services/catalogEvents";
 
@@ -19,14 +17,10 @@ export function useDashboardRuntimeResources({
   const {
     cancelDraftRuntimeLoad, cancelPublishedRuntimeLoad,
     draftError, draftLoading, draftRuntime, loadDraftRuntime,
-    loadPublishedRuntime: loadPublishedRuntimeFromApi, publishedRuntime, runtimeError, runtimeLoading,
+    loadPublishedRuntime, publishedRuntime, runtimeError, runtimeLoading,
     setDraftError, setDraftLoading, setDraftRuntime, setPublishedRuntime,
     setRuntimeError, setRuntimeLoading,
   } = useDashboardRuntimeLoaders(setSelectedPageId);
-  const loadPublishedRuntime = usePreparedPublishedDashboard({
-    active, dashboardId, loadFromApi: loadPublishedRuntimeFromApi, mode,
-    publishedRuntime, setPublishedRuntime, setRuntimeError,
-  });
 
   const pages = mode === "published"
     ? (publishedRuntime?.pages ?? [])
@@ -86,7 +80,7 @@ export function useDashboardRuntimeResources({
     },
     [mode, setDraftRuntime, setPublishedRuntime],
   );
-  const { retryWidgetData } = useDashboardWidgetData({
+  const { refreshCurrentPageWidgetData, refreshWidgetDataForDatasets, retryWidgetData } = useDashboardWidgetData({
     active,
     dashboardId,
     mode,
@@ -95,18 +89,9 @@ export function useDashboardRuntimeResources({
     setRuntime: setActiveRuntime,
   });
 
-  const { realtimeConnectionState, realtimeDataState } = usePublishedDashboardLiveRefresh({
-    active,
-    dashboardId,
-    mode,
-    publishedRuntime,
-    reloadPublishedRuntime: loadPublishedRuntime,
-    setPublishedRuntime,
-  });
-
   return {
     draftError, draftLoading, draftRuntime, loadDraftRuntime, loadPublishedRuntime,
-    pages, publishedRuntime, realtimeConnectionState, realtimeDataState,
+    pages, publishedRuntime, refreshCurrentPageWidgetData, refreshWidgetDataForDatasets,
     retryWidgetData, runtimeError, runtimeLoading, selectedPageId,
     setDraftError, setDraftRuntime, setPublishedRuntime, setSelectedPageId,
   };

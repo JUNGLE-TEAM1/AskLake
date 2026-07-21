@@ -5,11 +5,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from app.api.dashboard_live import query_dataset_freshness
+from app.api.dashboard_live import query_dataset_freshness, query_published_dashboard_widgets
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.dashboard import (
     DashboardRuntimeWidgetType,
+    DashboardWidgetQueryRequest,
     DatasetFreshnessQueryRequest,
     DatasetFreshnessResponse,
 )
@@ -1149,6 +1150,26 @@ class DashboardFreshnessApiTests(unittest.TestCase):
             [dataset.dataset_id for dataset in response.datasets],
             ["healthy-dataset"],
         )
+
+    def test_published_widget_query_uses_the_calculation_service_path(self) -> None:
+        actor = ActorContext(name="dashboard-viewer", role="viewer")
+        service = SimpleNamespace(query_widgets=lambda *_args: [])
+
+        with (
+            patch("app.api.dashboard_live.CatalogRepository", return_value=object()),
+            patch("app.api.dashboard_live.DashboardLiveRepository", return_value=object()),
+            patch("app.api.dashboard_live.DashboardRuntimeRepository", return_value=object()),
+            patch("app.api.dashboard_live.DashboardRuntimeService", return_value=service) as service_factory,
+        ):
+            response = query_published_dashboard_widgets(
+                "dashboard-live",
+                DashboardWidgetQueryRequest(mode="published", widget_ids=["widget-1"]),
+                actor,
+                SimpleNamespace(),
+            )
+
+        self.assertEqual(response.widgets, [])
+        self.assertEqual(service_factory.call_args.kwargs["prepared_live_results_only"], False)
 
 
 if __name__ == "__main__":

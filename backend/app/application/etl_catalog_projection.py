@@ -41,7 +41,6 @@ from app.application.etl_job_projection import (
     target_dataset_tags,
     tuple_rows_to_lists,
 )
-from app.application.rag_source_manifest import rag_source_manifest_from_spark_result
 from app.application.etl_runtime_support import dag_step, is_kafka_job
 from app.application.etl_source_window import (
     normalize_s3_etag,
@@ -102,6 +101,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     target_description = target_dataset_description(job)
     target_tags = target_dataset_tags(job)
     sample_rows = spark_output_sample_rows(result, schema_json)
+    producer_metadata = catalog_producer_metadata(job)
     return CatalogDatasetModel(
         id=dataset_id,
         payload=dataset_payload,
@@ -112,6 +112,12 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         status="available",
         freshness="latest",
         source=job.name,
+        producer_job_id=producer_metadata["producerJobId"],
+        producer_job_kind=producer_metadata["producerJobKind"],
+        execution_mode=producer_metadata["executionMode"],
+        source_kind=producer_metadata["sourceKind"],
+        relation_mode=producer_metadata["relationMode"],
+        runtime_status=producer_metadata["runtimeStatus"],
         source_manifest=dataset_payload.get("sourceManifest"),
         rows=format_rows(result.get("outputRows")),
         size=display_size,
@@ -223,7 +229,7 @@ def dataset_payload_from_spark_result(
     storage_format = "iceberg" if query_engine_available else SPARK_OUTPUT_FORMAT
     storage_location = str(result.get("warehouseLocation") or output_path)
     current_storage_size_bytes = storage_size_bytes if query_engine_available else aggregate["storageSizeBytes"]
-    downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
+    downstream = ["SQL 분석"] if query_engine_available else []
     result_run_id = str(result.get("runId") or "")
     if previous_payload and aggregate["latestRunId"] != result_run_id:
         return {
@@ -235,11 +241,6 @@ def dataset_payload_from_spark_result(
             "sourceRunId": aggregate["latestRunId"],
             "storageSizeBytes": previous_payload.get("storageSizeBytes", current_storage_size_bytes),
         }
-    source_manifest = rag_source_manifest_from_spark_result(
-        result=result,
-        dataset_id=dataset_id,
-        schema_json=schema_json,
-    )
     return {
         "description": target_dataset_description(job),
         "downstream": downstream,
@@ -257,13 +258,12 @@ def dataset_payload_from_spark_result(
         "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
         "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
-        "rag": job.rag,
         **catalog_relation_metadata(aggregate["rowCount"], format_rows(aggregate["rowCount"]), job.execution_mode == "continuous" and is_kafka_job(job), job.schema_fingerprint),
         "sampleRows": sample_rows,
         "schema": schema_json,
         "size": format_storage_size(current_storage_size_bytes) if current_storage_size_bytes > 0 else display_size,
         "source": job.name,
-        **({"sourceManifest": source_manifest} if source_manifest else {}),
+        **catalog_producer_metadata(job),
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": storage_format,
@@ -282,6 +282,29 @@ def dataset_payload_from_spark_result(
         ),
         **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
     }
+
+
+def catalog_producer_metadata(job: ETLJobModel) -> dict[str, str]:
+    execution_mode = (
+        "continuous"
+        if str(job.execution_mode or "").strip().casefold() == "continuous"
+        else "snapshot"
+    )
+    kafka_source = is_kafka_job(job)
+    source_kind = (
+        "kafka"
+        if kafka_source
+        else ("sql" if job.source_type == "SQL Result" else "etl")
+    )
+    return {
+        "producerJobId": job.id,
+        "producerJobKind": str(job.job_kind or "pipeline"),
+        "executionMode": execution_mode,
+        "sourceKind": source_kind,
+        "relationMode": "streaming" if execution_mode == "continuous" and kafka_source else "static",
+        "runtimeStatus": str(job.status or "scheduled"),
+    }
+
 
 def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> list[dict[str, Any]]:
     return upsert_materialization_run(previous_runs, next_run)

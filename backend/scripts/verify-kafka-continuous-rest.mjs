@@ -163,6 +163,7 @@ try {
     schemaEvolutionPolicy: {},
     topic: "reviews.rest.contract",
     triggerIntervalSeconds: 5,
+    workerAttemptId: "start-durable-fence",
   };
 
   const emptyStatus = await continuousAction("status", workerRequest, environment);
@@ -177,7 +178,7 @@ try {
   assert.equal(started.containerState, "starting");
   assert.equal(started.containerId, "continuous-1");
   assert.equal(started.started, true);
-  assert(started.workerAttemptId);
+  assert.equal(started.workerAttemptId, "start-durable-fence");
   const firstContinuousSubmission = createRequests.find(
     (item) => String(item.appArgs?.[0]).endsWith("/kafka_continuous_stream.py"),
   );
@@ -191,6 +192,11 @@ try {
     firstContinuousSubmission.environmentVariables.ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL,
     "ERROR",
   );
+
+  const fencedSubmission = createRequests.find(
+    (item) => item.environmentVariables.ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID === "start-durable-fence",
+  );
+  assert(fencedSubmission, "REST submission must receive the committed worker fence.");
 
   const duplicateStart = await runManager(continuousScript, workerRequest, environment, "ASKLAKE_KAFKA_CONTINUOUS_RESULT");
   assert.equal(duplicateStart.containerId, started.containerId);
@@ -225,9 +231,14 @@ try {
   assert.equal(pausedStatus.requestedAction, "pause");
 
   submissions.get("continuous-1").forceUnknown = true;
-  const resumed = await runManager(continuousScript, workerRequest, environment, "ASKLAKE_KAFKA_CONTINUOUS_RESULT");
+  const resumed = await runManager(
+    continuousScript,
+    { ...workerRequest, workerAttemptId: "start-durable-fence-2" },
+    environment,
+    "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
+  );
   assert.equal(resumed.containerId, "continuous-2");
-  assert.notEqual(resumed.workerAttemptId, started.workerAttemptId);
+  assert.equal(resumed.workerAttemptId, "start-durable-fence-2");
   assert.equal(resumed.started, true);
   assert.equal(
     continuousCreateCount,

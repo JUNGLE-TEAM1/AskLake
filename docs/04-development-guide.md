@@ -1,5 +1,7 @@
 # 04. Development Guide
 
+> RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
+
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
 
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
@@ -212,7 +214,7 @@ PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
 ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
 
 ETL 화면의 표는 `DataTable`을 사용한다. 이 컴포넌트가 TanStack Table의 row/column model과 shadcn `Table` primitives를 함께 제공하므로, 미리보기·검증 결과·편집 셀도 별도 `<table>` 마크업을 만들지 않고 `ColumnDef`의 `cell` renderer로 구현한다. 화면별 스타일은 최소 너비, 말줄임, 상태 표현처럼 데이터 의미에 필요한 범위만 `tableClassName`, `viewportClassName`, column meta로 추가한다.
-`npm run test:dashboard-live-refresh`는 published runtime의 Continuous dataset ID 중복 제거, `latestRevision > appliedRevision`인 widget 선택, 서버 polling 힌트의 1~60초 범위, 성공 widget만 기존 runtime에 병합하는 계약을 확인한다. partial 응답이 실제 전진했을 때만 250ms catch-up 대상이 되고 같은 revision을 다시 받으면 일반 주기로 돌아가는지도 검증한다.
+`npm run test:dashboard-widget-data-state`는 선택 페이지의 Dataset Widget grouping, 최초 pending 조회, 수동 새로고침의 전체 현재 페이지 강제 조회, signature가 일치하는 응답만 runtime에 병합하는 계약을 확인한다. Dashboard frontend에는 polling timer, EventSource 갱신, background prefetch를 추가하지 않는다.
 SQL/Catalog pagination 변경 시에는 같은 script가 SQL 전체 snapshot의 페이지 조작, 편집기 단일 스크롤·빈 SQL 유지, Catalog schema/sample viewer와 새로고침·첫/마지막 page 연결을 함께 확인한다. Backend unit test는 10,000행 경계뿐 아니라 20,001행 결과의 마지막 page까지 검증해 총행 제한이 다시 생기지 않게 한다.
 
 SQL run/Catalog row page의 backend 경계값은 전체 metadata를 초기화하는 `npm run verify`대신 다음 격리 unit test로 확인한다.
@@ -240,7 +242,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 .venv/bin/python -m unittest tests.test_query_route_compatibility tests.test_trino_production_hardening -v
 ```
 
-프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
+프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run test:sql-job-immediate-run && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, create→run/start 순서, 부분 성공 보존, TypeScript 연결과 production bundle을 함께 확인한다.
 
 `scripts/verify-deploy-readiness.sh`는 Docker 작업 전에 `ASKLAKE_PYTHON_BIN`이 정확히 Python 3.13인지 확인하고 다른 minor version이면 즉시 실패한다.
 
@@ -772,7 +774,7 @@ cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard는 기본 수동 새로고침을 유지하되, `DASHBOARD_AUTO_REFRESH_ENABLED=true`, `REALTIME_EVENTS_ENABLED=true`, effective `DASHBOARD_SYNC_MODE=hybrid|sse`인 경우 사용자·Dashboard별 토글로 보기·편집 모드의 현재 페이지 Dataset SSE 구독을 켤 수 있다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
 API/worker와 Spark driver가 같은 mounted report directory를 공유하지 않는 배포(EKS SparkApplication 등)는 두 process에 같은 private S3 prefix를 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>`로 설정한다. `s3://`도 API 설정에서 허용한다. 이 prefix에는 runtime report, command, catalog ACK가 저장되므로 warehouse나 일반 dataset prefix와 분리하고 해당 workload role에 그 prefix의 `GetObject`, `PutObject`, `ListBucket`만 부여한다. 로컬 Compose는 이 값을 비워 mounted local report directory를 계속 사용한다.
 
@@ -1011,6 +1013,72 @@ PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본
 상태값을 다룰 때는 API와 frontend internal state에 영어 canonical value를 사용한다.
 화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
 
+### Dashboard Job Binding 제거 순서
+
+Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. Job binding 제거와 기본 수동 갱신의 경계는 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따르며, 자동 갱신은 그 Dataset 연결을 변경하지 않는 선택적 SSE invalidation layer다.
+
+1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일한다. 자동 갱신은 opt-in SSE invalidation으로만 허용하며 polling/background prefetch는 추가하지 않는다.
+2. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 Dashboard 연동 옵션과 자동 Dashboard 생성을 제거한다. Dashboard runtime은 binding을 조회하지 않고 Dataset selector와 Assistant의 managed lock을 제거한다.
+3. Phase 2 frontend gate는 `npm run test:dashboard-job-binding-removal`, Dashboard 관련 회귀 테스트와 production build다.
+4. Phase 3에서 binding router/schema/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거한다. `npm run verify:dashboard-job-binding-removal`로 OpenAPI와 runtime 참조가 다시 생기지 않는지 검증한다.
+5. Phase 4 migration `0022_remove_dashboard_job_bindings`가 delivery table, binding table 순서로 제거한다. 기존 row가 있으면 모든 backend/worker replica의 Phase 3 교체와 backup을 확인한 뒤 migration process에만 `ASKLAKE_CONFIRM_DROP_DASHBOARD_JOB_BINDINGS=true`를 설정한다. DB table을 code cutover보다 먼저 삭제하지 않는다.
+6. 기존 Dashboard/revision/page/widget ID와 Widget `dataset_id`가 보존되고 수동 새로고침이 성공하는지 확인한다.
+7. `npm run verify:dashboard-job-binding-schema-removal`로 fresh upgrade, populated schema 차단, 명시적 upgrade, empty-schema downgrade와 재-upgrade를 검증한다.
+
+### SQL Job 실행 트리 구현 순서
+
+Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)과 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)을 따른다. SQL JOIN Job이 실행 트리의 parent/root이고, 선택된 Dataset을 생산하는 기존 Kafka/Batch Job이 child다. 데이터 흐름은 child Job → input Dataset revision → SQL transform → output Dataset revision이며, frontend가 Dataset 이름·tag로 producer를 추정하거나 `childJobId`를 제출하지 않는다.
+
+1. Phase 0에서 현재 direct-consumer 구현을 characterization하고 execution ownership, dependency, lock, revision, manual Dashboard 경계를 문서와 정적 verifier로 고정한다.
+2. Phase 1에서 Catalog Dataset의 authoritative producer metadata와 SQL dependency binding을 additive persistence로 도입한다. 완료 기준은 migration upgrade/downgrade, 새 DB session 재조회, Catalog 정규화 column 우선순위와 빈 `dependencyBindings` 호환성이다.
+3. Phase 2에서 backend가 Dataset ID와 정규화 Catalog metadata로 정확한 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다. frontend 이름/tag 추정은 제거하고 create는 dependency를 Job과 같은 transaction에 저장한다. 완료 기준은 producer 불일치/누락 오류, validate binding, 새 session create 재조회와 UI authoritative 분류 테스트다.
+4. Phase 3에서 tree run/node run과 atomic parent-child lock/lease/fencing을 구현한다. 완료 기준은 정렬된 전체 lock set, active standalone 충돌, 부분 lock rollback, 만료 takeover generation, fencing hash 응답, ETL command/update/delete 차단과 migration downgrade다.
+5. Phase 4 안전 보정은 parent worker start 실패 시 이번 tree run에서 시작한 realtime child만 보상 stop한 뒤 tree/node/lock을 terminal failure로 끝낸다. legacy direct-Kafka Job에는 이 보정 경로를 유지한다.
+6. Revision runner는 tree run의 input Dataset revision, parent Run의 static snapshot, output target과 private fence를 typed request로 직렬화한다. revision commit에는 exact Iceberg `snapshotId`를 저장하고 pinning은 snapshot이 있는 input만 tree/node에 고정한다. runner는 Kafka broker/topic/consumer group/offset/trigger 없이 `FOR VERSION AS OF` transform과 verified output publication을 수행한다. 첫 snapshot 전에는 `starting`으로 남아 sync loop가 재시도한다.
+7. Phase 4에서 SQL parent start/recover가 lock commit 뒤 실행 가능한 batch child `run`, realtime child `startContinuous`를 먼저 요청하고 node Run/session identity를 저장한다. child failure는 parent worker 시작 전 tree failure로 처리한다. Dataset revision 대기와 transform은 Phase 5 범위다.
+8. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
+9. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다. parent pause/stop/resume은 active tree의 realtime child에만 각각 `pauseContinuous`/`stopContinuous`/`resumeContinuous`를 전파하며, batch child를 다시 실행하거나 tree 밖 standalone Job을 제어하지 않는다. child lifecycle control 실패는 node에 durable `failed` evidence로 남기되, 이미 수락된 parent stop을 되돌려 "실행 중"으로 만들지 않는다.
+10. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다. Continuous SQL dialog는 streaming producer Dataset, static Dataset, output engine과 생성 후 `activeTreeRun.nodes`를 읽기 전용으로 표시한다. SQL-owned Kafka trigger/offset 설정 UI는 노출하지 않으며 수집 크기·주기는 producer Job 설정을 따른다.
+11. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다. Continuous control worker도 Dashboard precompute를 수행하지 않으며, 최초 pending Widget 계산과 사용자가 누른 새로고침만 `/widgets/query`를 호출한다.
+12. Phase 9에서 legacy direct-consumer Continuous SQL Job의 명시적 운영 처리와 live E2E/rollout gate를 완료한다. 기존 Job은 자동 마이그레이션하지 않는다.
+
+Phase 0 정적 계약 검증은 다음 명령으로 실행한다.
+
+```bash
+cd backend
+npm run verify:continuous-sql-execution-tree-contract
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python python -m unittest tests.test_sql_execution_tree_persistence -v
+```
+
+Phase 2까지 확인할 때는 producer resolution/create durability와 frontend 분류를 추가로 실행한다.
+
+```bash
+cd backend
+PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest \
+  tests.test_continuous_sql_dependency_resolution \
+  tests.test_continuous_sql_catalog \
+  tests.test_continuous_sql_planner \
+  tests.test_sql_execution_tree_persistence -v
+
+cd ../frontend
+npm run test:continuous-sql-ui
+npm run build
+```
+
+Phase 3 lock 검증은 다음을 추가한다. SQLite 선택-table fixture는 lock table이 없는 경우에만 legacy test compatibility로 우회하며 배포 PostgreSQL은 Alembic `0024_sql_execution_tree_locking`이 필수다.
+
+```bash
+cd backend
+PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest \
+  tests.test_sql_execution_tree_locking \
+  tests.test_etl_job_commands \
+  tests.test_etl_job_delete \
+  tests.test_etl_job_write_commands \
+  tests.test_continuous_sql_runtime_contract -v
+```
+
+Phase 4는 같은 `tests.test_sql_execution_tree_locking`에서 batch → realtime child dispatch 순서, matching fence internal command context, child failure 시 parent worker 미시작과 tree lock 해제를 검증한다. Phase 5 전에는 legacy SQL direct-consumer transform이 유지된다.
+
 ## 7) Pair Ownership
 
 4일 데모 마일스톤은 2인 3개 Pair 기준으로 운영한다.
@@ -1232,7 +1300,7 @@ cd backend
 .\.venv\Scripts\python.exe -m unittest tests.test_dashboard_live_repository tests.test_dashboard_live_results tests.test_kafka_continuous_dashboard_sync
 
 cd ..\frontend
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..
@@ -1240,6 +1308,8 @@ docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml 
 ```
 
 STACK-02 focused validation:
+
+Dashboard 자동 갱신을 로컬·배포 환경에서 확인하려면 `DASHBOARD_AUTO_REFRESH_ENABLED=true`, `REALTIME_EVENTS_ENABLED=true`, `DASHBOARD_SYNC_MODE=hybrid` 또는 `sse`가 필요하다. 사용자 토글은 기본 OFF이며 localStorage에 사용자 ID와 Dashboard ID를 함께 넣어 저장한다. 보기·편집 모드 각각에서 토글 ON, 페이지 이동, Widget Dataset 변경, hidden/visible 복귀, 토글 OFF를 확인하고 EventSource가 현재 페이지의 고유 Dataset만 구독하는지 점검한다. 연결 실패 시 polling 요청이 생기지 않고 수동 새로고침이 계속 동작해야 한다.
 
 ```powershell
 cd backend
@@ -1249,7 +1319,7 @@ cd backend
 
 cd ..\frontend
 npm run test:realtime-events
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..
@@ -1280,7 +1350,7 @@ npm run verify:realtime-stack
 
 cd ..\frontend
 npm run test:realtime-events
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..
@@ -1301,7 +1371,7 @@ npm run verify:ui-regressions
 npm run build
 ```
 
-Continuous SQL latency tuning은 새 request의 5초 기본 trigger와 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 두 경로를 사용한다. cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
+현재 legacy Continuous SQL latency tuning은 API에서 trigger를 생략하면 10초를 사용하고 SQL 분석 frontend가 5초를 명시적으로 제출하며, `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`를 함께 사용한다. Issue #1117 목표 구조에서는 SQL Job이 trigger/max-message를 소유하지 않고 연결된 producer Job의 수집 설정과 Dataset revision을 따른다. 전환 전 cache 한도는 executor memory/disk와 Catalog 통계 신뢰도를 확인하며 조정하고, memory pressure가 있거나 통계가 불안정하면 0으로 cache를 끈다. 새 output table은 `_asklake_run_id`를 partition column으로 생성하지만 기존 table은 자동 변경하지 않는다. 성능 변경 검증은 아래 계약 suite와 Compose render를 포함하고, 실제 지연 수치는 Kafka/MinIO/Spark/Iceberg/Trino 통합 환경에서 별도로 측정한다.
 
 ClickHouse mode의 정적 snapshot 적재 기본 한도는 relation당 15,000,000행이고 insert batch는 20,000행이다. Trino HTTP page는 최대 20MB, ClickHouse query는 60초로 제한한다. 실제 운영 데이터가 한도를 넘으면 값을 무조건 올리지 말고 dimension 크기·참조 열·ClickHouse 메모리와 disk를 먼저 확인한다. 동일 snapshot의 참조 열 table은 resume에서 재사용되며 source count와 local count가 다르면 truncate 후 다시 적재한다.
 
@@ -1537,6 +1607,17 @@ Continuous, publication, Catalog, Dashboard, Spark runtime path를 변경하면 
 ```bash
 cd backend
 npm run verify:etl-e2e-recovery
+```
+
+Kafka Continuous terminal 전이 또는 목록·상세 상태 projection을 변경하면 빠른 프로필 전에 아래 unit/프론트 계약을 실행한다. `stopping + unknown + stale report`, 동일 fence stop 재요청, `not_running` terminal commit, 중복 stop idempotency와 `중지 중` UI를 함께 보호한다.
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python -m unittest tests.test_continuous_application_use_cases tests.test_continuous_runtime_contract tests.test_continuous_maintenance_fencing tests.test_kafka_continuous_dashboard_sync -v
+
+cd ../frontend
+npm run test:continuous-runtime-contract
+npm run build
 ```
 
 배포 후보는 `verify:etl-e2e-recovery:release`를 추가한다. 실제 Kafka/브라우저/서비스 fault가 포함된 `nightly`는 `ASKLAKE_E2E_ISOLATED_ENV=true`와 loopback URL이 설정된 `self-hosted + asklake-e2e` runner에서만 실행한다. production URL·credential로 우회 실행하지 않는다. 결과물은 `.artifacts/etl-e2e-recovery/`의 JSON/JUnit/Markdown 세 파일이며, 실패 시 correlation ID와 해당 check의 bounded output을 PR에 첨부한다.

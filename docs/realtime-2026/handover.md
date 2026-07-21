@@ -42,7 +42,7 @@ npm run verify:realtime-stack
 
 cd ..\frontend
 npm run test:realtime-events
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 
 cd ..
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet

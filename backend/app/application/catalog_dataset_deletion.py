@@ -6,14 +6,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from fastapi import status
 from sqlalchemy import Text, delete, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.application.etl_schedule import has_scheduled_execution
-from app.clients.opensearch_client import OpenSearchClient
 from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -188,9 +186,7 @@ def build_deletion_impact(
     retained = ["audit events", "completed ETL/SQL run history", "stopped producer job definitions", "deletion receipt"]
     add_workload_blockers(db, dataset.id, blockers)
     add_dependency_blockers(db, dataset.id, payload, blockers)
-    rag_jobs = add_rag_blockers(db, dataset.id, blockers)
     add_dataset_artifacts(artifacts, payload)
-    add_rag_artifacts(db, dataset.id, rag_jobs, artifacts)
     add_artifact_ownership_blockers(dataset, artifacts, blockers)
 
     unique_blockers = unique_items(blockers, lambda item: (item.resource_type, item.resource_id, item.reason))
@@ -456,13 +452,10 @@ class CatalogPhysicalPurger:
             shutil.rmtree(target) if target.is_dir() else target.unlink()
 
     def _delete_opensearch_index(self, index_name: str) -> None:
-        if not settings.opensearch_base_url:
-            raise RuntimeError("OPENSEARCH_BASE_URL is not configured")
-        try:
-            OpenSearchClient(settings).delete_index(index_name)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 404:
-                raise
+        # RAG/OpenSearch is no longer part of the product. Existing historical
+        # deletion records may still list an index, but there is no live index
+        # service to contact and the catalog deletion can safely continue.
+        return None
 
 
 def process_catalog_dataset_deletion_by_id(deletion_id: str) -> None:
@@ -536,9 +529,6 @@ def delete_dataset_metadata(db: Session, dataset_id: str) -> None:
     delete_dataset_semantic_metadata(db, dataset_id)
     for model in (DashboardBatchWidgetResult, DashboardWidgetResultModel, DatasetFreshnessModel, DatasetRevisionCommitModel, DatasetKafkaPartitionCursorModel):
         db.execute(delete(model).where(model.dataset_id == dataset_id))
-    for model in (RagColumnRecommendationModel, RagClassificationRunModel, RagIndexJobModel, RagIndexManifestModel):
-        db.execute(delete(model).where(model.dataset_id == dataset_id))
-    db.execute(delete(RagDatasetProfileModel).where(RagDatasetProfileModel.dataset_id == dataset_id))
     db.execute(delete(PermissionGrantModel).where(
         PermissionGrantModel.resource_type == "dataset",
         PermissionGrantModel.resource_id == dataset_id,
@@ -723,11 +713,7 @@ def is_managed_storage_location(location: str, dataset: CatalogDatasetResponse) 
     path_segments = [item for item in parsed.path.split("/") if item]
     token_match = any(is_dataset_scope_segment(item, dataset) for item in path_segments)
     if parsed.scheme == "s3":
-        rag_staging = settings.rag_staging_base_path.replace("s3a://", "s3://", 1).rstrip("/")
-        return token_match and (
-            parsed.netloc == settings.asklake_spark_output_bucket
-            or normalized.rstrip("/").startswith(rag_staging + "/")
-        )
+        return token_match and parsed.netloc == settings.asklake_spark_output_bucket
     if parsed.scheme and not is_windows_path:
         return False
     try:

@@ -927,7 +927,6 @@ export function SqlAnalysisPage({
           onCreate={() => void continuousSql.create()}
           onOpenChange={continuousSql.setDialogOpen}
           onOutputNameChange={continuousSql.setOutputName}
-          onTriggerIntervalChange={continuousSql.setTriggerIntervalSeconds}
           open={continuousSql.dialogOpen}
           outputName={continuousSql.outputName}
           pending={continuousSql.pending}
@@ -936,7 +935,6 @@ export function SqlAnalysisPage({
           servingMode={continuousSql.servingMode}
           staticDatasets={continuousSql.relationMix.staticDatasets}
           streamingDataset={continuousSql.relationMix.streamingDataset}
-          triggerIntervalSeconds={continuousSql.triggerIntervalSeconds}
         />
       )}
       {materializationResult && baseDataset && materializeDialogOpen && (

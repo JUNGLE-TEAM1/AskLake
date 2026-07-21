@@ -454,11 +454,16 @@
 
 .asklake-widget-filter-value-error {
   color: #b91c1c;
+  line-height: 1.45;
 }
 
 .asklake-widget-filter-value-status svg {
   width: 14px;
   height: 14px;
+}
+
+.asklake-widget-filter-direct-value {
+  margin-top: 2px;
 }
 
 .asklake-widget-filter-value-hint {

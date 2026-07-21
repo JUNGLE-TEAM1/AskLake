@@ -313,6 +313,10 @@ from app.ports.runtime_io import (
 )
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository, snapshot_status_repository
+from app.repositories.execution_tree_lock_repository import (
+    require_standalone_job_unlocked,
+    require_tree_owned_job,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
@@ -697,15 +701,13 @@ def command_job(
     actor: ActorContext | None = None,
     *,
     execution_actor: ActorContext | None = None,
+    tree_run_id: str | None = None,
+    tree_fencing_token: str | None = None,
 ) -> JobCommandResponse:
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    job = (
-        etl_repository.get_job_for_update(db, job_id)
-        if command in {"run", "retry", "startContinuous", "resumeContinuous"}
-        else etl_repository.get_job(db, job_id)
-    )
+    job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
@@ -745,6 +747,22 @@ def command_job(
             target_type=AuditTargetType.ETL_JOB,
         )
         raise
+    if tree_run_id is not None or tree_fencing_token is not None:
+        if not tree_run_id or not tree_fencing_token:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "SQL execution tree command context is incomplete.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        require_tree_owned_job(
+            db,
+            job.id,
+            tree_run_id=tree_run_id,
+            fencing_token=tree_fencing_token,
+            action=f"command:{command}",
+        )
+    else:
+        require_standalone_job_unlocked(db, job.id, action=f"command:{command}")
     if job.execution_mode == "continuous" and command not in continuous_commands:
         raise ApiError(
             ErrorCode.INVALID_JOB_STATE,
@@ -1991,6 +2009,7 @@ def materialize_continuous_replay(
             source_ranges=source_ranges,
             commit_kind=REPLAY_COMMIT_KIND,
             manifest_location=replay_manifest_path,
+            snapshot_id=str(verified.get("icebergSnapshotId") or "") or None,
         )
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         db.rollback()

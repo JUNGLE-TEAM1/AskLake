@@ -7,8 +7,8 @@ import type {
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
+import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardEditToolbar } from "./DashboardEditToolbar";
@@ -18,7 +18,6 @@ import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 import type {
   CreateDraftWidgetFormInput,
   DashboardDatasetColumn,
@@ -40,6 +39,9 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
+  autoRefreshEnabled: boolean;
+  autoRefreshError: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -57,8 +59,6 @@ type DashboardRuntimeState = {
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
-  realtimeConnectionState: RealtimeConnectionState;
-  realtimeDataState: DashboardLiveDataState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -108,6 +108,7 @@ type DashboardRuntimeViewActions = {
   selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
   selectWidget: (widgetId: string) => void;
+  setAutoRefreshEnabled: (enabled: boolean) => void;
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
@@ -176,13 +177,16 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
-  const [assistantDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
+  const [assistantSelectedDatasetIds, setAssistantDatasetIds] = useState<string[]>([]);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const {
+    autoRefreshEnabled,
+    autoRefreshError,
+    autoRefreshStatus,
     canRedoLayout,
     canUndoLayout,
     deletingWidgetId,
@@ -252,6 +256,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
+  const assistantDatasetIds = assistantSelectedDatasetIds;
   useEffect(() => {
     const availableIds = new Set(dashboardDatasets.map((dataset) => dataset.id));
     setAssistantDatasetIds((current) => {
@@ -522,6 +527,9 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
           />
         ) : undefined}
         datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
+        autoRefreshEnabled={autoRefreshEnabled}
+        autoRefreshError={autoRefreshError}
+        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
@@ -563,7 +571,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}
@@ -575,6 +582,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
+        onAutoRefreshChange={actions.setAutoRefreshEnabled}
         onRenamePage={isDraftMode ? onRenamePage : undefined}
         onRenameTitle={isDraftMode ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}

@@ -67,6 +67,7 @@ export { default as Languages } from "lucide-react/dist/esm/icons/languages.mjs"
 export { default as LetterText } from "lucide-react/dist/esm/icons/letter-text.mjs";
 export { default as ListChecks } from "lucide-react/dist/esm/icons/list-checks.mjs";
 export { default as Loader2 } from "lucide-react/dist/esm/icons/loader-circle.mjs";
+export { default as LockKeyhole } from "lucide-react/dist/esm/icons/lock-keyhole.mjs";
 export { default as LogIn } from "lucide-react/dist/esm/icons/log-in.mjs";
 export { default as LogOut } from "lucide-react/dist/esm/icons/log-out.mjs";
 export { default as Maximize2 } from "lucide-react/dist/esm/icons/maximize-2.mjs";

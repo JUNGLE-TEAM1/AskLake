@@ -1,6 +1,6 @@
-# Kafka Continuous 데이터가 기존 대시보드에 자동 반영되는 구조
+# Kafka Continuous 데이터의 Dashboard 수동 최신화 구조
 
-이번 작업은 **Kafka 데이터를 기존 Spark가 S3에 저장하고, PostgreSQL이 새 데이터 번호와 작은 위젯 결과를 기억한 뒤, 기존 대시보드가 번호가 바뀌었을 때만 위젯을 갱신**하게 만드는 작업이다.
+backend는 **Kafka 데이터를 기존 Spark가 S3에 저장하고, PostgreSQL이 새 데이터 번호와 작은 위젯 결과를 기억**하는 기반을 유지한다. 현재 Dashboard frontend는 자동 polling이나 SSE를 사용하지 않으며, 보기·편집 화면 진입과 사용자의 현재 페이지 새로고침에서 Widget query API로 최신 결과를 읽는다.
 
 새 대시보드 화면이나 새 Kafka Consumer를 만들지 않는다.
 
@@ -18,7 +18,7 @@
 - PostgreSQL의 데이터셋 리비전
 - 리비전과 S3 batch의 연결 기록
 - 위젯 계산 버전, 적용 리비전, 작은 결과
-- 리비전 확인 API와 대시보드 polling
+- 리비전 확인 API와 현재 페이지 Widget query
 
 ## 1. 왜 이 구조로 만들었는가
 
@@ -533,7 +533,7 @@ npm run verify:dashboard-live-postgres
 npm run verify:kafka-continuous-contract
 
 cd ..\frontend
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run verify:ui-regressions
 npm run build
 ```
@@ -548,12 +548,12 @@ npm run build
 - 기존 Catalog run의 revision backfill 멱등성
 - replay materialization의 revision 연결
 
-`test:dashboard-live-refresh`는 다음을 확인한다.
+`test:dashboard-widget-data-state`는 다음을 확인한다.
 
-- 같은 데이터셋을 한 번만 확인
-- `latestRevision > appliedRevision`인 위젯만 선택
-- 갱신된 위젯만 기존 runtime에 병합
-- polling 권장값의 안전한 범위
+- 같은 Dataset을 사용하는 현재 페이지 Widget을 한 요청으로 묶음
+- 최초 진입 시 pending Widget만 조회
+- 수동 새로고침 시 이미 준비된 Widget까지 현재 페이지 전체를 다시 조회
+- 구성 signature가 같은 응답만 기존 runtime에 병합
 
 ### 실제 Kafka → 화면 수동 확인
 
@@ -683,12 +683,12 @@ Redis 저장이 실패해도 PostgreSQL 결과는 정상이어야 한다.
 
 ### Frontend
 
-- `frontend/src/pages/dashboard/runtime/dashboardLiveRefresh.ts`: 데이터셋 grouping, stale 위젯 판별, 결과 병합
-- `frontend/src/pages/dashboard/runtime/usePublishedDashboardLiveRefresh.ts`: 데이터셋별 adaptive polling, hidden tab, timeout, cleanup, 중복 요청 방지
-- `frontend/src/pages/dashboard/runtime/useDashboardRuntimeResources.ts`: 기존 published runtime에 live refresh hook 연결
-- `frontend/src/services/dashboardRuntimeApi.ts`: freshness/widget API adapter
+- `frontend/src/pages/dashboard/runtime/dashboardWidgetDataState.ts`: 현재 페이지 Dataset grouping, 요청 signature와 결과 병합
+- `frontend/src/pages/dashboard/runtime/useDashboardWidgetData.ts`: 최초 진입 및 사용자 수동 새로고침의 bounded Widget query
+- `frontend/src/pages/dashboard/runtime/useDashboardRuntimeResources.ts`: 보기·편집 runtime에 동일한 수동 조회 경로 연결
+- `frontend/src/services/dashboardRuntimeApi.ts`: Widget query API adapter
 - `frontend/src/types/dashboard.ts`: live widget 버전 필드
-- `frontend/scripts/dashboard-live-refresh.test.mts`: polling 선택·병합 회귀 테스트
+- `frontend/scripts/dashboard-widget-data-state.test.mts`: 현재 페이지 선택·수동 강제 조회·병합 회귀 테스트
 - `frontend/package.json`: 전용 test script와 UI regression 연결
 
 ### Docs

@@ -7,6 +7,7 @@ from app.schemas.common import CamelModel
 
 class RealtimeFeatureConfigResponse(CamelModel):
     dashboard_sync_mode: Literal["polling", "hybrid", "sse"]
+    dashboard_auto_refresh_enabled: bool = False
     realtime_events_enabled: bool
     continuous_sql_join_enabled: bool
     continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"

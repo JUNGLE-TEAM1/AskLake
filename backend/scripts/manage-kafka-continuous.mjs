@@ -137,7 +137,11 @@ async function startWorkerKubernetes(request, containerName) {
 
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
   await clearKubernetesCommand(jobId);
-  const workerAttemptId = randomUUID();
+  // The API/control-plane has already committed this fence before asking the
+  // runner to submit.  Preserve it so a stale REST status cannot leave a
+  // durable start intent permanently stuck in `starting`.
+  const requestedWorkerAttemptId = String(request.workerAttemptId || "").trim() || null;
+  const workerAttemptId = requestedWorkerAttemptId || randomUUID();
   const application = continuousSparkApplication(request, runtime, workerAttemptId);
   const created = await client.create(application);
   return kubernetesWorkerResult(jobId, containerName, created, { started: true, workerAttemptId });
@@ -302,7 +306,7 @@ async function startWorkerRest(request, containerName) {
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
 
-  const workerAttemptId = randomUUID();
+  const workerAttemptId = String(request.workerAttemptId || "").trim() || randomUUID();
   const runtime = continuousRestRuntime();
   const submission = createSparkRestSubmission({
     appName: `${continuousSqlContract ? "asklake-continuous-sql" : "asklake-kafka-continuous"}-${safeSegment(jobId)}`,
@@ -645,7 +649,7 @@ async function startWorkerDocker(request, containerName) {
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
-  const workerAttemptId = randomUUID();
+  const workerAttemptId = String(request.workerAttemptId || "").trim() || randomUUID();
   const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
   const packages = continuousSparkPackages(request.outputPath, icebergTarget).join(",");
   const environment = continuousEnvironment(request, workerAttemptId, reportContainerDir);

@@ -3,6 +3,7 @@ import { apiClient } from "./apiClient";
 export type DashboardSyncMode = "polling" | "hybrid" | "sse";
 
 export type RealtimeFeatureConfig = {
+  dashboardAutoRefreshEnabled: boolean;
   clickhouseContinuousJoinEnabled: boolean;
   clickhouseRealtimeConsumerOwner: "disabled" | "kafka_engine_v1" | "kafka_connect_v2";
   clickhouseRealtimeV2Enabled: boolean;

@@ -6,25 +6,6 @@ import type {
 } from "../types";
 import { apiClient, type ApiRequestOptions } from "./apiClient";
 
-export type DashboardDatasetFreshness = {
-  activeArchiveSnapshotId: string | null;
-  activeServingEngine: string | null;
-  activeServingVersionId: string | null;
-  bindingEpoch: number;
-  datasetId: string;
-  isContinuous: boolean;
-  latestChecksum: string | null;
-  latestMutationType: "append" | "upsert" | "replace" | "retract" | null;
-  latestRevision: number;
-  latestSourceBoundary: Record<string, unknown> | null;
-  nextCheckAfterMs: number;
-  updatedAt: string | null;
-};
-
-export type DashboardDatasetFreshnessResponse = {
-  datasets: DashboardDatasetFreshness[];
-};
-
 export type DashboardWidgetRefreshResponse = {
   widgets: DashboardRuntimeWidget[];
 };
@@ -57,17 +38,6 @@ export function getPublishedDashboard(
 ) {
   return apiClient.get<DashboardRuntimeResponse>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/published?includeData=${includeData}`,
-    options,
-  );
-}
-
-export function queryDashboardDatasetFreshness(
-  datasetIds: string[],
-  options: ApiRequestOptions = {},
-) {
-  return apiClient.post<DashboardDatasetFreshnessResponse>(
-    "/api/datasets/freshness/query",
-    { datasetIds },
     options,
   );
 }

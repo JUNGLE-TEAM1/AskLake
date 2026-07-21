@@ -3,6 +3,7 @@
 import { Calendar, CalendarOff, Info, Pencil, Play, RefreshCw, Square, Trash2, X, Zap } from "lucide-react";
 
 import { canRunJobCommand } from "../../../utils/permissions";
+import { continuousRuntimeStatusDisplay, continuousRuntimeStatusLabels } from "../../../services/continuousRuntimeContract";
 
 import { type StatusBadgeTone } from "@/components/ui/status-badge";
 
@@ -43,6 +44,22 @@ export function getJobStatusTone(status: JobStatus): StatusBadgeTone {
   if (status === "paused") return "warning";
   if (status === "stopped") return "warning";
   return "default";
+}
+
+export function getJobStatusDisplay(job: JobRowData) {
+  const continuousDisplay = continuousRuntimeStatusDisplay(job);
+  if (continuousDisplay) {
+    return {
+      ...continuousDisplay,
+      tone: getJobStatusTone(continuousDisplay.status),
+    };
+  }
+  return {
+    label: jobStatusMeta[job.status].label,
+    spinning: job.status === "running",
+    status: job.status,
+    tone: getJobStatusTone(job.status),
+  };
 }
 
 export function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
@@ -88,15 +105,6 @@ export function getJobTableRowClassName(status: JobStatus) {
   return statusAccentClassName[status];
 }
 
-export type JobMetricTone = "total" | "running" | "scheduled" | "stopped";
-
-export type JobMetric = {
-  label: string;
-  statuses?: JobStatus[];
-  tone: JobMetricTone;
-  value: string;
-};
-
 export type LatestRunModalSelection = {
   fallbackJob: JobRowData;
   fallbackRun: JobRunSummary;
@@ -104,34 +112,11 @@ export type LatestRunModalSelection = {
   runId: string;
 };
 
-export function getJobMetrics(facets: JobListFacets): JobMetric[] {
-  return [
-    { label: "전체 작업", tone: "total", value: String(facets.total) },
-    { label: jobStatusMeta.running.label, statuses: ["running"], tone: "running", value: String(facets.statusCounts.running) },
-    { label: jobStatusMeta.scheduled.label, statuses: ["scheduled"], tone: "scheduled", value: String(facets.statusCounts.scheduled) },
-    { label: "자동 실행 중지", statuses: ["stopped"], tone: "stopped", value: String(facets.statusCounts.stopped) },
-  ];
-}
-
-export function hasSameStatuses(first?: JobStatus[], second?: JobStatus[]) {
-  if (!first?.length && !second?.length) return true;
-  if (!first || !second || first.length !== second.length) return false;
-  return first.every((status) => second.includes(status));
-}
-
 export function isContinuousKafkaJob(job: JobRowData) {
   return job.executionMode === "continuous";
 }
 
-export const continuousRuntimeStatusLabels: Record<string, string> = {
-  failed: "실패",
-  paused: "일시정지",
-  pausing: "일시정지 중",
-  running: "실행 중",
-  starting: "시작 중",
-  stopped: "중지",
-  stopping: "중지 중",
-};
+export { continuousRuntimeStatusLabels };
 
 export const continuousSchemaStatusLabels: Record<string, string> = {
   drift_detected: "변경 감지",
