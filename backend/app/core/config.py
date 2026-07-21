@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     continuous_sql_static_pruning_max_keys: int = Field(default=100, ge=1, le=10_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
     continuous_sql_tree_lock_lease_seconds: int = Field(default=120, ge=10, le=3600)
+    continuous_sql_refresh_claim_seconds: int = Field(default=900, ge=30, le=7200)
     clickhouse_continuous_join_enabled: bool = False
     clickhouse_realtime_v2_enabled: bool = False
     kafka_connect_sink_enabled: bool = False

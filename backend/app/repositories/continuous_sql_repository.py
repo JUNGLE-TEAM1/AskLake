@@ -29,6 +29,7 @@ from app.schemas.continuous_sql import (
     ContinuousSqlRelationBinding,
     ContinuousSqlRun,
     ContinuousSqlExecutionTree,
+    ContinuousSqlRefreshState,
     ContinuousSqlTreeJobLock,
     ContinuousSqlTreeNodeRun,
     ContinuousSqlTreeRun,
@@ -78,6 +79,78 @@ class ContinuousSqlRepository:
             .where(ContinuousSqlJobModel.id == job_id)
             .with_for_update()
         ).first()
+
+    def claim_revision_refresh(
+        self,
+        job_id: str,
+        *,
+        source_revision: int,
+        stale_after_seconds: int,
+    ) -> bool:
+        now = datetime.now(UTC)
+        stale_before = now - timedelta(seconds=stale_after_seconds)
+        result = self.db.execute(
+            update(ContinuousSqlJobModel)
+            .where(
+                ContinuousSqlJobModel.id == job_id,
+                ContinuousSqlJobModel.desired_state == "running",
+                ContinuousSqlJobModel.published_source_revision < source_revision,
+                (
+                    ContinuousSqlJobModel.processing_source_revision.is_(None)
+                    | (ContinuousSqlJobModel.refresh_claimed_at < stale_before)
+                ),
+            )
+            .values(
+                latest_source_revision=source_revision,
+                processing_source_revision=source_revision,
+                refresh_status="running",
+                refresh_claimed_at=now,
+                refresh_last_error=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.db.commit()
+        return bool(result.rowcount)
+
+    def complete_revision_refresh(self, job_id: str, source_revision: int) -> None:
+        self.db.execute(
+            update(ContinuousSqlJobModel)
+            .where(
+                ContinuousSqlJobModel.id == job_id,
+                ContinuousSqlJobModel.published_source_revision <= source_revision,
+                (
+                    (ContinuousSqlJobModel.processing_source_revision == source_revision)
+                    | ContinuousSqlJobModel.processing_source_revision.is_(None)
+                ),
+            )
+            .values(
+                latest_source_revision=source_revision,
+                processing_source_revision=None,
+                published_source_revision=source_revision,
+                refresh_status="dashboard_ready",
+                refresh_claimed_at=None,
+                refresh_last_error=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.db.commit()
+
+    def fail_revision_refresh(self, job_id: str, source_revision: int, message: str) -> None:
+        self.db.execute(
+            update(ContinuousSqlJobModel)
+            .where(
+                ContinuousSqlJobModel.id == job_id,
+                ContinuousSqlJobModel.processing_source_revision == source_revision,
+            )
+            .values(
+                processing_source_revision=None,
+                refresh_status="failed",
+                refresh_claimed_at=None,
+                refresh_last_error=message[:2000],
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.db.commit()
 
     def job_by_output_dataset(self, dataset_id: str) -> ContinuousSqlJobModel | None:
         return self.db.scalars(
@@ -496,6 +569,17 @@ def job_to_schema(
         last_error_message=job.last_error_message,
         active_run=run_to_schema(run) if run is not None else None,
         incremental_binding=incremental_binding_payload(binding),
+        refresh_state=ContinuousSqlRefreshState(
+            latest_source_revision=int(job.latest_source_revision or 0),
+            processing_source_revision=(
+                int(job.processing_source_revision)
+                if job.processing_source_revision is not None
+                else None
+            ),
+            published_source_revision=int(job.published_source_revision or 0),
+            status=job.refresh_status or "idle",
+            last_error=job.refresh_last_error,
+        ),
     )
 
 

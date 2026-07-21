@@ -76,6 +76,17 @@ export function ContinuousSqlJoinDialog({
             </div>
             <span>Catalog Dataset ID: {result.outputDatasetId}</span>
             <span>Continuous Job ID: {result.id}</span>
+            {result.refreshState && (
+              <div className="grid gap-1 rounded-md border border-current/15 bg-white/40 p-3 text-xs">
+                <strong>백엔드 Gold 갱신 상태 · {refreshStatusLabel(result.refreshState.status)}</strong>
+                <span>Kafka 최신 revision · {result.refreshState.latestSourceRevision}</span>
+                <span>현재 공개 Gold revision · {result.refreshState.publishedSourceRevision}</span>
+                {result.refreshState.processingSourceRevision !== null
+                  && result.refreshState.processingSourceRevision !== undefined
+                  && <span>처리 중 revision · {result.refreshState.processingSourceRevision}</span>}
+                {result.refreshState.lastError && <span>마지막 오류 · {result.refreshState.lastError}</span>}
+              </div>
+            )}
             {result.activeTreeRun && (
               <div className="grid gap-1 rounded-md border border-current/15 bg-white/40 p-3 text-xs">
                 <strong>실행 트리 · {result.activeTreeRun.treeRunId}</strong>
@@ -133,4 +144,14 @@ export function ContinuousSqlJoinDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function refreshStatusLabel(status: NonNullable<ContinuousSqlJob["refreshState"]>["status"]) {
+  switch (status) {
+    case "running": return "새 데이터 JOIN 중";
+    case "failed": return "마지막 JOIN 실패 · 이전 Gold 유지";
+    case "catalog_ready": return "Catalog 검증 완료";
+    case "dashboard_ready": return "새로고침 조회 가능";
+    default: return "새 revision 대기";
+  }
 }

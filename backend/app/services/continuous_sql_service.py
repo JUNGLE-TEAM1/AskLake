@@ -986,8 +986,9 @@ class ContinuousSqlService:
                     job.last_error_code = None
                     job.last_error_message = None
                 else:
-                    job.observed_state = "failed"
-                    run.status = "failed"
+                    # Keep the last verified Gold revision and retry the unadvanced source cursor.
+                    job.observed_state = "running"
+                    run.status = "running"
                     job.last_error_code = str(exc.code)
                     job.last_error_message = exc.message
                     run.last_error_code = str(exc.code)
@@ -1015,7 +1016,6 @@ class ContinuousSqlService:
         job.worker_id = str(worker.get("containerId") or worker.get("workerAttemptId") or "") or job.worker_id
         if run is not None and job.worker_id:
             run.worker_id = job.worker_id
-
         if report is not None and run is not None:
             identity_error = worker_identity_error(job, run, report)
             if identity_error:

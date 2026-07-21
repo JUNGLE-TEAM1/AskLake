@@ -1,8 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
-import {
-  SqlPageIcon as Check,
-  SqlPageIcon as Sparkles,
-} from "./SqlPageIcon";
+import { Check, Send, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
@@ -25,7 +22,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { QueryAiSuggestion } from "../../services/queryAiService";
-import { NessieMark } from "./NessieMark";
 import styles from "./SqlAiWriterDialog.module.css";
 
 export type SqlAiWriterDialogProps = {
@@ -109,7 +105,6 @@ export function SqlAiWriterDialog({
   const promptOpen = !pending && !suggestion?.sql;
   const applyButtonRef = useRef<HTMLButtonElement | null>(null);
   const pendingStatusRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     if (!open) return;
 
@@ -147,7 +142,7 @@ export function SqlAiWriterDialog({
     <Popover onOpenChange={onOpenChange} open={open}>
       <PopoverTrigger asChild>
         <Button disabled={disabled} size="sm" type="button" variant="outline">
-          Nessie로 SQL 작성
+          <Sparkles data-icon="inline-start" /> AI로 SQL 작성
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -161,54 +156,56 @@ export function SqlAiWriterDialog({
         side="bottom"
         sideOffset={8}
       >
-        <BubbleGroup aria-live="polite">
-          <Bubble className="max-w-full" variant="tinted">
-            <BubbleContent className="max-w-full">
-              <span className="flex items-center gap-2 font-semibold">
-                <NessieMark className="size-5" /> Nessie
-              </span>
-              <span className="mt-1 block text-sm">
+        <div className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50/70 p-3">
+          <div className="flex items-start gap-3">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-600">
+              <Sparkles aria-hidden="true" className="size-4 text-white" />
+            </span>
+            <span className="min-w-0">
+              <strong className="block text-sm font-semibold text-blue-950">AI</strong>
+              <span className="mt-0.5 block text-sm leading-5 text-slate-600">
                 선택한 데이터셋을 기준으로 자연어 요청을 SQL 초안으로 바꿔드릴게요.
               </span>
-            </BubbleContent>
-          </Bubble>
-        </BubbleGroup>
+            </span>
+          </div>
 
-        <Collapsible open={promptOpen}>
-          <CollapsibleContent>
-            <FieldGroup>
-              <Field data-invalid={Boolean(error)}>
-                <FieldLabel htmlFor="sql-query-ai-popover-prompt">어떤 SQL이 필요한가요?</FieldLabel>
-                <Textarea
-                  aria-invalid={Boolean(error)}
-                  disabled={disabled || pending}
-                  id="sql-query-ai-popover-prompt"
-                  onChange={(event) => onPromptChange(event.target.value)}
-                  onKeyDown={handlePromptKeyDown}
-                  placeholder="예: 최근 30일 동안 카테고리별 주문 금액 합계를 큰 순서대로 보여줘"
-                  ref={promptRef}
-                  rows={4}
-                  value={prompt}
-                />
-                {disabled && (
-                  <FieldDescription>
-                    먼저 분석 테이블에서 데이터셋을 선택해 주세요.
-                  </FieldDescription>
-                )}
-                {error && <FieldError role="alert">{error}</FieldError>}
-              </Field>
-              <Button
-                className="w-full"
-                disabled={generateDisabled}
-                onClick={() => void onGenerate()}
-                type="button"
-                variant="secondary"
-              >
-                <Sparkles data-icon="inline-start" /> SQL 초안 생성
-              </Button>
-            </FieldGroup>
-          </CollapsibleContent>
-        </Collapsible>
+          <Collapsible open={promptOpen}>
+            <CollapsibleContent>
+              <FieldGroup className="gap-3">
+                <Field data-invalid={Boolean(error)}>
+                  <FieldLabel htmlFor="sql-query-ai-popover-prompt">어떤 SQL이 필요한가요?</FieldLabel>
+                  <Textarea
+                    aria-invalid={Boolean(error)}
+                    className="border-blue-200 bg-white"
+                    disabled={disabled || pending}
+                    id="sql-query-ai-popover-prompt"
+                    onChange={(event) => onPromptChange(event.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder="예: 최근 30일 동안 카테고리별 주문 금액 합계를 큰 순서대로 보여줘"
+                    ref={promptRef}
+                    rows={4}
+                    value={prompt}
+                  />
+                  {disabled && (
+                    <FieldDescription>
+                      먼저 분석 테이블에서 데이터셋을 선택해 주세요.
+                    </FieldDescription>
+                  )}
+                  {error && <FieldError role="alert">{error}</FieldError>}
+                </Field>
+                <Button
+                  className="w-full disabled:bg-slate-300 disabled:text-white disabled:opacity-100"
+                  disabled={generateDisabled}
+                  onClick={() => void onGenerate()}
+                  type="button"
+                  variant="primary"
+                >
+                  <Send data-icon="inline-start" /> SQL 초안 생성
+                </Button>
+              </FieldGroup>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
 
         {pending && (
           <div className="outline-none" ref={pendingStatusRef} role="status" tabIndex={-1}>

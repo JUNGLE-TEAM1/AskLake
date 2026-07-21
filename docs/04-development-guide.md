@@ -3,6 +3,8 @@ Total output lines: 2679
 
 # 04. Development Guide
 
+> Kafka revision 기반 SQL 자동 갱신은 API server가 아니라 `app.continuous_worker`에서 실행된다. 로컬 검증 시 Kafka continuous worker와 Trino collector를 함께 실행하고, `etl_jobs.continuous_config.revisionRefresh.publishedSourceRevision`이 Catalog 공개 성공 뒤에만 증가하는지 확인한다.
+
 > RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
 
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.
@@ -591,6 +593,50 @@ MongoDB Source connector는 Node MongoDB driver로 컬렉션 목록과 제한 �
 PostgreSQL과 MongoDB Source QA에서는 연결 테스트 직후 schema가 생기지 않는지 먼저 확인한다. 데이터 탐색에서 테이블 또는 컬렉션을 선택한 뒤에만 제한 샘플과 schema가 표시되어야 하며, 선택값 없는 `/api/etl/sources/test` 요청은 `400`으로 거부되어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
+### Kafka revision + S3 JOIN 1-hour demo fixture
+
+Dashboard 수동 새로고침 구조를 한 번 검증할 때는 전용 S3 상품 CSV와 Kafka 이벤트 topic을 준비한다. 이 fixture는 두 소스가 `product_id`를 공유하며 기존 fixture topic과 object를 변경하지 않는다.
+
+```bash
+cd backend
+npm run verify:kafka-s3-demo
+npm run demo:kafka-s3:prepare
+npm run demo:kafka-s3:produce
+```
+
+기본 producer는 `asklake.revision.events.v1` topic에 100건씩 1초 간격으로 3,600회, 총 360,000건을 전송한다. `Ctrl+C`로 중단하면 현재 1초 batch까지만 전송하고 종료한다. 짧게 확인하려면 `npm run demo:kafka-s3:produce -- --duration-seconds 2 --rate 100`을 사용한다.
+
+파이프라인 생성 화면에는 다음 값을 사용한다.
+
+| 소스 | 입력값 |
+| --- | --- |
+| Kafka broker | 로컬 backend는 `127.0.0.1:19092`, Compose 내부 worker는 `redpanda:9092` |
+| Kafka topic | `asklake.revision.events.v1` |
+| Kafka 실행 방식 | `실시간 수집` |
+| S3 endpoint | `http://127.0.0.1:9000` |
+| S3 bucket | `m3-raw` |
+| S3 object | `asklake-fixtures/kafka-s3-refresh-demo/products.csv` |
+
+S3 파이프라인을 먼저 Snapshot으로 한 번 실행하고 Kafka Continuous 파이프라인을 실행한다. 두 결과 Dataset이 Catalog에 `available`로 보이면 SQL 분석에서 Dataset을 선택하고 다음 형태로 JOIN한다. 실제 Dataset 표시명은 생성할 때 정한 이름으로 바꾼다.
+
+```sql
+SELECT
+  e.event_time,
+  e.event_id,
+  e.event_type,
+  e.product_id,
+  p.product_name,
+  p.category,
+  p.brand,
+  e.quantity,
+  e.amount
+FROM "Kafka 이벤트 데이터셋" AS e
+LEFT JOIN "S3 상품 데이터셋" AS p
+  ON e.product_id = p.product_id
+```
+
+`demo:kafka-s3:prepare`는 이 테스트 전용 topic만 비우고 다시 만든다. 실행 중인 같은 topic의 Kafka Job이 있으면 먼저 중지해야 하며, topic 내용을 보존하려면 `npm run demo:kafka-s3:prepare -- --keep-topic`을 사용한다. endpoint, bucket, key, broker, topic은 `ASKLAKE_DEMO_S3_*`, `ASKLAKE_DEMO_KAFKA_*` 환경변수로 바꿀 수 있다. 이 도구는 mock source를 준비하고 메시지를 넣는 역할만 하며 ETL Job이나 Dashboard를 자동 생성하지 않는다.
+
 ### Amazon review Kafka fixture
 
 Kafka replay와 ingest pipeline 작업자는 실제 6.6GB Amazon review replay가 준비되기 전에도 같은 메시지 계약으로 병렬 개발할 수 있다. 로컬 Redpanda를 켠 뒤 review fixture producer를 실행한다.
@@ -816,6 +862,26 @@ baseline과 새 Spark runtime digest는 private runtime-config values 한 revisi
 동시 bounded fixture 검증은 A가 승인한 MSK group을 먼저 `asklake-runtime-config` release의 `ASKLAKE_EKS_MVP_FIXTURE_SLOTS_JSON`에 exact group/table 쌍으로 추가한다. 기본 `asklake-eks-mvp-spark-v1 → eks_mvp_fixture` slot은 항상 포함하고 scale slot은 최대 4개만 더한다. group과 table 중복, wildcard/prefix, 기본 slot 제거, 5개 초과는 Backend와 Spark runtime이 모두 거부한다. 실제 private values를 만들기 전 A의 IAM group 범위 승인이 없으면 기본 slot을 여러 Job에 복제하지 말고 blocker로 남긴다.
 
 Terraform의 Spark MSK group 권한은 `msk_scale_consumer_groups`에 `49d163cfbaf1`부터 필요한 exact 값만 선택한다. 변수 validation은 `scale17-01..04` 외 값과 wildcard를 거부하고, IAM policy는 기본 group ARN과 선택한 group ARN만 `DescribeGroup`/`AlterGroup` resource로 렌더한다. 3개 실험에는 `01..03`만 사용하며 4번째는 3개로 Pending 증거를 만들 수 없을 때 별도 검토 후 추가한다.
+
+```bash
+# 저장소 root
+docker compose up -d --wait minio postgres trino
+
+cd backend
+CLICKHOUSE_E2E_LIVE_TRINO=true npm run verify:clickhouse-kafka-join
+```
+
+Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. 이 값은 새 빈 Source draft에만 한 번 채우고 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
+
+Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. Production은 `ASKLAKE_SPARK_RUNNER=rest`로 내부 Spark Standalone REST submission을 사용하고 backend에 Docker socket/CLI를 요구하지 않는다. 로컬 개발에서만 `ASKLAKE_SPARK_RUNNER=docker`를 명시해 격리 worker/maintenance container를 실행할 수 있다. 두 경로 모두 같은 Iceberg/JDBC/warehouse package와 runtime environment 계약을 사용한다.
+
+host에서 실행하는 local FastAPI와 Docker Continuous worker가 같은 Redpanda를 사용할 때는 `ASKLAKE_KAFKA_BROKER_IN_DOCKER=asklake-redpanda:9092`를 함께 설정한다. `scripts/start-local-query-runtime.sh` 또한 이 값을 로컬 기본값으로 사용한다. Source 연결 테스트와 저장값은 host용 `127.0.0.1:19092`를 유지하고, Docker worker를 시작할 때만 loopback broker를 내부 endpoint로 바꾼다. 외부 Kafka hostname은 변경하지 않는다.
+
+Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
+
+Iceberg writer 자체의 격리 검증은 기존 서비스 전체를 올리지 않고 고유 Redpanda/Trino/Spark를 시작한다. 정상 append, Iceberg commit 뒤 manifest 전 fault, 같은 boundary 재사용, checkpoint restart, append 중 Trino snapshot read, maintenance 전후 현재 row count와 과거 snapshot time-travel을 검증하고 종료 시 table/container/metadata를 정리한다.
 
 각 scale Job의 `sourceConfig`에는 서로 다른 등록 group을 넣고 table은 요청으로 받지 않는다. FastAPI가 slot mapping에서 target을 정하며 active Run 예약은 PostgreSQL group별 advisory lock으로 직렬화된다. 따라서 동일 slot 두 번째 실행은 Airflow/Spark 호출 전 `409 EKS_MVP_FIXTURE_SLOT_ACTIVE`, 서로 다른 3~4개 slot은 각기 고유 group/table과 Run별 output/checkpoint로 진행된다. 빠른 정적 검증은 다음과 같다.
 

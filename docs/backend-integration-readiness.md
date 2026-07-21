@@ -1,5 +1,9 @@
 # AskLake Backend Integration Readiness
 
+- [x] 일반 Trino SQL Job의 Kafka Base Dataset revision 감지 및 backend 자동 재실행
+- [x] 자동 실행 성공 후에만 Gold Catalog mapping과 published revision cursor 교체
+- [x] 실패 시 기존 성공 Gold 유지 및 Job revision refresh 오류 상태 저장
+
 이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 기본 live API mode에서 backend를 기준으로 검증하고, frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
 FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
@@ -60,10 +64,14 @@ Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/
 Amazon review Kafka replay/ingest 병렬 개발은 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 100건 mock fixture와 `npm run kafka:reviews-fixture`로 `reviews.raw` topic에 표준 JSON fixture를 넣어 시작한다. fixture를 다시 만들 때는 `npm run kafka:reviews-fixture:generate -- --count 100`을 사용한다. 실제 Amazon review JSONL/JSONL.gz 파일은 `npm run kafka:reviews-replay -- --input <path> --limit 100 --rate 100`으로 같은 메시지 계약에 맞춰 replay한다. `npm run kafka:reviews-loop -- --rate 2 --max-messages 500`는 cycle별 고유 event ID와 증가 offset을 갖는 Continuous 검증용 입력을 만든다. topic 재생성은 `--recreate-topic`을 명시한 경우에만 수행한다. 배포 환경은 `GET|POST|DELETE /api/etl/kafka/replay-producer`로 한 개의 producer subprocess를 관리하며, 대용량 파일은 `ASKLAKE_REPLAY_INPUT_DIR` mount 아래 상대 `inputPath`로만 지정한다. 이 스크립트는 Kafka 입력 계약 검증과 replay를 담당하며, Lake 적재 로직은 별도 ingest 작업 범위다.
 
 Issue #1050의 커머스 데모 데이터는 synthetic v3 30일 S3/MinIO 기준선과 realtime profile v1 격리 5분 Kafka fixture로 고정돼 있다. `npm run verify:synthetic-commerce`가 생성기 결정성, 카테고리·날짜 profile, raw 10필드/Kafka envelope와 변환 회귀를 검증한다. 고정 5분 fixture validator는 baseline manifest SHA-256, 사용자·상품 참조, `[anchorAt-5분, anchorAt)` 범위, 퍼널 순서, 파일 증거와 상승·유사·하락 threshold를 함께 확인한다. replay는 고유 topic에 one-shot으로만 주입하며 실제 sliding 5분 Dashboard 집계는 별도 범위다. fixture 경로와 검증 결과는 `backend/scripts/synthetic-commerce/README.md`를 따른다.
+
+Kafka revision 기반 Trino 재실행의 수동 통합 확인에는 `npm run demo:kafka-s3:prepare`가 `s3://m3-raw/asklake-fixtures/kafka-s3-refresh-demo/products.csv`와 격리 topic `asklake.revision.events.v1`을 준비한다. `npm run demo:kafka-s3:produce`는 S3 fixture와 동일한 `product_id`를 가진 JSON event를 기본 100건/초로 1시간, 총 360,000건 전송한다. `npm run verify:kafka-s3-demo`는 외부 인프라 없이 event/S3 join key 계약과 기본 실행 한도를 검증한다. live smoke는 별도로 MinIO object와 Kafka topic offset을 확인해야 하며 이 fixture 자체는 ETL Job, Catalog Dataset 또는 Dashboard를 자동 생성하지 않는다.
 Kafka Source Preview와 Snapshot bridge는 공통 KafkaJS Snappy codec을 등록한다. Source Preview는 최소 샘플/idle/settle bound로 실제 payload를 반환하고 consumer decode/run 오류를 metadata-only 성공으로 바꾸지 않는다. `GET /api/etl/sources/defaults`는 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix runtime 기본값을 새 Source draft에 제공한다. `ASKLAKE_VERIFY_KAFKA=true npm run verify:fastapi-sources`는 이 기본값 계약과 3건의 임시 Snappy 토픽 `event_id` schema/sample까지 검증한다.
+로컬 host FastAPI + Docker Continuous 구성은 저장된 loopback Kafka broker를 `ASKLAKE_KAFKA_BROKER_IN_DOCKER`로 지정한 내부 broker에 worker 시작 시에만 치환한다. 이 설정이 없으면 기존 broker를 그대로 사용하며 외부 hostname은 치환 대상이 아니다. `npm run test:kafka-continuous-broker`가 이 경계를 검증한다.
 Production Spark 공유 경로는 `spark-runtime-guard`가 매 daemon restart마다 기존 데이터를 보존하면서 초기화한다. worker는 UID 185 write/read/atomic rename/delete, backend는 report readiness read를 각각 startup probe로 확인한다. `npm run verify:spark-runtime-paths`, `npm run verify:spark-runtime-paths:container`, `npm run verify:production-spark`가 이 경계를 검증하며 실패 로그는 `runtime_storage_unwritable` 등 path·expected/actual metadata가 있는 JSON code를 사용한다. deploy 관련 PR은 GitHub Actions `Deploy Readiness`가 Node 22/Python 3.13에서 production Compose render, backend/frontend deploy image build, backend production dependency 준비, repository Spark runtime contract를 실행하고 JSON release-readiness artifact를 남긴다. 이 CI gate는 EC2 deploy 또는 long-running Spark/Kafka 실행을 수행하지 않는다.
 
 Continuous publication은 `output -> manifest -> Catalog -> Dashboard` 단계로 분리되어 있다. output/manifest 외부 검증 뒤 Catalog를 독립 commit하고 Dashboard revision 또는 zero-row progress를 별도 commit한다. 같은 batch/run/manifest fingerprint의 재시도는 기존 Iceberg output과 Catalog Run을 재사용하며, Dashboard 실패는 적재 성공을 data loss로 바꾸지 않는다. 최신 단계 진단은 기존 runtime metrics의 bounded `publicationWorkflow`에 저장되고 공개 API·DB schema는 그대로 유지한다. 구현·복구 기준은 [Continuous Materialization·Catalog·Dashboard 발행 계약](./refactor-2026/contracts/continuous-publication-workflow.md)을 따른다.
+S3 manifest 복구는 첫 micro-batch의 숫자 `batchId=0`을 유효한 identity로 취급한다. `tests.test_kafka_continuous_dashboard_sync` 회귀 테스트가 0-byte Spark part를 건너뛰고 비어 있지 않은 batch 0 manifest를 읽어 Catalog 복구의 시작점을 보장한다.
 
 배포 readiness의 현재 관찰 기준은 [배포 파이프라인 Phase 0 기준선](./deployment-phase-0-baseline.md)에 기록한다. Compose health와 API JSON health, Spark driver 상태, Kafka Continuous session heartbeat는 별개로 확인한다. request/worker hot path의 schema DDL 경쟁 제거와 자동 release gate는 아직 후속 Phase 범위다.
 
@@ -650,8 +658,8 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] backend producer resolution과 realtime 1개 + batch/static N개 validation
 - [x] atomic tree lock/lease/fencing과 tree run/node run
 - [x] parent-owned batch/realtime child orchestration
-- [ ] SQL-owned Kafka consumer 제거와 revision-driven transform
-- [ ] lifecycle/recovery/UI 및 output revision 회귀
+- [x] SQL-owned Kafka consumer 제거와 revision-driven transform, 단일 refresh claim과 published revision 보존
+- [x] refresh 실패 시 parent 유지, output revision 보존과 Dashboard 수동 새로고침 경계
 - [ ] legacy Job 운영 처리, live E2E와 rollout gate
 
 Phase 2 검증은 `cd backend && npm run verify:continuous-sql-execution-tree-contract`와 `PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_continuous_sql_dependency_resolution tests.test_continuous_sql_catalog tests.test_continuous_sql_planner tests.test_sql_execution_tree_persistence -v`, `cd ../frontend && npm run test:continuous-sql-ui && npm run build`로 실행한다. 이 통과는 tree lock/orchestration 또는 direct-consumer 제거 완료를 의미하지 않는다.

@@ -87,10 +87,8 @@ export function WidgetFrame({
       }}
     >
       <header>
-        <div className="asklake-widget-heading">
-          <span>{widgetTypeLabel(widget)}</span>
-          <h2>{widget.title || "제목 없는 위젯"}</h2>
-        </div>
+        <span className="asklake-widget-type">{widgetTypeLabel(widget)}</span>
+        <h2 className="asklake-widget-title">{widget.title || "제목 없는 위젯"}</h2>
         <div className="asklake-widget-header-actions">
           {editable && selected && (
             <Button

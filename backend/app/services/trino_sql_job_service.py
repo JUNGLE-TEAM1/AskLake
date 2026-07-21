@@ -67,7 +67,14 @@ class TrinoSqlJobService:
             runtime_settings=self.settings,
         )
 
-    def submit(self, job: ETLJobModel, command: str, actor: ActorContext) -> TrinoSqlJobCommandResult:
+    def submit(
+        self,
+        job: ETLJobModel,
+        command: str,
+        actor: ActorContext,
+        *,
+        auto_refresh_context: dict[str, Any] | None = None,
+    ) -> TrinoSqlJobCommandResult:
         self._require_job(job)
         if self.repository.get_active_trino_job_run_payload(job.id) is not None:
             raise ApiError(
@@ -76,7 +83,6 @@ class TrinoSqlJobService:
                 status.HTTP_409_CONFLICT,
                 {"jobId": job.id},
             )
-
         recipe = self._recipe(job)
         compiled_query, _ = self.query_access.compile_for_actor(
             base_dataset_id=str(recipe["baseDatasetId"]),
@@ -94,7 +100,6 @@ class TrinoSqlJobService:
                 "SQL Job target Dataset is incomplete",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-
         run_id = f"run_sql_{uuid4().hex[:16]}"
         target = build_query_engine_table(dataset_name, f"{dataset_id}:{run_id}", self.settings).model_copy(
             update={"partition_columns": string_list(target_info.get("partitionColumns"))}
@@ -102,7 +107,6 @@ class TrinoSqlJobService:
         self._ensure_target_schema(target)
         statement = build_versioned_ctas(target, compiled_query)
         started_at = utc_now()
-
         try:
             page = self.client.submit(statement)
         except ApiError as exc:
@@ -120,7 +124,6 @@ class TrinoSqlJobService:
             etl_repository.save_command_result(self.repository.db, job, run)
             self._record("submit_failed", job, run_id, actor, result="failed", error_code=str(exc.code))
             raise
-
         trino_run_status = trino_status(page)
         run = self._new_run(job, run_id, started_at, target)
         run.status = etl_run_status(trino_run_status)
@@ -134,6 +137,7 @@ class TrinoSqlJobService:
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_id: job.dag_steps}
 
         payload = {
+            "autoRefresh": auto_refresh_context,
             "baseDatasetId": str(recipe["baseDatasetId"]),
             "compiledQuery": compiled_query,
             "datasetId": dataset_id,
@@ -291,12 +295,14 @@ class TrinoSqlJobService:
 
         dataset: CatalogDataset | None = None
         if final_status == "succeeded":
+            self._apply_auto_refresh_result(job, payload, succeeded=True)
             dataset_payload = self._catalog_payload(job, run, payload, target, schema_rows)
             self.repository.db.add(job)
             self.repository.db.add(run)
             self.catalog_repository.save_dataset_payload(dataset_payload)
             dataset = etl_repository.get_dataset_schema_by_id(self.repository.db, str(payload["datasetId"]))
         else:
+            self._apply_auto_refresh_result(job, payload, succeeded=False, error_message=run.error_summary)
             self._drop_unpublished_target(payload)
             self.repository.db.add(job)
             self.repository.db.add(run)
@@ -324,6 +330,34 @@ class TrinoSqlJobService:
             job=etl_repository.job_to_schema(self.repository.db, job),
             run=etl_repository.run_to_schema(run),
         )
+
+    def _apply_auto_refresh_result(
+        self,
+        job: ETLJobModel,
+        payload: dict[str, Any],
+        *,
+        succeeded: bool,
+        error_message: str | None = None,
+    ) -> None:
+        context = payload.get("autoRefresh")
+        if not isinstance(context, dict):
+            return
+        source_revision = int(context.get("sourceRevision") or 0)
+        config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+        state_value = config.get("revisionRefresh")
+        state = dict(state_value) if isinstance(state_value, dict) else {}
+        job.continuous_config = {
+            **config,
+            "revisionRefresh": {
+                **state,
+                "lastError": None if succeeded else (error_message or "Trino SQL Job 실행 실패"),
+                "latestSourceRevision": max(int(state.get("latestSourceRevision") or 0), source_revision),
+                "processingSourceRevision": None,
+                "publishedSourceRevision": max(int(state.get("publishedSourceRevision") or 0), source_revision) if succeeded else int(state.get("publishedSourceRevision") or 0),
+                "sourceDatasetId": str(context.get("sourceDatasetId") or state.get("sourceDatasetId") or ""),
+                "status": "dashboard_ready" if succeeded else "failed",
+            },
+        }
 
     def _catalog_payload(
         self,
@@ -369,7 +403,7 @@ class TrinoSqlJobService:
             "lastUpdated": run.ended_at,
             "materializationRuns": materialization_runs,
             "name": str(target_info.get("datasetName") or job.target),
-            "nextRefresh": job.next_run or "-",
+            "nextRefresh": "Kafka revision 자동 반영" if isinstance((job.continuous_config or {}).get("revisionRefresh"), dict) else (job.next_run or "-"),
             "owner": job.owner,
             "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
             "permissions": resource_permissions(actor=job.owner, can_query=True, can_run=True, can_manage=True, can_delete=True, can_share=True),

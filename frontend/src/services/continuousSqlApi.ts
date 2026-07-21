@@ -43,6 +43,13 @@ export type ContinuousSqlJob = {
   observedState: "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed" | "recovering";
   outputDatasetId: string;
   outputDatasetName: string;
+  refreshState?: {
+    lastError?: string | null;
+    latestSourceRevision: number;
+    processingSourceRevision?: number | null;
+    publishedSourceRevision: number;
+    status: "idle" | "running" | "failed" | "catalog_ready" | "dashboard_ready";
+  };
   servingMode: "iceberg";
 };
 

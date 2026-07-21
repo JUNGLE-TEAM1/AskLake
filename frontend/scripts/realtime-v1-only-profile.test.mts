@@ -25,7 +25,7 @@ test("continuous review labels expose Spark as the only runtime engine", () => {
   );
 });
 
-test("Iceberg Continuous SQL execution tree remains available without ClickHouse V2", () => {
+test("general Iceberg SQL Job flow remains available without ClickHouse V2", () => {
   const page = readFileSync(
     resolve(frontendRoot, "src/pages/sql/SqlAnalysisPage.tsx"),
     "utf8",
@@ -34,28 +34,17 @@ test("Iceberg Continuous SQL execution tree remains available without ClickHouse
     resolve(frontendRoot, "src/pages/sql/SqlQueryEditorPanel.tsx"),
     "utf8",
   );
-  const dialog = readFileSync(
-    resolve(frontendRoot, "src/pages/sql/ContinuousSqlJoinDialog.tsx"),
-    "utf8",
-  );
-  const hook = readFileSync(
-    resolve(frontendRoot, "src/pages/sql/useContinuousSqlJoin.ts"),
-    "utf8",
-  );
   const api = readFileSync(
     resolve(frontendRoot, "src/services/continuousSqlApi.ts"),
     "utf8",
   );
 
-  assert.match(page, /continuousJoinAction=\{continuousSql\.relationMix \?/);
-  assert.match(page, /<ContinuousSqlJoinDialog/);
-  assert.match(editor, /data-testid="continuous-sql-join-button"/);
-  assert.match(dialog, /result\.activeTreeRun/);
-  assert.match(dialog, /Spark \/ Iceberg \/ GOLD/);
-  assert.match(hook, /servingMode: "iceberg"/);
-  assert.match(hook, /await createContinuousSqlJob/);
+  assert.match(page, /onCreateTrinoSqlJob/);
+  assert.match(editor, /<SqlAiWriterDialog/);
+  assert.doesNotMatch(page, /continuousJoinAction|<ContinuousSqlJoinDialog/);
+  assert.doesNotMatch(editor, /data-testid="continuous-sql-join-button"/);
   assert.match(api, /servingMode: "iceberg"/);
-  assert.doesNotMatch(`${dialog}\n${hook}\n${api}`, /ClickHouse|clickhouse|kafka_connect_v2/);
+  assert.doesNotMatch(`${page}\n${editor}\n${api}`, /ClickHouse|clickhouse|kafka_connect_v2/);
 });
 
 test("Kafka create mode tells V1-only users that Spark is the realtime engine", () => {

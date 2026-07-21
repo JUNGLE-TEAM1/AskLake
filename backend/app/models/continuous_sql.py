@@ -45,6 +45,12 @@ class ContinuousSqlJobModel(TimestampMixin, Base):
     worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latest_source_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    processing_source_revision: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    published_source_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    refresh_status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
+    refresh_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refresh_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ContinuousSqlDependencyModel(TimestampMixin, Base):

@@ -14,6 +14,7 @@ from app.repositories.continuous_control_lease_repository import acquire_or_rene
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
 from app.services.continuous_sql_incremental import reconcile_continuous_sql_source_bindings
 from app.services.etl_service import sync_active_kafka_continuous_runtimes
+from app.services.trino_sql_auto_refresh import sync_revision_driven_trino_sql_jobs
 
 logger = logging.getLogger(__name__)
 _OWNER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
@@ -21,6 +22,7 @@ _LEGACY_ALL_SCOPE_LEASE = "continuous-runtime-sync"
 
 
 def _sync_continuous_sql_scope() -> None:
+    sync_revision_driven_trino_sql_jobs()
     reconcile_continuous_sql_source_bindings()
     sync_active_continuous_sql_jobs()
 

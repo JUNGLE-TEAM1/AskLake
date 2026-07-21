@@ -5,6 +5,10 @@ Total output lines: 4298
 
 > 2026-07-20부터 RAG/OpenSearch/embedding worker runtime과 RAG Dataset API/UI는 제거됐다. 이 문서의 RAG request/response 서술은 persisted payload·migration 호환을 위한 역사적 계약이며 새 runtime을 활성화하지 않는다.
 
+## 일반 Trino SQL Job의 Kafka revision 자동 갱신
+
+`job_kind=trino_sql_materialization`인 Job의 Base와 reference Dataset 전체에 `relationMode=streaming`이 정확히 1개이고 static Dataset이 1개 이상이면 backend worker가 자동 갱신 대상으로 취급한다. 새 `dataset_freshness.latest_revision`마다 기존 Job run과 같은 Trino materialization을 내부 제출한다. 내구 상태는 `continuousConfig.revisionRefresh`에 저장하며 `publishedSourceRevision`은 결과 table 검증과 Catalog 공개가 성공한 뒤에만 전진한다. 실패 시 기존 Catalog Dataset mapping은 유지된다.
+
 이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
 프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
 
@@ -4316,6 +4320,20 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{jobId}`: owner/admin 범위 Job과 active Run을 반환한다. Run은 fencing token 원문 대신 `fencingTokenHash`를 반환한다.
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
+
+Dataset-revision Job response에는 다음 `refreshState`가 항상 포함된다. 브라우저는 이 값을 조회만 하며 refresh 실행을 요청하지 않는다.
+
+```json
+{
+  "latestSourceRevision": 18,
+  "processingSourceRevision": null,
+  "publishedSourceRevision": 18,
+  "status": "dashboard_ready",
+  "lastError": null
+}
+```
+
+`status`는 `idle | running | failed | catalog_ready | dashboard_ready`다. backend reconciliation만 refresh claim을 획득하며 같은 Job에서 동시에 하나의 revision만 처리한다. claim owner가 사라지면 `CONTINUOUS_SQL_REFRESH_CLAIM_SECONDS` 이후 회수할 수 있다. Dataset-revision runner의 Trino 결과는 기존 Gold에 누적 append하지 않고 새 Iceberg snapshot으로 replace하며 Catalog `rows`도 최신 snapshot 행 수를 사용한다. Trino 실행 또는 새 Gold 검증이 실패하면 `publishedSourceRevision`과 기존 Catalog 연결을 유지하고 다음 reconciliation에서 같은 source revision을 재시도한다.
 
 SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
 

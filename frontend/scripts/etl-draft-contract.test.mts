@@ -5,6 +5,7 @@ import {
   ETL_DRAFT_CONTRACT_VERSION,
   ETL_DRAFT_REDACTED_VALUE,
   hydrateEtlDraft,
+  sanitizeLiveEtlDraft,
   serializeEtlDraft,
 } from "../src/state/etlDraftState.ts";
 import type { DraftPipeline } from "../src/types/etl.ts";
@@ -96,4 +97,26 @@ test("empty and example object-storage defaults are replaceable", () => {
   assert.equal(shouldReplaceSourceRuntimeDefault(""), true);
   assert.equal(shouldReplaceSourceRuntimeDefault("replace-with-asklake-raw-bucket"), true);
   assert.equal(shouldReplaceSourceRuntimeDefault("m3-raw"), false);
+});
+
+test("live draft hydration removes mock and missing-column rules", () => {
+  const draft = draftFixture();
+  draft.schema.columns = [
+    { included: true, nullable: false, sourceName: "amount", targetName: "amount", type: "double" },
+  ];
+  draft.quality.rules = [
+    { enabled: true, failureAction: "Warn", id: "mock-quality-amount", kind: "range", severity: "Warning", targetColumn: "amount", validationType: "Range Check" },
+    { enabled: true, failureAction: "Fail Run", id: "stale-order-id", kind: "notNull", severity: "Error", targetColumn: "order_id", validationType: "Not Null" },
+    { enabled: true, failureAction: "Warn", id: "valid-amount", kind: "range", severity: "Warning", targetColumn: "amount", validationType: "Range Check" },
+  ];
+  draft.transform.steps = [
+    { enabled: true, id: "mock-transform-amount", input: "amount", kind: "cast", label: "mock", onError: "Warn", operation: "Cast", output: "amount" },
+    { enabled: true, id: "stale-order-transform", input: "order_id", kind: "trim", label: "stale", onError: "Warn", operation: "Trim", output: "order_id" },
+  ];
+
+  const sanitized = sanitizeLiveEtlDraft(draft);
+
+  assert.deepEqual(sanitized.quality.rules.map((rule) => rule.id), ["valid-amount"]);
+  assert.deepEqual(sanitized.transform.steps, []);
+  assert.equal(sanitized.quality.status, "idle");
 });

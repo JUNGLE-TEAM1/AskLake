@@ -485,7 +485,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
       strokeDashArray: 4,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 700,
       labels: {
         colors: "#475569",
@@ -542,7 +542,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
         rotate: 0,
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
         trim: true,
@@ -556,7 +556,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
         formatter: (value: number) => formatChartAxisNumber(value),
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
       },
@@ -629,7 +629,7 @@ function buildCircularChartOptions(color: string): ApexOptions {
       enabled: false,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 800,
       labels: {
         colors: "#475569",
