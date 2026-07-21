@@ -260,6 +260,30 @@ class SqlExecutionTreeMigrationTests(unittest.TestCase):
                 ).scalar_one()
             )
 
+    def test_upgrade_accepts_metadata_bootstrap_columns_before_alembic_revision(self) -> None:
+        _run_alembic(self.database_path, "upgrade", PREVIOUS_REVISION)
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE catalog_datasets (id TEXT PRIMARY KEY, payload JSON, "
+                "producer_job_id VARCHAR(160), producer_job_kind VARCHAR(64), "
+                "execution_mode VARCHAR(32), source_kind VARCHAR(64), "
+                "relation_mode VARCHAR(32), runtime_status VARCHAR(64))"
+            ))
+            connection.execute(text(
+                "CREATE TABLE continuous_sql_jobs (id VARCHAR(160) PRIMARY KEY)"
+            ))
+
+        _run_alembic(self.database_path, "upgrade", "head")
+
+        self.assertEqual(self._revision(), HEAD_REVISION)
+        inspector = inspect(self.engine)
+        self.assertTrue(
+            PRODUCER_COLUMNS.issubset({
+                column["name"] for column in inspector.get_columns("catalog_datasets")
+            })
+        )
+        self.assertIn("continuous_sql_dependencies", inspector.get_table_names())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,24 +26,23 @@ def upgrade() -> None:
     existing_tables = set(inspector.get_table_names())
 
     if "catalog_datasets" in existing_tables:
-        existing_columns = {
-            column["name"] for column in inspector.get_columns("catalog_datasets")
-        }
-        for column_name, column_type in CATALOG_PRODUCER_COLUMNS:
-            if column_name not in existing_columns:
-                op.add_column(
-                    "catalog_datasets",
-                    sa.Column(column_name, column_type, nullable=True),
-                )
-        existing_indexes = {
-            index["name"] for index in sa.inspect(connection).get_indexes("catalog_datasets")
-        }
-        if "ix_catalog_datasets_producer_job_id" not in existing_indexes:
-            op.create_index(
-                "ix_catalog_datasets_producer_job_id",
-                "catalog_datasets",
-                ["producer_job_id"],
-            )
+        # Deployments that ran the old metadata bootstrap can already have
+        # these additive columns while their Alembic row is still at 0022.
+        # PostgreSQL catalog inspection can be stale inside that bootstrap
+        # transaction, so use its native idempotent DDL rather than relying on
+        # a preflight snapshot alone.
+        if connection.dialect.name == "postgresql":
+            for column_name, column_type in CATALOG_PRODUCER_COLUMNS:
+                type_sql = connection.dialect.type_compiler.process(column_type)
+                op.execute(sa.text(
+                    f"ALTER TABLE catalog_datasets ADD COLUMN IF NOT EXISTS {column_name} {type_sql}"
+                ))
+            op.execute(sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_catalog_datasets_producer_job_id "
+                "ON catalog_datasets (producer_job_id)"
+            ))
+        else:
+            _upgrade_catalog_producer_columns(connection)
 
     if "continuous_sql_dependencies" not in existing_tables:
         op.create_table(
@@ -100,6 +99,28 @@ def upgrade() -> None:
             "ix_continuous_sql_dependencies_child_job",
             "continuous_sql_dependencies",
             ["child_job_id", "input_type"],
+        )
+
+
+def _upgrade_catalog_producer_columns(connection) -> None:
+    """SQLite/test fallback; PostgreSQL uses ADD COLUMN IF NOT EXISTS."""
+    existing_columns = {
+        column["name"] for column in sa.inspect(connection).get_columns("catalog_datasets")
+    }
+    for column_name, column_type in CATALOG_PRODUCER_COLUMNS:
+        if column_name not in existing_columns:
+            op.add_column(
+                "catalog_datasets",
+                sa.Column(column_name, column_type, nullable=True),
+            )
+    existing_indexes = {
+        index["name"] for index in sa.inspect(connection).get_indexes("catalog_datasets")
+    }
+    if "ix_catalog_datasets_producer_job_id" not in existing_indexes:
+        op.create_index(
+            "ix_catalog_datasets_producer_job_id",
+            "catalog_datasets",
+            ["producer_job_id"],
         )
 
 
