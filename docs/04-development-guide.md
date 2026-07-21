@@ -1031,7 +1031,7 @@ Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/
 
 1. Phase 0에서 현재 direct-consumer 구현을 characterization하고 execution ownership, dependency, lock, revision, manual Dashboard 경계를 문서와 정적 verifier로 고정한다.
 2. Phase 1에서 Catalog Dataset의 authoritative producer metadata와 SQL dependency binding을 additive persistence로 도입한다. 완료 기준은 migration upgrade/downgrade, 새 DB session 재조회, Catalog 정규화 column 우선순위와 빈 `dependencyBindings` 호환성이다.
-3. Phase 2에서 backend가 Dataset ID로 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다.
+3. Phase 2에서 backend가 Dataset ID와 정규화 Catalog metadata로 정확한 producer를 resolve하고 V1의 realtime 1개 + batch/static N개 조합을 검증한다. frontend 이름/tag 추정은 제거하고 create는 dependency를 Job과 같은 transaction에 저장한다. 완료 기준은 producer 불일치/누락 오류, validate binding, 새 session create 재조회와 UI authoritative 분류 테스트다.
 4. Phase 3에서 tree run/node run과 atomic parent-child lock/lease/fencing을 구현한다.
 5. Phase 4에서 SQL parent 시작이 실행 가능한 child를 먼저 시작하고 준비된 Dataset revision을 기준으로 transform을 실행하도록 orchestration한다.
 6. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
@@ -1046,6 +1046,21 @@ Phase 0 정적 계약 검증은 다음 명령으로 실행한다.
 cd backend
 npm run verify:continuous-sql-execution-tree-contract
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python python -m unittest tests.test_sql_execution_tree_persistence -v
+```
+
+Phase 2까지 확인할 때는 producer resolution/create durability와 frontend 분류를 추가로 실행한다.
+
+```bash
+cd backend
+PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest \
+  tests.test_continuous_sql_dependency_resolution \
+  tests.test_continuous_sql_catalog \
+  tests.test_continuous_sql_planner \
+  tests.test_sql_execution_tree_persistence -v
+
+cd ../frontend
+npm run test:continuous-sql-ui
+npm run build
 ```
 
 ## 7) Pair Ownership

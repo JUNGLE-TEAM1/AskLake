@@ -164,12 +164,17 @@ class ContinuousSqlRelationBinding(CamelModel):
     streaming_source: dict[str, Any] | None = None
     unique_key_sets: list[list[str]] = Field(default_factory=list)
     estimated_row_count: int | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
     broadcast_hint: bool = False
     cache_hint: bool = False
 
 
 class ContinuousSqlDependencyBinding(CamelModel):
-    sql_job_id: str
+    sql_job_id: str | None = None
     input_dataset_id: str
     child_job_id: str | None = None
     input_type: ContinuousSqlDependencyInputType
@@ -193,6 +198,7 @@ class ContinuousSqlPlanResponse(CamelModel):
     plan_hash: str
     runtime_sql: str
     relations: list[ContinuousSqlRelationBinding]
+    dependency_bindings: list[ContinuousSqlDependencyBinding] = Field(default_factory=list)
     joins: list[dict[str, Any]]
     output_schema: list[list[str]]
     static_binding_policy: ContinuousSqlStaticBindingPolicy

@@ -16,6 +16,7 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.models.continuous_sql import (
     ContinuousSqlCommandModel,
+    ContinuousSqlDependencyModel,
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
@@ -38,6 +39,7 @@ from app.schemas.continuous_sql import (
     ContinuousSqlCommandRequest,
     ContinuousSqlCommandResponse,
     ContinuousSqlCreateRequest,
+    ContinuousSqlDependencyBinding,
     ContinuousSqlJob,
     ContinuousSqlJobList,
     ContinuousSqlPlanRequest,
@@ -227,6 +229,20 @@ class ContinuousSqlService:
         )
         try:
             self.repository.add_job(job)
+            self.repository.replace_dependencies(
+                job.id,
+                [
+                    ContinuousSqlDependencyModel(
+                        sql_job_id=job.id,
+                        input_dataset_id=item.input_dataset_id,
+                        child_job_id=item.child_job_id,
+                        input_type=item.input_type,
+                        execution_policy=item.execution_policy,
+                        required=item.required,
+                    )
+                    for item in compiled.dependency_bindings
+                ],
+            )
             if incremental_binding is not None:
                 self.repository.add_incremental_binding(incremental_binding)
             self.db.commit()
@@ -736,12 +752,38 @@ class ContinuousSqlService:
             plan_hash=compiled.plan_hash,
             runtime_sql=compiled.runtime_sql,
             relations=[ContinuousSqlRelationBinding.model_validate(item) for item in plan["relations"]],
+            dependency_bindings=self._dependency_bindings(relations),
             joins=list(plan["joins"]),
             output_schema=list(plan["outputSchema"]),
             static_binding_policy=request.static_binding_policy,
             warnings=list(plan.get("warnings") or []),
             compiled_plan=plan,
         )
+
+    @staticmethod
+    def _dependency_bindings(
+        relations: list[Any],
+    ) -> list[ContinuousSqlDependencyBinding]:
+        return [
+            ContinuousSqlDependencyBinding(
+                input_dataset_id=relation.dataset_id,
+                child_job_id=relation.producer_job_id,
+                input_type=(
+                    "realtime"
+                    if relation.mode == "streaming"
+                    else "batch"
+                    if relation.producer_job_id
+                    else "static"
+                ),
+                execution_policy=(
+                    "run_on_tree_start"
+                    if relation.producer_job_id
+                    else "reuse_snapshot"
+                ),
+                required=True,
+            )
+            for relation in relations
+        ]
 
     def _new_run(
         self,
@@ -778,6 +820,7 @@ class ContinuousSqlService:
         return run
 
     def _resolve_run_bindings(self, job: ContinuousSqlJobModel) -> list[dict[str, Any]]:
+        legacy_direct_consumer = not self.repository.list_dependencies(job.id)
         incremental = self.repository.get_incremental_binding(job.id)
         pinned_by_dataset = {
             str(item.get("datasetId") or ""): item
@@ -789,7 +832,10 @@ class ContinuousSqlService:
             if not isinstance(persisted, dict):
                 continue
             dataset_id = str(persisted.get("datasetId") or "")
-            current = self.catalog_resolver.resolve_current(dataset_id)
+            current = self.catalog_resolver.resolve_current(
+                dataset_id,
+                legacy_binding=persisted if legacy_direct_consumer else None,
+            )
             if current.mode != str(persisted.get("mode") or ""):
                 raise ContinuousSqlValidationError(
                     "CONTINUOUS_SQL_RELATION_MODE_CHANGED",

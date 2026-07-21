@@ -263,14 +263,15 @@ SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이�
 
 #### Issue #1117 실행 트리 확장
 
-Phase 1에서 persistence/read field가 additive하게 도입됐다.
+Phase 1 persistence에 이어 Phase 2 producer resolution/create 계약이 적용됐다.
 
 - Catalog Dataset response는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`를 제공한다. 새 Dataset publication부터 저장하며 기존 Dataset은 추정 backfill하지 않는다.
-- Continuous SQL Job response는 durable `dependencyBindings[]`를 제공한다. 각 항목은 `sqlJobId`, `inputDatasetId`, nullable `childJobId`, `inputType`, `executionPolicy`, `required`를 가진다.
-- Phase 2 전에는 create가 producer를 자동 resolve/save하지 않으므로 `dependencyBindings`가 빈 배열일 수 있다.
+- validate와 Continuous SQL Job response는 backend가 resolve한 `dependencyBindings[]`를 제공한다. 각 항목은 nullable `sqlJobId`, `inputDatasetId`, nullable `childJobId`, `inputType`, `executionPolicy`, `required`를 가진다. validate에서는 아직 Job이 없어 `sqlJobId=null`, create/GET에서는 durable Job ID다.
+- streaming Dataset은 `relationMode=streaming`, `producerJobId`, `producerJobKind`, `executionMode=continuous`, `sourceKind=kafka`가 실제 Dataset-producing Kafka Continuous Job과 일치해야 한다. static producer metadata도 실제 Dataset-producing Job과 일치해야 하며 producer가 없는 queryable static snapshot은 `reuse_snapshot`으로 허용한다.
+- `relationMode`가 없는 기존 Dataset은 이름, tag, source 문자열이나 materialization 이력으로 추정하지 않는다. frontend도 같은 Catalog field만 사용한다.
 - frontend create/validate request는 계속 `relationDatasetIds`만 보내고 producer Job ID를 보내지 않는다.
 
-producer 자동 resolution, `executionTree`/`treeRun`/node state/`inputDatasetRevisions`, lock/orchestration과 direct consumer 제거는 후속 Phase다. 현재 runtime은 기존 direct Kafka consumer를 유지한다. Dashboard Binding과 자동 감시는 다시 추가하지 않는다.
+`CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`는 streaming producer가 없거나 Dataset에 정확히 연결되지 않은 경우, `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`는 producer metadata 불일치나 V1 input 범위 위반에 사용한다. `executionTree`/`treeRun`/node state/`inputDatasetRevisions`, lock/orchestration과 direct consumer 제거는 후속 Phase다. 현재 runtime은 기존 direct Kafka consumer를 유지한다. Dashboard Binding과 자동 감시는 다시 추가하지 않는다.
 
 상세 target contract는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 

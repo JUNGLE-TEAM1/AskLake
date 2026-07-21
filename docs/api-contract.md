@@ -4284,9 +4284,9 @@ compiled plan은 `staticCacheMaxRows`와 relation별 서버 계산 `cacheHint`�
 
 ### Issue #1117 SQL Job 실행 트리 contract
 
-Phase 1은 producer metadata와 dependency persistence/read shape까지 구현했다. runtime은 아직 direct-consumer이며 producer 자동 resolution, lock과 orchestration은 후속 Phase다. 구현 순서는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+Phase 1 producer metadata/dependency persistence에 이어 Phase 2는 validate/create의 authoritative producer resolution을 구현했다. runtime은 아직 direct-consumer이며 lock과 orchestration은 후속 Phase다. 구현 순서는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
-validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. Continuous SQL Job response는 다음 durable `dependencyBindings`를 반환할 수 있다. Phase 2 전에는 create가 자동 resolve/save하지 않으므로 빈 배열이 정상이다.
+validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. backend는 Catalog 정규화 column과 실제 Dataset-producing Job의 ID, Dataset ID, kind, execution/source mode를 대조한다. validate와 Continuous SQL Job response는 다음 `dependencyBindings`를 반환한다. validate의 `sqlJobId`는 `null`이고 create/GET은 같은 transaction으로 commit된 실제 ID다.
 
 ```json
 {
@@ -4299,7 +4299,11 @@ validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend
 }
 ```
 
-Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`가 추가됐다. 새 ETL/Trino SQL/Continuous SQL publication은 JSON payload와 정규화 column을 함께 쓰고 read에서는 정규화 column이 우선한다. 기존 Dataset은 자동 backfill하지 않으며 frontend 판정 전환은 Phase 2에서 수행한다.
+Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`가 추가됐다. 새 ETL/Trino SQL/Continuous SQL publication은 JSON payload와 정규화 column을 함께 쓰고 read에서는 정규화 column이 우선한다. 기존 Dataset은 자동 backfill하지 않는다. Phase 2 frontend와 backend 모두 이름, tag, source 문자열, materialization run으로 relation mode나 producer를 추정하지 않는다.
+
+streaming input은 `relationMode=streaming`, 실제 Kafka Continuous `producerJobId`, 일치하는 `producerJobKind`, `executionMode=continuous`, `sourceKind=kafka`가 모두 필요하다. static input은 일치하는 batch producer가 있으면 `batch/run_on_tree_start`, producer metadata가 전혀 없는 queryable snapshot이면 `static/reuse_snapshot`이다. 일부만 있는 producer metadata, 다른 Dataset을 생산하는 Job, static으로 위장한 Continuous producer는 `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`다. streaming producer 누락/해결 실패는 `CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`다.
+
+Phase 2 이전에 생성되어 durable dependency가 비어 있는 legacy direct-consumer Job의 재시작만 예외다. 이 경우 새 producer를 추정하지 않고 Job에 이미 저장된 relation mode와 streaming source를 현재 Catalog schema/snapshot 검증에 사용한다. 이 호환 경로는 validate/create 또는 새 Job에 적용되지 않으며 기존 Job을 tree-managed Job으로 자동 변환하지 않는다.
 
 DB migration `0023_sql_job_execution_tree_persistence`는 `catalog_datasets`에 위 6개 nullable column을 추가하고 `continuous_sql_dependencies`를 생성한다. dependency는 `(sql_job_id, input_dataset_id)`가 identity이며 producer child는 `run_on_tree_start`, jobless static은 `reuse_snapshot`만 허용한다.
 

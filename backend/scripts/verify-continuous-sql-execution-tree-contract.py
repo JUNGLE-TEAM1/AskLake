@@ -21,6 +21,11 @@ def require(text: str, token: str, label: str) -> None:
         raise AssertionError(f"{label} is missing required token: {token}")
 
 
+def reject(text: str, token: str, label: str) -> None:
+    if token in text:
+        raise AssertionError(f"{label} still contains forbidden token: {token}")
+
+
 def main() -> None:
     contract = read(str(CONTRACT_PATH.relative_to(ROOT)))
     adr = read(str(ADR_PATH.relative_to(ROOT)))
@@ -64,9 +69,10 @@ def main() -> None:
         "Phase 0 backend legacy evidence",
     )
 
-    legacy_frontend = read("frontend/src/pages/sql/continuousSqlUi.ts")
-    require(legacy_frontend, "isStreamingCatalogDataset", "Phase 0 frontend legacy evidence")
-    require(legacy_frontend, "kafka|stream", "Phase 0 frontend regex evidence")
+    authoritative_frontend = read("frontend/src/pages/sql/continuousSqlUi.ts")
+    require(authoritative_frontend, "isStreamingCatalogDataset", "Phase 2 frontend evidence")
+    require(authoritative_frontend, 'relationMode === "streaming"', "Phase 2 frontend evidence")
+    reject(authoritative_frontend, "kafka|stream", "Phase 2 frontend inference boundary")
 
     phase_one_evidence = {
         "backend/alembic/versions/0023_sql_job_execution_tree_persistence.py": (
@@ -99,6 +105,30 @@ def main() -> None:
         contents = read(relative_path)
         for token in tokens:
             require(contents, token, f"Phase 1 evidence in {relative_path}")
+
+    phase_two_evidence = {
+        "backend/app/services/continuous_sql_catalog.py": (
+            "CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED",
+            "CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED",
+            "CONTINUOUS_SQL_RELATION_MODE_REQUIRED",
+            "producer_job_id",
+        ),
+        "backend/app/services/continuous_sql_service.py": (
+            "_dependency_bindings",
+            "replace_dependencies",
+        ),
+        "backend/tests/test_continuous_sql_dependency_resolution.py": (
+            "test_create_commits_job_and_dependencies_together",
+            "test_relation_mode_is_required_and_never_inferred_from_legacy_fields",
+        ),
+        "frontend/scripts/continuous-sql-ui.test.mts": (
+            "does not infer streaming inputs from legacy names",
+        ),
+    }
+    for relative_path, tokens in phase_two_evidence.items():
+        contents = read(relative_path)
+        for token in tokens:
+            require(contents, token, f"Phase 2 evidence in {relative_path}")
 
     print("CONTINUOUS_SQL_EXECUTION_TREE_CONTRACT_OK")
 

@@ -5,7 +5,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
-현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. 현재 구현은 Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영의 legacy direct-consumer 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다. Issue #1117 Phase 1은 Catalog producer metadata와 SQL dependency persistence/read만 추가했으며 runtime은 아직 전환하지 않는다. 목표 경계는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+현재 기본 Continuous SQL 배포 모드는 `CONTINUOUS_SQL_SERVING_MODE=iceberg`다. 현재 구현은 Kafka → Spark Structured Streaming → 고정 정적 Iceberg snapshot JOIN → Iceberg/S3 output → Catalog revision → Dashboard 수동 반영의 legacy direct-consumer 경로를 사용하며 ClickHouse v1/v2 profile과 consumer owner는 기본 비활성이다. Issue #1117 Phase 2까지 Catalog producer metadata, SQL dependency persistence/read, validate/create producer resolution과 frontend authoritative 분류를 추가했으며 runtime은 아직 전환하지 않는다. 목표 경계는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
 ## 1. 현재 연결 상태
 
@@ -597,13 +597,13 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] Phase 0 execution ownership ADR, V1 계약, 제품/아키텍처/API 문서 기준선
 - [x] Phase 0 legacy direct-consumer 증적과 정적 contract verifier
 - [x] Dataset producer metadata와 SQL dependency persistence, migration upgrade/downgrade와 새 session 재조회
-- [ ] backend producer resolution과 realtime 1개 + batch/static N개 validation
+- [x] backend producer resolution과 realtime 1개 + batch/static N개 validation
 - [ ] atomic tree lock/lease/fencing과 tree run/node run
 - [ ] parent orchestration과 SQL-owned Kafka consumer 제거
 - [ ] lifecycle/recovery/UI 및 output revision 회귀
 - [ ] legacy Job 운영 처리, live E2E와 rollout gate
 
-Phase 1 검증은 `cd backend && npm run verify:continuous-sql-execution-tree-contract`와 `ASKLAKE_FASTAPI_PYTHON=.venv/bin/python python -m unittest tests.test_sql_execution_tree_persistence -v`로 실행한다. 이 통과는 producer resolution이나 runtime 전환 완료를 의미하지 않는다.
+Phase 2 검증은 `cd backend && npm run verify:continuous-sql-execution-tree-contract`와 `PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_continuous_sql_dependency_resolution tests.test_continuous_sql_catalog tests.test_continuous_sql_planner tests.test_sql_execution_tree_persistence -v`, `cd ../frontend && npm run test:continuous-sql-ui && npm run build`로 실행한다. 이 통과는 tree lock/orchestration 또는 direct-consumer 제거 완료를 의미하지 않는다.
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사
 - [x] SSE notification + REST refetch, durable cursor, resync ADR

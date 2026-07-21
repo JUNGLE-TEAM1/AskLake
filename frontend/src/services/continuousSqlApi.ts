@@ -8,6 +8,7 @@ export type ContinuousSqlPlanRequest = {
 };
 
 export type ContinuousSqlPlan = {
+  dependencyBindings: ContinuousSqlDependencyBinding[];
   normalizedSql: string;
   outputSchema: string[][];
   planHash: string;
@@ -15,15 +16,17 @@ export type ContinuousSqlPlan = {
   warnings: Array<{ code?: string; message?: string }>;
 };
 
+export type ContinuousSqlDependencyBinding = {
+  childJobId?: string | null;
+  executionPolicy: "run_on_tree_start" | "reuse_snapshot";
+  inputDatasetId: string;
+  inputType: "realtime" | "batch" | "static";
+  required: boolean;
+  sqlJobId?: string | null;
+};
+
 export type ContinuousSqlJob = {
-  dependencyBindings: Array<{
-    childJobId?: string | null;
-    executionPolicy: "run_on_tree_start" | "reuse_snapshot";
-    inputDatasetId: string;
-    inputType: "realtime" | "batch" | "static";
-    required: boolean;
-    sqlJobId: string;
-  }>;
+  dependencyBindings: ContinuousSqlDependencyBinding[];
   desiredState: "stopped" | "running" | "paused";
   generation: number;
   id: string;

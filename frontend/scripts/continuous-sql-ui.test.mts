@@ -34,13 +34,13 @@ function dataset(overrides: Record<string, unknown>) {
   } as never;
 }
 
-test("detects a Kafka delta dataset as the single streaming relation", () => {
+test("uses authoritative Catalog relationMode for the relation mix", () => {
   const stream = dataset({
     id: "dataset-events",
-    materializationRuns: [{ materializationMode: "delta", sourceKind: "kafka" }],
     name: "events",
+    relationMode: "streaming",
   });
-  const users = dataset({ id: "dataset-users", name: "users" });
+  const users = dataset({ id: "dataset-users", name: "users", relationMode: "static" });
 
   assert.equal(isStreamingCatalogDataset(stream), true);
   assert.equal(isStreamingCatalogDataset(users), false);
@@ -51,12 +51,26 @@ test("detects a Kafka delta dataset as the single streaming relation", () => {
 });
 
 test("requires exactly one stream and at least one static relation", () => {
-  const streamA = dataset({ id: "stream-a", source: "Kafka topic a" });
-  const streamB = dataset({ id: "stream-b", tags: ["#실시간"] });
-  const staticDataset = dataset({ id: "static" });
+  const streamA = dataset({ id: "stream-a", relationMode: "streaming" });
+  const streamB = dataset({ id: "stream-b", relationMode: "streaming" });
+  const staticDataset = dataset({ id: "static", relationMode: "static" });
 
   assert.equal(getContinuousSqlRelationMix([staticDataset]), null);
   assert.equal(getContinuousSqlRelationMix([streamA, streamB, staticDataset]), null);
+});
+
+test("does not infer streaming inputs from legacy names, tags, or materialization runs", () => {
+  const legacy = dataset({
+    id: "legacy-stream",
+    materializationRuns: [{ materializationMode: "delta", sourceKind: "kafka" }],
+    name: "realtime_kafka_events",
+    source: "Kafka topic",
+    tags: ["#실시간"],
+  });
+  const staticDataset = dataset({ id: "static", relationMode: "static" });
+
+  assert.equal(isStreamingCatalogDataset(legacy), false);
+  assert.equal(getContinuousSqlRelationMix([legacy, staticDataset]), null);
 });
 
 test("creates safe unique ClickHouse output identifiers", () => {

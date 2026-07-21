@@ -185,7 +185,7 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 
 - Phase 0: 본 계약, ADR, 상위 문서와 정적 verifier
 - Phase 1: producer metadata와 dependency persistence (완료)
-- Phase 2: backend validation/create 계약과 frontend authoritative 분류
+- Phase 2: backend validation/create 계약과 frontend authoritative 분류 (완료)
 - Phase 3: tree run, atomic lock, lease/fencing
 - Phase 4: parent 중심 child orchestration과 즉시 start 연결
 - Phase 5: direct Kafka consumer 제거와 revision-driven transform
