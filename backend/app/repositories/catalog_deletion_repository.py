@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -22,14 +23,37 @@ def ensure_catalog_deletion_schema(db: Session) -> None:
     _schema_ready_bind_ids.add(bind_key)
 
 
-def ensure_catalog_publication_allowed(db: Session, dataset_id: str) -> None:
-    if CatalogDeletionRepository(db).has_fence(dataset_id):
+def ensure_catalog_publication_allowed(
+    db: Session,
+    dataset_id: str,
+    *,
+    publication_created_at: datetime | None = None,
+) -> None:
+    receipt = CatalogDeletionRepository(db).latest_for_dataset(dataset_id)
+    if receipt is not None and publication_created_after_deletion(publication_created_at, receipt.created_at):
+        return
+    if receipt is not None:
         raise ApiError(
             "DATASET_DELETION_FENCED",
             "Dataset publication is blocked because deletion has already been requested.",
             409,
             {"datasetId": dataset_id},
         )
+
+
+def publication_created_after_deletion(
+    publication_created_at: datetime | None,
+    deletion_created_at: datetime | None,
+) -> bool:
+    if publication_created_at is None or deletion_created_at is None:
+        return False
+    return normalize_timestamp(publication_created_at) > normalize_timestamp(deletion_created_at)
+
+
+def normalize_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class CatalogDeletionRepository:

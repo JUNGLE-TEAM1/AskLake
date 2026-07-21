@@ -132,6 +132,33 @@ remote_deploy_preflight() {
   ssh_run "cd '$DEPLOY_PATH' && bash scripts/verify-deploy-env.sh '$COMPOSE_ENV_FILE' '$COMPOSE_FILE'"
 }
 
+airflow_execution_token_hash() {
+  local service="$1"
+  local environment_key="$2"
+
+  remote_compose "exec -T $service sh -lc 'token=\${${environment_key}:-}; test -n \"\$token\"; printf \"%s\" \"\$token\" | sha256sum | awk \"{print \$1}\"'"
+}
+
+verify_airflow_execution_token_parity() {
+  local backend_hash
+  local scheduler_hash
+
+  backend_hash="$(airflow_execution_token_hash backend AIRFLOW_EXECUTION_API_TOKEN)" \
+    || die "backend AIRFLOW_EXECUTION_API_TOKEN is missing"
+  scheduler_hash="$(airflow_execution_token_hash airflow-scheduler ASKLAKE_EXECUTION_API_TOKEN)" \
+    || die "airflow-scheduler ASKLAKE_EXECUTION_API_TOKEN is missing"
+
+  [[ "$backend_hash" == "$scheduler_hash" ]] \
+    || die "Airflow execution token drift detected between backend and airflow-scheduler"
+
+  printf 'Airflow execution token parity verified.\n'
+}
+
+recreate_airflow_execution_control_plane() {
+  remote_compose 'up -d --build --force-recreate backend airflow-apiserver airflow-scheduler airflow-dag-processor'
+  verify_airflow_execution_token_parity
+}
+
 remote_trino_enabled() {
   remote_compose 'config --format json' | "$PYTHON_BIN" -c '
 import json
@@ -547,6 +574,7 @@ start_stack() {
   prepare_clickhouse_runtime
   prepare_clickhouse_v2_runtime
   remote_compose 'up -d'
+  recreate_airflow_execution_control_plane
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime
@@ -586,6 +614,7 @@ deploy_stack() {
   prepare_clickhouse_runtime
   prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
+  recreate_airflow_execution_control_plane
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime
@@ -601,6 +630,7 @@ restart_stack() {
   prepare_clickhouse_runtime
   prepare_clickhouse_v2_runtime
   remote_compose 'up -d --build'
+  recreate_airflow_execution_control_plane
   health_check
   verify_trino_runtime
   verify_clickhouse_runtime

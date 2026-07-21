@@ -953,6 +953,60 @@ else
   record_fail 'health follows redirect for frontend, backend, and AI readiness requests'
 fi
 
+mock_airflow_execution_token_parity() (
+  local backend_hash="$1"
+  local scheduler_hash="$2"
+
+  remote_compose() {
+    case "$1" in
+      'exec -T backend '*) printf '%s\n' "$backend_hash" ;;
+      'exec -T airflow-scheduler '*) printf '%s\n' "$scheduler_hash" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  verify_airflow_execution_token_parity
+)
+
+if mock_airflow_execution_token_parity 'same-hash' 'same-hash' >/dev/null 2>&1; then
+  record_pass 'deploy verifies backend and Airflow execution-token parity without printing tokens'
+else
+  record_fail 'deploy verifies backend and Airflow execution-token parity without printing tokens'
+fi
+
+if output="$(mock_airflow_execution_token_parity 'backend-hash' 'scheduler-hash' 2>&1)"; then
+  record_fail 'deploy blocks Airflow execution-token drift'
+elif [[ "$output" == *'Airflow execution token drift detected'* ]] \
+  && [[ "$output" != *'backend-hash'* ]] \
+  && [[ "$output" != *'scheduler-hash'* ]]; then
+  record_pass 'deploy blocks Airflow execution-token drift'
+else
+  record_fail 'deploy blocks Airflow execution-token drift'
+fi
+
+mock_airflow_execution_control_plane_recreate() (
+  remote_compose() {
+    case "$1" in
+      'up -d --build --force-recreate backend airflow-apiserver airflow-scheduler airflow-dag-processor')
+        printf 'compose:%s\n' "$1"
+        ;;
+      'exec -T backend '*) printf 'same-hash\n' ;;
+      'exec -T airflow-scheduler '*) printf 'same-hash\n' ;;
+      *) return 1 ;;
+    esac
+  }
+
+  recreate_airflow_execution_control_plane
+)
+
+if output="$(mock_airflow_execution_control_plane_recreate 2>&1)" \
+  && [[ "$output" == *'compose:up -d --build --force-recreate backend airflow-apiserver airflow-scheduler airflow-dag-processor'* ]] \
+  && [[ "$output" == *'Airflow execution token parity verified.'* ]]; then
+  record_pass 'deploy recreates the Airflow execution control plane before health checks'
+else
+  record_fail 'deploy recreates the Airflow execution control plane before health checks'
+fi
+
 printf 'deploy regression summary: %s passed, %s failed, %s skipped\n' \
   "$pass_count" "$fail_count" "$skip_count"
 

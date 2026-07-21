@@ -168,6 +168,8 @@ EC2 running 보장
   -> deploy env preflight
   -> PostgreSQL만 준비한 metadata schema bootstrap
   -> docker compose up -d --build
+  -> backend/Airflow execution control plane force recreate
+  -> backend/Airflow execution-token parity check (hash comparison only)
   -> frontend/API health check
   -> TRINO_ENABLED=true이면 query identity, materializer CTAS, Warehouse/Query Result S3 readiness
   -> TRINO_ENABLED=false이면 stale Trino profile container 제거 후 readiness 생략
@@ -175,6 +177,8 @@ EC2 running 보장
 ```
 
 `git pull --ff-only`가 실패하면 서버 작업 tree가 배포 branch와 다르다는 뜻이므로 자동으로 덮어쓰지 않고 실패시킨다.
+
+Airflow Spark execution token은 backend와 scheduler가 공유하는 secret이다. `scripts/deploy.sh start`, `deploy`, `restart`는 backend, airflow-apiserver, airflow-scheduler, airflow-dag-processor를 강제 재생성한 다음 두 token의 SHA-256 hash만 비교한다. 값이 다르거나 비어 있으면 health check 전에 배포를 중단하며, 실제 token은 출력하지 않는다.
 
 Trino를 활성화한 서버에서는 배포 script와 동일한 readiness를 수동으로 다시 확인할 수 있다.
 
