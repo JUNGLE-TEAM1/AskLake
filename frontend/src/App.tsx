@@ -610,7 +610,6 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
         {(toast || apiPending || (activeDataLoading && activeDataHasRows)) && (
           <div className="app-notification-stack">
             {toast && <div className={`app-toast ${toast.tone}`} role="status">{toast.message}</div>}
@@ -626,7 +625,8 @@ export function App() {
             steps={wizardStepLabels}
           />
         )}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : activeFlow === "catalog" ? "page-body catalog-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
+          <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
               <Skeleton className="h-5 w-24" />

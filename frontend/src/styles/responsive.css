@@ -4,10 +4,6 @@
     overflow: visible;
   }
 
-  .schema-shell .topbar {
-    min-height: 64px;
-  }
-
   .schema-shell .stepper-inner {
     height: auto;
   }
@@ -163,6 +159,17 @@
     height: auto;
   }
 
+  .topbar {
+    min-height: 64px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+  }
+
+  .topbar-end {
+    margin-left: auto;
+  }
+
   .stepper-inner {
     height: auto;
     justify-content: flex-start;
@@ -189,6 +196,11 @@
   }
 
   .page-body {
+    padding: 20px;
+  }
+
+  .page-body.catalog-body,
+  .page-body.sql-body {
     padding: 20px;
   }
 
