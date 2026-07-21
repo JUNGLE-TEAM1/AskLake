@@ -1,10 +1,12 @@
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models.catalog import CatalogDatasetModel
+from app.schemas.catalog import DatasetPhysicalBinding
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -182,7 +184,7 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "table": query_engine["table"],
                 "snapshotId": normalized_payload.get("icebergSnapshotId"),
             })
-    normalized_payload["physicalBindings"] = physical_bindings
+    normalized_payload["physicalBindings"] = normalize_physical_bindings(physical_bindings)
     owner = str(normalized_payload.get("owner") or "")
     normalized_payload["permissionGrants"] = normalized_payload.get("permissionGrants") or permission_grants_from_roles(
         owner,
@@ -196,6 +198,21 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
         else []
     )
     return normalized_payload
+
+
+def normalize_physical_bindings(physical_bindings: list[Any]) -> list[dict[str, Any]]:
+    normalized_bindings: list[dict[str, Any]] = []
+    for binding in physical_bindings:
+        if not isinstance(binding, dict):
+            continue
+        if binding.get("role") != "archive" or binding.get("engine") != "trino":
+            continue
+        try:
+            parsed = DatasetPhysicalBinding.model_validate(binding)
+        except ValidationError:
+            continue
+        normalized_bindings.append(parsed.model_dump(by_alias=True, mode="json"))
+    return normalized_bindings
 
 
 def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict[str, Any]]:

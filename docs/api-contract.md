@@ -26,6 +26,10 @@ PR 07의 내부 리팩터링은 기존 API 계약에 additive field도 추가하
 
 Catalog terminal publication은 `datasetId`, materialization version, storage location, query-engine table identity가 일치하는 재시도를 멱등으로 처리한다. 내부 모듈과 검증 명령은 [Pipeline·Snapshot·SQL·Catalog Application 경계](refactor-2026/contracts/pipeline-snapshot-sql-catalog-boundaries.md)를 따른다.
 
+### Catalog physical binding 읽기 호환성
+
+`catalog_datasets.payload`는 저장 시점의 원본 JSONB를 유지한다. `GET /api/catalog/datasets`와 Dataset 상세를 위한 repository read normalization은 현재 지원하는 유효한 `role=archive`, `engine=trino` binding만 `physicalBindings` 응답에 포함한다. ClickHouse V2 시기의 `role=serving`, `engine=clickhouse` binding과 schema validation을 통과하지 못하는 entry는 응답에서 제외하며, 해당 entry 하나 때문에 목록 전체를 500으로 만들지 않는다. 이 호환 경계는 retired runtime을 재활성화하거나 persisted payload를 자동 갱신하지 않는다. `physicalBindings`가 list가 아니고 유효한 `queryEngineTable`이 있으면 기존 Trino archive binding fallback을 사용한다.
+
 ## 1. 구현 우선순위
 
 | 단계 | 우선순위 | API | 목적 |
