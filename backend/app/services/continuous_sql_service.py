@@ -986,11 +986,7 @@ class ContinuousSqlService:
                     job.last_error_code = None
                     job.last_error_message = None
                 else:
-                    # A failed refresh must not unpublish the last verified
-                    # Gold revision or terminate the long-running parent.
-                    # The next reconciliation cycle retries from the same
-                    # source revision because the published cursor did not
-                    # advance.
+                    # Keep the last verified Gold revision and retry the unadvanced source cursor.
                     job.observed_state = "running"
                     run.status = "running"
                     job.last_error_code = str(exc.code)
@@ -1020,7 +1016,6 @@ class ContinuousSqlService:
         job.worker_id = str(worker.get("containerId") or worker.get("workerAttemptId") or "") or job.worker_id
         if run is not None and job.worker_id:
             run.worker_id = job.worker_id
-
         if report is not None and run is not None:
             identity_error = worker_identity_error(job, run, report)
             if identity_error:

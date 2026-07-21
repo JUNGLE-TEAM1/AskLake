@@ -83,7 +83,6 @@ class TrinoSqlJobService:
                 status.HTTP_409_CONFLICT,
                 {"jobId": job.id},
             )
-
         recipe = self._recipe(job)
         compiled_query, _ = self.query_access.compile_for_actor(
             base_dataset_id=str(recipe["baseDatasetId"]),
@@ -101,7 +100,6 @@ class TrinoSqlJobService:
                 "SQL Job target Dataset is incomplete",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
-
         run_id = f"run_sql_{uuid4().hex[:16]}"
         target = build_query_engine_table(dataset_name, f"{dataset_id}:{run_id}", self.settings).model_copy(
             update={"partition_columns": string_list(target_info.get("partitionColumns"))}
@@ -109,7 +107,6 @@ class TrinoSqlJobService:
         self._ensure_target_schema(target)
         statement = build_versioned_ctas(target, compiled_query)
         started_at = utc_now()
-
         try:
             page = self.client.submit(statement)
         except ApiError as exc:
@@ -127,7 +124,6 @@ class TrinoSqlJobService:
             etl_repository.save_command_result(self.repository.db, job, run)
             self._record("submit_failed", job, run_id, actor, result="failed", error_code=str(exc.code))
             raise
-
         trino_run_status = trino_status(page)
         run = self._new_run(job, run_id, started_at, target)
         run.status = etl_run_status(trino_run_status)

@@ -105,7 +105,6 @@ export function SqlAiWriterDialog({
   const promptOpen = !pending && !suggestion?.sql;
   const applyButtonRef = useRef<HTMLButtonElement | null>(null);
   const pendingStatusRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     if (!open) return;
 
