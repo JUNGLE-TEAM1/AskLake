@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -309,6 +310,88 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertEqual(events, [])
             self.assertEqual(db.scalar(select(ContinuousSqlTreeRunModel)), None)
             self.assertEqual(db.scalar(select(ContinuousSqlTreeJobLockModel)), None)
+
+    def test_revision_transform_request_uses_only_dataset_revisions_and_snapshots(self) -> None:
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            job.compiled_plan = {
+                "executionInputMode": "dataset_revision",
+                "streamingSource": {
+                    "broker": "kafka:9092",
+                    "topic": "events",
+                    "consumerGroupId": "must-not-leak",
+                    "maxOffsetsPerTrigger": 100,
+                },
+            }
+            repository = ContinuousSqlRepository(db)
+            repository.replace_dependencies(job.id, [
+                ContinuousSqlDependencyModel(
+                    sql_job_id=job.id,
+                    input_dataset_id="dataset-JOB-REALTIME",
+                    child_job_id="JOB-REALTIME",
+                    input_type="realtime",
+                    execution_policy="run_on_tree_start",
+                    required=True,
+                ),
+                ContinuousSqlDependencyModel(
+                    sql_job_id=job.id,
+                    input_dataset_id="dataset-static",
+                    child_job_id=None,
+                    input_type="static",
+                    execution_policy="reuse_snapshot",
+                    required=True,
+                ),
+            ])
+            db.add(job)
+            db.commit()
+            service = ContinuousSqlService(db, runtime_settings=self.settings)
+            run = service._new_run(job, observed_state="starting")
+            run.static_bindings = [{"datasetId": "dataset-static", "snapshotId": "snap-101"}]
+            tree = service._acquire_execution_tree(job, run)
+            tree.input_dataset_revisions = {"dataset-JOB-REALTIME": 42}
+            db.add_all([run, tree])
+            db.commit()
+
+            payload = service._revision_transform_request(job, run).model_dump(
+                by_alias=True,
+                mode="json",
+            )
+
+            self.assertEqual(payload["executionInputMode"], "dataset_revision")
+            self.assertEqual(payload["treeRunId"], tree.tree_run_id)
+            self.assertEqual(payload["continuousSqlRunId"], run.run_id)
+            self.assertEqual(payload["inputDatasets"], [
+                {
+                    "inputDatasetId": "dataset-JOB-REALTIME",
+                    "inputType": "realtime",
+                    "childJobId": "JOB-REALTIME",
+                    "executionPolicy": "run_on_tree_start",
+                    "required": True,
+                    "revision": 42,
+                    "snapshotId": None,
+                },
+                {
+                    "inputDatasetId": "dataset-static",
+                    "inputType": "static",
+                    "childJobId": None,
+                    "executionPolicy": "reuse_snapshot",
+                    "required": True,
+                    "revision": None,
+                    "snapshotId": "snap-101",
+                },
+            ])
+            serialized = json.dumps(payload, sort_keys=True)
+            self.assertNotIn("kafka:9092", serialized)
+            self.assertNotIn("consumerGroupId", serialized)
+            self.assertNotIn("maxOffsetsPerTrigger", serialized)
 
     def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
         events: list[str] = []

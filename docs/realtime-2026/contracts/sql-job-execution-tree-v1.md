@@ -67,6 +67,43 @@ Phase 1에서 다음 의미의 durable dependency를 `continuous_sql_dependencie
 
 V1 parent start는 모든 producer child를 실행한다. 이미 존재하는 snapshot을 임의로 최신이라고 추정해 producer 실행을 건너뛰지 않는다. 추후 `reuse_snapshot` batch 정책은 별도 제품 결정과 API version 없이 노출하지 않는다.
 
+### Revision transform runner private request
+
+revision runner 준비 단계는 SQL parent가 Kafka 연결 정보를 다시 받지 않도록 아래 private worker request를 고정한다. 이 payload는 public API response가 아니며 `treeFencingToken`은 worker 전달 경로에서만 사용하고 browser/API에는 노출하지 않는다.
+
+```json
+{
+  "executionInputMode": "dataset_revision",
+  "treeRunId": "tree_123",
+  "treeFencingToken": "private-fence",
+  "sqlJobId": "csql_123",
+  "continuousSqlRunId": "csqlrun_123",
+  "runGeneration": 1,
+  "inputDatasets": [
+    {
+      "inputDatasetId": "ds_clicks",
+      "inputType": "realtime",
+      "childJobId": "JOB-1234",
+      "executionPolicy": "run_on_tree_start",
+      "required": true,
+      "revision": 42
+    },
+    {
+      "inputDatasetId": "ds_users",
+      "inputType": "static",
+      "executionPolicy": "reuse_snapshot",
+      "required": true,
+      "snapshotId": "iceberg-snapshot-101"
+    }
+  ],
+  "staticBindings": [{"datasetId": "ds_users", "snapshotId": "iceberg-snapshot-101"}],
+  "outputDatasetId": "ds_output",
+  "outputTarget": {"catalog": "iceberg", "namespace": "datasets", "table": "output"}
+}
+```
+
+`broker`, `topic`, `consumerGroupId`, Kafka offset과 trigger/max-offset은 이 payload에 절대 포함하지 않는다. realtime revision은 tree run의 `inputDatasetRevisions`에서, static snapshot은 parent Run의 `staticBindings`에서만 읽는다. 실제 revision 대기·transform 제출은 후속 runner Phase의 책임이다.
+
 Catalog/API는 frontend 판정을 위해 다음 authoritative field를 additive하게 제공한다. Phase 1부터 새 ETL/Trino SQL/Continuous SQL publication은 정규화 Catalog column과 payload를 함께 저장하며, 정규화 column이 오래된 payload보다 우선한다. 기존 Dataset은 자동 추정 backfill하지 않는다.
 
 ```json

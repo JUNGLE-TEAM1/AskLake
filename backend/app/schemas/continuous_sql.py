@@ -192,6 +192,37 @@ class ContinuousSqlDependencyBinding(CamelModel):
         return self
 
 
+class ContinuousSqlRevisionInput(CamelModel):
+    """One producer Dataset in the private revision-transform runner payload."""
+
+    input_dataset_id: str
+    input_type: ContinuousSqlDependencyInputType
+    child_job_id: str | None = None
+    execution_policy: ContinuousSqlDependencyExecutionPolicy
+    required: bool = True
+    revision: int | None = None
+    snapshot_id: str | None = None
+
+
+class ContinuousSqlRevisionTransformRequest(CamelModel):
+    """Private worker contract for a Dataset-revision SQL tree run.
+
+    This model deliberately excludes Kafka broker, topic, consumer group, and
+    offset fields.  Those belong only to the producer child Job.
+    """
+
+    execution_input_mode: Literal["dataset_revision"] = "dataset_revision"
+    tree_run_id: str
+    tree_fencing_token: str
+    sql_job_id: str
+    continuous_sql_run_id: str
+    run_generation: int
+    input_datasets: list[ContinuousSqlRevisionInput] = Field(default_factory=list)
+    static_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    output_dataset_id: str
+    output_target: dict[str, Any]
+
+
 class ContinuousSqlPlanResponse(CamelModel):
     normalized_sql: str
     plan_version: str
