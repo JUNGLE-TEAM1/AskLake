@@ -710,18 +710,18 @@ expect_preflight_failure \
   'Compose wiring does not match the selected minio provider and feature-profile contract' \
   "$UNSAFE_COMPOSE"
 
-if rg -Fq 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: ${ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS:-60}' \
+if grep -Fq 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: ${ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS:-60}' \
     "$ROOT_DIR/deploy/docker-compose.prod.yml"; then
   record_pass 'EC2 backend forwards the Spark execution lease setting'
 else
   record_fail 'EC2 backend forwards the Spark execution lease setting'
 fi
 
-if rg -Fq 'CONTINUOUS_WORKER_SCOPE: ${CONTINUOUS_WORKER_SCOPE:-all}' \
+if grep -Fq 'CONTINUOUS_WORKER_SCOPE: ${CONTINUOUS_WORKER_SCOPE:-all}' \
     "$ROOT_DIR/deploy/docker-compose.prod.yml" \
-  && rg -Fq 'CONTINUOUS_WORKER_OWNER: ${CONTINUOUS_WORKER_OWNER:-ec2-continuous-worker}' \
+  && grep -Fq 'CONTINUOUS_WORKER_OWNER: ${CONTINUOUS_WORKER_OWNER:-ec2-continuous-worker}' \
     "$ROOT_DIR/deploy/docker-compose.prod.yml" \
-  && rg -Fq 'CONTINUOUS_WORKER_GENERATION: ${CONTINUOUS_WORKER_GENERATION:-}' \
+  && grep -Fq 'CONTINUOUS_WORKER_GENERATION: ${CONTINUOUS_WORKER_GENERATION:-}' \
     "$ROOT_DIR/deploy/docker-compose.prod.yml"; then
   record_pass 'EC2 continuous worker preserves scope and ownership fencing settings'
 else
