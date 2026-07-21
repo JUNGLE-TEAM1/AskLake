@@ -2,7 +2,7 @@ from enum import Enum
 import re
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -301,12 +301,16 @@ class DashboardWidgetColorConfig(CamelModel):
 
 
 class MetricWidgetConfig(DashboardWidgetConfigBase):
+    model_config = ConfigDict(json_schema_mode_override="validation")
+
     aggregation: DashboardWidgetAggregation
     value_key: str
     format: DashboardWidgetFormat | None = None
 
 
 class TableWidgetConfig(DashboardWidgetConfigBase):
+    model_config = ConfigDict(json_schema_mode_override="validation")
+
     columns: list[str]
     limit: int | None = Field(default=None, ge=1)
     sort_direction: SortDirection | None = None
