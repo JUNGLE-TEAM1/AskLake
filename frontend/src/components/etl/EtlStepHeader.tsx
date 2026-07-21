@@ -4,15 +4,17 @@ import { PanelHeader } from "@/components/ui/panel";
 import { cn } from "@/lib/utils";
 
 type EtlStepHeaderProps = {
+  actions?: ReactNode;
   className?: string;
   description?: ReactNode;
   icon: ReactNode;
   title: ReactNode;
 };
 
-export function EtlStepHeader({ className, description, icon, title }: EtlStepHeaderProps) {
+export function EtlStepHeader({ actions, className, description, icon, title }: EtlStepHeaderProps) {
   return (
     <PanelHeader
+      actions={actions}
       className={cn("etl-step-header min-h-[68px] px-5 py-3.5", className)}
       description={description}
       icon={icon}

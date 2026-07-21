@@ -54,6 +54,8 @@ test("ETL wizard exposes its steps from a compact breadcrumb menu without a dupl
   const headerActionsPortal = read("src/components/layout/EtlWizardHeaderActionsPortal.tsx");
   const creationFlow = read("src/components/creation/CreationFlow.tsx");
   const schemaPage = read("src/pages/etl/SchemaInferencePage.tsx");
+  const schemaTransformWorkbench = read("src/pages/etl/SchemaTransformWorkbench.tsx");
+  const schemaTransformEditor = read("src/components/etl/SchemaTransformEditor.jsx");
   const sourcePage = read("src/pages/etl/SourceConnectionPage.tsx");
   const styles = read("src/styles/base.css");
 
@@ -69,6 +71,10 @@ test("ETL wizard exposes its steps from a compact breadcrumb menu without a dupl
   assert.match(headerActionsPortal, /createPortal\(children, target\)/);
   assert.match(creationFlow, /<EtlWizardHeaderActionsPortal>\{actions\}<\/EtlWizardHeaderActionsPortal>/);
   assert.match(schemaPage, /<EtlWizardHeaderActionsPortal>/);
+  assert.match(schemaPage, /headerActions=\{\(/);
+  assert.match(schemaPage, /변환 결과 미리보기/);
+  assert.match(schemaTransformWorkbench, /headerActions=\{headerActions\}/);
+  assert.match(schemaTransformEditor, /actions=\{headerActions\}/);
   assert.doesNotMatch(schemaPage, /schema-bottom-bar schema-top-actions/);
   assert.doesNotMatch(sourcePage, /title="소스 연결"/);
   assert.match(styles, /\.etl-wizard-header\s*\{[\s\S]*?min-height: 52px;/);

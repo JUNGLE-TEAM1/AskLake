@@ -317,6 +317,14 @@ export function SchemaInferencePage({
             <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
               <Check size={15} /> 스키마 승인
             </Button>
+          </div>
+        </section>
+
+        <div className="schema-workbench-content">
+        <SchemaTransformWorkbench
+          columns={schemaColumns}
+          executionMode={draft.source.executionMode}
+          headerActions={(
             <Button
               aria-expanded={showResultPreview}
               className="secondary-button schema-result-preview-button"
@@ -325,15 +333,9 @@ export function SchemaInferencePage({
               disabled={!hasInferredSchema}
               onClick={() => setShowResultPreview((current) => !current)}
             >
-              <Table2 size={15} /> {showResultPreview ? "미리보기 닫기" : "결과 미리보기"}
+              <Table2 size={15} /> {showResultPreview ? "변환 결과 닫기" : "변환 결과 미리보기"}
             </Button>
-          </div>
-        </section>
-
-        <div className="schema-workbench-content">
-        <SchemaTransformWorkbench
-          columns={schemaColumns}
-          executionMode={draft.source.executionMode}
+          )}
           sampleRows={schemaSampleRows}
           selectedIndex={selectedIndex}
           sourceFormat={sourceFormat}
