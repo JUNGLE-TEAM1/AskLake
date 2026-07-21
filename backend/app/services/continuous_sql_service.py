@@ -992,8 +992,13 @@ class ContinuousSqlService:
                     job.last_error_code = None
                     job.last_error_message = None
                 else:
-                    job.observed_state = "failed"
-                    run.status = "failed"
+                    # A failed refresh must not unpublish the last verified
+                    # Gold revision or terminate the long-running parent.
+                    # The next reconciliation cycle retries from the same
+                    # source revision because the published cursor did not
+                    # advance.
+                    job.observed_state = "running"
+                    run.status = "running"
                     job.last_error_code = str(exc.code)
                     job.last_error_message = exc.message
                     run.last_error_code = str(exc.code)

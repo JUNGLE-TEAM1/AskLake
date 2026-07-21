@@ -4247,6 +4247,20 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
 
+Dataset-revision Job response에는 다음 `refreshState`가 항상 포함된다. 브라우저는 이 값을 조회만 하며 refresh 실행을 요청하지 않는다.
+
+```json
+{
+  "latestSourceRevision": 18,
+  "processingSourceRevision": null,
+  "publishedSourceRevision": 18,
+  "status": "dashboard_ready",
+  "lastError": null
+}
+```
+
+`status`는 `idle | running | failed | catalog_ready | dashboard_ready`다. backend reconciliation만 refresh claim을 획득하며 같은 Job에서 동시에 하나의 revision만 처리한다. claim owner가 사라지면 `CONTINUOUS_SQL_REFRESH_CLAIM_SECONDS` 이후 회수할 수 있다. Dataset-revision runner의 Trino 결과는 기존 Gold에 누적 append하지 않고 새 Iceberg snapshot으로 replace하며 Catalog `rows`도 최신 snapshot 행 수를 사용한다. Trino 실행 또는 새 Gold 검증이 실패하면 `publishedSourceRevision`과 기존 Catalog 연결을 유지하고 다음 reconciliation에서 같은 source revision을 재시도한다.
+
 SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
 
 `output.servingMode`의 기본값은 `iceberg`다. Iceberg mode는 `storagePath`와 append `icebergTarget`을 함께 보내거나 둘 다 생략하며, 생략 시 backend가 `ASKLAKE_SPARK_OUTPUT_BUCKET`, Trino catalog/schema와 Dataset identity에서 target·checkpoint를 생성한다. 요청 mode가 `CONTINUOUS_SQL_SERVING_MODE`와 다르면 `422 CONTINUOUS_SQL_SERVING_MODE_DISABLED`다. `clickhouse` mode는 배포 mode와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`가 모두 맞을 때만 허용하며 output shape는 다음과 같다.

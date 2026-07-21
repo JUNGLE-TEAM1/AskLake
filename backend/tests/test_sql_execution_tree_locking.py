@@ -33,6 +33,7 @@ from app.repositories.execution_tree_lock_repository import (
 )
 from app.repositories.dashboard_live_repository import DashboardLiveRepository
 from app.services.continuous_sql_revision_runner import ContinuousSqlRevisionRunner
+from app.services.continuous_sql_publication import ContinuousSqlPublicationService
 from app.services.continuous_sql_service import ContinuousSqlService
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from tests.test_dashboard_job_binding_schema_removal import _run_alembic
@@ -40,7 +41,7 @@ from tests.test_sql_execution_tree_persistence import continuous_job
 
 
 PREVIOUS_REVISION = "0023_sql_job_execution_tree_persistence"
-HEAD_REVISION = "0025_dataset_revision_snapshot_identity"
+HEAD_REVISION = "0026_continuous_sql_refresh_state"
 
 
 def producer_job(job_id: str, dataset_id: str, *, status: str = "scheduled") -> ETLJobModel:
@@ -479,6 +480,116 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertNotIn("kafka:9092", select_sql)
             self.assertNotIn("consumerGroup", select_sql)
 
+    def test_revision_snapshot_publication_replaces_catalog_row_count(self) -> None:
+        job = parent_job("csql-parent", "output-parent")
+        job.compiled_plan = {"outputSchema": [["order_id", "bigint"]]}
+        payload, _schema, _relations, _now = ContinuousSqlPublicationService._catalog_payload(
+            job,
+            {
+                "manifestPath": "s3://lake/manifest.json",
+                "publicationRunId": "run-revision-18",
+                "publishedAt": "2026-07-22T00:00:00+00:00",
+                "rowCount": 25,
+                "sourceBoundary": {
+                    "inputSnapshots": [{"datasetId": "orders", "revision": 18, "snapshotId": "101"}],
+                },
+                "sourceRanges": [],
+                "staticSnapshots": [],
+            },
+            {
+                "committedAt": "2026-07-22T00:00:00+00:00",
+                "queryEngineTable": {"catalog": "iceberg", "schema": "datasets", "table": "gold"},
+                "snapshotId": "202",
+                "warehouseLocation": "s3://lake/gold",
+            },
+            {"rows": "10,000"},
+        )
+
+        self.assertEqual(payload["rows"], "25")
+        self.assertEqual(payload["materializationRuns"][-1]["materializationMode"], "snapshot")
+
+    def test_revision_refresh_claim_is_single_owner_and_recovers_when_stale(self) -> None:
+        with Session(self.engine) as db:
+            repository = ContinuousSqlRepository(db)
+            job = repository.add_job(parent_job("csql-refresh", "output-refresh"))
+            job.desired_state = "running"
+            db.add(job)
+            db.commit()
+
+            self.assertTrue(repository.claim_revision_refresh(
+                job.id,
+                source_revision=18,
+                stale_after_seconds=60,
+            ))
+            self.assertFalse(repository.claim_revision_refresh(
+                job.id,
+                source_revision=18,
+                stale_after_seconds=60,
+            ))
+
+            claimed = repository.get_job(job.id)
+            self.assertEqual(claimed.processing_source_revision, 18)
+            self.assertEqual(claimed.refresh_status, "running")
+            claimed.refresh_claimed_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=2)
+            db.add(claimed)
+            db.commit()
+
+            self.assertTrue(repository.claim_revision_refresh(
+                job.id,
+                source_revision=19,
+                stale_after_seconds=60,
+            ))
+            repository.complete_revision_refresh(job.id, 19)
+
+            published = repository.get_job(job.id)
+            self.assertEqual(published.latest_source_revision, 19)
+            self.assertIsNone(published.processing_source_revision)
+            self.assertEqual(published.published_source_revision, 19)
+            self.assertEqual(published.refresh_status, "dashboard_ready")
+            self.assertEqual(
+                job_to_schema_with_tree(published, repository).refresh_state.published_source_revision,
+                19,
+            )
+
+    def test_revision_refresh_failure_keeps_parent_and_last_gold_active(self) -> None:
+        class FailingRevisionRunner:
+            def reconcile(self, _job, _run):
+                raise ApiError(
+                    "CONTINUOUS_SQL_REVISION_TRANSFORM_FAILED",
+                    "Trino refresh failed",
+                    status.HTTP_502_BAD_GATEWAY,
+                )
+
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-refresh",
+                "output-refresh",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            job.compiled_plan = {"executionInputMode": "dataset_revision"}
+            job.published_source_revision = 17
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                revision_runner=FailingRevisionRunner(),
+            )
+            run = service._new_run(job, observed_state="running")
+            tree = service._acquire_execution_tree(job, run)
+            db.add_all([job, run, tree])
+            db.commit()
+
+            reconciled = service.reconcile(job)
+
+            self.assertEqual(reconciled.observed_state, "running")
+            self.assertEqual(reconciled.desired_state, "running")
+            self.assertEqual(reconciled.published_source_revision, 17)
+            self.assertEqual(reconciled.last_error_code, "CONTINUOUS_SQL_REVISION_TRANSFORM_FAILED")
+            self.assertIsNotNone(service.repository.active_tree_run(job.id))
+
     def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
         events: list[str] = []
 
@@ -720,6 +831,11 @@ class SqlExecutionTreeLockingMigrationTests(unittest.TestCase):
             engine = create_engine(f"sqlite+pysqlite:///{database_path}")
             try:
                 _run_alembic(database_path, "upgrade", PREVIOUS_REVISION)
+                with engine.begin() as connection:
+                    connection.execute(text(
+                        "CREATE TABLE IF NOT EXISTS continuous_sql_jobs "
+                        "(id VARCHAR(160) PRIMARY KEY)"
+                    ))
                 _run_alembic(database_path, "upgrade", "head")
                 tables = set(inspect(engine).get_table_names())
                 self.assertTrue({
@@ -727,6 +843,18 @@ class SqlExecutionTreeLockingMigrationTests(unittest.TestCase):
                     "continuous_sql_tree_node_runs",
                     "continuous_sql_tree_job_locks",
                 }.issubset(tables))
+                job_columns = {
+                    item["name"]
+                    for item in inspect(engine).get_columns("continuous_sql_jobs")
+                }
+                self.assertTrue({
+                    "latest_source_revision",
+                    "processing_source_revision",
+                    "published_source_revision",
+                    "refresh_status",
+                    "refresh_claimed_at",
+                    "refresh_last_error",
+                }.issubset(job_columns))
                 with engine.connect() as connection:
                     self.assertEqual(
                         connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),

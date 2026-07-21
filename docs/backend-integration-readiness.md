@@ -600,8 +600,8 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] backend producer resolution과 realtime 1개 + batch/static N개 validation
 - [x] atomic tree lock/lease/fencing과 tree run/node run
 - [x] parent-owned batch/realtime child orchestration
-- [ ] SQL-owned Kafka consumer 제거와 revision-driven transform
-- [ ] lifecycle/recovery/UI 및 output revision 회귀
+- [x] SQL-owned Kafka consumer 제거와 revision-driven transform, 단일 refresh claim과 published revision 보존
+- [x] refresh 실패 시 parent 유지, output revision 보존과 Dashboard 수동 새로고침 경계
 - [ ] legacy Job 운영 처리, live E2E와 rollout gate
 
 Phase 2 검증은 `cd backend && npm run verify:continuous-sql-execution-tree-contract`와 `PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-.venv/bin/python} -m unittest tests.test_continuous_sql_dependency_resolution tests.test_continuous_sql_catalog tests.test_continuous_sql_planner tests.test_sql_execution_tree_persistence -v`, `cd ../frontend && npm run test:continuous-sql-ui && npm run build`로 실행한다. 이 통과는 tree lock/orchestration 또는 direct-consumer 제거 완료를 의미하지 않는다.

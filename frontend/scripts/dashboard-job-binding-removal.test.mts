@@ -43,3 +43,13 @@ test("the frontend Dashboard binding API client is retired", () => {
     false,
   );
 });
+
+test("Dashboard refresh is manual and does not subscribe to Dataset revisions", () => {
+  const refreshHook = source("pages/dashboard/runtime/useDashboardAutoRefresh.ts");
+  const topBar = source("pages/dashboard/runtime/DashboardTopBar.tsx");
+
+  assert.doesNotMatch(refreshHook, /RealtimeEventClient|EventSource|getRealtimeFeatureConfig|setInterval/);
+  assert.match(refreshHook, /status: DashboardAutoRefreshStatus = "manual"/);
+  assert.doesNotMatch(topBar, /대시보드 자동 갱신|<Switch/);
+  assert.match(topBar, /aria-label="대시보드 새로고침"/);
+});

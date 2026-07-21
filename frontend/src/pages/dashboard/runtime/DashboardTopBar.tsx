@@ -3,7 +3,6 @@ import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Switch } from "@/components/ui/switch";
 import {
   dashboardAutoRefreshStatusCopy,
   type DashboardAutoRefreshStatus,
@@ -44,6 +43,8 @@ export function DashboardTopBar({
   onShare?: () => void;
   title: string;
 }) {
+  void autoRefreshEnabled;
+  void onAutoRefreshChange;
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
@@ -125,14 +126,6 @@ export function DashboardTopBar({
         )}
       </div>
       <div className="asklake-dashboard-actions">
-        <label className="asklake-dashboard-auto-refresh-toggle">
-          <span>자동 갱신</span>
-          <Switch
-            aria-label="대시보드 자동 갱신"
-            checked={autoRefreshEnabled}
-            onCheckedChange={onAutoRefreshChange}
-          />
-        </label>
         {mode === "published" ? (
           <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />

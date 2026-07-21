@@ -1015,9 +1015,9 @@ PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본
 
 ### Dashboard Job Binding 제거 순서
 
-Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. Job binding 제거와 기본 수동 갱신의 경계는 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따르며, 자동 갱신은 그 Dataset 연결을 변경하지 않는 선택적 SSE invalidation layer다.
+Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. Job binding 제거와 수동 갱신의 경계는 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다. Dashboard frontend는 SSE invalidation, polling, upstream 실행을 시작하지 않는다.
 
-1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일한다. 자동 갱신은 opt-in SSE invalidation으로만 허용하며 polling/background prefetch는 추가하지 않는다.
+1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일한다. 자동 갱신 토글, SSE invalidation, polling과 background prefetch는 사용하지 않는다.
 2. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 Dashboard 연동 옵션과 자동 Dashboard 생성을 제거한다. Dashboard runtime은 binding을 조회하지 않고 Dataset selector와 Assistant의 managed lock을 제거한다.
 3. Phase 2 frontend gate는 `npm run test:dashboard-job-binding-removal`, Dashboard 관련 회귀 테스트와 production build다.
 4. Phase 3에서 binding router/schema/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거한다. `npm run verify:dashboard-job-binding-removal`로 OpenAPI와 runtime 참조가 다시 생기지 않는지 검증한다.

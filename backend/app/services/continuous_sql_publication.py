@@ -183,13 +183,14 @@ class ContinuousSqlPublicationService:
         self.db.commit()
 
         dataset = self._catalog_dataset(job, evidence, verified.model_dump(mode="json", by_alias=True))
+        revision_snapshot_refresh = bool(evidence["sourceBoundary"].get("inputSnapshots"))
         commit_record = save_catalog_dataset_and_revision(
             self.db,
             dataset,
             run_id=evidence["publicationRunId"],
             storage_location=verified.warehouse_location,
             storage_format="iceberg",
-            materialization_mode="delta",
+            materialization_mode=("snapshot" if revision_snapshot_refresh else "delta"),
             row_count=evidence["rowCount"],
             next_check_after_ms=max(1_000, min(60_000, int(job.trigger_interval_seconds) * 500)),
             source_ranges=evidence["sourceRanges"],
@@ -355,12 +356,13 @@ class ContinuousSqlPublicationService:
         previous_payload: dict[str, Any],
     ) -> tuple[dict[str, Any], list[list[str]], list[str], str]:
         now = str(evidence["publishedAt"] or datetime.now(UTC).isoformat())
+        revision_snapshot_refresh = bool(evidence["sourceBoundary"].get("inputSnapshots"))
         materialization_run = {
             "createdAt": now,
             "icebergCommittedAt": verified.get("committedAt"),
             "icebergSnapshotId": verified.get("snapshotId"),
             "jobId": job.id,
-            "materializationMode": "delta",
+            "materializationMode": "snapshot" if revision_snapshot_refresh else "delta",
             "publicationManifest": evidence["manifestPath"],
             "rowCount": evidence["rowCount"],
             "runId": evidence["publicationRunId"],
@@ -380,7 +382,11 @@ class ContinuousSqlPublicationService:
         ]
         runs = [*previous_runs, materialization_run][-100:]
         previous_rows = parse_display_count(previous_payload.get("rows"))
-        total_rows = previous_rows + int(evidence["rowCount"])
+        total_rows = (
+            int(evidence["rowCount"])
+            if revision_snapshot_refresh
+            else previous_rows + int(evidence["rowCount"])
+        )
         output_schema = [
             [str(item[0]), str(item[1])]
             for item in job.compiled_plan.get("outputSchema") or []
