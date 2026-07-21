@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -10,6 +11,11 @@ import {
 } from "../src/pages/dashboard/runtime/draftWidgetLayoutPersistence.ts";
 import { hasAnyLayoutCollision } from "../src/pages/dashboard/runtime/dashboardLayoutUtils.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
+
+const dashboardCanvasSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/DashboardCanvas.tsx", import.meta.url),
+  "utf8",
+);
 
 function metricWidget(id: string, x: number, y: number): DashboardRuntimeWidget {
   return {
@@ -103,4 +109,9 @@ test("a colliding layout is rejected before a layout save request is built", () 
   ];
 
   assert.equal(hasAnyLayoutCollision(collidingLayout), true);
+});
+
+test("the draft editor keeps the canonical 12-column breakpoint while published dashboards stay responsive", () => {
+  assert.match(dashboardCanvasSource, /const editorBreakpoint = editable \? "lg" : undefined/);
+  assert.match(dashboardCanvasSource, /breakpoint=\{editorBreakpoint\}/);
 });
