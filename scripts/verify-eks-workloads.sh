@@ -31,16 +31,20 @@ required_files=(
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
+  "$ROOT_DIR/scripts/build-eks-spark-hybrid-activation-values.mjs"
+  "$ROOT_DIR/scripts/deploy-eks-spark-hybrid-activation.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-web-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
   "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
+  "$ROOT_DIR/scripts/prepare-eks-spark-hybrid-activation-values.sh"
   "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-off-values.mjs"
   "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs"
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"
+  "$ROOT_DIR/scripts/test-eks-spark-hybrid-activation-values.mjs"
   "$CHART_DIR/Chart.yaml"
   "$CHART_DIR/values.yaml"
   "$CHART_DIR/values.schema.json"
@@ -98,6 +102,13 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS=1 \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS=4 \
   --set-string configMap.data.ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES=1 >/dev/null
+"$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=10737418240 >/dev/null
+if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
+  --set-string configMap.data.ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=10737418241 >/dev/null 2>&1; then
+  echo "runtime ConfigMap schema accepted an unvalidated direct-cache threshold" >&2
+  exit 1
+fi
 if "$HELM_BIN" template asklake-runtime-config "$RUNTIME_CONFIG_CHART_DIR" \
   --set-string configMap.data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE=invalid >/dev/null 2>&1; then
   echo "runtime ConfigMap schema accepted an invalid Spark Resource Planner mode" >&2
@@ -496,13 +507,17 @@ bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-values.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-off-web-values.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-values.sh"
 bash -n "$ROOT_DIR/scripts/prepare-eks-spark-resource-planner-shadow-web-values.sh"
+bash -n "$ROOT_DIR/scripts/prepare-eks-spark-hybrid-activation-values.sh"
+bash -n "$ROOT_DIR/scripts/deploy-eks-spark-hybrid-activation.sh"
 bash -n "$ROOT_DIR/scripts/preflight-eks-spark-resource-planner-shadow.sh"
+node --check "$ROOT_DIR/scripts/build-eks-spark-hybrid-activation-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
 node --check "$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
 node --check "$ROOT_DIR/scripts/verify-eks-spark-resource-planner-shadow-evidence.mjs"
 node --test \
+  "$ROOT_DIR/scripts/test-eks-spark-hybrid-activation-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-off-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs" \

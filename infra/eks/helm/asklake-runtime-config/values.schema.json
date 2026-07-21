@@ -46,6 +46,10 @@
             "ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES": {
               "type": "string",
               "enum": ["1", "2", "3", "4"]
+            },
+            "ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES": {
+              "type": "string",
+              "enum": ["0", "10737418240"]
             }
           }
         }

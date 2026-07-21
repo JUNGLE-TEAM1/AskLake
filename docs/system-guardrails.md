@@ -45,7 +45,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
-| Spark direct-cache threshold | `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES`는 기본 0으로 두고, source byte와 실제 cache footprint가 다름을 전제로 raw read 1회·OOM·executor replacement·residue 검증 없이 운영 기본값을 올리지 않는다. |
+| Spark direct-cache threshold | process 기본값과 rollback은 0이다. dev 활성값 10GiB는 10GB direct-cache와 100GB staging의 raw read 1회·OOM·executor replacement·residue 0 근거가 있는 동일 Backend/Spark image receipt에만 적용한다. 임의 다른 값, active Spark가 있는 apply, ConfigMap만 바꾸고 FastAPI/Collector revision을 갱신하지 않는 부분 활성화를 금지한다. |
 
 ### What Is Deferred
 

@@ -807,6 +807,7 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR` | `384` | `balanced-v1`에서 초기 executor 하나가 담당하도록 계획하는 partition 수다. |
 | `ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS` | `1` | Resource Plan 최소 executor 수다. |
 | `ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS` | `4` | V1 후보 `1`, `2`, `4` 중 최대 executor 수다. |
+| `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES` | dev 활성값 `10737418240`, rollback `0` | exact source byte가 양수 한도 이하일 때만 direct `MEMORY_AND_DISK` cache를 선택한다. 10GiB 외 임의 운영값은 runtime ConfigMap schema가 거부한다. |
 | `ASKLAKE_SPARK_KUBERNETES_MAX_ATTEMPTS` | `2` | terminal-failed SparkApplication 뒤 같은 logical Run에서 허용하는 attempt generation 상한이다. `1..3`으로 제한한다. |
 | `ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS` | `7200` | SparkApplication polling의 최대 실행시간이다. heartbeat가 이 제한을 연장하지 않는다. |
 | `ASKLAKE_SPARK_RUNNER` | `kubernetes` | in-cluster API로 `SparkApplication`을 제출·복구·조회하고 driver 결과를 수집한다. |
