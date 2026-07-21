@@ -27,6 +27,14 @@
               "type": "string",
               "enum": ["off", "shadow", "enforce"]
             },
+            "ASKLAKE_SPARK_EVENT_LOG_ENABLED": {
+              "type": "string",
+              "enum": ["false", "true"]
+            },
+            "ASKLAKE_SPARK_EVENT_LOG_PREFIX": {
+              "type": "string",
+              "const": "spark-events"
+            },
             "ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES": {
               "type": "string",
               "const": "134217728"

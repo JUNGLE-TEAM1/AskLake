@@ -171,6 +171,7 @@ ingress_dns_owner          = null
 # endpoint/hybrid requires the minimum private AWS service endpoint set.
 private_egress_mode             = "undecided"
 nat_gateway_mode                = "undecided"
+enable_s3_gateway_endpoint      = false
 interface_vpc_endpoint_services = []
 
 # Terraform does not install or take ownership of shared networking add-ons.
@@ -216,3 +217,11 @@ observability_control_plane_retention_days = 7
 observability_rds_retention_days          = 7
 observability_daily_log_ingest_warning_gib = 3
 observability_stored_log_warning_gib       = 20
+
+# Bounded Spark benchmark observer. Keep principal identities and exact prefixes
+# in a private override file when enabled.
+benchmark_observability_reader_enabled                = false
+benchmark_observability_owner                         = null
+benchmark_observability_reader_trusted_principal_arns = []
+benchmark_observability_reader_assumer_iam_user_names = []
+benchmark_s3_request_metrics_prefixes                  = { raw = "", output = "" }

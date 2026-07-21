@@ -461,3 +461,25 @@ retry도 저장된 Plan을 재사용한다. 새 성공 이력은 다음 새 Run�
 반영한다. 실행 중 Dynamic Allocation, 동시 Job 전역 최적화와 통계 모델 자동 학습은
 V1 범위가 아니다. 계산식, fallback, 상한과 검증 순서는
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
+
+Phase 7 관측은 Planner 판단과 Spark 실행을 변경하지 않는 두 독립 증거 경로를 사용한다.
+Metrics Server의 `pods.metrics.k8s.io` 현재값은 전용 EKS access entry와
+`asklake:observability-readers` group에 바인딩된 namespace Role로만 읽고, 식별자를
+제거한 CPU·memory 합계를 저장소 밖 mode `0600` JSONL에 기록한다. 이 역할은 Secret,
+write verb와 다른 namespace를 읽지 못한다. Spark task·shuffle·spill은 opt-in
+`spark.eventLog.enabled=true`에서 얻으며, event log는 기존 Output bucket/prefix 아래
+`spark-events/<sha256(runId)>/`에 기록한다. 원본 `runId`는 S3 key에 넣지 않는다.
+
+event log는 기본값 `false`이고 10GB bounded smoke가 성공할 때만 후속 실험에서
+활성화한다. S3 event log 기록 실패는 SparkContext 시작 실패가 될 수 있으므로 관측
+실패를 처리 성공으로 숨기지 않고 Run을 중단한 뒤 `false`로 복구한다. Metrics Server는
+장기 이력 저장소가 아니며 Spark event log summary의 task CPU ratio도 Pod 전체 CPU
+사용률과 동일하다고 해석하지 않는다. 상세 실행·복구 절차는
+[Resource Planner Phase 7 관측 계약](eks-spark-resource-planner-phase7-observability.md)을
+따른다.
+
+dev EKS의 대용량 S3 경로는 단일 NAT 구성을 유지하면서
+`enable_s3_gateway_endpoint=true`로 별도 활성화한 S3 Gateway Endpoint를 사용한다.
+Endpoint는 두 private route table에만 연결되고 기존 NAT 기본 route와 Interface
+Endpoint 집합은 바꾸지 않는다. 따라서 Raw/Output S3 traffic은 prefix-list route로
+우회하고 외부 API·STS와 기존 서비스 egress는 NAT 경로를 유지한다.

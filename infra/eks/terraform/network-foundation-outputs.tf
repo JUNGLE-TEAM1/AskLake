@@ -18,7 +18,7 @@ output "phase11_network_handoff" {
       mode                 = var.private_egress_mode
       nat_gateway_mode     = local.use_nat_egress ? var.nat_gateway_mode : null
       interface_endpoints  = local.use_endpoints ? var.interface_vpc_endpoint_services : toset([])
-      s3_gateway_endpoint  = local.use_endpoints
+      s3_gateway_endpoint  = local.create_network && local.use_s3_gateway_endpoint
       cost_review_required = true
     }
     service_security_groups = {

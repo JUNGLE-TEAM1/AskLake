@@ -1,0 +1,49 @@
+{{- if .Values.observabilityRbac.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: asklake-observability-reader
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: asklake-observability-reader
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+subjects:
+  - kind: Group
+    name: {{ .Values.observabilityRbac.kubernetesGroup | quote }}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: asklake-observability-reader
+{{- end }}

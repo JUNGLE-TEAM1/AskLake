@@ -151,6 +151,10 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
 
 # EKS Spark Resource Planner promotion guardrail
 
+- dev의 S3 Gateway Endpoint는 single NAT와 독립적으로 유지한다. Terraform plan은 기존
+  endpoint와 두 private route table 연결, NAT 기본 route를 모두 보존하고 Interface
+  Endpoint를 새로 만들거나 기존 리소스를 삭제해서는 안 된다.
+
 - 기본 mode는 `off`이며 입력 metadata 부재, unsupported executor profile,
   Plan hash 또는 runtime ConfigMap revision drift에서는 baseline executor를 유지한다.
 - V1은 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다. 같은
@@ -164,3 +168,8 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
   복구가 검증되기 전에는 `enforce`로 승격하지 않는다.
 - image rollout, runtime/Web Helm mutation과 비용 발생 Spark Run은 각각 별도
   승인을 요구한다.
+- Phase 7 observer는 전용 IAM role/EKS access entry와
+  `asklake:observability-readers` namespace Role만 사용한다. 개인 access entry를
+  수동 수정하거나 Secret·write·다른 namespace 권한을 추가하지 않는다. Spark event
+  log는 기본 `false`, 고정 `spark-events` 하위 경로와 해시 Run 경로만 허용하며 10GB
+  smoke 실패 시 후속 100GB 실행 없이 즉시 `false`로 복구한다.

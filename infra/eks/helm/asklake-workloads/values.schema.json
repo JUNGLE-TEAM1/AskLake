@@ -279,7 +279,7 @@
         "config": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "sparkResourcePlannerMode", "sparkResourceTargetPartitionBytes", "sparkResourceTargetPartitionsPerExecutor", "sparkResourceMinExecutors", "sparkResourceMaxExecutors", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "sparkEventLogEnabled", "sparkEventLogPrefix", "sparkResourcePlannerMode", "sparkResourceTargetPartitionBytes", "sparkResourceTargetPartitionsPerExecutor", "sparkResourceMinExecutors", "sparkResourceMaxExecutors", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
           "properties": {
             "aiQueryProvider": {"type": "string", "enum": ["direct", "gateway"]},
             "airflowApiAuthMode": {"type": "string", "enum": ["api_token", "username_password"]},
@@ -295,6 +295,8 @@
             "allowedBuckets": {"type": "string", "minLength": 1},
             "sparkRunner": {"type": "string", "const": "kubernetes"},
             "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            "sparkEventLogEnabled": {"type": "boolean"},
+            "sparkEventLogPrefix": {"type": "string", "const": "spark-events"},
             "sparkResourcePlannerMode": {"type": "string", "enum": ["off", "shadow", "enforce"]},
             "sparkResourceTargetPartitionBytes": {"type": "integer", "const": 134217728},
             "sparkResourceTargetPartitionsPerExecutor": {"type": "integer", "const": 384},

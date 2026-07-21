@@ -503,7 +503,7 @@ async function collectSnapshot(options, clusterNameResult, regionResult) {
       runJson("kubectl", ["get", "deployment", "fastapi", "-n", namespace, "-o", "json"]),
       runJson("kubectl", ["get", "pods", "-n", namespace, "-o", "json"]),
       runJson("kubectl", ["get", "--raw", metricsPath]),
-      runJson("kubectl", ["get", "events", "-A", "-o", "json"]),
+      runJson("kubectl", ["get", "events", "-n", namespace, "-o", "json"]),
       collectNodeGroups(clusterNameResult, regionResult),
       readLoadStatus(options.loadStatus),
     ]);

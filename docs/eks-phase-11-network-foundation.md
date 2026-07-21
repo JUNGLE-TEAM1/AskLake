@@ -4,11 +4,11 @@
 
 Phase 11은 EKS Auto Mode workload가 실행될 VPC 배치를 코드로 만든다. Phase 7에서 정의한 network/ingress 선택 계약을 실제 VPC, public/private subnet, route, NAT Gateway 또는 VPC endpoint 리소스로 연결하되 실제 AWS 환경에서 아직 선택하지 않은 비용·주소·가용성 값을 임의로 정하지 않는다.
 
-초기 Phase 11은 Terraform 구조와 mock provider test까지만 완료했다. 2026-07-15 dev 환경에는 전용 VPC, 두 AZ public/private subnet, 단일 NAT, EKS/MSK/RDS 배치와 exact-port security group을 실제 적용하고 runtime smoke까지 완료했다. 실제 증거는 [7월 15일 Private Network 검증 기록](eks-day15-private-network-evidence.md)을 따른다.
+초기 Phase 11은 Terraform 구조와 mock provider test까지 완료했다. 2026-07-15 dev 환경에는 전용 VPC, 두 AZ public/private subnet, 단일 NAT, EKS/MSK/RDS 배치와 exact-port security group을 실제 적용하고 runtime smoke까지 완료했다. 2026-07-20에는 NAT 구성을 유지한 채 S3 Gateway Endpoint를 독립 활성화했다. 실제 증거는 [7월 15일 Private Network 검증 기록](eks-day15-private-network-evidence.md)과 [100GB Resource Planner 검증](eks-100gb-resource-planner-shadow-evidence-2026-07-20.md)을 따른다.
 
 ## 2026-07-15 dev 적용 결과
 
-dev는 `network_mode=create`, `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`을 사용한다. EKS Pod에서 RDS `5432`, MSK `9098`, STS와 S3 HTTPS가 성공했고 잘못된 service port와 VPC 외부 source는 차단됐다. VPC DNS, private/public route와 public ingress 부재도 실제 AWS 상태로 확인했다.
+dev는 `network_mode=create`, `private_egress_mode=nat_gateway`, `nat_gateway_mode=single`, `enable_s3_gateway_endpoint=true`를 사용한다. S3 Gateway Endpoint는 `available`이고 두 EKS private route table에 연결돼 있다. 단일 NAT와 두 `0.0.0.0/0` 기본 route는 유지하며 Interface Endpoint는 추가하지 않았다. 10GB smoke와 후속 100GB 실행에서 Raw/Output S3 read/write, NAT 우회, RDS/MSK/ALB/외부 통신 health를 검증했다.
 
 Pod traffic enforcement는 `auto_mode_network_policy`를 선택했다. AWS 공식 ConfigMap으로 Auto Mode Network Policy Controller를 활성화하고 General/Spark NodeClass를 `DefaultAllow`로 명시했다. 임시 namespace에서 ingress deny와 정책 제거 후 복구를 검증했다. 실제 workload default-deny/allow 정책은 B의 Service·port 계약 전에는 만들지 않는다.
 
@@ -49,6 +49,8 @@ MVP 전용 VPC를 생성하려면 `private_egress_mode`를 반드시 선택해�
 
 `nat_gateway`는 private workload가 일반 internet destination에도 접근할 수 있어 운영이 단순하지만 시간당·처리량 비용이 발생한다. `nat_gateway_mode = "single"`은 비용이 낮지만 선택된 NAT AZ 장애와 cross-AZ traffic 위험이 있다. `per_az`는 AZ별 독립 route를 제공하지만 NAT 고정비가 AZ 수만큼 발생한다. 이 선택은 실제 가용성·비용 기준을 학습한 뒤 한다.
 
+`enable_s3_gateway_endpoint = true`는 NAT mode와 독립적인 선택이다. Terraform이 소유한 모든 private route table을 같은 리전의 S3 Gateway Endpoint에 연결한다. NAT 기본 route, 외부 API·STS·MSK·RDS·ALB 경로는 그대로 두고 S3 prefix-list route만 추가하며 Interface Endpoint를 만들지 않는다.
+
 ### VPC endpoints
 
 `vpc_endpoints`는 NAT 기본 route를 만들지 않는다. baseline은 EC2, ECR API/DKR, CloudWatch Logs, STS interface endpoint와 S3 gateway endpoint를 요구한다. interface endpoint마다 시간당·처리량 비용이 있고, 이 목록만으로 모든 AskLake workload 목적지가 자동 해결되지는 않는다.
@@ -58,6 +60,8 @@ Pod Identity를 선택하면 `eks-auth`, external Secret delivery를 선택하�
 ### Hybrid
 
 `hybrid`는 NAT와 선택 endpoint를 함께 사용한다. AWS service traffic을 endpoint로 보내면서 일반 outbound는 NAT로 처리할 수 있지만 route·DNS·고정비가 모두 늘어난다. 단순히 가장 안전한 기본값으로 취급하지 않는다.
+
+S3 traffic만 NAT에서 우회하려는 경우에는 `hybrid`로 바꾸지 않고 NAT mode와 `enable_s3_gateway_endpoint=true` 조합을 사용한다.
 
 ## Security group 경계
 
@@ -81,7 +85,7 @@ Phase 11에서 도입한 contract `2.1`의 `phase11_network_handoff`는 Phase 13
 
 ## 이번 단계에서 하지 않는 일
 
-- 실제 CIDR/AZ/NAT/endpoints 선택 또는 AWS apply
+- 새 CIDR/AZ/NAT/Interface Endpoint 선택 또는 추가 AWS apply
 - Route 53, ACM, ALB/Ingress 생성과 외부 URL 개통
 - General/Spark custom NodePool·NodeClass·taint/label은 Phase 12 코드로 이동했으며 실제 selector/용량 승인과 AWS apply는 미완료
 - Security Groups for Pods 적용과 실제 workload별 NetworkPolicy
@@ -100,11 +104,12 @@ docker run --rm --entrypoint sh \
 bash scripts/verify-eks-foundation.sh
 ```
 
-정적 완료 기준은 external/create 소유권 분리, 2개 이상 AZ의 결정적 subnet 계산, NAT single/per-AZ와 endpoint-only 경로, endpoint 최소 집합, EKS/MSK/RDS private placement, exact service port security group과 실패 조건이 mock test로 통과하는 것이다. dev는 plan/apply, EKS Pod scheduling, S3/STS, MSK `9098`, RDS `5432`, wrong-port와 외부 source negative smoke까지 통과했다. Kafka IAM 인증과 실제 workload별 NetworkPolicy/Service 연결은 후속 완료 기준이다.
+정적 완료 기준은 external/create 소유권 분리, 2개 이상 AZ의 결정적 subnet 계산, NAT single/per-AZ와 endpoint-only 경로, NAT+optional S3 Gateway 경로, endpoint 최소 집합, EKS/MSK/RDS private placement, exact service port security group과 실패 조건이 mock test로 통과하는 것이다. dev는 endpoint `available`, private route table 연결 2개, NAT 기본 route 유지, Interface Endpoint 증분 0, 10GB/100GB S3 read/write와 NAT 우회를 통과했다. Kafka IAM 인증과 실제 workload별 NetworkPolicy/Service 연결은 후속 완료 기준이다.
 
 ## 공식 참고
 
 - [Amazon EKS VPC와 subnet 고려사항](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)
 - [Amazon EKS VPC와 subnet 요구사항](https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html)
 - [Interface VPC endpoint 생성](https://docs.aws.amazon.com/vpc/latest/privatelink/create-interface-endpoint.html)
+- [Amazon S3 Gateway Endpoint](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html)
 - [EKS Auto Mode Network Policy 사용](https://docs.aws.amazon.com/eks/latest/userguide/auto-net-pol.html)

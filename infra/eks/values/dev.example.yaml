@@ -15,6 +15,10 @@ namespace:
     asklake.io/ingress-access: asklake-dev
     eks.amazonaws.com/pod-readiness-gate-inject: enabled
 
+observabilityRbac:
+  enabled: false
+  kubernetesGroup: asklake:observability-readers
+
 # Pair A replaces empty annotations only after Pair B supplies the minimum IAM
 # action list and the team selects IRSA or EKS Pod Identity.
 serviceAccounts:
