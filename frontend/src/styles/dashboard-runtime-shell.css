@@ -129,6 +129,41 @@
   gap: 8px;
 }
 
+.asklake-dashboard-auto-refresh-toggle {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.asklake-dashboard-auto-refresh-toggle:focus-within {
+  outline: 3px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 2px;
+}
+
+.asklake-dashboard-auto-refresh-toggle button {
+  height: 20px;
+  width: 36px;
+}
+
+.asklake-dashboard-auto-refresh-toggle button > span {
+  height: 16px;
+  width: 16px;
+}
+
+.asklake-dashboard-auto-refresh-toggle button[data-state="checked"] > span {
+  transform: translateX(16px);
+}
+
 .asklake-dashboard-action,
 .asklake-dashboard-icon-action {
   display: inline-flex;

@@ -5,6 +5,7 @@ import type { DashboardRuntimeMode, DashboardRuntimeResponse } from "../../../ty
 import {
   dashboardWidgetDataRequests,
   dashboardWidgetDataRefreshRequests,
+  dashboardWidgetDataRefreshRequestsForDatasets,
   dashboardWidgetDataSelectionKey,
   mergeDashboardWidgetData,
   runDashboardWidgetDataQueue,
@@ -118,6 +119,36 @@ export function useDashboardWidgetData({
     return !controller.signal.aborted && succeeded;
   }, [active, dashboardId, mode, selectedPageId, setRuntime]);
 
+  const refreshWidgetDataForDatasets = useCallback(async (datasetIds: readonly string[]) => {
+    const current = runtimeRef.current;
+    if (!active || !current || current.dashboard.id !== dashboardId) return false;
+    const refreshRequests = dashboardWidgetDataRefreshRequestsForDatasets(
+      current,
+      selectedPageId,
+      datasetIds,
+    );
+    if (refreshRequests.length === 0) return true;
+
+    let succeeded = true;
+    await runDashboardWidgetDataQueue(refreshRequests, async (request) => {
+      try {
+        const response = await queryDashboardWidgets(dashboardId, mode, request.widgetIds, {
+          timeoutMs: DASHBOARD_WIDGET_DATA_TIMEOUT_MS,
+        });
+        if (response.widgets.some((widget) => widget.dataStatus === "error")) succeeded = false;
+        setRuntime((latest) => mergeDashboardWidgetData(
+          latest,
+          dashboardId,
+          response.widgets,
+          request.signatures,
+        ));
+      } catch {
+        succeeded = false;
+      }
+    });
+    return succeeded;
+  }, [active, dashboardId, mode, selectedPageId, setRuntime]);
+
   const activePageKey = active && runtime?.dashboard.id === dashboardId && selectedPageId
     ? `${dashboardId}:${mode}:${selectedPageId}`
     : null;
@@ -153,5 +184,5 @@ export function useDashboardWidgetData({
     setRuntime((current) => setDashboardWidgetDataStatus(current, [widgetId], "pending"));
   }, [setRuntime]);
 
-  return { refreshCurrentPageWidgetData, retryWidgetData };
+  return { refreshCurrentPageWidgetData, refreshWidgetDataForDatasets, retryWidgetData };
 }

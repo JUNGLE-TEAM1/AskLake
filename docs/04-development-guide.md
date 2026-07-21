@@ -1255,6 +1255,8 @@ docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml 
 
 STACK-02 focused validation:
 
+Dashboard 자동 갱신을 로컬·배포 환경에서 확인하려면 `DASHBOARD_AUTO_REFRESH_ENABLED=true`, `REALTIME_EVENTS_ENABLED=true`, `DASHBOARD_SYNC_MODE=hybrid` 또는 `sse`가 필요하다. 사용자 토글은 기본 OFF이며 localStorage에 사용자 ID와 Dashboard ID를 함께 넣어 저장한다. 보기·편집 모드 각각에서 토글 ON, 페이지 이동, Widget Dataset 변경, hidden/visible 복귀, 토글 OFF를 확인하고 EventSource가 현재 페이지의 고유 Dataset만 구독하는지 점검한다. 연결 실패 시 polling 요청이 생기지 않고 수동 새로고침이 계속 동작해야 한다.
+
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m unittest tests.test_realtime_events tests.test_realtime_feature_flags tests.test_dashboard_live_repository

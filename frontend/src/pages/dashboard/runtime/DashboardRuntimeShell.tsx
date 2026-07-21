@@ -15,6 +15,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
+import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -27,6 +28,9 @@ type RuntimeNotice = {
 };
 
 export function DashboardRuntimeShell({
+  autoRefreshEnabled,
+  autoRefreshError,
+  autoRefreshStatus,
   children,
   datasetSidebar,
   datasetSidebarOpen = false,
@@ -40,6 +44,7 @@ export function DashboardRuntimeShell({
   mode,
   notice,
   onAddPage,
+  onAutoRefreshChange,
   onCloseSharePanel,
   onDeletePage,
   onOpenDraft,
@@ -58,6 +63,9 @@ export function DashboardRuntimeShell({
   shareLink,
   title,
 }: {
+  autoRefreshEnabled: boolean;
+  autoRefreshError?: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   children: ReactNode;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
@@ -71,6 +79,7 @@ export function DashboardRuntimeShell({
   mode: "published" | "draft";
   notice?: RuntimeNotice | null;
   onAddPage?: () => void;
+  onAutoRefreshChange: (enabled: boolean) => void;
   onCloseSharePanel?: () => void;
   onDeletePage?: (pageId: string) => void;
   onOpenDraft?: () => void;
@@ -135,6 +144,9 @@ export function DashboardRuntimeShell({
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
+        autoRefreshEnabled={autoRefreshEnabled}
+        autoRefreshError={autoRefreshError}
+        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
@@ -142,6 +154,7 @@ export function DashboardRuntimeShell({
         mode={mode}
         title={title}
         onOpenDraft={onOpenDraft}
+        onAutoRefreshChange={onAutoRefreshChange}
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
@@ -155,6 +168,15 @@ export function DashboardRuntimeShell({
           variant={notice.tone === "error" ? "destructive" : "default"}
         >
           <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
+      {autoRefreshEnabled && autoRefreshError && (
+        <Alert
+          className="asklake-dashboard-runtime-notice error"
+          role="status"
+          variant="destructive"
+        >
+          <AlertDescription>{autoRefreshError}</AlertDescription>
         </Alert>
       )}
       <Sheet
