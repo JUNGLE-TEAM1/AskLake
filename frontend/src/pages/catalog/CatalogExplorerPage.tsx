@@ -37,6 +37,7 @@ export function CatalogPage({
   onOpenSql,
   onRefresh,
   selectedDataset,
+  viewSwitcher,
 }: {
   datasetDeletionPendingById: Record<string, boolean>;
   datasets: CatalogDataset[];
@@ -48,6 +49,7 @@ export function CatalogPage({
   onOpenSql: (dataset: CatalogDataset) => void;
   onRefresh?: () => void;
   selectedDataset: CatalogDataset;
+  viewSwitcher?: React.ReactNode;
 }) {
   const {
     activeModal,
@@ -215,6 +217,7 @@ export function CatalogPage({
           <Panel className="catalog-results-section">
             <div className="catalog-results-header">
               <PanelHeader
+                actions={viewSwitcher}
                 bordered={false}
                 icon={<BookOpen size={16} />}
                 iconVariant="outline"
