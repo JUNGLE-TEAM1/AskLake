@@ -34,9 +34,6 @@ from app.services.trino_client import TrinoClient
 
 DASHBOARD_CHART_ROW_LIMIT = 500
 DASHBOARD_TABLE_ROW_LIMIT = 500
-DASHBOARD_FILTER_VALUE_LIMIT = 100
-DASHBOARD_WIDGET_FILTER_LIMIT = 5
-DASHBOARD_WIDGET_FILTER_IN_VALUE_LIMIT = 50
 DASHBOARD_VALUE_ALIAS = "__asklake_widget_value"
 MAX_DASHBOARD_INCREMENTAL_GROUPS = 10_000
 DASHBOARD_TIME_BUCKET_UNITS = {"minute", "hour", "day", "month", "year"}
@@ -259,31 +256,25 @@ class DashboardDatasetQuerySession:
             self.clickhouse_client.close()
 
     def read_widget(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            source_config = dashboard_source_config(config)
-            column_types = dashboard_dataset_column_types(self.dataset, self.columns)
-            if widget_type == "table":
-                query = dashboard_table_query(
-                    self.query_table,
-                    self.columns,
-                    source_config,
-                    physical_columns=self.column_map,
-                    column_types=column_types,
-                )
-                data_mode = "server_preview"
-                runtime_config = dict(source_config)
-            else:
-                query, runtime_config = dashboard_aggregation_query(
-                    self.query_table,
-                    self.columns,
-                    widget_type,
-                    source_config,
-                    physical_columns=self.column_map,
-                    column_types=column_types,
-                )
-                data_mode = "server_aggregated"
-        except ValueError as error:
-            raise dashboard_widget_config_error(self.dataset, error) from error
+        source_config = dashboard_source_config(config)
+        if widget_type == "table":
+            query = dashboard_table_query(
+                self.query_table,
+                self.columns,
+                source_config,
+                physical_columns=self.column_map,
+            )
+            data_mode = "server_preview"
+            runtime_config = dict(source_config)
+        else:
+            query, runtime_config = dashboard_aggregation_query(
+                self.query_table,
+                self.columns,
+                widget_type,
+                source_config,
+                physical_columns=self.column_map,
+            )
+            data_mode = "server_aggregated"
 
         runtime_config["dataMode"] = data_mode
         runtime_config["sourceConfig"] = source_config
@@ -333,106 +324,19 @@ class DashboardDatasetQuerySession:
             raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         return {"config": runtime_config, "data": rows}
 
-    def read_filter_values(
-        self,
-        column: str,
-        *,
-        context_filters: list[dict[str, Any]] | None = None,
-        search: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        try:
-            physical_column = dashboard_physical_column(
-                column,
-                self.columns,
-                self.column_map,
-            )
-            resolved_limit = dashboard_row_limit(
-                limit,
-                default=50,
-                maximum=DASHBOARD_FILTER_VALUE_LIMIT,
-            )
-            column_types = dashboard_dataset_column_types(self.dataset, self.columns)
-            column_sql = quote_duckdb_identifier(physical_column)
-            filter_parts = dashboard_widget_filter_predicates(
-                {"filters": context_filters or []},
-                self.columns,
-                column_types,
-                self.column_map,
-            )
-            filter_parts.append(f"{column_sql} IS NOT NULL")
-            normalized_search = str(search or "").strip()
-            if normalized_search:
-                filter_parts.append(
-                    dashboard_contains_filter_predicate(column_sql, normalized_search)
-                )
-            where_sql = f" WHERE {' AND '.join(filter_parts)}"
-            value_alias = quote_duckdb_identifier("__asklake_filter_value")
-            query = (
-                f"SELECT DISTINCT {column_sql} AS {value_alias} "
-                f"FROM {self.query_table}{where_sql} "
-                f"ORDER BY CAST({column_sql} AS VARCHAR) ASC NULLS LAST "
-                f"LIMIT {resolved_limit + 1}"
-            )
-        except ValueError as error:
-            raise dashboard_widget_config_error(self.dataset, error) from error
-        try:
-            if self.clickhouse_client is not None:
-                clickhouse_queries = sqlglot.transpile(
-                    query,
-                    read="clickhouse",
-                    write="clickhouse",
-                )
-                if len(clickhouse_queries) != 1:
-                    raise ValueError("Dashboard ClickHouse filter-value query must contain one statement")
-                result = self.clickhouse_client.query(
-                    clickhouse_queries[0],
-                    timeout_seconds=self.query_timeout_seconds,
-                )
-                raw_rows = result.rows
-            elif self.trino_client is not None:
-                result = execute_trino_rows(
-                    self.trino_client,
-                    query,
-                    timeout_seconds=self.query_timeout_seconds,
-                )
-                raw_rows = result.rows
-            else:
-                if self.connection is None:
-                    raise ValueError("Dashboard dataset query session is closed")
-                raw_rows = execute_dashboard_query(
-                    self.connection,
-                    query,
-                    timeout_seconds=self.query_timeout_seconds,
-                ).fetchall()
-        except (ApiError, RuntimeError, ValueError, ClickHouseError, duckdb.Error) as error:
-            raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
-
-        truncated = len(raw_rows) > resolved_limit
-        values = [
-            dashboard_json_cell(row[0])
-            for row in raw_rows[:resolved_limit]
-            if row and row[0] is not None
-        ]
-        return {"truncated": truncated, "values": values}
-
     def read_aggregate_state(self, widget_type: str, config: dict[str, Any]) -> dict[str, Any] | None:
         """Read mergeable aggregate state; return None when cardinality is unsafe."""
         if widget_type == "table" or not self.revision_delta_available:
             return None
-        try:
-            source_config = dashboard_source_config(config)
-            query, state_template = dashboard_aggregate_state_query(
-                self.query_table,
-                self.columns,
-                widget_type,
-                source_config,
-                where_sql=self._aggregate_where_sql,
-                physical_columns=self.column_map,
-                column_types=dashboard_dataset_column_types(self.dataset, self.columns),
-            )
-        except ValueError as error:
-            raise dashboard_widget_config_error(self.dataset, error) from error
+        source_config = dashboard_source_config(config)
+        query, state_template = dashboard_aggregate_state_query(
+            self.query_table,
+            self.columns,
+            widget_type,
+            source_config,
+            where_sql=self._aggregate_where_sql,
+            physical_columns=self.column_map,
+        )
         try:
             if self.trino_client is not None:
                 result = execute_trino_rows(
@@ -532,13 +436,13 @@ def dashboard_physical_column(
     require_dashboard_column(column, columns)
     return (physical_columns or {}).get(column, column)
 
+
 def dashboard_table_query(
     table: str,
     columns: set[str],
     config: dict[str, Any],
     *,
     physical_columns: Mapping[str, str] | None = None,
-    column_types: Mapping[str, str] | None = None,
 ) -> str:
     requested_columns = config.get("columns")
     selected = (
@@ -569,14 +473,7 @@ def dashboard_table_query(
         direction = str(config.get("sortDirection") or config.get("sort_direction") or "asc").lower()
         order_sql = f" ORDER BY {quote_duckdb_identifier(physical_sort_key)} {'DESC' if direction == 'desc' else 'ASC'} NULLS LAST"
     limit = dashboard_row_limit(config.get("limit"), default=100, maximum=DASHBOARD_TABLE_ROW_LIMIT)
-    filter_parts = dashboard_widget_filter_predicates(
-        config,
-        columns,
-        column_types,
-        physical_columns,
-    )
-    where_sql = f" WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
-    return f"SELECT {select_sql} FROM {table}{where_sql}{order_sql} LIMIT {limit}"
+    return f"SELECT {select_sql} FROM {table}{order_sql} LIMIT {limit}"
 
 
 def dashboard_aggregation_query(
@@ -586,7 +483,6 @@ def dashboard_aggregation_query(
     config: dict[str, Any],
     *,
     physical_columns: Mapping[str, str] | None = None,
-    column_types: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
     if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
@@ -638,14 +534,7 @@ def dashboard_aggregation_query(
     if value_alias != configured_value_key:
         runtime_config[value_config_key] = value_alias
 
-    filter_parts = dashboard_widget_filter_predicates(
-        config,
-        columns,
-        column_types,
-        physical_columns,
-    )
-    filter_parts.extend(time_dimension_filters)
-    where_sql = f" WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
+    where_sql = f" WHERE {' AND '.join(time_dimension_filters)}" if time_dimension_filters else ""
     group_sql = f" GROUP BY {', '.join(group_expressions)}" if group_expressions else ""
     base_query = f"SELECT {', '.join(select_parts)} FROM {table}{where_sql}{group_sql}"
     if widget_type in {"line_chart", "area_chart"} and dimension_aliases:
@@ -682,7 +571,6 @@ def dashboard_aggregate_state_query(
     *,
     where_sql: str = "",
     physical_columns: Mapping[str, str] | None = None,
-    column_types: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     aggregation = str(config.get("aggregation") or "sum").lower()
     if aggregation not in {"sum", "avg", "count", "ratio", "min", "max"}:
@@ -747,12 +635,7 @@ def dashboard_aggregate_state_query(
             f"MIN({numeric_value}) AS __asklake_state_min",
             f"MAX({numeric_value}) AS __asklake_state_max",
         ])
-    filter_parts = dashboard_widget_filter_predicates(
-        config,
-        columns,
-        column_types,
-        physical_columns,
-    )
+    filter_parts: list[str] = []
     normalized_where_sql = where_sql.strip()
     if normalized_where_sql:
         if not normalized_where_sql.upper().startswith("WHERE "):
@@ -1025,207 +908,6 @@ def dashboard_ratio_expression(
     numerator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(numerator)} THEN 1 ELSE 0 END)"
     denominator_count = f"SUM(CASE WHEN CAST({column} AS VARCHAR) = {quote_duckdb_string_literal(denominator)} THEN 1 ELSE 0 END)"
     return f"100.0 * {numerator_count} / NULLIF({denominator_count}, 0)"
-
-
-def dashboard_dataset_column_types(
-    dataset: Any,
-    readable_columns: set[str] | None = None,
-) -> dict[str, str]:
-    schema = dataset_value(dataset, "schema_", "schema", default=[])
-    resolved: dict[str, str] = {}
-    if isinstance(schema, list):
-        for item in schema:
-            name: Any = None
-            raw_type: Any = None
-            if isinstance(item, Mapping):
-                name = item.get("name")
-                raw_type = item.get("type")
-            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                name, raw_type = item[0], item[1]
-            normalized_name = str(name or "").strip()
-            if not normalized_name:
-                continue
-            if readable_columns is not None and normalized_name not in readable_columns:
-                continue
-            resolved[normalized_name] = dashboard_normalized_column_type(raw_type)
-    if readable_columns is not None:
-        for column in readable_columns:
-            resolved.setdefault(column, "string")
-    return resolved
-
-
-def dashboard_normalized_column_type(value: Any) -> str:
-    normalized = normalized_text(value)
-    if any(hint in normalized for hint in ("date", "time", "timestamp")):
-        return "date"
-    if any(
-        hint in normalized
-        for hint in (
-            "bigint",
-            "decimal",
-            "double",
-            "float",
-            "int",
-            "long",
-            "number",
-            "numeric",
-            "real",
-            "smallint",
-            "tinyint",
-        )
-    ):
-        return "number"
-    return "string"
-
-
-def dashboard_widget_filter_predicates(
-    config: Mapping[str, Any],
-    columns: set[str],
-    column_types: Mapping[str, str] | None = None,
-    physical_columns: Mapping[str, str] | None = None,
-) -> list[str]:
-    raw_filters = config.get("filters")
-    if raw_filters is None:
-        return []
-    if not isinstance(raw_filters, list):
-        raise ValueError("Dashboard widget filters must be a list")
-    if len(raw_filters) > DASHBOARD_WIDGET_FILTER_LIMIT:
-        raise ValueError(
-            f"Dashboard widget supports at most {DASHBOARD_WIDGET_FILTER_LIMIT} filters"
-        )
-
-    resolved_column_types = column_types or {}
-    predicates: list[str] = []
-    seen_ids: set[str] = set()
-    for raw_filter in raw_filters:
-        if not isinstance(raw_filter, Mapping):
-            raise ValueError("Dashboard widget filter must be an object")
-        filter_id = str(raw_filter.get("id") or "").strip()
-        if not filter_id:
-            raise ValueError("Dashboard widget filter requires an ID")
-        if filter_id in seen_ids:
-            raise ValueError("Dashboard widget filter IDs must be unique")
-        seen_ids.add(filter_id)
-
-        column = str(raw_filter.get("column") or "").strip()
-        operator = str(raw_filter.get("operator") or "").strip().lower()
-        column_type = resolved_column_types.get(column, "string")
-        column_sql = quote_duckdb_identifier(
-            dashboard_physical_column(column, columns, physical_columns)
-        )
-        predicates.append(
-            dashboard_widget_filter_predicate(
-                column_sql,
-                column_type,
-                operator,
-                raw_filter,
-            )
-        )
-    return predicates
-
-
-def dashboard_widget_filter_predicate(
-    column_sql: str,
-    column_type: str,
-    operator: str,
-    raw_filter: Mapping[str, Any],
-) -> str:
-    if operator == "is_null":
-        return f"{column_sql} IS NULL"
-    if operator == "is_not_null":
-        return f"{column_sql} IS NOT NULL"
-
-    if operator == "contains":
-        if column_type != "string":
-            raise ValueError("Dashboard CONTAINS filter requires a string column")
-        value = raw_filter.get("value")
-        if not isinstance(value, str) or not value:
-            raise ValueError("Dashboard CONTAINS filter requires a non-empty string value")
-        return dashboard_contains_filter_predicate(column_sql, value)
-
-    if operator == "in":
-        if column_type != "string":
-            raise ValueError("Dashboard IN filter currently supports string columns only")
-        values = raw_filter.get("values")
-        if not isinstance(values, list) or not values:
-            raise ValueError("Dashboard IN filter requires values")
-        if len(values) > DASHBOARD_WIDGET_FILTER_IN_VALUE_LIMIT:
-            raise ValueError(
-                "Dashboard IN filter exceeds the bounded value limit"
-            )
-        literals = [dashboard_filter_literal(value, column_type) for value in values]
-        return f"CAST({column_sql} AS VARCHAR) IN ({', '.join(literals)})"
-
-    if operator == "between":
-        if column_type not in {"number", "date"}:
-            raise ValueError("Dashboard BETWEEN filter requires a number or date column")
-        values = raw_filter.get("values")
-        if not isinstance(values, list) or len(values) != 2:
-            raise ValueError("Dashboard BETWEEN filter requires exactly two values")
-        operand = dashboard_filter_operand(column_sql, column_type)
-        lower = dashboard_filter_literal(values[0], column_type)
-        upper = dashboard_filter_literal(values[1], column_type)
-        return f"{operand} BETWEEN {lower} AND {upper}"
-
-    comparisons = {
-        "eq": "=",
-        "gt": ">",
-        "gte": ">=",
-        "lt": "<",
-        "lte": "<=",
-    }
-    comparison = comparisons.get(operator)
-    if comparison is None:
-        raise ValueError(f"Unsupported dashboard filter operator: {operator}")
-    if operator != "eq" and column_type not in {"number", "date"}:
-        raise ValueError(
-            f"Dashboard {operator.upper()} filter requires a number or date column"
-        )
-    value = raw_filter.get("value")
-    if value is None:
-        raise ValueError(f"Dashboard {operator.upper()} filter requires a value")
-    return (
-        f"{dashboard_filter_operand(column_sql, column_type)} {comparison} "
-        f"{dashboard_filter_literal(value, column_type)}"
-    )
-
-
-def dashboard_filter_operand(column_sql: str, column_type: str) -> str:
-    if column_type == "number":
-        return f"TRY_CAST({column_sql} AS DOUBLE)"
-    if column_type == "date":
-        return f"TRY_CAST({column_sql} AS TIMESTAMP)"
-    return f"CAST({column_sql} AS VARCHAR)"
-
-
-def dashboard_filter_literal(value: Any, column_type: str) -> str:
-    if column_type == "number":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("Dashboard numeric filter requires a number value")
-        parsed = float(value)
-        if not math.isfinite(parsed):
-            raise ValueError("Dashboard numeric filter requires a finite value")
-        return str(value) if isinstance(value, int) else repr(parsed)
-    if column_type == "date":
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("Dashboard date filter requires an ISO date value")
-        normalized = value.strip()
-        try:
-            datetime.fromisoformat(normalized.replace("Z", "+00:00"))
-        except ValueError:
-            try:
-                date.fromisoformat(normalized)
-            except ValueError as error:
-                raise ValueError("Dashboard date filter requires an ISO date value") from error
-        return f"TRY_CAST({quote_duckdb_string_literal(normalized)} AS TIMESTAMP)"
-    if not isinstance(value, str):
-        raise ValueError("Dashboard string filter requires a string value")
-    return quote_duckdb_string_literal(value)
-
-
-def dashboard_contains_filter_predicate(column_sql: str, value: str) -> str:
-    literal = quote_duckdb_string_literal(value)
-    return f"STRPOS(LOWER(CAST({column_sql} AS VARCHAR)), LOWER({literal})) > 0"
 
 
 def require_dashboard_column(column: str, columns: set[str]) -> None:
@@ -1650,18 +1332,6 @@ def dashboard_storage_error(dataset: Any, reason: str) -> ApiError:
             "reason": reason[:500],
             "storageFormat": str(dataset_value(dataset, "storage_format", "storageFormat") or ""),
             "storageLocation": str(dataset_value(dataset, "storage_location", "storageLocation") or ""),
-        },
-    )
-
-
-def dashboard_widget_config_error(dataset: Any, error: ValueError) -> ApiError:
-    return ApiError(
-        "DASHBOARD_WIDGET_CONFIG_INVALID",
-        "Dashboard widget configuration is invalid for this dataset",
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        {
-            "datasetId": str(dataset_value(dataset, "id") or ""),
-            "reason": str(error)[:500],
         },
     )
 

@@ -8,8 +8,6 @@ from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
-    CatalogDatasetFilterValuesRequest,
-    CatalogDatasetFilterValuesResponse,
     CatalogDatasetDeletionAcceptedResponse,
     CatalogDatasetDeletionImpact,
     CatalogDatasetDeletionStatusResponse,
@@ -120,19 +118,6 @@ def get_dataset_rows(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CatalogDatasetRowsResponse:
     return service.get_dataset_rows(dataset_id, actor, limit=limit, offset=offset)
-
-
-@router.post(
-    "/datasets/{dataset_id}/filter-values/query",
-    response_model=CatalogDatasetFilterValuesResponse,
-)
-def query_dataset_filter_values(
-    dataset_id: str,
-    request: CatalogDatasetFilterValuesRequest,
-    service: Annotated[CatalogService, Depends(get_catalog_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> CatalogDatasetFilterValuesResponse:
-    return service.get_dataset_filter_values(dataset_id, request, actor)
 
 
 @router.get("/datasets/{dataset_id}/lineage", response_model=LineageGraphResponse)
