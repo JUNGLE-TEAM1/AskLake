@@ -8,8 +8,6 @@ from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
-    CatalogDatasetFilterValuesRequest,
-    CatalogDatasetFilterValuesResponse,
     CatalogDatasetDeletionAcceptedResponse,
     CatalogDatasetDeletionImpact,
     CatalogDatasetDeletionStatusResponse,
@@ -29,7 +27,6 @@ from app.application.catalog_dataset_deletion import (
 )
 from app.schemas.trino import TrinoMaterializationRunResponse
 from app.services.catalog_service import CatalogService
-from app.services.catalog_filter_values_service import query_catalog_dataset_filter_values
 from app.services.lake_storage_service import LocalLakeStorageService
 from app.services.trino_materialization_service import TrinoMaterializationService
 
@@ -121,19 +118,6 @@ def get_dataset_rows(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CatalogDatasetRowsResponse:
     return service.get_dataset_rows(dataset_id, actor, limit=limit, offset=offset)
-
-
-@router.post(
-    "/datasets/{dataset_id}/filter-values/query",
-    response_model=CatalogDatasetFilterValuesResponse,
-)
-def query_dataset_filter_values(
-    dataset_id: str,
-    request: CatalogDatasetFilterValuesRequest,
-    service: Annotated[CatalogService, Depends(get_catalog_service)],
-    actor: Annotated[ActorContext, Depends(get_actor_context)],
-) -> CatalogDatasetFilterValuesResponse:
-    return query_catalog_dataset_filter_values(service, dataset_id, request, actor)
 
 
 @router.get("/datasets/{dataset_id}/lineage", response_model=LineageGraphResponse)
