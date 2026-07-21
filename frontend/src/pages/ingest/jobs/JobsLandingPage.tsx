@@ -5,8 +5,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, Check, Filter, ListChecks, Plus, Search, X } from "lucide-react";
 
 import { SourceBrandIcon } from "../../../components/source/SourceBrand";
-import { PageHeaderActions } from "@/components/layout/Topbar";
-
 import { Button } from "@/components/ui/button";
 
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
@@ -96,12 +94,6 @@ export function JobsLandingPage({
 
   return (
     <div className="jobs-landing">
-      <PageHeaderActions>
-        <Button className="app-page-primary-action" size="sm" type="button" onClick={onCreate}>
-          <Plus size={16} />
-          새 수집/처리 생성
-        </Button>
-      </PageHeaderActions>
       <div className="content-main jobs-panel-stack">
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
@@ -495,6 +487,12 @@ export function JobsTableSection({
     <TooltipProvider delayDuration={250}>
       <Panel aria-label={ariaLabel}>
         <PanelHeader
+          actions={
+            <Button size="sm" type="button" onClick={onCreate}>
+              <Plus size={16} />
+              새 수집/처리 생성
+            </Button>
+          }
           icon={<ListChecks size={16} />}
           iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
           size="section"

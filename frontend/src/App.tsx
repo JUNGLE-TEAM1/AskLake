@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import { navItems, wizardFlows } from "./data/appShellData";
+import { wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
-import { Topbar } from "./components/layout/Topbar";
 import { EtlWizardHeader } from "./components/layout/EtlWizardHeader";
 import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
@@ -47,12 +46,6 @@ function isContinuousKafkaDraft(draft: DraftPipeline) {
 }
 const emptyDatasetId = "dataset_not_selected";
 const emptyJobId = "JOB-NONE";
-const topbarNavIdByFlow: Partial<Record<FlowId, NavId>> = {
-  catalog: "catalog",
-  jobs: "ingest",
-  sql: "sql",
-};
-
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
@@ -73,13 +66,6 @@ type FlowPathContext = {
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
 };
-
-function resolveTopbarSection(flow: FlowId, dashboardEntry: DashboardEntry) {
-  const navId = flow === "dashboard" && dashboardEntry.view === "list"
-    ? "dashboard"
-    : topbarNavIdByFlow[flow];
-  return navItems.find((item) => item.id === navId) ?? null;
-}
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
 const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
@@ -626,7 +612,6 @@ export function App() {
           />
         )}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : activeFlow === "catalog" ? "page-body catalog-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
-          <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
               <Skeleton className="h-5 w-24" />

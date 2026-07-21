@@ -333,7 +333,7 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor module keeps Nessie, reset, execution, and autocomplete controls",
+    name: "SQL editor module keeps AI writing, reset, execution, and autocomplete controls",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
       /<SqlAiWriterDialog disabled=\{disabled\} \{\.\.\.ai\} \/>/,
@@ -349,18 +349,18 @@ const checks = [
     ],
   },
   {
-    name: "SQL primary action buttons keep their text labels without decorative glyphs",
+    name: "SQL primary action buttons keep consistent labels and AI iconography",
     files: [
       "src/pages/sql/SqlAiWriterDialog.tsx",
       "src/pages/sql/SqlQueryEditorPanel.tsx",
     ],
     patterns: [
-      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*Nessie로 SQL 작성\s*<\/Button>/,
+      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*<Sparkles data-icon="inline-start" \/> AI로 SQL 작성\s*<\/Button>/,
       /<Button type="button" onClick=\{onReset\}[\s\S]*?>\s*SQL 초기화\s*<\/Button>/,
       /<Button type="button" onClick=\{onExecute\}[\s\S]*?>\s*\{pending \? "실행 중" : "실행"\}\s*<\/Button>/,
     ],
     forbiddenPatterns: [
-      /<PopoverTrigger asChild>[\s\S]{0,260}<NessieMark/,
+      /NessieMark/,
     ],
   },
   {
@@ -519,10 +519,14 @@ const checks = [
     ],
   },
   {
-    name: "Nessie SQL writer uses Popover, Bubble, and controlled Collapsible",
+    name: "AI SQL writer uses Popover, Bubble, and controlled Collapsible",
     file: "src/pages/sql/SqlAiWriterDialog.tsx",
     patterns: [
-      /Nessie로 SQL 작성/,
+      /AI로 SQL 작성/,
+      /import \{ Check, Send, Sparkles \} from "lucide-react";/,
+      /<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-600">[\s\S]*?<Sparkles aria-hidden="true" className="size-4 text-white" \/>/,
+      /className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50\/70 p-3"/,
+      /<Send data-icon="inline-start" \/> SQL 초안 생성/,
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /import \{ Collapsible, CollapsibleContent \} from "@\/components\/ui\/collapsible";/,
       /PopoverTrigger/,
