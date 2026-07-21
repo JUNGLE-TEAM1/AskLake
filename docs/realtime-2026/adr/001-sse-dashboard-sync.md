@@ -1,8 +1,11 @@
 # ADR-001: SSE 기반 Dashboard 변경 알림
 
-- 상태: Accepted
+- 상태: Superseded for Dashboard frontend (backend event 계약은 유지)
 - 결정일: 2026-07-16
+- 대체일: 2026-07-21
 - 범위: Published Dashboard 동기화
+
+Dashboard frontend 자동 갱신은 수동 모드로 전환되어 EventSource, adaptive polling과 background prefetch를 사용하지 않는다. 아래 내용은 backend event/SSE 설계 기록이며 현재 화면 동작을 정의하지 않는다.
 
 ## 맥락
 

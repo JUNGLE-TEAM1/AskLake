@@ -214,7 +214,7 @@ PYTHONPATH=. .venv/bin/python scripts/nessie-sql-benchmark-dataset.py \
 ETL 생성 화면의 상위 단계 제목은 `EtlStepHeader`, 내부 섹션 제목은 `EtlSectionHeader`를 사용한다. 기본 섹션 헤더는 20px 제목, 44px 색상 타일과 22px 아이콘, 공통 여백을 유지하고 상태 차이는 타일과 옅은 배경 tone으로만 표현한다. 더 작은 탐색 하위 패널은 `EtlSectionHeader density="compact"`를 사용하며 화면별 전용 제목·아이콘 CSS를 새로 만들지 않는다.
 
 ETL 화면의 표는 `DataTable`을 사용한다. 이 컴포넌트가 TanStack Table의 row/column model과 shadcn `Table` primitives를 함께 제공하므로, 미리보기·검증 결과·편집 셀도 별도 `<table>` 마크업을 만들지 않고 `ColumnDef`의 `cell` renderer로 구현한다. 화면별 스타일은 최소 너비, 말줄임, 상태 표현처럼 데이터 의미에 필요한 범위만 `tableClassName`, `viewportClassName`, column meta로 추가한다.
-`npm run test:dashboard-live-refresh`는 published runtime의 Continuous dataset ID 중복 제거, `latestRevision > appliedRevision`인 widget 선택, 서버 polling 힌트의 1~60초 범위, 성공 widget만 기존 runtime에 병합하는 계약을 확인한다. partial 응답이 실제 전진했을 때만 250ms catch-up 대상이 되고 같은 revision을 다시 받으면 일반 주기로 돌아가는지도 검증한다.
+`npm run test:dashboard-widget-data-state`는 선택 페이지의 Dataset Widget grouping, 최초 pending 조회, 수동 새로고침의 전체 현재 페이지 강제 조회, signature가 일치하는 응답만 runtime에 병합하는 계약을 확인한다. Dashboard frontend에는 polling timer, EventSource 갱신, background prefetch를 추가하지 않는다.
 SQL/Catalog pagination 변경 시에는 같은 script가 SQL 전체 snapshot의 페이지 조작, 편집기 단일 스크롤·빈 SQL 유지, Catalog schema/sample viewer와 새로고침·첫/마지막 page 연결을 함께 확인한다. Backend unit test는 10,000행 경계뿐 아니라 20,001행 결과의 마지막 page까지 검증해 총행 제한이 다시 생기지 않게 한다.
 
 SQL run/Catalog row page의 backend 경계값은 전체 metadata를 초기화하는 `npm run verify`대신 다음 격리 unit test로 확인한다.
@@ -242,7 +242,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 .venv/bin/python -m unittest tests.test_query_route_compatibility tests.test_trino_production_hardening -v
 ```
 
-프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, TypeScript 연결과 production bundle을 함께 확인한다.
+프론트 SQL 상태 경계를 바꾼 뒤에는 `cd frontend && npm run test:sql-job-immediate-run && npm run verify:ui-regressions && npm run build`를 실행한다. 이 조합이 preview/full-result 경계, timeline, cursor pagination, SQL Job wizard, create→run/start 순서, 부분 성공 보존, TypeScript 연결과 production bundle을 함께 확인한다.
 
 `scripts/verify-deploy-readiness.sh`는 Docker 작업 전에 `ASKLAKE_PYTHON_BIN`이 정확히 Python 3.13인지 확인하고 다른 minor version이면 즉시 실패한다.
 
@@ -774,7 +774,7 @@ cd backend
 ASKLAKE_VERIFY_ICEBERG_LIVE=true npm run verify:kafka-continuous-iceberg
 ```
 
-Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard 자동 갱신은 `DASHBOARD_AUTO_REFRESH_ENABLED`로 별도 통제하며 기본 `false`에서는 보기·편집 모드 모두 수동 새로고침만 사용한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
+Continuous control-plane worker는 `CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS`(기본 1초, 허용 범위 1~60초)마다 active Continuous worker report를 동기화한다. 이 control-plane sync가 Catalog materialization을 수행하므로 Job 목록/상세 조회가 없어도 적재 batch가 Catalog에 등록된다. Production web/API는 `CONTINUOUS_CONTROL_PLANE=disabled`, 전용 worker는 `worker`로 실행한다. worker는 PostgreSQL lease를 보유한 경우에만 Spark 명령과 reconciliation을 수행한다. Start/resume intent의 committed fencing token은 Spark runner의 worker attempt ID로 전달한다. 이전 attempt의 report가 stale이고 runner가 `exited`/`missing`이거나 control-plane 재배포로 state가 `unknown`이면 worker는 그 report만 무시하고 같은 fence로 start를 재제출하므로 `starting`에 고착되지 않는다. Dashboard는 기능 플래그와 무관하게 보기·편집 모드 모두 수동 새로고침만 사용하고, 현재 페이지 Dataset Widget을 명시적으로 query한다. Worker는 target의 `_batch-manifests/batch_id=*`에 valid/quarantine count를 함께 기록하고, 재시작 때 이 manifest를 읽어 runtime counter를 복구한다.
 
 API/worker와 Spark driver가 같은 mounted report directory를 공유하지 않는 배포(EKS SparkApplication 등)는 두 process에 같은 private S3 prefix를 `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX=s3a://<bucket>/<prefix>`로 설정한다. `s3://`도 API 설정에서 허용한다. 이 prefix에는 runtime report, command, catalog ACK가 저장되므로 warehouse나 일반 dataset prefix와 분리하고 해당 workload role에 그 prefix의 `GetObject`, `PutObject`, `ListBucket`만 부여한다. 로컬 Compose는 이 값을 비워 mounted local report directory를 계속 사용한다.
 
@@ -1013,17 +1013,17 @@ PR 본문 마지막에는 `Closes #<issue-number>`를 둔다. `dev`처럼 기본
 상태값을 다룰 때는 API와 frontend internal state에 영어 canonical value를 사용한다.
 화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
 
-### Dashboard Job Binding 구현 순서
+### Dashboard Job Binding 제거 순서
 
-Dashboard Job Binding은 실행 엔진 변경이나 EKS migration과 같은 PR에 섞지 않는다. [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)의 순서를 따른다.
+Dashboard Widget의 `dataset_id`를 유일한 연결 source로 사용한다. 제거 작업은 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다.
 
-1. Phase 0에서 새/빈 Dashboard만 지원하는 V1 범위, Dashboard-level Dataset lock, `latestRevision`/`appliedRevision` 완료 조건과 권한 경계를 문서로 확인한다.
-2. Phase 1에서 binding/delivery migration, repository, schema와 `/api/dashboard-job-bindings` Job/Dashboard API를 만든다. API는 empty Dashboard, output Dataset 일치와 Job/Dashboard 권한을 검사하고 `201` 전 transaction commit으로 새 session 재조회가 가능해야 한다.
-3. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 공통 선택적 연동 UI와 managed Dashboard source lock을 구현한다. 새 Dashboard 생성과 binding은 Job 생성 성공 뒤 API가 반환한 output Dataset ID만 사용하며, binding 실패는 Job 결과를 rollback하지 않는다. Widget 시각화 편집은 유지한다. detach UX는 binding API를 사용하는 Dashboard 관리 화면 후속 작업이다.
-4. Phase 3에서 검증된 Dataset revision publication 뒤 delivery worker를 연결한다. Dashboard 실패가 Job publication을 rollback하지 않는지 확인한다.
-5. Phase 4에서 `npm run verify:dashboard-job-binding-delivery`로 idempotency/degraded/retry/detach worker regression을 먼저 확인하고, `dev` immutable commit을 EC2에 배포한 뒤 Batch `replace`, Continuous `append`, worker/backend restart, duplicate revision, Dashboard 계산 실패와 detach를 E2E 검증한다. 실제 EC2 preflight와 fixture 정리 순서는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
-6. 보기 모드는 SSE/hybrid trigger와 polling fallback으로, 편집 모드는 polling으로 자동 갱신한다. 두 모드 모두 revision이 전진한 Dataset의 widget만 `widgets/query`로 요청하며, 편집 모드 검증에서는 config/layout/title/선택 상태가 바뀌지 않는지 함께 확인한다.
-7. Phase 6에서 제품 contract를 바꾸지 않고 EKS runtime parity를 검증한다.
+1. Phase 1에서 보기·편집 모드의 진입 및 상단 새로고침을 현재 페이지 `widgets/query`로 통일하고 자동 polling/SSE/background prefetch를 제거한다.
+2. Phase 2에서 ETL review, SQL 분석 batch/Trino Job wizard, Continuous SQL 생성의 Dashboard 연동 옵션과 자동 Dashboard 생성을 제거한다. Dashboard runtime은 binding을 조회하지 않고 Dataset selector와 Assistant의 managed lock을 제거한다.
+3. Phase 2 frontend gate는 `npm run test:dashboard-job-binding-removal`, Dashboard 관련 회귀 테스트와 production build다.
+4. Phase 3에서 binding router/schema/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거한다. `npm run verify:dashboard-job-binding-removal`로 OpenAPI와 runtime 참조가 다시 생기지 않는지 검증한다.
+5. Phase 4 migration `0022_remove_dashboard_job_bindings`가 delivery table, binding table 순서로 제거한다. 기존 row가 있으면 모든 backend/worker replica의 Phase 3 교체와 backup을 확인한 뒤 migration process에만 `ASKLAKE_CONFIRM_DROP_DASHBOARD_JOB_BINDINGS=true`를 설정한다. DB table을 code cutover보다 먼저 삭제하지 않는다.
+6. 기존 Dashboard/revision/page/widget ID와 Widget `dataset_id`가 보존되고 수동 새로고침이 성공하는지 확인한다.
+7. `npm run verify:dashboard-job-binding-schema-removal`로 fresh upgrade, populated schema 차단, 명시적 upgrade, empty-schema downgrade와 재-upgrade를 검증한다.
 
 ## 7) Pair Ownership
 
@@ -1246,7 +1246,7 @@ cd backend
 .\.venv\Scripts\python.exe -m unittest tests.test_dashboard_live_repository tests.test_dashboard_live_results tests.test_kafka_continuous_dashboard_sync
 
 cd ..\frontend
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..
@@ -1263,7 +1263,7 @@ cd backend
 
 cd ..\frontend
 npm run test:realtime-events
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..
@@ -1294,7 +1294,7 @@ npm run verify:realtime-stack
 
 cd ..\frontend
 npm run test:realtime-events
-npm run test:dashboard-live-refresh
+npm run test:dashboard-widget-data-state
 npm run build
 
 cd ..

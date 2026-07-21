@@ -38,13 +38,13 @@ Content-Type: application/json
 
 1. 안전 flag를 반영한 backend를 먼저 배포한다.
 2. `/api/realtime/config`가 effective polling/disabled를 반환하는지 확인한다.
-3. frontend를 배포하고 EventSource가 열리지 않으며 adaptive polling이 재개되는지 확인한다.
+3. frontend를 배포하고 EventSource와 Dashboard polling timer가 열리지 않으며 보기·편집 화면의 수동 새로고침이 현재 페이지 Widget query를 호출하는지 확인한다.
 4. 문제가 새 binary 자체에 있으면 직전 image로 rollback하되 additive table과 event log는 그대로 둔다.
 
 ## 4. 복구 확인
 
 - 기존 Dashboard가 마지막 성공 widget 결과를 표시한다.
-- freshness polling이 다시 실행되고 새 revision을 반영한다.
+- 화면 진입 또는 수동 새로고침이 새 revision을 반영한다.
 - 일반 SQL/ETL과 기존 Kafka ingestion이 동작한다.
 - Continuous SQL create/start/resume/recover는 `CONTINUOUS_SQL_DISABLED`로 거절된다.
 - 이미 committed된 Dataset revision과 event가 rollback 중 중복 생성되지 않는다.

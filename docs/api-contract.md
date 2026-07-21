@@ -868,7 +868,7 @@ type TrinoQueryValidationResponse = {
 };
 ```
 
-`POST /api/etl/sql-jobs`는 성공한 Trino Query Run에서 반복 실행용 SQL recipe Job을 생성합니다. source Run 제출자 또는 admin만 호출할 수 있고, Dataset을 조회할 수 있더라도 다른 사용자의 Run이면 `403`을 반환합니다. request의 query/base/reference identity도 persisted Run과 정확히 일치해야 합니다.
+`POST /api/etl/sql-jobs`는 성공한 Trino Query Run에서 stopped 반복 실행용 SQL recipe Job을 생성합니다. source Run 제출자 또는 admin만 호출할 수 있고, Dataset을 조회할 수 있더라도 다른 사용자의 Run이면 `403`을 반환합니다. request의 query/base/reference identity도 persisted Run과 정확히 일치해야 합니다. SQL 분석 frontend는 `201`의 Job을 먼저 상태에 보존한 뒤 `POST /api/etl/jobs/{jobId}/commands`에 `{ "command": "run" }`을 한 번 보낸다. command 실패는 create를 rollback하지 않고 부분 성공으로 표시하며 사용자는 같은 Job을 작업 목록에서 다시 실행할 수 있다. DuckDB compatibility SQL 처리 Job도 `POST /api/etl/jobs` create 성공 뒤 같은 첫 `run` command를 사용한다.
 
 ```ts
 type CreateTrinoSqlJobRequest = {
@@ -4124,19 +4124,19 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.
 
-## Dashboard Job Binding Phase 1 계약
+## Legacy Dashboard Job Binding 제거 계약
 
-> 구현 상태: durable API, managed Dashboard Dataset lock UI, Dataset revision delivery worker와 browser 자동 갱신이 구현됐다. 보기 모드는 SSE/hybrid trigger와 polling fallback을 사용하며, 편집 모드는 polling으로 widget data만 갱신한다. EC2/EKS end-to-end validation은 운영 검증 범위다.
+> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic head `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다.
 
-Dashboard Job Binding은 모든 Dataset-producing Job의 검증된 Dataset revision을 Dashboard의 managed Widget으로 전달하는 공통 downstream contract다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 각자의 실행 및 물리 publication 계약을 유지한다. binding은 해당 publication 이후에만 동작하며, Job 성공 또는 Catalog row 존재만으로 Widget 계산을 시작하지 않는다.
+Dashboard와 Job 사이에 새 binding을 만들지 않는다. ETL, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 검증된 Catalog Dataset revision을 publication하고, Dashboard Widget이 저장한 `dataset_id`가 사용자가 선택한 연결의 source of truth다.
 
-V1은 새 Dashboard 또는 Widget이 없는 빈 Dashboard에 하나의 Job output Dataset을 고정한다. Dashboard가 `managed`일 때 새 Widget은 고정 Dataset을 상속하고 Widget 설정은 수정할 수 있지만 Dashboard/Widget Dataset selector는 사용할 수 없다. 명시적 detach 뒤에만 일반 Dataset 선택으로 되돌아간다.
+Dashboard 편집기는 권한이 있는 Catalog Dataset을 제공하며 binding 상태로 Dataset selector를 잠그지 않는다. Widget create/update와 Assistant action은 명시적으로 선택된 Dataset을 사용한다. 화면 진입 및 수동 새로고침은 현재 페이지 Widget query를 실행하고 계산 실패 시 마지막 성공 결과를 유지한다.
 
-`dashboard_job_bindings`와 revision별 `dashboard_binding_deliveries`가 durable resource다. binding은 `job_kind + job_id` 다형 참조로 ETL과 Continuous SQL을 공통 처리하고 Dashboard당 하나만 둔다. delivery는 `waiting_first_data | pending | calculating | applied | degraded | failed | detached` 상태를 가지며, 서버 기준 성공은 enabled binding의 모든 managed Widget에서 `appliedRevision >= latestRevision`을 만족할 때다. 기존 Continuous SQL `dashboard_ready`는 Catalog revision/event publication stage이며 Widget delivery 성공을 의미하지 않는다.
+`dashboard_job_bindings`와 `dashboard_binding_deliveries`는 제품 계약이나 durable runtime resource가 아니다. migration은 `dashboard_binding_deliveries`를 먼저 삭제하고 `dashboard_job_bindings`를 삭제한다. 기존 row가 있으면 기본 upgrade는 중단되며, Phase 3 backend/worker replica 교체와 backup을 확인한 운영자가 migration process에 `ASKLAKE_CONFIRM_DROP_DASHBOARD_JOB_BINDINGS=true`를 준 경우에만 삭제한다. downgrade는 빈 호환 schema만 복원하므로 과거 row 복구에는 backup이 필요하다.
 
-`replace`는 full recalculation, `append`는 지원 Widget의 delta merge, `upsert`/`retract`/revision gap/schema identity 변경은 full recalculation을 사용한다. `(datasetId, revision)` delivery는 멱등이며 Dashboard 계산 실패는 검증된 Dataset revision과 원본 Job 상태를 되돌리지 않는다. 권한은 binding create/detach에 Job·Dashboard `manage`, Widget 계산/runtime read에 Dashboard `view`와 Dataset `query`를 각각 다시 검사한다.
+`replace`는 full recalculation, `append`는 지원 Widget의 delta merge, `upsert`/`retract`/revision gap/schema identity 변경은 full recalculation을 사용한다. 이 계산 계약은 Widget의 `dataset_id`, Dataset freshness/revision commit과 `dashboard_widget_results`에만 적용되며 binding delivery를 만들지 않는다.
 
-상세 모델, lifecycle, 제외 범위와 EC2 → EKS 순서는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+제거된 endpoint와 모델의 상세 형식은 과거 기록인 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)에 남긴다. 실제 schema 제거 순서와 데이터 보존 기준은 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다.
 
 ## ETL Permission create-flow contract
 
@@ -4177,7 +4177,7 @@ type PermissionGrant = {
 | 필드 | 타입 | 계약 |
 |---|---|---|
 | dashboardSyncMode | polling \| hybrid \| sse | invalid 값 또는 event 비활성 조합은 polling |
-| dashboardAutoRefreshEnabled | boolean | false이면 Dashboard 보기·편집 모드 모두 background polling/SSE widget refresh를 하지 않고 수동 새로고침만 사용 |
+| dashboardAutoRefreshEnabled | boolean | 이전 배포 진단 호환 필드. 현재 Dashboard frontend는 값과 무관하게 수동 새로고침만 사용 |
 | realtimeEventsEnabled | boolean | durable event/SSE kill switch |
 | continuousSqlJoinEnabled | boolean | Continuous SQL create/start kill switch |
 | continuousSqlServingMode | iceberg \| clickhouse | 새 Continuous SQL Job에 허용되는 deployment serving mode |
@@ -4193,7 +4193,7 @@ type PermissionGrant = {
 | reconnectRetryMs | integer | EventSource retry hint, 현재 3000 |
 | safetyPollAfterMs | integer | hybrid open 상태의 safety refresh 하한, 현재 60000 |
 
-이 API는 Connect URL, connector name, 설정 원문, credential, secret을 반환하지 않는다. 기능 off 상태는 기존 Dashboard adaptive polling, 정적 SQL, Kafka Continuous ingestion 계약과 동일하다.
+이 API는 Connect URL, connector name, 설정 원문, credential, secret을 반환하지 않는다. Dashboard frontend는 이 응답의 자동 갱신 필드로 polling/SSE를 시작하지 않으며 정적 SQL과 Kafka Continuous ingestion 계약에는 영향을 주지 않는다.
 
 ### GET /api/realtime/events
 
@@ -4245,6 +4245,8 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{jobId}`: owner/admin 범위 Job과 active Run을 반환한다. Run은 fencing token 원문 대신 `fencingTokenHash`를 반환한다.
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
+
+SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
 
 `output.servingMode`의 기본값은 `iceberg`다. Iceberg mode는 `storagePath`와 append `icebergTarget`을 함께 보내거나 둘 다 생략하며, 생략 시 backend가 `ASKLAKE_SPARK_OUTPUT_BUCKET`, Trino catalog/schema와 Dataset identity에서 target·checkpoint를 생성한다. 요청 mode가 `CONTINUOUS_SQL_SERVING_MODE`와 다르면 `422 CONTINUOUS_SQL_SERVING_MODE_DISABLED`다. `clickhouse` mode는 배포 mode와 `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED=true`가 모두 맞을 때만 허용하며 output shape는 다음과 같다.
 

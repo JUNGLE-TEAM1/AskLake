@@ -19,7 +19,6 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_batch_result_repository import DashboardBatchResultRepository
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
-from app.repositories.dashboard_job_binding_repository import DashboardJobBindingRepository
 from app.repositories.dashboard_live_repository import (
     BACKFILL_COMMIT_KIND,
     LEGACY_COMMIT_KIND,
@@ -291,7 +290,7 @@ class DashboardRuntimeService:
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = dashboard_widget_type_enum(request.type)
-        dataset_id = self._managed_widget_dataset_id(dashboard_id, request.dataset_id)
+        dataset_id = request.dataset_id
         widget = self.repository.create_widget(
             page.id,
             widget_type=widget_type.value,
@@ -327,22 +326,21 @@ class DashboardRuntimeService:
         next_config = None
         if request.config is not None or type_changed:
             next_config = self._config_to_json(next_type, request.config)
-        requested_dataset_id = request.dataset_id if "dataset_id" in request.model_fields_set else widget.dataset_id
-        managed_dataset_id = self._managed_widget_dataset_id(dashboard_id, requested_dataset_id)
+        next_dataset_id = request.dataset_id if "dataset_id" in request.model_fields_set else widget.dataset_id
         next_data = None
         update_data = False
         if "data" in request.model_fields_set:
-            next_data = self._resolve_widget_data(request.data, managed_dataset_id)
+            next_data = self._resolve_widget_data(request.data, next_dataset_id)
             update_data = True
         elif "dataset_id" in request.model_fields_set:
-            next_data = self._resolve_widget_data(None, managed_dataset_id)
+            next_data = self._resolve_widget_data(None, next_dataset_id)
             update_data = True
         widget = self.repository.update_widget(
             widget,
             widget_type=next_type.value if type_changed else None,
             title=request.title,
             update_title="title" in request.model_fields_set,
-            dataset_id=managed_dataset_id,
+            dataset_id=next_dataset_id,
             update_dataset_id="dataset_id" in request.model_fields_set,
             config=next_config,
             data=next_data,
@@ -1195,23 +1193,6 @@ class DashboardRuntimeService:
         if explicit_data is not None:
             return explicit_data[:MAX_EXPLICIT_WIDGET_ROWS]
         return []
-
-    def _managed_widget_dataset_id(self, dashboard_id: str, requested_dataset_id: str | None) -> str | None:
-        """Lock all managed Dashboard widgets to the binding output Dataset.
-
-        The UI hides the selector for this case, but the write boundary remains
-        authoritative for assistant actions and direct API callers.
-        """
-        binding = DashboardJobBindingRepository(self.repository.db).get_by_dashboard(dashboard_id)
-        if binding is None or binding.mode != "managed" or not binding.enabled:
-            return requested_dataset_id
-        if requested_dataset_id not in (None, binding.output_dataset_id):
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "Managed Dashboard widgets must use the binding output Dataset.",
-                status.HTTP_409_CONFLICT,
-            )
-        return binding.output_dataset_id
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:

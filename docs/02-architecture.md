@@ -113,7 +113,7 @@ Query submit은 `(actorKey, clientRequestId)` unique reservation과 actor별 Pos
 
 Query Engine 등록은 Dataset 표시명과 물리 table 이름을 분리한다. SQL 결과 Dataset은 Catalog에 `pending`을 먼저 저장하고 Iceberg CTAS terminal success와 `DESCRIBE` 검증이 끝난 뒤에만 `queryEngineStatus=available`과 `queryEngineTable`을 공개한다. 실패하면 mapping 없이 `registration_failed`와 안전한 오류만 저장한다. `TRINO_ENABLED=true`에서는 검증된 mapping이 없는 Dataset의 `permissions.canQuery`를 false로 계산한다. ETL Job은 backend-owned `icebergTarget`(`catalog`, `namespace`, 안정적인 physical `table`, `writeMode`)을 선택적으로 저장하며 기존 `storagePath`를 읽기 호환으로 유지한다. 이 target 선언 자체는 물리 table 존재 증명이 아니다. 일반 non-Kafka Spark batch, Kafka Snapshot과 V2가 비활성인 Kafka Continuous는 native Iceberg commit 뒤 snapshot/warehouse/fingerprint evidence와 Trino `DESCRIBE`/`$snapshots`/`$files` 검증이 모두 맞을 때만 `available`로 승격한다. Kafka Connect V2 Continuous는 ClickHouse raw offset 확인 뒤 active serving `physicalBindings`와 freshness/revision event를 같은 transaction으로 게시하며 Trino mapping은 만들지 않는다. Continuous SQL V2 혼합 JOIN은 이 경계를 유지해 streaming relation의 active ClickHouse binding을 fact 입력으로 허용하고, static relation에는 계속 available Iceberg mapping과 pinned snapshot을 강제한다. Job을 통하지 않는 legacy/debug JSONL ingest는 Iceberg mapping을 증명하지 못하므로 `unavailable`을 유지한다. writer별 전환 단계와 S3 warehouse 책임은 [Iceberg Writer Migration Plan](iceberg-writer-migration-plan.md)을 따른다.
 
-반복 SQL Job은 `jobKind=trino_sql_materialization`과 `sqlRecipe`를 ETL Job에 저장한다. `sqlRecipe`에는 생성 당시 role/group/email snapshot 대신 `runAsUserId`만 남긴다. `run`/`retry`와 scheduler tick은 Airflow/Spark가 아니라 Trino SQL Job service로 분기되고, production에서는 실행 시점의 active auth user와 principal block을 다시 조회해 현재 role/group으로 권한을 판정한다. 삭제·비활성·차단 사용자는 실행 전에 `403`으로 차단한다. AuthUser row가 없는 로컬 header-auth 호환 경로만 저장된 user id를 유지한 `viewer`/빈 group actor로 제한하며 과거 admin/group snapshot을 신뢰하지 않는다. 각 Run은 고유 Iceberg table에 full-refresh CTAS를 수행하고 `DESCRIBE` 뒤에만 안정적인 논리 Dataset mapping을 교체한다. 실패·취소·collector 재시작 중에는 마지막 정상 mapping을 유지하고, 같은 `runId`의 Catalog 확정은 멱등이다.
+반복 SQL Job은 `jobKind=trino_sql_materialization`과 `sqlRecipe`를 ETL Job에 저장한다. SQL 분석 frontend는 create 응답을 먼저 durable Job state에 반영한 뒤 같은 Job command API에 첫 `run`을 한 번 보낸다. 두 요청은 원자 transaction이 아니며 command 실패 시 create 결과를 rollback하지 않고 Job을 유지한 채 부분 성공을 표시한다. `sqlRecipe`에는 생성 당시 role/group/email snapshot 대신 `runAsUserId`만 남긴다. `run`/`retry`와 scheduler tick은 Airflow/Spark가 아니라 Trino SQL Job service로 분기되고, production에서는 실행 시점의 active auth user와 principal block을 다시 조회해 현재 role/group으로 권한을 판정한다. 삭제·비활성·차단 사용자는 실행 전에 `403`으로 차단한다. AuthUser row가 없는 로컬 header-auth 호환 경로만 저장된 user id를 유지한 `viewer`/빈 group actor로 제한하며 과거 admin/group snapshot을 신뢰하지 않는다. 각 Run은 고유 Iceberg table에 full-refresh CTAS를 수행하고 `DESCRIBE` 뒤에만 안정적인 논리 Dataset mapping을 교체한다. 실패·취소·collector 재시작 중에는 마지막 정상 mapping을 유지하고, 같은 `runId`의 Catalog 확정은 멱등이다.
 
 Estimate & Guardrail은 SQL AST가 참조한 컬럼과 Iceberg `$files.readable_metrics`를 결합해 실행 전 스캔량을 계산하고, metadata가 없을 때만 Trino plan/Catalog heuristic을 fallback으로 사용한다. submit 시 estimate snapshot은 Query Run에 저장하지만 confirmation token은 저장하지 않는다. Collector는 continuation fetch 중 backend-only QueryInfo를 읽기 전용으로 샘플링해 progress, driver/split, elapsed/queued/CPU, processed rows/bytes, peak memory를 단조 증가 방식으로 보강한다. QueryInfo 실패는 실행 실패로 승격하지 않는다. Query 완료, 수집 시작, 첫 durable page, manifest 완료 milestone은 최초 관측 시각을 유지한다. 상세 lifecycle은 [Trino Query Run Contract](trino-query-run-contract.md), storage·retention은 [Trino Query Result Storage Contract](trino-query-result-storage-contract.md)를 따른다.
 Node demo API는 기존 동작 비교용 reference로 남긴다.
@@ -238,7 +238,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - dashboard list/runtime API adapter: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
 - ETL 소스·S3 경로·JSON 샘플·SQL 데이터셋·Dashboard 데이터셋의 계층 탐색은 `react-arborist`를 동작 엔진으로 사용한다. 공통 `frontend/src/components/ui/explorer-tree.tsx`가 가상화, 키보드 탐색, 선택/펼침과 AskLake/shadcn 계열 행 UI를 합성하고, 각 페이지는 노드 데이터·아이콘·활성화 callback만 제공한다. 페이지에서 별도 재귀 트리 상태나 독자적인 tree row CSS를 만들지 않는다.
 - Dashboard frontend composition은 `DashboardPage.tsx`가 route/list/legacy 전환과 상위 상태를 조정하고, `legacy/`가 기존 builder/detail/chart 표시와 순수 view model을, `runtime/useDashboardRuntimeResources.ts`가 published/draft hydrate와 page 선택을, `runtime/useDraftPageMutations.ts`와 `runtime/useDraftWidgetMutations.ts`가 page/widget 변경 상태를, `runtime/useDashboardLayoutHistory.ts`가 layout undo/redo를 소유한다. 목록의 dashboard row는 저장 상태와 관계없이 published route인 `/dashboards/:dashboardId`를 열며, draft route인 `/dashboards/:dashboardId/edit`는 새 dashboard 생성 직후, 명시적인 `편집 모드` action, 직접 URL 접근에서만 연다. `dashboardAssistantIntent.ts`는 질문과 실제 시각화 변경 의도를 분류하고 `dashboardAssistantActions.ts`는 검증된 create/update action을 기존 widget persistence callback으로만 적용한다. callback이 `true`를 반환한 경우에만 성공으로 표시하며 실패하면 기존 draft를 유지하고 오류를 노출한다. Assistant panel과 시각화 요청 widget은 `LatestRequestGate`로 Dashboard·page·Dataset·선택 widget별 최신 요청만 소유하고, context 변경이나 unmount 시 이전 HTTP 요청을 abort한다. 응답 lease가 최신일 때만 widget persistence callback을 시작하므로 이전 화면의 AI 응답이 현재 draft를 덮어쓰지 않는다. 전체 runtime을 못 불러온 오류만 canvas 수준 오류로 처리하고, page/widget/title/layout/publish 변경 실패는 현재 화면을 유지한 채 작업 notice로 표시한다. API 오류에는 안전한 code·stage·diagnostic ID를 붙여 운영자가 같은 요청을 추적할 수 있다. `DashboardRuntimeView.tsx`는 runtime 화면 composition을 유지하고 편집 toolbar는 `DashboardEditToolbar.tsx`로 분리한다. Draft editor의 데이터 sidebar는 닫힌 상태로 시작하며, 데이터 sidebar와 inspector의 open/close는 persisted Dashboard payload가 아닌 local UI state다. inspector를 접어도 선택 widget, dataset, 설정 draft를 초기화하지 않는다. `dashboard.css`와 `dashboard-runtime.css`는 `styles.css`의 기존 import 위치를 보존하는 manifest이며, 하위 `dashboard-*` CSS 모듈을 base/list/builder/detail과 shell/dataset/canvas/widget/config/assistant/responsive 순서로 import해 기존 cascade를 유지한다.
-- SQL 결과 저장 UI는 `SqlJobWizardDialog`가 SQL 화면 안에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 로컬로 유지한다. 기본 owner는 현재 session actor이고 프로젝트 범위는 현재 actor가 속한 실제 group ID를 `principalId`로 선택해야 한다. private은 owner fallback만, organization은 인증 사용자 principal만 저장하며 임의의 demo 그룹명을 생성하지 않는다. DuckDB compatibility 결과의 저장 및 검토 단계는 ETL Target과 같은 `DatabaseField`, `S3PathField`를 재사용하고 DB, 파일 포맷, 압축, 태그, 다중 파티션을 `SqlJobWizardTarget`에 보존한 뒤 `useAskLakeData.createSqlDatasetJob`이 기존 `POST /api/etl/jobs` 경로로 보낸다. Trino mode에서는 같은 wizard가 managed Iceberg/full-refresh와 단일 파티션 범위만 명시하고 `POST /api/etl/sql-jobs`로 SQL recipe Job을 만든다. 어느 경로도 ETL Review route로 이동하지 않는다.
+- SQL 결과 저장 UI는 `SqlJobWizardDialog`가 SQL 화면 안에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 로컬로 유지한다. 기본 owner는 현재 session actor이고 프로젝트 범위는 현재 actor가 속한 실제 group ID를 `principalId`로 선택해야 한다. private은 owner fallback만, organization은 인증 사용자 principal만 저장하며 임의의 demo 그룹명을 생성하지 않는다. DuckDB compatibility 결과의 저장 및 검토 단계는 ETL Target과 같은 `DatabaseField`, `S3PathField`를 재사용하고 DB, 파일 포맷, 압축, 태그, 다중 파티션을 `SqlJobWizardTarget`에 보존한 뒤 `useAskLakeData.createSqlDatasetJob`이 기존 `POST /api/etl/jobs` 경로로 보낸다. Trino mode에서는 같은 wizard가 managed Iceberg/full-refresh와 단일 파티션 범위만 명시하고 `POST /api/etl/sql-jobs`로 SQL recipe Job을 만든다. 두 mode 모두 create 성공 뒤 `POST /api/etl/jobs/{jobId}/commands`의 `run`을 한 번 보내며 실행 요청 실패 시 생성된 Job을 유지한다. 어느 경로도 ETL Review route로 이동하지 않는다.
 - SQL 결과 영역은 `차트 보기`, `데이터 미리보기`, `실행 정보` 세 view를 같은 panel 안에서 제공한다. `실행 정보`에는 실행 평가와 preview의 `쿼리 실행 -> 첫 결과 준비` timeline을 둔다. 평가/timeline을 editor 아래 sibling card로 렌더링해 workspace 높이를 늘리지 않는다. 결과 action은 전체 보기, CSV 다운로드, 처리 Job 생성을 제공한다. 전체 보기와 CSV는 별도 full run을 시작하고, 처리 Job은 preview SQL recipe만 저장한다. Trino에서는 1회성 Iceberg CTAS API를 toolbar에서 노출하지 않으며 SQL 화면에서는 Dashboard 생성 action을 제공하지 않는다.
 - SQL 분석 화면은 오른쪽 `선택 테이블`/schema 사이드바 없이, 왼쪽 `분석 테이블` 트리에서 테이블 행을 클릭해 선택한다. 기준 테이블과 추가 참조 테이블 모두 선택된 행을 다시 클릭해 해제할 수 있다. 기준 테이블만 선택된 상태에서 해제하면 전체 선택과 editor context를 비우고, 참조 테이블이 남아 있으면 가장 먼저 선택한 참조 테이블을 새 기준 테이블로 승격한다. 선택된 행은 왼쪽 파란 체크로 표시한다. SQL editor의 사용자가 직접 작성한 query text가 실행 기준 source of truth이며 UI 선택 상태로 역동기화하지 않는다. 참조 테이블만 해제할 때는 SQL text를 자동 재작성하지 않고, 해제된 table을 계속 참조하면 preview 전 table context 검증에서 차단한다. 기준 테이블 해제 후 참조 테이블이 승격되는 경우는 dataset 변경으로 취급해 새 기준 테이블의 기본 쿼리로 초기화한다. 편집기를 전체 삭제한 빈 문자열도 사용자 입력으로 유지하며, 기본 쿼리 복원은 초기 dataset 선택·dataset 변경·명시적 reset로 한정한다. UI에서는 base/reference를 구분하지 않고, 내부 API payload만 기존 `sourceDatasetId`/`referenceDatasetIds` 계약을 유지한다.
 - SQL 분석 route는 `SqlAnalysisPage.tsx`가 데이터셋·query·result 사이의 orchestration만 맡고, 화면 composition은 `SqlDatasetContextPanel.tsx`, `SqlQueryEditorPanel.tsx`, `SqlResultsPanel.tsx`로 분리한다. 데이터셋 검색·pagination·접힘 상태는 `useSqlContextPanel.ts`, Query AI 요청·적용 상태는 `useSqlQueryAi.ts`, Trino preview polling·첫 page·cursor pagination·취소는 `useTrinoPreviewRun.ts`, SQL 검증·estimate·확인 dialog는 `useTrinoQueryPreflight.ts`, on-demand 전체 결과 요청·polling·cursor pagination·CSV 준비는 `useTrinoFullResult.ts`, SQL Job request 조립은 `useSqlJobCreation.ts`가 소유한다. `SqlPreviewTable.tsx`, `SqlResultChart.tsx`, `SqlDatasetRow.tsx`는 결과 표·위젯·데이터셋 표시를 맡는다. `SqlChartConfigurator.tsx`는 SQL 결과와 선택 데이터셋을 `DashboardDatasetOption`으로 변환하고 Dashboard `WidgetConfigPanel`을 그대로 합성해 설정 draft를 받는다. 명시적인 생성/적용 시점에만 페이지 widget config를 갱신한다.
@@ -514,9 +514,9 @@ Dashboard endpoint와 Catalog 물리 데이터는 FastAPI 응답을 source of tr
 - 사용자 후보는 `auth_users`를 우선 사용하지만 그룹 후보는 현재 `DEMO_GROUPS` 고정 정의다. 실서비스 조직/그룹 디렉터리 연동은 후속 범위다.
 - `permissionTemplate`은 과거 request 호환을 위한 요약 필드이며 실제 권한 판정은 `permissionGrants`만 사용한다.
 
-## 13) Kafka Continuous 대시보드 자동 갱신 경계
+## 13) Dashboard 수동 갱신 경계
 
-Dashboard runtime은 보기와 편집 mode에 공통 freshness → targeted widget query 경로를 둔다. published는 SSE/hybrid event를 low-latency trigger로 사용하고 polling으로 failover하며, draft는 polling만 사용한다. draft 응답은 widget의 server-calculated data, `appliedRevision`, `calculatedAt`만 교체하고 local draft config/layout/title/selection은 유지한다. hidden tab 및 route unmount에서는 in-flight request, timer, event subscription을 정리한다.
+Dashboard runtime은 보기와 편집 mode에 공통 수동 Widget query 경로를 둔다. runtime shell은 `includeData=false`로 먼저 읽고 현재 페이지의 pending Dataset Widget만 Dataset별로 묶어 조회한다. 상단 새로고침은 snapshot GET이나 prefetched 응답을 재사용하지 않고 현재 페이지의 Dataset Widget을 `POST /api/dashboards/{dashboardId}/widgets/query`로 명시적으로 다시 조회한다. 응답은 server-calculated data, `appliedRevision`, `calculatedAt`만 교체하고 draft config/layout/title/selection은 유지한다. 실패한 요청은 마지막 성공 결과를 유지한다.
 
 Kafka 수집 hot path는 바꾸지 않는다. 기존 Spark Structured Streaming이 checkpoint 기준 micro-batch를 backend-owned Iceberg table에 append하고 완료 manifest를 게시하면, backend control-plane이 exact Iceberg commit을 Trino로 검증해 Catalog에 반영한 다음에만 대시보드 리비전을 공개한다.
 
@@ -529,7 +529,7 @@ Catalog materialization
 ↓
 dataset_revision_commits + dataset_freshness transaction
 ↓
-published Dashboard freshness polling
+사용자의 Dashboard 진입·새로고침
 ↓
 변경된 widget result만 교체
 ```
@@ -554,29 +554,27 @@ Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit
 
 전체 누적 기준 `count`/`sum`/`avg`/`min`/`max`/`ratio` 집계는 새 widget에서 고정 Iceberg snapshot으로 기준값을 한 번 만든다. 이후에는 `_asklake_run_id = commit.run_id`인 delta만 집계해 PostgreSQL 상태에 병합한다. 날짜 차원에 `windowDays`가 있으면 최신 bucket 기준 범위 밖 bucket을 상태에서 제거하므로 최근 30일 전체를 다시 읽지 않는다. table widget, revision gap, 내부 run ID가 없는 legacy table, aggregate group 10,000개 초과만 고정 snapshot 전체 계산으로 차단 또는 재기준화한다.
 
-Frontend는 published `/dashboards/:dashboardId`에서 Continuous dataset만 polling한다. 같은 dataset을 쓰는 여러 widget은 freshness를 한 번만 확인하고 `latestRevision > appliedRevision`인 widget만 재조회한다. 한 revision이라도 실제로 전진했지만 아직 최신 revision보다 뒤라면 250ms 뒤 다음 chunk를 요청한다. 계산 실패처럼 `appliedRevision`이 전진하지 않으면 빠른 재시도를 하지 않고 backend 권장 주기로 돌아간다. 일반 주기는 backend가 `clamp(triggerIntervalSeconds × 500, 1,000, 60,000)`으로 계산한 `nextCheckAfterMs`를 사용하고, 동시 요청을 흩뜨리기 위해 dataset ID 기반 0~10% deterministic jitter를 더한다. hidden tab에서는 중지하고, route unmount 시 timer/request를 정리하며, 실패하면 이전 위젯 결과를 유지한다.
+Frontend는 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 현재 페이지에서 같은 Dataset을 쓰는 Widget을 한 요청 그룹으로 묶고 최대 4개 그룹만 동시에 조회한다. backend는 저장된 `appliedRevision`과 최신 Dataset revision을 비교해 가능한 Widget은 delta merge하고, revision gap·replace·계산 계약 변경·증분 미지원 Widget은 최신 물리 snapshot으로 전체 재계산한다. 페이지 또는 Widget 설정이 바뀐 뒤 도착한 늦은 응답은 Dashboard/Widget signature가 맞지 않으면 버리고, 실패하면 이전 위젯 결과를 유지한다.
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 
-## Dashboard Job Binding 경계
+## Dashboard Dataset 소유권과 legacy binding 제거
 
-Dashboard Job Binding은 Continuous SQL 또는 Kafka만의 별도 Dashboard Job이 아니다. Snapshot/Batch, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL이 검증된 Dataset revision을 publication한 뒤 공통으로 연결하는 downstream binding이다. Job 실행 엔진은 Dataset revision 이전의 물리 write·검증·복구를 소유하고, binding worker는 revision 이후의 Dashboard delivery만 소유한다.
+Dashboard와 Job은 직접 연결하지 않는다. Job은 검증된 Catalog Dataset과 revision을 publication하는 데서 책임이 끝나며, Dashboard Widget이 선택한 `dataset_id`가 화면 데이터 연결의 source of truth다.
 
 ```text
 Job Run / micro-batch
-→ verified Dataset revision publication
-→ DashboardJobBinding delivery
-→ managed Widget calculation
+→ verified Catalog Dataset revision publication
+→ 사용자가 Widget Dataset 선택
+→ 화면 진입 또는 수동 Widget query
 → widget appliedRevision
 ```
 
-- V1 binding은 새 Dashboard 또는 Widget이 없는 빈 Dashboard 하나와 Job output Dataset 하나를 연결한다. Dashboard가 `managed`일 때 모든 Widget은 Dashboard-level output Dataset을 상속하며 Widget 생성·삭제·시각화 편집은 허용하지만 Dataset selector는 잠근다.
-- binding은 Job/Dashboard `manage` 권한으로 생성·해제하며, Widget 계산과 runtime read는 기존 Dataset `query`, Dashboard `view` 권한을 다시 검사한다.
-- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`와 durable realtime event는 계속 canonical source다. binding은 경쟁 revision/event source를 만들지 않는다.
-- `replace` publication은 full Widget recalculation, `append`는 지원 Widget의 delta merge를 우선 사용한다. `upsert`, `retract`, revision gap, schema identity 변경은 current serving 결과를 다시 읽는 full recalculation으로 fail safe한다.
-- Continuous SQL의 `output_committed -> catalog_ready -> dashboard_ready`는 기존 Catalog publication stage다. 실제 binding delivery 완료는 별도 `DashboardBindingDelivery`가 `applied`이고 모든 managed Widget의 `appliedRevision`이 Dataset 최신 revision 이상인 경우뿐이다.
-- Dashboard 계산 실패, Dashboard 삭제, 권한 회수는 binding을 `degraded` 또는 `failed`로 만들 수 있지만 이미 검증된 Job/Dataset publication을 rollback하거나 Job을 실패시키지 않는다. 마지막 성공 Widget 결과는 유지한다.
-- Phase 3은 `continuous_worker`가 공통 `dataset_revision_commits`를 소비해 enabled managed binding의 revision delivery를 만들고 draft/published Widget 계산을 advance한다. binding은 Job status나 `dashboard_ready`를 직접 소비하지 않으며, Widget 오류는 Job/Dataset publication을 rollback하지 않고 delivery만 `degraded`로 만든다. EKS migration은 후속 phase이며 상세는 [Dashboard Job Binding V1 계약](dashboard-job-binding-contract.md)을 따른다.
+- ETL·반복 SQL·Continuous SQL 생성 UI는 Dashboard를 자동 생성하거나 output Dataset을 고정하지 않는다.
+- Dashboard 편집기는 권한 있는 Catalog Dataset을 모두 제공하고 Dataset selector를 binding 상태로 잠그지 않는다.
+- Widget create/update와 Assistant action은 선택된 Widget Dataset ID를 그대로 사용한다. Dataset `query`와 Dashboard `manage/view` 권한은 기존 경계대로 검사한다.
+- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`가 수동 최신화의 canonical source다. `replace`는 전체 재계산, 지원되는 `append`는 delta merge를 우선한다.
+- legacy `/api/dashboard-job-bindings`, binding service/repository/model, delivery worker 호출과 managed Widget/Assistant 제한은 제거됐다. Alembic `0022_remove_dashboard_job_bindings`는 delivery table을 먼저, binding table을 나중에 제거한다. 기존 데이터가 있으면 Phase 3 replica 교체와 backup 확인 없이는 migration을 거부한다.
 
 ## 14) Realtime 2026 전환 아키텍처
 
@@ -598,8 +596,8 @@ Spark/Iceberg commit
 - REST snapshot은 event cursor를 함께 반환하고 client는 cursor 이후 replay를 구독한다. retention gap은 resync 후 snapshot 재조회로 복구한다.
 - 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
 - Dataset revision과 `dataset.revision.committed`, Dashboard published revision과 `dashboard.published`는 각각 같은 transaction에서 기록한다. event insert 실패 시 canonical 변경도 rollback한다.
-- frontend는 Dataset별 최고 revision만 coalesce하고 affected widget REST endpoint만 재조회한다. Dashboard publish와 resync는 snapshot을 다시 읽으며 offline/stream 장애에서는 adaptive polling으로 복귀한다.
-- Production Compose의 DASHBOARD_SYNC_MODE 기본값은 `sse`이고 REALTIME_EVENTS_ENABLED 기본값은 `true`다. event backbone이 비활성화되거나 연결이 실패하면 기존 adaptive polling으로 fail closed한다.
+- Dashboard frontend는 보기·편집 화면 진입 시 선택 페이지의 Dataset Widget을 조회하고, 상단 새로고침에서 같은 현재 페이지 Widget REST endpoint를 강제로 다시 조회한다. 실패하면 마지막 성공 결과를 유지한다. 자동 polling, Dashboard EventSource 구독, background prefetch는 사용하지 않는다.
+- durable event log와 SSE endpoint, `DASHBOARD_SYNC_MODE` 및 `REALTIME_EVENTS_ENABLED`는 backend 호환·운영 관찰 기반으로 남아 있지만 Dashboard frontend의 데이터 갱신을 시작하지 않는다. 현재 사용자 가시성의 권위 경로는 수동 Widget query다.
 - Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
 - 새 Continuous SQL과 Kafka Continuous request의 `triggerIntervalSeconds` 기본값은 10초, batch 최대값은 100행이다. baseline-bound Job은 최초 Trino JOIN snapshot과 source cursor를 저장하고 이후 Kafka source revision의 신규 범위만 처리한다.

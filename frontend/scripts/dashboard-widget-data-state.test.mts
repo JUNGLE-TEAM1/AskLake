@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   dashboardWidgetDataRequests,
+  dashboardWidgetDataRefreshRequests,
   dashboardWidgetDataSignature,
   mergeDashboardWidgetData,
   runDashboardWidgetDataQueue,
@@ -59,6 +60,23 @@ function runtime(): DashboardRuntimeResponse {
 
 test("only the selected page is requested and widgets sharing a dataset are grouped", () => {
   const requests = dashboardWidgetDataRequests(runtime(), "page-1");
+
+  assert.deepEqual(requests.map((request) => request.widgetIds), [
+    ["widget-1", "widget-2"],
+    ["widget-3"],
+  ]);
+  assert.equal(requests.flatMap((request) => request.widgetIds).includes("widget-4"), false);
+});
+
+test("manual refresh requests every Dataset widget on the selected page", () => {
+  const current = runtime();
+  current.widgetsByPageId["page-1"] = current.widgetsByPageId["page-1"].map((item) => ({
+    ...item,
+    data: [{ value: 3 }],
+    dataStatus: "ready",
+  }));
+
+  const requests = dashboardWidgetDataRefreshRequests(current, "page-1");
 
   assert.deepEqual(requests.map((request) => request.widgetIds), [
     ["widget-1", "widget-2"],

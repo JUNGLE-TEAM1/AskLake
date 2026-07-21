@@ -3,22 +3,8 @@ import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
-
-const REALTIME_STATUS: Record<RealtimeConnectionState, {
-  label: string;
-  tone: "default" | "muted" | "success" | "warning";
-}> = {
-  closed: { label: "자동 새로고침", tone: "muted" },
-  connecting: { label: "실시간 연결 중", tone: "default" },
-  degraded: { label: "재연결 중", tone: "warning" },
-  fallback_polling: { label: "폴링 복구", tone: "warning" },
-  open: { label: "실시간", tone: "success" },
-};
 
 export function DashboardTopBar({
-  autoRefreshEnabled = false,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
@@ -30,11 +16,8 @@ export function DashboardTopBar({
   onRefresh,
   onRenameTitle,
   onShare,
-  realtimeConnectionState,
-  realtimeDataState,
   title,
 }: {
-  autoRefreshEnabled?: boolean;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
@@ -46,22 +29,11 @@ export function DashboardTopBar({
   onRefresh?: () => void;
   onRenameTitle?: (title: string) => Promise<void> | void;
   onShare?: () => void;
-  realtimeConnectionState?: RealtimeConnectionState;
-  realtimeDataState?: DashboardLiveDataState;
   title: string;
 }) {
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
-  const realtimeStatus = !autoRefreshEnabled
-    ? { label: "수동 새로고침", tone: "muted" as const }
-    : realtimeDataState === "degraded"
-    ? { label: "최신 데이터 확인 필요", tone: "warning" as const }
-    : realtimeDataState === "stale"
-      ? { label: "데이터 지연", tone: "warning" as const }
-      : realtimeConnectionState
-        ? REALTIME_STATUS[realtimeConnectionState]
-        : null;
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -109,14 +81,9 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
-            {realtimeStatus ? (
-              <StatusBadge
-                aria-label={`대시보드 동기화 상태: ${realtimeStatus.label}`}
-                tone={realtimeStatus.tone}
-              >
-                {realtimeStatus.label}
-              </StatusBadge>
-            ) : null}
+            <StatusBadge aria-label="대시보드 동기화 상태: 수동 새로고침" tone="muted">
+              수동 새로고침
+            </StatusBadge>
             {canRename && (
               <Button
                 className="asklake-dashboard-title-edit-button"

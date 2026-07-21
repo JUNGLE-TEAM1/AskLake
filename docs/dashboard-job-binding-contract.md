@@ -1,6 +1,6 @@
-# Dashboard Job Binding V1 계약
+# Dashboard Job Binding V1 폐기 기록
 
-> 상태: Phase 3 revision delivery worker 구현 완료. EC2 end-to-end/recovery 검증과 browser 자동 갱신은 아직 후속 단계다.
+> 상태: Superseded. 2026-07-21 Phase 2에서 frontend 생성 옵션·API client·managed Dataset lock을, Phase 3에서 backend API·service·repository·model·worker와 managed Widget/Assistant 제한을 제거했다. Phase 4 Alembic `0022_remove_dashboard_job_bindings`가 legacy DB table도 제거한다. 현재 제품 계약은 [Dashboard 수동 갱신 전환과 Job Binding 제거 계획](dashboard-manual-refresh-binding-removal-plan.md)을 따른다.
 
 ## 1. 목적
 
@@ -16,7 +16,9 @@ Job Run 성공
 
 브라우저 화면이 실제로 갱신됐는지는 이 계약의 완료 조건이 아니다. 이 계약은 서버가 Widget 결과를 최신 Dataset revision까지 준비했는지를 보장한다. SSE/polling은 준비된 결과를 브라우저에 전달하는 별도 Dashboard runtime 책임이다.
 
-## 2. V1 제품 범위
+## 2. 폐기된 V1 제품 범위
+
+아래 항목은 현재 제품 기능이 아니라 제거 대상의 과거 계약이다.
 
 - Job 생성 시 사용자는 `결과를 Dashboard에 자동 반영`을 선택할 수 있다.
 - 대상은 새 Dashboard 또는 Widget이 없는 빈 Dashboard다.
@@ -108,7 +110,7 @@ DashboardBindingDelivery
 - errorCode, errorMessage
 ```
 
-현재 live API는 `/api/dashboard-job-bindings`에 있으며, `POST` 생성, `GET` 조회 (`jobId` 또는 `dashboardId` 필수), `GET /{bindingId}`, `POST /{bindingId}/detach`, `POST /{bindingId}/deliveries/{datasetRevision}/retry`를 제공한다. Phase 3 worker는 `dataset_revision_commits`만 소비해 delivery를 생성하며, retry는 `degraded` delivery를 `pending`으로 되돌릴 뿐 Dataset publication을 다시 실행하지 않는다.
+과거 live API는 `/api/dashboard-job-bindings`에서 생성·조회·detach·delivery retry를 제공했다. Phase 3 제거 뒤 이 경로와 worker는 OpenAPI/runtime에 존재하지 않으며, 아래 모델과 권한 표는 삭제 전 계약을 보존하기 위한 기록이다.
 
 | 역할 | 권한 | 비고 |
 | --- | --- | --- |
@@ -150,23 +152,15 @@ DashboardBindingDelivery
 - managed Dashboard는 binding output Dataset만 화면에 제공하고 Widget Dataset selector를 비활성화한다.
 - Widget create/update API는 selector 우회, assistant action, 직접 호출에서도 binding output Dataset 외 값을 `409 CONFLICT`로 거부한다. 시각화·레이아웃·제목·필드 편집과 Widget 삭제는 계속 허용한다.
 
-## 11. Phase 3 완료 조건
+## 11. 폐기된 V1 Phase 3 완료 조건
 
 - `continuous_worker`는 기존 Continuous reconciliation 뒤 `process_dashboard_binding_deliveries()`를 실행한다.
 - worker는 enabled managed binding의 output Dataset에 기록된 `dataset_revision_commits`만 읽고, `(bindingId, revision)` unique delivery를 만든다.
 - draft/published revision에 존재하는 managed Dataset Widget을 계산해 모든 Widget이 target revision 이상이면 `applied`를 기록한다. 계산 실패 또는 뒤처진 Widget은 Dataset/Job을 rollback하지 않고 `degraded`로 남긴다.
 - `degraded` delivery는 명시적 retry API 호출로만 다시 `pending`이 된다. process 재시작 중 남은 `calculating` delivery는 안전하게 재시도한다.
 
-## 12. Phase 4 EC2 검증 절차
+## 12. 제거 Phase 4 검증 절차
 
-실제 EC2 검증은 feature branch를 `dev`에 반영한 immutable commit으로만 수행한다. 로컬 worktree나 임의 production DB에 직접 수정해 검증하지 않는다.
+실제 DB 제거는 Phase 3 backend/worker code가 모든 replica에 배포된 뒤 진행한다. 두 legacy table을 backup하고 migration process에만 `ASKLAKE_CONFIRM_DROP_DASHBOARD_JOB_BINDINGS=true`를 설정해 `0022_remove_dashboard_job_bindings`를 적용한다. Dashboard/revision/page/widget row와 Widget `dataset_id`는 변경하지 않는다.
 
-1. `scripts/deploy.sh status`로 EC2 instance와 `continuous-worker` 상태를 읽기 전용 확인한다.
-2. production Compose를 해당 commit으로 배포하고 metadata migration `0021_dashboard_job_bindings`가 적용됐는지 확인한다.
-3. Batch `replace` output에 binding과 Widget을 만든 뒤 revision, delivery `applied`, Widget `appliedRevision`을 기록한다.
-4. Continuous/Continuous SQL `append`를 두 번 발행하고 `(bindingId, revision)` delivery가 각각 한 행이며 마지막 Widget revision이 최신값인지 확인한다.
-5. `continuous-worker`와 backend를 각각 재시작한 뒤 동일 revision delivery가 중복 생성되지 않는지, stale `calculating`은 재시도되는지 확인한다.
-6. 물리 Dataset 접근 오류를 유도해 delivery만 `degraded`가 되고 Dataset/Job 상태는 성공으로 유지되는지 확인한다. retry API 후 Dataset publication 없이 `applied`가 되는지 확인한다.
-7. detach 후 새 revision을 발행해 추가 delivery가 생기지 않는지 확인하고, 생성한 fixture Job/Dashboard/Dataset만 정리한다.
-
-자동화한 worker regression은 `cd backend && npm run verify:dashboard-job-binding-delivery`이다. 이 명령은 EC2/Spark/Kafka를 변경하지 않으며, 실제 EC2 evidence는 위 순서로 별도 기록한다.
+`cd backend && npm run verify:dashboard-job-binding-removal`은 runtime 제거를, `npm run verify:dashboard-job-binding-schema-removal`은 migration head, 삭제 순서, populated schema 보호, 빈 downgrade와 재-upgrade를 검증한다.

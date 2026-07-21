@@ -12,7 +12,6 @@ import type {
 
 type DashboardAssistantActionHandlers = {
   datasets: DashboardDatasetOption[];
-  managedDatasetId?: string | null;
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   response: DashboardAssistantResponse;
@@ -21,7 +20,6 @@ type DashboardAssistantActionHandlers = {
 
 export async function applyAssistantWidgetActions({
   datasets,
-  managedDatasetId = null,
   onCreateWidget,
   onUpdateWidget,
   response,
@@ -39,13 +37,13 @@ export async function applyAssistantWidgetActions({
     if (action.type === "report") continue;
 
     if (action.type === "create_widget") {
-      const result = await applyCreateWidgetAction(action, onCreateWidget, managedDatasetId);
+      const result = await applyCreateWidgetAction(action, onCreateWidget);
       if (result) messages.push(result);
       continue;
     }
 
     if (action.type === "update_widget") {
-      const result = await applyUpdateWidgetAction(action, datasets, widgets, onUpdateWidget, managedDatasetId);
+      const result = await applyUpdateWidgetAction(action, datasets, widgets, onUpdateWidget);
       if (result) messages.push(result);
     }
   }
@@ -64,17 +62,16 @@ export function hasWidgetMutationAction(response: DashboardAssistantResponse) {
 async function applyCreateWidgetAction(
   action: DashboardAssistantCreateWidgetAction,
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<boolean>,
-  managedDatasetId?: string | null,
 ) {
   if (!onCreateWidget) throw new Error("위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.");
   const applied = await onCreateWidget({
     config: action.widget.config,
-    datasetId: managedDatasetId ?? action.widget.datasetId,
+    datasetId: action.widget.datasetId,
     title: action.widget.title || "AI 추천 위젯",
     type: action.widget.type,
   });
   if (applied !== true) throw new Error("위젯 생성 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
-  return managedDatasetId ? "연동 Dashboard의 고정 Dataset으로 차트를 생성했습니다." : "AI가 제안한 위젯을 추가했습니다.";
+  return "AI가 제안한 위젯을 추가했습니다.";
 }
 
 async function applyUpdateWidgetAction(
@@ -82,7 +79,6 @@ async function applyUpdateWidgetAction(
   datasets: DashboardDatasetOption[],
   widgets: DashboardRuntimeWidget[],
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>,
-  managedDatasetId?: string | null,
 ) {
   if (!onUpdateWidget) throw new Error("위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.");
 
@@ -91,7 +87,7 @@ async function applyUpdateWidgetAction(
     throw new Error("수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.");
   }
 
-  const nextDatasetId = managedDatasetId ?? action.patch.datasetId ?? currentWidget.datasetId ?? null;
+  const nextDatasetId = action.patch.datasetId ?? currentWidget.datasetId ?? null;
   const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
   const changesWidgetType = action.patch.type !== undefined && action.patch.type !== currentWidget.type;
   if (changesWidgetType && action.patch.config === undefined) {
@@ -123,7 +119,7 @@ async function applyUpdateWidgetAction(
     type: nextType,
   });
   if (applied !== true) throw new Error("위젯 변경사항 저장에 실패했습니다. 화면의 오류를 확인해 주세요.");
-  return managedDatasetId ? "연동 Dashboard의 고정 Dataset으로 위젯을 수정했습니다." : "AI가 제안한 위젯 변경사항을 적용했습니다.";
+  return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }
 
 function stableJson(value: unknown): string {

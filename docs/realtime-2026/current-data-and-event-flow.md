@@ -1,6 +1,6 @@
 # AskLake 현재 데이터·이벤트 흐름
 
-기준 커밋은 2026-07-16 최신 origin/dev의 b93ae273이며, 이 문서는 STACK-01 조사 결과다.
+기준 커밋은 2026-07-16 최신 origin/dev의 b93ae273이며, 이 문서는 STACK-01 조사 결과다. 2026-07-21 Dashboard 수동 모드 전환으로 frontend 자동 polling/SSE 소비 경로는 제거되었고, 아래 backend event 흐름은 호환·운영 기반으로만 남는다.
 
 ## 현재 Dashboard 갱신 흐름
 
@@ -8,10 +8,10 @@
 2. backend의 ETL reconcile 경로가 보고서를 읽고 materialize_continuous_publication을 호출한다.
 3. DashboardLiveRepository가 dataset_revision_commits와 dataset_kafka_partition_cursors를 잠근 뒤 리비전을 증가시킨다.
 4. dashboard_widget_results는 적용한 dataset revision과 결과 payload를 PostgreSQL에 보존한다.
-5. published Dashboard 화면의 usePublishedDashboardLiveRefresh가 freshness API를 adaptive polling한다.
-6. 새 revision이 확인된 경우에만 widget result bundle을 다시 조회하고 화면을 교체한다.
+5. Dashboard 보기·편집 화면 진입 시 선택 페이지의 pending Widget을 query한다.
+6. 사용자가 새로고침하면 선택 페이지의 Dataset Widget 전체를 query하고 성공 결과만 화면에 병합한다.
 
-현재 경로에는 Dashboard용 durable event log, PostgreSQL NOTIFY, EventSource 연결이 없다. 따라서 UI 표시 시점은 polling 주기에 의존한다.
+durable event log, PostgreSQL NOTIFY, EventSource endpoint는 backend에 존재하지만 Dashboard frontend는 구독하지 않는다. 따라서 UI 표시 시점은 화면 진입 또는 사용자의 수동 새로고침에 의존한다.
 
 ## 권위 데이터
 
@@ -29,7 +29,7 @@
 
 STACK-02는 dataset revision commit과 같은 DB transaction에서 durable event를 기록한다. Dashboard publish도 published revision과 event를 한 transaction에 둔다. PostgreSQL NOTIFY는 프로세스를 깨우는 힌트일 뿐 권위 데이터가 아니며, API 프로세스는 event log cursor로 누락을 복구한다.
 
-브라우저는 SSE payload를 데이터 본문으로 사용하지 않는다. 알림에 포함된 resource identity와 revision을 기준으로 기존 권한 검사를 거치는 REST endpoint를 targeted refetch한다. 연결 실패, cursor 만료, resync 지시는 snapshot 재조회 또는 기존 polling으로 복귀한다.
+이 절은 STACK-02의 과거 설계 기록이다. 현재 브라우저는 Dashboard SSE에 연결하지 않으며, 기존 권한 검사를 거치는 Widget REST endpoint를 화면 진입과 수동 새로고침에서만 호출한다.
 
 ## Race-free snapshot 규칙
 

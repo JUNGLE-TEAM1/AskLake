@@ -76,6 +76,6 @@
 ## 호환 정책
 
 - v1 필드는 additive 확장만 허용한다. 기존 필드 의미를 바꾸면 새 schema version을 만든다.
-- frontend는 알 수 없는 version, event/resource 조합, 잘못된 cursor/revision을 무시하고 canonical REST/polling 복구 경로를 유지한다.
+- event consumer는 알 수 없는 version, event/resource 조합, 잘못된 cursor/revision을 무시하고 canonical REST 복구 경로를 유지한다. 현재 Dashboard frontend는 event stream을 구독하지 않는다.
 - backend는 registry에 없는 event type을 저장하지 않는다.
-- `DASHBOARD_SYNC_MODE=polling` 또는 `REALTIME_EVENTS_ENABLED=false`에서 기존 adaptive polling이 그대로 권위 경로다.
+- `DASHBOARD_SYNC_MODE`와 `REALTIME_EVENTS_ENABLED`는 backend 호환 플래그다. 현재 Dashboard 사용자 가시성의 권위 경로는 화면 진입 및 수동 Widget query다.

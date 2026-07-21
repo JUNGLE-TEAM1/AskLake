@@ -10,7 +10,6 @@ import {
   verifyAndRegisterCatalogUniqueKey,
 } from "../../services/continuousSqlApi";
 import { getCatalogDataset } from "../../services/catalogApi";
-import { createManagedJobDashboard } from "../../services/dashboardJobBindingApi";
 import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
 import { ApiError, type AuditResult, type CatalogDataset } from "../../types";
 import {
@@ -37,8 +36,6 @@ export function useContinuousSqlJoin({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [featureConfig, setFeatureConfig] = useState<RealtimeFeatureConfig | null>(null);
   const [outputName, setOutputName] = useState("");
-  const [dashboardBindingEnabled, setDashboardBindingEnabled] = useState(false);
-  const [dashboardTitle, setDashboardTitle] = useState("");
   const [triggerIntervalSeconds, setTriggerIntervalSeconds] = useState(5);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,8 +126,6 @@ export function useContinuousSqlJoin({
   const open = () => {
     if (!relationMix) return;
     setOutputName(buildContinuousSqlOutputName(relationMix.streamingDataset));
-    setDashboardBindingEnabled(false);
-    setDashboardTitle("");
     setTriggerIntervalSeconds(5);
     setError(null);
     setResult(null);
@@ -211,35 +206,33 @@ export function useContinuousSqlJoin({
             servingMode: "clickhouse",
           },
         });
-      const started = await commandContinuousSqlJob(job.id, "start", createClientRequestId());
-      setResult(started.job);
-      if (started.job.observedState === "failed") {
-        throw new Error(started.job.lastErrorMessage || "실시간 JOIN 실행에 실패했습니다.");
-      }
-      setProgressMessage(
-        started.job.observedState === "running"
-          ? "Kafka 소비 준비 완료 · 첫 실제 이벤트를 기다리고 있습니다."
-          : "Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
-      );
-      onAction(
-        "analysis.continuous_sql.started",
-        `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
-        started.job.outputDatasetId,
-      );
-      if (dashboardBindingEnabled) {
-        try {
-          const { dashboard } = await createManagedJobDashboard({
-            jobId: started.job.id,
-            jobKind: "continuous_sql",
-            outputDatasetId: started.job.outputDatasetId,
-            title: dashboardTitle.trim() || `${outputName.trim()} Dashboard`,
-          });
-          onAction("analysis.continuous_sql.dashboard_binding.created", "/api/dashboard-job-bindings", dashboard.id);
-        } catch (bindingError) {
-          const bindingMessage = bindingError instanceof Error ? bindingError.message : "Dashboard 연동 생성에 실패했습니다.";
-          setError(`Continuous SQL Job은 시작됐지만 Dashboard 연동에 실패했습니다: ${bindingMessage}`);
-          onAction("analysis.continuous_sql.dashboard_binding.failed", "/api/dashboard-job-bindings", started.job.id, "failed");
+      setResult(job);
+      onAction("analysis.continuous_sql.created", "/api/query/continuous-jobs", job.id);
+      try {
+        const started = await commandContinuousSqlJob(job.id, "start", createClientRequestId());
+        setResult(started.job);
+        if (started.job.observedState === "failed") {
+          throw new Error(started.job.lastErrorMessage || "실시간 JOIN 실행에 실패했습니다.");
         }
+        setProgressMessage(
+          started.job.observedState === "running"
+            ? "Kafka 소비 준비 완료 · 첫 실제 이벤트를 기다리고 있습니다."
+            : "Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
+        );
+        onAction(
+          "analysis.continuous_sql.started",
+          `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
+          started.job.outputDatasetId,
+        );
+      } catch (startError) {
+        setError(`Continuous SQL Job은 생성됐지만 시작에 실패했습니다: ${startError instanceof Error ? startError.message : "시작 요청을 처리하지 못했습니다."}`);
+        setProgressMessage(null);
+        onAction(
+          "analysis.continuous_sql.start_failed",
+          `/api/query/continuous-jobs/${encodeURIComponent(job.id)}/commands`,
+          job.id,
+          "failed",
+        );
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "실시간 JOIN Job을 만들지 못했습니다.");
@@ -253,8 +246,6 @@ export function useContinuousSqlJoin({
   return {
     catalogDataset,
     create,
-    dashboardBindingEnabled,
-    dashboardTitle,
     dialogOpen,
     error,
     featureEnabled,
@@ -266,8 +257,6 @@ export function useContinuousSqlJoin({
     result,
     servingMode,
     setDialogOpen,
-    setDashboardBindingEnabled,
-    setDashboardTitle,
     setOutputName,
     setTriggerIntervalSeconds,
     triggerIntervalSeconds,

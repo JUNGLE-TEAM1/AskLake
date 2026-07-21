@@ -5,7 +5,6 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
-from app.repositories.dashboard_job_binding_repository import DashboardJobBindingRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.dashboard import (
@@ -121,22 +120,6 @@ def build_assistant_context(
         allowed_dataset_ids = {dataset.id for dataset in datasets}
         return _request_fallback_context(request, datasets, allowed_dataset_ids)
 
-    binding = DashboardJobBindingRepository(runtime_repository.db).get_by_dashboard(dashboard_id)
-    managed_dataset_id = (
-        binding.output_dataset_id
-        if binding is not None and binding.mode == "managed" and binding.enabled
-        else None
-    )
-    managed_warnings: list[str] = []
-    if managed_dataset_id:
-        datasets = [dataset for dataset in datasets if dataset.id == managed_dataset_id]
-        managed_warnings.append(
-            "이 Dashboard는 Job output Dataset으로 관리됩니다. availableDatasets의 단일 datasetId만 사용하고 다른 Dataset을 제안하거나 반환하지 마세요."
-        )
-        if not datasets:
-            managed_warnings.append(
-                "연결된 output Dataset이 아직 query 가능한 Catalog Dataset으로 준비되지 않았습니다. Widget 변경 action을 반환하지 마세요."
-            )
     allowed_dataset_ids = {dataset.id for dataset in datasets}
 
     dashboard_meta = runtime_repository.get_dashboard_meta(dashboard_id)
@@ -152,7 +135,6 @@ def build_assistant_context(
             datasets=scoped_datasets,
             warnings=[
                 "대시보드 draft/published revision을 찾지 못해 위젯 컨텍스트 없이 진행합니다.",
-                *managed_warnings,
                 *scope_warnings,
             ],
         )
@@ -179,7 +161,6 @@ def build_assistant_context(
             for widget in target_widgets
         ],
         warnings=[
-            *managed_warnings,
             *target_warnings,
             *scope_warnings,
             *([] if scoped_datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."]),

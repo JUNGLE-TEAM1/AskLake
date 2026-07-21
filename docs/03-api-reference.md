@@ -102,7 +102,7 @@ REALTIME_SSE_SEND_TIMEOUT_SECONDS=10
 - `AUTH_SESSION_COOKIE_SECURE`는 운영 세션 쿠키의 `Secure` 속성을 제어하며 기본값은 운영에서 `true`다. HTTPS가 없는 제한된 dev HTTP ALB에서만 `false`를 명시하고, HTTPS 전환 즉시 `true`로 복구한다. 이 설정은 header-auth fallback이나 public signup을 활성화하지 않는다.
 - `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API origin 또는 경로가 필요할 때만 지정한다.
 - `DASHBOARD_SYNC_MODE`: `polling`, `hybrid`, `sse` 중 하나다. invalid 값 또는 event backbone 비활성 조합은 effective `polling`으로 fail closed한다.
-- `DASHBOARD_AUTO_REFRESH_ENABLED`: Dashboard 보기·편집 모드의 background polling/SSE widget refresh opt-in이다. 기본 `false`에서는 두 모드 모두 상단 수동 새로고침만 데이터를 다시 읽는다.
+- `DASHBOARD_AUTO_REFRESH_ENABLED`: 이전 자동 갱신 배포와의 설정 호환 필드다. 현재 Dashboard frontend는 값과 무관하게 보기·편집 모드 모두 수동 새로고침만 사용한다.
 - `REALTIME_EVENTS_ENABLED`: durable event/SSE 경로의 총괄 kill switch다. Production Compose 기본값은 `true`다.
 - `CONTINUOUS_SQL_JOIN_ENABLED`: Continuous SQL create/start 경로의 kill switch다. Production Compose 기본값은 `true`이며 기존 Kafka Continuous ingestion과 정적 SQL에는 영향을 주지 않는다.
 - `CLICKHOUSE_CONTINUOUS_JOIN_ENABLED`: Kafka Engine V1 worker의 kill switch다. Production Compose는 V2의 단일 consumer ownership을 위해 기본값을 `false`로 둔다.
@@ -194,7 +194,7 @@ FastAPI schema 구현 기준:
 }
 ```
 
-`dashboardAutoRefreshEnabled=false`이면 Dashboard 보기·편집 모드는 background polling/SSE widget refresh를 시작하지 않고 수동 새로고침만 사용한다. `continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
+`dashboardAutoRefreshEnabled`는 이전 배포 진단 호환 필드이며 현재 Dashboard frontend는 이 값으로 polling/SSE를 시작하지 않는다. 보기·편집 모드 모두 진입 및 상단 수동 새로고침에서 Widget query API를 사용한다. `continuousSqlServingMode`는 이 배포에서 새 Continuous SQL Job에 허용하는 `iceberg | clickhouse` 실행 모드다. `clickhouseRealtimeConsumerOwner`는 `disabled | kafka_engine_v1 | kafka_connect_v2`다. V2와 sink field는 설정 검증 결과를 보여줄 뿐 connector가 등록되거나 ready라는 뜻이 아니다. `fallbackReason`은 `invalid_dashboard_sync_mode` 또는 `realtime_events_disabled`일 수 있다. 이 endpoint는 Connect URL, connector name, secret이나 raw env 값을 반환하지 않는다.
 
 V2 owner가 활성화된 Continuous SQL validate/create는 streaming Dataset의 active ClickHouse binding을 fact relation으로 해석한다. streaming relation은 `queryEngineStatus=unavailable`이어도 `storageFormat=clickhouse`, 완전한 `clickhouseTable`, 동일한 active `physicalBindings`가 모두 있어야 한다. static JOIN relation은 기존처럼 available Iceberg query-engine table과 committed snapshot이 필요하다.
 
@@ -255,6 +255,8 @@ validate/create request는 `query`, distinct `relationDatasetIds`, `staticBindin
 
 Job 응답은 `servingMode`와 mode별 `outputTarget`을 반환한다. ClickHouse 결과 Dataset은 Catalog에 `storageFormat=clickhouse`와 `clickhouseTable`을 기록하며 Dataset row와 Dashboard widget API는 output table을 `FINAL`로 읽는다. 일반 Trino SQL mapping은 만들지 않는다. plan relation의 `cacheHint`는 서버가 Catalog 통계와 안전 한도로 계산한 실행 hint이며 client가 임의로 지정하는 입력이 아니다. active Run 응답은 generation과 `fencingTokenHash`만 포함하며 fencing token 원문은 반환하지 않는다.
 
+SQL 분석 frontend는 stopped Job create가 성공하면 별도 `start` command를 즉시 한 번 전송한다. start 실패는 create transaction을 rollback하지 않으며 생성된 Job ID와 상태를 유지하고 `Job은 생성됐지만 시작에 실패`한 부분 성공으로 안내한다.
+
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
 SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 10초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
@@ -293,7 +295,7 @@ Canonical status values:
 | `GET` | `/api/etl/jobs` | `view` | 저장된 작업 목록·최신 Run 요약·facet 조회. 외부 runtime probe나 상태 write 없이 관련 DB 자료를 일괄 조회 | `docs/api-contract.md` |
 | `GET` | `/api/etl/jobs/statuses?jobId={jobId}` | `view` | 요청한 Job들의 저장된 상태·진행률·최신 Run·DAG 단계만 일괄 조회. 최대 100개, 외부 runtime 호출과 상태 write 없음 | `docs/api-contract.md` |
 | `GET` | `/api/etl/jobs/{jobId}` | `view` | 한 작업의 저장된 상세·전체 실행 이력 조회. 외부 runtime 호출과 상태 write 없음 | `docs/api-contract.md` |
-| `POST` | `/api/etl/sql-jobs` | source Query Run submitter/admin | 성공한 Trino Query Run에서 반복 full-refresh SQL Job 생성 | `docs/trino-query-run-contract.md` |
+| `POST` | `/api/etl/sql-jobs` | source Query Run submitter/admin | 성공한 Trino Query Run에서 stopped 반복 full-refresh SQL Job 생성. SQL 분석 UI는 성공 뒤 별도 `run` command 호출 | `docs/trino-query-run-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `GET` | `/api/etl/kafka/replay-producer` | `manage` | 배포 환경 Kafka replay producer 상태/최근 로그 조회 | `docs/api-contract.md` |
@@ -531,7 +533,7 @@ type ScheduledJobRunResponse = {
 
 ## 6) P2 / 확장 API
 
-> Dashboard Job Binding Phase 1~3 API와 worker는 live다. 생성은 Job과 Dashboard `manage`, 조회는 Dashboard `view`, detach/retry는 Dashboard `manage`를 확인한다. `continuous_worker`는 검증된 `dataset_revision_commits` 뒤 delivery를 계산하며, browser는 보기·편집 모드 모두에서 freshness polling으로 revision을 감지하고 영향 받은 widget만 재계산한다.
+> Dashboard Job Binding API와 worker는 제거됐다. `/api/dashboard-job-bindings`는 더 이상 OpenAPI에 노출되지 않으며 호출하면 `404`다. Dashboard는 보기·편집 모드 진입 및 사용자의 현재 페이지 새로고침에서 Widget query를 실행한다.
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
@@ -542,11 +544,6 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/dashboards` | dashboard 목록 조회 |
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
-| `POST` | `/api/dashboard-job-bindings` | 빈 Dashboard에 ETL 또는 Continuous SQL Job output Dataset managed binding을 transaction commit 후 생성 |
-| `GET` | `/api/dashboard-job-bindings?jobId=&jobKind=` 또는 `?dashboardId=` | Job 또는 Dashboard 기준 binding summary 조회 |
-| `GET` | `/api/dashboard-job-bindings/{bindingId}` | binding과 latest delivery 상태 조회 |
-| `POST` | `/api/dashboard-job-bindings/{bindingId}/detach` | binding을 detached로 전환하고 이후 delivery 중지 |
-| `POST` | `/api/dashboard-job-bindings/{bindingId}/deliveries/{datasetRevision}/retry` | 기존 failed/degraded delivery를 pending으로 재시도 요청 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision runtime 조회. `includeData=false`이면 shell만 반환 |

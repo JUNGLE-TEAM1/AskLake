@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { queryDashboardWidgets } from "../../../services/dashboardRuntimeApi";
 import type { DashboardRuntimeMode, DashboardRuntimeResponse } from "../../../types";
 import {
   dashboardWidgetDataRequests,
+  dashboardWidgetDataRefreshRequests,
   dashboardWidgetDataSelectionKey,
   mergeDashboardWidgetData,
   runDashboardWidgetDataQueue,
@@ -34,6 +35,10 @@ export function useDashboardWidgetData({
   );
   const selectionKey = dashboardWidgetDataSelectionKey(runtime, selectedPageId);
   const loadStateKey = `${selectionKey}:${requests.length > 0 ? "needs-data" : "settled"}`;
+  const runtimeRef = useRef(runtime);
+  const refreshControllerRef = useRef<AbortController | null>(null);
+  const activePageKeyRef = useRef<string | null>(null);
+  runtimeRef.current = runtime;
 
   useEffect(() => {
     if (!active || requests.length === 0) return undefined;
@@ -78,9 +83,75 @@ export function useDashboardWidgetData({
     return () => controller.abort();
   }, [active, dashboardId, loadStateKey, mode, setRuntime]);
 
+  const refreshCurrentPageWidgetData = useCallback(async () => {
+    const current = runtimeRef.current;
+    if (!active || !current || current.dashboard.id !== dashboardId) return false;
+    const refreshRequests = dashboardWidgetDataRefreshRequests(current, selectedPageId);
+    if (refreshRequests.length === 0) return true;
+
+    refreshControllerRef.current?.abort();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
+    let succeeded = true;
+
+    await runDashboardWidgetDataQueue(refreshRequests, async (request) => {
+      if (controller.signal.aborted) return;
+      try {
+        const response = await queryDashboardWidgets(dashboardId, mode, request.widgetIds, {
+          signal: controller.signal,
+          timeoutMs: DASHBOARD_WIDGET_DATA_TIMEOUT_MS,
+        });
+        if (controller.signal.aborted) return;
+        if (response.widgets.some((widget) => widget.dataStatus === "error")) succeeded = false;
+        setRuntime((latest) => mergeDashboardWidgetData(
+          latest,
+          dashboardId,
+          response.widgets,
+          request.signatures,
+        ));
+      } catch {
+        if (!controller.signal.aborted) succeeded = false;
+      }
+    });
+
+    if (refreshControllerRef.current === controller) refreshControllerRef.current = null;
+    return !controller.signal.aborted && succeeded;
+  }, [active, dashboardId, mode, selectedPageId, setRuntime]);
+
+  const activePageKey = active && runtime?.dashboard.id === dashboardId && selectedPageId
+    ? `${dashboardId}:${mode}:${selectedPageId}`
+    : null;
+
+  useEffect(() => {
+    if (!activePageKey) {
+      activePageKeyRef.current = null;
+      return;
+    }
+    const previousPageKey = activePageKeyRef.current;
+    activePageKeyRef.current = activePageKey;
+    if (!previousPageKey || previousPageKey === activePageKey) return;
+
+    const current = runtimeRef.current;
+    const hasPreviouslyLoadedDatasetWidget = Boolean(
+      current
+      && selectedPageId
+      && (current.widgetsByPageId[selectedPageId] ?? []).some((widget) => (
+        Boolean(widget.datasetId)
+        && widget.dataStatus !== "pending"
+        && widget.dataStatus !== "loading"
+      )),
+    );
+    if (hasPreviouslyLoadedDatasetWidget) void refreshCurrentPageWidgetData();
+  }, [activePageKey, refreshCurrentPageWidgetData, selectedPageId]);
+
+  useEffect(() => () => {
+    refreshControllerRef.current?.abort();
+    refreshControllerRef.current = null;
+  }, [dashboardId, mode]);
+
   const retryWidgetData = useCallback((widgetId: string) => {
     setRuntime((current) => setDashboardWidgetDataStatus(current, [widgetId], "pending"));
   }, [setRuntime]);
 
-  return { retryWidgetData };
+  return { refreshCurrentPageWidgetData, retryWidgetData };
 }

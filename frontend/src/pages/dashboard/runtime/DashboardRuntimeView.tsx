@@ -8,7 +8,6 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardEditToolbar } from "./DashboardEditToolbar";
@@ -18,7 +17,6 @@ import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
 import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 import type {
   CreateDraftWidgetFormInput,
   DashboardDatasetColumn,
@@ -40,7 +38,6 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
-  autoRefreshEnabled: boolean;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -58,8 +55,6 @@ type DashboardRuntimeState = {
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
-  realtimeConnectionState: RealtimeConnectionState;
-  realtimeDataState: DashboardLiveDataState;
   renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
@@ -81,7 +76,6 @@ type DashboardRuntimeDatasetState = {
   isLoading: boolean;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
-  managedDatasetId?: string | null;
 };
 
 type DashboardRuntimeViewActions = {
@@ -222,7 +216,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     isLoading: dashboardDatasetsLoading,
     selectedDataset,
     selectedDatasetId,
-    managedDatasetId,
   } = datasets;
   const {
     addPage: onAddPage,
@@ -255,11 +248,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
-  const managedDataset = managedDatasetId
-    ? dashboardDatasets.find((dataset) => dataset.id === managedDatasetId) ?? null
-    : null;
-  const assistantDatasetIds = managedDatasetId ? [managedDatasetId] : assistantSelectedDatasetIds;
-  const managedDatasetPreparing = managedDataset?.status === "preparing";
+  const assistantDatasetIds = assistantSelectedDatasetIds;
   useEffect(() => {
     const availableIds = new Set(dashboardDatasets.map((dataset) => dataset.id));
     setAssistantDatasetIds((current) => {
@@ -279,7 +268,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       ...widget.config,
       ...patch,
     } as UpdateDraftWidgetFormInput["config"],
-    datasetId: managedDatasetId ?? widget.datasetId ?? null,
+    datasetId: widget.datasetId ?? null,
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
@@ -306,7 +295,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
   const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
-    const nextDatasetId = managedDatasetId ?? patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
     const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
 
     return onUpdateWidget(widget.id, {
@@ -385,7 +374,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
-      if (managedDatasetId) return;
       const wasSelected = assistantDatasetIds.includes(datasetId);
       setAssistantDatasetIds((current) => (
         current.includes(datasetId)
@@ -405,7 +393,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
-      if (managedDatasetId) return;
       setAssistantDatasetIds((current) => (
         current.includes(dataset.id) ? current : [...current, dataset.id]
       ));
@@ -524,7 +511,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
             error={dashboardDatasetsError}
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
-            lockedDatasetId={managedDatasetId}
             onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
             selectedDatasetIds={inspectorMode === "assistant" ? assistantDatasetIds : undefined}
@@ -544,8 +530,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               currentDatasetId={assistantContext.activeDatasetId}
               dashboardId={assistantContext.dashboardId}
               datasets={dashboardDatasets}
-              managedDatasetId={managedDatasetId}
-              mutationBlockedMessage={managedDatasetPreparing ? "연결된 Job의 첫 실행이 완료된 뒤 차트를 만들 수 있습니다." : null}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedDatasetIds={assistantContext.selectedDatasetIds}
@@ -563,7 +547,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               focusedColorSlot={focusedColorSlot}
               isCreating={isCreatingDatasetWidget}
               isUpdating={updatingWidgetId === configurableDraftWidget?.id}
-              managedDatasetId={managedDatasetId}
               onPreviewWidgetChange={onPreviewWidget}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
@@ -577,8 +560,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         mode={mode}
         notice={notice}
         pages={pages}
-        realtimeConnectionState={runtime.realtimeConnectionState} realtimeDataState={runtime.realtimeDataState}
-        autoRefreshEnabled={runtime.autoRefreshEnabled}
         renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}

@@ -15,13 +15,9 @@ import type { ContinuousSqlJob } from "../../services/continuousSqlApi";
 
 export function ContinuousSqlJoinDialog({
   catalogDataset,
-  dashboardBindingEnabled,
-  dashboardTitle,
   error,
   featureEnabled,
   onCreate,
-  onDashboardBindingEnabledChange,
-  onDashboardTitleChange,
   onOpenChange,
   onOutputNameChange,
   onTriggerIntervalChange,
@@ -36,13 +32,9 @@ export function ContinuousSqlJoinDialog({
   triggerIntervalSeconds,
 }: {
   catalogDataset: CatalogDataset | null;
-  dashboardBindingEnabled: boolean;
-  dashboardTitle: string;
   error: string | null;
   featureEnabled: boolean;
   onCreate: () => void;
-  onDashboardBindingEnabledChange: (value: boolean) => void;
-  onDashboardTitleChange: (value: string) => void;
   onOpenChange: (open: boolean) => void;
   onOutputNameChange: (value: string) => void;
   onTriggerIntervalChange: (value: number) => void;
@@ -111,11 +103,6 @@ export function ContinuousSqlJoinDialog({
                 value={outputName}
               />
             </Field>
-            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
-              <input checked={dashboardBindingEnabled} type="checkbox" onChange={(event) => onDashboardBindingEnabledChange(event.target.checked)} />
-              <span><strong className="block">결과를 Dashboard에 자동 반영</strong><small>새 Dashboard의 Dataset은 이 GOLD 출력으로 고정됩니다.</small></span>
-            </label>
-            {dashboardBindingEnabled && <Field><FieldLabel htmlFor="continuous-sql-dashboard-title">Dashboard 이름</FieldLabel><Input id="continuous-sql-dashboard-title" maxLength={160} onChange={(event) => onDashboardTitleChange(event.target.value)} placeholder={`${outputName} Dashboard`} value={dashboardTitle} /></Field>}
             <Field>
               <FieldLabel htmlFor="continuous-sql-trigger">반영 시작 간격</FieldLabel>
               <Input

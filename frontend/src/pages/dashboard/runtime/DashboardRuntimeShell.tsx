@@ -15,8 +15,6 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -30,7 +28,6 @@ type RuntimeNotice = {
 
 export function DashboardRuntimeShell({
   children,
-  autoRefreshEnabled = false,
   datasetSidebar,
   datasetSidebarOpen = false,
   hasPublishedRevision,
@@ -56,15 +53,12 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar,
   onToggleInspector,
   pages,
-  realtimeConnectionState,
-  realtimeDataState,
   renamingPageId,
   selectedPageId,
   shareLink,
   title,
 }: {
   children: ReactNode;
-  autoRefreshEnabled?: boolean;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
@@ -90,8 +84,6 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar?: () => void;
   onToggleInspector?: () => void;
   pages: DashboardPageTab[];
-  realtimeConnectionState?: RealtimeConnectionState;
-  realtimeDataState?: DashboardLiveDataState;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -144,13 +136,10 @@ export function DashboardRuntimeShell({
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
         hasPublishedRevision={hasPublishedRevision}
-        autoRefreshEnabled={autoRefreshEnabled}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
         mode={mode}
-        realtimeConnectionState={realtimeConnectionState}
-        realtimeDataState={realtimeDataState}
         title={title}
         onOpenDraft={onOpenDraft}
         onOpenPublished={onOpenPublished}
@@ -159,20 +148,6 @@ export function DashboardRuntimeShell({
         onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
-      {realtimeDataState && realtimeDataState !== "fresh" ? (
-        <Alert
-          aria-live="polite"
-          className={`asklake-dashboard-runtime-notice ${realtimeDataState === "degraded" ? "error" : ""}`}
-          role="status"
-          variant={realtimeDataState === "degraded" ? "destructive" : "default"}
-        >
-          <AlertDescription>
-            {realtimeDataState === "degraded"
-              ? "최신 데이터 확인에 실패했습니다. 마지막 성공 결과를 유지하며 자동으로 다시 시도합니다."
-              : "데이터 변경을 확인하고 있습니다. 편집 중인 구성과 레이아웃은 바꾸지 않습니다."}
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {notice && (
         <Alert
           className={`asklake-dashboard-runtime-notice ${notice.tone}`}

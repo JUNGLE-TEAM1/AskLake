@@ -611,7 +611,7 @@ const checks = [
     patterns: [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
-      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
+      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false, runAfterCreate: true \}\);/,
       /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,

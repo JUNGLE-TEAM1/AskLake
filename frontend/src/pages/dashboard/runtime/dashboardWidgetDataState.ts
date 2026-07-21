@@ -47,14 +47,15 @@ export function dashboardWidgetDataSignature(widget: DashboardRuntimeWidget) {
   });
 }
 
-export function dashboardWidgetDataRequests(
+function buildDashboardWidgetDataRequests(
   runtime: DashboardRuntimeResponse | null,
   pageId: string | null,
+  include: (widget: DashboardRuntimeWidget) => boolean,
 ): DashboardWidgetDataRequest[] {
   if (!runtime || !pageId) return [];
   const grouped = new Map<string, DashboardRuntimeWidget[]>();
   for (const widget of runtime.widgetsByPageId[pageId] ?? []) {
-    if (widget.dataStatus !== "pending" && widget.dataStatus !== "loading") continue;
+    if (!include(widget)) continue;
     const groupKey = widget.datasetId ? `dataset:${widget.datasetId}` : `widget:${widget.id}`;
     grouped.set(groupKey, [...(grouped.get(groupKey) ?? []), widget]);
   }
@@ -68,6 +69,28 @@ export function dashboardWidgetDataRequests(
       ),
       widgetIds: widgets.map((widget) => widget.id).sort(),
     }));
+}
+
+export function dashboardWidgetDataRequests(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+): DashboardWidgetDataRequest[] {
+  return buildDashboardWidgetDataRequests(
+    runtime,
+    pageId,
+    (widget) => widget.dataStatus === "pending" || widget.dataStatus === "loading",
+  );
+}
+
+export function dashboardWidgetDataRefreshRequests(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+): DashboardWidgetDataRequest[] {
+  return buildDashboardWidgetDataRequests(
+    runtime,
+    pageId,
+    (widget) => Boolean(widget.datasetId),
+  );
 }
 
 export function dashboardWidgetDataSelectionKey(
