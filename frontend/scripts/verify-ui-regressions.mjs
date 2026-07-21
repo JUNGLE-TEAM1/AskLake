@@ -548,13 +548,12 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor exposes the governed continuous JOIN action before existing actions",
+    name: "SQL editor uses the normal SQL Job flow without a separate continuous JOIN action",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
-      /data-testid="continuous-sql-join-button"/,
-      /실시간 JOIN 만들기/,
       /<SqlAiWriterDialog/,
     ],
+    forbiddenPatterns: [/data-testid="continuous-sql-join-button"/, /실시간 JOIN 만들기/],
   },
   {
     name: "SQL result chart keeps its heading compact and fits inside the result panel",

@@ -1,5 +1,7 @@
 # 03. API Reference
 
+> Kafka streaming Base Dataset과 static reference Dataset을 사용하는 일반 Trino SQL Job은 backend worker가 새 Dataset revision을 감지해 저장 SQL을 재실행한다. 별도 Continuous JOIN 생성 API는 기본 화면 흐름에서 사용하지 않는다.
+
 > RAG Dataset API(`/api/catalog/datasets/{datasetId}/rag/*`)는 2026-07-20에 제거됐다. SQL AI와 Dashboard Assistant의 retrieval 응답은 `mode=disabled`, `status=disabled`, 빈 `sources`를 반환한다.
 
 Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.

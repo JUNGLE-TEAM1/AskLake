@@ -1,5 +1,9 @@
 # AskLake Backend Integration Readiness
 
+- [x] 일반 Trino SQL Job의 Kafka Base Dataset revision 감지 및 backend 자동 재실행
+- [x] 자동 실행 성공 후에만 Gold Catalog mapping과 published revision cursor 교체
+- [x] 실패 시 기존 성공 Gold 유지 및 Job revision refresh 오류 상태 저장
+
 이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 기본 live API mode에서 backend를 기준으로 검증하고, frontend-only QA에서만 `VITE_USE_MOCK_API=true` fallback을 사용한다.
 FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 

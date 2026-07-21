@@ -218,6 +218,10 @@ Phase 4에서는 성공 Run이 있는 Job의 target dataset/database/format/stor
 
 Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 broker, topic, consumer group, offset 정책을 포함하므로 수정에서 고정한다. 실행 이력이 있는 Job의 target identity도 고정하고, source 또는 output destination 변경은 복제 후 새 Job 생성으로 분리한다. 세부 필드 정책과 failure handling은 [ETL Job Edit Contract](etl-job-edit-contract.md)를 따른다.
 
+### Kafka revision 기반 일반 SQL Job 갱신
+
+일반 `trino_sql_materialization` Job의 Base Dataset이 streaming이고 reference Dataset이 static이면 continuous worker가 `dataset_freshness.latest_revision`을 확인한다. 새 revision이 있고 활성 Trino Run이 없을 때 저장된 SQL recipe를 원래 실행 사용자 권한으로 제출한다. Job의 `continuous_config.revisionRefresh`는 처리 중 revision과 마지막 성공 공개 revision을 보존한다. Trino CTAS와 Catalog 검증이 모두 성공한 경우에만 공개 revision cursor와 Gold Catalog mapping을 전진시키며 실패 시 기존 Gold를 유지한다. Dashboard는 이 worker를 호출하지 않고 수동 새로고침 때 마지막 성공 Gold만 읽는다.
+
 ## 5) Frontend Layer
 
 주요 책임:

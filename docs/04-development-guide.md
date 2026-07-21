@@ -1,5 +1,7 @@
 # 04. Development Guide
 
+> Kafka revision 기반 SQL 자동 갱신은 API server가 아니라 `app.continuous_worker`에서 실행된다. 로컬 검증 시 Kafka continuous worker와 Trino collector를 함께 실행하고, `etl_jobs.continuous_config.revisionRefresh.publishedSourceRevision`이 Catalog 공개 성공 뒤에만 증가하는지 확인한다.
+
 > RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
 
 AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)를 참고한다.

@@ -1,5 +1,9 @@
 # AskLake Backend API Contract
 
+## 일반 Trino SQL Job의 Kafka revision 자동 갱신
+
+`job_kind=trino_sql_materialization`인 Job의 Base와 reference Dataset 전체에 `relationMode=streaming`이 정확히 1개이고 static Dataset이 1개 이상이면 backend worker가 자동 갱신 대상으로 취급한다. 새 `dataset_freshness.latest_revision`마다 기존 Job run과 같은 Trino materialization을 내부 제출한다. 내구 상태는 `continuousConfig.revisionRefresh`에 저장하며 `publishedSourceRevision`은 결과 table 검증과 Catalog 공개가 성공한 뒤에만 전진한다. 실패 시 기존 Catalog Dataset mapping은 유지된다.
+
 이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
 프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
 
