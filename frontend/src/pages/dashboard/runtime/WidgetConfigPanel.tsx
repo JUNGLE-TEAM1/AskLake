@@ -44,7 +44,6 @@ import type {
   DashboardWidgetAggregation,
   DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
-  DashboardWidgetFilter,
   DashboardWidgetFormat,
   DashboardWidgetLineCurve,
   DashboardWidgetOrientation,
@@ -57,16 +56,29 @@ import type {
   DashboardWidgetColorSlotFocus,
   UpdateDraftWidgetFormInput,
 } from "./dashboardRuntimeTypes";
-import { WidgetFilterEditor } from "./WidgetFilterEditor";
-import {
-  applyDashboardWidgetFilters,
-  dashboardWidgetFiltersFromConfig,
-  normalizeDashboardWidgetFilters,
-  reconcileDashboardWidgetFilters,
-} from "./widgetFilters";
-import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigValidation";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
+
+type WidgetConfigDraft = {
+  aggregation?: DashboardWidgetAggregation;
+  columns?: string[];
+  curve?: DashboardWidgetLineCurve;
+  dateUnit?: DashboardWidgetDateUnit;
+  format?: DashboardWidgetFormat;
+  groupKey?: string;
+  labelKey?: string;
+  limit?: number;
+  max?: number;
+  min?: number;
+  orientation?: DashboardWidgetOrientation;
+  seriesKey?: string;
+  sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
+  stacked?: boolean;
+  valueKey?: string;
+  xKey?: string;
+  yKey?: string;
+};
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -236,7 +248,6 @@ function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConf
     curve: configString(editableConfig, "curve") as DashboardWidgetLineCurve | undefined,
     dateUnit: configString(editableConfig, "dateUnit") as DashboardWidgetDateUnit | undefined,
     format: configString(editableConfig, "format") as DashboardWidgetFormat | undefined,
-    filters: dashboardWidgetFiltersFromConfig(configRecord(editableConfig).filters),
     labelKey: configString(editableConfig, "labelKey"),
     limit: configNumber(editableConfig, "limit"),
     max: configNumber(editableConfig, "max"),
@@ -332,6 +343,24 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   };
 }
 
+function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
+  const usesCount = config.aggregation === "count";
+  if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
+  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
+    return "X축과 Y축 컬럼을 선택해 주세요.";
+  }
+  if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || (!usesCount && !config.valueKey))) {
+    return "분류와 값 컬럼을 선택해 주세요.";
+  }
+  if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
+  if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
+    return "X축, Y축, 값 컬럼을 선택해 주세요.";
+  }
+  return null;
+}
+
 function buildConfig(
   type: DashboardRuntimeWidgetType,
   config: WidgetConfigDraft,
@@ -339,7 +368,6 @@ function buildConfig(
 ): DashboardRuntimeWidgetConfig {
   const base = {
     description: common.description,
-    filters: normalizeDashboardWidgetFilters(config.filters ?? []),
   };
   const chartBase = {
     ...base,
@@ -357,8 +385,8 @@ function buildConfig(
 
   if (type === "table") {
     return {
-      ...base,
       columns: config.columns ?? [],
+      description: common.description,
       limit: config.limit,
       sortDirection: config.sortDirection,
       sortKey: config.sortKey || undefined,
@@ -472,12 +500,8 @@ function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null | un
   return widget ? configRecord(widget.config).placeholderKind === "visualization_request" : false;
 }
 
-function cloneDatasetRows(
-  dataset: DashboardDatasetOption | null | undefined,
-  filters: DashboardWidgetFilter[],
-) {
-  if (!dataset?.rows) return undefined;
-  return applyDashboardWidgetFilters(dataset.rows, filters).map((row) => ({ ...row }));
+function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
+  return dataset?.rows?.map((row) => ({ ...row }));
 }
 
 export function WidgetConfigPanel({
@@ -566,17 +590,11 @@ export function WidgetConfigPanel({
       const defaultConfigs: Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>> = selectedDataset
         ? createDefaultConfigs(selectedDataset)
         : {};
-      const restoredConfig = configDraftFromConfig(editingWidget.config);
       setConfigsByType({
         ...defaultConfigs,
         [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
           ? defaultConfigs[editingWidget.type] ?? {}
-          : {
-              ...restoredConfig,
-              filters: selectedDataset
-                ? reconcileDashboardWidgetFilters(restoredConfig.filters ?? [], selectedDataset.columns)
-                : restoredConfig.filters ?? [],
-            },
+          : configDraftFromConfig(editingWidget.config),
       });
       return;
     }
@@ -585,20 +603,13 @@ export function WidgetConfigPanel({
       ? initialCreateInput
       : null;
     if (initialInput && selectedDataset) {
-      const restoredConfig = configDraftFromConfig(initialInput.config);
       setType(initialInput.type);
       setTitle(initialInput.title);
       setDescription(configString(initialInput.config, "description") ?? "");
       setColor(configColor(initialInput.config));
       setConfigsByType({
         ...createDefaultConfigs(selectedDataset),
-        [initialInput.type]: {
-          ...restoredConfig,
-          filters: reconcileDashboardWidgetFilters(
-            restoredConfig.filters ?? [],
-            selectedDataset.columns,
-          ),
-        },
+        [initialInput.type]: configDraftFromConfig(initialInput.config),
       });
       return;
     }
@@ -661,7 +672,7 @@ export function WidgetConfigPanel({
   const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
   const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
-    ? validateWidgetConfig(type, currentConfig, columnGroups.allColumns)
+    ? validateConfig(type, currentConfig)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean(
     (isEditMode || (selectedDatasetId && selectedDataset))
@@ -737,7 +748,7 @@ export function WidgetConfigPanel({
       return;
     }
 
-    const error = validateWidgetConfig(type, currentConfig, columnGroups.allColumns);
+    const error = validateConfig(type, currentConfig);
     if (error) {
       setFormError(error);
       return;
@@ -760,7 +771,7 @@ export function WidgetConfigPanel({
     if (editingWidget && onUpdateWidget) {
       await onUpdateWidget(editingWidget.id, {
         ...nextInput,
-        data: cloneDatasetRows(selectedDataset, currentConfig.filters ?? []),
+        data: cloneDatasetRows(selectedDataset),
         datasetId: nextDatasetId,
       });
       return;
@@ -773,7 +784,7 @@ export function WidgetConfigPanel({
 
     await onCreateWidget({
       ...nextInput,
-      data: cloneDatasetRows(selectedDataset, currentConfig.filters ?? []),
+      data: cloneDatasetRows(selectedDataset),
       datasetId: selectedDatasetId,
     });
     setTitle("");
@@ -1162,14 +1173,6 @@ export function WidgetConfigPanel({
             </WidgetSelectField>
           </>
         )}
-
-        {selectedDataset ? (
-          <WidgetFilterEditor
-            dataset={selectedDataset}
-            filters={currentConfig.filters ?? []}
-            onChange={(filters) => patchCurrentConfig({ filters })}
-          />
-        ) : null}
 
         {(formError || validationMessage) && <FieldError>{formError ?? validationMessage}</FieldError>}
 

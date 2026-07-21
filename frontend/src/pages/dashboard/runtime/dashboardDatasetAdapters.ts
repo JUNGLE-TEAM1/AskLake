@@ -2,7 +2,6 @@ import type { CatalogDataset, SqlResultDraft } from "../../../types";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 const SQL_DATE_COLUMN_PATTERN = /(^|_)(date|time|at|day|month|year)($|_)/;
-const SQL_DATE_VALUE_PATTERN = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[T\s].*)?$/;
 const SQL_NUMBER_COLUMN_PATTERN = /(amount|count|score|total|value|price|qty|quantity|rate|risk|cost|sales|revenue|rows?)/;
 
 function finiteNumber(value: unknown) {
@@ -32,10 +31,7 @@ export function inferSqlResultColumnType(
   if (SQL_DATE_COLUMN_PATTERN.test(normalizedName)) return "date";
   if (SQL_NUMBER_COLUMN_PATTERN.test(normalizedName)) return "number";
   if (populatedValues.length > 0 && populatedValues.every((value) => finiteNumber(value) !== null)) return "number";
-  if (
-    populatedValues.length > 0
-    && populatedValues.every((value) => SQL_DATE_VALUE_PATTERN.test(value.trim()) && Number.isFinite(Date.parse(value)))
-  ) return "date";
+  if (populatedValues.length > 0 && populatedValues.every((value) => Number.isFinite(Date.parse(value)))) return "date";
   return "string";
 }
 
