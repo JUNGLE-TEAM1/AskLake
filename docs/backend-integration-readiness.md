@@ -414,6 +414,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | Page 삭제 | DB-backed draft page와 하위 widgets 삭제 | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
 | 위젯 추가 | selected dataset과 type별 config로 draft widget 생성 | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
 | 위젯 수정 | draft widget title/type/datasetId/config 수정 | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| 위젯 필터 후보값 | 선택 Dataset schema의 컬럼과 앞선 필터 조건으로 bounded distinct 값 조회 | `POST /api/catalog/datasets/{datasetId}/filter-values/query` |
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
@@ -430,6 +431,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 Dashboard runtime service는 실제 `catalog_datasets.payload`를 우선 조회해 `datasetId -> widget.data snapshot`을 만든다. demo catalog는 오래된 demo dataset id 또는 로컬 seed가 빠진 smoke 상황을 위한 fallback으로만 유지한다. 새 ETL/SQL derived dataset은 catalog `schema`와 `sampleRows`를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. 로컬 PostgreSQL에서 대시보드 사이드바와 Assistant가 같은 demo 데이터를 보려면 `app.seed.seed_dashboard_demo`로 demo dataset을 `catalog_datasets`에 저장한다.
 
 Kafka Continuous dataset의 published widget은 PostgreSQL `dataset_freshness`, `dataset_revision_commits`, `dataset_kafka_partition_cursors`, `dashboard_widget_results`를 사용한다. Worker는 source range와 fingerprint로 중복·부분 겹침을 막고 exact Iceberg run을 검증한 뒤 revision을 올린다. `count`/`sum`/`avg`/`min`/`max`/`ratio`는 baseline 뒤 delta만 병합하며 날짜 `windowDays`는 만료 bucket을 상태에서 제거한다. worker가 `dashboard_widget_results`를 먼저 갱신하므로 published 조회는 JOIN이나 Trino를 실행하지 않는다.
+위젯 `config.filters`는 최대 5개의 AND 조건을 저장한다. 후보 컬럼은 선택 Dataset schema, 문자열 후보값은 물리 Dataset distinct 조회에서 가져오며 앞 조건을 `contextFilters`로 적용한다. Backend의 공통 predicate compiler는 컬럼·타입·연산자를 검증하고 table, batch aggregate, Continuous baseline/delta에 같은 조건을 적용한다. 필터는 `sourceConfig` 계산 version에 포함되므로 조건 변경 시 이전 batch cache와 Continuous aggregate state를 재사용하지 않는다.
 Catalog ACK가 바뀔 때 worker는 전체 manifest 이력을 반복 조회하지 않고 bounded report window에서 승인된 batch를 제거한 뒤 부족한 다음 구간만 채운다. 재시작 복구는 committed manifest bulk read 한 번으로 수행한다. Backend의 S3 manifest 복구는 Spark가 만든 0-byte `part-*` 파일을 건너뛰고 실제 JSON row가 있는 part를 읽는다. 작은 Continuous micro-batch는 `ASKLAKE_CONTINUOUS_SPARK_SHUFFLE_PARTITIONS=4`, `ASKLAKE_CONTINUOUS_SPARK_LOG_LEVEL=WARN`을 기본으로 사용하며 일반 batch의 shuffle 설정은 유지한다.
 현재 legacy Continuous SQL API는 trigger 생략 시 10초·최대 100행을 기본으로 사용하고 SQL 분석 frontend는 5초를 명시적으로 제출한다. `baselineDatasetId`가 있으면 최초 Trino JOIN snapshot, source revision/offset, static snapshot을 durable runtime binding으로 저장하고 이후 신규 Kafka 범위와 필요한 static key만 JOIN한다. output의 `_asklake_run_id` partition으로 exact-count를 가지치기한다. Issue #1117 목표에서는 SQL-owned trigger/max-message와 Kafka consumer를 제거하고 producer Job의 revision/manifest cursor를 사용하며, Dashboard는 Widget Dataset을 수동 조회할 뿐 execution tree를 시작하거나 감시하지 않는다.
 `seed_dashboard_demo`에는 커머스 데모용 원본 dataset 2개(`commerce_orders_daily`, `commerce_marketing_spend_daily`)와 조인 결과처럼 보이는 `gold_commerce_channel_roi` GOLD dataset이 포함된다.

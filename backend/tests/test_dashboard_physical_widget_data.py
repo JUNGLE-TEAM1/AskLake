@@ -879,6 +879,20 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             {**base_config, "aggregation": "avg"},
             base_actor,
         )
+        changed_filter = dashboard_batch_cache_identity(
+            base_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            {
+                **base_config,
+                "filters": [{
+                    "id": "category-filter",
+                    "column": "category",
+                    "operator": "eq",
+                    "value": "Wearable Technology",
+                }],
+            },
+            base_actor,
+        )
         changed_actor = dashboard_batch_cache_identity(
             base_payload,
             DashboardRuntimeWidgetType.BAR_CHART,
@@ -888,6 +902,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         self.assertNotEqual(base.cache_key, changed_dataset.cache_key)
         self.assertNotEqual(base.cache_key, changed_config.cache_key)
+        self.assertNotEqual(base.cache_key, changed_filter.cache_key)
         self.assertNotEqual(base.cache_key, changed_actor.cache_key)
 
     def test_runtime_widget_returns_a_stable_error_when_physical_storage_is_unavailable(self) -> None:

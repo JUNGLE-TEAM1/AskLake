@@ -630,6 +630,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 조건부 레코드 구조화 | Source에서 선택한 File/S3 `.txt`/`.log` 또는 Kafka raw text preview와 `DraftPipeline.recordParsing` | `POST /api/etl/record-parsing/preview` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
+| Dashboard 필터값 | 선택 Dataset의 bounded distinct 값과 앞선 조건 context | `POST /api/catalog/datasets/{datasetId}/filter-values/query` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | 최대 100행 Trino preview Query Run 제출, 상태 polling, on-demand 전체 결과 run, signed-cursor page와 server CSV. 사용자별 실행 이력 조회·재열기 endpoint는 backend 계약으로 유지하며 이번 화면에는 별도 이력 선택 목록을 노출하지 않음 | Query lifecycle endpoints |
 | Query AI 생성 | 선택 Dataset ID와 prompt를 FastAPI에 보내고 private Gateway + 단일 사용 MCP context + Semantic RAG + Catalog cost metadata로 초안을 생성한다. join-aware v3는 게시된 Semantic relationship과 검증된 Catalog unique key만 `allowedRelationship`으로 만들고 생성 SQL의 equality key·column·type·alias를 AST로 재검사한다. 실제 사용한 RAG 근거만 표시하고 backend JOIN/cost/intent guard가 공통 최대 1회 교정하며 로컬 SQL fallback은 없다. | `POST /api/query/ai-suggestions` |
@@ -824,6 +825,29 @@ type DashboardRuntimeResponse = {
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
 Catalog `datasetId`를 연결한 Widget은 browser가 보낸 `data`와 Catalog `sampleRows`를 저장 데이터로 사용하지 않는다. Runtime 조회 시 backend는 actor의 dataset `query` permission과 governance를 storage 접근 전에 검사한다. Iceberg Dataset은 Catalog의 `icebergSnapshotId`에 `FOR VERSION AS OF`를 적용한 Trino query로 읽고, 전환 전 CSV/JSON/JSONL/Parquet segment만 DuckDB에 등록한다. `materializationMode`가 명시되면 그 값을 우선하고, 미지정 Kafka run은 `delta`, 그 외 run은 `snapshot`으로 판정한다. 원격 file segment는 allowlist와 누적 byte/object 예산을 통과해야 하고 모든 query는 resource/timeout 경계 안에서 실행한다. chart/metric은 최대 500개 그룹으로 집계하며 table은 최대 500행 preview만 반환한다. 응답 `config.sourceConfig`는 편집 원본을, `dataMode`는 `server_aggregated` 또는 `server_preview`를 나타낸다. 권한이 없으면 `DASHBOARD_DATA_FORBIDDEN`, 삭제된 Catalog dataset 또는 물리 데이터를 읽을 수 없으면 `DASHBOARD_DATA_UNAVAILABLE` error config와 빈 data를 해당 widget에 반환한다. `queryId`가 있는 bounded SQL snapshot은 Catalog payload가 없어도 최대 500행을 유지한다.
+
+위젯 `config.filters`는 최대 5개의 AND 조건이다. 문자열 컬럼은 `eq`, `in`, `contains`, 숫자·날짜 컬럼은 `eq`, `gt`, `gte`, `lt`, `lte`, `between`, 모든 타입은 `is_null`, `is_not_null`을 사용한다. Backend는 Dataset schema의 컬럼·타입과 허용 연산자를 대조하고 값만 안전한 SQL literal로 컴파일하며 raw SQL filter를 받지 않는다. 같은 filter predicate를 table, aggregate, Continuous baseline/delta에 적용하고 `sourceConfig` 계산 hash에 포함한다.
+
+```http
+POST /api/catalog/datasets/{datasetId}/filter-values/query
+Content-Type: application/json
+
+{
+  "column": "subcategory",
+  "search": "watch",
+  "limit": 50,
+  "contextFilters": [
+    {
+      "id": "category-filter",
+      "column": "category",
+      "operator": "eq",
+      "value": "Wearable Technology"
+    }
+  ]
+}
+```
+
+응답은 `{ datasetId, column, values: [{ label, value }], truncated }`다. `limit`은 `1..100`이고 Dataset `view`와 `query` 권한이 모두 필요하다. `contextFilters`는 최대 5개이며 먼저 적용되므로 category 선택 뒤 subcategory 후보를 전용 계층 metadata 없이 동적으로 좁힐 수 있다. 요청 변경 시 frontend는 이전 요청을 취소하고 300ms debounce 뒤 최신 요청만 적용한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 
