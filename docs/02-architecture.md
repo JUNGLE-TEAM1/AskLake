@@ -554,7 +554,7 @@ Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit
 
 전체 누적 기준 `count`/`sum`/`avg`/`min`/`max`/`ratio` 집계는 새 widget에서 고정 Iceberg snapshot으로 기준값을 한 번 만든다. 이후에는 `_asklake_run_id = commit.run_id`인 delta만 집계해 PostgreSQL 상태에 병합한다. 날짜 차원에 `windowDays`가 있으면 최신 bucket 기준 범위 밖 bucket을 상태에서 제거하므로 최근 30일 전체를 다시 읽지 않는다. table widget, revision gap, 내부 run ID가 없는 legacy table, aggregate group 10,000개 초과만 고정 snapshot 전체 계산으로 차단 또는 재기준화한다.
 
-Frontend는 기본 수동 모드에서 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 사용자가 자동 갱신을 켜면 현재 선택 페이지 Widget의 고유 Dataset ID만 Dashboard당 EventSource 하나로 구독한다. event는 데이터 자체가 아니라 invalidation이며, 700ms 동안 Dataset별로 합친 뒤 영향받은 Widget만 기존 REST query로 재조회한다. 한 자동 조회가 진행 중이면 새 event는 한 번의 후속 조회로 합치고 polling fallback은 만들지 않는다. hidden tab·화면 이탈·토글 OFF에서는 EventSource를 닫고, visible 복귀 시 현재 페이지를 한 번 최신화한 뒤 재연결한다. 현재 페이지에서 같은 Dataset을 쓰는 Widget은 한 요청 그룹으로 묶고 최대 4개 그룹만 동시에 조회한다. backend는 저장된 `appliedRevision`과 최신 Dataset revision을 비교해 가능한 Widget은 delta merge하고, revision gap·replace·계산 계약 변경·증분 미지원 Widget은 최신 물리 snapshot으로 전체 재계산한다. 페이지 또는 Widget 설정이 바뀐 뒤 도착한 늦은 응답은 Dashboard/Widget signature가 맞지 않으면 버리고, 실패하면 이전 위젯 결과를 유지한다.
+Frontend는 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 현재 페이지에서 같은 Dataset을 쓰는 Widget을 한 요청 그룹으로 묶고 최대 4개 그룹만 동시에 조회한다. 최초 `pending` Widget 계산과 사용자가 누른 수동 새로고침만 widget query를 실행하며, 페이지 전환은 이미 준비된 Widget의 재조회 trigger가 아니다. backend는 저장된 `appliedRevision`과 최신 Dataset revision을 비교해 가능한 Widget은 delta merge하고, revision gap·replace·계산 계약 변경·증분 미지원 Widget은 최신 물리 snapshot으로 전체 재계산한다. 페이지 또는 Widget 설정이 바뀐 뒤 도착한 늦은 응답은 Dashboard/Widget signature가 맞지 않으면 버리고, 실패하면 이전 위젯 결과를 유지한다.
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 
@@ -566,15 +566,43 @@ Dashboard와 Job은 직접 연결하지 않는다. Job은 검증된 Catalog Data
 Job Run / micro-batch
 → verified Catalog Dataset revision publication
 → 사용자가 Widget Dataset 선택
-→ 화면 진입, 수동 새로고침 또는 선택적 SSE invalidation 후 Widget query
+→ 화면 진입 또는 수동 Widget query
 → widget appliedRevision
 ```
 
 - ETL·반복 SQL·Continuous SQL 생성 UI는 Dashboard를 자동 생성하거나 output Dataset을 고정하지 않는다.
 - Dashboard 편집기는 권한 있는 Catalog Dataset을 모두 제공하고 Dataset selector를 binding 상태로 잠그지 않는다.
 - Widget create/update와 Assistant action은 선택된 Widget Dataset ID를 그대로 사용한다. Dataset `query`와 Dashboard `manage/view` 권한은 기존 경계대로 검사한다.
-- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`가 수동·자동 최신화의 canonical source다. SSE payload는 invalidation에만 사용하고 `replace`는 전체 재계산, 지원되는 `append`는 delta merge를 우선한다.
+- `dataset_revision_commits`, `dataset_freshness`, `dashboard_widget_results`가 수동 최신화의 canonical source다. `replace`는 전체 재계산, 지원되는 `append`는 delta merge를 우선한다.
 - legacy `/api/dashboard-job-bindings`, binding service/repository/model, delivery worker 호출과 managed Widget/Assistant 제한은 제거됐다. Alembic `0022_remove_dashboard_job_bindings`는 delivery table을 먼저, binding table을 나중에 제거한다. 기존 데이터가 있으면 Phase 3 replica 교체와 backup 확인 없이는 migration을 거부한다.
+
+## SQL Job 실행 트리 목표 경계
+
+Issue #1117의 target architecture에서 SQL JOIN Job은 실행 트리의 부모/root이고, input Dataset을 생산하는 기존 Kafka/Batch Job은 execution child다. 부모/자식은 실행 ownership 용어이며 lineage는 계속 `producer Job → input Dataset → SQL transform → output Dataset` 방향을 유지한다.
+
+```text
+SQL parent start
+→ parent + producer child atomic lock
+→ producer child run / jobless static snapshot pin
+→ verified input Dataset revision set
+→ revision-driven SQL transform
+→ verified output Dataset revision publication
+→ Dashboard manual Widget query
+```
+
+- frontend는 Dataset ID만 제출한다. backend가 Catalog와 Job metadata에서 `producerJobId`, producer kind, execution/source/relation mode와 runtime status를 resolve한다.
+- realtime input에는 runnable Kafka Continuous producer Job이 필요하고, producer가 없는 queryable static Dataset은 허용한다.
+- parent full-tree start는 producer child를 실행한다. child가 standalone 실행 중이면 전체 parent start를 `409`로 거절하고 부분 lock이나 일부 child 실행을 허용하지 않는다.
+- parent가 tree lock을 보유하는 동안 child의 standalone command, 설정 변경과 삭제를 차단한다. lock이 없으면 child는 기존처럼 standalone 실행할 수 있으며 child command가 parent를 역방향으로 시작하지 않는다.
+- Kafka broker/topic/consumer group/offset과 고급 설정은 producer child만 소유한다. SQL parent는 별도 Kafka consumer를 만들지 않고 child가 게시한 Dataset revision/manifest cursor만 처리한다.
+- parent가 시작한 realtime child는 parent stop에서 함께 정지한다. output commit과 Catalog revision publication 뒤에만 input cursor를 전진시킨다.
+- Dashboard Job Binding과 자동 revision 감시는 사용하지 않는다. Widget Dataset ID가 연결 source이고 보기·편집 모드 모두 수동 query만 수행한다.
+
+Phase 1은 `catalog_datasets`의 producer 정규화 column과 `continuous_sql_dependencies`를 additive하게 도입했다. Phase 2부터 Continuous SQL validate/create는 정규화 Catalog metadata를 권위 정보로 사용한다. `relationMode`가 없는 Dataset을 이름·tag·materialization 이력으로 추정하지 않으며, streaming은 정확히 연결된 Kafka Continuous producer Job이 있어야 한다. static은 연결된 snapshot/batch producer 또는 producer가 없는 queryable snapshot을 허용한다. validate는 resolve 결과를 `dependencyBindings`로 반환하고 create는 SQL Job과 dependency를 같은 transaction에서 commit한다. 현재 `asklake-continuous-sql-{jobId}` consumer group을 만드는 Iceberg/ClickHouse adapter는 legacy runtime이며 Phase 5 전까지 제거하지 않는다. 상세 불변식과 Phase gate는 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)과 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+
+Phase 3은 `continuous_sql_tree_runs`, `continuous_sql_tree_node_runs`, `continuous_sql_tree_job_locks`를 추가한다. parent start는 parent와 producer child ETL row를 정렬해 잠그고, standalone active 상태를 확인한 뒤 전체 Job lock을 한 transaction에서 조건부 획득한다. 한 항목이라도 충돌하면 tree/node/lock을 모두 rollback한다. lock row는 lease, 단조 증가 generation, tree fencing identity를 가지며 API에는 hash만 노출한다. active tree의 reconcile은 lease를 갱신하고 stop/failure는 현재 fence와 일치하는 lock만 해제한다. ETL standalone command/update/delete도 같은 Job row를 잠근 뒤 active tree lock을 확인한다.
+
+Phase 4는 parent `start`/`recover`가 lock을 commit한 뒤 existing ETL producer를 batch → realtime 순서로 내부 command path에서 시작한다. child command는 tree run ID와 fence가 일치하는 active lock을 제시해야 하며, standalone bypass는 허용하지 않는다. node run에는 child Run/session identity와 requested state를 기록한다. child start가 실패하면 parent worker를 시작하지 않고 already-started realtime child만 best-effort stop한 다음 parent tree를 failed로 끝내고 lock을 해제한다. Phase 5부터 dependency가 있는 새 SQL Job plan은 `executionInputMode=dataset_revision`이며 SQL-owned broker/topic/consumer group/offset 설정을 저장하지 않는다. dependency가 없는 기존 Job만 `legacy_kafka` plan으로 기존 worker를 계속 사용한다. revision transform runner가 준비되지 않은 deployment에서는 managed plan을 legacy Kafka worker로 대체 실행하지 않고 `CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED`로 안전하게 거절한다.
 
 ## 14) Realtime 2026 전환 아키텍처
 
@@ -596,9 +624,9 @@ Spark/Iceberg commit
 - REST snapshot은 event cursor를 함께 반환하고 client는 cursor 이후 replay를 구독한다. retention gap은 resync 후 snapshot 재조회로 복구한다.
 - 현재 코드에는 tenant 식별자가 없으므로 기능 플래그는 deployment scope로 평가한다. event 전송과 refetch는 기존 ActorContext, resource permission, governance를 다시 검사한다.
 - Dataset revision과 `dataset.revision.committed`, Dashboard published revision과 `dashboard.published`는 각각 같은 transaction에서 기록한다. event insert 실패 시 canonical 변경도 rollback한다.
-- Dashboard frontend는 보기·편집 화면 진입 시 선택 페이지의 Dataset Widget을 조회하고, 상단 새로고침에서 같은 현재 페이지 Widget REST endpoint를 강제로 다시 조회한다. 사용자·Dashboard별 자동 갱신 preference 기본값은 OFF이며, ON이면 현재 페이지 Widget Dataset만 EventSource 하나로 구독하고 event 대상 Widget을 REST로 재조회한다. 실패하면 마지막 성공 결과를 유지한다.
-- durable event log와 SSE endpoint는 `DASHBOARD_AUTO_REFRESH_ENABLED=true`, `REALTIME_EVENTS_ENABLED=true`, `DASHBOARD_SYNC_MODE=hybrid|sse`일 때만 자동 갱신에 사용한다. 비활성·권한·서비스 오류는 연결 실패 상태로 표시하고 hidden polling으로 전환하지 않는다. 데이터 권위 경로는 자동 모드에서도 Widget REST query다.
-- Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다.
+- Dashboard frontend는 보기·편집 화면 진입 시 선택 페이지의 Dataset Widget을 조회하고, 상단 새로고침에서 같은 현재 페이지 Widget REST endpoint를 강제로 다시 조회한다. 실패하면 마지막 성공 결과를 유지한다. 자동 polling, Dashboard EventSource 구독, background prefetch는 사용하지 않는다.
+- durable event log와 SSE endpoint, `DASHBOARD_SYNC_MODE` 및 `REALTIME_EVENTS_ENABLED`는 backend 호환·운영 관찰 기반으로 남아 있지만 Dashboard frontend의 데이터 갱신을 시작하지 않는다. 현재 사용자 가시성의 권위 경로는 수동 Widget query다.
+- 현재 legacy Continuous SQL V1은 Kafka Structured Streaming runtime과 Iceberg/Catalog publication을 재사용하되 SQL 전용 consumer group, 별도 planner와 versioned manifest로 streaming relation 1개 + static relation N개의 INNER/LEFT JOIN만 허용한다. Issue #1117 target은 producer child의 Dataset revision 기반 실행 트리로 이 ownership을 교체한다.
 - static binding 기본값은 PINNED_AT_START다. advanced binding과 historical backfill은 기본 비활성 상태다.
 - 새 Continuous SQL과 Kafka Continuous request의 `triggerIntervalSeconds` 기본값은 10초, batch 최대값은 100행이다. baseline-bound Job은 최초 Trino JOIN snapshot과 source cursor를 저장하고 이후 Kafka source revision의 신규 범위만 처리한다.
 - Catalog `estimatedRowCount`가 `CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS` 이하인 static relation만 exact snapshot·schema identity로 Spark cache를 재사용한다. 유일키 scan은 같은 snapshot·JOIN key에서 한 번만 수행하고, snapshot이 바뀌면 기존 frame과 검증 identity를 폐기한다. 통계가 없거나 한도를 넘는 relation은 cache하지 않으며 0은 cache 비활성이다.
@@ -608,13 +636,13 @@ Spark/Iceberg commit
 - Catalog Dataset revision과 durable event는 exact Iceberg snapshot 및 `_asklake_run_id` 행 수 검증 뒤 같은 transaction에 기록한다. worker ACK는 이 transaction 이후이며 ACK 실패는 publication을 되돌리지 않고 retry한다.
 - stale worker/report/publication은 plan hash, Run generation과 fencing hash가 하나라도 다르면 거절한다. fencing token 원문은 worker bridge에만 전달하고 public API에는 hash만 노출한다.
 - ClickHouse serving mode는 기존 planner·Job/Run/Batch/command table을 재사용하는 선택적 worker adapter다. `servingMode` 기본값은 `iceberg`이며 ClickHouse flag가 꺼진 배포와 기존 payload의 의미는 바뀌지 않는다.
-- 현재 Production Compose 기본은 `CONTINUOUS_SQL_SERVING_MODE=iceberg`, `COMPOSE_PROFILES=trino`, ClickHouse v1/v2 flag off다. `DASHBOARD_AUTO_REFRESH_ENABLED=false`에서는 Dashboard 보기·편집 모드가 준비된 revision을 상단 수동 새로고침에서만 표시한다. flag가 켜져도 사용자 토글 기본값은 OFF다.
+- 현재 Production Compose 기본은 `CONTINUOUS_SQL_SERVING_MODE=iceberg`, `COMPOSE_PROFILES=trino`, ClickHouse v1/v2 flag off다. `DASHBOARD_AUTO_REFRESH_ENABLED=false`에서는 SQL 화면이 backend mode를 따라 Spark/Iceberg Job을 만들고 Dashboard 보기·편집 모드가 준비된 revision을 상단 수동 새로고침에서만 표시한다.
 - ClickHouse hot path는 `Kafka Engine -> ingest Materialized View -> raw ReplacingMergeTree -> JOIN Materialized View -> output ReplacingMergeTree` 순서다. raw와 output은 `(kafka_partition, kafka_offset)` identity를 사용하고 Dashboard와 Catalog rows reader는 output을 `FINAL`로 읽는다. 따라서 INNER JOIN의 미매칭 입력도 raw offset 경계에는 남고 output에는 노출되지 않는다.
 - static relation은 Run 시작 시 고정한 Iceberg snapshot을 Trino로 bounded read해 ClickHouse local MergeTree에 적재한다. ClickHouse mode는 `PINNED_AT_START`만 허용하며 static snapshot 변경은 기존 행을 backfill하지 않고 새 Run의 이후 입력부터 적용한다.
 - ClickHouse publication은 raw input offset range와 output row count를 구분해 PostgreSQL Catalog revision/event에 기록한다. ClickHouse output은 일반 Trino SQL table로 가장하지 않고 `queryEngineStatus=unavailable`, `clickhouseTable` mapping을 사용하며 Dashboard·Catalog row API만 전용 reader로 조회한다.
 - ClickHouse 장애 시 같은 Run을 Spark로 자동 전환하지 않는다. 전용 Kafka consumer group의 offset ownership을 보존하기 위해 Job을 실패 상태로 남기고 운영자가 flag·새 generation을 명시적으로 선택한다.
 
-결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
+결정 근거와 race-free 계약은 docs/realtime-2026/adr, event/wire 계약은 docs/realtime-2026/contracts/realtime-event-v1.md, docs/realtime-2026/contracts/continuous-sql-v1.md, docs/realtime-2026/contracts/sql-job-execution-tree-v1.md와 docs/realtime-2026/sse-operations.md에 있다. 4개 stacked PR의 범위는 docs/codex-realtime-pr-pack/STACKED_PR_PLAN.md를 따른다.
 
 ## 15) Pipeline·Snapshot·SQL·Catalog application 경계
 

@@ -929,6 +929,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             storage_size_bytes=payload.get("storageSizeBytes"),
             lineage_graph=payload.get("lineageGraph"),
             materialization_runs=payload.get("materializationRuns") or [],
+            producer_job_id=dataset.producer_job_id or payload.get("producerJobId"),
+            producer_job_kind=dataset.producer_job_kind or payload.get("producerJobKind"),
+            execution_mode=dataset.execution_mode or payload.get("executionMode"),
+            source_kind=dataset.source_kind or payload.get("sourceKind"),
+            relation_mode=dataset.relation_mode or payload.get("relationMode"),
+            runtime_status=dataset.runtime_status or payload.get("runtimeStatus"),
         )
 
     return CatalogDataset(
@@ -957,6 +963,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
         materialization_runs=[],
+        producer_job_id=dataset.producer_job_id,
+        producer_job_kind=dataset.producer_job_kind,
+        execution_mode=dataset.execution_mode,
+        source_kind=dataset.source_kind,
+        relation_mode=dataset.relation_mode,
+        runtime_status=dataset.runtime_status,
     )
 
 

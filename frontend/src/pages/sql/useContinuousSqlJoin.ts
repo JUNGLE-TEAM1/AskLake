@@ -36,7 +36,6 @@ export function useContinuousSqlJoin({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [featureConfig, setFeatureConfig] = useState<RealtimeFeatureConfig | null>(null);
   const [outputName, setOutputName] = useState("");
-  const [triggerIntervalSeconds, setTriggerIntervalSeconds] = useState(5);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ContinuousSqlJob | null>(null);
@@ -89,13 +88,13 @@ export function useContinuousSqlJoin({
           return;
         }
         if (latest.observedState !== "running") {
-          setProgressMessage("Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.");
+          setProgressMessage("연결된 producer Job과 JOIN 실행 트리를 준비하고 있습니다.");
         } else {
           try {
             const published = await getCatalogDataset(latest.outputDatasetId);
             if (!active) return;
             if (published.status !== "available") {
-              setProgressMessage("Kafka 소비 준비 완료 · 첫 실제 이벤트 게시를 기다리고 있습니다.");
+              setProgressMessage("producer Dataset의 첫 query 가능한 revision을 기다리고 있습니다.");
               if (active) timer = globalThis.setTimeout(() => void poll(), 1_000);
               return;
             }
@@ -104,7 +103,7 @@ export function useContinuousSqlJoin({
             return;
           } catch (catalogError) {
             if (!(catalogError instanceof ApiError) || catalogError.status !== 404) throw catalogError;
-            setProgressMessage("Kafka 소비 준비 완료 · 첫 실제 이벤트가 들어오면 카탈로그와 대시보드에 즉시 게시됩니다.");
+            setProgressMessage("producer Dataset revision이 게시되면 출력 Dataset에 반영됩니다.");
           }
         }
       } catch (pollError) {
@@ -126,7 +125,6 @@ export function useContinuousSqlJoin({
   const open = () => {
     if (!relationMix) return;
     setOutputName(buildContinuousSqlOutputName(relationMix.streamingDataset));
-    setTriggerIntervalSeconds(5);
     setError(null);
     setResult(null);
     setCatalogDataset(null);
@@ -137,12 +135,13 @@ export function useContinuousSqlJoin({
 
   const create = async () => {
     if (!relationMix || !featureEnabled || pending || !outputName.trim()) return;
-    const triggerSeconds = Math.max(1, Math.min(3600, Math.trunc(triggerIntervalSeconds)));
     const planRequest = {
       query,
       relationDatasetIds: selectedDatasets.map((item) => item.id),
       staticBindingPolicy: "PINNED_AT_START" as const,
-      triggerIntervalSeconds: triggerSeconds,
+      // SQL Job does not own Kafka trigger/offset tuning. The API field is
+      // retained for the legacy contract, while producer Jobs own cadence.
+      triggerIntervalSeconds: 10,
     };
     const outputIdentity = buildClickHouseOutputIdentity();
     setPending(true);
@@ -168,8 +167,8 @@ export function useContinuousSqlJoin({
       }
       setProgressMessage(
         servingMode === "iceberg"
-          ? "정적 Iceberg 스냅샷을 고정하고 Spark 실시간 JOIN 경로를 시작하고 있습니다."
-          : "정적 스냅샷을 ClickHouse에 준비하고 실시간 JOIN 경로를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.",
+          ? "정적 Iceberg 스냅샷과 producer Dataset revision을 고정하고 JOIN 실행 트리를 시작하고 있습니다."
+          : "정적 스냅샷과 producer Dataset revision을 준비하고 JOIN 실행 트리를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.",
       );
       const commonCreateRequest = {
         ...planRequest,
@@ -216,8 +215,8 @@ export function useContinuousSqlJoin({
         }
         setProgressMessage(
           started.job.observedState === "running"
-            ? "Kafka 소비 준비 완료 · 첫 실제 이벤트를 기다리고 있습니다."
-            : "Kafka 소비자와 JOIN 경로가 준비되는지 확인하고 있습니다.",
+            ? "producer Dataset revision을 처리하고 있습니다."
+            : "연결된 producer Job과 JOIN 실행 트리를 준비하고 있습니다.",
         );
         onAction(
           "analysis.continuous_sql.started",
@@ -258,7 +257,5 @@ export function useContinuousSqlJoin({
     servingMode,
     setDialogOpen,
     setOutputName,
-    setTriggerIntervalSeconds,
-    triggerIntervalSeconds,
   };
 }

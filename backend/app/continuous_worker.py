@@ -13,7 +13,6 @@ from app.core.database import SessionLocal
 from app.repositories.continuous_control_lease_repository import acquire_or_renew
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
 from app.services.continuous_sql_incremental import reconcile_continuous_sql_source_bindings
-from app.services.dashboard_live_precompute import precompute_continuous_sql_dashboards
 from app.services.etl_service import sync_active_kafka_continuous_runtimes
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,6 @@ def run_once() -> bool:
     sync_active_kafka_continuous_runtimes()
     reconcile_continuous_sql_source_bindings()
     sync_active_continuous_sql_jobs()
-    precompute_continuous_sql_dashboards()
     return True
 
 

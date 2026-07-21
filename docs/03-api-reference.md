@@ -259,7 +259,27 @@ SQL 분석 frontend는 stopped Job create가 성공하면 별도 `start` command
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
-SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 10초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
+SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. API 호환용 trigger 값은 10초지만 SQL UI는 Kafka trigger/offset 설정을 노출하지 않고 producer Job 설정을 따른다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog Dataset revision publication을 사용하며, Dashboard Widget은 사용자가 수동 새로고침할 때 그 revision을 조회한다.
+
+#### Issue #1117 실행 트리 확장
+
+Phase 1 persistence에 이어 Phase 2 producer resolution/create 계약이 적용됐다.
+
+- Catalog Dataset response는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`를 제공한다. 새 Dataset publication부터 저장하며 기존 Dataset은 추정 backfill하지 않는다.
+- validate와 Continuous SQL Job response는 backend가 resolve한 `dependencyBindings[]`를 제공한다. 각 항목은 nullable `sqlJobId`, `inputDatasetId`, nullable `childJobId`, `inputType`, `executionPolicy`, `required`를 가진다. validate에서는 아직 Job이 없어 `sqlJobId=null`, create/GET에서는 durable Job ID다.
+- streaming Dataset은 `relationMode=streaming`, `producerJobId`, `producerJobKind`, `executionMode=continuous`, `sourceKind=kafka`가 실제 Dataset-producing Kafka Continuous Job과 일치해야 한다. static producer metadata도 실제 Dataset-producing Job과 일치해야 하며 producer가 없는 queryable static snapshot은 `reuse_snapshot`으로 허용한다.
+- `relationMode`가 없는 기존 Dataset은 이름, tag, source 문자열이나 materialization 이력으로 추정하지 않는다. frontend도 같은 Catalog field만 사용한다.
+- frontend create/validate request는 계속 `relationDatasetIds`만 보내고 producer Job ID를 보내지 않는다.
+
+`CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`는 streaming producer가 없거나 Dataset에 정확히 연결되지 않은 경우, `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`는 producer metadata 불일치나 V1 input 범위 위반에 사용한다. 현재 runtime은 기존 direct Kafka consumer를 유지한다. producer child orchestration, revision 확정과 direct consumer 제거는 후속 Phase이며 Dashboard Binding과 자동 감시는 다시 추가하지 않는다.
+
+Phase 3부터 dependency가 있는 Job의 `start`/`recover`는 외부 worker 호출 전에 parent와 모든 producer child lock을 원자적으로 획득하고 `activeTreeRun`을 반환한다. `executionTree`에는 `activeTreeRunId`, `lockedJobIds`, `lockConflict`가 있고 tree run에는 node run, lock generation, lease expiry, hash 처리한 fencing token, 아직 비어 있을 수 있는 `inputDatasetRevisions`가 포함된다. 원문 fencing token은 API에 노출하지 않는다. active standalone child 또는 다른 tree lock과 충돌하면 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`, producer Job이 사라졌으면 `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`이며 tree/부분 lock은 남지 않는다. tree가 소유한 ETL Job의 standalone command/update/delete도 동일 conflict로 거절한다.
+
+Phase 4에서는 parent가 lock commit 뒤 batch child `run`, realtime child `startContinuous`를 batch → realtime 순서로 internal command path에서 요청하고, node의 `producerRunId`와 status를 응답 `activeTreeRun`에 반영한다. child command는 matching tree run ID와 fencing token이 없으면 여전히 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`다. 하나라도 시작되지 않으면 `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`로 parent worker 시작 전 실패하며 tree lock은 해제된다. Phase 5의 dependency-managed Job은 `executionInputMode=dataset_revision`으로 생성되고 SQL-owned Kafka 설정을 plan에 남기지 않는다. revision runner가 없는 배포는 managed Job을 Kafka worker로 fallback하지 않고 `409 CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED`를 반환한다. legacy Job(`executionInputMode=legacy_kafka`)만 기존 direct consumer를 유지한다.
+
+SQL 분석의 Continuous SQL dialog는 이 API가 반환한 authoritative `dependencyBindings`와 `activeTreeRun`만 표시한다. Kafka broker, consumer group, trigger 또는 max-offset 값을 SQL Job 생성 화면에서 수정하거나 제출하지 않는다.
+
+상세 target contract는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
 Canonical status values:
 
@@ -897,7 +917,7 @@ Content-Type: application/json
 
 `count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
-Frontend는 보기·편집 모드 모두에서 Dataset freshness를 polling한다. published는 SSE/hybrid 변경 알림을 빠른 trigger로 추가로 사용하고 연결 실패 시 polling으로 복귀한다. revision이 전진한 Dataset의 영향 widget만 `widgets/query`로 요청하며, draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 현재 값보다 낮으면 폐기한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer와 subscription을 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다.
+Frontend는 보기·편집 모드 모두에서 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 최초 `pending` Widget과 사용자가 상단 새로고침을 누른 현재 페이지의 Dataset Widget만 `widgets/query`로 요청한다. draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. 응답 revision이 현재 값보다 낮거나 Widget signature가 달라지면 폐기한다. route unmount 시 in-flight 요청을 취소하며, 갱신 실패는 이전 widget result를 유지한다.
 
 ### Pair A -> Pair B
 

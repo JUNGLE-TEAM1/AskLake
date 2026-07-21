@@ -503,6 +503,11 @@ class ClickHouseKafkaIngestV2Gateway:
             "schema": schema,
             "size": "ClickHouse managed",
             "source": job.name,
+            "producerJobId": job.id,
+            "producerJobKind": job.job_kind or "pipeline",
+            "executionMode": "continuous",
+            "sourceKind": "kafka",
+            "runtimeStatus": runtime.status,
             "status": "available" if published else "preparing",
             "storageFormat": "clickhouse",
             "storageLocation": (

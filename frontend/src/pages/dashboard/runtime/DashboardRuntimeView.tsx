@@ -7,7 +7,6 @@ import type {
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
-import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
@@ -39,9 +38,6 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
-  autoRefreshEnabled: boolean;
-  autoRefreshError: string | null;
-  autoRefreshStatus: DashboardAutoRefreshStatus;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -108,7 +104,6 @@ type DashboardRuntimeViewActions = {
   selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
   selectWidget: (widgetId: string) => void;
-  setAutoRefreshEnabled: (enabled: boolean) => void;
   share: () => void;
   toggleDatasetSidebar: () => void;
   undoLayout: () => void;
@@ -184,9 +179,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const {
-    autoRefreshEnabled,
-    autoRefreshError,
-    autoRefreshStatus,
     canRedoLayout,
     canUndoLayout,
     deletingWidgetId,
@@ -527,9 +519,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
           />
         ) : undefined}
         datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
-        autoRefreshEnabled={autoRefreshEnabled}
-        autoRefreshError={autoRefreshError}
-        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
@@ -582,7 +571,6 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
-        onAutoRefreshChange={actions.setAutoRefreshEnabled}
         onRenamePage={isDraftMode ? onRenamePage : undefined}
         onRenameTitle={isDraftMode ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}

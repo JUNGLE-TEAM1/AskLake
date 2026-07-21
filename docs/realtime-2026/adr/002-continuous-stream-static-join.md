@@ -4,6 +4,8 @@
 - 결정일: 2026-07-16
 - 범위: Continuous SQL V1
 
+> [ADR-003](003-sql-job-execution-tree-ownership.md)이 execution ownership과 producer 재사용 경계를 후속 정의한다. 이 ADR의 SQL shape, static snapshot, cardinality 안전 계약은 유지하지만 direct Kafka consumer ownership은 legacy 구현으로만 남는다.
+
 ## 결정
 
 V1은 streaming relation 정확히 1개와 static relation 1개 이상을 지원한다. JOIN은 INNER와 LEFT만 허용하며 명시적인 equality key가 필요하다. SELECT projection, alias, deterministic scalar expression을 허용하고 aggregate, window, subquery, UNION, CROSS/FULL/RIGHT JOIN, stream-stream JOIN은 거절한다.
@@ -12,11 +14,11 @@ V1은 streaming relation 정확히 1개와 static relation 1개 이상을 지원
 
 LATEST_PER_BATCH는 별도 flag가 켜진 경우에만 batch 시작 시 최신 static snapshot을 다시 resolve한다. STATIC_CHANGE_BACKFILL은 별도 flag와 명시적 운영 승인 없이는 실행하지 않는다.
 
-지연을 줄이기 위해 새 Continuous SQL Job의 trigger 기본값을 5초로 두고, Catalog row 통계가 설정 한도 이하인 exact static snapshot만 Spark memory/disk에 cache한다. 실제 snapshot 유일키 검증은 같은 snapshot·JOIN key에서 한 번만 수행하고, snapshot 변경 시 cache와 검증 identity를 폐기한다. 통계가 없으면 cache하지 않는 fail-safe를 선택한다.
+지연을 줄이기 위해 현재 SQL 분석 frontend는 새 Continuous SQL Job에 5초 trigger를 명시적으로 제출한다. API에서 생략했을 때의 기본값은 10초다. Catalog row 통계가 설정 한도 이하인 exact static snapshot만 Spark memory/disk에 cache한다. 실제 snapshot 유일키 검증은 같은 snapshot·JOIN key에서 한 번만 수행하고, snapshot 변경 시 cache와 검증 identity를 폐기한다. 통계가 없으면 cache하지 않는 fail-safe를 선택한다. ADR-003 목표 구조에서는 SQL Job의 trigger 설정을 제거하고 producer Job 설정과 Dataset revision을 따른다.
 
 새 Continuous SQL output table의 Iceberg partition spec에 내부 `_asklake_run_id`를 추가한다. 그러면 Trino가 publication exact-count와 Dashboard delta query에서 해당 batch file만 가지치기할 수 있다. 기존 table은 partition evolution을 자동 수행하지 않고 기존 spec을 유지한다.
 
-이 최적화는 exact Iceberg snapshot의 `_asklake_run_id` 행 수를 Trino로 확인한 후에만 Catalog/Dashboard를 게시하는 안전 계약을 바꾸지 않는다. 5초는 trigger interval이지 end-to-end 반영 SLA가 아니다.
+이 최적화는 exact Iceberg snapshot의 `_asklake_run_id` 행 수를 Trino로 확인한 후에만 Catalog revision을 게시하는 안전 계약을 바꾸지 않는다. 현재 frontend가 제출하는 5초는 trigger interval이지 end-to-end 반영 SLA가 아니다. Dashboard는 해당 Dataset을 수동 새로고침으로 조회한다.
 
 ## 결과 의미
 

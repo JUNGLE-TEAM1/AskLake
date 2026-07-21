@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
@@ -16,16 +17,20 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.models.continuous_sql import (
     ContinuousSqlCommandModel,
+    ContinuousSqlDependencyModel,
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
+    ContinuousSqlTreeNodeRunModel,
+    ContinuousSqlTreeRunModel,
 )
+from app.models.etl import ETLJobModel, KafkaContinuousRuntimeModel
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import (
     ContinuousSqlRepository,
     batch_to_schema,
-    job_to_schema,
     jobs_to_schema,
+    job_to_schema_with_tree,
 )
 from app.repositories.dashboard_live_repository import (
     DashboardLiveRepository,
@@ -38,6 +43,7 @@ from app.schemas.continuous_sql import (
     ContinuousSqlCommandRequest,
     ContinuousSqlCommandResponse,
     ContinuousSqlCreateRequest,
+    ContinuousSqlDependencyBinding,
     ContinuousSqlJob,
     ContinuousSqlJobList,
     ContinuousSqlPlanRequest,
@@ -46,6 +52,7 @@ from app.schemas.continuous_sql import (
     continuous_sql_serving_mode,
 )
 from app.services.continuous_sql_catalog import ContinuousSqlCatalogResolver
+from app.services.etl_service import command_job as command_etl_job
 from app.services.clickhouse_continuous_publication import (
     ClickHouseContinuousSqlPublicationService,
 )
@@ -80,6 +87,7 @@ class ContinuousSqlService:
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
         clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
+        child_commander: Callable[..., Any] | None = None,
     ) -> None:
         self.db = db
         self.settings = runtime_settings or settings
@@ -100,6 +108,7 @@ class ContinuousSqlService:
             clickhouse_publication_service
             or ClickHouseContinuousSqlPublicationService(db)
         )
+        self.child_commander = child_commander or command_etl_job
 
     def validate(
         self,
@@ -191,11 +200,18 @@ class ContinuousSqlService:
                 request,
                 job_id,
             )
+        # A Job with resolved producer dependencies is a Dataset-revision
+        # consumer.  It must not acquire a second Kafka consumer group simply
+        # because one of its relations originated at Kafka.  Jobs created
+        # before the execution-tree feature (and therefore without
+        # dependencies) deliberately retain the legacy direct-consumer plan.
+        managed_by_dataset_revisions = bool(compiled.dependency_bindings)
         compiled_plan = compiled_plan_with_serving_mode(
             compiled.compiled_plan,
             request.output.serving_mode,
             job_id=job_id,
             max_offsets_per_trigger=self.settings.continuous_sql_micro_batch_max_rows,
+            execution_input_mode=("dataset_revision" if managed_by_dataset_revisions else "legacy_kafka"),
         )
         job = ContinuousSqlJobModel(
             id=job_id,
@@ -227,6 +243,20 @@ class ContinuousSqlService:
         )
         try:
             self.repository.add_job(job)
+            self.repository.replace_dependencies(
+                job.id,
+                [
+                    ContinuousSqlDependencyModel(
+                        sql_job_id=job.id,
+                        input_dataset_id=item.input_dataset_id,
+                        child_job_id=item.child_job_id,
+                        input_type=item.input_type,
+                        execution_policy=item.execution_policy,
+                        required=item.required,
+                    )
+                    for item in compiled.dependency_bindings
+                ],
+            )
             if incremental_binding is not None:
                 self.repository.add_incremental_binding(incremental_binding)
             self.db.commit()
@@ -486,6 +516,12 @@ class ContinuousSqlService:
 
         previous_run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
         run, external_action = self._transition_command(job, previous_run, request.command)
+        if request.command in {"start", "recover"} and run is not None:
+            try:
+                self._acquire_execution_tree(job, run)
+            except ApiError:
+                self.db.rollback()
+                raise
 
         command = ContinuousSqlCommandModel(
             id=f"{job.id}:{request.command_id}",
@@ -496,6 +532,13 @@ class ContinuousSqlService:
             status="accepted",
         )
         self.repository.add_command(command)
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         self.db.add(job)
         if run is not None:
             self.db.add(run)
@@ -503,6 +546,8 @@ class ContinuousSqlService:
 
         try:
             worker_result: dict[str, Any] = {}
+            if external_action in {"start", "recover"}:
+                self._start_execution_tree_children(job, actor)
             if external_action == "recover":
                 self.gateway.manage(job, previous_run, "terminate")
                 worker_result = self.gateway.manage(
@@ -515,6 +560,16 @@ class ContinuousSqlService:
                     external_action,
                     self._worker_start_options(job) if external_action == "start" else None,
                 )
+            # The parent owns lifecycle only for realtime children that it
+            # locked and started as part of this tree.  Batch children are
+            # immutable completed revisions at this point and are never
+            # re-run by pause/resume/stop.
+            if external_action == "pause":
+                self._manage_execution_tree_realtime_children(job, actor, "pauseContinuous")
+            elif external_action == "stop":
+                self._manage_execution_tree_realtime_children(job, actor, "stopContinuous")
+            elif external_action == "start" and request.command == "resume":
+                self._manage_execution_tree_realtime_children(job, actor, "resumeContinuous")
             self._complete_command(job.id, run.run_id if run else None, command.id, request.command, worker_result)
         except ApiError as exc:
             self._fail_command(job.id, run.run_id if run else None, command.id, exc)
@@ -528,6 +583,310 @@ class ContinuousSqlService:
             command_id=request.command_id,
             job=self._job_schema(refreshed),
         )
+
+    def _start_execution_tree_children(
+        self,
+        job: ContinuousSqlJobModel,
+        actor: ActorContext,
+    ) -> None:
+        """Start existing producer Jobs before the parent worker is submitted.
+
+        Phase 4 deliberately reuses the ETL command path instead of copying
+        Kafka settings or creating a SQL-owned consumer.  The exact dataset
+        revision wait and transform are Phase 5; this phase makes ownership,
+        dispatch order, durable node state, and failure propagation explicit.
+        """
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        dependencies = self.repository.list_dependencies(job.id)
+        by_child = {
+            item.child_job_id: item
+            for item in dependencies
+            if item.child_job_id is not None
+        }
+        nodes = {
+            item.job_id: item
+            for item in self.repository.list_tree_nodes(tree_run.tree_run_id)
+        }
+        # Batch output must be requested before the realtime producer.  This
+        # preserves the target execution order while leaving revision pinning
+        # and transform dispatch to Phase 5.
+        ordered_children = sorted(
+            by_child,
+            key=lambda child_id: (
+                0 if by_child[child_id].input_type == "batch" else 1,
+                child_id,
+            ),
+        )
+        started_realtime: list[str] = []
+        current_node: ContinuousSqlTreeNodeRunModel | None = None
+        try:
+            for child_id in ordered_children:
+                dependency = by_child[child_id]
+                current_node = nodes.get(child_id)
+                if current_node is None:
+                    raise ApiError(
+                        "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                        "The SQL execution tree is missing a producer node.",
+                        status.HTTP_409_CONFLICT,
+                        {"jobId": job.id, "childJobId": child_id},
+                    )
+                command = "startContinuous" if dependency.input_type == "realtime" else "run"
+                current_node.status = "starting"
+                self.db.add(current_node)
+                response = self.child_commander(
+                    self.db,
+                    child_id,
+                    command,
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+                current_node.producer_run_id = self._producer_run_id(response)
+                current_node.status = self._producer_node_status(response, dependency.input_type)
+                self.db.add(current_node)
+                if dependency.input_type == "realtime":
+                    started_realtime.append(child_id)
+        except Exception as exc:
+            if current_node is not None:
+                current_node.status = "failed"
+                current_node.ended_at = utc_now()
+                self.db.add(current_node)
+            self._stop_started_realtime_children(tree_run, started_realtime, actor)
+            cause_code = str(exc.code) if isinstance(exc, ApiError) else "INTERNAL_ERROR"
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                "A required producer Job could not be started for the SQL execution tree.",
+                status.HTTP_409_CONFLICT,
+                {
+                    "jobId": job.id,
+                    "childJobId": current_node.job_id if current_node is not None else None,
+                    "causeCode": cause_code,
+                },
+            ) from exc
+
+    def _stop_started_realtime_children(
+        self,
+        tree_run: ContinuousSqlTreeRunModel,
+        child_ids: list[str],
+        actor: ActorContext,
+    ) -> None:
+        for child_id in reversed(child_ids):
+            try:
+                self.child_commander(
+                    self.db,
+                    child_id,
+                    "stopContinuous",
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+            except ApiError:
+                logger.exception(
+                    "SQL execution tree could not compensate realtime child start",
+                    extra={"treeRunId": tree_run.tree_run_id, "jobId": child_id},
+                )
+
+    def _manage_execution_tree_realtime_children(
+        self,
+        job: ContinuousSqlJobModel,
+        actor: ActorContext,
+        command: str,
+    ) -> None:
+        """Propagate lifecycle only through the active parent-owned tree.
+
+        Management is deliberately best effort after the parent command has
+        been accepted by its worker. A failed child control request is durable
+        node evidence, but it must not turn a successful parent stop into a
+        false "still running" result.
+        """
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        nodes = self.repository.list_tree_nodes(tree_run.tree_run_id)
+        for node in sorted(
+            (item for item in nodes if item.node_type == "realtime"),
+            key=lambda item: item.job_id,
+            reverse=command == "stopContinuous",
+        ):
+            try:
+                response = self.child_commander(
+                    self.db,
+                    node.job_id,
+                    command,
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+                node.producer_run_id = self._producer_run_id(response) or node.producer_run_id
+                node.status = {
+                    "pauseContinuous": "pausing",
+                    "resumeContinuous": "starting",
+                    "stopContinuous": "stopping",
+                }[command]
+                self.db.add(node)
+            except ApiError as exc:
+                node.status = "failed"
+                node.ended_at = utc_now()
+                self.db.add(node)
+                logger.exception(
+                    "SQL execution tree child lifecycle command failed",
+                    extra={
+                        "treeRunId": tree_run.tree_run_id,
+                        "jobId": node.job_id,
+                        "command": command,
+                        "code": exc.code,
+                    },
+                )
+
+    @staticmethod
+    def _producer_run_id(response: Any) -> str | None:
+        run = getattr(response, "run", None)
+        run_id = getattr(run, "run_id", None) or getattr(run, "runId", None)
+        if run_id:
+            return str(run_id)
+        result = getattr(response, "processing_result", None) or {}
+        worker_result = result.get("workerResult") if isinstance(result, dict) else None
+        if isinstance(worker_result, dict):
+            return str(worker_result.get("workerAttemptId") or worker_result.get("containerId") or "") or None
+        return None
+
+    @staticmethod
+    def _producer_node_status(response: Any, input_type: str) -> str:
+        if input_type == "batch":
+            run = getattr(response, "run", None)
+            return str(getattr(run, "status", None) or "queued")
+        result = getattr(response, "processing_result", None) or {}
+        runtime_status = result.get("runtimeStatus") if isinstance(result, dict) else None
+        return str(runtime_status or "starting")
+
+    def _acquire_execution_tree(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+    ) -> ContinuousSqlTreeRunModel | None:
+        dependencies = self.repository.list_dependencies(job.id)
+        child_ids = sorted({
+            item.child_job_id
+            for item in dependencies
+            if item.child_job_id is not None
+        })
+        if not dependencies:
+            return None
+
+        children = list(self.db.scalars(
+            select(ETLJobModel)
+            .where(ETLJobModel.id.in_(child_ids))
+            .order_by(ETLJobModel.id.asc())
+            .with_for_update()
+        ).all()) if child_ids else []
+        children_by_id = {child.id: child for child in children}
+        missing = [child_id for child_id in child_ids if child_id not in children_by_id]
+        if missing:
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                "A required producer Job no longer exists.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "childJobIds": missing},
+            )
+        active_children: list[dict[str, str]] = []
+        for child in children:
+            runtime = (
+                self.db.get(KafkaContinuousRuntimeModel, child.id)
+                if child.execution_mode == "continuous"
+                else None
+            )
+            runtime_status = str(runtime.status if runtime is not None else "").casefold()
+            if str(child.status or "").casefold() in {"running", "paused"} or runtime_status in {
+                "starting", "running", "pausing", "paused", "stopping",
+            }:
+                active_children.append({
+                    "jobId": child.id,
+                    "status": runtime_status or str(child.status),
+                })
+        if active_children:
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_CONFLICT",
+                "A producer Job is already active as a standalone Job.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "conflicts": active_children},
+            )
+
+        generation = self.repository.next_tree_generation(job.id)
+        tree_run_id = f"tree_{job.id}_{generation}_{uuid4().hex[:12]}"
+        fencing_token = uuid4().hex
+        now = utc_now()
+        lease_expires_at = datetime.now(UTC) + timedelta(
+            seconds=self.settings.continuous_sql_tree_lock_lease_seconds
+        )
+        tree_run = self.repository.add_tree_run(ContinuousSqlTreeRunModel(
+            tree_run_id=tree_run_id,
+            sql_job_id=job.id,
+            continuous_sql_run_id=run.run_id,
+            generation=generation,
+            trigger_type="parent_tree",
+            status="starting",
+            fencing_token=fencing_token,
+            lease_expires_at=lease_expires_at,
+            input_dataset_revisions={},
+            started_at=now,
+        ))
+        dependency_by_child = {
+            item.child_job_id: item
+            for item in dependencies
+            if item.child_job_id is not None
+        }
+        nodes = [ContinuousSqlTreeNodeRunModel(
+            node_run_id=f"node_{tree_run_id}_{job.id}",
+            tree_run_id=tree_run_id,
+            job_id=job.id,
+            node_type="parent",
+            trigger_type="parent_tree",
+            parent_run_id=None,
+            producer_run_id=run.run_id,
+            status="starting",
+            input_dataset_revisions={},
+            started_at=now,
+        )]
+        nodes.extend(
+            ContinuousSqlTreeNodeRunModel(
+                node_run_id=f"node_{tree_run_id}_{child_id}",
+                tree_run_id=tree_run_id,
+                job_id=child_id,
+                node_type=dependency_by_child[child_id].input_type,
+                trigger_type="parent_tree",
+                parent_run_id=tree_run_id,
+                producer_run_id=None,
+                status="locked",
+                input_dataset_revisions={},
+                started_at=now,
+            )
+            for child_id in child_ids
+        )
+        self.repository.add_tree_nodes(nodes)
+        node_by_job = {node.job_id: node for node in nodes}
+        for lock_job_id in sorted([job.id, *child_ids]):
+            lock_generation = self.repository.acquire_tree_job_lock(
+                job_id=lock_job_id,
+                tree_run_id=tree_run_id,
+                node_run_id=node_by_job[lock_job_id].node_run_id,
+                owner_sql_job_id=job.id,
+                lock_kind="parent" if lock_job_id == job.id else "child",
+                fencing_token=fencing_token,
+                lease_seconds=self.settings.continuous_sql_tree_lock_lease_seconds,
+            )
+            if lock_generation is None:
+                raise ApiError(
+                    "CONTINUOUS_SQL_DEPENDENCY_CONFLICT",
+                    "The SQL execution tree could not acquire its complete Job lock set.",
+                    status.HTTP_409_CONFLICT,
+                    {"jobId": job.id, "conflictingJobId": lock_job_id},
+                )
+        return tree_run
 
     def _transition_command(
         self,
@@ -684,6 +1043,13 @@ class ContinuousSqlService:
                     run.last_error_code = job.last_error_code
                     run.last_error_message = job.last_error_message
 
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         self.db.add(job)
         if run is not None:
             self.db.add(run)
@@ -736,12 +1102,38 @@ class ContinuousSqlService:
             plan_hash=compiled.plan_hash,
             runtime_sql=compiled.runtime_sql,
             relations=[ContinuousSqlRelationBinding.model_validate(item) for item in plan["relations"]],
+            dependency_bindings=self._dependency_bindings(relations),
             joins=list(plan["joins"]),
             output_schema=list(plan["outputSchema"]),
             static_binding_policy=request.static_binding_policy,
             warnings=list(plan.get("warnings") or []),
             compiled_plan=plan,
         )
+
+    @staticmethod
+    def _dependency_bindings(
+        relations: list[Any],
+    ) -> list[ContinuousSqlDependencyBinding]:
+        return [
+            ContinuousSqlDependencyBinding(
+                input_dataset_id=relation.dataset_id,
+                child_job_id=relation.producer_job_id,
+                input_type=(
+                    "realtime"
+                    if relation.mode == "streaming"
+                    else "batch"
+                    if relation.producer_job_id
+                    else "static"
+                ),
+                execution_policy=(
+                    "run_on_tree_start"
+                    if relation.producer_job_id
+                    else "reuse_snapshot"
+                ),
+                required=True,
+            )
+            for relation in relations
+        ]
 
     def _new_run(
         self,
@@ -778,6 +1170,7 @@ class ContinuousSqlService:
         return run
 
     def _resolve_run_bindings(self, job: ContinuousSqlJobModel) -> list[dict[str, Any]]:
+        legacy_direct_consumer = not self.repository.list_dependencies(job.id)
         incremental = self.repository.get_incremental_binding(job.id)
         pinned_by_dataset = {
             str(item.get("datasetId") or ""): item
@@ -789,7 +1182,10 @@ class ContinuousSqlService:
             if not isinstance(persisted, dict):
                 continue
             dataset_id = str(persisted.get("datasetId") or "")
-            current = self.catalog_resolver.resolve_current(dataset_id)
+            current = self.catalog_resolver.resolve_current(
+                dataset_id,
+                legacy_binding=persisted if legacy_direct_consumer else None,
+            )
             if current.mode != str(persisted.get("mode") or ""):
                 raise ContinuousSqlValidationError(
                     "CONTINUOUS_SQL_RELATION_MODE_CHANGED",
@@ -842,6 +1238,10 @@ class ContinuousSqlService:
         return bindings
 
     def _worker_start_options(self, job: ContinuousSqlJobModel) -> dict[str, Any]:
+        if str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision":
+            # Revision-driven execution receives its cursor from durable
+            # Dataset commits, never from Kafka offsets.
+            return {}
         binding = self.repository.get_incremental_binding(job.id)
         options: dict[str, Any] = {
             "maxOffsetsPerTrigger": int(self.settings.continuous_sql_micro_batch_max_rows),
@@ -928,6 +1328,13 @@ class ContinuousSqlService:
                 run.status = job.observed_state
                 if job.observed_state == "stopped":
                     run.ended_at = utc_now()
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         if worker_id:
             job.worker_id = worker_id
             if run is not None:
@@ -965,6 +1372,13 @@ class ContinuousSqlService:
             run.status = "failed"
             run.last_error_code = str(error.code)
             run.last_error_message = error.message
+        self._sync_execution_tree_status(
+            job,
+            status_value="failed",
+            terminal=True,
+            error_code=str(error.code),
+            error_message=error.message,
+        )
         command = self.db.get(ContinuousSqlCommandModel, command_record_id)
         if command is not None:
             command.status = "failed"
@@ -974,6 +1388,56 @@ class ContinuousSqlService:
         if run is not None:
             self.db.add(run)
         self.db.commit()
+
+    def _sync_execution_tree_status(
+        self,
+        job: ContinuousSqlJobModel,
+        *,
+        status_value: str,
+        terminal: bool,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        if terminal:
+            self.repository.release_tree_locks(
+                tree_run,
+                terminal_status=status_value,
+                ended_at=utc_now(),
+                error_code=error_code,
+                error_message=error_message,
+            )
+            return
+        if not self.repository.renew_tree_locks(
+            tree_run,
+            self.settings.continuous_sql_tree_lock_lease_seconds,
+        ):
+            job.observed_state = "failed"
+            job.last_error_code = "CONTINUOUS_SQL_DEPENDENCY_CONFLICT"
+            job.last_error_message = "SQL execution tree lock ownership was lost."
+            self.repository.release_tree_locks(
+                tree_run,
+                terminal_status="failed",
+                ended_at=utc_now(),
+                error_code=job.last_error_code,
+                error_message=job.last_error_message,
+            )
+            return
+        tree_run.status = status_value
+        parent_node = next(
+            (
+                node
+                for node in self.repository.list_tree_nodes(tree_run.tree_run_id)
+                if node.node_type == "parent"
+            ),
+            None,
+        )
+        if parent_node is not None:
+            parent_node.status = status_value
+            self.db.add(parent_node)
+        self.db.add(tree_run)
 
     def _apply_worker_report(
         self,
@@ -1086,8 +1550,7 @@ class ContinuousSqlService:
         return job
 
     def _job_schema(self, job: ContinuousSqlJobModel) -> ContinuousSqlJob:
-        run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
-        return job_to_schema(job, run, self.repository.get_incremental_binding(job.id))
+        return job_to_schema_with_tree(job, self.repository)
 
     @staticmethod
     def _invalid_transition(job: ContinuousSqlJobModel, command: str) -> None:
@@ -1145,21 +1608,32 @@ def compiled_plan_with_serving_mode(
     *,
     job_id: str | None = None,
     max_offsets_per_trigger: int | None = None,
+    execution_input_mode: str = "legacy_kafka",
 ) -> dict[str, Any]:
     plan_without_hash = {
         key: value for key, value in compiled_plan.items() if key != "planHash"
     }
     plan_without_hash["servingMode"] = serving_mode
+    plan_without_hash["executionInputMode"] = execution_input_mode
     streaming_source = plan_without_hash.get("streamingSource")
     if isinstance(streaming_source, dict):
         streaming_source = dict(streaming_source)
-        if job_id:
+        if execution_input_mode == "legacy_kafka" and job_id:
             streaming_source["consumerGroupId"] = f"asklake-continuous-sql-{job_id}"
-        if max_offsets_per_trigger is not None:
+        if execution_input_mode == "legacy_kafka" and max_offsets_per_trigger is not None:
             streaming_source["maxOffsetsPerTrigger"] = max(
                 1,
                 int(max_offsets_per_trigger),
             )
+        if execution_input_mode == "dataset_revision":
+            # Keep only relation metadata used to resolve the producer's
+            # published Dataset.  Kafka connection/offset configuration is
+            # producer-owned and cannot leak into the SQL runtime contract.
+            for key in (
+                "broker", "topic", "consumerGroupId", "initialOffsetPolicy",
+                "maxOffsetsPerTrigger", "streamPartitionCursors",
+            ):
+                streaming_source.pop(key, None)
         plan_without_hash["streamingSource"] = streaming_source
     return {
         **plan_without_hash,

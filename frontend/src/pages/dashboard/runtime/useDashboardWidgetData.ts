@@ -5,7 +5,6 @@ import type { DashboardRuntimeMode, DashboardRuntimeResponse } from "../../../ty
 import {
   dashboardWidgetDataRequests,
   dashboardWidgetDataRefreshRequests,
-  dashboardWidgetDataRefreshRequestsForDatasets,
   dashboardWidgetDataSelectionKey,
   mergeDashboardWidgetData,
   runDashboardWidgetDataQueue,
@@ -38,7 +37,6 @@ export function useDashboardWidgetData({
   const loadStateKey = `${selectionKey}:${requests.length > 0 ? "needs-data" : "settled"}`;
   const runtimeRef = useRef(runtime);
   const refreshControllerRef = useRef<AbortController | null>(null);
-  const activePageKeyRef = useRef<string | null>(null);
   runtimeRef.current = runtime;
 
   useEffect(() => {
@@ -119,62 +117,6 @@ export function useDashboardWidgetData({
     return !controller.signal.aborted && succeeded;
   }, [active, dashboardId, mode, selectedPageId, setRuntime]);
 
-  const refreshWidgetDataForDatasets = useCallback(async (datasetIds: readonly string[]) => {
-    const current = runtimeRef.current;
-    if (!active || !current || current.dashboard.id !== dashboardId) return false;
-    const refreshRequests = dashboardWidgetDataRefreshRequestsForDatasets(
-      current,
-      selectedPageId,
-      datasetIds,
-    );
-    if (refreshRequests.length === 0) return true;
-
-    let succeeded = true;
-    await runDashboardWidgetDataQueue(refreshRequests, async (request) => {
-      try {
-        const response = await queryDashboardWidgets(dashboardId, mode, request.widgetIds, {
-          timeoutMs: DASHBOARD_WIDGET_DATA_TIMEOUT_MS,
-        });
-        if (response.widgets.some((widget) => widget.dataStatus === "error")) succeeded = false;
-        setRuntime((latest) => mergeDashboardWidgetData(
-          latest,
-          dashboardId,
-          response.widgets,
-          request.signatures,
-        ));
-      } catch {
-        succeeded = false;
-      }
-    });
-    return succeeded;
-  }, [active, dashboardId, mode, selectedPageId, setRuntime]);
-
-  const activePageKey = active && runtime?.dashboard.id === dashboardId && selectedPageId
-    ? `${dashboardId}:${mode}:${selectedPageId}`
-    : null;
-
-  useEffect(() => {
-    if (!activePageKey) {
-      activePageKeyRef.current = null;
-      return;
-    }
-    const previousPageKey = activePageKeyRef.current;
-    activePageKeyRef.current = activePageKey;
-    if (!previousPageKey || previousPageKey === activePageKey) return;
-
-    const current = runtimeRef.current;
-    const hasPreviouslyLoadedDatasetWidget = Boolean(
-      current
-      && selectedPageId
-      && (current.widgetsByPageId[selectedPageId] ?? []).some((widget) => (
-        Boolean(widget.datasetId)
-        && widget.dataStatus !== "pending"
-        && widget.dataStatus !== "loading"
-      )),
-    );
-    if (hasPreviouslyLoadedDatasetWidget) void refreshCurrentPageWidgetData();
-  }, [activePageKey, refreshCurrentPageWidgetData, selectedPageId]);
-
   useEffect(() => () => {
     refreshControllerRef.current?.abort();
     refreshControllerRef.current = null;
@@ -184,5 +126,5 @@ export function useDashboardWidgetData({
     setRuntime((current) => setDashboardWidgetDataStatus(current, [widgetId], "pending"));
   }, [setRuntime]);
 
-  return { refreshCurrentPageWidgetData, refreshWidgetDataForDatasets, retryWidgetData };
+  return { refreshCurrentPageWidgetData, retryWidgetData };
 }

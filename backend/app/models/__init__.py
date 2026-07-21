@@ -6,9 +6,13 @@ from app.models.benchmark import BenchmarkRunModel
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
+    ContinuousSqlDependencyModel,
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
+    ContinuousSqlTreeJobLockModel,
+    ContinuousSqlTreeNodeRunModel,
+    ContinuousSqlTreeRunModel,
 )
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -71,7 +75,11 @@ __all__ = [
     "ContinuousSqlRunModel",
     "ContinuousSqlBatchModel",
     "ContinuousSqlCommandModel",
+    "ContinuousSqlDependencyModel",
     "ContinuousSqlIncrementalBindingModel",
+    "ContinuousSqlTreeRunModel",
+    "ContinuousSqlTreeNodeRunModel",
+    "ContinuousSqlTreeJobLockModel",
     "DatasetFreshnessModel",
     "DatasetKafkaPartitionCursorModel",
     "DatasetRevisionCommitModel",

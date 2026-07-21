@@ -4,7 +4,10 @@ import hashlib
 import json
 from typing import Any, Protocol
 
+from fastapi import status
+
 from app.core.config import Settings, settings
+from app.core.errors import ApiError
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.schemas.continuous_sql import continuous_sql_serving_mode
 from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
@@ -31,6 +34,19 @@ class NodeContinuousSqlWorkerGateway:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         plan = dict(job.compiled_plan or {})
+        if str(plan.get("executionInputMode") or "legacy_kafka") == "dataset_revision":
+            # Do not silently fall through to the historical Kafka runner:
+            # that would create a SQL-owned consumer and break the execution
+            # tree's single-producer ownership guarantee.  A revision runner
+            # is selected by the routed gateway in the next implementation
+            # step; keeping this guard here protects old deployments that
+            # instantiate NodeContinuousSqlWorkerGateway directly.
+            raise ApiError(
+                "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED",
+                "Dataset-revision Continuous SQL requires the revision transform runner; "
+                "the legacy Kafka worker is not permitted for this Job.",
+                status.HTTP_409_CONFLICT,
+            )
         source = plan.get("streamingSource") if isinstance(plan.get("streamingSource"), dict) else {}
         runtime_plan = {
             **plan,

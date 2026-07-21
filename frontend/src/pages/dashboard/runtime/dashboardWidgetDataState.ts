@@ -93,32 +93,6 @@ export function dashboardWidgetDataRefreshRequests(
   );
 }
 
-export function dashboardWidgetDataRefreshRequestsForDatasets(
-  runtime: DashboardRuntimeResponse | null,
-  pageId: string | null,
-  datasetIds: readonly string[],
-): DashboardWidgetDataRequest[] {
-  const selectedDatasetIds = new Set(datasetIds.map((id) => id.trim()).filter(Boolean));
-  if (selectedDatasetIds.size === 0) return [];
-  return buildDashboardWidgetDataRequests(
-    runtime,
-    pageId,
-    (widget) => Boolean(widget.datasetId && selectedDatasetIds.has(widget.datasetId)),
-  );
-}
-
-export function dashboardPageDatasetIds(
-  runtime: DashboardRuntimeResponse | null,
-  pageId: string | null,
-) {
-  if (!runtime || !pageId) return [];
-  return Array.from(new Set(
-    (runtime.widgetsByPageId[pageId] ?? [])
-      .map((widget) => widget.datasetId?.trim() ?? "")
-      .filter(Boolean),
-  )).sort();
-}
-
 export function dashboardWidgetDataSelectionKey(
   runtime: DashboardRuntimeResponse | null,
   pageId: string | null,

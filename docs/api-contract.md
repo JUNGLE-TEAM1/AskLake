@@ -4126,7 +4126,7 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 
 ## Legacy Dashboard Job Binding 제거 계약
 
-> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic head `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다.
+> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic migration `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다. 현재 head는 후속 additive migration을 포함할 수 있다.
 
 Dashboard와 Job 사이에 새 binding을 만들지 않는다. ETL, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 검증된 Catalog Dataset revision을 publication하고, Dashboard Widget이 저장한 `dataset_id`가 사용자가 선택한 연결의 source of truth다.
 
@@ -4281,6 +4281,49 @@ compiled plan은 `staticCacheMaxRows`와 relation별 서버 계산 `cacheHint`�
 새 Continuous SQL output과 baseline-bound 기존 Iceberg table의 partition spec에는 사용자 schema에 노출하지 않는 `_asklake_run_id` identity partition을 추가한다. publication의 exact snapshot row-count와 Dashboard revision delta는 이 partition을 조건으로 해당 batch file만 가지치기한다.
 
 기존 `/api/query/runs` 및 Kafka Continuous ETL API는 변경하지 않는다. Continuous SQL feature flag가 꺼져 있으면 validate/create/start/resume/recover는 `409 CONTINUOUS_SQL_DISABLED`로 fail closed한다.
+
+### Issue #1117 SQL Job 실행 트리 contract
+
+Phase 1 producer metadata/dependency persistence에 이어 Phase 2는 validate/create의 authoritative producer resolution을 구현했다. runtime은 아직 direct-consumer이며 lock과 orchestration은 후속 Phase다. 구현 순서는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+
+validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. backend는 Catalog 정규화 column과 실제 Dataset-producing Job의 ID, Dataset ID, kind, execution/source mode를 대조한다. validate와 Continuous SQL Job response는 다음 `dependencyBindings`를 반환한다. validate의 `sqlJobId`는 `null`이고 create/GET은 같은 transaction으로 commit된 실제 ID다.
+
+```json
+{
+  "sqlJobId": "csql_123",
+  "inputDatasetId": "ds_clicks",
+  "childJobId": "JOB-1234",
+  "inputType": "realtime",
+  "executionPolicy": "run_on_tree_start",
+  "required": true
+}
+```
+
+Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`가 추가됐다. 새 ETL/Trino SQL/Continuous SQL publication은 JSON payload와 정규화 column을 함께 쓰고 read에서는 정규화 column이 우선한다. 기존 Dataset은 자동 backfill하지 않는다. Phase 2 frontend와 backend 모두 이름, tag, source 문자열, materialization run으로 relation mode나 producer를 추정하지 않는다.
+
+streaming input은 `relationMode=streaming`, 실제 Kafka Continuous `producerJobId`, 일치하는 `producerJobKind`, `executionMode=continuous`, `sourceKind=kafka`가 모두 필요하다. static input은 일치하는 batch producer가 있으면 `batch/run_on_tree_start`, producer metadata가 전혀 없는 queryable snapshot이면 `static/reuse_snapshot`이다. 일부만 있는 producer metadata, 다른 Dataset을 생산하는 Job, static으로 위장한 Continuous producer는 `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`다. streaming producer 누락/해결 실패는 `CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`다.
+
+Phase 2 이전에 생성되어 durable dependency가 비어 있는 legacy direct-consumer Job의 재시작만 예외다. 이 경우 새 producer를 추정하지 않고 Job에 이미 저장된 relation mode와 streaming source를 현재 Catalog schema/snapshot 검증에 사용한다. 이 호환 경로는 validate/create 또는 새 Job에 적용되지 않으며 기존 Job을 tree-managed Job으로 자동 변환하지 않는다.
+
+Phase 3 migration `0024_sql_execution_tree_locking`은 tree run, node run, cross-Job lock table을 추가한다. dependency가 있는 Continuous SQL parent의 start/recover는 SQL parent와 모든 producer child ID를 정렬하고 관련 Job row를 `FOR UPDATE`로 잠근 뒤 전체 lock set을 같은 transaction에서 획득한다. active standalone child, active unexpired tree lock 또는 producer 삭제가 하나라도 확인되면 새 continuous run, tree/node row와 앞서 획득한 lock을 전부 rollback한다.
+
+Job response의 additive `executionTree`는 active tree ID와 잠긴 Job ID를, `activeTreeRun`은 `treeRunId`, generation, `triggerType=parent_tree`, status, `fencingTokenHash`, `leaseExpiresAt`, `inputDatasetRevisions`, `nodes`, `locks`를 반환한다. parent node의 `parentRunId`는 null이고 child node는 tree run ID를 가진다. lock API는 generation과 fencing hash만 노출하며 raw token을 반환하지 않는다. reconcile은 현재 fence의 전체 lock set만 갱신하고, stop/failure는 현재 fence와 일치하는 lock만 해제한다. lease가 만료되면 다음 owner가 generation을 증가시켜 takeover할 수 있고 stale owner는 새 lock을 해제하거나 상태를 되돌릴 수 없다.
+
+tree-owned ETL Job은 standalone lifecycle command, update, delete를 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`로 거절한다. 반대로 standalone Job row가 먼저 running/paused 상태를 확정하면 parent start가 같은 오류로 거절된다. Phase 4 parent start/recover는 tree lock commit 뒤 existing batch child에 `run`, realtime child에 `startContinuous`를 batch → realtime 순서로 요청한다. 이 internal command는 matching `treeRunId`와 raw fencing token을 server-side로만 제시해 tree-owned child를 통과하며 public ETL API request에 이 field를 추가하지 않는다. child response의 Run/session identity와 requested status는 tree node에 저장한다. child가 실패하면 parent SQL worker는 시작하지 않고 `CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`로 tree를 failed/released 처리한다. revision wait/transform과 legacy direct-consumer 제거는 Phase 5다. lock lease는 `CONTINUOUS_SQL_TREE_LOCK_LEASE_SECONDS`(기본 120초)이며 active parent reconcile에서 갱신한다.
+
+DB migration `0023_sql_job_execution_tree_persistence`는 `catalog_datasets`에 위 6개 nullable column을 추가하고 `continuous_sql_dependencies`를 생성한다. dependency는 `(sql_job_id, input_dataset_id)`가 identity이며 producer child는 `run_on_tree_start`, jobless static은 `reuse_snapshot`만 허용한다.
+
+Job/Run response에는 additive `executionTree`, active `treeRun`, node state와 `inputDatasetRevisions`를 추가한다. parent full-tree start는 parent와 producer child lock을 한 transaction에서 모두 획득하고, 충돌하면 lock과 child 실행을 하나도 남기지 않은 채 다음 오류를 반환한다.
+
+- `422 CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`: realtime Dataset에 runnable Kafka Continuous producer Job이 없음
+- `422 CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`: realtime cardinality 또는 input type이 V1 범위를 벗어남
+- `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`: standalone/tree owner lock 충돌
+- `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`: required child를 실행할 수 없음
+- `409 CONTINUOUS_SQL_INPUT_REVISION_UNAVAILABLE`: required Dataset revision/snapshot을 고정할 수 없음
+
+SQL parent는 Kafka source identity를 복사해 새 consumer group을 만들지 않는다. producer child가 게시한 Dataset revision/manifest cursor를 사용하고 output commit과 Catalog revision publication 뒤에만 cursor를 전진시킨다. parent가 시작한 realtime child는 active tree와 matching fence 안에서만 parent pause/stop/resume에 따라 함께 pause/stop/resume한다. batch child는 이미 고정된 revision이므로 lifecycle 전파로 다시 실행하지 않는다. child lifecycle control 실패는 node `failed` evidence로 저장하지만 parent stop 자체를 rollback하지 않는다. tree lock이 없을 때 child standalone 실행은 유지하며 child command가 parent를 자동 시작하지 않는다.
+
+Dashboard Job Binding, managed Dataset lock과 자동 revision watcher는 이 확장에 포함하지 않는다. SQL output은 일반 Catalog Dataset으로 게시되고 Dashboard 보기·편집 모드는 Widget이 저장한 Dataset ID를 사용자의 수동 새로고침에서 조회한다.
 
 ## Internal runtime compatibility contract
 

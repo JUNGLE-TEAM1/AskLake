@@ -3,23 +3,14 @@ import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Switch } from "@/components/ui/switch";
-import {
-  dashboardAutoRefreshStatusCopy,
-  type DashboardAutoRefreshStatus,
-} from "./dashboardAutoRefresh";
 
 export function DashboardTopBar({
-  autoRefreshEnabled,
-  autoRefreshError,
-  autoRefreshStatus,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
   isRenaming = false,
   mode,
   onOpenDraft,
-  onAutoRefreshChange,
   onOpenPublished,
   onPublishDraft,
   onRefresh,
@@ -27,16 +18,12 @@ export function DashboardTopBar({
   onShare,
   title,
 }: {
-  autoRefreshEnabled: boolean;
-  autoRefreshError?: string | null;
-  autoRefreshStatus: DashboardAutoRefreshStatus;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
   isRenaming?: boolean;
   mode: "published" | "draft";
   onOpenDraft?: () => void;
-  onAutoRefreshChange: (enabled: boolean) => void;
   onOpenPublished?: () => void;
   onPublishDraft?: () => void;
   onRefresh?: () => void;
@@ -47,14 +34,6 @@ export function DashboardTopBar({
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const canRename = mode === "draft" && Boolean(onRenameTitle);
-  const autoRefreshStatusLabel = dashboardAutoRefreshStatusCopy(autoRefreshStatus);
-  const autoRefreshStatusTone = autoRefreshStatus === "active"
-    ? "success"
-    : autoRefreshStatus === "error"
-      ? "danger"
-      : autoRefreshStatus === "connecting"
-        ? "warning"
-        : "muted";
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -102,12 +81,8 @@ export function DashboardTopBar({
         ) : (
           <div className="asklake-dashboard-title-row">
             <h1>{title}</h1>
-            <StatusBadge
-              aria-label={`대시보드 동기화 상태: ${autoRefreshStatusLabel}`}
-              title={autoRefreshError ?? autoRefreshStatusLabel}
-              tone={autoRefreshStatusTone}
-            >
-              {autoRefreshStatusLabel}
+            <StatusBadge aria-label="대시보드 동기화 상태: 수동 새로고침" tone="muted">
+              수동 새로고침
             </StatusBadge>
             {canRename && (
               <Button
@@ -125,14 +100,6 @@ export function DashboardTopBar({
         )}
       </div>
       <div className="asklake-dashboard-actions">
-        <label className="asklake-dashboard-auto-refresh-toggle">
-          <span>자동 갱신</span>
-          <Switch
-            aria-label="대시보드 자동 갱신"
-            checked={autoRefreshEnabled}
-            onCheckedChange={onAutoRefreshChange}
-          />
-        </label>
         {mode === "published" ? (
           <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />
