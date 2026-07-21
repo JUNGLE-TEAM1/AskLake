@@ -143,4 +143,5 @@ test("saved config filters restore without hard-coded category names", () => {
   ]);
   assert.equal(dashboardFilterInputValue("12.5", "number"), 12.5);
   assert.equal(dashboardFilterInputValue("invalid", "number"), undefined);
+  assert.equal(dashboardFilterInputValue("직접 입력한 값", "string"), "직접 입력한 값");
 });

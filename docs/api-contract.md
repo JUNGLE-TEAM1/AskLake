@@ -2521,6 +2521,7 @@ Response `200 OK`:
 - `column`과 `contextFilters[].column`은 Catalog schema와 실제 readable column의 교집합에 있어야 합니다.
 - 알 수 없는 컬럼, 타입에 맞지 않는 연산자·값은 `422 DASHBOARD_WIDGET_CONFIG_INVALID`입니다.
 - 문자열 검색은 대소문자를 구분하지 않는 포함 조건이며 값과 검색어는 SQL literal로 처리합니다.
+- 물리 값 조회 실패는 빈 `values` 성공 응답으로 바꾸지 않습니다. Frontend는 오류와 직접 값 입력 fallback을 제공할 수 있지만 Catalog `sampleRows`를 후보로 사용하지 않으며, 저장된 Widget의 실제 계산은 계속 backend 물리 데이터 조회 계약을 따릅니다.
 
 `GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 

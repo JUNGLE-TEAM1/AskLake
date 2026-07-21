@@ -847,7 +847,7 @@ Content-Type: application/json
 }
 ```
 
-응답은 `{ datasetId, column, values: [{ label, value }], truncated }`다. `limit`은 `1..100`이고 Dataset `view`와 `query` 권한이 모두 필요하다. `contextFilters`는 최대 5개이며 먼저 적용되므로 category 선택 뒤 subcategory 후보를 전용 계층 metadata 없이 동적으로 좁힐 수 있다. 요청 변경 시 frontend는 이전 요청을 취소하고 300ms debounce 뒤 최신 요청만 적용한다.
+응답은 `{ datasetId, column, values: [{ label, value }], truncated }`다. `limit`은 `1..100`이고 Dataset `view`와 `query` 권한이 모두 필요하다. `contextFilters`는 최대 5개이며 먼저 적용되므로 category 선택 뒤 subcategory 후보를 전용 계층 metadata 없이 동적으로 좁힐 수 있다. 요청 변경 시 frontend는 이전 요청을 취소하고 300ms debounce 뒤 최신 요청만 적용한다. 물리 값 조회가 실패하면 frontend는 오류와 직접 입력 fallback을 표시하며 Catalog `sampleRows`를 실제 후보로 사용하거나 storage 오류를 숨기지 않는다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 

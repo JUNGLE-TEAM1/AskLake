@@ -26,6 +26,7 @@ import {
 } from "./dashboardCatalogApi";
 
 let fallbackFilterId = 0;
+const FILTER_VALUE_REQUEST_TIMEOUT_MS = 10_000;
 
 function nextFilterId() {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -72,6 +73,12 @@ function FilterValuePicker({
   const buttonLabel = selectedValues.length
     ? selectedValues.map(filterValueLabel).join(", ")
     : "값 선택";
+  const directValue = query.trim();
+  const directValueIdentity = filterValueIdentity(directValue);
+  const directValueIsListed = options.some((option) => (
+    filterValueIdentity(option.value) === directValueIdentity
+  ));
+  const directValueIsSelected = selectedIdentities.has(directValueIdentity);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -102,16 +109,16 @@ function FilterValuePicker({
           limit: 50,
           search: query,
         },
-        { signal: controller.signal },
+        { signal: controller.signal, timeoutMs: FILTER_VALUE_REQUEST_TIMEOUT_MS },
       ).then((response) => {
         if (controller.signal.aborted) return;
         setOptions(response.values);
         setTruncated(response.truncated);
-      }).catch((requestError: unknown) => {
+      }).catch(() => {
         if (controller.signal.aborted) return;
         setOptions([]);
         setTruncated(false);
-        setError(requestError instanceof Error ? requestError.message : "필터 값을 불러오지 못했습니다.");
+        setError("실제 데이터의 값 목록을 읽지 못했습니다. 검색어를 직접 입력해 적용할 수 있습니다.");
       }).finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
@@ -171,28 +178,51 @@ function FilterValuePicker({
             <div className="grid gap-1 pr-2" role="listbox" aria-label={`${column.name} 값`}>
               {loading ? (
                 <p className="asklake-widget-filter-value-status"><Loader2 className="animate-spin" /> 값을 조회하는 중입니다.</p>
-              ) : error ? (
-                <p className="asklake-widget-filter-value-error">{error}</p>
-              ) : options.length ? options.map((option) => {
-                const selected = selectedIdentities.has(filterValueIdentity(option.value));
-                return (
-                  <Button
-                    aria-selected={selected}
-                    className="justify-start"
-                    key={filterValueIdentity(option.value)}
-                    role="option"
-                    size="sm"
-                    type="button"
-                    variant={selected ? "secondary" : "ghost"}
-                    onClick={() => selectValue(option.value)}
-                  >
-                    <Check aria-hidden="true" className={selected ? "opacity-100" : "opacity-0"} />
-                    <span className="truncate">{option.label}</span>
-                  </Button>
-                );
-              }) : (
-                <p className="asklake-widget-filter-value-status">일치하는 값이 없습니다.</p>
+              ) : (
+                <>
+                  {error ? <p className="asklake-widget-filter-value-error">{error}</p> : null}
+                  {options.map((option) => {
+                    const selected = selectedIdentities.has(filterValueIdentity(option.value));
+                    return (
+                      <Button
+                        aria-selected={selected}
+                        className="justify-start"
+                        key={filterValueIdentity(option.value)}
+                        role="option"
+                        size="sm"
+                        type="button"
+                        variant={selected ? "secondary" : "ghost"}
+                        onClick={() => selectValue(option.value)}
+                      >
+                        <Check aria-hidden="true" className={selected ? "opacity-100" : "opacity-0"} />
+                        <span className="truncate">{option.label}</span>
+                      </Button>
+                    );
+                  })}
+                  {!error && !options.length && !directValue ? (
+                    <p className="asklake-widget-filter-value-status">일치하는 값이 없습니다.</p>
+                  ) : null}
+                </>
               )}
+              {directValue && !directValueIsListed ? (
+                <Button
+                  aria-selected={directValueIsSelected}
+                  className="asklake-widget-filter-direct-value justify-start"
+                  role="option"
+                  size="sm"
+                  type="button"
+                  variant={directValueIsSelected ? "secondary" : "outline"}
+                  onClick={() => {
+                    selectValue(directValue);
+                    if (isMultiple) setQuery("");
+                  }}
+                >
+                  <Plus aria-hidden="true" />
+                  <span className="truncate">
+                    “{directValue}” {directValueIsSelected ? "선택 해제" : isMultiple ? "직접 입력값 추가" : "직접 사용"}
+                  </span>
+                </Button>
+              ) : null}
             </div>
           </ScrollArea>
           {truncated ? <p className="asklake-widget-filter-value-hint">일부 값만 표시됩니다. 검색어를 입력해 좁혀보세요.</p> : null}

@@ -1,5 +1,5 @@
 import type { CatalogDataset, DashboardWidgetFilter, DashboardWidgetFilterValue } from "../../../types";
-import { apiClient } from "../../../services/apiClient";
+import { apiClient, type ApiRequestOptions } from "../../../services/apiClient";
 
 type CatalogDatasetListResponse = {
   datasets: CatalogDataset[];
@@ -30,7 +30,7 @@ export async function getDashboardDatasetFilterValues(
     limit?: number;
     search?: string;
   },
-  options: { signal?: AbortSignal } = {},
+  options: ApiRequestOptions = {},
 ): Promise<DashboardFilterValuesResponse> {
   return apiClient.post<DashboardFilterValuesResponse>(
     `/api/catalog/datasets/${encodeURIComponent(datasetId)}/filter-values/query`,
