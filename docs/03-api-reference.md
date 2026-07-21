@@ -277,6 +277,8 @@ Phase 3부터 dependency가 있는 Job의 `start`/`recover`는 외부 worker 호
 
 Phase 4에서는 parent가 lock commit 뒤 batch child `run`, realtime child `startContinuous`를 batch → realtime 순서로 internal command path에서 요청하고, node의 `producerRunId`와 status를 응답 `activeTreeRun`에 반영한다. child command는 matching tree run ID와 fencing token이 없으면 여전히 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`다. 하나라도 시작되지 않으면 `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`로 parent worker 시작 전 실패하며 tree lock은 해제된다. Phase 5의 dependency-managed Job은 `executionInputMode=dataset_revision`으로 생성되고 SQL-owned Kafka 설정을 plan에 남기지 않는다. revision runner가 없는 배포는 managed Job을 Kafka worker로 fallback하지 않고 `409 CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED`를 반환한다. legacy Job(`executionInputMode=legacy_kafka`)만 기존 direct consumer를 유지한다.
 
+SQL 분석의 Continuous SQL dialog는 이 API가 반환한 authoritative `dependencyBindings`와 `activeTreeRun`만 표시한다. Kafka broker, consumer group, trigger 또는 max-offset 값을 SQL Job 생성 화면에서 수정하거나 제출하지 않는다.
+
 상세 target contract는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
 Canonical status values:
