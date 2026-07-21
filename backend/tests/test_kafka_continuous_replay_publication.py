@@ -93,7 +93,9 @@ def fake_spark(*, write_failure: Exception | None = None):
 
 def commit_evidence(previous_snapshot, *, operation: str = "append") -> dict:
     return {
+        "_committedSnapshotId": "101",
         "_previousSnapshot": previous_snapshot,
+        "_rollbackRequired": operation != "reuse",
         "createdTable": previous_snapshot is None,
         "operation": operation,
         "runId": "replay-1",
@@ -142,7 +144,12 @@ class KafkaContinuousReplayPublicationTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "completion marker"):
                         self.publish(spark, commit)
 
-                rollback.assert_called_once_with(spark, self.target, previous_snapshot)
+                rollback.assert_called_once_with(
+                    spark,
+                    self.target,
+                    previous_snapshot,
+                    committed_snapshot_id="101",
+                )
                 self.assertIn("_previousSnapshot", commit)
                 self.assertEqual(writer.mode_value, "errorifexists")
 
@@ -156,7 +163,12 @@ class KafkaContinuousReplayPublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "manifest write failed"):
                 self.publish(spark, commit)
 
-        rollback.assert_called_once_with(spark, self.target, previous_snapshot)
+        rollback.assert_called_once_with(
+            spark,
+            self.target,
+            previous_snapshot,
+            committed_snapshot_id="101",
+        )
         self.assertIn("_previousSnapshot", commit)
 
     def test_success_marker_removes_private_rollback_evidence_only_after_publish(self) -> None:
@@ -171,6 +183,8 @@ class KafkaContinuousReplayPublicationTests(unittest.TestCase):
         rollback.assert_not_called()
         self.assertNotIn("_previousSnapshot", result)
         self.assertNotIn("_previousSnapshot", commit)
+        self.assertNotIn("_committedSnapshotId", result)
+        self.assertNotIn("_rollbackRequired", result)
         manifest = json.loads(reader.rows[0])
         self.assertNotIn("_previousSnapshot", manifest["icebergCommit"])
 

@@ -2,7 +2,7 @@
 
 ## 목적
 
-Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Continuous worker를 함께 사용한다. 두 deployment cell이 같은 장기 reconciliation loop를 동시에 소유한다고 선언하면 동일 Job에 중복 명령이 전달될 수 있으므로, 배포 전에 machine-readable topology에서 owner 수를 검증한다.
+Production은 EKS의 웹·유한 배치 workload와 EKS Realtime V1 전용 Continuous worker를 사용하고, EC2 Compose worker는 rollback standby로 보존한다. 두 deployment cell이 같은 장기 reconciliation loop를 동시에 소유한다고 선언하면 동일 Job에 중복 명령이 전달될 수 있으므로, 배포 전에 machine-readable topology에서 owner 수를 검증한다.
 
 이 계약은 현재 실행 위치를 옮기거나 FastAPI background task를 켜고 끄지 않는다. 현재 배포 기준을 명시하고 이후 manifest 변경에서 중복 claim을 차단하는 정적 guard다.
 
@@ -12,12 +12,12 @@ Production은 EKS의 웹·유한 배치 workload와 EC2 Compose의 전용 Contin
 
 | Control plane | Runtime entrypoint evidence | 현재 owner |
 | --- | --- | --- |
-| Kafka Continuous runtime reconciliation | `backend/app/continuous_worker.py::sync_active_kafka_continuous_runtimes` | `ec2-continuous-worker` |
-| Continuous SQL runtime reconciliation | `backend/app/continuous_worker.py::sync_active_continuous_sql_jobs` | `ec2-continuous-worker` |
+| Kafka Continuous runtime reconciliation | `backend/app/continuous_worker.py::sync_active_kafka_continuous_runtimes` | `eks-realtime-v1-worker` |
+| Continuous SQL runtime reconciliation | `backend/app/continuous_worker.py::sync_active_continuous_sql_jobs` | `eks-realtime-v1-worker` |
 
-`eks-web-finite-batch`는 현재 배포 topology에 존재하지만 위 두 장기 control plane을 claim하지 않는다. EKS/EC2의 실제 rollout 또는 역할 이동은 manifest 한 줄만 바꾸는 작업이 아니며, 대상 runtime 설정과 배포 증거를 같은 PR에 포함해야 한다.
+`eks-web-finite-batch`는 현재 배포 topology에 존재하지만 위 두 장기 control plane을 claim하지 않는다. `ec2-continuous-worker`는 비활성 rollback standby이며 EC2의 opt-in ClickHouse V2/Kafka Connect 자산 보존과 active owner claim은 서로 다른 개념이다. EKS/EC2의 실제 rollout 또는 역할 이동은 manifest 한 줄만 바꾸는 작업이 아니며, 이전 owner fence, 새 generation, 대상 runtime 설정과 배포 증거를 같은 PR에 포함해야 한다.
 
-EKS Continuous gateway와 worker template은 repository에 준비돼 있어도 현재 owner를 자동으로 변경하지 않는다. `deploy/kubernetes/continuous-worker.yaml.template`은 `asklake-backend` service account의 SparkApplication RBAC를 재사용하는 future rollout artifact이며, apply 전에 EC2 worker를 제거하고 canonical ownership manifest를 같은 release에서 바꿔야 한다.
+EKS와 EC2 image는 모두 `dev`를 source branch로 사용하고 각 release의 실제 배포 SHA를 별도 고정하며 환경별 profile로 기능을 선택한다. 브랜치 차이를 owner 분리 수단으로 사용하지 않는다.
 
 ## 실패 조건
 

@@ -18,23 +18,63 @@ from app.services.trino_sql_auto_refresh import sync_revision_driven_trino_sql_j
 
 logger = logging.getLogger(__name__)
 _OWNER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+_LEGACY_ALL_SCOPE_LEASE = "continuous-runtime-sync"
 
 
-def run_once() -> bool:
-    with SessionLocal() as db:
-        generation = acquire_or_renew(
-            db,
-            control_plane="continuous-runtime-sync",
-            owner_id=_OWNER_ID,
-            lease_seconds=settings.continuous_control_lease_seconds,
-        )
-    if generation is None:
-        return False
-    sync_active_kafka_continuous_runtimes()
+def _sync_continuous_sql_scope() -> None:
     sync_revision_driven_trino_sql_jobs()
     reconcile_continuous_sql_source_bindings()
     sync_active_continuous_sql_jobs()
-    return True
+
+
+_SCOPES = {
+    "kafka": (
+        "kafka-continuous-runtime-sync",
+        sync_active_kafka_continuous_runtimes,
+    ),
+    "continuous_sql": (
+        "continuous-sql-runtime-sync",
+        _sync_continuous_sql_scope,
+    ),
+}
+
+
+def selected_scopes() -> tuple[str, ...]:
+    scope = settings.continuous_worker_scope
+    return tuple(_SCOPES) if scope == "all" else (scope,)
+
+
+def run_once() -> bool:
+    scopes = selected_scopes()
+    if settings.continuous_worker_scope == "all":
+        with SessionLocal() as db:
+            generation = acquire_or_renew(
+                db,
+                control_plane=_LEGACY_ALL_SCOPE_LEASE,
+                owner_id=_OWNER_ID,
+                lease_seconds=settings.continuous_control_lease_seconds,
+            )
+        if generation is None:
+            return False
+        for scope in scopes:
+            _SCOPES[scope][1]()
+        return True
+
+    reconciled = False
+    for scope in scopes:
+        control_plane, reconcile = _SCOPES[scope]
+        with SessionLocal() as db:
+            generation = acquire_or_renew(
+                db,
+                control_plane=control_plane,
+                owner_id=_OWNER_ID,
+                lease_seconds=settings.continuous_control_lease_seconds,
+            )
+        if generation is None:
+            continue
+        reconcile()
+        reconciled = True
+    return reconciled
 
 
 async def run_forever() -> None:

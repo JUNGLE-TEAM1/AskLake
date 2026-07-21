@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.realtime_job_engine import selected_realtime_job_engine
+
 RUNTIME_NAMES = {
     'ApiError',
     'CallableKafkaRuntimeGateway',
@@ -23,13 +25,13 @@ RUNTIME_NAMES = {
     'begin_kafka_continuous_session',
     'blocked_principal_for_actor',
     'bool',
-    'clickhouse_kafka_ingest_v2_enabled',
     'compile_pipeline_rules',
     'continuous_runtime_from_job',
     'dict',
     'execute_continuous_command',
     'execute_list_source_assets',
     'execute_test_source_connector',
+    'external_continuous_control_plane_enabled',
     'fail_kafka_continuous_session',
     'field_value',
     'has_pending_continuous_replay_catalog',
@@ -82,7 +84,12 @@ def command_kafka_continuous_job(
         ContinuousCommandRequest(command=command, job_id=job.id),
         actor,
         worker=CallableKafkaRuntimeGateway(run_kafka_continuous_worker),
-        dispatch_worker=settings.continuous_control_plane == "embedded",
+        # The EKS web/API process persists command intent; the V1 worker owns
+        # the external SparkApplication lifecycle.
+        dispatch_worker=(
+            settings.continuous_control_plane == "embedded"
+            and not external_continuous_control_plane_enabled()
+        ),
         hooks=ContinuousCommandHooks(
             is_kafka_job=is_kafka_job,
             runtime_from_job=continuous_runtime_from_job,
@@ -95,11 +102,7 @@ def command_kafka_continuous_job(
             fail_session=fail_kafka_continuous_session,
             mark_session_stopping=mark_kafka_continuous_session_stopping,
             with_permissions=with_job_permissions,
-            worker_kind=lambda current_job: (
-                "kafka_connect_clickhouse_v2"
-                if clickhouse_kafka_ingest_v2_enabled(current_job, settings)
-                else "spark_structured_streaming"
-            ),
+            worker_kind=lambda _current_job: selected_realtime_job_engine(settings),
         ),
     )
 
@@ -260,6 +263,12 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
+def _processing_mode_label(execution_mode: str) -> str:
+    if execution_mode != "continuous":
+        return "배치 · Spark"
+    if selected_realtime_job_engine(settings) == "kafka_connect_clickhouse_v2":
+        return "실시간 · ClickHouse"
+    return "실시간 · Spark"
 
 
 def review_pipeline(
@@ -330,7 +339,7 @@ def review_pipeline(
     return ReviewSnapshot(
         basic_information=[
             review_entry("소스", source_display),
-            review_entry("처리 방식", "실시간 스트리밍" if request.execution_mode == "continuous" else "배치 처리"),
+            review_entry("처리 방식", _processing_mode_label(request.execution_mode)),
             review_entry("출력 데이터셋 이름", request.target_dataset),
             review_entry("설명", request.target_description),
         ],

@@ -35,6 +35,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 compact workspace header, SQL action/section marker와 방향성 panel toggle, Catalog PROCESS projection, Dashboard panel toggle, Vite build를 함께 확인 |
 | Nessie SQL deterministic benchmark | `.github/workflows/nessie-sql-benchmark.yml` and `backend npm run verify:nessie-benchmark` | `enabled` | fixture/schema/repository/runner/comparator drift 또는 고정 baseline 대비 정확성·성능 policy 실패 시 matching PR check 실패 | data-platform | CI는 provider credential과 live Trino 없이 비교기만 재현한다. Live provider campaign과 baseline 승격은 bounded 수동 승인이고 tracked artifact에 SQL·endpoint·row·credential을 저장하지 않는다. |
 | Deploy readiness record | `.github/workflows/deploy-readiness.yml` running `scripts/verify-deploy-readiness.sh` | `enabled` | matching PR/manual workflow fails when production Compose render, deploy image build, backend production dependencies, or repository Spark runtime contract fails | maintainer | uses Node 22/Python 3.13 and uploads a JSON release-readiness artifact; never connects to EC2 or injects production secrets |
+| Unified deploy source ref | `.github/workflows/eks-image-delivery.yml` + `scripts/verify-eks-image-source-ref.sh` + `scripts/deploy.sh` | `enabled` | EKS `environment=dev` delivery와 EC2 start/deploy/restart는 source branch가 정확히 `dev`가 아니면 실패한다. EC2 deploy는 dirty/untracked remote tree를 거부하고 checkout이 exact `origin/dev`인지 양방향 ancestor로 확인한다. | maintainer | 각 환경 release는 실제 배포한 SHA를 별도 receipt에 고정한다. 배포 시점이 다르면 EKS/EC2 SHA는 다를 수 있다. staging은 explicit ref를 허용하지만 빈 ref는 거부한다. |
 | Deploy readiness required check | GitHub repository ruleset | `requires-admin` | block merge only after repository admin marks `Deploy Readiness / deploy-readiness` as required | repo admin | workflow implementation does not change GitHub repository settings |
 | Dashboard schema preparation | backend startup plus `backend npm run migrate:dashboard-schema` and `npm run verify:dashboard-storage` | `enabled` | versioned Dashboard schema preparation fails before Dashboard API requests are served; request paths must not issue Dashboard DDL | data-platform | `dashboard_schema_migrations` records Dashboard card/runtime and batch-result-cache versions; a PostgreSQL advisory lock serializes multi-instance startup. This is not a repository-wide Alembic policy. |
 | Metadata schema bootstrap | backend startup plus `backend npm run migrate:metadata-schema` and EC2 deploy pre-bootstrap | `enabled` | block application startup/deploy when ETL, Catalog, SQL, Dashboard, Continuous, or Realtime metadata preparation fails | data-platform | repository schema helpers remain idempotent for local/test compatibility, but deployed API and control-plane processes prepare their bind before request or worker loops start. Repository-wide Alembic adoption remains separate. |
@@ -44,16 +45,17 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Admin audit contract and failure isolation | `Refactor Quality Gates / backend-contracts` running `verify:admin-audit-contract` + `Frontend UI Checks` running `test:admin-console-load` | `enabled` | 신규 writer의 enum-only 계약, `query_run`/레거시 `unknown` HTTP·OpenAPI·frontend type drift, 한 admin endpoint 실패에 따른 section 초기화, stale/race 상태 회귀 시 PR check 실패 | data-platform | EC2 rollout 후 admin session으로 `query_run`/`unknown` 필터 200과 section별 metric을 수동 확인하며 배포 자동화는 이 test가 수행하지 않음 |
 | ETL CSS reviewed cascade | `frontend npm run test:css-catalog-boundary` | `enabled` | URL/shared façade 순서, feature CSS hash, 정확한 selector inventory, retired selector 또는 `.s3-tree-panel` declaration 순서가 drift하면 실패 | analytics-experience | 배포 소스 미참조 legacy rule 제거 후 3,108 rule LOC, 429 definitions/409 unique/중복 20개. 남은 반응형 중복은 visual·computed-style evidence 없이 제거 금지 |
 | Prod compose config check | `Realtime Quality Gates / realtime-contracts`, `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet`, `backend/scripts/verify-production-spark-contract.mjs`, and Spark runtime path verifiers | `enabled` | matching realtime PR의 config render 실패 또는 배포 전 Spark REST·UID 185 mount·Docker socket 계약 실패 시 중단 | maintainer | GitHub required check 등록은 repo admin 확인 필요. `npm run verify:spark-runtime-paths:container`는 clean mount, owner/mode repair, guard restart와 data 보존을 실제 container에서 확인 |
+| Airflow execution-token parity | `scripts/deploy.sh start\|deploy\|restart` + deploy script regression | `enabled` | backend와 Airflow scheduler 컨테이너의 token hash가 다르거나 하나라도 비어 있으면 중단 | data-platform | 배포는 backend/Airflow execution control-plane을 강제 재생성하고 SHA-256 값만 비교한다. shared token 자체는 출력하지 않는다. |
 | Refactor release execution gate | `npm run verify:refactor-release-execution` + `docs/refactor-2026/final/release-gates.json` | `enabled` | exit 2 and block production execution until isolated nightly, clean reboot, backup/restore evidence are passed | maintainer | plan validation is read-only; changing a manual gate to passed requires release-record evidence and operator review |
 | ETL Job query ownership | `Refactor Quality Gates` + `tests.test_etl_job_queries` | `enabled` | read-only 목록·상태·상세 hydrate/permission/facet 또는 404/403 audit 계약이 바뀌면 실패 | data-platform | `etl_service.list_jobs/list_job_statuses/get_job`은 façade로 유지하고 application module이 조회 정책을 소유 |
 | Snapshot Airflow reconciliation owner | `tests.test_snapshot_status_reconciliation` + frontend `test:snapshot-status-polling` | `enabled` | GET에 Airflow/write가 재결합되거나 multi-process 중복 sync, Job별 오류 격리, batch polling·stale/backoff 계약이 바뀌면 실패 | data-platform | backend 5초 loop + PostgreSQL advisory lock이 저장을 소유하고 frontend는 active Job 최대 100개를 한 요청으로 읽음 |
-| RAG Data Plane publication boundary | `RAG OpenSearch integration` workflow + backend RAG contract tests + embedding worker tests | `enabled` | Catalog source identity, deterministic parent/chunk ID, failed-row threshold, embedding dimension, idempotency, generation alias swap 또는 callback stage 계약이 바뀌면 실패 | data-platform | Spark가 승인 source를 Iceberg staging으로 만들고 worker만 private Gateway/OpenSearch에 접근한다. provider key와 OpenSearch port는 외부에 노출하지 않는다. |
+| Retired RAG runtime boundary | production Compose/EKS profile + deploy preflight | `enabled` | `opensearch`, `embedding-worker`, `rag-artifact-cleanup` service가 production render에 다시 나타나면 실패 | data-platform | RAG/OpenSearch/embedding worker와 전용 CI/test/script는 제거했다. 기존 migration·모델·deletion receipt·외부 volume/object는 복구 이력이며 물리 삭제에는 별도 승인이 필요하다. |
 | ETL Job delete transaction | `Refactor Quality Gates` + `tests.test_etl_job_commands` + `tests.test_etl_job_delete` | `enabled` | permission보다 workload identity를 먼저 조회하거나 active workload 차단, 종속 삭제 순서, audit·commit/rollback이 바뀌면 실패 | data-platform | `etl_service.delete_job`은 façade로 유지하고 application command가 transaction을 소유 |
 | ETL Pipeline write ownership | `Refactor Quality Gates` + `tests.test_etl_job_write_commands` + create/update contract verifiers | `enabled` | new/append/continuous identity, Rule validation, permission, immutable target/runtime/checkpoint 또는 projection 순서가 바뀌면 실패 | data-platform | `etl_service.create_pipeline/update_pipeline`은 façade로 유지하고 application command가 write orchestration을 소유 |
 | Airflow finite execution/publication ownership | `Refactor Quality Gates` + `tests.test_airflow_execution_commands` + Airflow/Catalog integration verifier | `enabled` | persisted Run identity, Spark lease claim/finalize, 성공 멱등성, physical verification, Catalog commit/failure evidence 순서가 바뀌면 실패 | data-platform | `etl_service.execute_airflow_spark_run/reconcile_airflow_catalog`은 façade로 유지하고 application command가 transaction 순서를 소유 |
 | ETL service module boundary | `tests.test_etl_service_module_boundaries` | `enabled` | façade 2,500줄 또는 추출 모듈 budget 초과, 함수 재정의, 역방향 façade import, re-export/runtime-binding drift 시 실패 | data-platform | 최신 `dev` 8,389줄에서 2,198줄로 축소하고 application projection·policy와 API·snapshot·Airflow·source runtime·Continuous·replay orchestration을 책임 모듈로 분리 |
 | Source connector Python/Node ownership | `Refactor Quality Gates` + `tests.test_source_connector_gateway` + source connector verifiers | `enabled` | Python schema boundary 또는 Node script·marker·payload·timeout mapping이 바뀌면 실패 | data-platform | Python application이 use case를, typed gateway 뒤 Node adapter가 기존 connector runtime transport를 소유 |
-| EKS·EC2 Continuous control-plane owner | `Refactor Quality Gates / structural-ratchet` + `deploy/control-plane-ownership.json` + `scripts/refactor_audit/control_plane_ownership.py` | `enabled` | required control plane의 active owner 누락·중복, inactive/unknown claim, repository evidence drift 시 실패 | data-platform | 현재 EKS는 웹·유한 배치, EC2 Compose의 `continuous-worker`만 Kafka Continuous·Continuous SQL reconciliation을 claim. 실제 cluster replica 대조는 rollout 수동 gate |
+| EKS·EC2 Continuous control-plane owner | `Refactor Quality Gates / structural-ratchet` + `deploy/control-plane-ownership.json` + `scripts/refactor_audit/control_plane_ownership.py` | `enabled` | required control plane의 active owner 누락·중복, inactive/unknown claim, repository evidence drift 시 실패 | data-platform | 현재 EKS Realtime V1 worker가 Kafka Continuous·Continuous SQL reconciliation을 claim하고 EC2 worker는 rollback standby다. EC2 프로필로 owner를 옮길 때는 EKS fence와 manifest/evidence를 같은 변경에 포함한다. |
 | Continuous runtime document storage | `ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX` | required for split API/Spark volumes | EKS/API/worker/Spark가 서로 다른 local filesystem을 볼 때 local report path 사용 금지 | data-platform | private S3 prefix만 허용; command/report/ACK object 권한을 dataset warehouse와 분리 |
 | EKS Continuous Spark gateway | `ASKLAKE_CONTINUOUS_SPARK_RUNNER=kubernetes` + Spark Operator RBAC | required when enabling EKS Continuous | mutable image tag, missing runtime S3 prefix, worker role without SparkApplication CRUD, 또는 SparkApplication에 JDBC secret 평문 삽입 금지 | data-platform | image digest, worker `sparkapplications` CRUD, driver/executor S3 access와 `secretKeyRef`를 rollout 전 확인 |
 | EKS Continuous worker manifest | `deploy/kubernetes/continuous-worker.yaml.template` + `npm run verify:kubernetes-continuous-worker` | required before owner transfer | EC2 owner가 active인 상태에서 EKS template apply 금지 | data-platform | render/dry-run/RBAC 점검은 transfer 승인 전 준비 단계이며 owner 변경 자체는 아님 |
@@ -101,13 +103,14 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
+| Spark direct-cache threshold | process 기본값과 rollback은 0이다. dev 활성값 10GiB는 10GB direct-cache와 100GB staging의 raw read 1회·OOM·executor replacement·residue 0 근거가 있는 동일 Backend/Spark image receipt에만 적용한다. 임의 다른 값, active Spark가 있는 apply, ConfigMap만 바꾸고 FastAPI/Collector revision을 갱신하지 않는 부분 활성화를 금지한다. ALB steady 검증은 정상 rollout의 draining·EndpointSlice·healthy floor 수렴만 최대 10분까지 bounded retry하고 15초 간격 3회 연속 steady를 요구하며, 그 밖의 계약 위반이나 제한 시간 초과는 전체 활성화를 rollback한다. |
 
 ### What Is Deferred
 
 | Deferred item | Reason |
 | --- | --- |
 | CODEOWNERS review | ownership 기준이 아직 정해지지 않았다. |
-| Backend integration CI | backend scaffold가 아직 없다. |
+| Live AWS integration CI | RDS/MSK/S3/EKS/IRSA fixture를 일반 PR에 제공하지 않는다. |
 
 ### Common Failure And Fix
 
@@ -119,6 +122,8 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | Deploy readiness failed | GitHub Actions artifact의 JSON record와 실패한 `compose_config`, `backend_image`, `backend_dependencies`, `backend_python_dependencies`, `backend_runtime_contract`, `frontend_image` step을 확인한다. 로컬 재현은 `bash scripts/verify-deploy-readiness.sh`로 한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
+| Spark direct cache was skipped or failed | Spark result의 `source.inputBytes`, `directCacheMaxSourceBytes`, `directCacheDecisionReason`, `directCacheInitializationStatus`, `directCacheFallbackCount`를 확인한다. 크기 미확인이나 한도 초과를 우회해 강제 cache하지 않으며, 초기화 실패를 staging fallback으로 바꿔 원본 재읽기를 숨기지 않는다. |
+| Spark Planner가 AWS S3 입력을 `input_size_unavailable`로 기록 | FastAPI workload identity의 직접 `HEAD`와 `S3_ALLOWED_BUCKETS`를 먼저 확인한다. AWS native S3는 custom endpoint를 저장하거나 `S3_ALLOWED_ENDPOINTS`를 요구하지 않으며, custom endpoint를 쓰는 Source만 endpoint allowlist를 가져야 한다. |
 | Admin audit contract failed | `cd backend && npm run verify:admin-audit-contract`로 `query_run`, 레거시 `unknown`, OpenAPI inline/local-ref 의미 호환성과 frontend 타입 집합을 확인한다. session 기반 실제 HTTP 흐름은 `npm run verify:identity-admin`, 부분 실패 UI는 `cd frontend && npm run test:admin-console-load`로 확인한다. |
 | PR branch policy failed | base/head 조합, 지원 브랜치 패턴, linked issue의 `Target Branch`를 확인한다. `main <- dev`; `dev <- pair1|pair2|pair3|지원 work branch|<type>-#issue`가 허용된다. |
 | Merged PR did not close its issue | PR footer가 `Closes/Fixes/Resolves #N`인지, base branch에 최신 Notion Issue Sync가 있는지, lifecycle smoke가 통과했는지 확인한다. 정기 복구는 기본 브랜치 `main`의 workflow를 사용하므로 자동화 변경은 `dev -> main`까지 반영한다. |
@@ -148,26 +153,6 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 목적은 현재 시스템 가드레일과 협업 하네스 기록이 실제 PR/Issue/workspace 흐름에서 어긋나는 지점을 찾는 것이다.
 
-| Test Layer | Runs By Default | Scope | Expected Result |
-| --- | --- | --- | --- |
-| Frontend UI checks | yes on matching PR paths | `frontend` | UI regression contracts and TypeScript/Vite build pass |
-| Backend refactor contracts | yes on `dev`/`main` PR | backend API/application contracts and structural ratchet | admin audit HTTP serialization, legacy compatibility, frontend audit type parity, backward compatibility and application boundary tests pass |
-| Prod compose config | yes on matching realtime paths | `deploy/docker-compose.prod.yml` | `TRINO_ENABLED=false` excludes every Trino-profile service without Trino secrets/files/buckets; ClickHouse off excludes its profile, on requires Trino plus `COMPOSE_PROFILES=trino,clickhouse`, private endpoint and matching credentials |
-| ClickHouse Realtime V2 foundation | matching V2 backend/deploy paths | feature-flag and Alembic unit tests, local/prod Compose profile render, artifact provenance review | Explicit V2 profile render keeps exact pins, config fields, health fail-closed and migrations consistent. Secret·TLS·immutable image와 connector readiness가 없으면 opt-in 배포 차단 |
-| RAG OpenSearch integration | yes on matching RAG paths | Spark RAG scripts, Airflow DAG, OpenSearch 2.19.1, embedding worker | parent/chunk contract, quality gate, worker idempotency와 OpenSearch generation/alias publication이 통과하고 test index만 정리 |
-| Realtime PR contracts | yes on matching realtime paths | backend event/SSE/Continuous SQL, frontend transport, disposable PostgreSQL, Caddy/NGINX parser | deterministic suite, NOTIFY/resource replay, polling strategy and config parser pass |
-| Realtime live runtime | daily schedule or manual opt-in | disposable Kafka/Spark/Iceberg/Trino/ClickHouse fault·restart harness | 기존 checkpoint/atomic Iceberg와 opt-in Kafka→ClickHouse JOIN→Catalog→Dashboard, duplicate 방지가 각각 통과; production ALB/browser evidence는 별도 |
-| Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
-| Deploy dependency verification | manual | deploy Compose/env, health JSON readiness, reboot-safe Spark path/REST contract, backend/frontend/Spark/Trino images, Airflow DAG import | `tests/deploy/deploy-scripts-regression.sh`, `backend/scripts/verify-production-spark-contract.mjs`, `backend/scripts/verify-spark-runtime-paths.py`, and `scripts/verify-deploy-dependencies.sh` pass before deploy |
-| Trino contract verification | matching backend/frontend paths | 100행 preview/PostgreSQL inline 저장, 요청형 full-result/S3 저장, Query Run history, registration, collector fencing, actor reservation, timeline state | `verify:trino-query-foundation`, `verify:trino-preview-full-flow`, `verify:trino-query-history`, `verify:query-engine-registration`, `verify:trino-result-storage`, `verify:trino-collector-resilience`, `verify:trino-submission-guard`, `test:trino-timeline` pass |
-| Trino production readiness | deploy-time when `TRINO_ENABLED=true` | TLS/auth, read-only query identity, materializer CTAS/describe/drop, AWS S3 Warehouse/Query Result bucket round trip through EC2 instance profile | `verify:trino-production-readiness` passes after Compose health |
-| AWS S3 startup readiness | every production Compose startup | Raw bucket list, Output bucket put/head/delete with EC2 instance role | `aws-s3-readiness` completes before backend starts; bucket auto-create and static AWS keys are forbidden |
-| AWS S3 output identity | frontend build, Target browser API, and every Spark run/Catalog publish | Target UI bucket, `GET /api/s3/buckets` first item, Spark writer bucket, Catalog storage location | production frontend and backend receive the same `ASKLAKE_SPARK_OUTPUT_BUCKET`; AWS mode forbids a silent local `asklake-output` fallback; only legacy `asklake-output` roots are normalized and explicit custom buckets remain unchanged |
-| Production legacy demo boundary | focused auth tests + deploy preflight | backend startup account/session state and production env | startup preserves existing status/session, false does not seed or reactivate demo identities, and mismatched or invalid opt-in flags fail before Compose mutation |
-| PR event checks | no | future GitHub Actions | changed code satisfies required checks |
-| Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
-| Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |
-
 ### Mock Scenario Matrix
 
 | Scenario | System Layer Expectation | Harness Layer Expectation | Suggested Test Form | Blocker? |
@@ -187,6 +172,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - `Refactor Quality Gates`는 `dev`/`main` PR에서 구조 ratchet과 API/persisted/bridge/legacy 계약을 검사한다.
 - 기존 1,000줄 file과 100줄 Python·JavaScript/TypeScript function은 `docs/refactor-2026/quality-gate-baseline.json`을 넘겨 키울 수 없다.
 - 2026-07-21 기준표는 `feat-#1106`의 필터 기능 이식 전 상태(`18fb51f`)에서 다시 수집했다. 기존 브랜치의 구조 부채만 현재 상한으로 기록했으며, 이번 변경으로 커진 `dashboard_physical_data.py`는 공통 헬퍼로 분리해 기준보다 작게 유지했다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
+- Issue #1139의 `dev`/`pair1` 통합은 `origin/dev`에서 그대로 상속되거나 줄어든 구조 부채와 결합 트리에서만 커진 항목을 구분하고, 필요한 path/function만 정확한 현재 줄 수와 2026-08-31 만료일로 예외 처리한다. `origin/pair1`의 기존 예외는 유지하며 전체 기준 재생성, wildcard, 미사용 성장 여유는 허용하지 않는다.
 - 새 import cycle과 문서 없는 API/schema·CI/deploy 변경을 금지한다.
 - baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
@@ -208,3 +194,45 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - `npm run verify:refactor-release-execution`은 격리 nightly fault, production canary clean reboot, backup/restore drill이 모두 증명되기 전 exit 2로 차단한다.
 - production 배포, EC2 reboot, traffic promotion은 별도 명시적 승인과 release owner가 필요하다.
 - rollback은 DB 수동 편집, checkpoint 삭제, 수동 chown을 정상 절차로 사용하지 않는다.
+
+# EKS Realtime V1-only guardrail (#1101)
+
+Backend immutable image preflight와 rollout은 live `asklake-web` profile을 먼저 읽고
+`standard`와 `realtime-v1-only`를 서로 다른 경계로 검증한다. `standard`에서는
+FastAPI 2개가 `external_ec2`이고 내부 Continuous process가 0이어야 하며 보존된
+외부 EC2 owner 검증도 통과해야 한다. `realtime-v1-only`에서는 FastAPI 2개가
+`local` control plane과 승인된 동일 owner generation을 사용하고 내부 Continuous
+process는 0이어야 한다. 이때 전용 `asklake-realtime-v1-worker`가 fenced previous
+owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 owner 검증을
+강제하지 않는다. 알 수 없는 profile, generation drift, worker 부재 또는 FastAPI
+내 중복 worker process는 image apply 전에 실패한다.
+
+- 신규 Kafka Continuous Job의 `runtimeEngine`은 `spark_structured_streaming`만 허용한다.
+- EKS realtime worker는 `CONTINUOUS_WORKER_SCOPE=all`이며 Kafka와 Continuous SQL control
+  plane을 하나의 owner claim으로 소유한다.
+- 동일 broker/topic/group/generation/checkpoint identity의 active owner는 정확히 하나다.
+- owner fence, 승인, 새 generation, MSK IAM, S3 runtime document/checkpoint가 하나라도
+  없으면 workload 활성화를 거부한다.
+- rollback은 새 generation과 보존된 checkpoint를 사용하며 checkpoint 삭제·rewind,
+  dual-run, 다른 엔진으로 자동 전환을 금지한다.
+- EKS V1-only 전환 전 Catalog JSONB의 `serving/clickhouse` physical binding은 원본을 삭제하지
+  않고 비활성 profile의 read normalization에서 제외한다. 현재 유효한 `archive/trino` binding과
+  Dataset metadata는 보존하며, legacy 또는 malformed entry 하나가 Catalog 목록 전체를 500으로
+  만들면 rollout No-Go다. 이 EKS guard는 EC2 opt-in ClickHouse V2/Kafka Connect profile과 관련
+  배포 자산을 삭제하거나 비활성화하지 않는다.
+
+# EKS Spark Resource Planner promotion guardrail
+
+- 기본 mode는 `off`이며 입력 metadata 부재, unsupported executor profile,
+  Plan hash 또는 runtime ConfigMap revision drift에서는 baseline executor를 유지한다.
+- V1은 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다. 같은
+  Job의 성공·입력 byte·Plan hash·실제 executor가 일치하는 이력만 사용하고 다른
+  Job의 결과나 실패 Run은 학습 근거로 섞지 않는다.
+- policy V3는 30분 Spark duration 목표를 만족하는 후보 중 `executor-seconds`가 가장
+  작은 값을 선택한다. 실제 청구액이나 전체 wall-clock으로 과장하지 않는다.
+- private runtime 후보는 Planner 관련 key만, Web 후보는
+  `backend.runtimeConfigRevision`만 변경해야 한다.
+- 같은 immutable Backend/Spark image의 10GB·100GB `shadow` evidence와 `off/1`
+  복구가 검증되기 전에는 `enforce`로 승격하지 않는다.
+- image rollout, runtime/Web Helm mutation과 비용 발생 Spark Run은 각각 별도
+  승인을 요구한다.

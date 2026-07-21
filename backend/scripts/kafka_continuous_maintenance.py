@@ -307,11 +307,12 @@ def publish_replay_manifest(
     source_ranges: list[dict],
 ) -> dict:
     previous_snapshot = iceberg_commit.get("_previousSnapshot")
+    committed_snapshot_id = iceberg_commit.get("_committedSnapshotId")
     committed_new_snapshot = str(iceberg_commit.get("operation") or "").strip().lower() != "reuse"
     public_iceberg_commit = {
         key: value
         for key, value in iceberg_commit.items()
-        if key != "_previousSnapshot"
+        if not str(key).startswith("_")
     }
     replay_manifest = {
         "publicationId": f"replay:{run_id}",
@@ -334,14 +335,20 @@ def publish_replay_manifest(
     except Exception as error:
         if committed_new_snapshot:
             try:
-                rollback_iceberg_commit(spark, iceberg_target, previous_snapshot)
+                rollback_iceberg_commit(
+                    spark,
+                    iceberg_target,
+                    previous_snapshot,
+                    committed_snapshot_id=committed_snapshot_id,
+                )
             except Exception as rollback_error:
                 raise RuntimeError(
                     f"{error}; replay Iceberg rollback failed: {rollback_error}"
                 ) from error
         raise
 
-    iceberg_commit.pop("_previousSnapshot", None)
+    for key in [key for key in iceberg_commit if str(key).startswith("_")]:
+        iceberg_commit.pop(key, None)
     return public_iceberg_commit
 
 

@@ -4,8 +4,7 @@
   "contractOwner": "data-platform",
   "reviewBy": "2026-10-31",
   "requiredPlatforms": [
-    "eks",
-    "ec2-compose"
+    "eks"
   ],
   "requiredControlPlanes": [
     {
@@ -45,14 +44,12 @@
       "id": "ec2-continuous-worker",
       "platform": "ec2-compose",
       "deploymentCell": "production-ec2-compose",
-      "active": true,
+      "active": false,
       "responsibilities": [
-        "continuous-control-plane"
+        "rollback-standby",
+        "optional-ec2-clickhouse-v2-profile"
       ],
-      "ownsControlPlanes": [
-        "kafka-continuous-runtime-sync",
-        "continuous-sql-runtime-sync"
-      ],
+      "ownsControlPlanes": [],
       "evidence": [
         {
           "kind": "repository",
@@ -61,6 +58,28 @@
         {
           "kind": "repository",
           "reference": "backend/app/continuous_worker.py::run_forever"
+        }
+      ]
+    },
+    {
+      "id": "eks-realtime-v1-worker",
+      "platform": "eks",
+      "deploymentCell": "production-eks-realtime-v1",
+      "active": true,
+      "responsibilities": [
+        "kafka-continuous-control-plane",
+        "continuous-sql-control-plane",
+        "iceberg-gold-publication",
+        "spark-structured-streaming"
+      ],
+      "ownsControlPlanes": [
+        "kafka-continuous-runtime-sync",
+        "continuous-sql-runtime-sync"
+      ],
+      "evidence": [
+        {
+          "kind": "repository",
+          "reference": "infra/eks/helm/asklake-workloads/templates/realtime-v1-worker.yaml::CONTINUOUS_WORKER_SCOPE"
         }
       ]
     }

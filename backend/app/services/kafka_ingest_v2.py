@@ -504,10 +504,10 @@ class ClickHouseKafkaIngestV2Gateway:
             "size": "ClickHouse managed",
             "source": job.name,
             "producerJobId": job.id,
-            "producerJobKind": job.job_kind or "pipeline",
+            "producerJobKind": getattr(job, "job_kind", None) or "pipeline",
             "executionMode": "continuous",
             "sourceKind": "kafka",
-            "runtimeStatus": runtime.status,
+            "runtimeStatus": getattr(runtime, "status", None) or "starting",
             "status": "available" if published else "preparing",
             "storageFormat": "clickhouse",
             "storageLocation": (

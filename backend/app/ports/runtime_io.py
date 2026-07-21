@@ -53,6 +53,8 @@ class NodeBridgePort(Protocol):
         error_marker: str,
         timeout_seconds: int,
         timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        progress_file: Path | None = None,
     ) -> dict[str, Any]: ...
 
 

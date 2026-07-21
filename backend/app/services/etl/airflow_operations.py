@@ -38,7 +38,10 @@ RUNTIME_NAMES = {
     'datetime',
     'dict',
     'ensure_batch_iceberg_target',
+    'ensure_eks_mvp_fixture_iceberg_target',
+    'eks_mvp_fixture_run_state',
     'etl_repository',
+    'execute_eks_airflow_spark_run',
     'execute_airflow_catalog_commit',
     'execute_airflow_catalog_reconciliation',
     'execute_airflow_spark_command',
@@ -52,6 +55,7 @@ RUNTIME_NAMES = {
     'int',
     'is_internal_data_lake_source',
     'is_kafka_job',
+    'is_eks_mvp_bounded_fixture_job',
     'isinstance',
     'iso_now',
     'job_payload_for_spark',
@@ -67,9 +71,11 @@ RUNTIME_NAMES = {
     'parse_count_value',
     'parse_incremental_timestamp',
     'parse_optional_integer',
+    'persisted_eks_mvp_fixture_source_boundary',
     're',
     'record_airflow_catalog_failure',
     'reconcile_active_airflow_runs',
+    'reconcile_eks_airflow_catalog',
     'recover_spark_rest_submission',
     'require_airflow_internal_token',
     'require_compiled_rules',
@@ -79,6 +85,7 @@ RUNTIME_NAMES = {
     'run_from_spark_result',
     'run_node_bridge',
     'run_spark_job',
+    'run_uses_eks_execution',
     'secrets',
     'settings',
     'source_incremental_window',
@@ -86,6 +93,8 @@ RUNTIME_NAMES = {
     'spark_error_summary',
     'spark_execution_lease_is_active',
     'spark_execution_lease_seconds',
+    'spark_kubernetes_execution_state_file',
+    'spark_kubernetes_mode_enabled',
     'spark_failed_stage',
     'spark_python_bridge_timeout_seconds',
     'spark_rest_mode_enabled',
@@ -103,16 +112,31 @@ RUNTIME_NAMES = {
     'timedelta',
     'urlparse',
     'validate_catalog_output_identity',
+    'validate_eks_mvp_fixture_spark_result',
     'verify_spark_iceberg_result',
     'writer_mode_for_pipeline',
+    'eks_spark_execution_lease_seconds',
 }
 
 
-def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def run_spark_job(
+    db: Session,
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    *,
+    spark_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    spark_attempt_generation: int = 1,
+    source_boundary: dict[str, Any] | None = None,
+    expected_kubernetes_execution: dict[str, Any] | None = None,
+    spark_resource_plan: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
+    kubernetes_mode = spark_kubernetes_mode_enabled()
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
+    kubernetes_state_file = spark_kubernetes_execution_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
     source_window_rebaseline = source_uses_incremental_folder_window(job) and incremental_since is None
     source_object_inventory = incremental_source_object_inventory(
@@ -144,12 +168,33 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
                 source_object_inventory,
                 source_window_rebaseline=source_window_rebaseline,
                 source_iceberg_table=source_iceberg_table,
+                source_boundary=source_boundary,
             ),
             "runId": run_id,
+            **(
+                {"sparkResourcePlan": spark_resource_plan}
+                if spark_resource_plan is not None
+                else {}
+            ),
+            **(
+                {
+                    "sparkAttemptGeneration": spark_attempt_generation,
+                    "sparkKubernetesProgressFile": str(kubernetes_state_file),
+                    **(
+                        {"expectedKubernetesExecution": expected_kubernetes_execution}
+                        if expected_kubernetes_execution is not None
+                        else {}
+                    ),
+                }
+                if kubernetes_mode
+                else {}
+            ),
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode or kubernetes_mode else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
+        progress_callback=spark_progress_callback if kubernetes_mode else None,
+        progress_file=kubernetes_state_file if kubernetes_mode else None,
     )
     if source_object_inventory is not None:
         source_collection = result.get("sourceCollection")
@@ -163,6 +208,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
 
 def ensure_batch_iceberg_target(db: Session, job: ETLJobModel) -> None:
     if is_kafka_job(job):
+        ensure_eks_mvp_fixture_iceberg_target(db, job)
         return
     expected_write_mode = writer_mode_for_pipeline(job.source_type, job.source_config)
     if job.iceberg_target:
@@ -187,7 +233,19 @@ def execute_airflow_spark_run(
     job_id: str,
     run_id: str,
     command: str,
+    airflow_source_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    persisted_run = etl_repository.get_run_model(db, run_id)
+    if spark_kubernetes_mode_enabled() or run_uses_eks_execution(persisted_run):
+        return execute_eks_airflow_spark_run(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            command=command,
+            airflow_source_boundary=airflow_source_boundary,
+            run_spark_job=run_spark_job,
+            spark_result_manifest=spark_result_manifest,
+        )
     return execute_airflow_spark_command(
         db,
         job_id=job_id,
@@ -231,18 +289,7 @@ def spark_execution_lease_is_active(value: Any) -> bool:
 
 
 def spark_execution_lease_seconds() -> int:
-    try:
-        run_timeout = max(1, int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "900"))
-    except ValueError:
-        run_timeout = 900
-    try:
-        configured = int(
-            os.environ.get("ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS")
-            or DEFAULT_SPARK_EXECUTION_LEASE_SECONDS
-        )
-    except ValueError:
-        configured = DEFAULT_SPARK_EXECUTION_LEASE_SECONDS
-    return max(run_timeout + 60, configured)
+    return eks_spark_execution_lease_seconds()
 
 
 def finalize_spark_execution_attempt(
@@ -269,6 +316,14 @@ def reconcile_airflow_catalog(
     job_id: str,
     run_id: str,
 ) -> AirflowCatalogReconciliationResponse:
+    persisted_run = etl_repository.get_run_model(db, run_id)
+    if spark_kubernetes_mode_enabled() or run_uses_eks_execution(persisted_run):
+        return reconcile_eks_airflow_catalog(
+            db,
+            job_id=job_id,
+            run_id=run_id,
+            hooks=airflow_catalog_reconciliation_hooks(),
+        )
     return execute_airflow_catalog_reconciliation(
         db,
         job_id=job_id,
@@ -303,6 +358,8 @@ def commit_airflow_catalog_reconciliation(
     run_id: str,
     result: dict[str, Any],
     retry_on_create_conflict: bool,
+    owner: str | None = None,
+    generation: int | None = None,
 ) -> AirflowCatalogReconciliationResponse:
     return execute_airflow_catalog_commit(
         db,
@@ -311,16 +368,28 @@ def commit_airflow_catalog_reconciliation(
         result=result,
         retry_on_create_conflict=retry_on_create_conflict,
         hooks=airflow_catalog_reconciliation_hooks(),
+        owner=owner,
+        generation=generation,
     )
 
 
-def persist_catalog_reconciliation_failure(db: Session, run_id: str, dataset_id: str, message: str) -> None:
+def persist_catalog_reconciliation_failure(
+    db: Session,
+    run_id: str,
+    dataset_id: str,
+    message: str,
+    *,
+    owner: str | None = None,
+    generation: int | None = None,
+) -> None:
     record_airflow_catalog_failure(
         db,
         run_id,
         dataset_id,
         message,
         hooks=airflow_catalog_reconciliation_hooks(),
+        owner=owner,
+        generation=generation,
     )
 
 
@@ -472,14 +541,18 @@ def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]
             "inputBytes",
             "inputFileCount",
             "inputRows",
+            "kubernetesExecution",
             "outputFileCount",
             "icebergCommit",
             "outputPath",
             "outputRows",
+            "phaseTimings",
             "quality",
             "schema",
+            "sourceBoundary",
             "sourceCollection",
             "sourcePath",
+            "sparkResources",
             "sparkExitCode",
             "startedAt",
             "status",
@@ -651,12 +724,19 @@ def airflow_run_reservation(
 ) -> ETLRunModel:
     submitted_at = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
+    fixture_state = eks_mvp_fixture_run_state(
+        job,
+        run_id,
+        submitted_at,
+        kubernetes_mode=spark_kubernetes_mode_enabled(),
+    )
+    source_boundary = fixture_state.get("sourceBoundary") if fixture_state is not None else None
     reserved_dag_run = AirflowDagRun(
         dag_id=airflow_client.config.dag_id,
         dag_run_id=run_id,
         state="queued",
         asklake_status="queued",
-        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        conf=airflow_dag_run_conf(job, command, run_id, submitted_at, source_boundary=source_boundary),
         raw={"reservation": True},
     )
     reserved = run_from_airflow_submit(
@@ -672,6 +752,7 @@ def airflow_run_reservation(
             "reservedAt": submitted_at,
             "status": "queued",
         },
+        **({"eksMvpFixture": fixture_state} if fixture_state is not None else {}),
     }
     return reserved
 
@@ -683,13 +764,14 @@ def submit_airflow_job_run(
     run_id: str | None = None,
     submitted_at: str | None = None,
     airflow_client: AirflowGateway | None = None,
+    source_boundary: dict[str, Any] | None = None,
 ) -> ETLRunModel:
     submitted_at = submitted_at or iso_now()
     run_id = run_id or stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
     airflow_client = airflow_client or build_airflow_client()
     dag_run = airflow_client.trigger_dag_run(
         dag_run_id=run_id,
-        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        conf=airflow_dag_run_conf(job, command, run_id, submitted_at, source_boundary=source_boundary),
         note=f"AskLake {command} command for {job.id}",
     )
     if not dag_run.dag_run_id or dag_run.dag_run_id != run_id:
@@ -719,6 +801,7 @@ def submit_or_reconcile_airflow_job_run(
     reserved_run: ETLRunModel,
     airflow_client: Any,
 ) -> tuple[ETLRunModel | None, Exception | None]:
+    source_boundary = persisted_eks_mvp_fixture_source_boundary(reserved_run)
     try:
         return submit_airflow_job_run(
             job,
@@ -726,6 +809,7 @@ def submit_or_reconcile_airflow_job_run(
             run_id=reserved_run.run_id,
             submitted_at=reserved_run.started_at,
             airflow_client=airflow_client,
+            source_boundary=source_boundary,
         ), None
     except Exception as trigger_error:
         try:
@@ -752,12 +836,20 @@ def submit_or_reconcile_airflow_job_run(
         ), None
 
 
-def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_at: str) -> dict[str, Any]:
+def airflow_dag_run_conf(
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    submitted_at: str,
+    *,
+    source_boundary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "command": command,
         "executionMode": "spark",
         "jobId": job.id,
         "runId": run_id,
+        **({"sourceBoundary": source_boundary} if source_boundary is not None else {}),
         "submittedAt": submitted_at,
     }
 
@@ -771,6 +863,7 @@ def job_payload_for_spark(
     *,
     source_window_rebaseline: bool = False,
     source_iceberg_table: dict[str, Any] | None = None,
+    source_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     compiled_rules = compile_job_rules(job)
     require_compiled_rules(compiled_rules)
@@ -804,6 +897,7 @@ def job_payload_for_spark(
         "schemaFingerprint": job.schema_fingerprint,
         "schemaSampleRows": job.schema_sample_rows or [],
         "source": job.source,
+        "sourceBoundary": source_boundary,
         "sourceConfig": job.source_config or [],
         "sourceIncrementalBefore": incremental_before,
         "sourceIncrementalSince": incremental_since,

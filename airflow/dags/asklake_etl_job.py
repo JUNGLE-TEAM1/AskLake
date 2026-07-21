@@ -94,6 +94,7 @@ def post_asklake_execution_api(
 
 def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
     run_id = str(conf["runId"])
+    source_boundary = conf.get("sourceBoundary")
     wait_seconds = max(
         60,
         int(os.environ.get("ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS") or "7200"),
@@ -110,6 +111,7 @@ def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
                 {
                     "command": str(conf.get("command") or "run"),
                     "jobId": str(conf["jobId"]),
+                    **({"sourceBoundary": source_boundary} if isinstance(source_boundary, dict) else {}),
                 },
                 operation="Spark execution",
             )

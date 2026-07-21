@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { continuousSparkApplication } from "./manage-kafka-continuous.mjs";
+import { continuousSparkApplication, ensureOutputBucket } from "./manage-kafka-continuous.mjs";
 import { sparkApplicationState } from "./spark-kubernetes-client.mjs";
 
 const request = {
@@ -34,12 +34,14 @@ const request = {
 
 test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret refs", () => {
   const saved = captureEnvironment([
+    "ASKLAKE_SPARK_RUNNER",
     "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
     "TRINO_ICEBERG_JDBC_USER",
     "TRINO_ICEBERG_JDBC_PASSWORD",
     "TRINO_ICEBERG_WAREHOUSE_BUCKET",
   ]);
   Object.assign(process.env, {
+    ASKLAKE_SPARK_RUNNER: "kubernetes",
     ASKLAKE_SPARK_ICEBERG_JDBC_URL: "jdbc:postgresql://postgres:5432/asklake",
     TRINO_ICEBERG_JDBC_USER: "contract-user",
     TRINO_ICEBERG_JDBC_PASSWORD: "K8S_SECRET_SENTINEL",
@@ -52,24 +54,62 @@ test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret re
       serviceAccount: "asklake-spark",
     }, "attempt-1", {
       ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX: "s3a://asklake-runtime/continuous",
+      ASKLAKE_KAFKA_AUTH_MODE: "iam",
+      ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: "local:///opt/asklake/jars/aws-msk-iam-auth-shaded.jar",
       ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET_NAME: "asklake-spark-runtime",
       ASKLAKE_SPARK_KUBERNETES_NODE_SELECTOR: '{"asklake.io/workload-class":"spark"}',
       ASKLAKE_SPARK_KUBERNETES_TOLERATIONS: '[{"key":"asklake.io/workload","operator":"Equal","value":"spark","effect":"NoSchedule"}]',
     });
     const serialized = JSON.stringify(application);
     const password = application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD");
+    const jdbcUrl = application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_SPARK_ICEBERG_JDBC_URL");
+    const jdbcUser = application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_SPARK_ICEBERG_JDBC_USER");
 
     assert.equal(password.value, undefined);
     assert.deepEqual(password.valueFrom, {
       secretKeyRef: { name: "asklake-spark-runtime", key: "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD" },
     });
+    assert.deepEqual(jdbcUrl.valueFrom, {
+      secretKeyRef: { name: "asklake-spark-runtime", key: "ASKLAKE_SPARK_ICEBERG_JDBC_URL" },
+    });
+    assert.deepEqual(jdbcUser.valueFrom, {
+      secretKeyRef: { name: "asklake-spark-runtime", key: "ASKLAKE_SPARK_ICEBERG_JDBC_USER" },
+    });
     assert.equal(serialized.includes("K8S_SECRET_SENTINEL"), false);
     assert.equal(application.spec.hadoopConf["fs.s3a.aws.credentials.provider"], "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider");
     assert.equal(application.spec.driver.nodeSelector["asklake.io/workload-class"], "spark");
     assert.equal(application.spec.executor.tolerations[0].effect, "NoSchedule");
+    assert.deepEqual(application.spec.deps.jars, ["local:///opt/asklake/jars/aws-msk-iam-auth-shaded.jar"]);
+    assert.equal(
+      application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_KAFKA_AUTH_MODE")?.value,
+      "iam",
+    );
   } finally {
     restoreEnvironment(saved);
   }
+});
+
+test("AWS Continuous startup does not require bucket-wide ListBucket permission", async () => {
+  let calls = 0;
+  await ensureOutputBucket("s3a://provisioned-output/prefix", {
+    minio: false,
+    client: { async send() { calls += 1; } },
+  });
+  assert.equal(calls, 0);
+});
+
+test("MinIO Continuous startup still creates a missing local bucket", async () => {
+  const commands = [];
+  await ensureOutputBucket("s3a://local-output/prefix", {
+    minio: true,
+    client: {
+      async send(command) {
+        commands.push(command.constructor.name);
+        if (commands.length === 1) throw new Error("missing");
+      },
+    },
+  });
+  assert.deepEqual(commands, ["HeadBucketCommand", "CreateBucketCommand"]);
 });
 
 test("Kubernetes completed state is the shared exited terminal state", () => {

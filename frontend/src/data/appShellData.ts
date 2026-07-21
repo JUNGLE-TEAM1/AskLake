@@ -106,7 +106,7 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["저장소", "S3 Gold"],
     ["포맷", "Parquet"],
     ["파티션", "설정 전"],
-    ["RAG 인덱스", "선택"],
+    ["Semantic Model", "미연결"],
     ["진행률", "-"],
   ],
   permission: [

@@ -27,6 +27,7 @@ class CreatePipelineMappingContext:
     next_run: str
     schedule_policy: dict[str, Any]
     stats: dict[str, Any]
+    source_config: list[list[str]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +61,7 @@ def map_create_request_to_job(
         retry_policy=_dump(request.retry_policy) if request.retry_policy else None,
         retry_policy_summary=request.retry_policy_summary,
         run_limit_summary=request.run_limit_summary,
-        source_config=_row_lists(request.source_config),
+        source_config=context.source_config if context.source_config is not None else _row_lists(request.source_config),
         source_label=request.source_label,
         source_type=request.source_type,
         execution_mode=request.execution_mode,
@@ -125,7 +126,7 @@ def apply_append_request_to_job(
     job.retry_policy = _dump(request.retry_policy) if request.retry_policy else None
     job.retry_policy_summary = request.retry_policy_summary
     job.run_limit_summary = request.run_limit_summary
-    job.source_config = _row_lists(request.source_config)
+    job.source_config = context.source_config if context.source_config is not None else _row_lists(request.source_config)
     job.source_label = request.source_label
     job.source_type = request.source_type
     job.execution_mode = request.execution_mode

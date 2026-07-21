@@ -12,6 +12,7 @@ RUNTIME_NAMES = {
     '_apply_continuous_runtime_report',
     'continuous_batch_dag_steps',
     'continuous_runtime_report_path',
+    'continuous_runtime_reconciliation_enabled',
     'continuous_session_dag_steps',
     'continuous_worker_status',
     'current_kafka_continuous_session',
@@ -35,6 +36,7 @@ RUNTIME_NAMES = {
     'reconcile_pending_continuous_replay_catalog',
     'reconcile_stale_continuous_maintenance_runs',
     'require_governed_access',
+    'require_local_continuous_control_plane',
     'reversed',
     'run_kafka_continuous_worker',
     'secrets',
@@ -71,6 +73,7 @@ def require_continuous_job_access(
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     if job.execution_mode != "continuous" or not is_kafka_job(job):
         raise ApiError(ErrorCode.INVALID_JOB_STATE, "Continuous operation requires a continuous Kafka Job.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    require_local_continuous_control_plane(getattr(job, "continuous_config", None))
     require_governed_access(
         db,
         actor,
@@ -404,6 +407,8 @@ def continuous_session_dag_steps(
 
 
 def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+    if not continuous_runtime_reconciliation_enabled():
+        return
     reconcile_continuous_runtime(
         db,
         job,

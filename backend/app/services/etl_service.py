@@ -10,7 +10,6 @@ import secrets
 from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import urlparse
-
 from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,6 +49,10 @@ from app.application.airflow_execution import (
     finalize_spark_execution_attempt as finalize_airflow_spark_attempt,
     persist_catalog_reconciliation_failure as record_airflow_catalog_failure,
     reconcile_airflow_catalog as execute_airflow_catalog_reconciliation,
+)
+from app.application.eks_airflow_execution import (
+    execute_eks_airflow_spark_run,
+    reconcile_eks_airflow_catalog,
 )
 from app.application.etl_job_commands import (
     EtlJobDeleteHooks,
@@ -212,6 +215,7 @@ from app.application.etl_run_projection import (
     mark_airflow_catalog_reconciliation_failure,
     mark_airflow_submission_unknown,
     mark_airflow_success_without_catalog_reconciliation,
+    merge_airflow_task_state_snapshot,
     record_airflow_sync_error,
     repair_incomplete_airflow_successes,
     run_from_airflow_submit,
@@ -250,10 +254,6 @@ from app.application.source_connectors import (
     test_source_connector as execute_test_source_connector,
 )
 from app.core.config import settings
-from app.services.kafka_ingest_v2 import (
-    kafka_ingest_v2_enabled as clickhouse_kafka_ingest_v2_enabled,
-    run_clickhouse_kafka_ingest_v2,
-)
 from app.core.errors import ApiError
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,
@@ -397,9 +397,29 @@ from app.services.etl import (
     continuous_publication as _etl_continuous_publication,
     replay_schedule as _etl_replay_schedule,
 )
+from app.services.etl.eks_fixture import (
+    eks_mvp_fixture_iceberg_target,
+    eks_mvp_fixture_run_state,
+    ensure_eks_mvp_fixture_iceberg_target,
+    is_eks_mvp_bounded_fixture_job,
+    persisted_eks_mvp_fixture_source_boundary,
+    require_eks_mvp_fixture_slot_available,
+    require_matching_airflow_source_boundary,
+    run_uses_eks_execution,
+    validate_eks_mvp_bounded_fixture_job,
+    validate_eks_mvp_fixture_spark_result,
+)
 from app.services.etl.runtime_binding import bind_runtime
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.auth_service import load_active_actor_by_user_id
+from app.services.eks_execution_contract import (
+    continuous_runtime_reconciliation_enabled,
+    external_continuous_control_plane_enabled,
+    job_visible_in_current_control_plane,
+    require_local_continuous_control_plane,
+    run_execution_heartbeat_interval_seconds,
+    spark_execution_lease_seconds as eks_spark_execution_lease_seconds,
+)
 from app.services.governance_enforcement import require_governed_access
 from app.services.trino_materialization_service import materialized_dataset_id
 from app.services.trino_query_run_service import TrinoQueryRunService
@@ -423,6 +443,29 @@ from app.services.resource_permission_service import (
     permissions_for_actor_with_governance,
     permissions_for_actor_with_governance_state,
 )
+
+
+def clickhouse_kafka_ingest_v2_enabled(
+    job: ETLJobModel,
+    runtime_settings: Any | None = None,
+) -> bool:
+    """Load the EC2-only V2 adapter only after its feature fence is evaluated."""
+    configured = runtime_settings or settings
+    if not (
+        configured.clickhouse_realtime_v2_enabled
+        and configured.kafka_connect_sink_enabled
+        and configured.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+    ):
+        return False
+    from app.services.kafka_ingest_v2 import kafka_ingest_v2_enabled
+
+    return kafka_ingest_v2_enabled(job, configured)
+
+
+def run_clickhouse_kafka_ingest_v2(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from app.services.kafka_ingest_v2 import run_clickhouse_kafka_ingest_v2 as run_v2
+
+    return run_v2(*args, **kwargs)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -686,12 +729,18 @@ def create_trino_sql_job(
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
+    if not continuous_runtime_reconciliation_enabled():
+        return
     sync_active_kafka_continuous_jobs(ContinuousRuntimeSyncHooks(
         reconcile_stale_maintenance=reconcile_stale_continuous_maintenance_runs,
         refresh_runtime=refresh_kafka_continuous_runtime,
         report_has_unacknowledged_publication=continuous_report_has_unacknowledged_publication,
         has_pending_replay_catalog=has_pending_continuous_replay_catalog,
     ))
+
+
+class ScheduledJobOccurrenceAlreadyClaimed(Exception):
+    """The scheduler's preloaded due occurrence changed before its row lock."""
 
 
 def command_job(
@@ -703,6 +752,7 @@ def command_job(
     execution_actor: ActorContext | None = None,
     tree_run_id: str | None = None,
     tree_fencing_token: str | None = None,
+    scheduled_due_at: str | None = None,
 ) -> JobCommandResponse:
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
@@ -710,6 +760,13 @@ def command_job(
     job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if job.execution_mode == "continuous":
+        require_local_continuous_control_plane(getattr(job, "continuous_config", None))
+    if (
+        scheduled_due_at is not None
+        and not scheduled_job_occurrence_is_claimable(job, scheduled_due_at)
+    ):
+        raise ScheduledJobOccurrenceAlreadyClaimed(job_id)
 
     actor_context = actor or ActorContext()
     required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
@@ -787,6 +844,12 @@ def command_job(
             plan.http_status,
         )
 
+    if (
+        plan.execution_path == SnapshotExecutionPath.RUN
+        and scheduled_due_at is not None
+    ):
+        advance_claimed_scheduled_job(job)
+
     if plan.execution_path == SnapshotExecutionPath.TRINO:
         service = TrinoSqlJobService(SqlRepository(db), CatalogRepository(db))
         result = (
@@ -817,7 +880,7 @@ def command_job(
     run_model = None
     dataset_model = None
     if plan.execution_path == SnapshotExecutionPath.RUN:
-        if is_kafka_job(job):
+        if is_kafka_job(job) and not is_eks_mvp_bounded_fixture_job(job):
             run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             run_model = kafka_run_reservation(job, run_id)
@@ -858,6 +921,11 @@ def command_job(
             finalize_job_from_kafka_result(job, command, result)
             job.dag_steps = dag_steps_from_kafka_result(job, command, run_schema.model_dump(by_alias=True), result)
         else:
+            validate_eks_mvp_bounded_fixture_job(
+                job,
+                kubernetes_mode=spark_kubernetes_mode_enabled(),
+            )
+            require_eks_mvp_fixture_slot_available(db, job)
             airflow_client = build_airflow_client()
             run_model = airflow_run_reservation(job, command, airflow_client)
             run_schema = etl_repository.run_to_schema(run_model)
@@ -1171,18 +1239,73 @@ def verify_spark_iceberg_result(
                 "storageSizeBytes": storage_size_bytes,
             },
         )
+    spark_snapshot_file_count = parse_count_value(result.get("outputFileCount"))
+    commit_snapshot_file_count = (
+        parse_count_value(commit.get("dataFileCount"))
+        if commit.get("dataFileCount") is not None
+        else None
+    )
+    if commit_snapshot_file_count is not None and (
+        commit_snapshot_file_count != data_file_count
+        or spark_snapshot_file_count != data_file_count
+    ):
+        raise catalog_reconciliation_error(
+            "Spark and Trino Iceberg snapshot file counts do not match.",
+            {
+                "icebergCommitDataFileCount": commit_snapshot_file_count,
+                "jobId": job.id,
+                "outputFileCount": spark_snapshot_file_count,
+                "runId": run_id,
+                "snapshotDataFileCount": data_file_count,
+                "snapshotId": snapshot_id,
+            },
+        )
     verified = evidence.model_dump(mode="json", by_alias=True)
     return {
         **result,
         "dataFileCount": data_file_count,
         "icebergCommit": verified,
         "materializationOutputPath": evidence.warehouse_location,
+        "outputFileCount": data_file_count,
         "queryEngineTable": evidence.query_engine_table.model_dump(mode="json", by_alias=True),
         "queryEngineVerified": True,
         "ruleFingerprint": evidence.rule_fingerprint,
         "schemaFingerprint": evidence.schema_fingerprint,
         "storageSizeBytes": storage_size_bytes,
         "warehouseLocation": evidence.warehouse_location,
+    }
+
+
+def enrich_airflow_catalog_spark_result(
+    job: ETLJobModel,
+    run: ETLRunModel,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    fixture_job = is_eks_mvp_bounded_fixture_job(job)
+    if job.iceberg_target and (not is_kafka_job(job) or fixture_job):
+        expected_run_row_count = None
+        if fixture_job:
+            source_boundary = persisted_eks_mvp_fixture_source_boundary(run)
+            if source_boundary is None:
+                raise catalog_reconciliation_error(
+                    "Persisted EKS fixture boundary is required for Catalog reconciliation.",
+                    {"jobId": job.id, "runId": run.run_id},
+                )
+            expected_run_row_count = source_boundary["expectedCount"]
+        return verify_spark_iceberg_result(
+            job,
+            run.run_id,
+            result,
+            expected_run_row_count=expected_run_row_count,
+        )
+
+    output_path = str(result.get("outputPath") or "").strip()
+    validate_catalog_output_identity(job, run.run_id, output_path)
+    physical = inspect_spark_output(output_path)
+    return {
+        **result,
+        "parquetObjectCount": physical["parquetObjectCount"],
+        "storageSizeBytes": physical["storageSizeBytes"],
     }
 
 
@@ -1355,22 +1478,14 @@ def sync_airflow_run(
     run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
     run.airflow_state = dag_run.state
     previous_task_states = dict(run.task_states or {})
-    spark_execution = previous_task_states.get("sparkExecution")
     spark_result = previous_task_states.get("sparkResult")
     catalog_result = previous_task_states.get("catalogResult")
-    airflow_reservation = previous_task_states.get("airflowReservation")
-    run.task_states = task_state_snapshot(task_instances)
-    if isinstance(spark_execution, dict):
-        run.task_states["sparkExecution"] = spark_execution
-    if isinstance(spark_result, dict):
-        run.task_states["sparkResult"] = spark_result
-    if isinstance(catalog_result, dict):
-        run.task_states["catalogResult"] = catalog_result
-    if isinstance(airflow_reservation, dict):
-        run.task_states["airflowReservation"] = airflow_reservation
+    run.task_states = merge_airflow_task_state_snapshot(
+        previous_task_states,
+        task_state_snapshot(task_instances),
+    )
     run.last_synced_at = synced_at
     run.sync_error = None
-
     if run.status in TERMINAL_RUN_STATUSES and run.ended_at == "-":
         run.ended_at = synced_at
         run.duration = format_iso_duration(run.started_at, synced_at)
@@ -2108,11 +2223,13 @@ sync_airflow_runs_for_job = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['sy
 run_node_bridge = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['run_node_bridge'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 recover_spark_rest_submission = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['recover_spark_rest_submission'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 spark_rest_mode_enabled = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_rest_mode_enabled'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
+spark_kubernetes_mode_enabled = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_kubernetes_mode_enabled'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 spark_rest_poll_timeout_ms = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_rest_poll_timeout_ms'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 spark_python_bridge_timeout_seconds = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_python_bridge_timeout_seconds'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 continuous_maintenance_poll_timeout_ms = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['continuous_maintenance_poll_timeout_ms'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 continuous_maintenance_bridge_timeout_seconds = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['continuous_maintenance_bridge_timeout_seconds'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 spark_rest_submission_state_file = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_rest_submission_state_file'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
+spark_kubernetes_execution_state_file = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['spark_kubernetes_execution_state_file'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 continuous_maintenance_state_file = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['continuous_maintenance_state_file'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 continuous_maintenance_result_file = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['continuous_maintenance_result_file'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
 read_continuous_maintenance_result = bind_runtime(_etl_source_runtime.IMPLEMENTATIONS['read_continuous_maintenance_result'], globals(), runtime_names=_etl_source_runtime.RUNTIME_NAMES)
@@ -2190,4 +2307,7 @@ nonnegative_int = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['nonnegative
 has_successful_run = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['has_successful_run'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
 trino_sql_job_run_as_actor = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['trino_sql_job_run_as_actor'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
 advance_scheduled_job_after_tick = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['advance_scheduled_job_after_tick'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
+scheduled_job_next_run_utc = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['scheduled_job_next_run_utc'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
+scheduled_job_occurrence_is_claimable = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['scheduled_job_occurrence_is_claimable'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
+advance_claimed_scheduled_job = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['advance_claimed_scheduled_job'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)
 ensure_scheduled_job_next_run = bind_runtime(_etl_replay_schedule.IMPLEMENTATIONS['ensure_scheduled_job_next_run'], globals(), runtime_names=_etl_replay_schedule.RUNTIME_NAMES)

@@ -128,6 +128,13 @@ def ensure_dashboard_live_schema(db: Session) -> None:
         # volumes forward-compatible when a column is added later.
         for statement in (
             "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS next_check_after_ms integer NOT NULL DEFAULT 1000",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS binding_epoch bigint NOT NULL DEFAULT 0",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS active_serving_engine varchar(32)",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS active_serving_version_id varchar(160)",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS active_archive_snapshot_id varchar(255)",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS latest_source_boundary jsonb",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS latest_checksum varchar(128)",
+            "ALTER TABLE dataset_freshness ADD COLUMN IF NOT EXISTS latest_mutation_type varchar(32)",
             "ALTER TABLE dataset_freshness DROP CONSTRAINT IF EXISTS dataset_freshness_next_check_after_ms_check",
             "ALTER TABLE dataset_freshness ALTER COLUMN next_check_after_ms SET DEFAULT 1000",
             "ALTER TABLE dataset_freshness ADD CONSTRAINT dataset_freshness_next_check_after_ms_check CHECK (next_check_after_ms BETWEEN 1000 AND 60000)",
@@ -138,6 +145,13 @@ def ensure_dashboard_live_schema(db: Session) -> None:
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_fingerprint varchar(64)",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS manifest_location varchar(2048)",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS snapshot_id varchar(255)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS materialization_id varchar(160)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_boundary jsonb",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS serving_engine varchar(32)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS serving_version_id varchar(160)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS binding_epoch bigint NOT NULL DEFAULT 0",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS dimension_version_ids jsonb NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS mutation_type varchar(32) NOT NULL DEFAULT 'append'",
             "CREATE TABLE IF NOT EXISTS dashboard_live_schema_migrations (version varchar(96) PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT NOW())",
             "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM dashboard_live_schema_migrations WHERE version = '20260714_kafka_partition_cursor_v1') THEN UPDATE dataset_revision_commits SET commit_kind = CASE WHEN materialization_mode = 'snapshot' THEN 'backfill' WHEN run_id LIKE 'continuous-replay_%' THEN 'replay' WHEN run_id LIKE 'continuous:%:batch:%' THEN 'stream' ELSE commit_kind END WHERE commit_kind = 'legacy'; INSERT INTO dataset_kafka_partition_cursors (dataset_id, commit_kind, topic, partition, next_offset, updated_revision, updated_at) SELECT commits.dataset_id, 'stream', ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer, MAX((ranges.item ->> 'endOffset')::bigint), MAX(commits.revision), NOW() FROM dataset_revision_commits AS commits CROSS JOIN LATERAL jsonb_array_elements(commits.source_ranges) AS ranges(item) WHERE commits.commit_kind IN ('stream', 'backfill') AND jsonb_typeof(commits.source_ranges) = 'array' AND ranges.item ? 'topic' AND ranges.item ? 'partition' AND ranges.item ? 'endOffset' AND (ranges.item ->> 'partition') ~ '^[0-9]+$' AND (ranges.item ->> 'endOffset') ~ '^[0-9]+$' GROUP BY commits.dataset_id, ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer ON CONFLICT (dataset_id, commit_kind, topic, partition) DO UPDATE SET next_offset = GREATEST(dataset_kafka_partition_cursors.next_offset, EXCLUDED.next_offset), updated_revision = GREATEST(dataset_kafka_partition_cursors.updated_revision, EXCLUDED.updated_revision), updated_at = NOW(); INSERT INTO dashboard_live_schema_migrations (version) VALUES ('20260714_kafka_partition_cursor_v1'); END IF; END $$",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN result_payload TYPE jsonb USING result_payload::jsonb",
@@ -146,6 +160,7 @@ def ensure_dashboard_live_schema(db: Session) -> None:
             "ALTER TABLE dashboard_widget_results ALTER COLUMN calculation_state SET DEFAULT '{}'::jsonb",
             "CREATE INDEX IF NOT EXISTS dataset_revision_commits_dataset_revision_idx ON dataset_revision_commits (dataset_id, revision)",
             "CREATE UNIQUE INDEX IF NOT EXISTS dataset_revision_commits_source_fingerprint_uq ON dataset_revision_commits (dataset_id, commit_kind, source_fingerprint) WHERE source_fingerprint IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS dataset_revision_commits_materialization_uq ON dataset_revision_commits (materialization_id) WHERE materialization_id IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS dashboard_widget_results_dataset_revision_idx ON dashboard_widget_results (dataset_id, applied_revision)",
         ):
             db.execute(text(statement))

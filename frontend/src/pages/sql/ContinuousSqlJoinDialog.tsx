@@ -25,7 +25,6 @@ export function ContinuousSqlJoinDialog({
   pending,
   progressMessage,
   result,
-  servingMode,
   staticDatasets,
   streamingDataset,
 }: {
@@ -40,7 +39,6 @@ export function ContinuousSqlJoinDialog({
   pending: boolean;
   progressMessage: string | null;
   result: ContinuousSqlJob | null;
-  servingMode: "iceberg" | "clickhouse";
   staticDatasets: CatalogDataset[];
   streamingDataset: CatalogDataset;
 }) {
@@ -64,9 +62,7 @@ export function ContinuousSqlJoinDialog({
               ? "producer Dataset revision이 JOIN되어 카탈로그 데이터 소스로 게시됐습니다."
               : result
                 ? "producer Job이 게시한 첫 query 가능한 Dataset revision 전에는 카탈로그 게시 완료로 표시하지 않습니다."
-                : servingMode === "iceberg"
-                  ? "현재 SQL을 검증한 뒤 연결된 producer Dataset revision과 고정된 정적 스냅샷을 JOIN해 Iceberg에 게시합니다."
-                  : "현재 SQL을 검증한 뒤 연결된 producer Dataset revision과 고정된 정적 스냅샷을 ClickHouse에서 JOIN합니다."}
+                : "현재 SQL을 검증한 뒤 연결된 producer Dataset revision과 고정된 정적 스냅샷을 JOIN해 Iceberg에 게시합니다."}
           </DialogDescription>
         </DialogHeader>
 
@@ -110,7 +106,7 @@ export function ContinuousSqlJoinDialog({
             <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
               <div><strong>실시간 producer Dataset</strong> · {streamingDataset.name}</div>
               <div><strong>정적 JOIN</strong> · {staticDatasets.map((dataset) => dataset.name).join(", ")}</div>
-              <div><strong>출력 엔진</strong> · {servingMode === "iceberg" ? "Spark / Iceberg" : "ClickHouse"} / GOLD</div>
+              <div><strong>출력 엔진</strong> · Spark / Iceberg / GOLD</div>
               <div className="text-muted-foreground">Kafka 수집 크기와 주기는 producer Job 설정을 따릅니다.</div>
             </div>
             <Field>

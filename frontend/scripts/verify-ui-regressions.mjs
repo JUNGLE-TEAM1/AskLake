@@ -58,6 +58,7 @@ const jobsPageFiles = [
   "src/pages/ingest/jobs/JobRunsPage.tsx",
   "src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
   "src/pages/ingest/jobs/SnapshotJobRunsPage.tsx",
+  "src/services/continuousRuntimeContract.ts",
 ];
 
 const askLakeDataFiles = [
@@ -550,9 +551,7 @@ const checks = [
   {
     name: "SQL editor uses the normal SQL Job flow without a separate continuous JOIN action",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
-    patterns: [
-      /<SqlAiWriterDialog/,
-    ],
+    patterns: [/<SqlAiWriterDialog/],
     forbiddenPatterns: [/data-testid="continuous-sql-join-button"/, /실시간 JOIN 만들기/],
   },
   {
@@ -569,7 +568,7 @@ const checks = [
     ],
   },
   {
-    name: "Catalog semantic workspace uses live Semantic Model and RAG contracts",
+    name: "Catalog semantic workspace uses the live Semantic Model contract",
     files: [
       "src/pages/catalog/CatalogWorkspacePage.tsx",
       "src/pages/semantic/SemanticLayerPage.tsx",
@@ -580,8 +579,6 @@ const checks = [
       /<SemanticLayerPage datasets=\{catalogProps\.datasets\}/,
       /listSemanticModels\(\)/,
       /apiClient\.get<SemanticModel\[\]>\("\/api\/semantic-models"\)/,
-      /apiClient\.post<RagProfile>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/approve`/,
-      /<RagJobHistory datasetId=\{selectedDatasetId\}/,
     ],
     forbiddenPatterns: [/semanticLayerMock/, /services\/mockApi/],
   },
@@ -1595,7 +1592,8 @@ const checks = [
     file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
     patterns: [
       /const usesCount = config\.aggregation === "count";/,
-      /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /type === "bar_chart" && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /\(type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
       /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],
@@ -2035,18 +2033,20 @@ const checks = [
     ],
   },
   {
-    name: "Authenticated routes share the compact global app shell",
+    name: "Authenticated routes share the compact sidebar shell without the retired global top bar",
     file: "src/App.tsx",
     patterns: [
       /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
-      /function resolveTopbarSection\(flow: FlowId, dashboardEntry: DashboardEntry\)/,
-      /<Topbar section=\{resolveTopbarSection\(activeFlow, dashboardEntry\)\} \/>/,
+      /<main className=\{activeFlow === "schema" \? "main-shell schema-shell" : "main-shell"\}>/,
+      /<section className=\{activeFlow === "jobs" \? "page-body jobs-body"/,
       /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
       /<Footer \/>/,
       /onRefresh=\{/,
       /<Topbar[^>]*onLogout=/,
+      /<Topbar section=/,
+      /resolveTopbarSection/,
     ],
   },
   {
@@ -2094,7 +2094,7 @@ const checks = [
     ],
   },
   {
-    name: "Primary list and analysis routes leave their visible title in the global top bar",
+    name: "Primary list and analysis routes keep their visible title and actions in local content",
     files: [
       "src/pages/ingest/jobs/JobsLandingPage.tsx",
       "src/pages/catalog/CatalogExplorerPage.tsx",
@@ -2102,10 +2102,10 @@ const checks = [
       "src/pages/dashboard/DashboardLandingPage.tsx",
     ],
     patterns: [
-      /data-page-actions="jobs"/,
+      /title="작업 목록"/,
       /className="catalog-page"/,
       /className=\{cn\(styles\.page,/,
-      /className="dashboard-list-actions"/,
+      /title="대시보드 목록"/,
     ],
     forbiddenPatterns: [
       /PageHeader/,

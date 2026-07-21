@@ -1,0 +1,81 @@
+{
+  "contractVersion": "asklake.eks.day18.observability-decision.v1",
+  "status": "applied-with-runtime-limitations",
+  "selected": {
+    "delivery": "amazon-cloudwatch-observability-eks-addon",
+    "addonVersion": "v6.3.0-eksbuild.1",
+    "containerInsights": "otel",
+    "applicationSignals": false,
+    "classicContainerInsights": false,
+    "containerLogs": true,
+    "otelNativeLogs": false,
+    "managedFluentBitLogs": true,
+    "standaloneFluentBit": false,
+    "standaloneAdot": false
+  },
+  "compatibility": {
+    "eksAutoMode": true,
+    "kubernetesVersion": "1.36",
+    "architectures": ["amd64", "arm64"],
+    "exactVersionMustBeRevalidatedBeforeApply": true
+  },
+  "identity": {
+    "mode": "eks-pod-identity",
+    "serviceAccount": "cloudwatch-agent",
+    "dedicatedRole": true,
+    "attachToNodeRole": false,
+    "xrayPermissions": false,
+    "crossAccount": false,
+    "requiredActionsMustBeVerifiedInPhase2": true,
+    "requiredActionsVerifiedInPhase2": true
+  },
+  "collection": {
+    "applicationLogGroup": "/aws/otel/containerinsights/{clusterName}/application",
+    "applicationLogSource": "container-stdout-stderr",
+    "namespaceScope": "asklake-dev-file-path-include-filter",
+    "dropDebugLogs": false,
+    "debugFilterStatus": "namespace-first-cost-boundary",
+    "nodeExporterCpuRequest": "25m",
+    "agentRoles": {
+      "node": "CWAGENT_ROLE=NODE",
+      "clusterScraper": "CWAGENT_ROLE=LEADER",
+      "clusterScraperNetwork": "pod-network-post-apply-reconcile"
+    },
+    "kubernetesEvents": {
+      "source": "kubernetes-api-read-only",
+      "cloudWatchDelivery": false,
+      "sanitizedPrivateReceipt": true,
+      "correlationKey": "utc-time-window-and-run-id"
+    }
+  },
+  "retentionDays": {
+    "application": 7,
+    "controlPlane": 7,
+    "rdsPostgresql": 7
+  },
+  "costGuardrails": {
+    "monthlyCloudWatchBudgetUsd": 75,
+    "dailyLogIngestGiBWarning": 3,
+    "storedLogGiBWarning": 20,
+    "tuneAfterFirst24Hours": true,
+    "applicationSignalsMayNotBeEnabledImplicitly": true,
+    "dualPublishClassicAndOtel": false
+  },
+  "runtime": {
+    "addonStatus": "ACTIVE",
+    "allAddonWorkloadsReady": true,
+    "applicationLogDelivered": true,
+    "managedFluentBit": "enabled-and-namespace-scoped",
+    "accessDenied": 0,
+    "clusterScraperNetwork": "pod-network-post-apply-reconcile",
+    "metricsDelivery": "partial-success-with-http-400-drops",
+    "metricsLiveGate": "open-follow-up-required",
+    "criParserWarnings": "removed-by-phase3-managed-fluent-bit-switch"
+  },
+  "rollback": {
+    "removeAddonSoftwareOnRollback": true,
+    "retainLogGroups": true,
+    "retainExistingControlPlaneLogging": true,
+    "doNotModifyApplicationWorkloads": true
+  }
+}

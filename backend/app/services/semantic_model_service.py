@@ -73,11 +73,11 @@ class SemanticModelService:
         dataset_ids: list[str],
         actor: ActorContext,
     ) -> list[dict[str, Any]]:
-        """Resolve published semantic models that can be used for RAG retrieval.
+        """Resolve published semantic models authorized for Dataset queries.
 
         This is deliberately a query-permission check, not a view check.  A
-        model can be visible in the UI while its underlying retrieval contract
-        is not available to the current actor.
+        model can be visible in the UI while its underlying query contract is
+        not available to the current actor.
         """
         normalized_dataset_ids = list(dict.fromkeys(str(item) for item in dataset_ids if str(item).strip()))
         if not normalized_dataset_ids:

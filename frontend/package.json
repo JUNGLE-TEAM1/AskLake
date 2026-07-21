@@ -9,7 +9,7 @@
     "db:seed": "node server/seed.js",
     "test:auth-contract": "node --experimental-strip-types --test scripts/auth-contract.test.mts",
     "test:admin-console-load": "node --experimental-strip-types --test scripts/admin-console-load.test.mts",
-    "test:dashboard-realtime-v2": "npm run test:realtime-events && npm run test:route-data-loading && npm run test:compatibility-runtime",
+    "test:dashboard-runtime": "npm run test:realtime-events && npm run test:route-data-loading && npm run test:compatibility-runtime",
     "test:dashboard-draft-layout-persistence": "node --experimental-strip-types --test scripts/dashboard-draft-layout-persistence.test.mts",
     "test:dashboard-runtime-mutations": "node --experimental-strip-types --test scripts/dashboard-runtime-mutations.test.mts",
     "test:dashboard-runtime-errors": "node --experimental-strip-types --test scripts/dashboard-runtime-errors.test.mts",
@@ -18,9 +18,11 @@
     "test:dashboard-widget-data-state": "node --experimental-strip-types --test scripts/dashboard-widget-data-state.test.mts",
     "test:dashboard-widget-filters": "node --experimental-strip-types --test scripts/dashboard-widget-filters.test.mts",
     "test:dashboard-time-series": "node --experimental-strip-types --test scripts/dashboard-time-series.test.mts",
+    "test:dashboard-bar-orientation": "node --experimental-strip-types --test scripts/dashboard-bar-orientation.test.mts",
     "test:realtime-events": "node --experimental-strip-types --test scripts/realtime-events.test.mts",
     "test:continuous-runtime-contract": "node --experimental-strip-types --test scripts/continuous-runtime-contract.test.mts",
     "test:continuous-sql-ui": "node --experimental-strip-types --test scripts/continuous-sql-ui.test.mts",
+    "test:realtime-v1-only-profile": "node --experimental-strip-types --test scripts/realtime-v1-only-profile.test.mts",
     "test:request-ownership": "node --experimental-strip-types --test scripts/request-ownership.test.mts",
     "test:live-ai-api-boundary": "node --experimental-strip-types --test scripts/live-ai-api-boundary.test.mts",
     "test:sql-ai-editor-contract": "node --experimental-strip-types --test scripts/sql-ai-editor-contract.test.mts",
@@ -49,7 +51,7 @@
     "test:sql-result-boundary": "node --experimental-strip-types --test scripts/sql-result-boundary.test.mts",
     "test:trino-timeline": "node --experimental-strip-types --test scripts/trino-execution-timeline.test.mts",
     "test:wizard-navigation": "node --experimental-strip-types --test scripts/wizard-navigation.test.mts",
-    "verify:ui-regressions": "npm run test:auth-contract && npm run test:admin-console-load && npm run test:trino-timeline && npm run test:sql-result-boundary && npm run test:dashboard-draft-layout-persistence && npm run test:dashboard-runtime-mutations && npm run test:dashboard-runtime-errors && npm run test:dashboard-performance-contract && npm run test:dashboard-job-binding-removal && npm run test:dashboard-widget-data-state && npm run test:dashboard-widget-filters && npm run test:dashboard-time-series && npm run test:dashboard-circular-chart && npm run test:realtime-events && npm run test:continuous-runtime-contract && npm run test:continuous-sql-ui && npm run test:source-raw-preview && npm run test:wizard-navigation && npm run test:record-parsing-ai-action && npm run test:request-ownership && npm run test:live-ai-api-boundary && npm run test:sql-ai-editor-contract && npm run test:sql-job-permission-contract && npm run test:sql-job-immediate-run && npm run test:dashboard-assistant-intent && npm run test:dashboard-assistant-actions && npm run test:route-data-loading && npm run test:etl-draft-contract && npm run test:etl-step-registry && npm run test:jobs-data-boundary && npm run test:snapshot-status-polling && npm run test:deployed-ui-boundary && npm run test:css-catalog-boundary && npm run test:catalog-dataset-delete && npm run test:catalog-lineage-projection && npm run test:compatibility-runtime && npm run test:diagnostic-contract && npm run test:semantic-layer-ui && node scripts/verify-ui-regressions.mjs",
+    "verify:ui-regressions": "npm run test:auth-contract && npm run test:admin-console-load && npm run test:trino-timeline && npm run test:sql-result-boundary && npm run test:dashboard-draft-layout-persistence && npm run test:dashboard-runtime-mutations && npm run test:dashboard-runtime-errors && npm run test:dashboard-performance-contract && npm run test:dashboard-job-binding-removal && npm run test:dashboard-widget-data-state && npm run test:dashboard-widget-filters && npm run test:dashboard-time-series && npm run test:dashboard-bar-orientation && npm run test:dashboard-circular-chart && npm run test:realtime-events && npm run test:continuous-runtime-contract && npm run test:continuous-sql-ui && npm run test:realtime-v1-only-profile && npm run test:source-raw-preview && npm run test:wizard-navigation && npm run test:record-parsing-ai-action && npm run test:request-ownership && npm run test:live-ai-api-boundary && npm run test:sql-ai-editor-contract && npm run test:sql-job-permission-contract && npm run test:sql-job-immediate-run && npm run test:dashboard-assistant-intent && npm run test:dashboard-assistant-actions && npm run test:route-data-loading && npm run test:etl-draft-contract && npm run test:etl-step-registry && npm run test:jobs-data-boundary && npm run test:snapshot-status-polling && npm run test:deployed-ui-boundary && npm run test:css-catalog-boundary && npm run test:catalog-dataset-delete && npm run test:catalog-lineage-projection && npm run test:compatibility-runtime && npm run test:diagnostic-contract && npm run test:semantic-layer-ui && node scripts/verify-ui-regressions.mjs",
     "verify:rule-compiler": "node scripts/verify-rule-compiler-contract.mjs",
     "verify:schema-transform-rules": "node scripts/verify-schema-transform-rules.mjs && npm run test:schema-result-preview",
     "build": "tsc -b && vite build --config vite.config.ts",
@@ -105,12 +107,12 @@
     "recharts": "^3.8.0",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.2",
-    "typescript": "5.6.3",
-    "vite": "5.4.11"
+    "typescript": "5.6.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "vite": "5.4.21"
   }
 }

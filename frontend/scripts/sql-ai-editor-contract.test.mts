@@ -28,10 +28,10 @@ test("SQL AI sends every selected Dataset instead of only the base Dataset", () 
   assert.match(hook, /requestSqlQueryAiSuggestion\([\s\S]*selectedDatasets/);
 });
 
-test("SQL AI renders only verified used JOIN relationships separately from RAG evidence", () => {
+test("SQL AI renders only verified used JOIN relationships without retrieval evidence UI", () => {
   assert.match(service, /joinEvidence\?: Array/);
   assert.match(dialog, /function SqlAiJoinEvidence/);
   assert.match(dialog, /<strong>JOIN 근거<\/strong>/);
   assert.match(dialog, /<SqlAiJoinEvidence suggestion=\{suggestion\} \/>/);
-  assert.match(dialog, /<SqlAiSuggestionEvidence suggestion=\{suggestion\} \/>/);
+  assert.doesNotMatch(dialog, /SqlAiSuggestionEvidence|RAG 근거|queryEmbeddings/);
 });

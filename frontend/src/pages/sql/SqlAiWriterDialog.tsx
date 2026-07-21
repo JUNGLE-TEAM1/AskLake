@@ -59,52 +59,6 @@ function SqlAiSuggestionSummary({ suggestion }: { suggestion: QueryAiSuggestion 
   );
 }
 
-function SqlAiSuggestionEvidence({ suggestion }: { suggestion: QueryAiSuggestion }) {
-  const retrieval = suggestion.retrieval;
-  const sources = suggestion.sources ?? [];
-  if (!retrieval || sources.length === 0) return null;
-
-  return (
-    <Bubble className="max-w-full" variant="tinted">
-      <BubbleContent className="max-w-full text-sm">
-        <strong>RAG 근거</strong>
-        <span className="mt-1 block">
-          Semantic model: {(retrieval.semanticModelNames ?? []).join(", ") || "없음"}
-          {retrieval.semanticModelVersions?.some(Boolean)
-            ? ` · version ${retrieval.semanticModelVersions.filter(Boolean).join(", ")}`
-            : ""}
-        </span>
-        <span className="mt-1 block text-muted-foreground">
-          Dataset: {(retrieval.datasetIds ?? []).join(", ") || "-"}
-          {` · ${retrieval.status ?? "unknown"} · ${retrieval.resultCount ?? sources.length} source chunks`}
-        </span>
-        {(retrieval.queryPlannerProvider || retrieval.queryPlannerModel) && (
-          <span className="mt-1 block text-muted-foreground">
-            검색 계획: {[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}
-          </span>
-        )}
-        {Object.entries(retrieval.queryEmbeddings ?? {}).map(([datasetId, embedding]) => (
-          <span className="mt-1 block text-muted-foreground" key={`embedding-${datasetId}`}>
-            쿼리 임베딩({datasetId}): {[embedding.provider, embedding.model, embedding.dimensions ? `${embedding.dimensions}차원` : null].filter(Boolean).join(" · ")}
-          </span>
-        ))}
-        {(retrieval.relevanceProvider || retrieval.relevanceModel) && (
-          <span className="mt-1 block text-muted-foreground">
-            근거 관련성 검증: {[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}
-          </span>
-        )}
-        {sources.map((source, index) => (
-          <span className="mt-1 block text-muted-foreground" key={`${source.parentDocumentId ?? "source"}-${index}`}>
-            {index + 1}. {source.title || source.body?.trim().slice(0, 180) || source.datasetId || "source chunk"}
-            {source.chunkIndex !== undefined ? ` · chunk ${source.chunkIndex}` : ""}
-            {source.embeddingProvider || source.embeddingModel ? ` · 임베딩 ${[source.embeddingProvider, source.embeddingModel].filter(Boolean).join(" · ")}` : ""}
-          </span>
-        ))}
-      </BubbleContent>
-    </Bubble>
-  );
-}
-
 function SqlAiJoinEvidence({ suggestion }: { suggestion: QueryAiSuggestion }) {
   const evidence = suggestion.joinEvidence ?? [];
   if (evidence.length === 0) return null;
@@ -268,7 +222,6 @@ export function SqlAiWriterDialog({
           <BubbleGroup aria-live="polite">
             <SqlAiSuggestionSummary suggestion={suggestion} />
             <SqlAiJoinEvidence suggestion={suggestion} />
-            <SqlAiSuggestionEvidence suggestion={suggestion} />
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">
                 <ScrollArea className={styles.preview} scrollbars="both" type="always">

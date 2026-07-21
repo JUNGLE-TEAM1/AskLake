@@ -1,0 +1,62 @@
+{{- if and .Values.enabled .Values.collector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-result-collector
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trino-result-collector
+spec:
+  replicas: {{ .Values.collector.replicaCount }}
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asklake
+      app.kubernetes.io/component: trino-result-collector
+  template:
+    metadata:
+      labels:
+        {{- include "asklake-web.labels" . | nindent 8 }}
+        app.kubernetes.io/component: trino-result-collector
+      annotations:
+        asklake.io/runtime-boundary-configmap: {{ .Values.backend.runtimeBoundaryConfigMapName | quote }}
+        {{- with .Values.backend.runtimeConfigRevision }}
+        asklake.io/runtime-config-revision: {{ . | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.collector.serviceAccountName }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        {{- toYaml .Values.placement.nodeSelector | nindent 8 }}
+      containers:
+        - name: trino-result-collector
+          image: {{ .Values.backend.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["python"]
+          args: ["scripts/collect-trino-results.py"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.backend.runtimeConfigMapName }}
+            - secretRef:
+                name: {{ .Values.backend.runtimeSecretName }}
+            {{- if ne .Values.backend.trinoRuntimeSecretName .Values.backend.runtimeSecretName }}
+            - secretRef:
+                name: {{ .Values.backend.trinoRuntimeSecretName }}
+            {{- end }}
+          volumeMounts:
+            - name: backend-runtime-files
+              mountPath: /var/run/asklake/secrets
+              readOnly: true
+          resources:
+            {{- toYaml .Values.collector.resources | nindent 12 }}
+      volumes:
+        - name: backend-runtime-files
+          secret:
+            secretName: {{ .Values.backend.trinoRuntimeSecretName }}
+            items:
+              - key: {{ .Values.backend.runtimeSecretTrinoCaKey }}
+                path: trino-ca.pem
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-auto-mode
+description: Fail-closed EKS Auto Mode NodeClass and NodePool contract for AskLake workloads
+type: application
+version: 0.1.0
+appVersion: "phase-12"
