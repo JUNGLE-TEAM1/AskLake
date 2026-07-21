@@ -23,7 +23,6 @@ from app.services.catalog_service import (
     dataset_for_latest_successful_materialization,
     with_dataset_permissions,
 )
-from app.services.catalog_filter_values_service import query_catalog_dataset_filter_values
 from app.services.dataset_rows_service import read_dataset_rows
 
 
@@ -192,19 +191,14 @@ class CatalogDatasetRowsTest(unittest.TestCase):
 
         with (
             patch.object(service, "get_dataset", return_value=self.dataset) as get_dataset,
-            patch("app.services.catalog_filter_values_service.require_governed_access") as governed_access,
-            patch("app.services.catalog_filter_values_service.require_permission") as permission,
+            patch("app.services.catalog_service.require_governed_access") as governed_access,
+            patch("app.services.catalog_service.require_permission") as permission,
             patch(
-                "app.services.catalog_filter_values_service.DashboardDatasetQuerySession",
+                "app.services.catalog_service.DashboardDatasetQuerySession",
                 return_value=query_session,
             ) as session_class,
         ):
-            actual = query_catalog_dataset_filter_values(
-                service,
-                self.dataset.id,
-                request,
-                actor,
-            )
+            actual = service.get_dataset_filter_values(self.dataset.id, request, actor)
 
         self.assertEqual(actual.dataset_id, self.dataset.id)
         self.assertEqual([item.value for item in actual.values], ["row-10", "row-11"])
