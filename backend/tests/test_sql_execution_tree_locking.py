@@ -385,6 +385,46 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertEqual(child_lock.tree_run_id, second_tree.tree_run_id)
             self.assertEqual(child_lock.generation, 2)
 
+    def test_parent_lifecycle_propagates_only_to_tree_owned_realtime_child(self) -> None:
+        events: list[tuple[str, str]] = []
+
+        def child_commander(_db, child_id, command, _actor, **context):
+            events.append((child_id, command))
+            self.assertTrue(context["tree_fencing_token"])
+            return SimpleNamespace(run=None, processing_result={"runtimeStatus": "stopping"})
+
+        with Session(self.engine) as db:
+            db.add_all([
+                producer_job("JOB-BATCH", "dataset-JOB-BATCH"),
+                producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"),
+            ])
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-BATCH", "JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime", "JOB-BATCH": "batch"},
+            )
+            service = ContinuousSqlService(
+                db,
+                runtime_settings=self.settings,
+                child_commander=child_commander,
+            )
+            tree = service._acquire_execution_tree(job, SimpleNamespace(run_id="run-parent"))
+            db.commit()
+
+            service._manage_execution_tree_realtime_children(
+                job,
+                ActorContext(name="owner", role="admin"),
+                "stopContinuous",
+            )
+
+            self.assertEqual(events, [("JOB-REALTIME", "stopContinuous")])
+            nodes = {item.job_id: item for item in service.repository.list_tree_nodes(tree.tree_run_id)}
+            self.assertEqual(nodes["JOB-REALTIME"].status, "stopping")
+            self.assertEqual(nodes["JOB-BATCH"].status, "locked")
+
 
 class SqlExecutionTreeLockingMigrationTests(unittest.TestCase):
     def test_upgrade_and_downgrade_preserve_phase_two_tables(self) -> None:

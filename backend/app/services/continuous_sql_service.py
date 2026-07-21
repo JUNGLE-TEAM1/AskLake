@@ -560,6 +560,16 @@ class ContinuousSqlService:
                     external_action,
                     self._worker_start_options(job) if external_action == "start" else None,
                 )
+            # The parent owns lifecycle only for realtime children that it
+            # locked and started as part of this tree.  Batch children are
+            # immutable completed revisions at this point and are never
+            # re-run by pause/resume/stop.
+            if external_action == "pause":
+                self._manage_execution_tree_realtime_children(job, actor, "pauseContinuous")
+            elif external_action == "stop":
+                self._manage_execution_tree_realtime_children(job, actor, "stopContinuous")
+            elif external_action == "start" and request.command == "resume":
+                self._manage_execution_tree_realtime_children(job, actor, "resumeContinuous")
             self._complete_command(job.id, run.run_id if run else None, command.id, request.command, worker_result)
         except ApiError as exc:
             self._fail_command(job.id, run.run_id if run else None, command.id, exc)
@@ -678,6 +688,59 @@ class ContinuousSqlService:
                 logger.exception(
                     "SQL execution tree could not compensate realtime child start",
                     extra={"treeRunId": tree_run.tree_run_id, "jobId": child_id},
+                )
+
+    def _manage_execution_tree_realtime_children(
+        self,
+        job: ContinuousSqlJobModel,
+        actor: ActorContext,
+        command: str,
+    ) -> None:
+        """Propagate lifecycle only through the active parent-owned tree.
+
+        Management is deliberately best effort after the parent command has
+        been accepted by its worker. A failed child control request is durable
+        node evidence, but it must not turn a successful parent stop into a
+        false "still running" result.
+        """
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        nodes = self.repository.list_tree_nodes(tree_run.tree_run_id)
+        for node in sorted(
+            (item for item in nodes if item.node_type == "realtime"),
+            key=lambda item: item.job_id,
+            reverse=command == "stopContinuous",
+        ):
+            try:
+                response = self.child_commander(
+                    self.db,
+                    node.job_id,
+                    command,
+                    actor,
+                    execution_actor=actor,
+                    tree_run_id=tree_run.tree_run_id,
+                    tree_fencing_token=tree_run.fencing_token,
+                )
+                node.producer_run_id = self._producer_run_id(response) or node.producer_run_id
+                node.status = {
+                    "pauseContinuous": "pausing",
+                    "resumeContinuous": "starting",
+                    "stopContinuous": "stopping",
+                }[command]
+                self.db.add(node)
+            except ApiError as exc:
+                node.status = "failed"
+                node.ended_at = utc_now()
+                self.db.add(node)
+                logger.exception(
+                    "SQL execution tree child lifecycle command failed",
+                    extra={
+                        "treeRunId": tree_run.tree_run_id,
+                        "jobId": node.job_id,
+                        "command": command,
+                        "code": exc.code,
+                    },
                 )
 
     @staticmethod

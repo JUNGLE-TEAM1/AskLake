@@ -4321,7 +4321,7 @@ Job/Run response에는 additive `executionTree`, active `treeRun`, node state와
 - `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`: required child를 실행할 수 없음
 - `409 CONTINUOUS_SQL_INPUT_REVISION_UNAVAILABLE`: required Dataset revision/snapshot을 고정할 수 없음
 
-SQL parent는 Kafka source identity를 복사해 새 consumer group을 만들지 않는다. producer child가 게시한 Dataset revision/manifest cursor를 사용하고 output commit과 Catalog revision publication 뒤에만 cursor를 전진시킨다. parent가 시작한 realtime child는 parent stop에서 함께 정지한다. tree lock이 없을 때 child standalone 실행은 유지하며 child command가 parent를 자동 시작하지 않는다.
+SQL parent는 Kafka source identity를 복사해 새 consumer group을 만들지 않는다. producer child가 게시한 Dataset revision/manifest cursor를 사용하고 output commit과 Catalog revision publication 뒤에만 cursor를 전진시킨다. parent가 시작한 realtime child는 active tree와 matching fence 안에서만 parent pause/stop/resume에 따라 함께 pause/stop/resume한다. batch child는 이미 고정된 revision이므로 lifecycle 전파로 다시 실행하지 않는다. child lifecycle control 실패는 node `failed` evidence로 저장하지만 parent stop 자체를 rollback하지 않는다. tree lock이 없을 때 child standalone 실행은 유지하며 child command가 parent를 자동 시작하지 않는다.
 
 Dashboard Job Binding, managed Dataset lock과 자동 revision watcher는 이 확장에 포함하지 않는다. SQL output은 일반 Catalog Dataset으로 게시되고 Dashboard 보기·편집 모드는 Widget이 저장한 Dataset ID를 사용자의 수동 새로고침에서 조회한다.
 
