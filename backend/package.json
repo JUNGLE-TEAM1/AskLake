@@ -109,6 +109,7 @@
     "verify:kafka-review-scheduled-ingest": "node scripts/verify-kafka-review-scheduled-ingest.mjs",
     "verify:kafka-target-projection": "node scripts/verify-kafka-target-projection.mjs",
     "verify:kafka-continuous-contract": "node scripts/run-python-verification.mjs scripts/verify-kafka-continuous-contract.py",
+    "test:kafka-continuous-broker": "node --test scripts/kafka-continuous-broker.test.mjs",
     "verify:continuous-sql-contract": "node scripts/run-python-verification.mjs scripts/verify-continuous-sql-contract.py",
     "verify:continuous-sql-execution-tree-contract": "node scripts/run-python-verification.mjs scripts/verify-continuous-sql-execution-tree-contract.py",
     "verify:clickhouse-kafka-join": "node scripts/run-python-verification.mjs scripts/verify-clickhouse-kafka-join.py",

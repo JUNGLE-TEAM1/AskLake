@@ -809,6 +809,8 @@ Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 �
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. Production은 `ASKLAKE_SPARK_RUNNER=rest`로 내부 Spark Standalone REST submission을 사용하고 backend에 Docker socket/CLI를 요구하지 않는다. 로컬 개발에서만 `ASKLAKE_SPARK_RUNNER=docker`를 명시해 격리 worker/maintenance container를 실행할 수 있다. 두 경로 모두 같은 Iceberg/JDBC/warehouse package와 runtime environment 계약을 사용한다.
 
+host에서 실행하는 local FastAPI와 Docker Continuous worker가 같은 Redpanda를 사용할 때는 `ASKLAKE_KAFKA_BROKER_IN_DOCKER=asklake-redpanda:9092`를 함께 설정한다. `scripts/start-local-query-runtime.sh` 또한 이 값을 로컬 기본값으로 사용한다. Source 연결 테스트와 저장값은 host용 `127.0.0.1:19092`를 유지하고, Docker worker를 시작할 때만 loopback broker를 내부 endpoint로 바꾼다. 외부 Kafka hostname은 변경하지 않는다.
+
 Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, schema/Rule quarantine, Transform/Quality 카운터, Rule-aware replay, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog fingerprint materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 
 Iceberg writer 자체의 격리 검증은 기존 서비스 전체를 올리지 않고 고유 Redpanda/Trino/Spark를 시작한다. 정상 append, Iceberg commit 뒤 manifest 전 fault, 같은 boundary 재사용, checkpoint restart, append 중 Trino snapshot read, maintenance 전후 현재 row count와 과거 snapshot time-travel을 검증하고 종료 시 table/container/metadata를 정리한다.

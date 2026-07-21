@@ -526,7 +526,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
-    ASKLAKE_CONTINUOUS_BROKER: required(request.broker, "broker"),
+    ASKLAKE_CONTINUOUS_BROKER: resolveContinuousWorkerBroker(required(request.broker, "broker"), environment),
     ASKLAKE_CONTINUOUS_TOPIC: required(request.topic, "topic"),
     ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID: required(request.consumerGroupId, "consumerGroupId"),
     ASKLAKE_CONTINUOUS_OUTPUT_PATH: required(request.outputPath, "outputPath"),
@@ -670,7 +670,7 @@ async function startWorkerDocker(request, containerName) {
     ...Object.entries(environment).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     "-e", `ASKLAKE_CONTINUOUS_JOB_ID=${jobId}`,
     "-e", `ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID=${workerAttemptId}`,
-    "-e", `ASKLAKE_CONTINUOUS_BROKER=${required(request.broker, "broker")}`,
+    "-e", `ASKLAKE_CONTINUOUS_BROKER=${resolveContinuousWorkerBroker(required(request.broker, "broker"))}`,
     "-e", `ASKLAKE_CONTINUOUS_TOPIC=${required(request.topic, "topic")}`,
     "-e", `ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID=${required(request.consumerGroupId, "consumerGroupId")}`,
     "-e", `ASKLAKE_CONTINUOUS_OUTPUT_PATH=${required(request.outputPath, "outputPath")}`,
@@ -916,6 +916,16 @@ function safeSegment(value) {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+export function resolveContinuousWorkerBroker(broker, environment = process.env) {
+  const configured = required(broker, "broker");
+  const dockerOverride = String(environment.ASKLAKE_KAFKA_BROKER_IN_DOCKER || "").trim();
+  if (!dockerOverride) return configured;
+
+  const [host] = configured.split(":", 1);
+  return ["127.0.0.1", "localhost", "::1"].includes(host.toLowerCase())
+    ? dockerOverride
+    : configured;
 }
 function requiredObject(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
