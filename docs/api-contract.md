@@ -1628,10 +1628,13 @@ type PermissionGrant = {
   `taskStates.sparkExecution.resourcePlan`을 최초 제출 전에 저장한다.
 - `shadow`의 `appliedExecutors`는 기존 executor 수를 유지하며 같은 Run의 retry는
   Plan을 재사용한다. Plan hash drift는 `SPARK_EXECUTION_IDENTITY_MISMATCH`로 실패한다.
-- policy V2 `balanced-v1`은 `standard-v1`(cores 2, CPU request/limit 2/3,
-  heap/overhead 4g/1g) profile을 고정하고 executor 수만 `1`, `2`, `4` 중
-  선택한다. 입력 크기가 없거나 profile이 다르면 `enforce`에서도 baseline을
-  유지한다.
+- policy V3 `history-sla-cost-v1`은 `standard-v1`(cores 2, CPU request/limit 2/3,
+  heap/overhead 4g/1g) profile을 고정하고 executor 수만 `1`, `2`, `4` 중 선택한다.
+  같은 Job의 성공 이력으로 후보별 Spark duration과 executor-seconds를 계산해 30분을
+  만족하는 최소 비용 후보를 선택한다. 비교 가능한 이력이 없으면 입력 크기 seed를
+  사용하고, 입력 크기가 없거나 profile이 다르면 `enforce`에서도 baseline을 유지한다.
+- candidate evaluation, decision basis와 history count는 Plan hash에 포함된다. policy
+  V1/V2 Plan은 기존 Run retry/recovery에서만 호환된다.
 
 ## Realtime 2026 전환 계약
 

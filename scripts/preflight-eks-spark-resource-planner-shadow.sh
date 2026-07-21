@@ -28,8 +28,14 @@ case "$TARGET_MODE" in
     BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-values.mjs"
     WEB_BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-shadow-web-values.mjs"
     ;;
+  enforce)
+    DEFAULT_CANDIDATE_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-enforce.runtime-config-values.json"
+    DEFAULT_CANDIDATE_WEB_VALUES="$ROOT_DIR/infra/eks/values/workloads/dev.spark-resource-planner-enforce.web.private-values.json"
+    BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-enforce-values.mjs"
+    WEB_BUILDER="$ROOT_DIR/scripts/build-eks-spark-resource-planner-enforce-web-values.mjs"
+    ;;
   *)
-    echo "ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE must be off or shadow" >&2
+    echo "ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE must be off, shadow, or enforce" >&2
     exit 1
     ;;
 esac

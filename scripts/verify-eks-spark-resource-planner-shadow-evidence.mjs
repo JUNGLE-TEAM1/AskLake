@@ -40,14 +40,21 @@ function isSha256(value) {
 
 
 function canonicalPlanHash(plan) {
-  const canonical = Object.fromEntries(
-    Object.entries(plan)
-      .filter(([key]) => key !== "planHash")
-      .sort(([left], [right]) =>
-        left < right ? -1 : left > right ? 1 : 0,
-      ),
+  const canonical = canonicalize(
+    Object.fromEntries(Object.entries(plan).filter(([key]) => key !== "planHash")),
   );
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
 }
 
 
@@ -88,8 +95,8 @@ function validatePlan(plan, expected, alias) {
   const estimated = Math.max(1, Math.ceil(expected.inputBytes / 134_217_728));
   const calculated = Math.max(1, Math.ceil(estimated / 384));
   const exact = {
-    policyVersion: 2,
-    policyName: "balanced-v1",
+    policyVersion: 3,
+    policyName: "history-sla-cost-v1",
     policyTargetCompletionSeconds: 1800,
     mode: "shadow",
     decisionStatus: "planned",
@@ -105,7 +112,9 @@ function validatePlan(plan, expected, alias) {
     appliedExecutors: 1,
     minExecutors: 1,
     maxExecutors: 4,
-    reason: "balanced_partition_budget",
+    costProxy: "executor_seconds",
+    slaMetric: "spark_duration_ms",
+    modelScalingExponent: 0.8,
   };
   for (const [key, value] of Object.entries(exact)) {
     if (plan[key] !== value) fail(`${alias} Resource Plan ${key} is invalid`);
@@ -113,12 +122,68 @@ function validatePlan(plan, expected, alias) {
   if (JSON.stringify(plan.executorCandidates) !== JSON.stringify([1, 2, 4])) {
     fail(`${alias} Resource Plan executorCandidates are invalid`);
   }
+  validateHistoryDecision(plan, alias);
   validateProfile(plan, `${alias} Resource Plan`);
   if (!/^[0-9a-f]{64}$/.test(String(plan.planHash || ""))) {
     fail(`${alias} Resource Plan hash is invalid`);
   }
   if (canonicalPlanHash(plan) !== plan.planHash) {
     fail(`${alias} Resource Plan hash does not match its canonical payload`);
+  }
+}
+
+
+function validateHistoryDecision(plan, alias) {
+  if (!new Set(["history_sla_cost", "size_seed"]).has(plan.decisionBasis)) {
+    fail(`${alias} Resource Plan decisionBasis is invalid`);
+  }
+  if (
+    !Number.isSafeInteger(plan.historyEvidenceCount)
+    || plan.historyEvidenceCount < 0
+    || plan.historyEvidenceCount > 20
+    || !Number.isSafeInteger(plan.historyComparableCount)
+    || plan.historyComparableCount < 0
+    || plan.historyComparableCount > plan.historyEvidenceCount
+    || !Array.isArray(plan.historyRunIds)
+    || plan.historyRunIds.length !== plan.historyEvidenceCount
+  ) {
+    fail(`${alias} Resource Plan history evidence is invalid`);
+  }
+  const evaluations = plan.candidateEvaluations;
+  if (!Array.isArray(evaluations) || evaluations.length !== 3) {
+    fail(`${alias} Resource Plan candidate evaluations are invalid`);
+  }
+  for (const [index, candidate] of [1, 2, 4].entries()) {
+    const evaluation = evaluations[index];
+    if (!evaluation || evaluation.executors !== candidate) {
+      fail(`${alias} Resource Plan candidate executor is invalid`);
+    }
+  }
+  if (plan.decisionBasis === "size_seed") {
+    if (evaluations.some((item) => item.estimateSource !== "unavailable")) {
+      fail(`${alias} size-seed Resource Plan contains modeled history`);
+    }
+    return;
+  }
+  if (plan.historyComparableCount < 1) {
+    fail(`${alias} history Resource Plan lacks comparable evidence`);
+  }
+  const available = evaluations.filter((item) => (
+    Number.isSafeInteger(item.estimatedDurationMs)
+    && Number.isFinite(item.estimatedExecutorSeconds)
+    && item.estimatedExecutorSeconds > 0
+    && item.meetsTarget === (item.estimatedDurationMs <= 1_800_000)
+    && new Set(["measured", "modeled"]).has(item.estimateSource)
+  ));
+  const meetingTarget = available.filter((item) => item.meetsTarget);
+  const selected = meetingTarget.length > 0
+    ? [...meetingTarget].sort((left, right) => (
+      left.estimatedExecutorSeconds - right.estimatedExecutorSeconds
+      || left.executors - right.executors
+    ))[0]
+    : [...available].sort((left, right) => right.executors - left.executors)[0];
+  if (!selected || selected.executors !== plan.recommendedExecutors) {
+    fail(`${alias} history Resource Plan recommendation is inconsistent`);
   }
 }
 
@@ -132,7 +197,7 @@ function validateRun(run, expected, alias) {
   const expectedAnnotations = {
     "asklake.io/resource-plan-hash": hash,
     "asklake.io/resource-plan-mode": "shadow",
-    "asklake.io/resource-policy": "balanced-v1",
+    "asklake.io/resource-policy": "history-sla-cost-v1",
     "asklake.io/executor-profile": "standard-v1",
     "asklake.io/calculated-executors": String(run.resourcePlan.calculatedExecutors),
     "asklake.io/recommended-executors": String(expected.recommendedExecutors),
@@ -173,7 +238,7 @@ function validateRun(run, expected, alias) {
 
 export function validateSparkResourcePlannerShadowEvidence(evidence) {
   rejectProtectedIdentity(evidence);
-  if (evidence?.contractVersion !== "1.0" || evidence.status !== "passed") {
+  if (evidence?.contractVersion !== "1.1" || evidence.status !== "passed") {
     fail("shadow evidence contractVersion/status is invalid");
   }
   if (!/^[0-9a-f]{40}$/.test(String(evidence.gitRevision || ""))) {
@@ -227,7 +292,7 @@ export function validateSparkResourcePlannerShadowEvidence(evidence) {
 
 export function sparkResourcePlannerShadowEvidenceTemplate() {
   return {
-    contractVersion: "1.0",
+    contractVersion: "1.1",
     status: "pending",
     gitRevision: "<40-hex-git-revision>",
     backendImageDigest: "sha256:<64-hex>",

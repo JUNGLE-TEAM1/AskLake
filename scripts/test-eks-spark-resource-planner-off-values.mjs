@@ -70,9 +70,39 @@ test("accepts an already explicit off standard-v1 base", () => {
 });
 
 
-test("rejects active Planner mode, baseline/profile drift, and unexpected policy drift", () => {
+test("recovers an exact active Planner profile by changing only the mode", () => {
+  for (const mode of ["shadow", "enforce"]) {
+    const base = baseValues({
+      ASKLAKE_SPARK_KUBERNETES_IMAGE: NEW_SPARK_IMAGE,
+      ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: mode,
+      ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728",
+      ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "384",
+      ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: "1",
+      ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: "4",
+      ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "2",
+      ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: "3",
+    });
+    const candidate = buildSparkResourcePlannerOffValues(base, NEW_SPARK_IMAGE);
+    assert.deepEqual(
+      { ...candidate.configMap.data, ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: mode },
+      base.configMap.data,
+    );
+  }
+});
+
+
+test("rejects incomplete active recovery, baseline/profile drift, and unexpected policy drift", () => {
   const cases = [
     baseValues({ ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "shadow" }),
+    baseValues({
+      ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "enforce",
+      ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728",
+      ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "384",
+      ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: "1",
+      ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: "4",
+      ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: "2",
+      ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: "3",
+    }),
     baseValues({ ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: "2" }),
     baseValues({ ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES: "3" }),
     baseValues({ ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: "4" }),
@@ -81,7 +111,7 @@ test("rejects active Planner mode, baseline/profile drift, and unexpected policy
   for (const values of cases) {
     assert.throws(
       () => buildSparkResourcePlannerOffValues(values, NEW_SPARK_IMAGE),
-      /off alignment/,
+      /off alignment|active Planner recovery/,
     );
   }
 });

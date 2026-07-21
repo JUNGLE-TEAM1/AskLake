@@ -24,8 +24,8 @@ function plan(inputBytes, recommendedExecutors, overrides = {}) {
   const estimatedPartitions = Math.ceil(inputBytes / 134_217_728);
   const calculatedExecutors = Math.ceil(estimatedPartitions / 384);
   const value = {
-    policyVersion: 2,
-    policyName: "balanced-v1",
+    policyVersion: 3,
+    policyName: "history-sla-cost-v1",
     policyTargetCompletionSeconds: 1800,
     mode: "shadow",
     decisionStatus: "planned",
@@ -43,18 +43,40 @@ function plan(inputBytes, recommendedExecutors, overrides = {}) {
     appliedExecutors: 1,
     minExecutors: 1,
     maxExecutors: 4,
+    decisionBasis: "size_seed",
+    historyEvidenceCount: 0,
+    historyComparableCount: 0,
+    historyRunIds: [],
+    candidateEvaluations: [1, 2, 4].map((executors) => ({
+      executors,
+      estimatedDurationMs: null,
+      estimatedExecutorSeconds: null,
+      meetsTarget: null,
+      evidenceCount: 0,
+      estimateSource: "unavailable",
+    })),
+    costProxy: "executor_seconds",
+    slaMetric: "spark_duration_ms",
+    modelScalingExponent: 0.8,
     reason: "balanced_partition_budget",
     ...overrides,
   };
-  const canonical = Object.fromEntries(
-    Object.entries(value).sort(([left], [right]) =>
-      left < right ? -1 : left > right ? 1 : 0,
-    ),
-  );
+  const canonical = canonicalize(value);
   return {
     ...value,
     planHash: createHash("sha256").update(JSON.stringify(canonical)).digest("hex"),
   };
+}
+
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
 }
 
 
@@ -68,7 +90,7 @@ function run(alias, inputBytes, recommendedExecutors) {
       annotations: {
         "asklake.io/resource-plan-hash": resourcePlan.planHash,
         "asklake.io/resource-plan-mode": "shadow",
-        "asklake.io/resource-policy": "balanced-v1",
+        "asklake.io/resource-policy": "history-sla-cost-v1",
         "asklake.io/executor-profile": "standard-v1",
         "asklake.io/calculated-executors": String(resourcePlan.calculatedExecutors),
         "asklake.io/recommended-executors": String(recommendedExecutors),
@@ -96,7 +118,7 @@ function run(alias, inputBytes, recommendedExecutors) {
 
 function evidence() {
   return {
-    contractVersion: "1.0",
+    contractVersion: "1.1",
     status: "passed",
     gitRevision: "a".repeat(40),
     backendImageDigest: `sha256:${"b".repeat(64)}`,

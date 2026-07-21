@@ -29,7 +29,7 @@ function baseValues(overrides = {}) {
 }
 
 
-test("builds a shadow candidate with only the fixed V1 policy delta", () => {
+test("builds a shadow candidate with only the fixed history policy delta", () => {
   const base = baseValues();
   const candidate = buildSparkResourcePlannerShadowValues(base);
 

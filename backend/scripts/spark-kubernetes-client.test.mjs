@@ -55,13 +55,63 @@ function resourcePlan(overrides = {}) {
     targetPartitionsPerExecutor: 384,
     ...overrides,
   };
-  const canonical = Object.fromEntries(
-    Object.entries(plan).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
-  );
+  const canonical = canonicalize(plan);
   return {
     ...plan,
     planHash: createHash("sha256").update(JSON.stringify(canonical)).digest("hex"),
   };
+}
+
+function historyResourcePlan(overrides = {}) {
+  return resourcePlan({
+    candidateEvaluations: [
+      {
+        estimateSource: "measured",
+        estimatedDurationMs: 2_654_186,
+        estimatedExecutorSeconds: 2654.186,
+        evidenceCount: 1,
+        executors: 1,
+        meetsTarget: false,
+      },
+      {
+        estimateSource: "measured",
+        estimatedDurationMs: 1_564_800,
+        estimatedExecutorSeconds: 3129.6,
+        evidenceCount: 1,
+        executors: 2,
+        meetsTarget: true,
+      },
+      {
+        estimateSource: "measured",
+        estimatedDurationMs: 1_091_474,
+        estimatedExecutorSeconds: 4365.896,
+        evidenceCount: 1,
+        executors: 4,
+        meetsTarget: true,
+      },
+    ],
+    costProxy: "executor_seconds",
+    decisionBasis: "history_sla_cost",
+    historyComparableCount: 3,
+    historyEvidenceCount: 3,
+    historyRunIds: ["reference-1", "reference-2", "reference-4"],
+    modelScalingExponent: 0.8,
+    policyName: "history-sla-cost-v1",
+    policyVersion: 3,
+    reason: "history_min_cost_meets_sla",
+    slaMetric: "spark_duration_ms",
+    ...overrides,
+  });
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
 }
 
 function applicationFixture(attemptGeneration = 1, plan = undefined, environmentOverrides = {}) {
@@ -203,6 +253,25 @@ test("enforcing Resource Plan applies its bounded executor count", () => {
   assert.equal(application.metadata.annotations["asklake.io/executor-instances"], "2");
 });
 
+test("history-aware Resource Plan preserves nested evidence identity and applies executor two", () => {
+  const plan = historyResourcePlan({
+    appliedExecutors: 2,
+    baselineExecutors: 1,
+    mode: "enforce",
+  });
+  const application = applicationFixture(1, plan);
+
+  assert.equal(application.spec.executor.instances, 2);
+  assert.equal(application.metadata.annotations["asklake.io/resource-policy"], "history-sla-cost-v1");
+  assert.equal(application.metadata.annotations["asklake.io/resource-plan-hash"], plan.planHash);
+
+  plan.candidateEvaluations[1].estimatedDurationMs = 1;
+  assert.throws(
+    () => applicationFixture(1, plan),
+    /hash does not match/,
+  );
+});
+
 test("tampered and non-enforcing Resource Plans are rejected", () => {
   const tampered = resourcePlan();
   tampered.appliedExecutors = 2;
@@ -248,7 +317,7 @@ test("Resource Plan rejects executor profile drift before submission", () => {
 
 test("Resource Plan rejects policy and candidate drift before submission", () => {
   assert.throws(
-    () => applicationFixture(1, resourcePlan({ policyVersion: 3 })),
+    () => applicationFixture(1, resourcePlan({ policyVersion: 4 })),
     /policy version is unsupported/i,
   );
   assert.throws(

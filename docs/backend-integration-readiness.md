@@ -603,13 +603,15 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 - [x] 실제 EKS Collector 1/1, 기존 stuck Run 안전 종료, bounded SQL 100행 terminal 성공과 Collector Pod 재생성 검증 ([live evidence](eks-day17-trino-result-collector-evidence.md))
 - [x] File/S3 입력 크기로 초기 executor 권장값을 계산하고 Run persistence,
   retry 재사용과 SparkApplication Plan hash를 검증하는 Resource Planner 계약
+- [x] 같은 Job의 성공 Run만 정규화하고 30분 SLA·executor-seconds로 후보 `1/2/4`를
+  평가하는 policy V3, nested Plan hash와 100GB `1/2/4` backtest
 - [x] Phase 3 private runtime/Web candidate builder, read-only server-dry-run
   preflight와 sanitized 10/100 GB shadow evidence validator
 - [x] live Spark digest/profile drift를 Planner `off` 상태에서만 정렬하는
   exact-delta private candidate와 같은 read-only preflight 경로
-- [ ] 실제 EKS 10/100 GB shadow에서 권장/적용/실행 identity 검증 후,
-  10 GB executor 1과 100 GB executor 2 `balanced-v1` 비용·성능 gate.
-  executor 4는 2개가 목표를 충족하지 못할 때 후속 검증
+- [ ] 같은 immutable image의 실제 EKS 10/100 GB Shadow에서
+  history/size-seed 권장·적용·실행 identity를 검증한 뒤, 100GB executor 2
+  `history-sla-cost-v1` Enforce 비용·성능 gate와 `off/1` 복구
 ## Realtime 2026 foundation readiness
 
 - [x] 현재 Dashboard publication/polling과 Kafka Continuous 경로 조사

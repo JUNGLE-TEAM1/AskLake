@@ -1,28 +1,33 @@
-# EKS Spark Resource Planner Phase 3 Shadow Runbook
+# EKS Spark Resource Planner Shadow·Enforce Runbook
 
 ## 1. 목적과 현재 경계
 
-Phase 3은 Resource Planner V1을 dev EKS에 `shadow`로 연결해 실제 의사결정과
-identity를 검증한다. 이 단계에서 executor 수는 바꾸지 않는다.
+Phase 3은 Resource Planner V3을 dev EKS에 `shadow`로 연결해 실제 의사결정과
+identity를 검증한다. Phase 4는 같은 immutable image와 정책을 `enforce`로 승격해
+선택된 executor 수가 실제 SparkApplication과 Pod에 적용되는지 확인한다.
 
 | reference run | input bytes | estimated partitions | recommendation | applied/actual |
 | --- | ---: | ---: | ---: | ---: |
 | 10GB | `9,235,015,833` | `69` | `1` | `1` |
 | 100GB | `97,079,116,733` | `724` | `2` | `1` |
 
-Phase 3 준비 자동화는 private 후보 values 생성, server dry-run preflight와 sanitized
-evidence 검증까지 제공한다. 실제 image build/push, Backend rollout, ConfigMap/Web
-release apply와 10/100GB 실행은 각각 명시적 승인 뒤에만 수행한다.
+준비 자동화는 private off/shadow/enforce 후보 values 생성, server dry-run preflight와
+sanitized shadow evidence 검증까지 제공한다. 실제 image build/push, Backend rollout,
+ConfigMap/Web release apply와 10/100GB 실행은 승인된 campaign 안에서만 수행한다.
 
 ## 2. 불변조건과 중단 조건
 
-- Planner mode는 시작과 복구 시 `off`, 실험 중에만 `shadow`다.
-- executor baseline과 실제 `SparkApplication.spec.executor.instances`는 계속 `1`이다.
+- Planner mode는 시작과 최종 복구 시 `off`, 관찰 실험은 `shadow`, 적용 canary는
+  `enforce`다.
+- executor baseline은 항상 `1`이다. `shadow`의 실제 executor는 `1`, `enforce`의 실제
+  executor는 검증된 Plan의 `appliedExecutors`와 같아야 한다.
 - executor profile은 cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`다.
 - off alignment runtime 후보는 formal Spark digest와 승인된 policy/profile key만
   변경하고, shadow runtime 후보는 Planner 여섯 key 범위만 변경한다.
 - Web 후보는 `backend.runtimeConfigRevision`만 변경해 FastAPI와 Collector를 같은
   ConfigMap revision으로 재시작한다.
+- shadow→enforce 후보는 Planner mode 한 키만 변경한다. active mode→off 복구는 같은
+  immutable Spark image와 정확히 같은 policy/profile일 때만 mode 한 키를 변경한다.
 - RDS Plan hash, SparkApplication annotation hash와 Kubernetes execution hash가 같다.
 - 입력 크기와 alias는 남기되 raw Run/Job/Application/bucket/endpoint identity는
   tracked 문서와 sanitized evidence에 남기지 않는다.
@@ -42,9 +47,11 @@ release apply와 10/100GB 실행은 각각 명시적 승인 뒤에만 수행한�
 | runtime base | `infra/eks/values/workloads/dev.runtime-config-values.json` | apply 전 live ConfigMap과 rollback source |
 | runtime off alignment | `infra/eks/values/workloads/dev.spark-resource-planner-off.runtime-config-values.json` | 새 Spark digest와 `standard-v1`을 Planner `off`로 정렬 |
 | runtime shadow | `infra/eks/values/workloads/dev.spark-resource-planner-shadow.runtime-config-values.json` | Planner-only candidate |
+| runtime enforce | `infra/eks/values/workloads/dev.spark-resource-planner-enforce.runtime-config-values.json` | shadow→enforce mode-only candidate |
 | Web base | `infra/eks/values/workloads/dev.web.private-values.json` | 현재 `asklake-web` release values |
 | Web off alignment | `infra/eks/values/workloads/dev.spark-resource-planner-off.web.private-values.json` | off alignment revision-only candidate |
 | Web shadow | `infra/eks/values/workloads/dev.spark-resource-planner-shadow.web.private-values.json` | runtime revision-only candidate |
+| Web enforce | `infra/eks/values/workloads/dev.spark-resource-planner-enforce.web.private-values.json` | enforce revision-only candidate |
 | evidence | `infra/eks/delivery/dev.spark-resource-planner-evidence.json` | 10/100GB sanitized result |
 
 이미지 receipt도 기존 formal private receipt 계약과 mode `0600`을 사용한다.
@@ -56,6 +63,7 @@ cd /path/to/AskLake
 
 node --test \
   scripts/test-eks-spark-resource-planner-off-values.mjs \
+  scripts/test-eks-spark-resource-planner-enforce-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-web-values.mjs \
   scripts/test-eks-spark-resource-planner-shadow-evidence.mjs
@@ -101,7 +109,7 @@ ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=off \
 ```
 
 off candidate는 formal receipt의 Spark digest, mode `off`, executor baseline `1`,
-cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`와 policy V2 기본값만
+cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`와 policy V3 기본값만
 정렬한다. 기존 값이 없거나 이미 같은 값일 때만 허용하며 예상 밖 profile/policy
 값은 덮어쓰지 않고 실패한다. preflight가 통과해도 apply는 자동 실행하지 않는다.
 
@@ -122,7 +130,7 @@ base values로 복구한다.
 ```
 
 첫 번째 builder는 base가 `off`, executor baseline `1`, `standard-v1`일 때만
-`shadow + balanced-v1` 후보를 만든다. 두 번째 builder는 runtime data의 canonical
+`shadow + history-sla-cost-v1` 후보를 만든다. 두 번째 builder는 runtime data의 canonical
 hash로 `sprp-shadow-<hash-prefix>` revision을 만들고 Web values에서
 `backend.runtimeConfigRevision`만 변경한다.
 
@@ -205,3 +213,28 @@ Phase 4 `enforce` 진입 조건은 다음 전부다.
 - correctness, Catalog, workload health 통과
 - `off/1` 복구 확인
 - Phase 4 apply와 100GB executor 2 실행에 대한 새 승인
+
+## 12. Enforce canary와 최종 복구
+
+Shadow가 live인 상태에서 runtime/Web 값을 base 파일로 다시 캡처하고 mode-only 후보를
+준비한다.
+
+```bash
+./scripts/prepare-eks-spark-resource-planner-enforce-values.sh
+./scripts/prepare-eks-spark-resource-planner-enforce-web-values.sh
+
+ASKLAKE_IMAGE_RECEIPT=<private-formal-receipt> \
+  ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=enforce \
+  ./scripts/preflight-eks-spark-resource-planner-shadow.sh
+```
+
+preflight는 live shadow와 captured base의 exact match, 동일 image digest, baseline `1`,
+`standard-v1`, 최대 `4`, mode 한 키 외 delta 없음, active Spark `0`을 확인한다. 두 Helm
+candidate를 적용한 뒤 같은 100GB object를 한 번만 실행한다. RDS Plan,
+SparkApplication annotation hash, spec executor와 실제 executor Pod 수가 모두 같고 출력
+정합성이 shadow baseline과 같아야 성공이다.
+
+성공·실패와 관계없이 live enforce 값을 base로 다시 캡처한 뒤 off 후보를 준비하고 같은
+preflight를 `TARGET_MODE=off`로 통과시켜 적용한다. active mode 복구는 Spark image나
+policy/profile drift가 있으면 실패하므로 임의로 덮어쓰지 않는다. 최종 상태는 mode
+`off`, baseline `1`, active Spark `0`, FastAPI `2/2`, Collector `1/1`이다.

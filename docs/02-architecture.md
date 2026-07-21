@@ -440,16 +440,24 @@ active claim은 정확히 하나다. workload는 이전 owner fence, 승인, 새
 
 ## 25) Spark 초기 Resource Plan
 
-EKS batch Spark Run은 입력 크기 기반 초기 executor 권장값을 Run별 Resource
-Plan으로 계산한다. V1 `balanced-v1`은 cores `2`, CPU request/limit `2/3`,
-heap/overhead `4g/1g`인 `standard-v1` executor profile을 고정하고 executor 수만
-후보 `1`, `2`, `4` 중 선택한다. 30분 완료 목표는 정책 metadata와 검증 기준이며,
-현재 계산은 `128MiB/partition`, `384 partitions/executor` seed rule이다.
+EKS batch Spark Run은 입력 크기와 같은 Job의 성공 실행 이력을 Run별 Resource Plan으로
+계산한다. V1 `history-sla-cost-v1`은 cores `2`, CPU request/limit `2/3`,
+heap/overhead `4g/1g`인 `standard-v1` executor profile을 고정하고 executor 수만 후보
+`1`, `2`, `4` 중 선택한다. 같은 Job의 성공·Plan hash·입력 byte·실제 executor가 모두
+일치하는 최대 20개 Run만 사용한다. 다른 Job의 결과는 workload 의미가 다를 수 있어
+섞지 않는다.
 
-`shadow`는 권장값과 근거를 RDS Run과 SparkApplication identity에 기록하지만 실제
-executor 수는 기존 고정값을 유지한다. 입력 크기가 없거나 실제 profile이 다르면
-`enforce`에서도 baseline을 유지한다. Plan은 최초 SparkApplication 제출 전에 한 번
-확정하며 같은 `runId`의 lease takeover와 terminal attempt generation retry도 저장된
-Plan을 재사용한다. 실행 중 Dynamic Allocation, 동시 Job 전역 최적화와 자동 학습은
+후보별 Spark duration을 같은 executor의 관측 중앙값 또는 `0.8` scaling exponent로
+추정하고, 30분을 만족하는 후보 중 `executor-seconds`가 가장 작은 값을 선택한다. 모든
+후보가 목표를 넘으면 `4`, 비교 가능한 이력이 없으면 `128MiB/partition`과
+`384 partitions/executor` 크기 seed를 사용한다. 이 비용 proxy는 실제 Spot/EBS/S3
+청구액이나 Pod Pending·Node scale-out wall-clock을 포함하지 않는다.
+
+`shadow`는 권장값과 후보별 판단 근거를 RDS Run과 SparkApplication identity에
+기록하지만 실제 executor 수는 기존 고정값을 유지한다. 입력 크기가 없거나 실제
+profile이 다르면 `enforce`에서도 baseline을 유지한다. Plan은 최초 SparkApplication
+제출 전에 한 번 확정하며 같은 `runId`의 lease takeover와 terminal attempt generation
+retry도 저장된 Plan을 재사용한다. 새 성공 이력은 다음 새 Run의 deterministic 평가에만
+반영한다. 실행 중 Dynamic Allocation, 동시 Job 전역 최적화와 통계 모델 자동 학습은
 V1 범위가 아니다. 계산식, fallback, 상한과 검증 순서는
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.

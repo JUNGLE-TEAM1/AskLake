@@ -153,10 +153,14 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
 
 - 기본 mode는 `off`이며 입력 metadata 부재, unsupported executor profile,
   Plan hash 또는 runtime ConfigMap revision drift에서는 baseline executor를 유지한다.
-- V1은 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다.
+- V1은 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다. 같은
+  Job의 성공·입력 byte·Plan hash·실제 executor가 일치하는 이력만 사용하고 다른
+  Job의 결과나 실패 Run은 학습 근거로 섞지 않는다.
+- policy V3는 30분 Spark duration 목표를 만족하는 후보 중 `executor-seconds`가 가장
+  작은 값을 선택한다. 실제 청구액이나 전체 wall-clock으로 과장하지 않는다.
 - private runtime 후보는 Planner 관련 key만, Web 후보는
   `backend.runtimeConfigRevision`만 변경해야 한다.
-- 10/100GB `shadow` evidence와 `off/1` 복구가 검증되기 전에는 `enforce`로
-  승격하지 않는다.
+- 같은 immutable Backend/Spark image의 10GB·100GB `shadow` evidence와 `off/1`
+  복구가 검증되기 전에는 `enforce`로 승격하지 않는다.
 - image rollout, runtime/Web Helm mutation과 비용 발생 Spark Run은 각각 별도
   승인을 요구한다.
