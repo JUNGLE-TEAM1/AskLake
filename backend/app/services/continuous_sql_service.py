@@ -200,11 +200,18 @@ class ContinuousSqlService:
                 request,
                 job_id,
             )
+        # A Job with resolved producer dependencies is a Dataset-revision
+        # consumer.  It must not acquire a second Kafka consumer group simply
+        # because one of its relations originated at Kafka.  Jobs created
+        # before the execution-tree feature (and therefore without
+        # dependencies) deliberately retain the legacy direct-consumer plan.
+        managed_by_dataset_revisions = bool(compiled.dependency_bindings)
         compiled_plan = compiled_plan_with_serving_mode(
             compiled.compiled_plan,
             request.output.serving_mode,
             job_id=job_id,
             max_offsets_per_trigger=self.settings.continuous_sql_micro_batch_max_rows,
+            execution_input_mode=("dataset_revision" if managed_by_dataset_revisions else "legacy_kafka"),
         )
         job = ContinuousSqlJobModel(
             id=job_id,
@@ -1168,6 +1175,10 @@ class ContinuousSqlService:
         return bindings
 
     def _worker_start_options(self, job: ContinuousSqlJobModel) -> dict[str, Any]:
+        if str((job.compiled_plan or {}).get("executionInputMode") or "legacy_kafka") == "dataset_revision":
+            # Revision-driven execution receives its cursor from durable
+            # Dataset commits, never from Kafka offsets.
+            return {}
         binding = self.repository.get_incremental_binding(job.id)
         options: dict[str, Any] = {
             "maxOffsetsPerTrigger": int(self.settings.continuous_sql_micro_batch_max_rows),
@@ -1534,21 +1545,32 @@ def compiled_plan_with_serving_mode(
     *,
     job_id: str | None = None,
     max_offsets_per_trigger: int | None = None,
+    execution_input_mode: str = "legacy_kafka",
 ) -> dict[str, Any]:
     plan_without_hash = {
         key: value for key, value in compiled_plan.items() if key != "planHash"
     }
     plan_without_hash["servingMode"] = serving_mode
+    plan_without_hash["executionInputMode"] = execution_input_mode
     streaming_source = plan_without_hash.get("streamingSource")
     if isinstance(streaming_source, dict):
         streaming_source = dict(streaming_source)
-        if job_id:
+        if execution_input_mode == "legacy_kafka" and job_id:
             streaming_source["consumerGroupId"] = f"asklake-continuous-sql-{job_id}"
-        if max_offsets_per_trigger is not None:
+        if execution_input_mode == "legacy_kafka" and max_offsets_per_trigger is not None:
             streaming_source["maxOffsetsPerTrigger"] = max(
                 1,
                 int(max_offsets_per_trigger),
             )
+        if execution_input_mode == "dataset_revision":
+            # Keep only relation metadata used to resolve the producer's
+            # published Dataset.  Kafka connection/offset configuration is
+            # producer-owned and cannot leak into the SQL runtime contract.
+            for key in (
+                "broker", "topic", "consumerGroupId", "initialOffsetPolicy",
+                "maxOffsetsPerTrigger", "streamPartitionCursors",
+            ):
+                streaming_source.pop(key, None)
         plan_without_hash["streamingSource"] = streaming_source
     return {
         **plan_without_hash,
