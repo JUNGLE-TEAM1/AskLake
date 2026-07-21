@@ -24,7 +24,7 @@ Catalog row 통계가 있고 `estimatedRowCount <= CONTINUOUS_SQL_STATIC_BROADCA
 
 ## low-latency 실행 계약
 
-- 새 validate/create request에서 `triggerIntervalSeconds`를 생략하면 5초다. 허용 범위는 1~3,600초이고 기존 persisted Job은 저장된 값을 유지한다. 5초는 micro-batch 시작 주기이며 end-to-end SLA가 아니다.
+- 새 validate/create request에서 `triggerIntervalSeconds`를 생략하면 10초다. 허용 범위는 1~3,600초이고 기존 persisted Job은 저장된 값을 유지한다. `baselineDatasetId=output.datasetId`는 최초 Trino JOIN snapshot과 Kafka cursor를 고정하며 이후에는 최대 100행 source range만 처리한다.
 - `estimatedRowCount <= CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`인 static relation은 plan에 `cacheHint=true`를 기록한다. worker는 exact `(datasetId, snapshotId, schemaFingerprint)` identity의 frame을 memory/disk에 재사용하고, 같은 snapshot·JOIN key의 유일성 scan을 한 번만 수행한다.
 - snapshot이 바뀌면 이전 frame을 unpersist하고 유일성을 다시 검증한다. 통계가 없거나 한도를 넘는 relation은 frame을 cache하지 않고, 한도 0은 cache 비활성이다.
 - 새 Continuous SQL Iceberg output table은 `_asklake_run_id` identity partition을 갖는다. exact publication count와 Dashboard revision delta query는 해당 batch partition을 가지치기할 수 있다. 사용자 projection에는 marker를 노출하지 않는다.

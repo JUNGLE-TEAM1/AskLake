@@ -4,6 +4,7 @@ export type DashboardSyncMode = "polling" | "hybrid" | "sse";
 
 export type RealtimeFeatureConfig = {
   continuousSqlJoinEnabled: boolean;
+  continuousSqlServingMode: "iceberg" | "clickhouse";
   dashboardSyncMode: DashboardSyncMode;
   fallbackReason: string | null;
   featureScope: "deployment";

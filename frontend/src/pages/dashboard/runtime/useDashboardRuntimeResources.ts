@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import type { DashboardRuntimeMode } from "../../../types";
 import { useDashboardRuntimeLoaders } from "./useDashboardRuntimeLoaders";
+import { usePreparedPublishedDashboard } from "./usePreparedPublishedDashboard";
 import { usePublishedDashboardLiveRefresh } from "./usePublishedDashboardLiveRefresh";
 import { useDashboardWidgetData } from "./useDashboardWidgetData";
+import { onCatalogDatasetDeleted } from "../../../services/catalogEvents";
 
 export function useDashboardRuntimeResources({
   active,
@@ -17,10 +19,14 @@ export function useDashboardRuntimeResources({
   const {
     cancelDraftRuntimeLoad, cancelPublishedRuntimeLoad,
     draftError, draftLoading, draftRuntime, loadDraftRuntime,
-    loadPublishedRuntime, publishedRuntime, runtimeError, runtimeLoading,
+    loadPublishedRuntime: loadPublishedRuntimeFromApi, publishedRuntime, runtimeError, runtimeLoading,
     setDraftError, setDraftLoading, setDraftRuntime, setPublishedRuntime,
     setRuntimeError, setRuntimeLoading,
   } = useDashboardRuntimeLoaders(setSelectedPageId);
+  const loadPublishedRuntime = usePreparedPublishedDashboard({
+    active, dashboardId, loadFromApi: loadPublishedRuntimeFromApi, mode,
+    publishedRuntime, setPublishedRuntime, setRuntimeError,
+  });
 
   const pages = mode === "published"
     ? (publishedRuntime?.pages ?? [])
@@ -57,6 +63,18 @@ export function useDashboardRuntimeResources({
     }
   }, [active, pages, selectedPageId]);
 
+  useEffect(() => {
+    if (!active) return undefined;
+
+    return onCatalogDatasetDeleted(() => {
+      if (mode === "published") {
+        void loadPublishedRuntime(dashboardId, { silent: true });
+      } else {
+        void loadDraftRuntime(dashboardId, { silent: true });
+      }
+    });
+  }, [active, dashboardId, loadDraftRuntime, loadPublishedRuntime, mode]);
+
   const activeRuntime = mode === "published" ? publishedRuntime : draftRuntime;
   const setActiveRuntime = useCallback(
     (update: Parameters<typeof setPublishedRuntime>[0]) => {
@@ -87,22 +105,9 @@ export function useDashboardRuntimeResources({
   });
 
   return {
-    draftError,
-    draftLoading,
-    draftRuntime,
-    loadDraftRuntime,
-    loadPublishedRuntime,
-    pages,
-    publishedRuntime,
-    realtimeConnectionState,
-    realtimeDataState,
-    retryWidgetData,
-    runtimeError,
-    runtimeLoading,
-    selectedPageId,
-    setDraftError,
-    setDraftRuntime,
-    setPublishedRuntime,
-    setSelectedPageId,
+    draftError, draftLoading, draftRuntime, loadDraftRuntime, loadPublishedRuntime,
+    pages, publishedRuntime, realtimeConnectionState, realtimeDataState,
+    retryWidgetData, runtimeError, runtimeLoading, selectedPageId,
+    setDraftError, setDraftRuntime, setPublishedRuntime, setSelectedPageId,
   };
 }

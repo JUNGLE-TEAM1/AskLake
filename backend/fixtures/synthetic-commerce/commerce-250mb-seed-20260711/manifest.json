@@ -1,5 +1,5 @@
 {
-  "generator_version": 2,
+  "generator_version": 3,
   "run_id": "commerce-250mb-seed-20260711",
   "seed": 20260711,
   "source_file": "meta_Electronics.jsonl",
@@ -14,27 +14,27 @@
     "target_total_size_mb": 250.0,
     "max_file_size_mb": 64.0,
     "resolved_products": 10000,
-    "resolved_users": 33297,
-    "actual_total_bytes": 262229855,
-    "actual_total_mib": 250.081878,
-    "target_size_error_pct": 0.033
+    "resolved_users": 33702,
+    "actual_total_bytes": 262685445,
+    "actual_total_mib": 250.516362,
+    "target_size_error_pct": 0.207
   },
   "resolved_counts": {
     "products": 10000,
-    "users": 33297,
-    "click_events": 849054,
-    "sessions": 213152
+    "users": 33702,
+    "click_events": 849760,
+    "sessions": 215157
   },
   "counts": {
     "products": 10000,
-    "users": 33297,
-    "event_count": 849054,
-    "session_count": 213152,
+    "users": 33702,
+    "event_count": 849760,
+    "session_count": 215157,
     "event_type_counts": {
-      "product_impression": 593757,
-      "product_click": 206740,
-      "add_to_cart": 35980,
-      "purchase_click": 12577
+      "product_impression": 599636,
+      "product_click": 202688,
+      "add_to_cart": 35371,
+      "purchase_click": 12065
     },
     "products_exposed": 10000,
     "product_coverage_pct": 100.0
@@ -64,6 +64,82 @@
     },
     "selection_rule": "balanced deterministic hash sample; valid price; rating_count >= 5"
   },
+  "behavior_profile": {
+    "version": 1,
+    "category_purchase_intent": {
+      "applied_stage": "cart_to_purchase_click",
+      "categories": {
+        "Computers & Accessories": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Camera & Photo": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Television & Video": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Headphones, Earbuds & Accessories": {
+          "group": "high",
+          "multiplier": 1.3
+        },
+        "Home Audio": {
+          "group": "medium",
+          "multiplier": 1.0
+        },
+        "Car & Vehicle Electronics": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Portable Audio & Video": {
+          "group": "low",
+          "multiplier": 0.7
+        },
+        "Wearable Technology": {
+          "group": "high",
+          "multiplier": 1.3
+        }
+      }
+    },
+    "date_profiles": {
+      "weekend_campaign": {
+        "dates": [
+          "2026-06-06",
+          "2026-06-07"
+        ],
+        "multipliers": {
+          "traffic": 1.6,
+          "impression_to_click": 0.72,
+          "click_to_cart": 0.86,
+          "cart_to_purchase_click": 0.95
+        }
+      },
+      "payday_promotion": {
+        "dates": [
+          "2026-06-25"
+        ],
+        "multipliers": {
+          "traffic": 1.0,
+          "impression_to_click": 1.0,
+          "click_to_cart": 1.35,
+          "cart_to_purchase_click": 1.15
+        }
+      }
+    },
+    "thresholds": {
+      "category_adjacent_group_gap_pp": 1.0,
+      "category_max_min_gap_pp": 3.0,
+      "category_max_min_ratio": 1.5,
+      "minimum_clicks_per_category": 1000,
+      "minimum_purchase_clicks_per_category": 50,
+      "weekend_campaign_traffic_ratio": 1.2,
+      "weekend_campaign_ctr_drop_pp": 2.0,
+      "payday_traffic_tolerance_pct": 10.0,
+      "payday_click_to_cart_lift_pp": 3.0
+    }
+  },
   "datasets": {
     "meta": {
       "format": "jsonl",
@@ -84,50 +160,50 @@
     "users": {
       "format": "jsonl",
       "prefix": "users/",
-      "rows": 33297,
-      "bytes": 6461017,
-      "mib": 6.161706,
+      "rows": 33702,
+      "bytes": 6539645,
+      "mib": 6.236691,
       "file_count": 1,
       "files": [
         {
           "path": "users/part-00000.jsonl",
-          "rows": 33297,
-          "bytes": 6461017,
-          "sha256": "c8c1217db8edf18228856c0fc30a164e426b0ac615db64236cc8f16ae899647f"
+          "rows": 33702,
+          "bytes": 6539645,
+          "sha256": "6d851f6351181502097f4aa75d091b3ba2e25b60b03568fcd52b006917898939"
         }
       ]
     },
     "click_events": {
       "format": "jsonl",
       "prefix": "click_events/",
-      "rows": 849054,
-      "bytes": 252640318,
-      "mib": 240.936583,
+      "rows": 849760,
+      "bytes": 253017280,
+      "mib": 241.296082,
       "file_count": 4,
       "files": [
         {
           "path": "click_events/part-00000.jsonl",
-          "rows": 225583,
-          "bytes": 67108791,
-          "sha256": "9e70c5c5fb998a9a1a67887e0f4a584b3fd227c689d4863226ce4eb2f2d55132"
+          "rows": 225366,
+          "bytes": 67108763,
+          "sha256": "fe53379acadef1893194cc176aece1eee767d6aaeb5dfebf858a704b8ae78c80"
         },
         {
           "path": "click_events/part-00001.jsonl",
-          "rows": 225471,
-          "bytes": 67108860,
-          "sha256": "27064c79ce6849a2bb807f4180f2daed74f885d4520755fc56df0ee765518efd"
+          "rows": 225344,
+          "bytes": 67108813,
+          "sha256": "538d7bdfe213038e82578de279728ffb0edcbff711d218281bd0d1782858c515"
         },
         {
           "path": "click_events/part-00002.jsonl",
-          "rows": 225541,
-          "bytes": 67108565,
-          "sha256": "ac7e319e6f880b8c9b8449127b7310f030fe84d9f83e30aa80b3f77792181e03"
+          "rows": 225409,
+          "bytes": 67108771,
+          "sha256": "433ca68ce03f72a1c87e5799b15bf417b70944f3226127aa6e4346441ca4bd33"
         },
         {
           "path": "click_events/part-00003.jsonl",
-          "rows": 172459,
-          "bytes": 51314102,
-          "sha256": "c4d748f9b13b27c36c38e072494d6e4cf3c15c57be115f686b384c9a4d0c4dac"
+          "rows": 173641,
+          "bytes": 51690933,
+          "sha256": "cb1d2e606f3c2164ee2f830b05a552ac7fae0d0c27a9a52ca033ff0d40b036d5"
         }
       ]
     }
@@ -141,37 +217,37 @@
     },
     {
       "path": "users/part-00000.jsonl",
-      "rows": 33297,
-      "bytes": 6461017,
-      "sha256": "c8c1217db8edf18228856c0fc30a164e426b0ac615db64236cc8f16ae899647f"
+      "rows": 33702,
+      "bytes": 6539645,
+      "sha256": "6d851f6351181502097f4aa75d091b3ba2e25b60b03568fcd52b006917898939"
     },
     {
       "path": "click_events/part-00000.jsonl",
-      "rows": 225583,
-      "bytes": 67108791,
-      "sha256": "9e70c5c5fb998a9a1a67887e0f4a584b3fd227c689d4863226ce4eb2f2d55132"
+      "rows": 225366,
+      "bytes": 67108763,
+      "sha256": "fe53379acadef1893194cc176aece1eee767d6aaeb5dfebf858a704b8ae78c80"
     },
     {
       "path": "click_events/part-00001.jsonl",
-      "rows": 225471,
-      "bytes": 67108860,
-      "sha256": "27064c79ce6849a2bb807f4180f2daed74f885d4520755fc56df0ee765518efd"
+      "rows": 225344,
+      "bytes": 67108813,
+      "sha256": "538d7bdfe213038e82578de279728ffb0edcbff711d218281bd0d1782858c515"
     },
     {
       "path": "click_events/part-00002.jsonl",
-      "rows": 225541,
-      "bytes": 67108565,
-      "sha256": "ac7e319e6f880b8c9b8449127b7310f030fe84d9f83e30aa80b3f77792181e03"
+      "rows": 225409,
+      "bytes": 67108771,
+      "sha256": "433ca68ce03f72a1c87e5799b15bf417b70944f3226127aa6e4346441ca4bd33"
     },
     {
       "path": "click_events/part-00003.jsonl",
-      "rows": 172459,
-      "bytes": 51314102,
-      "sha256": "c4d748f9b13b27c36c38e072494d6e4cf3c15c57be115f686b384c9a4d0c4dac"
+      "rows": 173641,
+      "bytes": 51690933,
+      "sha256": "cb1d2e606f3c2164ee2f830b05a552ac7fae0d0c27a9a52ca033ff0d40b036d5"
     }
   ],
-  "total_bytes": 262229855,
-  "total_mib": 250.081878,
+  "total_bytes": 262685445,
+  "total_mib": 250.516362,
   "public_user_columns": [
     "user_id",
     "age",
@@ -194,6 +270,9 @@
     "referral users have higher cart and purchase-click propensity than paid-search users",
     "premium/vip users have higher funnel progression than basic users",
     "mobile sessions concentrate in local evening hours",
-    "gender and region have no direct behavior multiplier and act as null controls"
+    "gender and region have no direct behavior multiplier and act as null controls",
+    "category purchase-click propensity follows high, medium, and low groups",
+    "the first weekend campaign increases traffic while lowering CTR",
+    "the payday promotion keeps traffic near normal while increasing click-to-cart progression"
   ]
 }

@@ -28,6 +28,7 @@ import {
   dashboardLiveRefreshInterval,
   mergePublishedDashboardWidgets,
   planDashboardRealtimeRefresh,
+  publishedDashboardUsesManualRefresh,
   staleDashboardWidgetIds,
   type DashboardDatasetCursor,
   type DashboardLiveDataState,
@@ -52,7 +53,7 @@ export function usePublishedDashboardLiveRefresh({
   publishedRuntime: DashboardRuntimeResponse | null;
   reloadPublishedRuntime: (
     dashboardId: string,
-    options?: { silent?: boolean },
+    options?: { preferPrefetched?: boolean; silent?: boolean },
   ) => Promise<DashboardRuntimeResponse | null>;
   setPublishedRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
 }) {
@@ -68,6 +69,11 @@ export function usePublishedDashboardLiveRefresh({
   const liveDatasetIdsKey = JSON.stringify(liveDatasetIds);
 
   useEffect(() => {
+    if (publishedDashboardUsesManualRefresh()) {
+      setRealtimeConnectionState("closed");
+      setRealtimeDataState("fresh");
+      return;
+    }
     if (!active || mode !== "published" || liveDatasetIds.length === 0) {
       setRealtimeConnectionState("closed");
       setRealtimeDataState("fresh");

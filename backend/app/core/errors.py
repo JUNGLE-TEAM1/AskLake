@@ -96,11 +96,19 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
 
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     increment_metric("api_errors_total", code=ErrorCode.VALIDATION_ERROR.value, stage="validation")
+    # RequestValidationError does not consistently expose Pydantic v2's
+    # ``include_input`` keyword across our supported FastAPI versions. Strip
+    # request input values ourselves so an expected 422 never becomes a 500
+    # and validation details cannot echo credentials.
+    validation_errors = [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in exc.errors()
+    ]
     return error_response(
         ErrorCode.VALIDATION_ERROR,
         "Request validation failed",
         status.HTTP_422_UNPROCESSABLE_ENTITY,
-        {"errors": exc.errors(include_input=False)},
+        {"errors": validation_errors},
         stage="validation",
         user_message="입력값을 확인해 주세요.",
         diagnostic_id=_request_diagnostic_id(request),

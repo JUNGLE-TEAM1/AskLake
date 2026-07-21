@@ -20,7 +20,7 @@ $env:APP_ENV = "local"
 $env:PROVIDER = "openai_compatible"
 $env:PROVIDER_BASE_URL = "https://api.openai.com/v1"
 $env:PROVIDER_API_KEY = "<secret>"
-$env:PROVIDER_MODEL = "gpt-4.1-mini"
+$env:PROVIDER_MODEL = "gpt-4.1"
 python -m uvicorn app.main:app --reload --port 8090
 ```
 
@@ -53,7 +53,7 @@ Response:
     "warnings": []
   },
   "provider": "openai_compatible",
-  "model": "gpt-4.1-mini"
+  "model": "gpt-4.1"
 }
 ```
 
@@ -75,7 +75,7 @@ isolated test suite. For an OpenAI-compatible provider set:
 PROVIDER=openai_compatible
 PROVIDER_BASE_URL=https://api.openai.com/v1
 PROVIDER_API_KEY=<secret>
-PROVIDER_MODEL=gpt-4.1-mini
+PROVIDER_MODEL=gpt-4.1
 ```
 
 The client sends a JSON-schema `response_format` and accepts only the

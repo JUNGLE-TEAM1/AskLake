@@ -41,6 +41,7 @@ def spark_hooks(
 ) -> AirflowSparkExecutionHooks:
     return AirflowSparkExecutionHooks(
         compact_storage_text=lambda value, **_kwargs: str(value),
+        execution_owner_id="backend-process-1",
         format_duration_ms=lambda value: f"{value}ms",
         format_rows=lambda value: f"{value} rows",
         iso_now=lambda: "2026-07-17T00:00:00Z",
@@ -201,6 +202,7 @@ class AirflowSparkExecutionCommandTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(db.commits, 2)
         self.assertEqual(run.task_states["sparkExecution"]["attemptId"], "attempt:RUN-1")
+        self.assertEqual(run.task_states["sparkExecution"]["ownerId"], "backend-process-1")
         self.assertEqual(run.task_states["sparkExecution"]["status"], "success")
         self.assertEqual(run.task_states["sparkResult"]["runId"], "RUN-1")
         self.assertEqual(job.target_path, "s3://lake/orders/RUN-1")

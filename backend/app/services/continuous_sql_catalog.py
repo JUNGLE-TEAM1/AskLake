@@ -23,9 +23,15 @@ from app.services.resource_permission_service import dataset_with_persisted_perm
 
 
 class ContinuousSqlCatalogResolver:
-    def __init__(self, db: Session) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        allow_clickhouse_streaming: bool = False,
+    ) -> None:
         self.db = db
         self.catalog_repository = CatalogRepository(db)
+        self.allow_clickhouse_streaming = allow_clickhouse_streaming
 
     def resolve_authorized(
         self,

@@ -12,6 +12,7 @@ from app.application.catalog_dataset_deletion import (
     CatalogPhysicalPurger,
     add_dependency_blockers,
     build_deletion_impact,
+    delete_dataset_sql_metadata,
     is_managed_storage_location,
     nested_contains,
     process_claimed_deletion,
@@ -208,6 +209,21 @@ class CatalogDeletionRequestTest(unittest.TestCase):
 
 
 class CatalogDeletionSafetyTest(unittest.TestCase):
+    def test_sql_metadata_delete_removes_join_runs_and_result_pages(self) -> None:
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = [
+            SimpleNamespace(
+                id="sql_join_1",
+                dataset_id="other_dataset",
+                payload={"baseDatasetId": "other_dataset", "selectedDatasetIds": ["ds_orders"]},
+            )
+        ]
+
+        run_ids = delete_dataset_sql_metadata(db, "ds_orders")
+
+        self.assertEqual(run_ids, {"sql_join_1"})
+        self.assertEqual(db.execute.call_count, 2)
+
     def test_nested_dataset_reference_is_detected(self) -> None:
         self.assertTrue(nested_contains({"relations": [{"datasetId": "ds_orders"}]}, "ds_orders"))
         self.assertFalse(nested_contains({"relations": [{"datasetId": "ds_other"}]}, "ds_orders"))

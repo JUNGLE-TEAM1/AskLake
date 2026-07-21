@@ -26,13 +26,13 @@ WIDGET_OPTIONS: dict[DashboardRuntimeWidgetType, dict[str, Any]] = {
         "required": ["xKey", "yKey", "aggregation", "color"],
         "optional": ["seriesKey", "dateUnit", "curve"],
         "numeric": ["yKey"],
-        "description": "시간 또는 순서에 따른 추이를 선으로 보여줍니다.",
+        "description": "시간 또는 순서에 따른 추이를 선으로 보여줍니다. 시간 데이터는 dateUnit minute/hour/day/month/year로 묶을 수 있습니다.",
     },
     DashboardRuntimeWidgetType.AREA_CHART: {
         "required": ["xKey", "yKey", "aggregation", "color"],
         "optional": ["seriesKey", "dateUnit", "stacked"],
         "numeric": ["yKey"],
-        "description": "흐름이나 누적 규모를 면적으로 강조합니다.",
+        "description": "흐름이나 누적 규모를 면적으로 강조합니다. 시간 데이터는 dateUnit minute/hour/day/month/year로 묶을 수 있습니다.",
     },
     DashboardRuntimeWidgetType.DONUT_CHART: {
         "required": ["labelKey", "valueKey", "aggregation", "color"],

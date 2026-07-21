@@ -20,7 +20,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
 - `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
 - `backend/scripts/verify-prefix-source-connector.mjs`: recursive Prefix filtering/schema contract verifier
-- `backend/scripts/upload-synthetic-commerce.mjs`: synthetic v2 manifest -> MinIO/S3 stream uploader and remote evidence verifier
+- `backend/scripts/upload-synthetic-commerce.mjs`: synthetic v2/v3 manifest -> MinIO/S3 stream uploader and remote evidence verifier
 - `backend/scripts/verify-prefix-spark-e2e.mjs`: real Prefix Preview -> Job -> Spark -> Iceberg -> Catalog -> SQL verifier
 - `backend/scripts/verify-spark-iceberg-batch.py`: native Spark Iceberg replace/re-run/rollback live verifier
 - `backend/scripts/verify-kafka-snapshot-iceberg.py`: Kafka fixed snapshot -> Spark Iceberg append -> Trino/Catalog -> offset commit/retry live verifier
@@ -137,6 +137,8 @@ MinIO 검증은 `--s3-endpoint-url http://127.0.0.1:9000 --s3-force-path-style`�
 
 Preview 계약과 전체 runtime을 함께 검증할 때는 FastAPI, Airflow, MinIO, Spark가 같은 local Compose network를 사용하도록 한 뒤 아래 명령을 실행한다.
 
+대용량 실행 중 Airflow가 재시작되면 orphan task는 backend의 기존 Spark 결과를 재조회하며, backend까지 재시작된 경우 이전 process owner의 실행 lease를 stale로 처리해 같은 Run을 다시 claim한다. 재시작 직후 `SPARK_RUN_ALREADY_EXECUTING`만으로 Run을 terminal 실패로 확정하면 안 된다. Backend 컨테이너가 교체되는 동안 Docker DNS 또는 연결이 잠시 끊겨도 `spark_process_write`는 15초부터 최대 2분까지 지수 backoff로 4회 재시도하고 같은 Run의 persisted result/lease를 재사용한다. Spark worker가 교체되어 driver state가 `FAILED`/`KILLED`/`ERROR`로 끝난 경우 다음 retry는 terminal state와 오래된 실패 report를 제거하고 새 driver를 제출한다. 성공한 `FINISHED` state/report는 재사용해 중복 출력을 만들지 않는다.
+
 ```powershell
 cd backend
 npm run verify:record-parsing
@@ -197,7 +199,7 @@ TXT may be smaller than 1GB when the source files are smaller. Parquet is copied
 
 ## 4.1 Synthetic Commerce 250MiB Prefix Harness
 
-Amazon Electronics metadata를 기준으로 만든 synthetic v2 run은 `meta/`, `users/`, `click_events/`를 서로 다른 데이터셋 Prefix로 둔다. 다중 파일 검증은 같은 스키마의 `click_events/part-*.jsonl`을 대상으로 하며 세 Prefix를 한 Job에서 자동 조인하지 않는다.
+Amazon Electronics metadata를 기준으로 만든 synthetic v3 run은 `meta/`, `users/`, `click_events/`를 서로 다른 데이터셋 Prefix로 둔다. 다중 파일 검증은 같은 스키마의 `click_events/part-*.jsonl`을 대상으로 하며 세 Prefix를 한 Job에서 자동 조인하지 않는다. uploader와 Prefix E2E는 기존 v2 fixture 호환성도 유지한다.
 
 ```bash
 python3 backend/scripts/synthetic-commerce/generate.py \
@@ -219,6 +221,13 @@ npm run verify:prefix-spark-e2e
 ```
 
 Uploader는 local bytes/SHA-256을 manifest와 대조하고 data part를 stream upload한 뒤 `HeadObject`와 원격 key set을 확인하며 `manifest.json`을 마지막에 게시한다. E2E는 실제 `/api/etl/sources/test` Prefix Preview 결과로 Job을 생성하고 `inputFileCount`, `inputBytes`, `inputRows`, `outputRows`를 manifest와 대조한다. 출력은 정확한 byte 크기가 아니라 Parquet 파일이 2개 이상인지 검증하며, Catalog 물리 경로에서 SQL `COUNT(*)`와 `event_type` 퍼널 분포까지 조회한다. Compose project 이름을 바꾸면 `ASKLAKE_DOCKER_NETWORK=<project>_default`를 함께 설정한다.
+
+Issue #1050은 이 harness에 다음 두 시간 구간의 고정 fixture와 자동 검증을 추가한다. 상세 profile과 threshold는 `backend/scripts/synthetic-commerce/README.md`의 `Issue #1050 데모 데이터`가 기준이다.
+
+- S3/MinIO: 고정 3,000 사용자 calibration과 250MiB 30일 기준선에서 카테고리별 clicks/carts/purchase_clicks, 날짜별 실제 건수와 전환율, 기존 planted pattern을 함께 검증
+- Kafka: 검증된 baseline identity와 명시적 `anchorAt`으로 만든 bounded 5분 raw-text/Kafka JSONL fixture를 고유 topic/group/checkpoint에 one-shot replay하고, 기준선 대비 상승·유사·하락과 Catalog 반영 증거를 검증
+
+현재 harness는 실제 최근 5분 sliding window나 조건부 `purchase_clicks / clicks` Dashboard 집계를 지원하거나 검증하지 않는다. Issue #1050은 격리된 5분 demo run을 선택했으며, 누적 Kafka 결과를 `최근 5분`이라고 판정하지 않는다.
 
 ## 5. Spark Server
 

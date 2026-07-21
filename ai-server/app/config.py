@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     provider: ProviderName = "openai_compatible"
     provider_base_url: str = "https://api.openai.com/v1"
     provider_api_key: SecretStr | None = None
-    provider_model: str = "gpt-4.1-mini"
+    provider_model: str = "gpt-4.1"
     provider_model_query_sql: str | None = None
     provider_model_dashboard_assistant: str | None = None
     provider_model_etl_transform: str | None = None
@@ -50,7 +50,10 @@ class Settings(BaseSettings):
 
     request_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     max_request_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
-    max_prompt_chars: int = Field(default=8_000, ge=1, le=32_000)
+    # Product APIs still bound user-authored prompts to 8,000 characters.
+    # The internal request also carries generated SQL contracts for every
+    # selected Dataset, so it needs bounded headroom without dropping schema.
+    max_prompt_chars: int = Field(default=32_000, ge=1, le=32_000)
     max_current_query_chars: int = Field(default=20_000, ge=0, le=64_000)
     max_context_bytes: int = Field(default=32 * 1024, ge=0, le=256 * 1024)
     max_context_items: int = Field(default=32, ge=0, le=128)

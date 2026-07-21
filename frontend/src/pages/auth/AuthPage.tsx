@@ -1,30 +1,39 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 
 import { login, signup } from "../../services/authApi";
 import { ApiError } from "../../types";
 import type { CurrentUserResponse } from "../../types";
-
-type AuthMode = "login" | "signup";
+import type { AuthMode } from "./authRoute";
 
 type AuthPageProps = {
+  initialMode: AuthMode;
   onAuthenticated: (user: CurrentUserResponse) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: "success" | "failed", options?: { targetType?: "ui" }) => void;
+  onModeChange: (mode: AuthMode) => void;
+  publicSignupEnabled: boolean;
 };
 
-export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
+export function AuthPage({ initialMode, onAction, onAuthenticated, onModeChange, publicSignupEnabled }: AuthPageProps) {
   const demoDefaultsEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";
-  const publicSignupEnabled = import.meta.env.DEV || import.meta.env.VITE_AUTH_PUBLIC_SIGNUP === "true";
-  const [mode, setMode] = useState<AuthMode>("login");
+  const availableInitialMode = initialMode === "signup" && publicSignupEnabled ? "signup" : "login";
+  const [mode, setMode] = useState<AuthMode>(availableInitialMode);
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState(demoDefaultsEnabled ? "admin.user@asklake.local" : "");
   const [password, setPassword] = useState(demoDefaultsEnabled ? "asklake-admin" : "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setMode(initialMode === "signup" && publicSignupEnabled ? "signup" : "login");
+    setError(null);
+  }, [initialMode, publicSignupEnabled]);
+
   const changeMode = (nextMode: AuthMode) => {
+    if (nextMode === "signup" && !publicSignupEnabled) return;
     setMode(nextMode);
     setError(null);
+    onModeChange(nextMode);
   };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -55,7 +64,7 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
       </Link>
       <p className="login-tagline">The Complete Data Pipeline Platform</p>
 
-      <form className="login-card" data-testid="auth-login-form" onSubmit={submit}>
+      <form className="login-card" data-auth-mode={mode} data-testid="auth-login-form" onSubmit={submit}>
         <h1>{mode === "login" ? "Sign In" : "Create Account"}</h1>
         <p className="login-card-description">
           {mode === "login"
@@ -66,7 +75,7 @@ export function AuthPage({ onAction, onAuthenticated }: AuthPageProps) {
         <div className="login-mode-switch" role="tablist" aria-label="계정 모드">
           <button aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} role="tab" type="button" onClick={() => changeMode("login")}>로그인</button>
           {publicSignupEnabled && (
-            <button aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} role="tab" type="button" onClick={() => changeMode("signup")}>회원가입</button>
+            <button aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} data-testid="auth-signup-tab" role="tab" type="button" onClick={() => changeMode("signup")}>회원가입</button>
           )}
         </div>
 

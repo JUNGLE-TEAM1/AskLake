@@ -92,6 +92,8 @@
     "synthetic-commerce:click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_events_to_log.py",
     "verify:kafka-click-log": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_log_to_kafka_jsonl.py",
     "kafka:click-log:convert": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/convert_click_log_to_kafka_jsonl.py",
+    "synthetic-commerce:realtime": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/generate_realtime.py",
+    "verify:synthetic-commerce": "${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_generate.py && ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_generate_realtime.py && ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_events_to_log.py && ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/synthetic-commerce/test_convert_click_log_to_kafka_jsonl.py",
     "minio:seed-click-log": "node scripts/seed-minio-click-log.mjs",
     "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",

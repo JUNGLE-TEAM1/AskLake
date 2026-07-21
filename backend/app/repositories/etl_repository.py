@@ -5,6 +5,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.compatibility import record_legacy_runtime_error_projection
+from app.core.config import settings
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
@@ -55,6 +56,9 @@ def ensure_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
+        return
+    if not settings.startup_schema_management_enabled:
+        _schema_ready_bind_ids.add(bind_key)
         return
 
     with bind.begin() as connection:

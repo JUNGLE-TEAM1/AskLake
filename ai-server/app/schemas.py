@@ -131,7 +131,7 @@ class DashboardWidgetConfigOutput(BaseModel):
     color: DashboardColorOutput | None
     columns: list[str] | None = Field(max_length=64)
     curve: Literal["smooth", "straight", "stepline"] | None
-    date_unit: Literal["day", "month", "year"] | None = Field(alias="dateUnit")
+    date_unit: Literal["minute", "hour", "day", "month", "year"] | None = Field(alias="dateUnit")
     description: str | None = Field(max_length=2_000)
     error: str | None = Field(max_length=1_000)
     error_message: str | None = Field(alias="errorMessage", max_length=1_000)
@@ -211,9 +211,26 @@ class DashboardActionOutput(BaseModel):
         elif self.type == "create_widget":
             if self.widget is None or self.patch is not None or self.widget_id is not None or self.markdown is not None:
                 raise ValueError("Create actions must contain only widget")
+            if (
+                not self.widget.title
+                or self.widget.type is None
+                or not self.widget.dataset_id
+                or self.widget.config is None
+            ):
+                raise ValueError("Create actions must contain a complete widget")
         elif self.type == "update_widget":
             if not self.widget_id or self.patch is None or self.widget is not None or self.markdown is not None:
                 raise ValueError("Update actions must contain widgetId and patch")
+            if all(
+                value is None
+                for value in (
+                    self.patch.title,
+                    self.patch.type,
+                    self.patch.dataset_id,
+                    self.patch.config,
+                )
+            ):
+                raise ValueError("Update actions must contain at least one changed field")
         return self
 
 
@@ -371,7 +388,7 @@ class GenerateRequest(BaseModel):
 
     mode: GenerationMode = "query_sql"
     request_id: str | None = Field(default=None, max_length=255)
-    prompt: str = Field(min_length=1, max_length=8_000)
+    prompt: str = Field(min_length=1, max_length=32_000)
     current_query: str | None = Field(default=None, max_length=20_000)
     base_dataset_id: str | None = Field(default=None, max_length=255)
     rag_context: dict[str, Any] = Field(default_factory=dict)

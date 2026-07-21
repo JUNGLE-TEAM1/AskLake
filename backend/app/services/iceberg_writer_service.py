@@ -132,6 +132,37 @@ class IcebergWriterService:
             + qualified_identifier(target.catalog, target.namespace)
         )
 
+    def prepare_continuous_append_target(self, target: IcebergWriterTarget) -> None:
+        """Add only AskLake lineage columns and the delta partition to a baseline table."""
+        existing_columns = {
+            str(row[0]).strip().casefold()
+            for row in self.describe_table(target)
+            if row and str(row[0]).strip()
+        }
+        lineage_columns = (
+            ("kafka_timestamp", "timestamp(6)"),
+            ("kafka_partition", "integer"),
+            ("kafka_offset", "bigint"),
+            ("ingested_at", "timestamp(6)"),
+            ("_asklake_run_id", "varchar"),
+            ("_asklake_ingested_at", "timestamp(6)"),
+        )
+        table = qualified_target(target)
+        for name, type_name in lineage_columns:
+            if name.casefold() in existing_columns:
+                continue
+            self._execute(
+                f"ALTER TABLE {table} ADD COLUMN {quote_identifier(name)} {type_name}"
+            )
+        partition_columns = list(dict.fromkeys([
+            *target.partition_columns,
+            "_asklake_run_id",
+        ]))
+        partitioning = ", ".join(sql_literal(name) for name in partition_columns)
+        self._execute(
+            f"ALTER TABLE {table} SET PROPERTIES partitioning = ARRAY[{partitioning}]"
+        )
+
     def table_exists(self, target: IcebergWriterTarget) -> bool:
         rows = self._execute(
             "SELECT table_name FROM "

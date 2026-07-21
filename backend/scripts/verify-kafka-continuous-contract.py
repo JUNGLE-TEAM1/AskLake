@@ -132,8 +132,8 @@ def main() -> None:
     assert config == {
         "runtimeEngine": "spark_structured_streaming", "runtimeGeneration": 1,
         "initialOffsetPolicy": "earliest",
-        "triggerIntervalSeconds": 30,
-        "maxOffsetsPerTrigger": 10000,
+        "triggerIntervalSeconds": 10,
+        "maxOffsetsPerTrigger": 100,
         "schemaEvolutionPolicy": {
             "additiveNullable": "allow",
             "missingRequired": "quarantine",

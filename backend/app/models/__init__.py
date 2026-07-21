@@ -6,6 +6,7 @@ from app.models.benchmark import BenchmarkRunModel
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
+    ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "ContinuousSqlRunModel",
     "ContinuousSqlBatchModel",
     "ContinuousSqlCommandModel",
+    "ContinuousSqlIncrementalBindingModel",
     "DatasetFreshnessModel",
     "DatasetKafkaPartitionCursorModel",
     "DatasetRevisionCommitModel",

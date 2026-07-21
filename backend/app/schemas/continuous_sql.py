@@ -9,7 +9,7 @@ from app.schemas.iceberg import IcebergWriterTarget
 
 ContinuousSqlStaticBindingPolicy = Literal["PINNED_AT_START", "LATEST_PER_BATCH"]
 ContinuousSqlServingMode = Literal["iceberg"]
-CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 5
+CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 10
 ContinuousSqlDesiredState = Literal["stopped", "running", "paused"]
 ContinuousSqlObservedState = Literal[
     "starting",
@@ -55,11 +55,11 @@ class ContinuousSqlOutput(CamelModel):
     @model_validator(mode="after")
     def require_mode_target(self) -> "ContinuousSqlOutput":
         if self.serving_mode == "iceberg":
-            if self.storage_path is None or self.iceberg_target is None:
+            if (self.storage_path is None) != (self.iceberg_target is None):
                 raise ValueError(
-                    "Iceberg Continuous SQL output requires storagePath and icebergTarget"
+                    "Iceberg Continuous SQL output must provide both storagePath and icebergTarget or let the backend derive both"
                 )
-            if self.iceberg_target.write_mode != "append":
+            if self.iceberg_target is not None and self.iceberg_target.write_mode != "append":
                 raise ValueError("Continuous SQL output requires an append Iceberg target")
         return self
 
@@ -92,6 +92,7 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
     output: ContinuousSqlOutput
     checkpoint_path: str | None = Field(default=None, max_length=2048)
     client_request_id: str | None = Field(default=None, max_length=160)
+    baseline_dataset_id: str | None = Field(default=None, min_length=1, max_length=160)
 
     @field_validator("checkpoint_path")
     @classmethod
@@ -198,6 +199,7 @@ class ContinuousSqlJob(CamelModel):
     last_error_code: str | None = None
     last_error_message: str | None = None
     active_run: ContinuousSqlRun | None = None
+    incremental_binding: dict[str, Any] | None = None
 
 
 class ContinuousSqlCommandRequest(CamelModel):

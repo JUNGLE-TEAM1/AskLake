@@ -109,6 +109,35 @@ function SqlAiSuggestionEvidence({ suggestion }: { suggestion: QueryAiSuggestion
   );
 }
 
+function SqlAiJoinEvidence({ suggestion }: { suggestion: QueryAiSuggestion }) {
+  const evidence = suggestion.joinEvidence ?? [];
+  if (evidence.length === 0) return null;
+
+  return (
+    <Bubble className="max-w-full" variant="tinted">
+      <BubbleContent className="max-w-full text-sm">
+        <strong>JOIN 근거</strong>
+        {evidence.map((relationship, index) => {
+          const sourceLabel = relationship.source.startsWith("semantic_model:")
+            ? "게시된 시맨틱 관계"
+            : "Catalog 검증 고유키";
+          const predicates = relationship.columnPairs.map((pair) => (
+            `${relationship.leftDatasetName}.${pair.leftColumn} = ${relationship.rightDatasetName}.${pair.rightColumn}`
+          )).join(" AND ");
+          return (
+            <span
+              className="mt-1 block text-muted-foreground"
+              key={`${relationship.leftDatasetId}-${relationship.rightDatasetId}-${index}`}
+            >
+              {index + 1}. {predicates} · {sourceLabel} · {relationship.relationshipType}
+            </span>
+          );
+        })}
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
 export function SqlAiWriterDialog({
   disabled = false,
   error,
@@ -240,6 +269,7 @@ export function SqlAiWriterDialog({
         {suggestion?.sql && (
           <BubbleGroup aria-live="polite">
             <SqlAiSuggestionSummary suggestion={suggestion} />
+            <SqlAiJoinEvidence suggestion={suggestion} />
             <SqlAiSuggestionEvidence suggestion={suggestion} />
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">

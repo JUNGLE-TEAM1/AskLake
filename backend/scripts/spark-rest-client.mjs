@@ -136,6 +136,7 @@ export async function waitForSparkRestDriver({
 
 export async function runSparkRestRequest({
   pollIntervalMs,
+  retryTerminalFailures = false,
   restUrl: restUrlValue,
   stateFile: stateFileValue,
   submission: submissionValue,
@@ -148,6 +149,26 @@ export async function runSparkRestRequest({
 
   if (state && state.restUrl !== restUrl) {
     throw new Error("Spark REST state URL does not match the configured control plane.");
+  }
+
+  if (
+    retryTerminalFailures
+    && state
+    && terminalSparkFailureStates.has(normalizeSparkDriverState(state.driverState))
+  ) {
+    const releaseStateLock = await acquireStateLock(stateFile, Math.min(timeoutMs, 15_000));
+    try {
+      state = readSparkRestState(stateFile, false);
+      if (state && state.restUrl !== restUrl) {
+        throw new Error("Spark REST state URL does not match the configured control plane.");
+      }
+      if (state && terminalSparkFailureStates.has(normalizeSparkDriverState(state.driverState))) {
+        unlinkSync(stateFile);
+        state = null;
+      }
+    } finally {
+      releaseStateLock();
+    }
   }
 
   if (!state) {

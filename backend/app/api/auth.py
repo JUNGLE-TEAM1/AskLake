@@ -131,7 +131,11 @@ def get_session(
 ) -> AuthSessionResponse:
     session_actor = service.actor_for_session(session_token)
     if session_actor is None:
-        return AuthSessionResponse(authenticated=False, user=None)
+        return AuthSessionResponse(
+            authenticated=False,
+            public_signup_enabled=settings.allows_public_signup,
+            user=None,
+        )
     actor = ActorContext(
         name=str(session_actor.get("name") or "demo-user"),
         role=str(session_actor.get("role") or "viewer"),
@@ -142,6 +146,7 @@ def get_session(
     )
     return AuthSessionResponse(
         authenticated=True,
+        public_signup_enabled=settings.allows_public_signup,
         user=IdentityService(db).get_current_user(actor),
     )
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { apiConfig } from "../../services/apiClient";
 import { deleteCatalogDataset, deleteDatasetMaterializationRun, getCatalogDatasetDeletionImpact, getCatalogDatasetDeletionStatus } from "../../services/catalogApi";
+import { notifyCatalogDatasetDeleted } from "../../services/catalogEvents";
 
 import type { CatalogDataset, CatalogDatasetDeletionImpact, FlowId } from "../../types";
 import { emptySelectedDataset, normalizeDatasetRow, recalculateDatasetFromMaterializationRuns } from "./catalogState";
@@ -124,6 +125,7 @@ export function useCatalogController({
       setDatasets((items) => items.filter((dataset) => dataset.id !== datasetId));
       setSelectedDataset((current) => current.id === datasetId ? remaining[0] ?? emptySelectedDataset : current);
       if (selectedDataset.id === datasetId) setSqlResultDraft(null);
+      notifyCatalogDatasetDeleted(datasetId);
       writeAuditLog("catalog.dataset.deleted", `/api/catalog/datasets/${datasetId}`, datasetId, "success", { targetType: "dataset" });
       showToast("데이터셋과 관리 물리 데이터를 삭제했습니다.", "success");
       return true;
