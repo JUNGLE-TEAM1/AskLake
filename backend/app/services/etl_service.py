@@ -2009,6 +2009,7 @@ def materialize_continuous_replay(
             source_ranges=source_ranges,
             commit_kind=REPLAY_COMMIT_KIND,
             manifest_location=replay_manifest_path,
+            snapshot_id=str(verified.get("icebergSnapshotId") or "") or None,
         )
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         db.rollback()

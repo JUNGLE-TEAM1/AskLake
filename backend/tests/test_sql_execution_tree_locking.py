@@ -17,6 +17,7 @@ from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlDependencyModel,
+    ContinuousSqlRunModel,
     ContinuousSqlTreeJobLockModel,
     ContinuousSqlTreeNodeRunModel,
     ContinuousSqlTreeRunModel,
@@ -30,6 +31,8 @@ from app.repositories.execution_tree_lock_repository import (
     require_standalone_job_unlocked,
     require_tree_owned_job,
 )
+from app.repositories.dashboard_live_repository import DashboardLiveRepository
+from app.services.continuous_sql_revision_runner import ContinuousSqlRevisionRunner
 from app.services.continuous_sql_service import ContinuousSqlService
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from tests.test_dashboard_job_binding_schema_removal import _run_alembic
@@ -37,7 +40,7 @@ from tests.test_sql_execution_tree_persistence import continuous_job
 
 
 PREVIOUS_REVISION = "0023_sql_job_execution_tree_persistence"
-HEAD_REVISION = "0024_sql_execution_tree_locking"
+HEAD_REVISION = "0025_dataset_revision_snapshot_identity"
 
 
 def producer_job(job_id: str, dataset_id: str, *, status: str = "scheduled") -> ETLJobModel:
@@ -392,6 +395,61 @@ class SqlExecutionTreeLockingTests(unittest.TestCase):
             self.assertNotIn("kafka:9092", serialized)
             self.assertNotIn("consumerGroupId", serialized)
             self.assertNotIn("maxOffsetsPerTrigger", serialized)
+
+    def test_revision_runner_pins_exact_revision_snapshot_on_tree(self) -> None:
+        with Session(self.engine) as db:
+            db.add(producer_job("JOB-REALTIME", "dataset-JOB-REALTIME"))
+            db.commit()
+            job = self._seed_parent(
+                db,
+                "csql-parent",
+                "output-parent",
+                ["JOB-REALTIME"],
+                input_types={"JOB-REALTIME": "realtime"},
+            )
+            repository = ContinuousSqlRepository(db)
+            run = ContinuousSqlRunModel(
+                run_id="run-1", job_id=job.id, generation=1, fencing_token="fence-1",
+                plan_hash=job.plan_hash, status="starting", static_bindings=[],
+                checkpoint_path=job.checkpoint_path, started_at="2026-07-21T00:00:00+00:00",
+            )
+            repository.add_run(run)
+            tree = ContinuousSqlTreeRunModel(
+                tree_run_id="tree-1", sql_job_id=job.id,
+                continuous_sql_run_id=run.run_id, generation=1, trigger_type="parent_tree",
+                status="starting", fencing_token="tree-fence",
+                lease_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+                input_dataset_revisions={}, started_at="2026-07-21T00:00:00+00:00",
+            )
+            repository.add_tree_run(tree)
+            repository.add_tree_nodes([
+                ContinuousSqlTreeNodeRunModel(
+                    node_run_id="node-parent", tree_run_id=tree.tree_run_id,
+                    job_id=job.id, node_type="parent", input_dataset_revisions={},
+                    started_at="2026-07-21T00:00:00+00:00",
+                ),
+                ContinuousSqlTreeNodeRunModel(
+                    node_run_id="node-child", tree_run_id=tree.tree_run_id,
+                    job_id="JOB-REALTIME", node_type="realtime", input_dataset_revisions={},
+                    started_at="2026-07-21T00:00:00+00:00",
+                ),
+            ])
+            DashboardLiveRepository(db).record_dataset_commit(
+                dataset_id="dataset-JOB-REALTIME", run_id="producer-run-7",
+                storage_location="s3a://lake/realtime", storage_format="iceberg",
+                materialization_mode="delta", row_count=10, next_check_after_ms=1_000,
+                commit_kind="legacy", snapshot_id="snapshot-7",
+            )
+            db.commit()
+
+            pinned = ContinuousSqlRevisionRunner(db).pin_inputs(job, run)
+
+            self.assertEqual(pinned[0].dataset_id, "dataset-JOB-REALTIME")
+            self.assertEqual(pinned[0].revision, 1)
+            self.assertEqual(pinned[0].snapshot_id, "snapshot-7")
+            self.assertEqual(tree.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
+            child = next(item for item in repository.list_tree_nodes(tree.tree_run_id) if item.job_id == "JOB-REALTIME")
+            self.assertEqual(child.input_dataset_revisions, {"dataset-JOB-REALTIME": 1})
 
     def test_parent_start_failure_compensates_started_realtime_children(self) -> None:
         events: list[str] = []
