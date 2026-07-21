@@ -164,6 +164,21 @@
     padding: 18px 20px;
   }
 
+  .etl-wizard-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .etl-wizard-breadcrumb {
+    min-height: 40px;
+    padding: 4px 16px 0;
+  }
+
+  .stepper.compact .stepper-inner {
+    height: 52px;
+    justify-content: flex-start;
+    padding: 0 16px 6px;
+  }
+
   .page-body {
     padding: 20px;
   }

@@ -3,14 +3,15 @@ import { steps as defaultSteps } from "../../data/appShellData";
 
 type StepperProps = {
   activeIndex: number;
+  density?: "compact" | "default";
   isStepDisabled?: (stepIndex: number) => boolean;
   onStepSelect?: (stepIndex: number) => void;
   steps?: string[];
 };
 
-export function Stepper({ activeIndex, isStepDisabled, onStepSelect, steps = defaultSteps }: StepperProps) {
+export function Stepper({ activeIndex, density = "default", isStepDisabled, onStepSelect, steps = defaultSteps }: StepperProps) {
   return (
-    <div className="stepper">
+    <div className={density === "compact" ? "stepper compact" : "stepper"}>
       <div className="stepper-inner">
         {steps.map((step, index) => {
           const complete = index < activeIndex;

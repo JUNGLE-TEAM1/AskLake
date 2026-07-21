@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router";
 import { navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
-import { Stepper } from "./components/layout/Stepper";
+import { EtlWizardHeader } from "./components/layout/EtlWizardHeader";
 import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
@@ -613,7 +613,15 @@ export function App() {
         <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
-        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
+        {wizardFlows.includes(activeFlow) && (
+          <EtlWizardHeader
+            activeIndex={wizardActiveIndex}
+            isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true}
+            onBack={() => moveToFlow("jobs")}
+            onStepSelect={navigateWizardStep}
+            steps={wizardStepLabels}
+          />
+        )}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">

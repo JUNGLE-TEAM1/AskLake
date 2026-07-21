@@ -2053,7 +2053,7 @@ const checks = [
       /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
       /canNavigateToWizardStep\(\{/,
       /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
-      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /<EtlWizardHeader[\s\S]*isStepDisabled=\{/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,

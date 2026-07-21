@@ -3,12 +3,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Braces,
-  Cable,
   FileText
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
-import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { getDatasets } from "../../services/mockApi";
 import { getSourceConnectorDefaults, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../../types";
@@ -842,11 +840,6 @@ export function SourceConnectionPage({
       actions={<CreationTopActions nextDisabled={sourceNextDisabled} showPrev={false} split onPrev={onPrev} onNext={goNext} />}
       className="source-creation-flow"
     >
-      <EtlStepHeader
-        className="etl-step-standalone-header"
-        icon={<Cable />}
-        title="소스 연결"
-      />
       <section className="panel hegun-console-panel source-connect-panel source-workbench-panel" aria-label="소스 선택 및 연결">
         <div className="source-workbench-body">
           <Tabs
