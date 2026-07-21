@@ -94,6 +94,10 @@
     width: 100%;
   }
 
+  .catalog-results-header .catalog-view-switcher {
+    width: auto;
+  }
+
   .catalog-view-button {
     flex: 1 1 0;
   }
