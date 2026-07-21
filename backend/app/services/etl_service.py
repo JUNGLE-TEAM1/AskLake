@@ -276,6 +276,7 @@ from app.domain.continuous_runtime import (
     runtime_contract_projection,
 )
 from app.domain.dataset_identity import catalog_relation_metadata
+from app.domain.kafka_source_identity import managed_kafka_source_config
 from app.domain.pipeline_contract import (
     create_request_violations,
     permission_grant_violations,
