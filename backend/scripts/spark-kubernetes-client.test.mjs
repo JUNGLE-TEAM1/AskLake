@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { kafkaSecurityOptions } from "../src/kafka-codecs.mjs";
+import { sparkEventLogConfiguration } from "../src/sparkApplicationConfig.mjs";
 import {
   createSparkKubernetesApplication,
   EKS_MVP_FIXTURE_SLOTS_ENV,
@@ -12,7 +13,6 @@ import {
   sparkExecutionMode,
   sparkKafkaFixtureEnvironment,
   sparkJobManifest,
-  sparkEventLogConfiguration,
   sparkKubernetesApplicationName,
   sparkExecutorInstances,
   sparkPackages,

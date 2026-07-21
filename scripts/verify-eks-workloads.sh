@@ -19,6 +19,7 @@ required_files=(
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.test.mjs"
   "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+  "$ROOT_DIR/backend/src/sparkApplicationConfig.mjs"
   "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
   "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
