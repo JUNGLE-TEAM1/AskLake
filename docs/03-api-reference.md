@@ -271,7 +271,9 @@ Phase 1 persistence에 이어 Phase 2 producer resolution/create 계약이 적�
 - `relationMode`가 없는 기존 Dataset은 이름, tag, source 문자열이나 materialization 이력으로 추정하지 않는다. frontend도 같은 Catalog field만 사용한다.
 - frontend create/validate request는 계속 `relationDatasetIds`만 보내고 producer Job ID를 보내지 않는다.
 
-`CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`는 streaming producer가 없거나 Dataset에 정확히 연결되지 않은 경우, `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`는 producer metadata 불일치나 V1 input 범위 위반에 사용한다. `executionTree`/`treeRun`/node state/`inputDatasetRevisions`, lock/orchestration과 direct consumer 제거는 후속 Phase다. 현재 runtime은 기존 direct Kafka consumer를 유지한다. Dashboard Binding과 자동 감시는 다시 추가하지 않는다.
+`CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED`는 streaming producer가 없거나 Dataset에 정확히 연결되지 않은 경우, `CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED`는 producer metadata 불일치나 V1 input 범위 위반에 사용한다. 현재 runtime은 기존 direct Kafka consumer를 유지한다. producer child orchestration, revision 확정과 direct consumer 제거는 후속 Phase이며 Dashboard Binding과 자동 감시는 다시 추가하지 않는다.
+
+Phase 3부터 dependency가 있는 Job의 `start`/`recover`는 외부 worker 호출 전에 parent와 모든 producer child lock을 원자적으로 획득하고 `activeTreeRun`을 반환한다. `executionTree`에는 `activeTreeRunId`, `lockedJobIds`, `lockConflict`가 있고 tree run에는 node run, lock generation, lease expiry, hash 처리한 fencing token, 아직 비어 있을 수 있는 `inputDatasetRevisions`가 포함된다. 원문 fencing token은 API에 노출하지 않는다. active standalone child 또는 다른 tree lock과 충돌하면 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`, producer Job이 사라졌으면 `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`이며 tree/부분 lock은 남지 않는다. tree가 소유한 ETL Job의 standalone command/update/delete도 동일 conflict로 거절한다. child 실행 전파는 Phase 4이므로 Phase 3 start는 아직 legacy SQL worker를 시작한다.
 
 상세 target contract는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 

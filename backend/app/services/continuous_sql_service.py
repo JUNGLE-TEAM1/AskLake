@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import logging
@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
@@ -20,13 +21,16 @@ from app.models.continuous_sql import (
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
+    ContinuousSqlTreeNodeRunModel,
+    ContinuousSqlTreeRunModel,
 )
+from app.models.etl import ETLJobModel, KafkaContinuousRuntimeModel
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.continuous_sql_repository import (
     ContinuousSqlRepository,
     batch_to_schema,
-    job_to_schema,
     jobs_to_schema,
+    job_to_schema_with_tree,
 )
 from app.repositories.dashboard_live_repository import (
     DashboardLiveRepository,
@@ -502,6 +506,12 @@ class ContinuousSqlService:
 
         previous_run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
         run, external_action = self._transition_command(job, previous_run, request.command)
+        if request.command in {"start", "recover"} and run is not None:
+            try:
+                self._acquire_execution_tree(job, run)
+            except ApiError:
+                self.db.rollback()
+                raise
 
         command = ContinuousSqlCommandModel(
             id=f"{job.id}:{request.command_id}",
@@ -512,6 +522,13 @@ class ContinuousSqlService:
             status="accepted",
         )
         self.repository.add_command(command)
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         self.db.add(job)
         if run is not None:
             self.db.add(run)
@@ -544,6 +561,130 @@ class ContinuousSqlService:
             command_id=request.command_id,
             job=self._job_schema(refreshed),
         )
+
+    def _acquire_execution_tree(
+        self,
+        job: ContinuousSqlJobModel,
+        run: ContinuousSqlRunModel,
+    ) -> ContinuousSqlTreeRunModel | None:
+        dependencies = self.repository.list_dependencies(job.id)
+        child_ids = sorted({
+            item.child_job_id
+            for item in dependencies
+            if item.child_job_id is not None
+        })
+        if not dependencies:
+            return None
+
+        children = list(self.db.scalars(
+            select(ETLJobModel)
+            .where(ETLJobModel.id.in_(child_ids))
+            .order_by(ETLJobModel.id.asc())
+            .with_for_update()
+        ).all()) if child_ids else []
+        children_by_id = {child.id: child for child in children}
+        missing = [child_id for child_id in child_ids if child_id not in children_by_id]
+        if missing:
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE",
+                "A required producer Job no longer exists.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "childJobIds": missing},
+            )
+        active_children: list[dict[str, str]] = []
+        for child in children:
+            runtime = (
+                self.db.get(KafkaContinuousRuntimeModel, child.id)
+                if child.execution_mode == "continuous"
+                else None
+            )
+            runtime_status = str(runtime.status if runtime is not None else "").casefold()
+            if str(child.status or "").casefold() in {"running", "paused"} or runtime_status in {
+                "starting", "running", "pausing", "paused", "stopping",
+            }:
+                active_children.append({
+                    "jobId": child.id,
+                    "status": runtime_status or str(child.status),
+                })
+        if active_children:
+            raise ApiError(
+                "CONTINUOUS_SQL_DEPENDENCY_CONFLICT",
+                "A producer Job is already active as a standalone Job.",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "conflicts": active_children},
+            )
+
+        generation = self.repository.next_tree_generation(job.id)
+        tree_run_id = f"tree_{job.id}_{generation}_{uuid4().hex[:12]}"
+        fencing_token = uuid4().hex
+        now = utc_now()
+        lease_expires_at = datetime.now(UTC) + timedelta(
+            seconds=self.settings.continuous_sql_tree_lock_lease_seconds
+        )
+        tree_run = self.repository.add_tree_run(ContinuousSqlTreeRunModel(
+            tree_run_id=tree_run_id,
+            sql_job_id=job.id,
+            continuous_sql_run_id=run.run_id,
+            generation=generation,
+            trigger_type="parent_tree",
+            status="starting",
+            fencing_token=fencing_token,
+            lease_expires_at=lease_expires_at,
+            input_dataset_revisions={},
+            started_at=now,
+        ))
+        dependency_by_child = {
+            item.child_job_id: item
+            for item in dependencies
+            if item.child_job_id is not None
+        }
+        nodes = [ContinuousSqlTreeNodeRunModel(
+            node_run_id=f"node_{tree_run_id}_{job.id}",
+            tree_run_id=tree_run_id,
+            job_id=job.id,
+            node_type="parent",
+            trigger_type="parent_tree",
+            parent_run_id=None,
+            producer_run_id=run.run_id,
+            status="starting",
+            input_dataset_revisions={},
+            started_at=now,
+        )]
+        nodes.extend(
+            ContinuousSqlTreeNodeRunModel(
+                node_run_id=f"node_{tree_run_id}_{child_id}",
+                tree_run_id=tree_run_id,
+                job_id=child_id,
+                node_type=dependency_by_child[child_id].input_type,
+                trigger_type="parent_tree",
+                parent_run_id=tree_run_id,
+                producer_run_id=None,
+                status="locked",
+                input_dataset_revisions={},
+                started_at=now,
+            )
+            for child_id in child_ids
+        )
+        self.repository.add_tree_nodes(nodes)
+        node_by_job = {node.job_id: node for node in nodes}
+        for lock_job_id in sorted([job.id, *child_ids]):
+            lock_generation = self.repository.acquire_tree_job_lock(
+                job_id=lock_job_id,
+                tree_run_id=tree_run_id,
+                node_run_id=node_by_job[lock_job_id].node_run_id,
+                owner_sql_job_id=job.id,
+                lock_kind="parent" if lock_job_id == job.id else "child",
+                fencing_token=fencing_token,
+                lease_seconds=self.settings.continuous_sql_tree_lock_lease_seconds,
+            )
+            if lock_generation is None:
+                raise ApiError(
+                    "CONTINUOUS_SQL_DEPENDENCY_CONFLICT",
+                    "The SQL execution tree could not acquire its complete Job lock set.",
+                    status.HTTP_409_CONFLICT,
+                    {"jobId": job.id, "conflictingJobId": lock_job_id},
+                )
+        return tree_run
 
     def _transition_command(
         self,
@@ -700,6 +841,13 @@ class ContinuousSqlService:
                     run.last_error_code = job.last_error_code
                     run.last_error_message = job.last_error_message
 
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         self.db.add(job)
         if run is not None:
             self.db.add(run)
@@ -974,6 +1122,13 @@ class ContinuousSqlService:
                 run.status = job.observed_state
                 if job.observed_state == "stopped":
                     run.ended_at = utc_now()
+        self._sync_execution_tree_status(
+            job,
+            status_value=job.observed_state,
+            terminal=job.observed_state in {"stopped", "failed"},
+            error_code=job.last_error_code,
+            error_message=job.last_error_message,
+        )
         if worker_id:
             job.worker_id = worker_id
             if run is not None:
@@ -1011,6 +1166,13 @@ class ContinuousSqlService:
             run.status = "failed"
             run.last_error_code = str(error.code)
             run.last_error_message = error.message
+        self._sync_execution_tree_status(
+            job,
+            status_value="failed",
+            terminal=True,
+            error_code=str(error.code),
+            error_message=error.message,
+        )
         command = self.db.get(ContinuousSqlCommandModel, command_record_id)
         if command is not None:
             command.status = "failed"
@@ -1020,6 +1182,56 @@ class ContinuousSqlService:
         if run is not None:
             self.db.add(run)
         self.db.commit()
+
+    def _sync_execution_tree_status(
+        self,
+        job: ContinuousSqlJobModel,
+        *,
+        status_value: str,
+        terminal: bool,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        tree_run = self.repository.active_tree_run(job.id)
+        if tree_run is None:
+            return
+        if terminal:
+            self.repository.release_tree_locks(
+                tree_run,
+                terminal_status=status_value,
+                ended_at=utc_now(),
+                error_code=error_code,
+                error_message=error_message,
+            )
+            return
+        if not self.repository.renew_tree_locks(
+            tree_run,
+            self.settings.continuous_sql_tree_lock_lease_seconds,
+        ):
+            job.observed_state = "failed"
+            job.last_error_code = "CONTINUOUS_SQL_DEPENDENCY_CONFLICT"
+            job.last_error_message = "SQL execution tree lock ownership was lost."
+            self.repository.release_tree_locks(
+                tree_run,
+                terminal_status="failed",
+                ended_at=utc_now(),
+                error_code=job.last_error_code,
+                error_message=job.last_error_message,
+            )
+            return
+        tree_run.status = status_value
+        parent_node = next(
+            (
+                node
+                for node in self.repository.list_tree_nodes(tree_run.tree_run_id)
+                if node.node_type == "parent"
+            ),
+            None,
+        )
+        if parent_node is not None:
+            parent_node.status = status_value
+            self.db.add(parent_node)
+        self.db.add(tree_run)
 
     def _apply_worker_report(
         self,
@@ -1132,13 +1344,7 @@ class ContinuousSqlService:
         return job
 
     def _job_schema(self, job: ContinuousSqlJobModel) -> ContinuousSqlJob:
-        run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
-        return job_to_schema(
-            job,
-            run,
-            self.repository.get_incremental_binding(job.id),
-            self.repository.list_dependencies(job.id),
-        )
+        return job_to_schema_with_tree(job, self.repository)
 
     @staticmethod
     def _invalid_transition(job: ContinuousSqlJobModel, command: str) -> None:

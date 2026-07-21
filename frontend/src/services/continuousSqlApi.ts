@@ -26,10 +26,17 @@ export type ContinuousSqlDependencyBinding = {
 };
 
 export type ContinuousSqlJob = {
+  activeTreeRun?: ContinuousSqlTreeRun | null;
   dependencyBindings: ContinuousSqlDependencyBinding[];
   desiredState: "stopped" | "running" | "paused";
   generation: number;
   id: string;
+  executionTree?: {
+    activeTreeRunId?: string | null;
+    lockConflict?: Record<string, unknown> | null;
+    lockedJobIds: string[];
+    sqlJobId: string;
+  } | null;
   lastErrorCode?: string | null;
   lastErrorMessage?: string | null;
   name: string;
@@ -37,6 +44,44 @@ export type ContinuousSqlJob = {
   outputDatasetId: string;
   outputDatasetName: string;
   servingMode: "iceberg" | "clickhouse";
+};
+
+export type ContinuousSqlTreeRun = {
+  continuousSqlRunId?: string | null;
+  endedAt?: string | null;
+  fencingTokenHash: string;
+  generation: number;
+  inputDatasetRevisions: Record<string, number>;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  leaseExpiresAt: string;
+  locks: Array<{
+    active: boolean;
+    fencingTokenHash: string;
+    generation: number;
+    jobId: string;
+    leaseExpiresAt: string;
+    lockKind: "parent" | "child";
+    nodeRunId: string;
+  }>;
+  nodes: Array<{
+    endedAt?: string | null;
+    inputDatasetRevisions: Record<string, number>;
+    jobId: string;
+    nodeRunId: string;
+    nodeType: "parent" | "realtime" | "batch";
+    parentRunId?: string | null;
+    producerRunId?: string | null;
+    startedAt: string;
+    status: string;
+    treeRunId: string;
+    triggerType: "parent_tree" | "standalone";
+  }>;
+  sqlJobId: string;
+  startedAt: string;
+  status: string;
+  treeRunId: string;
+  triggerType: "parent_tree" | "standalone";
 };
 
 export type CreateClickHouseContinuousSqlRequest = ContinuousSqlPlanRequest & {

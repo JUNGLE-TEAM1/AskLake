@@ -242,6 +242,55 @@ class ContinuousSqlBatch(CamelModel):
     last_error_message: str | None = None
 
 
+class ContinuousSqlTreeJobLock(CamelModel):
+    job_id: str
+    node_run_id: str
+    lock_kind: Literal["parent", "child"]
+    generation: int
+    fencing_token_hash: str
+    lease_expires_at: str
+    active: bool
+
+
+class ContinuousSqlTreeNodeRun(CamelModel):
+    node_run_id: str
+    tree_run_id: str
+    job_id: str
+    node_type: Literal["parent", "realtime", "batch"]
+    trigger_type: Literal["parent_tree", "standalone"]
+    parent_run_id: str | None = None
+    producer_run_id: str | None = None
+    status: str
+    input_dataset_revisions: dict[str, int] = Field(default_factory=dict)
+    started_at: str
+    ended_at: str | None = None
+
+
+class ContinuousSqlTreeRun(CamelModel):
+    tree_run_id: str
+    sql_job_id: str
+    continuous_sql_run_id: str | None = None
+    generation: int
+    trigger_type: Literal["parent_tree", "standalone"]
+    status: str
+    fencing_token_hash: str
+    lease_expires_at: str
+    input_dataset_revisions: dict[str, int] = Field(default_factory=dict)
+    nodes: list[ContinuousSqlTreeNodeRun] = Field(default_factory=list)
+    locks: list[ContinuousSqlTreeJobLock] = Field(default_factory=list)
+    started_at: str
+    ended_at: str | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+
+
+class ContinuousSqlExecutionTree(CamelModel):
+    sql_job_id: str
+    active_tree_run_id: str | None = None
+    locked_job_ids: list[str] = Field(default_factory=list)
+    lock_conflict: dict[str, Any] | None = None
+
+
 class ContinuousSqlJob(CamelModel):
     id: str
     name: str
@@ -254,6 +303,8 @@ class ContinuousSqlJob(CamelModel):
     compiled_plan: dict[str, Any]
     relation_bindings: list[ContinuousSqlRelationBinding]
     dependency_bindings: list[ContinuousSqlDependencyBinding] = Field(default_factory=list)
+    execution_tree: ContinuousSqlExecutionTree | None = None
+    active_tree_run: ContinuousSqlTreeRun | None = None
     static_binding_policy: ContinuousSqlStaticBindingPolicy
     trigger_interval_seconds: int
     serving_mode: ContinuousSqlServingMode = "iceberg"

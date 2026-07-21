@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -84,6 +85,73 @@ class ContinuousSqlDependencyModel(TimestampMixin, Base):
     input_type: Mapped[str] = mapped_column(String(32), nullable=False)
     execution_policy: Mapped[str] = mapped_column(String(32), nullable=False)
     required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ContinuousSqlTreeRunModel(TimestampMixin, Base):
+    __tablename__ = "continuous_sql_tree_runs"
+    __table_args__ = (
+        UniqueConstraint("sql_job_id", "generation", name="uq_continuous_sql_tree_run_generation"),
+        Index("ix_continuous_sql_tree_runs_job_status", "sql_job_id", "status"),
+    )
+
+    tree_run_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    sql_job_id: Mapped[str] = mapped_column(
+        String(160), ForeignKey("continuous_sql_jobs.id", ondelete="CASCADE"), nullable=False,
+    )
+    continuous_sql_run_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False, default="parent_tree")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="locked")
+    fencing_token: Mapped[str] = mapped_column(String(160), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_dataset_revisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    ended_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ContinuousSqlTreeNodeRunModel(TimestampMixin, Base):
+    __tablename__ = "continuous_sql_tree_node_runs"
+    __table_args__ = (
+        UniqueConstraint("tree_run_id", "job_id", name="uq_continuous_sql_tree_node_job"),
+        Index("ix_continuous_sql_tree_node_runs_job", "job_id", "status"),
+    )
+
+    node_run_id: Mapped[str] = mapped_column(String(220), primary_key=True)
+    tree_run_id: Mapped[str] = mapped_column(
+        String(200), ForeignKey("continuous_sql_tree_runs.tree_run_id", ondelete="CASCADE"), nullable=False,
+    )
+    job_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    node_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False, default="parent_tree")
+    parent_run_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    producer_run_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="locked")
+    input_dataset_revisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    ended_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class ContinuousSqlTreeJobLockModel(TimestampMixin, Base):
+    __tablename__ = "continuous_sql_tree_job_locks"
+    __table_args__ = (
+        Index("ix_continuous_sql_tree_job_locks_tree", "tree_run_id", "active"),
+        Index("ix_continuous_sql_tree_job_locks_owner", "owner_sql_job_id", "active"),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    tree_run_id: Mapped[str] = mapped_column(
+        String(200), ForeignKey("continuous_sql_tree_runs.tree_run_id", ondelete="CASCADE"), nullable=False,
+    )
+    node_run_id: Mapped[str] = mapped_column(String(220), nullable=False)
+    owner_sql_job_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    lock_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    fencing_token: Mapped[str] = mapped_column(String(160), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    released_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ContinuousSqlRunModel(TimestampMixin, Base):

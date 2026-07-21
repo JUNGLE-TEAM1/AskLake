@@ -600,6 +600,8 @@ SQL parent start
 
 Phase 1은 `catalog_datasets`의 producer 정규화 column과 `continuous_sql_dependencies`를 additive하게 도입했다. Phase 2부터 Continuous SQL validate/create는 정규화 Catalog metadata를 권위 정보로 사용한다. `relationMode`가 없는 Dataset을 이름·tag·materialization 이력으로 추정하지 않으며, streaming은 정확히 연결된 Kafka Continuous producer Job이 있어야 한다. static은 연결된 snapshot/batch producer 또는 producer가 없는 queryable snapshot을 허용한다. validate는 resolve 결과를 `dependencyBindings`로 반환하고 create는 SQL Job과 dependency를 같은 transaction에서 commit한다. 현재 `asklake-continuous-sql-{jobId}` consumer group을 만드는 Iceberg/ClickHouse adapter는 legacy runtime이며 Phase 5 전까지 제거하지 않는다. 상세 불변식과 Phase gate는 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)과 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
+Phase 3은 `continuous_sql_tree_runs`, `continuous_sql_tree_node_runs`, `continuous_sql_tree_job_locks`를 추가한다. parent start는 parent와 producer child ETL row를 정렬해 잠그고, standalone active 상태를 확인한 뒤 전체 Job lock을 한 transaction에서 조건부 획득한다. 한 항목이라도 충돌하면 tree/node/lock을 모두 rollback한다. lock row는 lease, 단조 증가 generation, tree fencing identity를 가지며 API에는 hash만 노출한다. active tree의 reconcile은 lease를 갱신하고 stop/failure는 현재 fence와 일치하는 lock만 해제한다. ETL standalone command/update/delete도 같은 Job row를 잠근 뒤 active tree lock을 확인한다. 이 단계는 child를 실제 실행하지 않으며 orchestration은 Phase 4다.
+
 ## 14) Realtime 2026 전환 아키텍처
 
 Realtime 확장은 기존 publication과 REST 계약 위에 단계적으로 추가한다. Production 배포 템플릿은 Kafka Connect V2 ClickHouse serving과 SSE 경로를 기본 활성화하고, 같은 generation의 중복 소비를 막기 위해 Kafka Engine V1은 비활성화한다.

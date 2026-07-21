@@ -4305,6 +4305,12 @@ streaming input은 `relationMode=streaming`, 실제 Kafka Continuous `producerJo
 
 Phase 2 이전에 생성되어 durable dependency가 비어 있는 legacy direct-consumer Job의 재시작만 예외다. 이 경우 새 producer를 추정하지 않고 Job에 이미 저장된 relation mode와 streaming source를 현재 Catalog schema/snapshot 검증에 사용한다. 이 호환 경로는 validate/create 또는 새 Job에 적용되지 않으며 기존 Job을 tree-managed Job으로 자동 변환하지 않는다.
 
+Phase 3 migration `0024_sql_execution_tree_locking`은 tree run, node run, cross-Job lock table을 추가한다. dependency가 있는 Continuous SQL parent의 start/recover는 SQL parent와 모든 producer child ID를 정렬하고 관련 Job row를 `FOR UPDATE`로 잠근 뒤 전체 lock set을 같은 transaction에서 획득한다. active standalone child, active unexpired tree lock 또는 producer 삭제가 하나라도 확인되면 새 continuous run, tree/node row와 앞서 획득한 lock을 전부 rollback한다.
+
+Job response의 additive `executionTree`는 active tree ID와 잠긴 Job ID를, `activeTreeRun`은 `treeRunId`, generation, `triggerType=parent_tree`, status, `fencingTokenHash`, `leaseExpiresAt`, `inputDatasetRevisions`, `nodes`, `locks`를 반환한다. parent node의 `parentRunId`는 null이고 child node는 tree run ID를 가진다. lock API는 generation과 fencing hash만 노출하며 raw token을 반환하지 않는다. reconcile은 현재 fence의 전체 lock set만 갱신하고, stop/failure는 현재 fence와 일치하는 lock만 해제한다. lease가 만료되면 다음 owner가 generation을 증가시켜 takeover할 수 있고 stale owner는 새 lock을 해제하거나 상태를 되돌릴 수 없다.
+
+tree-owned ETL Job은 standalone lifecycle command, update, delete를 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`로 거절한다. 반대로 standalone Job row가 먼저 running/paused 상태를 확정하면 parent start가 같은 오류로 거절된다. Phase 3은 child 실행 orchestration을 수행하지 않으며 Phase 4 전까지 SQL worker의 legacy direct-consumer 실행은 유지한다. lock lease는 `CONTINUOUS_SQL_TREE_LOCK_LEASE_SECONDS`(기본 120초)이며 active parent reconcile에서 갱신한다.
+
 DB migration `0023_sql_job_execution_tree_persistence`는 `catalog_datasets`에 위 6개 nullable column을 추가하고 `continuous_sql_dependencies`를 생성한다. dependency는 `(sql_job_id, input_dataset_id)`가 identity이며 producer child는 `run_on_tree_start`, jobless static은 `reuse_snapshot`만 허용한다.
 
 Job/Run response에는 additive `executionTree`, active `treeRun`, node state와 `inputDatasetRevisions`를 추가한다. parent full-tree start는 parent와 producer child lock을 한 transaction에서 모두 획득하고, 충돌하면 lock과 child 실행을 하나도 남기지 않은 채 다음 오류를 반환한다.

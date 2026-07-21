@@ -130,6 +130,36 @@ def main() -> None:
         for token in tokens:
             require(contents, token, f"Phase 2 evidence in {relative_path}")
 
+    phase_three_evidence = {
+        "backend/alembic/versions/0024_sql_execution_tree_locking.py": (
+            "continuous_sql_tree_runs",
+            "continuous_sql_tree_node_runs",
+            "continuous_sql_tree_job_locks",
+        ),
+        "backend/app/models/continuous_sql.py": (
+            "ContinuousSqlTreeRunModel",
+            "ContinuousSqlTreeNodeRunModel",
+            "ContinuousSqlTreeJobLockModel",
+        ),
+        "backend/app/services/continuous_sql_service.py": (
+            "_acquire_execution_tree",
+            "CONTINUOUS_SQL_DEPENDENCY_CONFLICT",
+            "_sync_execution_tree_status",
+        ),
+        "backend/app/repositories/execution_tree_lock_repository.py": (
+            "require_standalone_job_unlocked",
+            "with_for_update",
+        ),
+        "backend/tests/test_sql_execution_tree_locking.py": (
+            "test_conflict_rolls_back_every_lock_and_tree_row",
+            "test_expired_lock_can_be_taken_over_with_monotonic_generation",
+        ),
+    }
+    for relative_path, tokens in phase_three_evidence.items():
+        contents = read(relative_path)
+        for token in tokens:
+            require(contents, token, f"Phase 3 evidence in {relative_path}")
+
     print("CONTINUOUS_SQL_EXECUTION_TREE_CONTRACT_OK")
 
 

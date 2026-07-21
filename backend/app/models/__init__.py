@@ -10,6 +10,9 @@ from app.models.continuous_sql import (
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
+    ContinuousSqlTreeJobLockModel,
+    ContinuousSqlTreeNodeRunModel,
+    ContinuousSqlTreeRunModel,
 )
 from app.models.dashboard_live import (
     DashboardWidgetResultModel,
@@ -74,6 +77,9 @@ __all__ = [
     "ContinuousSqlCommandModel",
     "ContinuousSqlDependencyModel",
     "ContinuousSqlIncrementalBindingModel",
+    "ContinuousSqlTreeRunModel",
+    "ContinuousSqlTreeNodeRunModel",
+    "ContinuousSqlTreeJobLockModel",
     "DatasetFreshnessModel",
     "DatasetKafkaPartitionCursorModel",
     "DatasetRevisionCommitModel",

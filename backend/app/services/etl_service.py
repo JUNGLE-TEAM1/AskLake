@@ -313,6 +313,7 @@ from app.ports.runtime_io import (
 )
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository, snapshot_status_repository
+from app.repositories.execution_tree_lock_repository import require_standalone_job_unlocked
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
@@ -701,11 +702,7 @@ def command_job(
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    job = (
-        etl_repository.get_job_for_update(db, job_id)
-        if command in {"run", "retry", "startContinuous", "resumeContinuous"}
-        else etl_repository.get_job(db, job_id)
-    )
+    job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
@@ -745,6 +742,7 @@ def command_job(
             target_type=AuditTargetType.ETL_JOB,
         )
         raise
+    require_standalone_job_unlocked(db, job.id, action=f"command:{command}")
     if job.execution_mode == "continuous" and command not in continuous_commands:
         raise ApiError(
             ErrorCode.INVALID_JOB_STATE,
