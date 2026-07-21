@@ -554,7 +554,7 @@ Dashboard 계산은 Catalog row → freshness row 순서로 잠그며 ETL commit
 
 전체 누적 기준 `count`/`sum`/`avg`/`min`/`max`/`ratio` 집계는 새 widget에서 고정 Iceberg snapshot으로 기준값을 한 번 만든다. 이후에는 `_asklake_run_id = commit.run_id`인 delta만 집계해 PostgreSQL 상태에 병합한다. 날짜 차원에 `windowDays`가 있으면 최신 bucket 기준 범위 밖 bucket을 상태에서 제거하므로 최근 30일 전체를 다시 읽지 않는다. table widget, revision gap, 내부 run ID가 없는 legacy table, aggregate group 10,000개 초과만 고정 snapshot 전체 계산으로 차단 또는 재기준화한다.
 
-Frontend는 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 현재 페이지에서 같은 Dataset을 쓰는 Widget을 한 요청 그룹으로 묶고 최대 4개 그룹만 동시에 조회한다. backend는 저장된 `appliedRevision`과 최신 Dataset revision을 비교해 가능한 Widget은 delta merge하고, revision gap·replace·계산 계약 변경·증분 미지원 Widget은 최신 물리 snapshot으로 전체 재계산한다. 페이지 또는 Widget 설정이 바뀐 뒤 도착한 늦은 응답은 Dashboard/Widget signature가 맞지 않으면 버리고, 실패하면 이전 위젯 결과를 유지한다.
+Frontend는 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 현재 페이지에서 같은 Dataset을 쓰는 Widget을 한 요청 그룹으로 묶고 최대 4개 그룹만 동시에 조회한다. 최초 `pending` Widget 계산과 사용자가 누른 수동 새로고침만 widget query를 실행하며, 페이지 전환은 이미 준비된 Widget의 재조회 trigger가 아니다. backend는 저장된 `appliedRevision`과 최신 Dataset revision을 비교해 가능한 Widget은 delta merge하고, revision gap·replace·계산 계약 변경·증분 미지원 Widget은 최신 물리 snapshot으로 전체 재계산한다. 페이지 또는 Widget 설정이 바뀐 뒤 도착한 늦은 응답은 Dashboard/Widget signature가 맞지 않으면 버리고, 실패하면 이전 위젯 결과를 유지한다.
 
 상세 사용·운영·검증 절차는 [Kafka PostgreSQL Dashboard Sync](kafka-postgresql-dashboard-sync.md)를 따른다.
 

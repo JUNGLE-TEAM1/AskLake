@@ -37,7 +37,6 @@ export function useDashboardWidgetData({
   const loadStateKey = `${selectionKey}:${requests.length > 0 ? "needs-data" : "settled"}`;
   const runtimeRef = useRef(runtime);
   const refreshControllerRef = useRef<AbortController | null>(null);
-  const activePageKeyRef = useRef<string | null>(null);
   runtimeRef.current = runtime;
 
   useEffect(() => {
@@ -117,32 +116,6 @@ export function useDashboardWidgetData({
     if (refreshControllerRef.current === controller) refreshControllerRef.current = null;
     return !controller.signal.aborted && succeeded;
   }, [active, dashboardId, mode, selectedPageId, setRuntime]);
-
-  const activePageKey = active && runtime?.dashboard.id === dashboardId && selectedPageId
-    ? `${dashboardId}:${mode}:${selectedPageId}`
-    : null;
-
-  useEffect(() => {
-    if (!activePageKey) {
-      activePageKeyRef.current = null;
-      return;
-    }
-    const previousPageKey = activePageKeyRef.current;
-    activePageKeyRef.current = activePageKey;
-    if (!previousPageKey || previousPageKey === activePageKey) return;
-
-    const current = runtimeRef.current;
-    const hasPreviouslyLoadedDatasetWidget = Boolean(
-      current
-      && selectedPageId
-      && (current.widgetsByPageId[selectedPageId] ?? []).some((widget) => (
-        Boolean(widget.datasetId)
-        && widget.dataStatus !== "pending"
-        && widget.dataStatus !== "loading"
-      )),
-    );
-    if (hasPreviouslyLoadedDatasetWidget) void refreshCurrentPageWidgetData();
-  }, [activePageKey, refreshCurrentPageWidgetData, selectedPageId]);
 
   useEffect(() => () => {
     refreshControllerRef.current?.abort();

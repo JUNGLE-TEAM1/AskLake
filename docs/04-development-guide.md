@@ -1037,7 +1037,7 @@ Issue #1117의 목표 계약은 [SQL Job 실행 트리 V1 계약](realtime-2026/
 6. Phase 5에서 SQL-owned Kafka consumer group, broker/topic/offset, trigger/max-message 고급 설정을 제거하고 producer revision/manifest cursor 기반 transform으로 전환한다.
 7. Phase 6에서 stop/restart/recovery와 parent-owned child command 차단을 완성한다. parent pause/stop/resume은 active tree의 realtime child에만 각각 `pauseContinuous`/`stopContinuous`/`resumeContinuous`를 전파하며, batch child를 다시 실행하거나 tree 밖 standalone Job을 제어하지 않는다. child lifecycle control 실패는 node에 durable `failed` evidence로 남기되, 이미 수락된 parent stop을 되돌려 "실행 중"으로 만들지 않는다.
 8. Phase 7에서 SQL 분석 UI를 backend producer metadata와 tree status만 표시하도록 바꾼다. Continuous SQL dialog는 streaming producer Dataset, static Dataset, output engine과 생성 후 `activeTreeRun.nodes`를 읽기 전용으로 표시한다. SQL-owned Kafka trigger/offset 설정 UI는 노출하지 않으며 수집 크기·주기는 producer Job 설정을 따른다.
-9. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다.
+9. Phase 8에서 output Dataset revision과 Dashboard 수동 새로고침 회귀를 검증한다. Dashboard가 upstream Job을 실행하거나 revision watcher를 시작하지 않는다. Continuous control worker도 Dashboard precompute를 수행하지 않으며, 최초 pending Widget 계산과 사용자가 누른 새로고침만 `/widgets/query`를 호출한다.
 10. Phase 9에서 legacy direct-consumer Continuous SQL Job의 명시적 운영 처리와 live E2E/rollout gate를 완료한다. 기존 Job은 자동 마이그레이션하지 않는다.
 
 Phase 0 정적 계약 검증은 다음 명령으로 실행한다.

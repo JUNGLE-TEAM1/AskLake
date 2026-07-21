@@ -259,7 +259,7 @@ SQL 분석 frontend는 stopped Job create가 성공하면 별도 `start` command
 
 지원 SQL, Catalog relation metadata, lifecycle, error stage와 publication 계약은 `docs/realtime-2026/contracts/continuous-sql-v1.md`를 따른다. 기능 비활성은 `409 CONTINUOUS_SQL_DISABLED`, SQL/metadata validation은 안정적인 `CONTINUOUS_SQL_*` code와 `422`, 잘못된 transition/idempotency 충돌은 `409`다.
 
-SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. 기본 trigger는 10초다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog/Dashboard publication을 사용하며, Dashboard 표시 값은 백그라운드에서 준비된 snapshot을 사용자가 수동 새로고침할 때 교체한다.
+SQL 분석 frontend는 선택 관계가 Kafka streaming 1개와 static 1개 이상일 때 `실시간 JOIN 만들기` action을 표시한다. action은 `GET /api/realtime/config`의 `continuousSqlJoinEnabled`와 `continuousSqlServingMode`를 확인하고, 현재 editor SQL과 선택 Dataset ID 전체로 validate를 먼저 호출한다. static key 증적만 없으면 위 exact Trino verification API를 자동 호출하고 validate를 재시도한다. 성공하면 배포 mode, `layer=GOLD`, `staticBindingPolicy=PINNED_AT_START`로 Job을 생성하고 별도 `start` command를 전송한다. API 호환용 trigger 값은 10초지만 SQL UI는 Kafka trigger/offset 설정을 노출하지 않고 producer Job 설정을 따른다. Iceberg mode는 Spark JOIN·Iceberg commit·Catalog Dataset revision publication을 사용하며, Dashboard Widget은 사용자가 수동 새로고침할 때 그 revision을 조회한다.
 
 #### Issue #1117 실행 트리 확장
 
@@ -917,7 +917,7 @@ Content-Type: application/json
 
 `count`/`sum`/`avg`/`min`/`max`/`ratio` 위젯은 고정 Iceberg snapshot으로 기준값을 한 번 만든 뒤 `_asklake_run_id = commit.run_id`인 delta만 병합한다. 날짜 차원과 `windowDays`가 있으면 최신 bucket 기준 범위 밖 상태를 제거한다. table, revision gap, legacy table, 고카디널리티만 전체 재기준화 대상이다.
 
-Frontend는 보기·편집 모드 모두에서 Dataset freshness를 polling한다. published는 SSE/hybrid 변경 알림을 빠른 trigger로 추가로 사용하고 연결 실패 시 polling으로 복귀한다. revision이 전진한 Dataset의 영향 widget만 `widgets/query`로 요청하며, draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. partial 응답이 이전 `appliedRevision`보다 전진했지만 아직 최신보다 뒤면 250ms 뒤 다음 revision을 이어서 요청한다. 응답 revision이 현재 값보다 낮으면 폐기한다. hidden tab에서는 polling을 중지하고 요청을 취소하며, route unmount 시 timer와 subscription을 정리한다. 갱신 실패는 이전 widget result를 유지하고 화면을 loading 상태로 바꾸지 않는다.
+Frontend는 보기·편집 모드 모두에서 Dataset freshness polling이나 SSE subscription을 시작하지 않는다. 최초 `pending` Widget과 사용자가 상단 새로고침을 누른 현재 페이지의 Dataset Widget만 `widgets/query`로 요청한다. draft에서는 응답의 data·revision 결과만 병합해 사용자가 편집 중인 title/config/layout/선택 상태를 바꾸지 않는다. 응답 revision이 현재 값보다 낮거나 Widget signature가 달라지면 폐기한다. route unmount 시 in-flight 요청을 취소하며, 갱신 실패는 이전 widget result를 유지한다.
 
 ### Pair A -> Pair B
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -83,6 +84,16 @@ test("manual refresh requests every Dataset widget on the selected page", () => 
     ["widget-3"],
   ]);
   assert.equal(requests.flatMap((request) => request.widgetIds).includes("widget-4"), false);
+});
+
+test("page changes do not trigger an implicit Dataset refresh", () => {
+  const hook = readFileSync(
+    new URL("../src/pages/dashboard/runtime/useDashboardWidgetData.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(hook, /activePageKey/);
+  assert.doesNotMatch(hook, /void refreshCurrentPageWidgetData\(\)/);
 });
 
 test("one widget result replaces only that widget and preserves unrelated object identity", () => {
