@@ -615,6 +615,50 @@ MongoDB Source connector는 Node MongoDB driver로 컬렉션 목록과 제한 �
 PostgreSQL과 MongoDB Source QA에서는 연결 테스트 직후 schema가 생기지 않는지 먼저 확인한다. 데이터 탐색에서 테이블 또는 컬렉션을 선택한 뒤에만 제한 샘플과 schema가 표시되어야 하며, 선택값 없는 `/api/etl/sources/test` 요청은 `400`으로 거부되어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
+### Kafka revision + S3 JOIN 1-hour demo fixture
+
+Dashboard 수동 새로고침 구조를 한 번 검증할 때는 전용 S3 상품 CSV와 Kafka 이벤트 topic을 준비한다. 이 fixture는 두 소스가 `product_id`를 공유하며 기존 fixture topic과 object를 변경하지 않는다.
+
+```bash
+cd backend
+npm run verify:kafka-s3-demo
+npm run demo:kafka-s3:prepare
+npm run demo:kafka-s3:produce
+```
+
+기본 producer는 `asklake.revision.events.v1` topic에 100건씩 1초 간격으로 3,600회, 총 360,000건을 전송한다. `Ctrl+C`로 중단하면 현재 1초 batch까지만 전송하고 종료한다. 짧게 확인하려면 `npm run demo:kafka-s3:produce -- --duration-seconds 2 --rate 100`을 사용한다.
+
+파이프라인 생성 화면에는 다음 값을 사용한다.
+
+| 소스 | 입력값 |
+| --- | --- |
+| Kafka broker | 로컬 backend는 `127.0.0.1:19092`, Compose 내부 worker는 `redpanda:9092` |
+| Kafka topic | `asklake.revision.events.v1` |
+| Kafka 실행 방식 | `실시간 수집` |
+| S3 endpoint | `http://127.0.0.1:9000` |
+| S3 bucket | `m3-raw` |
+| S3 object | `asklake-fixtures/kafka-s3-refresh-demo/products.csv` |
+
+S3 파이프라인을 먼저 Snapshot으로 한 번 실행하고 Kafka Continuous 파이프라인을 실행한다. 두 결과 Dataset이 Catalog에 `available`로 보이면 SQL 분석에서 Dataset을 선택하고 다음 형태로 JOIN한다. 실제 Dataset 표시명은 생성할 때 정한 이름으로 바꾼다.
+
+```sql
+SELECT
+  e.event_time,
+  e.event_id,
+  e.event_type,
+  e.product_id,
+  p.product_name,
+  p.category,
+  p.brand,
+  e.quantity,
+  e.amount
+FROM "Kafka 이벤트 데이터셋" AS e
+LEFT JOIN "S3 상품 데이터셋" AS p
+  ON e.product_id = p.product_id
+```
+
+`demo:kafka-s3:prepare`는 이 테스트 전용 topic만 비우고 다시 만든다. 실행 중인 같은 topic의 Kafka Job이 있으면 먼저 중지해야 하며, topic 내용을 보존하려면 `npm run demo:kafka-s3:prepare -- --keep-topic`을 사용한다. endpoint, bucket, key, broker, topic은 `ASKLAKE_DEMO_S3_*`, `ASKLAKE_DEMO_KAFKA_*` 환경변수로 바꿀 수 있다. 이 도구는 mock source를 준비하고 메시지를 넣는 역할만 하며 ETL Job이나 Dashboard를 자동 생성하지 않는다.
+
 ### Amazon review Kafka fixture
 
 Kafka replay와 ingest pipeline 작업자는 실제 6.6GB Amazon review replay가 준비되기 전에도 같은 메시지 계약으로 병렬 개발할 수 있다. 로컬 Redpanda를 켠 뒤 review fixture producer를 실행한다.
