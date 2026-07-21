@@ -27,6 +27,7 @@ RUNTIME_REVISION_BEFORE=""
 WEB_REVISION_BEFORE=""
 ALB_STEADY_TIMEOUT_SECONDS="${ASKLAKE_ALB_STEADY_TIMEOUT_SECONDS:-600}"
 ALB_STEADY_POLL_SECONDS="${ASKLAKE_ALB_STEADY_POLL_SECONDS:-15}"
+ALB_STEADY_REQUIRED_SUCCESSES=3
 
 fail() { echo "$1" >&2; return 1; }
 
@@ -43,18 +44,23 @@ active_spark_count() {
 wait_for_alb_steady() {
   local deadline=$((SECONDS + ALB_STEADY_TIMEOUT_SECONDS))
   local error_file="$TEMP_DIR/alb-steady-error.log"
+  local steady_successes=0
 
   while true; do
     if bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady \
       >/dev/null 2>"$error_file"; then
-      return 0
-    fi
-
-    if ! grep -Eq \
-      'healthy rollout floor|does not allow draining ALB targets|do not exactly match Ready EndpointSlice' \
-      "$error_file"; then
-      cat "$error_file" >&2
-      return 1
+      steady_successes=$((steady_successes + 1))
+      if ((steady_successes >= ALB_STEADY_REQUIRED_SUCCESSES)); then
+        return 0
+      fi
+    else
+      steady_successes=0
+      if ! grep -Eq \
+        'healthy rollout floor|does not allow draining ALB targets|do not exactly match Ready EndpointSlice' \
+        "$error_file"; then
+        cat "$error_file" >&2
+        return 1
+      fi
     fi
     if ((SECONDS >= deadline)); then
       cat "$error_file" >&2

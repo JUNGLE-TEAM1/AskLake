@@ -2,7 +2,7 @@
 
 작성일: 2026-07-20
 관련 이슈: #931
-상태: executor cache OOM 수정, 격리 EKS scale, direct-cache/staging hybrid 10GB·100GB 검증 완료
+상태: executor cache OOM 수정, direct-cache/staging hybrid 10GB·100GB 검증 및 dev EKS 공용 활성화 완료
 
 ## 1. 목적과 범위
 
@@ -262,3 +262,44 @@ active Job과 active Stage가 모두 0이었다. file별 `getFileStatus` exact b
 안의 `spark.read.parquet(...).inputFiles()`와 S3 file discovery/plan 준비 구간을
 분리 계측해야 한다. 이 병목은 100GB 안정성·정확성 검증을 깨지는 않았지만 성능
 개선으로 주장할 수 없으며 후속 최적화 범위다.
+
+### 9.3 dev EKS 공용 활성화와 운영 경로 검증
+
+2026-07-21 dev EKS의 Helm 소유 runtime ConfigMap에
+`ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES=10737418240`을 활성화했다.
+Backend와 Spark runtime은 공식 image delivery가 만든 revision `4e1df074`의
+immutable receipt로 맞췄고, FastAPI 2개와 Collector 1개를 같은 runtime revision으로
+rollout했다. 새 FastAPI Pod 내부의 실제 `sparkRunner.mjs`로 SparkApplication을
+render하여 Pod env의 10GiB 값이 driver env에 그대로 전달되고, receipt의 immutable
+Spark image와 dev namespace를 사용하는지 확인했다.
+
+첫 apply는 새 Pod가 Ready가 된 직후 ALB 이전 target이 draining인 상태를 steady로
+오판하지 않도록 실패했고, 두 Helm release를 직전 revision으로 자동 복구했다.
+복구 뒤 threshold 미설정, FastAPI 2/2, Collector 1/1, active SparkApplication 0을
+확인했다. 이 live 결과를 반영해 정상 rollout의 draining, Ready EndpointSlice,
+healthy floor 수렴만 최대 10분 동안 15초 간격으로 기다리고 steady 3회 연속을
+성공 조건으로 강화했다. 다른 ALB 오류나 제한 시간 초과는 계속 전체 rollback한다.
+두 번째 apply 뒤 ALB는 HTTP frontend/backend 200과 database health를 유지한 채
+수렴했고, 최종적으로 3회 연속 steady와 active SparkApplication 0을 확인했다.
+
+공용 설정 활성화 뒤 10GB source를 공식 Spark image로 다시 한 번 실행한 결과는
+다음과 같다. 이 실행은 고유 output prefix만 사용하고 종료 시 모든 임시 리소스를
+정리했다.
+
+| 항목 | 운영 활성화 후 10GB 결과 |
+| --- | ---: |
+| 입력/출력 행 | 29,544,766 / 29,544,766 |
+| 선택 전략 | `direct_source_cache`, `MEMORY_AND_DISK` |
+| Spark duration | 215,447 ms |
+| staging file | 0 |
+| published Parquet object | 69 |
+| raw physical full-read stage | 1 |
+| failed task / failed executor / OOM | 0 / 0 / 0 |
+| SparkApplication / Pod residue | 0 / 0 |
+| S3 current object / version·delete-marker residue | 0 / 0 |
+
+따라서 dev EKS의 공유 운영 경로에서도 작은 source가 direct cache를 선택하고 실제
+SparkApplication까지 10GiB 값이 전달되는 것을 확인했다. 100GB는 9.1의 실제 EKS
+staging 완주 결과를 활성화 근거로 사용했으며, 공용 설정 적용 뒤 같은 100GB를 다시
+실행하지는 않았다. 10GiB를 장기 운영 경계로 확정하는 탐색과 100GB publication
+end-to-end 대조는 여전히 후속 범위다.

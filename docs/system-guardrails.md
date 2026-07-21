@@ -45,7 +45,7 @@ AI service guardrails, secret isolation, private Compose networking, and deploym
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
-| Spark direct-cache threshold | process 기본값과 rollback은 0이다. dev 활성값 10GiB는 10GB direct-cache와 100GB staging의 raw read 1회·OOM·executor replacement·residue 0 근거가 있는 동일 Backend/Spark image receipt에만 적용한다. 임의 다른 값, active Spark가 있는 apply, ConfigMap만 바꾸고 FastAPI/Collector revision을 갱신하지 않는 부분 활성화를 금지한다. ALB steady 검증은 정상 rollout의 draining·EndpointSlice·healthy floor 수렴만 최대 10분까지 bounded retry하며, 그 밖의 계약 위반이나 제한 시간 초과는 전체 활성화를 rollback한다. |
+| Spark direct-cache threshold | process 기본값과 rollback은 0이다. dev 활성값 10GiB는 10GB direct-cache와 100GB staging의 raw read 1회·OOM·executor replacement·residue 0 근거가 있는 동일 Backend/Spark image receipt에만 적용한다. 임의 다른 값, active Spark가 있는 apply, ConfigMap만 바꾸고 FastAPI/Collector revision을 갱신하지 않는 부분 활성화를 금지한다. ALB steady 검증은 정상 rollout의 draining·EndpointSlice·healthy floor 수렴만 최대 10분까지 bounded retry하고 15초 간격 3회 연속 steady를 요구하며, 그 밖의 계약 위반이나 제한 시간 초과는 전체 활성화를 rollback한다. |
 
 ### What Is Deferred
 

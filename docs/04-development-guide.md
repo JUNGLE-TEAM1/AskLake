@@ -857,7 +857,8 @@ rollout한다. 중간 또는 사후 검증이 실패하면 두 Helm release를 �
 실제 env가 10GiB인지, Backend/Spark image가 같은 receipt인지, ALB가 steady인지,
 새 SparkApplication driver env에 같은 값이 전달되는지를 모두 확인한 뒤 내린다.
 롤아웃 직후 정상적인 target draining, Ready EndpointSlice 수렴, healthy floor 수렴은
-최대 10분 동안 15초 간격으로 기다린다. 그 밖의 ALB 오류는 즉시 실패하며,
+최대 10분 동안 15초 간격으로 기다리고, steady가 3회 연속 관찰되어야 성공한다.
+그 밖의 ALB 오류는 즉시 실패하며,
 제한 시간 안에 steady가 되지 않아도 두 Helm release를 직전 revision으로 되돌린다.
 
 EKS의 목표 AI runtime은 `gateway`다. 기존 direct 13-key 전환기는 rollback 호환 경로이며 새 배포의 정상 경로가 아니다. Gateway 전환은 provider-key-free Backend exact 15-key, 별도 Gateway exact 3-key, service/MCP token 동일성, `AI_QUERY_PROVIDER=gateway`, private Service URL과 immutable Gateway image를 모두 만족해야 한다. `deploy-eks-web-workloads.sh --apply`는 이 계약을 fail-closed로 확인하며 live apply 뒤 `/api/health/ai`, Dashboard Assistant, Query AI를 별도 smoke한다. Secret 값은 command output, evidence 또는 Git에 남기지 않는다.
