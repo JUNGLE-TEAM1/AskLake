@@ -48,7 +48,7 @@ test("previously completed steps remain reachable after moving backward", () => 
   assert.equal(canNavigateToWizardStep({ activeIndex: 1, completedFlows, stepFlows, targetIndex: 5 }), false);
 });
 
-test("ETL wizard uses a compact breadcrumb header without a duplicate source heading", () => {
+test("ETL wizard exposes its steps from a compact breadcrumb menu without a duplicate source heading", () => {
   const app = read("src/App.tsx");
   const header = read("src/components/layout/EtlWizardHeader.tsx");
   const sourcePage = read("src/pages/etl/SourceConnectionPage.tsx");
@@ -57,9 +57,13 @@ test("ETL wizard uses a compact breadcrumb header without a duplicate source hea
   assert.match(app, /<EtlWizardHeader/);
   assert.match(header, /aria-label="탐색 경로"/);
   assert.match(header, />\s*수집\/처리\s*</);
-  assert.match(header, /새 데이터 소스 생성/);
-  assert.match(header, /density="compact"/);
+  assert.match(header, /새 수집\/처리 생성/);
+  assert.match(header, /<DropdownMenuTrigger asChild>/);
+  assert.match(header, /isStepDisabled\(index\)/);
+  assert.match(header, /onStepSelect\(index\)/);
+  assert.doesNotMatch(header, /<Stepper/);
   assert.doesNotMatch(sourcePage, /title="소스 연결"/);
-  assert.match(styles, /\.stepper\.compact \.stepper-inner\s*\{[\s\S]*?height: 59px;/);
+  assert.match(styles, /\.etl-wizard-header\s*\{[\s\S]*?min-height: 52px;/);
+  assert.doesNotMatch(styles, /\.stepper\.compact/);
   assert.match(styles, /\.page-body\[data-etl-route\]:not\(\.schema-body\)/);
 });

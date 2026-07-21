@@ -422,10 +422,9 @@ p {
 }
 
 .etl-wizard-header {
-  display: grid;
+  display: flex;
   min-width: 0;
-  min-height: 60px;
-  grid-template-columns: minmax(220px, auto) minmax(0, 1fr);
+  min-height: 52px;
   align-items: center;
   border-bottom: 1px solid #dee1e6;
   background: #fff;
@@ -436,7 +435,7 @@ p {
   min-width: 0;
   align-items: center;
   gap: 6px;
-  padding-left: clamp(20px, 2.5vw, 40px);
+  padding: 6px clamp(20px, 2.5vw, 40px);
   color: #475569;
   font-size: 13px;
   font-weight: 700;
@@ -469,9 +468,59 @@ p {
   outline-offset: 2px;
 }
 
-.etl-wizard-header .stepper {
-  border-bottom: 0;
-  background: transparent;
+.etl-wizard-step-trigger {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 8px 6px 10px;
+}
+
+.etl-wizard-step-trigger:hover,
+.etl-wizard-step-trigger:focus-visible,
+.etl-wizard-step-trigger[data-state="open"] {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.etl-wizard-step-trigger:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.etl-wizard-step-count {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.etl-wizard-step-status {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.etl-wizard-current-label {
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
 }
 
 .stepper-inner {
@@ -490,35 +539,6 @@ p {
 
 .schema-shell .stepper-inner {
   height: 97px;
-}
-
-.stepper.compact .stepper-inner {
-  height: 59px;
-  max-width: none;
-  gap: 8px;
-  justify-content: flex-end;
-  padding: 0 clamp(20px, 2.5vw, 40px) 0 16px;
-}
-
-.stepper.compact .stepper-item {
-  min-width: 0;
-  grid-template-columns: minmax(0, auto) minmax(24px, 1fr);
-  gap: 8px;
-}
-
-.stepper.compact .step-trigger {
-  grid-template-columns: 28px auto;
-  gap: 7px;
-}
-
-.stepper.compact .step-dot {
-  width: 28px;
-  height: 28px;
-  font-size: 12px;
-}
-
-.stepper.compact .step-label {
-  font-size: 13px;
 }
 
 .stepper-item {
