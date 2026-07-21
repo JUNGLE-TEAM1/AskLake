@@ -42,6 +42,12 @@ export type CatalogDataset = {
   name: string;
   nextRefresh: string;
   owner: string;
+  producerJobId?: string;
+  producerJobKind?: string;
+  executionMode?: string;
+  sourceKind?: string;
+  relationMode?: "streaming" | "static";
+  runtimeStatus?: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
   partition?: string;
@@ -99,7 +105,7 @@ export type DatasetMaterializationRun = {
   runId: string;
   runtimeFingerprint?: string;
   schemaFingerprint?: string;
-  sourceKind: "etl" | "sql" | "kafka";
+  sourceKind: "etl" | "sql" | "kafka" | "continuous_sql";
   sourceLabel: string;
   sourceRanges?: Array<Record<string, unknown>>;
   status: "success" | "failed" | "canceled" | "running" | "queued";

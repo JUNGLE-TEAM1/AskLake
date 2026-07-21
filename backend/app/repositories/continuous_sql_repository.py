@@ -4,19 +4,21 @@ import hashlib
 from typing import Iterable
 from weakref import WeakSet
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.base import Base
 from app.models.continuous_sql import (
     ContinuousSqlBatchModel,
     ContinuousSqlCommandModel,
+    ContinuousSqlDependencyModel,
     ContinuousSqlIncrementalBindingModel,
     ContinuousSqlJobModel,
     ContinuousSqlRunModel,
 )
 from app.schemas.continuous_sql import (
     ContinuousSqlBatch,
+    ContinuousSqlDependencyBinding,
     ContinuousSqlJob,
     ContinuousSqlRelationBinding,
     ContinuousSqlRun,
@@ -27,6 +29,7 @@ from app.schemas.continuous_sql import (
 
 CONTINUOUS_SQL_TABLES = [
     ContinuousSqlJobModel.__table__,
+    ContinuousSqlDependencyModel.__table__,
     ContinuousSqlRunModel.__table__,
     ContinuousSqlBatchModel.__table__,
     ContinuousSqlCommandModel.__table__,
@@ -104,6 +107,30 @@ class ContinuousSqlRepository:
             )
             .order_by(ContinuousSqlJobModel.updated_at.asc())
         ).all())
+
+    def list_dependencies(self, job_id: str) -> list[ContinuousSqlDependencyModel]:
+        return list(self.db.scalars(
+            select(ContinuousSqlDependencyModel)
+            .where(ContinuousSqlDependencyModel.sql_job_id == job_id)
+            .order_by(ContinuousSqlDependencyModel.input_dataset_id.asc())
+        ).all())
+
+    def replace_dependencies(
+        self,
+        job_id: str,
+        dependencies: Iterable[ContinuousSqlDependencyModel],
+    ) -> list[ContinuousSqlDependencyModel]:
+        resolved = list(dependencies)
+        if any(item.sql_job_id != job_id for item in resolved):
+            raise ValueError("Continuous SQL dependency belongs to a different Job")
+        self.db.execute(
+            delete(ContinuousSqlDependencyModel).where(
+                ContinuousSqlDependencyModel.sql_job_id == job_id
+            )
+        )
+        self.db.add_all(resolved)
+        self.db.flush()
+        return resolved
 
     def get_incremental_binding(
         self,
@@ -262,6 +289,7 @@ def job_to_schema(
     job: ContinuousSqlJobModel,
     run: ContinuousSqlRunModel | None = None,
     binding: ContinuousSqlIncrementalBindingModel | None = None,
+    dependencies: Iterable[ContinuousSqlDependencyModel] = (),
 ) -> ContinuousSqlJob:
     return ContinuousSqlJob(
         id=job.id,
@@ -277,6 +305,7 @@ def job_to_schema(
             ContinuousSqlRelationBinding.model_validate(item)
             for item in job.relation_bindings or []
         ],
+        dependency_bindings=[dependency_to_schema(item) for item in dependencies],
         static_binding_policy=job.static_binding_policy,
         trigger_interval_seconds=int(job.trigger_interval_seconds),
         serving_mode=continuous_sql_serving_mode(job),
@@ -349,9 +378,23 @@ def jobs_to_schema(
             job,
             repository.get_run(job.active_run_id) if job.active_run_id else None,
             repository.get_incremental_binding(job.id),
+            repository.list_dependencies(job.id),
         )
         for job in jobs
     ]
+
+
+def dependency_to_schema(
+    dependency: ContinuousSqlDependencyModel,
+) -> ContinuousSqlDependencyBinding:
+    return ContinuousSqlDependencyBinding(
+        sql_job_id=dependency.sql_job_id,
+        input_dataset_id=dependency.input_dataset_id,
+        child_job_id=dependency.child_job_id,
+        input_type=dependency.input_type,
+        execution_policy=dependency.execution_policy,
+        required=bool(dependency.required),
+    )
 
 
 def incremental_binding_payload(

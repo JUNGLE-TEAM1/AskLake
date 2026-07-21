@@ -68,6 +68,38 @@ def main() -> None:
     require(legacy_frontend, "isStreamingCatalogDataset", "Phase 0 frontend legacy evidence")
     require(legacy_frontend, "kafka|stream", "Phase 0 frontend regex evidence")
 
+    phase_one_evidence = {
+        "backend/alembic/versions/0023_sql_job_execution_tree_persistence.py": (
+            "continuous_sql_dependencies",
+            "producer_job_id",
+            "runtime_status",
+        ),
+        "backend/app/models/continuous_sql.py": (
+            "ContinuousSqlDependencyModel",
+            "ck_continuous_sql_dependency_owner",
+        ),
+        "backend/app/models/catalog.py": (
+            "producer_job_id",
+            "relation_mode",
+        ),
+        "backend/app/repositories/continuous_sql_repository.py": (
+            "replace_dependencies",
+            "list_dependencies",
+        ),
+        "backend/app/schemas/continuous_sql.py": (
+            "ContinuousSqlDependencyBinding",
+            "dependency_bindings",
+        ),
+        "frontend/src/types/catalog.ts": (
+            "producerJobId",
+            "relationMode",
+        ),
+    }
+    for relative_path, tokens in phase_one_evidence.items():
+        contents = read(relative_path)
+        for token in tokens:
+            require(contents, token, f"Phase 1 evidence in {relative_path}")
+
     print("CONTINUOUS_SQL_EXECUTION_TREE_CONTRACT_OK")
 
 

@@ -4126,7 +4126,7 @@ OpenAPI에서 이 타입이 inline enum 또는 local component `$ref`로 표현�
 
 ## Legacy Dashboard Job Binding 제거 계약
 
-> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic head `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다.
+> 구현 상태: frontend 생성 옵션과 managed Dataset lock, backend binding API/service/repository/model, managed Widget `409`, Assistant 제한과 delivery worker 호출을 제거했다. Alembic migration `0022_remove_dashboard_job_bindings`는 legacy DB table도 제거한다. 현재 head는 후속 additive migration을 포함할 수 있다.
 
 Dashboard와 Job 사이에 새 binding을 만들지 않는다. ETL, Scheduled Batch, SQL materialization, Kafka Continuous, Continuous SQL은 검증된 Catalog Dataset revision을 publication하고, Dashboard Widget이 저장한 `dataset_id`가 사용자가 선택한 연결의 source of truth다.
 
@@ -4282,11 +4282,11 @@ compiled plan은 `staticCacheMaxRows`와 relation별 서버 계산 `cacheHint`�
 
 기존 `/api/query/runs` 및 Kafka Continuous ETL API는 변경하지 않는다. Continuous SQL feature flag가 꺼져 있으면 validate/create/start/resume/recover는 `409 CONTINUOUS_SQL_DISABLED`로 fail closed한다.
 
-### Issue #1117 SQL Job 실행 트리 planned contract
+### Issue #1117 SQL Job 실행 트리 contract
 
-이 절은 Phase 0 target contract다. 아직 OpenAPI, DB schema 또는 현재 direct-consumer runtime이 구현한 field로 간주하지 않는다. 구현은 기존 endpoint를 additive하게 확장하며 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)의 순서를 따른다.
+Phase 1은 producer metadata와 dependency persistence/read shape까지 구현했다. runtime은 아직 direct-consumer이며 producer 자동 resolution, lock과 orchestration은 후속 Phase다. 구현 순서는 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
-validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. backend는 Dataset ID에서 producer를 resolve하고 response/persisted plan에 다음 의미의 `dependencyBindings`를 추가한다.
+validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend가 producer Job ID, Kafka broker/topic/consumer group 또는 input type을 보내지 않는다. Continuous SQL Job response는 다음 durable `dependencyBindings`를 반환할 수 있다. Phase 2 전에는 create가 자동 resolve/save하지 않으므로 빈 배열이 정상이다.
 
 ```json
 {
@@ -4299,7 +4299,9 @@ validate/create request는 계속 `relationDatasetIds`를 사용한다. frontend
 }
 ```
 
-Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`를 추가한다. 이 field가 도입된 뒤 frontend는 표시 이름, description, tag 또는 upstream 문자열로 streaming 여부를 추정하지 않는다.
+Catalog Dataset response에는 optional `producerJobId`, `producerJobKind`, `executionMode`, `sourceKind`, `relationMode`, `runtimeStatus`가 추가됐다. 새 ETL/Trino SQL/Continuous SQL publication은 JSON payload와 정규화 column을 함께 쓰고 read에서는 정규화 column이 우선한다. 기존 Dataset은 자동 backfill하지 않으며 frontend 판정 전환은 Phase 2에서 수행한다.
+
+DB migration `0023_sql_job_execution_tree_persistence`는 `catalog_datasets`에 위 6개 nullable column을 추가하고 `continuous_sql_dependencies`를 생성한다. dependency는 `(sql_job_id, input_dataset_id)`가 identity이며 producer child는 `run_on_tree_start`, jobless static은 `reuse_snapshot`만 허용한다.
 
 Job/Run response에는 additive `executionTree`, active `treeRun`, node state와 `inputDatasetRevisions`를 추가한다. parent full-tree start는 parent와 producer child lock을 한 transaction에서 모두 획득하고, 충돌하면 lock과 child 실행을 하나도 남기지 않은 채 다음 오류를 반환한다.
 

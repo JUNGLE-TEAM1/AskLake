@@ -16,6 +16,14 @@ export type ContinuousSqlPlan = {
 };
 
 export type ContinuousSqlJob = {
+  dependencyBindings: Array<{
+    childJobId?: string | null;
+    executionPolicy: "run_on_tree_start" | "reuse_snapshot";
+    inputDatasetId: string;
+    inputType: "realtime" | "batch" | "static";
+    required: boolean;
+    sqlJobId: string;
+  }>;
   desiredState: "stopped" | "running" | "paused";
   generation: number;
   id: string;

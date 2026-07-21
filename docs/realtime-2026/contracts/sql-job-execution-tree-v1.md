@@ -1,7 +1,7 @@
 # SQL Job 실행 트리 V1 계약
 
 - 이슈: #1117
-- 상태: Phase 0 계약 확정
+- 상태: Phase 1 persistence 구현, runtime은 legacy
 - 기준 commit: `a234abea`
 - runtime 상태: 아직 legacy direct-consumer 경로다. 이 문서는 후속 Phase의 target contract다.
 - 결정 기록: [ADR-003](../adr/003-sql-job-execution-tree-ownership.md)
@@ -47,7 +47,7 @@
 
 ## 4. dependency 계약
 
-Phase 1에서 다음 의미의 durable dependency를 additive schema로 도입한다. 실제 table/field 이름은 migration과 OpenAPI에서 이 camelCase 의미를 보존한다.
+Phase 1에서 다음 의미의 durable dependency를 `continuous_sql_dependencies` additive schema로 도입했다. API는 camelCase 의미를 보존한다. Phase 2 전에는 validate/create가 producer를 자동 resolve하지 않으므로 기존 Job의 `dependencyBindings`는 비어 있을 수 있다.
 
 ```json
 {
@@ -67,7 +67,7 @@ Phase 1에서 다음 의미의 durable dependency를 additive schema로 도입�
 
 V1 parent start는 모든 producer child를 실행한다. 이미 존재하는 snapshot을 임의로 최신이라고 추정해 producer 실행을 건너뛰지 않는다. 추후 `reuse_snapshot` batch 정책은 별도 제품 결정과 API version 없이 노출하지 않는다.
 
-Catalog/API는 frontend 판정을 위해 다음 authoritative field를 additive하게 제공한다.
+Catalog/API는 frontend 판정을 위해 다음 authoritative field를 additive하게 제공한다. Phase 1부터 새 ETL/Trino SQL/Continuous SQL publication은 정규화 Catalog column과 payload를 함께 저장하며, 정규화 column이 오래된 payload보다 우선한다. 기존 Dataset은 자동 추정 backfill하지 않는다.
 
 ```json
 {
@@ -184,7 +184,7 @@ Phase 0은 live request/response를 변경하지 않는다. 후속 Phase는 기�
 ## 13. Phase gate
 
 - Phase 0: 본 계약, ADR, 상위 문서와 정적 verifier
-- Phase 1: producer metadata와 dependency persistence
+- Phase 1: producer metadata와 dependency persistence (완료)
 - Phase 2: backend validation/create 계약과 frontend authoritative 분류
 - Phase 3: tree run, atomic lock, lease/fencing
 - Phase 4: parent 중심 child orchestration과 즉시 start 연결

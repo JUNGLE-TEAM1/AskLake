@@ -31,6 +31,8 @@ ContinuousSqlBatchStage = Literal[
     "failed",
 ]
 ContinuousSqlCommand = Literal["start", "pause", "resume", "stop", "recover"]
+ContinuousSqlDependencyInputType = Literal["realtime", "batch", "static"]
+ContinuousSqlDependencyExecutionPolicy = Literal["run_on_tree_start", "reuse_snapshot"]
 
 
 class ClickHouseWriterTarget(CamelModel):
@@ -166,6 +168,25 @@ class ContinuousSqlRelationBinding(CamelModel):
     cache_hint: bool = False
 
 
+class ContinuousSqlDependencyBinding(CamelModel):
+    sql_job_id: str
+    input_dataset_id: str
+    child_job_id: str | None = None
+    input_type: ContinuousSqlDependencyInputType
+    execution_policy: ContinuousSqlDependencyExecutionPolicy
+    required: bool = True
+
+    @model_validator(mode="after")
+    def validate_execution_ownership(self) -> "ContinuousSqlDependencyBinding":
+        if self.input_type == "realtime" and not self.child_job_id:
+            raise ValueError("Realtime Continuous SQL dependency requires childJobId")
+        if self.child_job_id is None and self.execution_policy != "reuse_snapshot":
+            raise ValueError("Jobless static dependency requires reuse_snapshot policy")
+        if self.child_job_id is not None and self.execution_policy != "run_on_tree_start":
+            raise ValueError("Producer dependency requires run_on_tree_start policy")
+        return self
+
+
 class ContinuousSqlPlanResponse(CamelModel):
     normalized_sql: str
     plan_version: str
@@ -226,6 +247,7 @@ class ContinuousSqlJob(CamelModel):
     plan_hash: str
     compiled_plan: dict[str, Any]
     relation_bindings: list[ContinuousSqlRelationBinding]
+    dependency_bindings: list[ContinuousSqlDependencyBinding] = Field(default_factory=list)
     static_binding_policy: ContinuousSqlStaticBindingPolicy
     trigger_interval_seconds: int
     serving_mode: ContinuousSqlServingMode = "iceberg"

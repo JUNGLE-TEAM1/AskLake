@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -44,6 +44,46 @@ class ContinuousSqlJobModel(TimestampMixin, Base):
     worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ContinuousSqlDependencyModel(TimestampMixin, Base):
+    __tablename__ = "continuous_sql_dependencies"
+    __table_args__ = (
+        UniqueConstraint(
+            "sql_job_id",
+            "input_dataset_id",
+            name="uq_continuous_sql_dependency_input",
+        ),
+        Index(
+            "ix_continuous_sql_dependencies_child_job",
+            "child_job_id",
+            "input_type",
+        ),
+        CheckConstraint(
+            "input_type IN ('realtime', 'batch', 'static')",
+            name="ck_continuous_sql_dependency_input_type",
+        ),
+        CheckConstraint(
+            "execution_policy IN ('run_on_tree_start', 'reuse_snapshot')",
+            name="ck_continuous_sql_dependency_execution_policy",
+        ),
+        CheckConstraint(
+            "(child_job_id IS NULL AND input_type = 'static' AND execution_policy = 'reuse_snapshot') "
+            "OR (child_job_id IS NOT NULL AND execution_policy = 'run_on_tree_start')",
+            name="ck_continuous_sql_dependency_owner",
+        ),
+    )
+
+    sql_job_id: Mapped[str] = mapped_column(
+        String(160),
+        ForeignKey("continuous_sql_jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    input_dataset_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    child_job_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    input_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_policy: Mapped[str] = mapped_column(String(32), nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class ContinuousSqlRunModel(TimestampMixin, Base):

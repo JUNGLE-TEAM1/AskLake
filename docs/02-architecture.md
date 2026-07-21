@@ -598,7 +598,7 @@ SQL parent start
 - parent가 시작한 realtime child는 parent stop에서 함께 정지한다. output commit과 Catalog revision publication 뒤에만 input cursor를 전진시킨다.
 - Dashboard Job Binding과 자동 revision 감시는 사용하지 않는다. Widget Dataset ID가 연결 source이고 보기·편집 모드 모두 수동 query만 수행한다.
 
-Phase 0은 이 경계와 필드 의미만 확정한다. 현재 `asklake-continuous-sql-{jobId}` consumer group을 만드는 Iceberg/ClickHouse adapter는 legacy runtime이며 Phase 5 전까지 제거하지 않는다. 상세 불변식과 Phase gate는 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)과 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
+Phase 1은 `catalog_datasets`의 producer 정규화 column과 `continuous_sql_dependencies`를 additive하게 도입했다. 정규화 producer metadata가 JSON payload보다 우선하며 기존 Dataset은 이름/tag로 자동 backfill하지 않는다. Continuous SQL Job response는 durable `dependencyBindings`를 노출하지만 Phase 2 producer resolution 전까지 비어 있을 수 있다. 현재 `asklake-continuous-sql-{jobId}` consumer group을 만드는 Iceberg/ClickHouse adapter는 legacy runtime이며 Phase 5 전까지 제거하지 않는다. 상세 불변식과 Phase gate는 [ADR-003](realtime-2026/adr/003-sql-job-execution-tree-ownership.md)과 [SQL Job 실행 트리 V1 계약](realtime-2026/contracts/sql-job-execution-tree-v1.md)을 따른다.
 
 ## 14) Realtime 2026 전환 아키텍처
 

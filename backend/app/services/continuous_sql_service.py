@@ -1087,7 +1087,12 @@ class ContinuousSqlService:
 
     def _job_schema(self, job: ContinuousSqlJobModel) -> ContinuousSqlJob:
         run = self.repository.get_run(job.active_run_id) if job.active_run_id else None
-        return job_to_schema(job, run, self.repository.get_incremental_binding(job.id))
+        return job_to_schema(
+            job,
+            run,
+            self.repository.get_incremental_binding(job.id),
+            self.repository.list_dependencies(job.id),
+        )
 
     @staticmethod
     def _invalid_transition(job: ContinuousSqlJobModel, command: str) -> None:

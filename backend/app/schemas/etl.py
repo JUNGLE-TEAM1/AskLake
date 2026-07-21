@@ -528,6 +528,12 @@ class CatalogDataset(CamelModel):
     index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    relation_mode: Literal["streaming", "static"] | None = None
+    runtime_status: str | None = None
 
 
 class DerivedDatasetSpec(CamelModel):

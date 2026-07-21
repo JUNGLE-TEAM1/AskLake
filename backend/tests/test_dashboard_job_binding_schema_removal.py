@@ -14,6 +14,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = BACKEND_ROOT / "alembic.ini"
 PREVIOUS_REVISION = "0021_dashboard_job_bindings"
 REMOVAL_REVISION = "0022_remove_dashboard_job_bindings"
+HEAD_REVISION = "0023_sql_job_execution_tree_persistence"
 RETIRED_TABLES = {"dashboard_binding_deliveries", "dashboard_job_bindings"}
 
 
@@ -74,11 +75,11 @@ class DashboardJobBindingSchemaRemovalTests(unittest.TestCase):
     def test_fresh_head_has_no_retired_binding_tables(self) -> None:
         heads = _run_alembic(self.database_path, "heads").stdout
         self.assertEqual(heads.count("(head)"), 1)
-        self.assertIn(REMOVAL_REVISION, heads)
+        self.assertIn(HEAD_REVISION, heads)
 
         _run_alembic(self.database_path, "upgrade", "head")
 
-        self.assertEqual(_revision(self.engine), REMOVAL_REVISION)
+        self.assertEqual(_revision(self.engine), HEAD_REVISION)
         self.assertTrue(RETIRED_TABLES.isdisjoint(inspect(self.engine).get_table_names()))
 
     def test_upgrade_drops_only_retired_tables_and_downgrade_restores_empty_schema(self) -> None:
@@ -122,7 +123,7 @@ class DashboardJobBindingSchemaRemovalTests(unittest.TestCase):
         _run_alembic(self.database_path, "upgrade", "head", confirm_drop=True)
 
         upgraded_tables = set(inspect(self.engine).get_table_names())
-        self.assertEqual(_revision(self.engine), REMOVAL_REVISION)
+        self.assertEqual(_revision(self.engine), HEAD_REVISION)
         self.assertTrue(RETIRED_TABLES.isdisjoint(upgraded_tables))
         self.assertIn("dashboard_phase4_marker", upgraded_tables)
         with self.engine.connect() as connection:
