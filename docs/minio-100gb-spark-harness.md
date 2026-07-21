@@ -431,6 +431,25 @@ dashboard_widget_result_failed
 
 실제 화면 지연은 `다음 Spark trigger까지 남은 시간 + Spark/S3 + backend reconciliation 0~1초 + polling 0~nextCheckAfterMs(+ dataset ID 기반 0~10% jitter) + widget 계산`이다. 2~5초 반영을 항상 보장하지 않는다.
 
+### 8.2 Spark Resource Planner 이력 backtest
+
+100GB executor `1/2/4` 실행 결과는
+`backend/benchmarks/spark-resource-planner/reference-100gb.v1.json`의 redacted fixture로
+정규화한다. 동일 입력 byte, `standard-v1` profile, 결과 정합성과 S3 Gateway Endpoint
+활성 조건만 보존하며 실제 AWS 식별자와 output prefix는 저장하지 않는다. 이 fixture는
+정책 회귀 테스트용이고 production RDS에 history seed로 적재하지 않는다.
+
+```bash
+cd backend
+python -m pytest -q tests/test_spark_resource_plan.py
+node --test scripts/spark-kubernetes-client.test.mjs
+```
+
+backtest는 executor `1`이 30분을 넘고 `2`와 `4`가 통과할 때, 가장 빠른 `4`가 아니라
+`executor-seconds`가 작은 `2`를 선택해야 통과한다. 실제 EKS 승격은 이 fixture만으로
+완료하지 않으며 같은 immutable image의 10GB·100GB Shadow, 100GB Enforce와 `off/1`
+복구를 별도로 증명한다.
+
 ## 9. Frontend
 
 ```powershell

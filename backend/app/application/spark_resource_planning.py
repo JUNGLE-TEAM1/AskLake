@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,10 +16,12 @@ from app.core.s3_policy import (
     validate_s3_source_config,
 )
 from app.domain.spark_resource_plan import (
+    SUPPORTED_EXECUTOR_TIERS,
     build_spark_resource_plan,
     normalize_spark_resource_plan,
     spark_resource_planner_mode,
 )
+from app.domain.spark_resource_history import normalize_spark_resource_history
 from app.models import ETLJobModel
 from app.services.eks_execution_contract import spark_execution_identity_mismatch
 
@@ -32,6 +35,7 @@ def prepare_eks_spark_attempt_with_resource_plan(
     lease_generation: int,
     run_id: str,
     started_at: str,
+    historical_runs: Iterable[Any] = (),
 ) -> tuple[dict[str, Any], dict[str, Any] | None, int, dict[str, Any] | None]:
     previous_execution = task_states.get("sparkExecution")
     resource_plan = resolve_spark_resource_plan_for_execution(
@@ -39,6 +43,7 @@ def prepare_eks_spark_attempt_with_resource_plan(
         job,
         job_id=job_id,
         run_id=run_id,
+        historical_runs=historical_runs,
     )
     prepared, previous_kubernetes, generation = prepare_eks_spark_attempt(
         task_states,
@@ -58,6 +63,7 @@ def resolve_spark_resource_plan_for_execution(
     *,
     job_id: str,
     run_id: str,
+    historical_runs: Iterable[Any] = (),
 ) -> dict[str, Any] | None:
     previous_resource_plan = (
         previous_execution.get("resourcePlan")
@@ -80,12 +86,18 @@ def resolve_spark_resource_plan_for_execution(
         # Runs first submitted before the planner rollout retain their existing
         # SparkApplication identity instead of introducing a plan during retry.
         return None
-    return spark_resource_plan_for_job(job)
+    return spark_resource_plan_for_job(
+        job,
+        current_run_id=run_id,
+        historical_runs=historical_runs,
+    )
 
 
 def spark_resource_plan_for_job(
     job: ETLJobModel,
     *,
+    current_run_id: str = "",
+    historical_runs: Iterable[Any] = (),
     s3_client: Any | None = None,
 ) -> dict[str, Any] | None:
     if spark_resource_planner_mode() == "off":
@@ -97,11 +109,18 @@ def spark_resource_plan_for_job(
         )
     except ValueError:
         baseline_executors = 1
+    historical_observations = normalize_spark_resource_history(
+        historical_runs,
+        current_run_id=current_run_id,
+        supported_executors=SUPPORTED_EXECUTOR_TIERS,
+        normalize_plan=normalize_spark_resource_plan,
+    )
     return build_spark_resource_plan(
         input_bytes=estimate.get("inputBytes"),
         input_file_count=estimate.get("inputFileCount"),
         input_size_source=str(estimate.get("inputSizeSource") or ""),
         baseline_executors=max(1, baseline_executors),
+        historical_observations=historical_observations,
     )
 
 

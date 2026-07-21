@@ -26,7 +26,6 @@ const REQUIRED_EXISTING_PROFILE = Object.freeze({
 });
 
 const OPTIONAL_EXISTING_VALUES = Object.freeze({
-  ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: "off",
   ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: "134217728",
   ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: "384",
   ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: "1",
@@ -70,10 +69,25 @@ export function buildSparkResourcePlannerOffValues(base, sparkImage) {
       fail(`off alignment requires existing ${name}=${expected}`);
     }
   }
-  for (const [name, expected] of Object.entries(OPTIONAL_EXISTING_VALUES)) {
-    const current = String(data[name] || "");
-    if (current && current !== expected) {
-      fail(`off alignment refuses to overwrite unexpected ${name}`);
+  const currentMode = String(data.ASKLAKE_SPARK_RESOURCE_PLANNER_MODE || "off");
+  if (!["off", "shadow", "enforce"].includes(currentMode)) {
+    fail("off alignment refuses to overwrite an invalid Planner mode");
+  }
+  if (currentMode === "shadow" || currentMode === "enforce") {
+    for (const [name, expected] of Object.entries(OFF_ALIGNMENT)) {
+      if (name !== "ASKLAKE_SPARK_RESOURCE_PLANNER_MODE" && String(data[name] || "") !== expected) {
+        fail(`active Planner recovery requires existing ${name}=${expected}`);
+      }
+    }
+    if (String(data.ASKLAKE_SPARK_KUBERNETES_IMAGE || "") !== sparkImage) {
+      fail("active Planner recovery refuses to change the Spark image");
+    }
+  } else {
+    for (const [name, expected] of Object.entries(OPTIONAL_EXISTING_VALUES)) {
+      const current = String(data[name] || "");
+      if (current && current !== expected) {
+        fail(`off alignment refuses to overwrite unexpected ${name}`);
+      }
     }
   }
   const candidate = structuredClone(base);

@@ -773,12 +773,24 @@ Spark Operator가 `spark.jars.packages`를 submission Pod에서 해결하므로 
 `spark_job_run.py`는 배포 경로 호환 façade이고 Kafka bounded offset·MSK IAM·fixture row-count 구현은 `backend/scripts/runtime/spark_job_runtime.py`에 있다. `scripts/verify-eks-workloads.sh`는 façade의 존재와 실제 runtime 구현을 각각 검사해야 하며, 구현 문자열을 façade에 복제해 검증을 통과시키지 않는다. EKS lease와 Kubernetes identity helper를 변경하면 realtime architecture budget과 `tests.test_eks_execution_contract`, `tests.test_eks_runtime_boundary`, `tests.test_runtime_io_ports`, `npm run test:spark-kubernetes`를 함께 실행한다.
 
 Spark Resource Planner를 변경하면 pure planner와 S3 metadata fallback,
-Kubernetes application/recovery identity, terminal retry Plan 유지, Helm의
-`off` 기본값, `balanced-v1`의 384 partition budget, `standard-v1` executor
-profile과 최대 4 schema gate를 함께 검증한다. profile drift와 입력 metadata
-부재는 `enforce`에서도 baseline을 보존해야 한다. EKS에서는 10/100 GB shadow가
-통과하기 전 `enforce` 실험을 시작하지 않는다. 상세 계약은
+같은 Job history filter와 100GB backtest, Kubernetes application/recovery identity,
+terminal retry Plan 유지, nested 후보 평가의 canonical hash, Helm의 `off` 기본값,
+`history-sla-cost-v1`의 384 partition seed, `standard-v1` executor profile과 최대 4
+schema gate를 함께 검증한다. profile drift와 입력 metadata 부재는 `enforce`에서도
+baseline을 보존해야 한다. EKS에서는 같은 immutable image의 10GB Shadow와 100GB
+Shadow가 통과하기 전 `enforce` 실험을 시작하지 않는다. 상세 계약은
 [Spark Resource Planner 계약](spark-resource-planner-contract.md)을 따른다.
+
+focused 검증은 아래 순서로 실행한다.
+
+```bash
+cd backend
+python -m pytest -q tests/test_spark_resource_plan.py \
+  tests/test_airflow_execution_commands.py \
+  tests/test_eks_runtime_boundary.py \
+  tests/test_eks_execution_contract.py
+node --test scripts/spark-kubernetes-client.test.mjs
+```
 
 Phase 3 준비는 `prepare-eks-spark-resource-planner-shadow-values.sh`와
 `prepare-eks-spark-resource-planner-shadow-web-values.sh`로 각각 Planner-only
@@ -797,6 +809,13 @@ receipt, workload health, active Spark 0, 두 Helm server dry-run의 mutation 0�
 image rollout과 각 Spark Run은 별도 승인 경계다. 전체 순서는
 [Phase 3 Shadow runbook](eks-spark-resource-planner-phase3-shadow-runbook.md)을
 따른다.
+
+Shadow evidence가 통과하면 live shadow runtime/Web 값을 base로 다시 캡처하고
+`prepare-eks-spark-resource-planner-enforce-values.sh`와
+`prepare-eks-spark-resource-planner-enforce-web-values.sh`를 실행한다.
+`ASKLAKE_SPARK_RESOURCE_PLANNER_TARGET_MODE=enforce` preflight는 동일 image/profile에서
+mode 한 키만 바뀌는지 확인한다. canary 뒤 off builder로 복구할 때도 active mode의
+image와 policy/profile exact match가 필수이며 최종 mode/baseline은 `off/1`이다.
 
 Live FastAPI와 Collector는 `asklake-runtime-config` release가 소유하는
 `asklake-runtime` ConfigMap을 소비한다. 따라서 Planner mode·정책값·executor

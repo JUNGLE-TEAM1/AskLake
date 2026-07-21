@@ -804,7 +804,7 @@ EKS FastAPI는 아래 환경 계약을 사용한다.
 | `ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS` | `60` | 같은 `runId` 외부 실행의 RDS lease TTL이다. Spark run timeout과 독립적이다. |
 | `ASKLAKE_SPARK_RESOURCE_PLANNER_MODE` | `off` | `off`, `shadow`, `enforce`. 최초 적용은 계산만 기록하는 `shadow`다. |
 | `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES` | `134217728` | 예상 Spark read partition 크기다. |
-| `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR` | `384` | `balanced-v1`에서 초기 executor 하나가 담당하도록 계획하는 partition 수다. |
+| `ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR` | `384` | 이력이 없을 때 `history-sla-cost-v1` 크기 seed에서 executor 하나가 담당하도록 계획하는 partition 수다. |
 | `ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS` | `1` | Resource Plan 최소 executor 수다. |
 | `ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS` | `4` | V1 후보 `1`, `2`, `4` 중 최대 executor 수다. |
 | `ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES` | dev 활성값 `10737418240`, rollback `0` | exact source byte가 양수 한도 이하일 때만 direct `MEMORY_AND_DISK` cache를 선택한다. 10GiB 외 임의 운영값은 runtime ConfigMap schema가 거부한다. |
@@ -832,10 +832,14 @@ Resource Planner가 활성화되면 최초 제출 전에
 `taskStates.sparkExecution.resourcePlan`을 저장한다. 같은 Run과 새 attempt
 generation의 retry는 이 값을 재계산하지 않으며 SparkApplication annotation과
 Kubernetes execution의 `resourcePlanHash`가 다르면 identity mismatch로 차단한다.
-`balanced-v1`은 cores `2`, CPU request/limit `2/3`, heap/overhead `4g/1g`인
-`standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중 선택한다. `shadow`의
+policy V3 `history-sla-cost-v1`은 cores `2`, CPU request/limit `2/3`,
+heap/overhead `4g/1g`인 `standard-v1` profile에서 executor 수만 `1`, `2`, `4` 중
+선택한다. 같은 Job의 성공 이력으로 후보별 `spark_duration_ms`와
+`executor_seconds`를 계산해 30분을 만족하는 최소 비용 후보를 고르고, 비교 가능한
+이력이 없으면 기존 partition budget을 size seed로 사용한다. `shadow`의
 `appliedExecutors`는 기존 고정 executor 수와 같다. 입력 크기를 알 수 없거나 실제
-profile이 다르면 `enforce`에서도 기존 executor 수를 유지한다.
+profile이 다르면 `enforce`에서도 기존 executor 수를 유지한다. policy V1/V2 Plan은
+retry/recovery 호환을 위해 계속 읽되 새 Run에는 소급 적용하지 않는다.
 
 terminal failure 뒤 internal execute 경계를 같은 `runId`로 다시 호출하면 기본 최대 2회 안에서 다음 deterministic application name과 새 UID를 만든다. 이전 terminal identity는 `sparkExecution.kubernetesAttempts`에 남고 현재 attempt와 분리된다. non-terminal application에는 새 UID를 만들 수 없으며, 상한을 넘으면 `409 SPARK_TERMINAL_RETRY_EXHAUSTED`다.
 

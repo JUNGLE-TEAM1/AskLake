@@ -25,6 +25,7 @@ from app.application.etl_runtime_support import compact_storage_text
 from app.core.errors import ApiError
 from app.models import ETLJobModel
 from app.repositories import etl_repository
+from app.repositories import spark_resource_history_repository
 from app.schemas.common import ErrorCode
 from app.services.eks_execution_contract import (
     FASTAPI_EXECUTION_OWNER,
@@ -151,7 +152,7 @@ def execute_eks_airflow_spark_run(
             lease_generation=lease.generation,
             job_id=job_id,
             run_id=run_id,
-            started_at=iso_now(),
+            started_at=iso_now(), historical_runs=spark_resource_history_repository.list_recent_run_models_for_job(db, job_id),
         )
         db.commit()
     except Exception:
