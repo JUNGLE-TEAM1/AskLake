@@ -37,6 +37,7 @@ import {
 } from "./timeSeries";
 import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
+import { resolveChartValueAxisRange } from "./chartAxisRange";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -575,6 +576,14 @@ function buildBaseChartOptions(color: string): ApexOptions {
         },
       },
     },
+  };
+}
+
+function yAxisWithRange(baseOptions: ApexOptions, range: { max?: number; min?: number }): ApexOptions["yaxis"] {
+  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
+  return {
+    ...baseYAxis,
+    ...range,
   };
 }
 
@@ -1122,6 +1131,8 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const horizontal = widget.config.orientation === "horizontal";
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1135,14 +1146,16 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        horizontal: widget.config.orientation === "horizontal",
+        horizontal,
         columnWidth: "48%",
       },
     },
     xaxis: {
       ...baseOptions.xaxis,
       categories: chartData.categories,
+      ...(horizontal ? valueAxisRange : {}),
     },
+    yaxis: yAxisWithRange(baseOptions, horizontal ? {} : valueAxisRange),
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="bar" widget={widget} />;
@@ -1172,6 +1185,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1191,6 +1205,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     },
     tooltip: timeAxis.tooltip,
     xaxis: timeAxis.xaxis,
+    yaxis: yAxisWithRange(baseOptions, valueAxisRange),
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="line" widget={widget} />;
@@ -1220,6 +1235,9 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series, {
+    stacked: widget.config.stacked ?? false,
+  });
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1249,6 +1267,7 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     },
     tooltip: timeAxis.tooltip,
     xaxis: timeAxis.xaxis,
+    yaxis: yAxisWithRange(baseOptions, valueAxisRange),
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="area" widget={widget} />;

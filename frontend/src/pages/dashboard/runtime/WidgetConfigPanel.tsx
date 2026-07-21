@@ -42,6 +42,7 @@ import type {
   DashboardRuntimeWidgetConfig,
   DashboardRuntimeWidgetType,
   DashboardWidgetAggregation,
+  DashboardWidgetAxisRangeMode,
   DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
   DashboardWidgetFilter,
@@ -103,6 +104,12 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "세로", value: "vertical" },
   { label: "가로", value: "horizontal" },
 ];
+const axisRangeModeOptions: Array<{ label: string; value: DashboardWidgetAxisRangeMode }> = [
+  { label: "기본 자동 범위", value: "default" },
+  { label: "데이터 차이 강조", value: "data_focus" },
+  { label: "직접 입력", value: "manual" },
+];
+const axisRangeModes = new Set<DashboardWidgetAxisRangeMode>(axisRangeModeOptions.map(({ value }) => value));
 const multiColorFallbackCount = 6;
 function WidgetSelectField({
   children,
@@ -179,6 +186,17 @@ function configBoolean(config: DashboardRuntimeWidgetConfig, key: string) {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function configAxisRangeMode(config: DashboardRuntimeWidgetConfig) {
+  const value = configString(config, "valueAxisRangeMode") as DashboardWidgetAxisRangeMode | undefined;
+  return value && axisRangeModes.has(value) ? value : undefined;
+}
+
+function optionalNumberInput(value: string) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColorConfig {
   const value = configRecord(config).color;
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -247,6 +265,9 @@ function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConf
     sortKey: configString(editableConfig, "sortKey"),
     stacked: configBoolean(editableConfig, "stacked"),
     valueKey: configString(editableConfig, "valueKey"),
+    valueAxisMax: configNumber(editableConfig, "valueAxisMax"),
+    valueAxisMin: configNumber(editableConfig, "valueAxisMin"),
+    valueAxisRangeMode: configAxisRangeMode(editableConfig),
     xKey: configString(editableConfig, "xKey"),
     yKey: configString(editableConfig, "yKey"),
   };
@@ -271,6 +292,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       dateUnit: defaultTimeBucket,
       seriesKey: "",
       stacked: false,
+      valueAxisRangeMode: "default",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
@@ -278,6 +300,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       aggregation: "sum",
       groupKey: "",
       orientation: "vertical",
+      valueAxisRangeMode: "default",
       xKey: dimensionFallback,
       yKey: numericFallback,
     },
@@ -297,6 +320,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       curve: "smooth",
       dateUnit: defaultTimeBucket,
       seriesKey: "",
+      valueAxisRangeMode: "default",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
@@ -345,6 +369,16 @@ function buildConfig(
     ...base,
     color: common.color,
   };
+  const valueAxisRangeMode = config.valueAxisRangeMode ?? "default";
+  const valueAxisRange = {
+    valueAxisRangeMode,
+    ...(valueAxisRangeMode === "manual" && config.valueAxisMax !== undefined
+      ? { valueAxisMax: config.valueAxisMax }
+      : {}),
+    ...(valueAxisRangeMode === "manual" && config.valueAxisMin !== undefined
+      ? { valueAxisMin: config.valueAxisMin }
+      : {}),
+  };
 
   if (type === "metric") {
     return {
@@ -368,6 +402,7 @@ function buildConfig(
   if (type === "line_chart") {
     return {
       ...chartBase,
+      ...valueAxisRange,
       aggregation: config.aggregation ?? "sum",
       curve: config.curve ?? "smooth",
       dateUnit: config.dateUnit,
@@ -380,6 +415,7 @@ function buildConfig(
   if (type === "area_chart") {
     return {
       ...chartBase,
+      ...valueAxisRange,
       aggregation: config.aggregation ?? "sum",
       dateUnit: config.dateUnit,
       seriesKey: config.seriesKey || undefined,
@@ -422,6 +458,7 @@ function buildConfig(
 
   return {
     ...chartBase,
+    ...valueAxisRange,
     aggregation: config.aggregation ?? "sum",
     groupKey: config.groupKey || undefined,
     orientation: config.orientation ?? "vertical",
@@ -1076,6 +1113,53 @@ export function WidgetConfigPanel({
                 />
                 <span>누적 영역으로 표시</span>
               </label>
+            )}
+            <WidgetSelectField
+              label="값 축 범위"
+              value={currentConfig.valueAxisRangeMode ?? "default"}
+              onChange={(event) => patchCurrentConfig({
+                valueAxisRangeMode: event.target.value as DashboardWidgetAxisRangeMode,
+              })}
+            >
+              {axisRangeModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </WidgetSelectField>
+            {currentConfig.valueAxisRangeMode === "data_focus" && (
+              <p className="text-xs leading-5 text-slate-500" role="note">
+                표시 데이터의 최솟값과 최댓값에 8% 여백을 더해 작은 차이가 잘 보이도록 조정합니다.
+              </p>
+            )}
+            {currentConfig.valueAxisRangeMode === "manual" && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormFieldGroup label="축 최솟값">
+                    <Input
+                      size="sm"
+                      step="any"
+                      type="number"
+                      value={currentConfig.valueAxisMin ?? ""}
+                      onChange={(event) => patchCurrentConfig({
+                        valueAxisMin: optionalNumberInput(event.target.value),
+                      })}
+                    />
+                  </FormFieldGroup>
+                  <FormFieldGroup label="축 최댓값">
+                    <Input
+                      size="sm"
+                      step="any"
+                      type="number"
+                      value={currentConfig.valueAxisMax ?? ""}
+                      onChange={(event) => patchCurrentConfig({
+                        valueAxisMax: optionalNumberInput(event.target.value),
+                      })}
+                    />
+                  </FormFieldGroup>
+                </div>
+                <p className="text-xs leading-5 text-amber-700" role="note">
+                  한쪽 값만 입력하면 반대쪽은 자동 계산됩니다. 지정 범위 밖의 데이터는 차트에서 잘릴 수 있습니다.
+                </p>
+              </>
             )}
           </>
         )}

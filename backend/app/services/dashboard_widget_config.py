@@ -6,6 +6,7 @@ from app.schemas.dashboard import (
     BarChartWidgetConfig,
     DashboardRuntimeWidgetType,
     DashboardWidgetAggregation,
+    DashboardWidgetAxisRangeMode,
     DashboardWidgetColorConfig,
     DashboardWidgetConfigBase,
     DashboardWidgetFormat,
@@ -112,6 +113,7 @@ def default_dashboard_widget_config(
             aggregation=DashboardWidgetAggregation.SUM,
             color=color,
             curve=DashboardWidgetLineCurve.SMOOTH,
+            value_axis_range_mode=DashboardWidgetAxisRangeMode.DEFAULT,
             x_key="category",
             y_key="value",
         )
@@ -120,6 +122,7 @@ def default_dashboard_widget_config(
             aggregation=DashboardWidgetAggregation.SUM,
             color=color,
             stacked=False,
+            value_axis_range_mode=DashboardWidgetAxisRangeMode.DEFAULT,
             x_key="category",
             y_key="value",
         )
@@ -165,6 +168,7 @@ def default_dashboard_widget_config(
         aggregation=DashboardWidgetAggregation.SUM,
         color=color,
         orientation=DashboardWidgetOrientation.VERTICAL,
+        value_axis_range_mode=DashboardWidgetAxisRangeMode.DEFAULT,
         x_key="category",
         y_key="value",
     )

@@ -61,6 +61,7 @@ Dashboard 성능 계약은 `npm run verify:dashboard-performance`, 같은 합성
 
 ```bash
 cd frontend
+npm run test:dashboard-axis-range
 npm run test:trino-timeline
 npm run test:catalog-lineage-projection
 npm run verify:ui-regressions
@@ -68,6 +69,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
+`npm run test:dashboard-axis-range`는 값 축의 기본/데이터 강조/수동 모드, 8% padding과 nice step, 단일·음수·누적 series, 수동 범위 검증을 외부 서비스 없이 확인한다.
 `npm run test:trino-timeline`은 preview의 `쿼리 실행 -> 첫 결과 준비` 단계, full run에서만 보이는 전체 결과 수집 단계, terminal/만료 상태, 2초 progress 지연, 실제 분자/분모 없는 bar 생략, manifest 마무리와 legacy timing fallback을 순수 상태 모델로 검증한다.
 `npm run test:catalog-lineage-projection`은 저장된 API graph를 변경하지 않으면서 Catalog 화면에서 `PROCESS` node를 제거하고 동일 컬럼의 source→target edge만 만드는지 검증한다. UI 수동 확인에서는 `/etl/source`의 connector 카드, 전역 152px sidebar, `/catalog` 목록·lineage, `/dashboards/:dashboardId/edit`의 기본 닫힌 데이터 패널과 오른쪽 설정 패널 toggle을 desktop과 좁은 viewport에서 함께 확인한다.
 
@@ -150,7 +152,7 @@ PYTHONPATH=. .venv/bin/python scripts/verify-rule-persistence-contract.py
 .venv/bin/python scripts/verify-permission-create-flow-contract.py
 ```
 
-`npm run verify:ui-regressions`는 관리자 콘솔 API의 section별 부분 실패 격리, timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, 위젯별 동적 필터의 타입·저장·종속 후보값 계약, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다. 위젯 필터만 빠르게 확인할 때는 `cd frontend && npm run test:dashboard-widget-filters`, 관리자 콘솔만 확인할 때는 `cd frontend && npm run test:admin-console-load`를 실행한다.
+`npm run verify:ui-regressions`는 관리자 콘솔 API의 section별 부분 실패 격리, timeline 상태 테스트와 ETL wizard 순차 이동 테스트를 먼저 실행한 뒤 SQL 분석의 Nessie Popover/Bubble/Collapsible 흐름, SQL editor 불변 높이, 결과 panel의 `차트 보기`/`데이터 미리보기`/`실행 정보` 전환, Trino cursor pagination과 server CSV, Dashboard `WidgetConfigPanel` 재사용, 값 축 범위 모드, 위젯별 동적 필터의 타입·저장·종속 후보값 계약, SQL 내부 Job wizard와 최근 UI 회귀 계약을 정적으로 확인한다. 값 축만 빠르게 확인할 때는 `cd frontend && npm run test:dashboard-axis-range`, 위젯 필터만 확인할 때는 `cd frontend && npm run test:dashboard-widget-filters`, 관리자 콘솔만 확인할 때는 `cd frontend && npm run test:admin-console-load`를 실행한다.
 
 Nessie가 생성한 SQL의 대용량 정확성·스캔량·실행시간·자원 사용량을 고정 Dataset snapshot과 질문 suite로 비교하는 내부 검증 기준은 [Nessie SQL 대용량 Benchmark](nessie-sql-benchmark.md)를 따른다. 이 benchmark는 공개 Query AI API나 자동 실행 동작을 추가하지 않으며, live campaign은 preflight와 별도의 명시적 confirmation을 거쳐야 한다.
 

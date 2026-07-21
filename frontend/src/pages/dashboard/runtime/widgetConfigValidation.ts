@@ -1,6 +1,7 @@
 import type {
   DashboardRuntimeWidgetType,
   DashboardWidgetAggregation,
+  DashboardWidgetAxisRangeMode,
   DashboardWidgetDateUnit,
   DashboardWidgetFilter,
   DashboardWidgetFormat,
@@ -9,6 +10,7 @@ import type {
   DashboardWidgetSortDirection,
 } from "../../../types";
 import type { DashboardDatasetColumn } from "./dashboardRuntimeTypes";
+import { validateChartValueAxisRange } from "./chartAxisRange";
 import { validateDashboardWidgetFilters } from "./widgetFilters";
 
 export type WidgetConfigDraft = {
@@ -29,6 +31,9 @@ export type WidgetConfigDraft = {
   sortKey?: string;
   stacked?: boolean;
   valueKey?: string;
+  valueAxisMax?: number;
+  valueAxisMin?: number;
+  valueAxisRangeMode?: DashboardWidgetAxisRangeMode;
   xKey?: string;
   yKey?: string;
 };
@@ -43,6 +48,10 @@ export function validateWidgetConfig(
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
   if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
     return "X축과 Y축 컬럼을 선택해 주세요.";
+  }
+  if (type === "bar_chart" || type === "line_chart" || type === "area_chart") {
+    const axisRangeError = validateChartValueAxisRange(config);
+    if (axisRangeError) return axisRangeError;
   }
   if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || (!usesCount && !config.valueKey))) {
     return "분류와 값 컬럼을 선택해 주세요.";

@@ -1388,6 +1388,29 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard cartesian charts expose shared value-axis range controls",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /label="값 축 범위"/,
+      /valueAxisRangeMode: event\.target\.value as DashboardWidgetAxisRangeMode/,
+      /표시 데이터의 최솟값과 최댓값에 8% 여백/,
+      /label="축 최솟값"/,
+      /label="축 최댓값"/,
+      /지정 범위 밖의 데이터는 차트에서 잘릴 수 있습니다/,
+    ],
+  },
+  {
+    name: "Dashboard renderer applies value-axis bounds by chart orientation",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /import \{ resolveChartValueAxisRange \} from "\.\/chartAxisRange";/,
+      /const horizontal = widget\.config\.orientation === "horizontal";/,
+      /\.\.\.\(horizontal \? valueAxisRange : \{\}\)/,
+      /yaxis: yAxisWithRange\(baseOptions, horizontal \? \{\} : valueAxisRange\)/,
+      /stacked: widget\.config\.stacked \?\? false/,
+    ],
+  },
+  {
     name: "Dashboard widget settings use the shared searchable combobox",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
