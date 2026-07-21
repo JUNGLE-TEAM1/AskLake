@@ -25,6 +25,8 @@ RUNTIME_APPLIED=false
 WEB_APPLIED=false
 RUNTIME_REVISION_BEFORE=""
 WEB_REVISION_BEFORE=""
+ALB_STEADY_TIMEOUT_SECONDS="${ASKLAKE_ALB_STEADY_TIMEOUT_SECONDS:-600}"
+ALB_STEADY_POLL_SECONDS="${ASKLAKE_ALB_STEADY_POLL_SECONDS:-15}"
 
 fail() { echo "$1" >&2; return 1; }
 
@@ -36,6 +38,31 @@ active_spark_count() {
     ]
     | length
   '
+}
+
+wait_for_alb_steady() {
+  local deadline=$((SECONDS + ALB_STEADY_TIMEOUT_SECONDS))
+  local error_file="$TEMP_DIR/alb-steady-error.log"
+
+  while true; do
+    if bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady \
+      >/dev/null 2>"$error_file"; then
+      return 0
+    fi
+
+    if ! grep -Eq \
+      'healthy rollout floor|does not allow draining ALB targets|do not exactly match Ready EndpointSlice' \
+      "$error_file"; then
+      cat "$error_file" >&2
+      return 1
+    fi
+    if ((SECONDS >= deadline)); then
+      cat "$error_file" >&2
+      echo "ALB did not reach steady state within ${ALB_STEADY_TIMEOUT_SECONDS}s" >&2
+      return 1
+    fi
+    sleep "$ALB_STEADY_POLL_SECONDS"
+  done
 }
 
 rollback_on_error() {
@@ -60,7 +87,15 @@ trap cleanup EXIT
 
 [[ "$MODE" == "--preflight" || "$MODE" == "--apply" ]] || \
   fail "usage: deploy-eks-spark-hybrid-activation.sh [--preflight|--apply]"
-for command in git helm jq kubectl node; do
+[[ "$ALB_STEADY_TIMEOUT_SECONDS" =~ ^[0-9]+$ \
+  && "$ALB_STEADY_TIMEOUT_SECONDS" -ge 1 \
+  && "$ALB_STEADY_TIMEOUT_SECONDS" -le 1800 ]] || \
+  fail "ASKLAKE_ALB_STEADY_TIMEOUT_SECONDS must be between 1 and 1800"
+[[ "$ALB_STEADY_POLL_SECONDS" =~ ^[0-9]+$ \
+  && "$ALB_STEADY_POLL_SECONDS" -ge 1 \
+  && "$ALB_STEADY_POLL_SECONDS" -le 60 ]] || \
+  fail "ASKLAKE_ALB_STEADY_POLL_SECONDS must be between 1 and 60"
+for command in git grep helm jq kubectl node; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 RECEIPT="$(asklake_require_image_receipt "$ROOT_DIR" "$RECEIPT")" || \
@@ -204,7 +239,7 @@ for component in backend trino-result-collector; do
     printenv ASKLAKE_SPARK_DIRECT_CACHE_MAX_SOURCE_BYTES)" == "10737418240" ]] || \
     fail "$component Pod did not receive the 10GiB threshold"
 done
-bash "$ROOT_DIR/scripts/verify-eks-day15-alb-runtime.sh" --steady >/dev/null
+wait_for_alb_steady
 
 RUNTIME_APPLIED=false
 WEB_APPLIED=false
