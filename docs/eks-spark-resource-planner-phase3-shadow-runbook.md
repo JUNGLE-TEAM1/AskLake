@@ -202,8 +202,10 @@ executor `1`, correctness/Catalog, 환경 비교 가능성, 네 승인 기록과
 ## 11. 종료와 Phase 4 진입 조건
 
 증거를 수집한 뒤 runtime base와 새 off revision으로 FastAPI/Collector를 재시작해
-Planner `off`, executor `1`, workload health와 active Spark `0`을 확인한다. 완료된
-SparkApplication과 RDS/Iceberg/Catalog evidence는 삭제하지 않는다.
+Planner `off`, executor `1`, workload health와 active Spark `0`을 확인한다. RDS Run,
+Iceberg snapshot, Catalog 결과, SparkApplication private snapshot과 CloudWatch 증거는
+보존한다. 실험이 만든 완료 SparkApplication과 잔존 Pod는 private snapshot을 확보한
+뒤 run identity가 정확히 일치할 때만 정리할 수 있다.
 
 Phase 4 `enforce` 진입 조건은 다음 전부다.
 
@@ -238,3 +240,7 @@ SparkApplication annotation hash, spec executor와 실제 executor Pod 수가 �
 preflight를 `TARGET_MODE=off`로 통과시켜 적용한다. active mode 복구는 Spark image나
 policy/profile drift가 있으면 실패하므로 임의로 덮어쓰지 않는다. 최종 상태는 mode
 `off`, baseline `1`, active Spark `0`, FastAPI `2/2`, Collector `1/1`이다.
+
+2026-07-21 live campaign의 10GB Shadow, 100GB Shadow와 executor 2 Enforce 결과는
+[100GB Resource Planner live evidence](eks-100gb-resource-planner-shadow-evidence-2026-07-20.md)에
+기록한다.
