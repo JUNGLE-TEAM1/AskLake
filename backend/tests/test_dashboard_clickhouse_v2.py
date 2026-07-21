@@ -173,6 +173,37 @@ class DashboardClickHouseV2QueryTests(unittest.TestCase):
         self.assertIn("trimBoth(payload)", query)
         self.assertNotIn("JSON_VALUE(payload", query)
 
+    def test_filter_values_use_the_active_clickhouse_session(self) -> None:
+        clickhouse = _ClickHouse(rows=[["busan"], ["seoul"]])
+        session = DashboardDatasetQuerySession(
+            dataset_payload(),
+            clickhouse_client=clickhouse,  # type: ignore[arg-type]
+            expected_binding_epoch=7,
+            query_timeout_seconds=4,
+        )
+        try:
+            result = session.read_filter_values(
+                "region",
+                context_filters=[{
+                    "id": "amount-filter",
+                    "column": "amount",
+                    "operator": "gte",
+                    "value": 10,
+                }],
+                search="s",
+                limit=25,
+            )
+        finally:
+            session.close()
+
+        query, options = clickhouse.queries[0]
+        self.assertEqual(result, {"truncated": False, "values": ["busan", "seoul"]})
+        self.assertIn("SELECT DISTINCT", query)
+        self.assertIn("serving_current_v2", query)
+        self.assertIn("toFloat64OrNull", query)
+        self.assertIn("LIMIT 26", query)
+        self.assertEqual(options["timeout_seconds"], 4)
+
     def test_stale_or_ambiguous_active_binding_fails_closed(self) -> None:
         with self.assertRaises(ApiError) as stale:
             DashboardDatasetQuerySession(

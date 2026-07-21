@@ -1,0 +1,36 @@
+{{- if .Values.enabled }}
+apiVersion: eks.amazonaws.com/v1
+kind: IngressClassParams
+metadata:
+  name: {{ .Values.ingressClassParamsName }}
+  labels:
+    {{- include "asklake-ingress.labels" . | nindent 4 }}
+spec:
+  scheme: {{ .Values.exposure }}
+  namespaceSelector:
+    matchLabels:
+      {{- toYaml .Values.namespaceSelector | nindent 6 }}
+  group:
+    name: {{ .Values.groupName }}
+  ipAddressType: {{ .Values.ipAddressType }}
+  subnets:
+    ids:
+      {{- toYaml .Values.subnetIds | nindent 6 }}
+  {{- with .Values.certificateArn }}
+  certificateARNs:
+    - {{ . | quote }}
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ .Values.ingressClassName }}
+  labels:
+    {{- include "asklake-ingress.labels" . | nindent 4 }}
+spec:
+  controller: eks.amazonaws.com/alb
+  parameters:
+    apiGroup: eks.amazonaws.com
+    kind: IngressClassParams
+    name: {{ .Values.ingressClassParamsName }}
+{{- end }}

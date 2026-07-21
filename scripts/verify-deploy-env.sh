@@ -179,6 +179,12 @@ esac
 kafka_connect_connector_name="$(env_value_for KAFKA_CONNECT_CONNECTOR_NAME)"
 kafka_connect_connector_name="${kafka_connect_connector_name:-asklake-clickhouse-realtime-v2}"
 
+asklake_continuous_control_plane="$(env_value_for ASKLAKE_CONTINUOUS_CONTROL_PLANE)"
+[[ "$asklake_continuous_control_plane" == "local" ]] || {
+  printf 'error: EC2 Compose requires ASKLAKE_CONTINUOUS_CONTROL_PLANE=local\n' >&2
+  exit 1
+}
+
 has_compose_profile() {
   local requested_profile="$1"
   local configured_profiles
@@ -261,17 +267,15 @@ required_keys=(
   AI_PROVIDER_API_KEY
   APP_DOMAIN
   APP_ENV
+  ASKLAKE_CONTINUOUS_CONTROL_PLANE
   ASKLAKE_HOST_DATA_DIR
   ASKLAKE_OBJECT_STORAGE_PROVIDER
   ASKLAKE_REPLAY_HOST_INPUT_DIR
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
-  OPENSEARCH_INITIAL_ADMIN_PASSWORD
-  OPENSEARCH_PASSWORD
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
-  RAG_WORKER_TOKEN
   VITE_API_BASE_URL
 )
 
@@ -783,6 +787,7 @@ export ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD="$minio_root_password"
 export ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY="$minio_access_key"
 export ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY="$minio_secret_key"
 export ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER="$storage_provider"
+export ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE="$asklake_continuous_control_plane"
 export ASKLAKE_PREFLIGHT_AWS_REGION="$(env_value_for AWS_REGION)"
 export ASKLAKE_PREFLIGHT_RAW_BUCKET="$(env_value_for ASKLAKE_RAW_BUCKET)"
 export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUCKET)"
@@ -844,6 +849,9 @@ try:
         if clickhouse_v2_infra_enabled
         else profiled_clickhouse_v2_services.isdisjoint(services)
     )
+    profile_wiring_valid = profile_wiring_valid and {
+        "opensearch", "embedding-worker", "rag-artifact-cleanup"
+    }.isdisjoint(services)
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
         forbidden = {
@@ -931,7 +939,9 @@ try:
         services[name] for name in ("backend", "continuous-worker") if name in services
     )
     valid = valid and all(
-        runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_V2_ENABLED")
+        runtime_service.get("environment", {}).get("ASKLAKE_CONTINUOUS_CONTROL_PLANE")
+        == os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_V2_ENABLED")
         == ("true" if clickhouse_v2_enabled else "false")
         and runtime_service.get("environment", {}).get("KAFKA_CONNECT_SINK_ENABLED")
         == ("true" if kafka_connect_enabled else "false")
@@ -1033,6 +1043,7 @@ unset ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD
 unset ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY
 unset ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY
 unset ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER
+unset ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE
 unset ASKLAKE_PREFLIGHT_AWS_REGION
 unset ASKLAKE_PREFLIGHT_RAW_BUCKET
 unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET

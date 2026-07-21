@@ -26,7 +26,7 @@ from app.schemas.catalog import CatalogDatasetResponse
 from tests.test_dashboard_job_binding_schema_removal import _run_alembic
 
 
-HEAD_REVISION = "0024_sql_execution_tree_locking"
+HEAD_REVISION = "0025_dataset_revision_snapshot_identity"
 PREVIOUS_REVISION = "0022_remove_dashboard_job_bindings"
 PRODUCER_COLUMNS = {
     "producer_job_id",

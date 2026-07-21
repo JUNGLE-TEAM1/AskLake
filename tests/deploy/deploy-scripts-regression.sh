@@ -69,6 +69,7 @@ write_valid_env() {
       'APP_ENV=production' \
       'AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
       'VITE_AUTH_LEGACY_DEMO_USERS_ENABLED=false' \
+      'ASKLAKE_CONTINUOUS_CONTROL_PLANE=local' \
       'ASKLAKE_OBJECT_STORAGE_PROVIDER=minio' \
       'APP_DOMAIN=deploy.asklake.test' \
       'VITE_API_BASE_URL=https://deploy.asklake.test' \
@@ -91,12 +92,9 @@ write_valid_env() {
       "MINIO_SECRET_KEY=$SECRET_SENTINEL" \
       'MONGO_INITDB_ROOT_PASSWORD=MongoPassword_123' \
       'MONGO_INITDB_ROOT_USERNAME=MongoRootUser_123' \
-      'OPENSEARCH_INITIAL_ADMIN_PASSWORD=OpenSearchPassword_123!' \
-      'OPENSEARCH_PASSWORD=OpenSearchPassword_123!' \
       'POSTGRES_DB=asklake_metadata' \
       'POSTGRES_PASSWORD=PostgresPassword_123' \
       'POSTGRES_USER=asklake' \
-      'RAG_WORKER_TOKEN=RagWorkerToken_123456789012345678901234' \
       'COMPOSE_PROFILES=' \
       'TRINO_ENABLED=false' \
       'CONTINUOUS_SQL_JOIN_ENABLED=false' \
@@ -427,6 +425,12 @@ expect_preflight_failure \
   'Continuous SQL parent flag rejects non-boolean values' \
   'CONTINUOUS_SQL_JOIN_ENABLED must be true or false'
 
+write_valid_env "$ENV_FILE"
+replace_env_value "$ENV_FILE" ASKLAKE_CONTINUOUS_CONTROL_PLANE 'external_ec2'
+expect_preflight_failure \
+  'EC2 deployment rejects the EKS external control-plane profile' \
+  'EC2 Compose requires ASKLAKE_CONTINUOUS_CONTROL_PLANE=local'
+
 write_valid_clickhouse_trino_aws_env "$ENV_FILE"
 replace_env_value "$ENV_FILE" COMPOSE_PROFILES 'trino'
 expect_preflight_failure \
@@ -706,9 +710,61 @@ expect_preflight_failure \
   'Compose wiring does not match the selected minio provider and feature-profile contract' \
   "$UNSAFE_COMPOSE"
 
+if grep -Fq 'ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: ${ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS:-60}' \
+    "$ROOT_DIR/deploy/docker-compose.prod.yml"; then
+  record_pass 'EC2 backend forwards the Spark execution lease setting'
+else
+  record_fail 'EC2 backend forwards the Spark execution lease setting'
+fi
+
+if grep -Fq 'CONTINUOUS_WORKER_SCOPE: ${CONTINUOUS_WORKER_SCOPE:-all}' \
+    "$ROOT_DIR/deploy/docker-compose.prod.yml" \
+  && grep -Fq 'CONTINUOUS_WORKER_OWNER: ${CONTINUOUS_WORKER_OWNER:-ec2-continuous-worker}' \
+    "$ROOT_DIR/deploy/docker-compose.prod.yml" \
+  && grep -Fq 'CONTINUOUS_WORKER_GENERATION: ${CONTINUOUS_WORKER_GENERATION:-}' \
+    "$ROOT_DIR/deploy/docker-compose.prod.yml"; then
+  record_pass 'EC2 continuous worker preserves scope and ownership fencing settings'
+else
+  record_fail 'EC2 continuous worker preserves scope and ownership fencing settings'
+fi
+
 # Source without executing main so the real health_check function can be exercised
 # with deterministic curl fixtures.
 source "$DEPLOY_SCRIPT"
+
+if (DEPLOY_BRANCH=dev; require_deploy_branch) >/dev/null 2>&1 \
+  && ! (DEPLOY_BRANCH=pair1; require_deploy_branch) >/dev/null 2>&1 \
+  && ! (DEPLOY_BRANCH=feature/example; require_deploy_branch) >/dev/null 2>&1; then
+  record_pass 'EC2 deploy source branch is fail-closed to dev'
+else
+  record_fail 'EC2 deploy source branch is fail-closed to dev'
+fi
+
+if output="$({ ssh_run() { printf '%s\n' "$1"; }; update_remote_dev_checkout; } 2>&1)" \
+  && [[ "$output" == *'git status --porcelain --untracked-files=all'* ]] \
+  && [[ "$output" == *'git fetch origin dev'* ]] \
+  && [[ "$output" == *'git checkout dev'* ]] \
+  && [[ "$output" == *'git pull --ff-only origin dev'* ]] \
+  && [[ "$output" == *'git symbolic-ref --short HEAD | grep -Fxq dev'* ]] \
+  && [[ "$output" == *'git merge-base --is-ancestor HEAD origin/dev'* ]] \
+  && [[ "$output" == *'git merge-base --is-ancestor origin/dev HEAD'* ]] \
+  && [[ "$output" == *'git rev-parse HEAD'* ]]; then
+  record_pass 'EC2 deploy pins a clean remote checkout to exact origin/dev'
+else
+  record_fail 'EC2 deploy pins a clean remote checkout to exact origin/dev'
+fi
+
+if output="$({ ssh_run() { printf '%s\n' "$1"; }; verify_remote_dev_checkout; } 2>&1)" \
+  && [[ "$output" == *'git fetch origin dev'* ]] \
+  && [[ "$output" == *'git symbolic-ref --short HEAD | grep -Fxq dev'* ]] \
+  && [[ "$output" == *'git status --porcelain --untracked-files=all'* ]] \
+  && [[ "$output" == *'git merge-base --is-ancestor HEAD origin/dev'* ]] \
+  && [[ "$output" == *'git merge-base --is-ancestor origin/dev HEAD'* ]] \
+  && [[ "$output" == *'git rev-parse HEAD'* ]]; then
+  record_pass 'EC2 start and restart verify a clean exact origin/dev checkout'
+else
+  record_fail 'EC2 start and restart verify a clean exact origin/dev checkout'
+fi
 
 mock_trino_deploy_control() (
   local enabled="$1"
@@ -807,12 +863,14 @@ mock_stack_metadata_bootstrap() (
 
   ensure_started() { printf 'ensure_started\n'; }
   ssh_run() { printf 'git_pull\n'; }
+  verify_remote_dev_checkout() { printf 'dev_checkout_verified\n'; }
   remote_deploy_preflight() { printf 'preflight\n'; }
   bootstrap_metadata_schema() { printf 'metadata_bootstrap\n'; }
   bootstrap_trino_dependencies() { printf 'trino_bootstrap\n'; }
   prepare_clickhouse_runtime() { printf 'clickhouse_prepare\n'; }
   prepare_clickhouse_v2_runtime() { printf 'clickhouse_v2_prepare\n'; }
   remote_compose() { printf 'compose:%s\n' "$1"; }
+  recreate_airflow_execution_control_plane() { printf 'airflow_recreate\n'; }
   health_check() { printf 'health_check\n'; }
   verify_trino_runtime() { printf 'trino_verify\n'; }
   verify_clickhouse_runtime() { printf 'clickhouse_verify\n'; }
@@ -954,13 +1012,13 @@ else
 fi
 
 mock_airflow_execution_token_parity() (
-  local backend_hash="$1"
-  local scheduler_hash="$2"
+  local expected_backend_hash="$1"
+  local expected_scheduler_hash="$2"
 
   remote_compose() {
     case "$1" in
-      'exec -T backend '*) printf '%s\n' "$backend_hash" ;;
-      'exec -T airflow-scheduler '*) printf '%s\n' "$scheduler_hash" ;;
+      'exec -T backend '*) printf '%s\n' "$expected_backend_hash" ;;
+      'exec -T airflow-scheduler '*) printf '%s\n' "$expected_scheduler_hash" ;;
       *) return 1 ;;
     esac
   }

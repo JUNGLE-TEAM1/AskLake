@@ -127,5 +127,6 @@ def quote_trino_identifier(value: str) -> str:
 
 def iceberg_read_reason(error: Exception) -> str:
     if isinstance(error, ApiError):
-        return str(error.code)
+        code = error.code
+        return str(code.value if hasattr(code, "value") else code)
     return str(error)[:500]

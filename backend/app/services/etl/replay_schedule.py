@@ -8,6 +8,7 @@ RUNTIME_NAMES = {
     'BACKEND_DIR',
     'ErrorCode',
     'Path',
+    'ScheduledJobRunRequest',
     'TypeError',
     'ValueError',
     'any',
@@ -22,6 +23,7 @@ RUNTIME_NAMES = {
     'os',
     're',
     'settings',
+    'should_run_scheduled_job',
     'status',
     'str',
     'tuple',
@@ -129,6 +131,36 @@ def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
     etl_repository.save_job(db, job)
 
 
+def scheduled_job_next_run_utc(job: ETLJobModel) -> str:
+    if not isinstance(job.schedule_policy, dict):
+        return ""
+    return str(job.schedule_policy.get("nextRunUtc") or "").strip()
+
+
+def scheduled_job_occurrence_is_claimable(job: ETLJobModel, expected_next_run_utc: str) -> bool:
+    if not expected_next_run_utc or scheduled_job_next_run_utc(job) != expected_next_run_utc:
+        return False
+    should_run, reason = should_run_scheduled_job(
+        job,
+        ScheduledJobRunRequest(force=False, job_id=job.id, kafka_only=False),
+    )
+    return should_run and reason == "due"
+
+
+def advance_claimed_scheduled_job(job: ETLJobModel) -> None:
+    if not isinstance(job.schedule_policy, dict):
+        return
+    next_run_utc = next_scheduled_run_utc(job)
+    if not next_run_utc:
+        job.schedule_policy = {**job.schedule_policy, "nextRunUtc": ""}
+        job.next_run = "-"
+        job.status = "stopped"
+        job.last_state = "스케줄 종료"
+        return
+    job.schedule_policy = {**job.schedule_policy, "nextRunUtc": next_run_utc}
+    job.next_run = next_run_utc
+
+
 def ensure_scheduled_job_next_run(db: Session, job: ETLJobModel) -> None:
     if not has_scheduled_execution(job):
         return
@@ -157,6 +189,9 @@ EXPORTED_FUNCTIONS = (
     'has_successful_run',
     'trino_sql_job_run_as_actor',
     'advance_scheduled_job_after_tick',
+    'scheduled_job_next_run_utc',
+    'scheduled_job_occurrence_is_claimable',
+    'advance_claimed_scheduled_job',
     'ensure_scheduled_job_next_run',
 )
 

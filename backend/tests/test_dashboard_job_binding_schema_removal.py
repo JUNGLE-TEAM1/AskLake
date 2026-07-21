@@ -14,7 +14,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = BACKEND_ROOT / "alembic.ini"
 PREVIOUS_REVISION = "0021_dashboard_job_bindings"
 REMOVAL_REVISION = "0022_remove_dashboard_job_bindings"
-HEAD_REVISION = "0023_sql_job_execution_tree_persistence"
+HEAD_REVISION = "0025_dataset_revision_snapshot_identity"
 RETIRED_TABLES = {"dashboard_binding_deliveries", "dashboard_job_bindings"}
 
 

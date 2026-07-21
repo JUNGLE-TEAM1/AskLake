@@ -36,7 +36,7 @@ export ASKLAKE_DEPLOY_BRANCH=dev
 
 ```bash
 export ASKLAKE_EC2_HOST=203-0-113-10.sslip.io
-export ASKLAKE_APP_URL=https://203-0-113-10.sslip.io
+export ASKLAKE_APP_URL='https://<public-app-host>'
 ```
 
 작업 shell에서 환경 파일을 불러온다.
@@ -50,6 +50,12 @@ source deploy/ec2.env
 ```bash
 scripts/deploy.sh status
 ```
+
+기존 Compose stack을 운영 명령으로 다시 제어할 때는 private `deploy/ec2.env`의
+`ASKLAKE_COMPOSE_PROJECT_NAME`을 실제 container의 `com.docker.compose.project` label과
+같게 지정한다. 값이 다르면 public health가 우연히 통과해도 `status`, `start`, `logs`가
+빈 project나 새 project를 대상으로 할 수 있다. 운영 script는 lowercase project 이름만
+허용하며 host의 다른 project를 자동 채택하지 않는다.
 
 Before deploying a branch, run the dependency verification from the repo root:
 
@@ -151,20 +157,24 @@ Production frontend build는 Compose가 `ASKLAKE_SPARK_OUTPUT_BUCKET` 값을 `VI
 scripts/deploy.sh deploy
 ```
 
-기본 branch는 `ASKLAKE_DEPLOY_BRANCH=dev`다.
-pair branch나 현재 검증 branch를 올릴 때는 shell에서 branch만 바꿔 실행한다.
+배포 branch는 `dev`로 고정한다. `scripts/deploy.sh`는 `ASKLAKE_DEPLOY_BRANCH`가 `dev`가
+아니면 start/deploy/restart를 중단한다. pair/feature branch를 직접 올리지 말고 먼저 `dev`에
+병합한 뒤 그 exact SHA의 image와 checkout을 사용한다.
 
-```bash
-ASKLAKE_DEPLOY_BRANCH=pair2 scripts/deploy.sh deploy
-```
+`deploy`는 remote checkout의 tracked·untracked 변경을 fetch 전후에 거부하고, pull 뒤
+`HEAD`와 `origin/dev`가 정확히 같은 commit인지 양방향 ancestor 검사로 확인한다. 통과한
+`git rev-parse HEAD`를 배포 로그/receipt의 EC2 source SHA로 사용한다.
+`start`와 `restart`도 EC2를 깨운 뒤 build/start 전에 remote branch가 `dev`이고 clean하며
+`HEAD == origin/dev`인지 같은 방식으로 읽기 전용 검증한다. 불일치 상태를 자동 checkout하거나
+빌드하지 않는다.
 
 재배포는 서버에서 다음 흐름을 실행한다.
 
 ```text
 EC2 running 보장
-  -> git fetch origin <branch>
-  -> git checkout <branch>
-  -> git pull --ff-only origin <branch>
+  -> git fetch origin dev
+  -> git checkout dev
+  -> git pull --ff-only origin dev
   -> deploy env preflight
   -> PostgreSQL만 준비한 metadata schema bootstrap
   -> docker compose up -d --build

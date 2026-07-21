@@ -161,11 +161,57 @@ class AirflowClient:
         return AirflowDagRun.from_payload(response)
 
     def get_dag_run(self, dag_run_id: str) -> AirflowDagRun:
-        response = self._request_json(
-            "GET",
-            f"/dags/{path_segment(self.config.dag_id)}/dagRuns/{path_segment(dag_run_id)}",
-        )
-        return AirflowDagRun.from_payload(response)
+        try:
+            response = self._request_json(
+                "GET",
+                f"/dags/{path_segment(self.config.dag_id)}/dagRuns/{path_segment(dag_run_id)}",
+            )
+            return AirflowDagRun.from_payload(response)
+        except Exception as direct_error:
+            details = getattr(direct_error, "details", None)
+            if (
+                not isinstance(details, dict)
+                or details.get("airflowStatus") != 404
+            ):
+                raise
+
+            # Airflow 3 can expose a completed run in the collection while its
+            # legacy dag_run_id detail route returns 404. Search a bounded,
+            # newest-first collection and still require one exact identifier.
+            for offset in range(0, 1000, 100):
+                collection = self._request_json(
+                    "GET",
+                    f"/dags/{path_segment(self.config.dag_id)}/dagRuns",
+                    query={"limit": "100", "offset": str(offset)},
+                )
+                items = collection.get("dag_runs")
+                if not isinstance(items, list):
+                    raise api_error(
+                        "AIRFLOW_BAD_RESPONSE",
+                        "Airflow DAG Run collection did not include dag_runs.",
+                        HTTP_502_BAD_GATEWAY,
+                    )
+                exact = [
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("dag_run_id") or item.get("run_id") or "")
+                    == dag_run_id
+                ]
+                if len(exact) == 1:
+                    return AirflowDagRun.from_payload(exact[0])
+                if len(exact) > 1:
+                    raise api_error(
+                        "AIRFLOW_BAD_RESPONSE",
+                        "Airflow returned duplicate exact DAG Run identifiers.",
+                        HTTP_502_BAD_GATEWAY,
+                    )
+                total = collection.get("total_entries")
+                if len(items) < 100 or (
+                    isinstance(total, int) and offset + len(items) >= total
+                ):
+                    break
+            raise direct_error
 
     def list_task_instances(self, dag_run_id: str, *, limit: int = 100) -> list[AirflowTaskInstance]:
         response = self._request_json(

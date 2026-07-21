@@ -1,7 +1,7 @@
 """Canonical helpers for Catalog schema bindings.
 
 Catalog payloads can come from the legacy frontend shape (``[name, type]``)
-or from API connectors that return objects.  Semantic and RAG code must use
+or from API connectors that return objects.  Semantic and query code must use
 one canonical representation so a selected physical column is never silently
 treated as a free-form string.
 """

@@ -42,6 +42,7 @@ class EtlJobQueryHooks:
         [Session, list[JobRowData], ActorContext],
         list[JobRowData],
     ]
+    visible: Callable[[JobRowData], bool] = lambda _job: True
 
 
 def list_jobs(
@@ -60,7 +61,11 @@ def list_jobs(
         etl_repository.list_jobs(db),
         actor_context,
     )
-    all_jobs = [job for job in visible_jobs if job.permissions.can_view]
+    all_jobs = [
+        job
+        for job in visible_jobs
+        if job.permissions.can_view and hooks.visible(job)
+    ]
     selected_statuses = set(statuses or [])
     filtered_jobs = [
         job
@@ -118,7 +123,7 @@ def list_job_statuses(
     jobs_by_id = {
         job.id: job
         for job in visible_jobs
-        if job.permissions.can_view
+        if job.permissions.can_view and hooks.visible(job)
     }
     return JobStatusListResponse(jobs=[
         JobStatusSnapshot(

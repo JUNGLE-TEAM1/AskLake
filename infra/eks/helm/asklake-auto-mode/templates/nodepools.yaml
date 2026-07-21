@@ -1,0 +1,54 @@
+{{- if .Values.enabled }}
+{{- range $name := list "general" "spark" }}
+{{- $pool := index $.Values $name -}}
+{{- include "asklake-auto-mode.requirePool" (dict "name" $name "pool" $pool) -}}
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: asklake-{{ $name }}
+  labels:
+    {{- include "asklake-auto-mode.labels" $ | nindent 4 }}
+spec:
+  template:
+    metadata:
+      labels:
+        asklake.io/workload-class: {{ $name | quote }}
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: asklake-{{ $name }}
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            {{- toYaml $pool.capacityTypes | nindent 12 }}
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values:
+            {{- toYaml $pool.instanceCategories | nindent 12 }}
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values: [{{ sub $pool.instanceGenerationMin 1 | quote }}]
+      {{- if eq $name "spark" }}
+      taints:
+        - key: asklake.io/workload-class
+          value: spark
+          effect: NoSchedule
+      {{- end }}
+      expireAfter: {{ $pool.expireAfter | quote }}
+      terminationGracePeriod: {{ $pool.terminationGracePeriod | quote }}
+  limits:
+    cpu: {{ $pool.limits.cpu | quote }}
+    memory: {{ $pool.limits.memory | quote }}
+  disruption:
+    consolidationPolicy: {{ $pool.disruption.consolidationPolicy }}
+    consolidateAfter: {{ $pool.disruption.consolidateAfter | quote }}
+    budgets:
+      - nodes: {{ $pool.disruption.budget | quote }}
+---
+{{ end }}
+{{ end }}

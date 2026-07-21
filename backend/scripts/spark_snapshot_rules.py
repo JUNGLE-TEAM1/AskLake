@@ -28,7 +28,14 @@ def supports_spark_snapshot_rules(rules):
     return True
 
 
-def apply_spark_snapshot_rules(spark, frame, rules, input_row_count=None):
+def apply_spark_snapshot_rules(
+    spark,
+    frame,
+    rules,
+    input_row_count=None,
+    *,
+    pre_materialized_transform_count=0,
+):
     enabled = [rule for rule in (rules or []) if rule and rule.get("enabled") is not False]
     transforms = [rule for rule in enabled if rule.get("kind") == "transform"]
     quality_rules = [rule for rule in enabled if rule.get("kind") == "quality"]
@@ -36,6 +43,30 @@ def apply_spark_snapshot_rules(spark, frame, rules, input_row_count=None):
     quarantine = None
     current = frame
     current_row_count = int(input_row_count) if input_row_count is not None else None
+    pre_materialized_transform_count = int(pre_materialized_transform_count or 0)
+    if (
+        pre_materialized_transform_count < 0
+        or pre_materialized_transform_count > len(transforms)
+    ):
+        raise ValueError("Invalid pre-materialized transform prefix count.")
+    if pre_materialized_transform_count and current_row_count is None:
+        raise ValueError("Pre-materialized transforms require an exact input row count.")
+    pre_materialized_rules = transforms[:pre_materialized_transform_count]
+    if any(
+        _pre_materialized_transform_expression(current, rule) is None
+        for rule in pre_materialized_rules
+    ):
+        raise ValueError("Pre-materialized transform prefix is not provably row preserving.")
+    transform["appliedStepCount"] += (
+        int(current_row_count or 0) * pre_materialized_transform_count
+    )
+    transform["preMaterializedTransformCount"] = pre_materialized_transform_count
+    transform["rowPreservingSqlExpressionCount"] += sum(
+        1
+        for rule in pre_materialized_rules
+        if rule.get("operation") == "sql_expression"
+    )
+    transforms = transforms[pre_materialized_transform_count:]
     segment = []
     transform_started_at = time.monotonic()
 
@@ -112,6 +143,64 @@ def apply_spark_snapshot_rules(spark, frame, rules, input_row_count=None):
     }
 
 
+def pre_materialize_row_preserving_transform_prefix(frame, rules):
+    """Apply only the leading transforms whose total, row-preserving shape is proven."""
+    transforms = [
+        rule
+        for rule in (rules or [])
+        if rule
+        and rule.get("enabled") is not False
+        and rule.get("kind") == "transform"
+    ]
+    current = frame
+    count = 0
+    for rule in transforms:
+        expression = _pre_materialized_transform_expression(current, rule)
+        output = _normalize_name(
+            _first(rule.get("outputColumns")) or _first(rule.get("inputColumns"))
+        )
+        if expression is None or not output:
+            break
+        current = current.withColumn(output, expression)
+        count += 1
+    return current, count
+
+
+def _pre_materialized_transform_expression(frame, rule):
+    operation = str(rule.get("operation") or "")
+    input_name = _resolve_column_name(frame, _first(rule.get("inputColumns")))
+    output = _normalize_name(
+        _first(rule.get("outputColumns")) or _first(rule.get("inputColumns"))
+    )
+    if not input_name or not output:
+        return None
+    if operation == "sql_expression":
+        expression = str((rule.get("parameters") or {}).get("expression") or "").strip()
+        return _safe_row_preserving_sql_expression(
+            frame,
+            rule,
+            expression,
+            input_name,
+        )
+    if operation not in {"cast", "copy", "rename"}:
+        return None
+    parameters = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+    output_type = rule.get("outputType") or parameters.get("targetType")
+    if output_type:
+        field = next(
+            (candidate for candidate in frame.schema.fields if candidate.name == input_name),
+            None,
+        )
+        source_type = field.dataType.simpleString() if field is not None else ""
+        target_type = _spark_type(output_type)
+        if (
+            source_type != target_type
+            or source_type not in {"bigint", "boolean", "string"}
+        ):
+            return None
+    return F.col(_quote(input_name))
+
+
 def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
     expression = str((rule.get("parameters") or {}).get("expression") or "").strip()
     output = _normalize_name(_first(rule.get("outputColumns")) or _first(rule.get("inputColumns")))
@@ -127,6 +216,16 @@ def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
             finally:
                 spark.catalog.dropTempView(view_name)
         else:
+            safe_expression = _safe_row_preserving_sql_expression(
+                frame,
+                rule,
+                expression,
+                input_name,
+            )
+            if safe_expression is not None:
+                transform["appliedStepCount"] += row_count
+                transform["rowPreservingSqlExpressionCount"] += 1
+                return frame.withColumn(output, safe_expression), None, row_count
             result = frame.withColumn(output, F.expr(expression))
         result_count = result.count()
         transform["appliedStepCount"] += row_count
@@ -157,6 +256,26 @@ def _apply_sql_rule(spark, frame, rule, transform, input_row_count=None):
         return frame.withColumn(output, fallback), None, row_count
 
 
+def _safe_row_preserving_sql_expression(frame, rule, expression, input_name):
+    """Compile the approved total SQL subset without a data-wide validation action."""
+    if not input_name:
+        return None
+    raw_input = str(_first(rule.get("inputColumns")) or "").strip()
+    identifier = re.escape(raw_input)
+    quoted_identifier = re.escape(f"`{raw_input.replace('`', '``')}`")
+    source_pattern = rf"(?:{identifier}|{quoted_identifier})"
+    normalized = str(expression or "").strip()
+    if re.fullmatch(source_pattern, normalized, flags=re.IGNORECASE):
+        return F.col(_quote(input_name))
+    if re.fullmatch(
+        rf"TRIM\s*\(\s*CAST\s*\(\s*{source_pattern}\s+AS\s+STRING\s*\)\s*\)",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        return F.trim(F.col(_quote(input_name)).cast("string"))
+    return None
+
+
 def _quarantine_all(frame, rule, reason):
     visible_columns = [column for column in frame.columns if not column.startswith("__asklake_")]
     record_columns = [F.col(_quote(column)).alias(column) for column in visible_columns]
@@ -181,7 +300,9 @@ def _empty_transform(configured_count):
         "configuredStepCount": configured_count,
         "droppedCount": 0,
         "errorCount": 0,
+        "preMaterializedTransformCount": 0,
         "quarantinedCount": 0,
+        "rowPreservingSqlExpressionCount": 0,
         "setNullCount": 0,
         "warnCount": 0,
     }

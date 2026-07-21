@@ -1,0 +1,211 @@
+name: EKS B Workload Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+      - pair1
+    paths:
+      - ".github/workflows/eks-b-workload-checks.yml"
+      - ".github/workflows/eks-image-delivery.yml"
+      - "airflow/**"
+      - "ai-server/**"
+      - "backend/**"
+      - "frontend/**"
+      - "infra/eks/helm/asklake-web/**"
+      - "infra/eks/helm/asklake-workloads/**"
+      - "infra/eks/terraform/**"
+      - "infra/eks/secrets/**"
+      - "infra/eks/values/workloads/**"
+      - "scripts/test-eks-runtime-secrets.mjs"
+      - "scripts/test-eks-image-source-ref.sh"
+      - "scripts/test-eks-trino-distributed-evidence.mjs"
+      - "scripts/deploy-eks-trino-distributed.sh"
+      - "scripts/lib/verify_eks_trino_active_workers.py"
+      - "scripts/verify-eks-trino-distributed-evidence.mjs"
+      - "scripts/verify-eks-trino-distributed-live.sh"
+      - "scripts/verify-eks-trino-distributed.sh"
+      - "scripts/verify-eks-runtime-secrets.mjs"
+      - "scripts/verify-eks-runtime-secrets.sh"
+      - "scripts/verify-eks-image-source-ref.sh"
+      - "scripts/verify-eks-web-workloads.sh"
+      - "scripts/verify-eks-ai-gateway-runtime.mjs"
+      - "scripts/test-eks-ai-gateway-runtime.mjs"
+      - "scripts/verify-eks-workloads.sh"
+      - "docs/02-architecture.md"
+      - "docs/03-api-reference.md"
+      - "docs/04-development-guide.md"
+      - "docs/backend-integration-readiness.md"
+      - "docs/system-guardrails.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workload-contract:
+    name: Helm and runtime contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.18.4
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          npm ci
+          python -m pip install -r requirements.txt
+
+      - name: Install and verify AI Gateway
+        run: |
+          python -m pip install -r ai-server/requirements.txt
+          python -m pytest -q ai-server/tests
+
+      - name: Verify Helm and AWS workload boundaries
+        run: |
+          scripts/test-eks-image-source-ref.sh
+          scripts/verify-eks-workloads.sh
+          scripts/verify-eks-web-workloads.sh
+          node scripts/test-eks-trino-distributed-evidence.mjs
+
+      - name: Verify Trino collector AWS storage contract
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python -m unittest tests.test_trino_result_storage_aws_contract -v
+
+      - name: Verify runtime Secret contracts and dev mappings
+        run: |
+          scripts/verify-eks-runtime-secrets.sh
+          node scripts/test-eks-ai-gateway-runtime.mjs
+
+      - name: Verify Kubernetes Spark recovery and MSK IAM adapter
+        working-directory: backend
+        run: npm run test:spark-kubernetes
+
+      - name: Verify bounded Kafka fixture boundary
+        working-directory: backend
+        run: npm run test:kafka-fixture-boundary
+
+      - name: Verify focused FastAPI runtime contracts
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q tests/test_ai_health_api.py tests/test_ai_gateway_mcp.py
+          python -m unittest \
+            tests.test_object_storage_mode \
+            tests.test_etl_job_delete \
+            tests.test_dashboard_live_results \
+            tests.test_eks_runtime_boundary -v
+
+      - name: Verify Airflow catalog wiring
+        working-directory: backend
+        run: npm run verify:airflow-catalog-wiring
+
+  amd64-images:
+    name: AMD64 image - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: frontend
+            context: ./frontend
+            file: ./frontend/Dockerfile
+            target: ""
+          - name: backend
+            context: ./backend
+            file: ./backend/Dockerfile
+            target: backend-runtime
+          - name: ai-gateway
+            context: ./ai-server
+            file: ./ai-server/Dockerfile
+            target: ""
+          - name: spark-runtime
+            context: ./backend
+            file: ./backend/Dockerfile
+            target: spark-runtime
+          - name: airflow
+            context: ./airflow
+            file: ./airflow/Dockerfile
+            target: ""
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build linux/amd64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: false
+          load: ${{ matrix.name == 'ai-gateway' }}
+          tags: asklake-ci/${{ matrix.name }}:test
+          provenance: false
+          cache-from: type=gha,scope=eks-b-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=eks-b-${{ matrix.name }}
+
+      - name: Smoke AI Gateway as Kubernetes numeric non-root user
+        if: matrix.name == 'ai-gateway'
+        run: |
+          test "$(docker image inspect asklake-ci/ai-gateway:test --format '{{.Config.User}}')" = "10001:10001"
+          container_id="$(docker run -d --read-only --tmpfs /tmp --user 10001:10001 \
+            -e APP_ENV=test -e PROVIDER=mock -e INTERNAL_AUTH_TOKEN=ci-internal-token \
+            -p 127.0.0.1:8090:8090 asklake-ci/ai-gateway:test)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8090/health | jq -e '.status=="ok" and .checks.internalAuth=="ready" and .checks.provider=="ready"' >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container_id"
+          exit 1
+
+  terraform-contract:
+    name: Terraform foundation contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.3
+
+      - name: Verify Terraform formatting and tests
+        working-directory: infra/eks/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+          terraform test

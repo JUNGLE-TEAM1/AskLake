@@ -1,7 +1,12 @@
 """Airflow, Spark, and Kafka run-state projections."""
 
+from datetime import datetime
 from typing import Any, Callable
 from fastapi import status
+from app.application.etl_airflow_projection import (
+    airflow_task_observation,
+    airflow_task_timing,
+)
 from app.application.etl_job_projection import (
     apply_job_command,
     continuous_config_from_request,
@@ -75,6 +80,7 @@ from app.application.etl_runtime_support import compact_storage_text, dag_step
 
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
+AIRFLOW_MISSING_RUN_FAILURE_GRACE_SECONDS = 60
 AIRFLOW_TASK_TITLES = {
     "receive_asklake_run": "1. Airflow DAG Run 접수",
     "validate_spark_request": "2. Spark 실행 요청 검증",
@@ -360,7 +366,22 @@ def record_airflow_sync_error(run: ETLRunModel, error: ApiError, synced_at: str)
     })
     task_states["airflowReservation"] = reservation
     run.task_states = task_states
-    if missing_count < AIRFLOW_MISSING_RUN_FAILURE_LIMIT:
+    reservation_started_at = str(
+        reservation.get("reservedAt") or run.started_at or ""
+    ).strip()
+    try:
+        elapsed_seconds = (
+            datetime.fromisoformat(synced_at.replace("Z", "+00:00"))
+            - datetime.fromisoformat(
+                reservation_started_at.replace("Z", "+00:00")
+            )
+        ).total_seconds()
+    except (TypeError, ValueError):
+        elapsed_seconds = 0
+    if (
+        missing_count < AIRFLOW_MISSING_RUN_FAILURE_LIMIT
+        or elapsed_seconds < AIRFLOW_MISSING_RUN_FAILURE_GRACE_SECONDS
+    ):
         return
 
     run.status = "failed"
@@ -458,6 +479,27 @@ def task_state_snapshot(task_instances: list[AirflowTaskInstance]) -> dict[str, 
         if task.task_id
     }
 
+def merge_airflow_task_state_snapshot(
+    previous: dict[str, Any],
+    current: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(current)
+    for key in (
+        "sparkExecution",
+        "sparkResult",
+        "catalogResult",
+        "airflowReservation",
+        "eksMvpFixture",
+        "day18Phase8",
+    ):
+        value = previous.get(key)
+        if isinstance(value, dict):
+            merged[key] = value
+    fault_attempts = previous.get("faultAttempts")
+    if isinstance(fault_attempts, list):
+        merged["faultAttempts"] = fault_attempts
+    return merged
+
 def first_problem_task(task_instances: list[AirflowTaskInstance]) -> AirflowTaskInstance | None:
     for task in task_instances:
         if task.asklake_status in {"failed", "blocked"}:
@@ -492,6 +534,9 @@ def dag_steps_from_airflow_sync(
     task_instances: list[AirflowTaskInstance],
 ) -> list[dict[str, Any]]:
     task_by_id = {task.task_id: task for task in task_instances if task.task_id}
+    task_states = run.get("taskStates") if isinstance(run.get("taskStates"), dict) else {}
+    spark_result = task_states.get("sparkResult") if isinstance(task_states.get("sparkResult"), dict) else {}
+    catalog_result = task_states.get("catalogResult") if isinstance(task_states.get("catalogResult"), dict) else {}
     run_status = str(run.get("status") or "running")
     run_state = str(run.get("airflowState") or run_status)
     submit_status = "success" if run_status in TERMINAL_RUN_STATUSES else "running"
@@ -514,22 +559,45 @@ def dag_steps_from_airflow_sync(
         logs = [f"Airflow Task Instance state: {airflow_state}"]
         if task and task.raw.get("try_number") is not None:
             logs.append(f"try_number={task.raw.get('try_number')}")
-        steps.append(dag_step(task_id, title, airflow_state, status_value, [
-            ["Airflow task", task_id],
-            ["Airflow state", airflow_state],
-        ], logs))
+        details, duration, completed_at = airflow_task_observation(
+            task_id,
+            task,
+            spark_result,
+            catalog_result,
+        )
+        steps.append(dag_step(
+            task_id,
+            title,
+            airflow_state,
+            status_value,
+            details,
+            logs,
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     extra_tasks = [
         task for task in task_instances
         if task.task_id and task.task_id not in AIRFLOW_TASK_TITLES
     ]
     for task in extra_tasks:
-        steps.append(dag_step(task.task_id, task_title(task.task_id), task.state or "-", task.asklake_status, [
-            ["Airflow task", task.task_id],
-            ["Airflow state", task.state or "-"],
-        ], [f"Airflow Task Instance state: {task.state or '-'}"]))
+        duration, completed_at = airflow_task_timing(task)
+        steps.append(dag_step(
+            task.task_id,
+            task_title(task.task_id),
+            task.state or "-",
+            task.asklake_status,
+            [
+                ["Airflow task", task.task_id],
+                ["Airflow state", task.state or "-"],
+            ],
+            [f"Airflow Task Instance state: {task.state or '-'}"],
+            duration=duration,
+            completed_at=completed_at,
+        ))
 
     return steps
+
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
     success = result.get("status") == "success"

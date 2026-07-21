@@ -932,7 +932,6 @@ export function SqlAnalysisPage({
           pending={continuousSql.pending}
           progressMessage={continuousSql.progressMessage}
           result={continuousSql.result}
-          servingMode={continuousSql.servingMode}
           staticDatasets={continuousSql.relationMix.staticDatasets}
           streamingDataset={continuousSql.relationMix.streamingDataset}
         />

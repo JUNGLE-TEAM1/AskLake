@@ -1,0 +1,74 @@
+{{- if .Values.enabled }}
+{{- $root := . }}
+{{- range $pool := list "general" "spark" }}
+{{- $workload := index $root.Values $pool }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-day17-{{ $pool }}-scale
+  namespace: {{ $root.Values.namespace }}
+  labels:
+    app.kubernetes.io/name: asklake-day17-{{ $pool }}-scale
+    app.kubernetes.io/part-of: asklake
+    asklake.io/day17-run: {{ $root.Values.runFingerprint | quote }}
+spec:
+  replicas: {{ $workload.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asklake-day17-{{ $pool }}-scale
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asklake-day17-{{ $pool }}-scale
+        app.kubernetes.io/part-of: asklake
+        asklake.io/day17-run: {{ $root.Values.runFingerprint | quote }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      nodeSelector:
+        asklake.io/workload-class: {{ $pool }}
+        kubernetes.io/arch: amd64
+      {{- if eq $pool "spark" }}
+      tolerations:
+        - key: asklake.io/workload-class
+          operator: Equal
+          value: spark
+          effect: NoSchedule
+      {{- end }}
+      containers:
+        - name: reservation
+          image: {{ $root.Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c", "import time; time.sleep(3600)"]
+          resources:
+            {{- toYaml $workload.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.negativeSparkProbe }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: asklake-day17-spark-negative
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: asklake-day17-spark-negative
+    app.kubernetes.io/part-of: asklake
+    asklake.io/day17-run: {{ .Values.runFingerprint | quote }}
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 900
+  nodeSelector:
+    asklake.io/workload-class: spark
+    kubernetes.io/arch: amd64
+  containers:
+    - name: negative-probe
+      image: {{ .Values.image | quote }}
+      imagePullPolicy: IfNotPresent
+      command: ["python", "-c", "import time; time.sleep(600)"]
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 100m, memory: 128Mi}
+{{- end }}
+{{- end }}

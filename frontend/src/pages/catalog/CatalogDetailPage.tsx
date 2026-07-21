@@ -97,7 +97,6 @@ export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: Ca
 
   return (
     <>
-      {dataset.rag && <Badge shape={shape} size="sm">RAG</Badge>}
       <StatusBadge shape={shape} size="sm" tone={statusTone}>{statusMeta.label}</StatusBadge>
     </>
   );

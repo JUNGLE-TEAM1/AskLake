@@ -42,8 +42,6 @@ AWS S3
 
 Iceberg Warehouse와 Query Result bucket은 이미 만들어 두어도 되지만 현재 `dev` runtime은 사용하지 않는다. Trino/query engine 복원은 별도 이슈와 검증을 거쳐야 한다.
 
-이 단일 EC2 Compose는 demo/staging topology이며 HA 또는 production-ready ClickHouse topology로 표시하지 않는다. ClickHouse Realtime Serving V2의 production 목표인 2개 replica, 3개 Keeper, 2개 이상의 Kafka Connect worker와 backend replica는 [V2 구현 명세](ASKLAKE_CLICKHOUSE_REALTIME_IMPLEMENTATION_SPEC.md)의 cutover gate와 별도 운영 승인을 통과한 뒤 적용한다. PR09까지의 코드 merge만으로 production traffic을 전환하지 않는다.
-
 외부 요청은 Caddy가 받는다.
 
 ```text
@@ -352,46 +350,3 @@ cd backend
 cd ..
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
 ```
-
-## ClickHouse Realtime V2 foundation deployment
-
-PR02에서 추가된 `clickhouse-realtime-v2` profile은 누적 PR09 구현 이후 production Compose의 기본 profile로 전환됐다. Kafka Engine/ClickHouse V1 profile은 기본 기동에서 제외하며 V2 Kafka Connect가 단일 consumer owner다.
-
-Production profile은 아래 경계만 제공한다.
-
-- `clickhouse/clickhouse-server:26.3.17.4`의 검증된 OCI index digest를 Keeper와 ClickHouse에 동일하게 사용
-- 단일 Keeper, 단일 ClickHouse, 단일 Kafka Connect worker와 별도 named volume
-- ClickHouse final process의 plaintext native/interserver HTTP/MySQL/PostgreSQL/gRPC listener 제거(`127.0.0.1:9000`은 entrypoint init bootstrap 동안만 사용), HTTPS 8443·secure native 9440·interserver HTTPS 9010, strict CA healthcheck와 Connect JVM truststore
-- host port 없이 `clickhouse_v2_internal` private network 안에서만 ClickHouse와 Connect REST 노출
-- admin, ingest, materializer, reader, migration, observer password의 길이·placeholder·상호 중복 fail-closed
-- Kafka Connect base digest와 공식 ClickHouse Sink v1.4.0 release asset checksum 검증
-
-Kafka Connect production image는 [Dockerfile](../deploy/kafka-connect/Dockerfile)로 build/publish한 뒤 server `deploy/.env`의 `KAFKA_CONNECT_V2_IMAGE`를 immutable `name@sha256:...`로 바꿔야 한다. example의 invalid registry/digest placeholder로 실제 profile을 배포하지 않는다. ClickHouse certificate/key/CA는 repository 밖의 readable host path에 준비하고 connector properties secret은 mode `0600`으로 제한한다.
-
-ClickHouse Realtime V2를 명시적으로 선택하는 배포만 누적 PR09의 connector registration과 live probe를 사용해 아래 값을 활성화한다. 기본 Production Compose는 `COMPOSE_PROFILES=trino`, `CONTINUOUS_SQL_SERVING_MODE=iceberg`이며 이 profile을 기동하지 않는다.
-
-```dotenv
-CLICKHOUSE_REALTIME_V2_ENABLED=true
-KAFKA_CONNECT_SINK_ENABLED=true
-CLICKHOUSE_REALTIME_CONSUMER_OWNER=kafka_connect_v2
-KAFKA_CONNECT_URL=http://kafka-connect-v2:8083
-KAFKA_CONNECT_CONNECTOR_NAME=asklake-clickhouse-realtime-v2
-```
-
-실제 V2 profile 값을 준비한 뒤 기존 production preflight를 통과해야 한다. Profile-only shadow도 strict TLS listener, readable cert/secret file, pairwise-distinct password, immutable ClickHouse/Connect image digest와 Compose network wiring을 검사한다. 세 flag·owner를 활성화하면 private Connect origin과 stable connector name을 추가로 검사하고 Kafka Engine V1의 active ownership을 거부한다. 기존 V1 backend ClickHouse credential은 V2 identity로 바꾸지 않는다.
-
-```bash
-scripts/verify-deploy-env.sh deploy/.env deploy/docker-compose.prod.yml
-```
-
-Schema는 runtime startup DDL이 아니라 Alembic이 소유한다. `scripts/deploy.sh`는 PostgreSQL 기동 후 web/worker rollout과 legacy metadata bootstrap 전에 다음 one-shot을 실행한다.
-
-```bash
-cd deploy
-docker compose --env-file .env -f docker-compose.prod.yml run --rm --no-deps \
-  backend python -m alembic -c alembic.ini upgrade head
-```
-
-`0016_clickhouse_realtime_v2_foundation`은 신규 V2 table 10개만 추가한다. disabled rollback은 owner와 두 flag를 끄고 schema/volume을 보존한다. production downgrade, offset reset, volume 삭제는 금지한다.
-
-현재 topology는 단일-node 배포이며 HA가 아니다. strict TLS, six-account RBAC, connector task, Kafka ingest, automatic JOIN과 Catalog/SSE publication은 격리 container E2E로 검증했다. clean host reboot, 72시간 soak, backup/restore와 multi-node failover는 별도 operator gate다. exact artifact, local/prod 차이와 검증 결과는 [V2 기반시설 운영 계약](clickhouse-realtime-v2-foundation.md)을 따른다.

@@ -31,11 +31,6 @@ from app.models import (
     ETLJobModel,
     ETLRunModel,
     PermissionGrantModel,
-    RagClassificationRunModel,
-    RagColumnRecommendationModel,
-    RagDatasetProfileModel,
-    RagIndexJobModel,
-    RagIndexManifestModel,
     ResourceLockModel,
     SemanticDimensionModel,
     SemanticMetricModel,
@@ -61,7 +56,6 @@ from app.schemas.catalog import (
 )
 from app.schemas.common import ErrorCode
 from app.schemas.iceberg import IcebergWriterTarget
-from app.services.clickhouse_client import ClickHouseClient, qualified_clickhouse_table
 from app.services.governance_enforcement import require_governed_access
 from app.services.iceberg_writer_service import IcebergWriterService
 from app.services.lake_storage_service import LocalLakeStorageService
@@ -69,7 +63,6 @@ from app.services.object_storage import object_storage_runtime
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 
-TERMINAL_RAG_STATUSES = {"canceled", "cancelled", "completed", "failed", "ready", "rejected", "success", "succeeded"}
 ACTIVE_RUN_STATUSES = {"queued", "running", "starting", "submitted"}
 
 
@@ -183,7 +176,13 @@ def build_deletion_impact(
 ) -> CatalogDatasetDeletionImpact:
     blockers: list[CatalogDatasetDeletionBlocker] = []
     artifacts: list[CatalogDatasetDeletionArtifact] = []
-    retained = ["audit events", "completed ETL/SQL run history", "stopped producer job definitions", "deletion receipt"]
+    retained = [
+        "audit events",
+        "completed ETL/SQL run history",
+        "stopped producer job definitions",
+        "historical RAG metadata and artifacts",
+        "deletion receipt",
+    ]
     add_workload_blockers(db, dataset.id, blockers)
     add_dependency_blockers(db, dataset.id, payload, blockers)
     add_dataset_artifacts(artifacts, payload)
@@ -302,51 +301,13 @@ def _add_dependency_blockers_with_dashboard_widgets(
         blockers.append(blocker("catalog_dataset", downstream_id, downstream.name if downstream else downstream_id, "downstream Dataset lineage가 남아 있습니다."))
 
 
-def add_rag_blockers(
-    db: Session,
-    dataset_id: str,
-    blockers: list[CatalogDatasetDeletionBlocker],
-) -> list[RagIndexJobModel]:
-    rag_jobs = list(db.scalars(select(RagIndexJobModel).where(RagIndexJobModel.dataset_id == dataset_id)))
-    # RAG artifacts are owned by the dataset and are purged or detached during
-    # the confirmed deletion. An old in-flight job must not make the dataset
-    # permanently undeletable.
-    return rag_jobs
-
-    for run in db.scalars(select(RagClassificationRunModel).where(RagClassificationRunModel.dataset_id == dataset_id)):
-        if str(run.status).casefold() not in TERMINAL_RAG_STATUSES:
-            blockers.append(blocker("rag_classification", run.id, run.id, "RAG 분류 작업이 진행 중입니다."))
-    rag_jobs = list(db.scalars(select(RagIndexJobModel).where(RagIndexJobModel.dataset_id == dataset_id)))
-    for job in rag_jobs:
-        if str(job.status).casefold() not in TERMINAL_RAG_STATUSES:
-            blockers.append(blocker("rag_index_job", job.id, job.id, "RAG 색인 작업이 진행 중입니다."))
-    return rag_jobs
-
-
-def add_rag_artifacts(
-    db: Session,
-    dataset_id: str,
-    rag_jobs: list[RagIndexJobModel],
-    artifacts: list[CatalogDatasetDeletionArtifact],
-) -> None:
-    for manifest in db.scalars(select(RagIndexManifestModel).where(RagIndexManifestModel.dataset_id == dataset_id)):
-        artifacts.append(CatalogDatasetDeletionArtifact(kind="opensearch_index", location=manifest.index_name))
-    for job in rag_jobs:
-        for index_name in (job.target_index, job.validated_index, job.activation_target_index, job.activation_previous_index):
-            if index_name:
-                artifacts.append(CatalogDatasetDeletionArtifact(kind="opensearch_index", location=index_name))
-        for kind, location in (("rag_parent_table", job.parent_table), ("rag_chunk_table", job.chunk_table), ("rag_checkpoint", job.checkpoint_path)):
-            if location:
-                artifacts.append(CatalogDatasetDeletionArtifact(kind=kind, location=location))
-
-
 def add_artifact_ownership_blockers(
     dataset: CatalogDatasetResponse,
     artifacts: list[CatalogDatasetDeletionArtifact],
     blockers: list[CatalogDatasetDeletionBlocker],
 ) -> None:
     for artifact in artifacts:
-        if artifact.kind in {"storage", "rag_checkpoint"} and not is_managed_storage_location(artifact.location, dataset):
+        if artifact.kind == "storage" and not is_managed_storage_location(artifact.location, dataset):
             blockers.append(blocker("storage", artifact.location, artifact.location, "AskLake 관리 경로임을 확인할 수 없습니다."))
         if artifact.kind == "iceberg_table":
             table_parts = [item.strip('`" ') for item in artifact.location.split(".") if item.strip('`" ')]
@@ -366,16 +327,19 @@ class CatalogPhysicalPurger:
             if artifact.kind == "storage":
                 self._purge_storage(artifact.location, dataset)
             elif artifact.kind == "iceberg_table":
-                self._drop_rag_table(artifact.location)
+                self._drop_iceberg_artifact(artifact.location)
             elif artifact.kind == "clickhouse_table":
                 self._drop_clickhouse_artifact(artifact.location)
-            elif artifact.kind == "opensearch_index":
-                self._delete_opensearch_index(artifact.location)
-            elif artifact.kind in {"rag_parent_table", "rag_chunk_table"}:
-                if self._is_managed_rag_table(artifact.location):
-                    self._drop_rag_table(artifact.location)
-            elif artifact.kind == "rag_checkpoint":
-                self._purge_storage(artifact.location, dataset)
+            elif artifact.kind in {
+                "opensearch_index",
+                "rag_parent_table",
+                "rag_chunk_table",
+                "rag_checkpoint",
+            }:
+                # Old deletion receipts can still carry retired RAG artifacts.
+                # They remain visible as historical evidence but are never
+                # physically deleted without a separate operator approval.
+                continue
 
     def _drop_iceberg_table(self, value: dict[str, Any]) -> None:
         if str(value.get("catalog") or "") != settings.trino_catalog:
@@ -398,6 +362,10 @@ class CatalogPhysicalPurger:
                 raise
 
     def _drop_clickhouse_table(self, value: dict[str, Any]) -> None:
+        if not settings.clickhouse_realtime_v2_enabled:
+            raise RuntimeError("CATALOG_DATASET_CLICKHOUSE_RUNTIME_DISABLED")
+        from app.services.clickhouse_client import ClickHouseClient, qualified_clickhouse_table
+
         database = str(value.get("database") or "")
         table = str(value.get("table") or "")
         if database != settings.clickhouse_database:
@@ -414,7 +382,7 @@ class CatalogPhysicalPurger:
             raise RuntimeError("CATALOG_DATASET_INVALID_CLICKHOUSE_TABLE")
         self._drop_clickhouse_table({"database": database, "table": table})
 
-    def _drop_rag_table(self, location: str) -> None:
+    def _drop_iceberg_artifact(self, location: str) -> None:
         parts = [item.strip('`" ') for item in location.split(".") if item.strip('`" ')]
         if len(parts) == 3:
             catalog, namespace, table = parts
@@ -423,11 +391,6 @@ class CatalogPhysicalPurger:
         else:
             catalog, namespace, table = settings.trino_catalog, settings.trino_schema, parts[0] if parts else ""
         self._drop_iceberg_table({"catalog": catalog, "schema": namespace, "table": table, "format": "iceberg"})
-
-    @staticmethod
-    def _is_managed_rag_table(location: str) -> bool:
-        parts = [item.strip('`" ') for item in location.split(".") if item.strip('`" ')]
-        return len(parts) != 3 or parts[0] == settings.trino_catalog
 
     def _purge_storage(self, location: str, dataset: CatalogDatasetResponse) -> None:
         if not is_managed_storage_location(location, dataset):
@@ -450,13 +413,6 @@ class CatalogPhysicalPurger:
             raise RuntimeError("CATALOG_DATASET_UNMANAGED_STORAGE")
         if target.exists():
             shutil.rmtree(target) if target.is_dir() else target.unlink()
-
-    def _delete_opensearch_index(self, index_name: str) -> None:
-        # RAG/OpenSearch is no longer part of the product. Existing historical
-        # deletion records may still list an index, but there is no live index
-        # service to contact and the catalog deletion can safely continue.
-        return None
-
 
 def process_catalog_dataset_deletion_by_id(deletion_id: str) -> None:
     with SessionLocal() as db:
@@ -686,7 +642,11 @@ def add_dataset_artifacts(artifacts: list[CatalogDatasetDeletionArtifact], paylo
             location=".".join(str(query_table.get(key) or "") for key in ("catalog", "schema", "table")),
         ))
     clickhouse_table = payload.get("clickhouseTable")
-    if isinstance(clickhouse_table, dict) and clickhouse_table.get("table"):
+    if (
+        settings.clickhouse_realtime_v2_enabled
+        and isinstance(clickhouse_table, dict)
+        and clickhouse_table.get("table")
+    ):
         artifacts.append(CatalogDatasetDeletionArtifact(
             kind="clickhouse_table",
             location=f"{clickhouse_table.get('database')}.{clickhouse_table.get('table')}",

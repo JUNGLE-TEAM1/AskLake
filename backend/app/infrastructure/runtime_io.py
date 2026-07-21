@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import threading
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -42,6 +43,70 @@ class CallableKafkaRuntimeGateway:
         return self._handler(job, runtime, action, options)
 
 
+class BridgeProgressFileWatcher:
+    """Forward Kubernetes bridge identity updates before the process exits."""
+
+    def __init__(
+        self,
+        progress_file: Path | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        self._progress_file = progress_file
+        self._progress_callback = progress_callback
+        self._last_content: str | None = None
+        self._error: Exception | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._progress_file is None or self._progress_callback is None:
+            return
+        self._progress_file.unlink(missing_ok=True)
+        self._thread = threading.Thread(
+            target=self._run,
+            name="asklake-spark-kubernetes-progress",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> Exception | None:
+        if self._thread is None:
+            return None
+        self._stop.set()
+        self._thread.join(timeout=1)
+        self._consume()
+        try:
+            self._progress_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return self._error
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.05):
+            self._consume()
+
+    def _consume(self) -> None:
+        if self._error is not None or self._progress_file is None or self._progress_callback is None:
+            return
+        try:
+            content = self._progress_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            self._error = exc
+            return
+        if content == self._last_content:
+            return
+        self._last_content = content
+        try:
+            progress = json.loads(content)
+            if not isinstance(progress, dict):
+                raise ValueError("Spark Kubernetes progress state must be a JSON object")
+            self._progress_callback(progress)
+        except Exception as exc:
+            self._error = exc
+
+
 class SubprocessNodeBridge:
     """Execute a Node bridge and normalize timeout/process/response failures."""
 
@@ -65,6 +130,8 @@ class SubprocessNodeBridge:
         error_marker: str,
         timeout_seconds: int,
         timeout_recovery: Callable[[], dict[str, Any]] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        progress_file: Path | None = None,
     ) -> dict[str, Any]:
         script_path = self._scripts_dir / script_name
         bridge_id = current_correlation_id() or _bridge_request_id(payload)
@@ -74,31 +141,38 @@ class SubprocessNodeBridge:
             "ASKLAKE_NODE_BRIDGE_CORRELATION_ID": bridge_id,
             "ASKLAKE_NODE_BRIDGE_IDEMPOTENCY_KEY": _payload_fingerprint(payload),
         }
+        progress_watcher = BridgeProgressFileWatcher(progress_file, progress_callback)
+        progress_watcher.start()
         try:
-            result = self._runner(
-                ["node", str(script_path)],
-                cwd=str(self._backend_dir),
-                input=json.dumps(payload, ensure_ascii=False),
-                text=True,
-                capture_output=True,
-                encoding="utf-8",
-                env=bridge_environment,
-                errors="replace",
-                timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
-            if timeout_recovery is not None:
-                try:
-                    recovery.update({"result": timeout_recovery(), "succeeded": True})
-                except Exception as recovery_error:
-                    recovery.update({"error": str(recovery_error), "succeeded": False})
-            raise ApiError(
-                "BACKEND_BRIDGE_TIMEOUT",
-                f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
-                status.HTTP_504_GATEWAY_TIMEOUT,
-                {"recovery": recovery, "timeoutSeconds": timeout_seconds},
-            ) from exc
+            try:
+                result = self._runner(
+                    ["node", str(script_path)],
+                    cwd=str(self._backend_dir),
+                    input=json.dumps(payload, ensure_ascii=False),
+                    text=True,
+                    capture_output=True,
+                    encoding="utf-8",
+                    env=bridge_environment,
+                    errors="replace",
+                    timeout=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as exc:
+                recovery: dict[str, Any] = {"attempted": timeout_recovery is not None}
+                if timeout_recovery is not None:
+                    try:
+                        recovery.update({"result": timeout_recovery(), "succeeded": True})
+                    except Exception as recovery_error:
+                        recovery.update({"error": str(recovery_error), "succeeded": False})
+                raise ApiError(
+                    "BACKEND_BRIDGE_TIMEOUT",
+                    f"{script_name} exceeded its derived {timeout_seconds}s bridge timeout.",
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    {"recovery": recovery, "timeoutSeconds": timeout_seconds},
+                ) from exc
+        finally:
+            progress_error = progress_watcher.stop()
+            if progress_error is not None:
+                raise progress_error
 
         stdout = result.stdout or ""
         stderr = result.stderr or ""
