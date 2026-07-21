@@ -207,7 +207,7 @@ async function getWithDevFallback<T>(path: string): Promise<T> {
 }
 
 async function getBackendDirect<T>(path: string): Promise<T> {
-  const response = await fetch(`${directBackendBaseUrl}${path}`);
+  const response = await fetch(`${directBackendBaseUrl}${path}`, { credentials: "include" });
   if (response.ok) return await response.json() as T;
   const text = await response.text().catch(() => "");
   throw new Error(text || `Backend ${response.status} ${response.statusText}`);
@@ -216,6 +216,7 @@ async function getBackendDirect<T>(path: string): Promise<T> {
 async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`${directBackendBaseUrl}${path}`, {
     body: JSON.stringify(body),
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });

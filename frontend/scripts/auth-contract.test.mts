@@ -35,3 +35,13 @@ test("signup visibility follows the backend session capability", () => {
   assert.doesNotMatch(authPage, /VITE_AUTH_PUBLIC_SIGNUP/);
   assert.match(authApi, /post<AuthUserResponse>\("\/api\/auth\/signup", payload\)/);
 });
+
+test("direct development source requests preserve the login session", () => {
+  const sourceConnectorService = source("src/services/sourceConnectorService.ts");
+  const directRequests = sourceConnectorService.match(/fetch\(`\$\{directBackendBaseUrl\}\$\{path\}`[\s\S]*?\);/g) ?? [];
+
+  assert.equal(directRequests.length, 2);
+  for (const request of directRequests) {
+    assert.match(request, /credentials: "include"/);
+  }
+});
