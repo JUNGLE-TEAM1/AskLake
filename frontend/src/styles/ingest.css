@@ -9,10 +9,6 @@
   gap: 20px;
 }
 
-.jobs-panel-metrics {
-  padding: 16px 20px 20px;
-}
-
 .owner-chip,
 .tag-chip {
   display: inline-flex;

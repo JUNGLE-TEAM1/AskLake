@@ -2,11 +2,9 @@ import { useCallback, useMemo, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 
-import { Activity, AlertCircle, Check, Filter, ListChecks, Plus, Search, X } from "lucide-react";
+import { AlertCircle, Check, Filter, ListChecks, Plus, Search, X } from "lucide-react";
 
 import { SourceBrandIcon } from "../../../components/source/SourceBrand";
-
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { Button } from "@/components/ui/button";
 
@@ -25,7 +23,7 @@ import { cn } from "@/lib/utils";
 import type { AuditResult, JobCommand, JobListFacets, JobListQuery, JobRowData, JobScheduleKind, JobStatus } from "../../../types";
 
 import { OwnerIdentity, StatusPill, getJobListSourceDisplay, hasLatestSuccessfulRun } from "./jobDetailModel";
-import { JobListActionIcon, JobListActionKind, JobMetric, JobMetricTone, JobsTableRow, LatestRunModalSelection, filterJobsBySearch, formatJobLastRun, formatJobSchedule, formatNextScheduledRun, getJobActionButtonVariant, getJobListActionButtonClassName, getJobListActions, getJobMetrics, getJobStatusDisplay, getJobTableRowClassName, getJobsQueryPath, getLatestRunOutcome, getNextScheduledRunDate, hasSameStatuses, matchesJobListQuery } from "./jobShared";
+import { JobListActionIcon, JobListActionKind, JobsTableRow, LatestRunModalSelection, filterJobsBySearch, formatJobLastRun, formatJobSchedule, formatNextScheduledRun, getJobActionButtonVariant, getJobListActionButtonClassName, getJobListActions, getJobStatusDisplay, getJobTableRowClassName, getJobsQueryPath, getLatestRunOutcome, getNextScheduledRunDate, matchesJobListQuery } from "./jobShared";
 import { RunDagModal } from "./SnapshotJobRunsPage";
 
 export function JobsLandingPage({
@@ -51,9 +49,6 @@ export function JobsLandingPage({
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
   const [latestRunModalSelection, setLatestRunModalSelection] = useState<LatestRunModalSelection | null>(null);
-  const metrics = getJobMetrics(jobListFacets);
-  const failureFilterActive = hasSameStatuses(jobQuery.statuses, ["failed"]);
-  const failedJobCount = jobListFacets.statusCounts.failed;
   const filteredJobs = useMemo(
     () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
     [excludedJobIds, jobs, searchQuery],
@@ -98,19 +93,6 @@ export function JobsLandingPage({
     });
   };
 
-  const toggleFailureFilter = () => {
-    if (failureFilterActive) {
-      setSearchQuery("");
-      updateJobQuery({});
-      return;
-    }
-    updateJobQuery({
-      ...jobQuery,
-      lastRunOutcome: undefined,
-      statuses: ["failed"],
-    });
-  };
-
   return (
     <div className="jobs-landing">
       <div className="flex min-h-10 items-center justify-end" data-page-actions="jobs">
@@ -120,36 +102,6 @@ export function JobsLandingPage({
         </Button>
       </div>
       <div className="content-main jobs-panel-stack">
-        <Panel className="jobs-metrics-card">
-          <PanelHeader
-            icon={<Activity size={16} />}
-            iconClassName="size-11 border border-blue-100 bg-white text-blue-700 shadow-sm [&_svg]:size-[22px]"
-            size="section"
-            title="작업 현황"
-          />
-          <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {metrics.map((metric) => (
-              <JobStatusFilterCard
-                active={hasSameStatuses(jobQuery.statuses, metric.statuses)}
-                key={metric.label}
-                metric={metric}
-                onSelect={() => updateJobQuery({
-                  ...jobQuery,
-                  statuses: metric.statuses,
-                })}
-              />
-            ))}
-          </div>
-          {(failedJobCount > 0 || failureFilterActive) && (
-            <div className="px-5 pb-5">
-              <JobFailureAlert
-                active={failureFilterActive}
-                count={failedJobCount}
-                onToggle={toggleFailureFilter}
-              />
-            </div>
-          )}
-        </Panel>
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
           emptyAction={hasSearchQuery ? <Button type="button" variant="outline" onClick={clearSearch}>검색어 지우기</Button> : undefined}
@@ -181,78 +133,6 @@ export function JobsLandingPage({
         />
       )}
     </div>
-  );
-}
-
-export function JobStatusFilterCard({
-  active,
-  metric,
-  onSelect,
-}: {
-  active: boolean;
-  metric: JobMetric;
-  onSelect: () => void;
-}) {
-  const toneClassName: Record<JobMetricTone, { active: string; dot: string }> = {
-    running: { active: "border-emerald-300 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200", dot: "bg-emerald-500" },
-    scheduled: { active: "border-blue-300 bg-blue-50 text-blue-950 ring-1 ring-blue-200", dot: "bg-blue-500" },
-    stopped: { active: "border-amber-300 bg-amber-50 text-amber-950 ring-1 ring-amber-200", dot: "bg-amber-500" },
-    total: { active: "border-slate-400 bg-slate-100 text-slate-950 ring-1 ring-slate-300", dot: "bg-slate-500" },
-  };
-  const tone = toneClassName[metric.tone];
-
-  return (
-    <Button
-      aria-pressed={active}
-      className={`group h-[100px] min-w-0 items-stretch justify-start rounded-lg border px-5 py-4 text-left shadow-none transition-colors ${active ? tone.active : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"}`}
-      type="button"
-      variant="outline"
-      onClick={onSelect}
-    >
-      <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${tone.dot}`} aria-hidden="true" />
-      <span className="grid min-w-0 gap-1.5">
-        <strong className="text-3xl font-bold leading-none tracking-normal text-slate-950">{metric.value}</strong>
-        <span className="truncate text-base font-semibold tracking-normal">{metric.label}</span>
-      </span>
-    </Button>
-  );
-}
-
-export function JobFailureAlert({
-  active,
-  count,
-  onToggle,
-}: {
-  active: boolean;
-  count: number;
-  onToggle: () => void;
-}) {
-  const hasFailures = count > 0;
-
-  return (
-    <Alert
-      className="flex min-h-20 items-center gap-3 [&>svg]:static [&>svg~*]:pl-0"
-      variant={hasFailures ? "destructive" : "default"}
-    >
-      <AlertCircle className="!size-5 shrink-0" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <AlertTitle className="text-base">
-          {hasFailures ? `현재 실패 상태인 작업이 ${count}개 있습니다.` : "현재 실패 상태인 작업이 없습니다."}
-        </AlertTitle>
-        <AlertDescription>
-          {hasFailures ? "작업 상세와 실행 이력에서 실패 원인을 확인하거나 작업을 재실행할 수 있습니다." : "필터를 해제하면 전체 작업을 다시 볼 수 있습니다."}
-        </AlertDescription>
-      </div>
-      <Button
-        className={`!grid h-9 min-w-[124px] shrink-0 place-items-center px-0 text-sm leading-none ${hasFailures && !active ? "border-red-300 bg-white text-red-700 hover:border-red-400 hover:bg-red-100" : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"}`}
-        size="sm"
-        type="button"
-        variant="outline"
-        onClick={onToggle}
-      >
-        <span className="block w-full text-center">{active ? "전체 작업 보기" : "실패 작업 보기"}</span>
-      </Button>
-    </Alert>
   );
 }
 

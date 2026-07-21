@@ -105,36 +105,12 @@ export function getJobTableRowClassName(status: JobStatus) {
   return statusAccentClassName[status];
 }
 
-export type JobMetricTone = "total" | "running" | "scheduled" | "stopped";
-
-export type JobMetric = {
-  label: string;
-  statuses?: JobStatus[];
-  tone: JobMetricTone;
-  value: string;
-};
-
 export type LatestRunModalSelection = {
   fallbackJob: JobRowData;
   fallbackRun: JobRunSummary;
   jobId: string;
   runId: string;
 };
-
-export function getJobMetrics(facets: JobListFacets): JobMetric[] {
-  return [
-    { label: "전체 작업", tone: "total", value: String(facets.total) },
-    { label: jobStatusMeta.running.label, statuses: ["running"], tone: "running", value: String(facets.statusCounts.running) },
-    { label: jobStatusMeta.scheduled.label, statuses: ["scheduled"], tone: "scheduled", value: String(facets.statusCounts.scheduled) },
-    { label: "자동 실행 중지", statuses: ["stopped"], tone: "stopped", value: String(facets.statusCounts.stopped) },
-  ];
-}
-
-export function hasSameStatuses(first?: JobStatus[], second?: JobStatus[]) {
-  if (!first?.length && !second?.length) return true;
-  if (!first || !second || first.length !== second.length) return false;
-  return first.every((status) => second.includes(status));
-}
 
 export function isContinuousKafkaJob(job: JobRowData) {
   return job.executionMode === "continuous";
