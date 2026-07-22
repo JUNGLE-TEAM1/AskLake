@@ -1,0 +1,12 @@
+global:
+  workloadIdentityMode: pod_identity
+
+serviceAccounts:
+  backend:
+    annotations: {}
+  trino:
+    annotations: {}
+  mskSmoke:
+    annotations: {}
+  spark:
+    annotations: {}

@@ -1,0 +1,9 @@
+**
+!ai-server/
+!ai-server/requirements.txt
+!ai-server/app/
+!ai-server/app/**
+!infra/
+!infra/eks/
+!infra/eks/images/
+!infra/eks/images/ai-gateway.Dockerfile

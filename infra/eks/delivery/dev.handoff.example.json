@@ -1,0 +1,108 @@
+{
+  "contractVersion": "1.1",
+  "environment": "dev",
+  "readiness": "planning",
+  "runtimeBoundary": {
+    "kafkaRuntime": "msk-serverless",
+    "kafkaAuth": "iam",
+    "trinoRuntime": "eks-single-coordinator",
+    "continuousOwner": "external-ec2",
+    "fixtureProducerLocation": "outside-eks",
+    "replayWorkloadOnEks": false
+  },
+  "kubernetes": {
+    "clusterName": null,
+    "namespace": "asklake-dev",
+    "nodeArchitecture": "linux/amd64",
+    "serviceAccounts": {
+      "frontend": "asklake-frontend",
+      "backend": "asklake-backend",
+      "aiGateway": "asklake-ai-gateway",
+      "airflow": "asklake-airflow",
+      "trino": "asklake-trino",
+      "mskSmoke": "asklake-msk-smoke",
+      "spark": "asklake-spark"
+    }
+  },
+  "images": {
+    "frontend": null,
+    "backend": null,
+    "aiGateway": null,
+    "airflow": null,
+    "sparkRuntime": null,
+    "trino": null
+  },
+  "configReferences": {
+    "runtimeConfigMap": "asklake-runtime",
+    "backendSecret": "asklake-backend-runtime",
+    "aiGatewaySecret": "asklake-ai-gateway-runtime",
+    "airflowSecret": "asklake-airflow-runtime",
+    "sparkSecret": "asklake-spark-runtime",
+    "trinoSecret": "asklake-trino-runtime"
+  },
+  "dataPlaneReferences": {
+    "mskClusterArn": null,
+    "mskBootstrapBrokersSaslIam": null,
+    "rdsEndpoint": null,
+    "storageBuckets": null,
+    "trinoServiceUrl": "https://asklake-trino.asklake-dev.svc:8443",
+    "workloadIdentityMode": "disabled"
+  },
+  "isolatedFixture": {
+    "topic": "asklake.eks-mvp.fixture.v1",
+    "consumerGroup": "asklake-eks-mvp-spark-v1",
+    "outputPrefix": "eks-mvp/output/",
+    "checkpointPrefix": "checkpoints/eks-mvp/"
+  },
+  "networkFlows": [
+    "ingress-to-frontend:tcp:80",
+    "ingress-to-backend:tcp:8080",
+    "backend-to-airflow:tcp:8080",
+    "airflow-to-backend:tcp:8080",
+    "airflow-to-rds:tcp:5432",
+    "backend-to-kubernetes-api:tcp:443",
+    "backend-to-rds:tcp:5432",
+    "backend-to-trino:tcp:8443",
+    "backend-to-ai-gateway:tcp:8090",
+    "ai-gateway-to-backend-mcp:tcp:8080",
+    "ai-gateway-to-provider:tcp:443",
+    "trino-to-rds:tcp:5432",
+    "trino-to-s3-sts:tcp:443",
+    "backend-spark-to-s3-sts:tcp:443",
+    "node-to-ecr-s3:tcp:443",
+    "msk-smoke-to-msk:tcp:9098",
+    "spark-to-msk:tcp:9098",
+    "spark-to-rds:tcp:5432",
+    "external-fixture-producer-to-msk:tcp:9098"
+  ],
+  "decisions": {
+    "clusterReuseOrCreate": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "workloadIdentity": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "secretDelivery": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "ingressExposure": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "domainAndCertificate": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "privateEgress": {
+      "status": "learning-required",
+      "selected": null
+    },
+    "continuousReadPath": {
+      "status": "deferred",
+      "selected": null
+    }
+  }
+}

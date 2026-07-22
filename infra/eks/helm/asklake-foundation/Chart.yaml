@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asklake-foundation
+description: AskLake namespace and workload identity contract for the EKS MVP
+type: application
+version: 0.1.0
+appVersion: "phase1"

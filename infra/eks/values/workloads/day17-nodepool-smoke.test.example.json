@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "namespace": "asklake-dev",
+  "runFingerprint": "0000000000000000",
+  "image": "000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "general": {
+    "replicas": 1,
+    "resources": {
+      "requests": { "cpu": "1", "memory": "512Mi" },
+      "limits": { "cpu": "1", "memory": "512Mi" }
+    }
+  },
+  "spark": {
+    "replicas": 1,
+    "resources": {
+      "requests": { "cpu": "2", "memory": "2Gi" },
+      "limits": { "cpu": "2", "memory": "2Gi" }
+    }
+  },
+  "negativeSparkProbe": true
+}

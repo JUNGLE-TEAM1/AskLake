@@ -208,3 +208,14 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - `npm run verify:refactor-release-execution`은 격리 nightly fault, production canary clean reboot, backup/restore drill이 모두 증명되기 전 exit 2로 차단한다.
 - production 배포, EC2 reboot, traffic promotion은 별도 명시적 승인과 release owner가 필요하다.
 - rollback은 DB 수동 편집, checkpoint 삭제, 수동 chown을 정상 절차로 사용하지 않는다.
+
+# EC2 기준 EKS 복구 gate (2026-07-22)
+
+- 복구 application base는 e6f86eb8f02a16772d945c405af80d75eff96db2이고 Backend와 Jobs UI tree hash가 다르면 image delivery를 차단한다.
+- 1de45135와 e6d6b7f8 전체 merge는 금지한다. Dashboard의 가로 막대 NaN 예외 파일은 승인된 source revision과 blob hash가 정확히 같아야 한다.
+- recovery image workflow는 codex/eks-recovery-e6f86eb8 branch, dev environment, ec2-recovery-e6f86eb8 profile 조합에서만 실행한다.
+- EKS image는 digest-pinned AMD64만 허용한다. Backend source tree와 EKS Spark/MSK dependency packaging을 분리하고 image build 중 source patch를 금지한다.
+- FastAPI는 Continuous side effect를 claim하지 않고 EKS worker 하나만 owner다. EC2 worker 0/EKS worker 1, owner generation, 이전 owner fence, DB 0026 head를 live mutation 전후에 확인한다.
+- rollout은 네 Helm release의 승인된 image 필드만 바꾸며 DB migration이나 runtime ConfigMap/Secret/ServiceAccount/node placement 변경을 포함하지 않는다. 실패하면 변경을 시작한 release를 이전 revision으로 rollback한다.
+- 정확한 e6f86eb8 Backend의 일반 batch Spark Operator 미지원은 release risk다. 명시적 제한 승인 없이는 rollout script가 실패해야 하며, 이를 우회하려고 금지된 Backend hunk를 섞지 않는다.
+- receipt, live values snapshot, EC2 instance ID와 실행 증거는 Git 밖에 0600으로 보관한다.

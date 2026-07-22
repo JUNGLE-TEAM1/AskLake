@@ -1,0 +1,39 @@
+{
+  "contractVersion": "1.0",
+  "profile": "ec2-recovery-e6f86eb8",
+  "applicationBaseRevision": "e6f86eb8f02a16772d945c405af80d75eff96db2",
+  "dashboardPatchSourceRevision": "e6d6b7f868d2bb2b1f376aa6a5174608fefe6249",
+  "eksConfigurationSourceRevision": "e6d6b7f868d2bb2b1f376aa6a5174608fefe6249",
+  "observedAt": "2026-07-22T03:03:07Z",
+  "observedCurrentRuntime": {
+    "ec2Revision": "e6d6b7f868d2bb2b1f376aa6a5174608fefe6249",
+    "eksReceiptRevision": "e6d6b7f868d2bb2b1f376aa6a5174608fefe6249",
+    "ec2ContinuousWorkerReplicas": 0,
+    "eksContinuousWorkerReplicas": 1
+  },
+  "protectedTrees": {
+    "backend": "375f427a0c6ff7034edd07cdfdebc6415d9725f3",
+    "jobsUi": "e28a35c6b1d4475c269565d8626965de1eb42378"
+  },
+  "forbiddenMergeRevisions": [
+    "1de45135",
+    "e6d6b7f8"
+  ],
+  "runtimeBoundary": {
+    "databaseSchemaHead": "0026_continuous_sql_refresh_state",
+    "webControlPlane": "disabled",
+    "continuousOwner": "eks-continuous-worker-v1",
+    "continuousWorkerControlPlane": "worker",
+    "continuousSparkRunner": "kubernetes",
+    "previousEc2OwnerMustRemainFenced": true,
+    "imageReferencesMustUseDigests": true
+  },
+  "knownLimitation": {
+    "generalBatchSparkOperatorSubmission": "unsupported-by-application-base",
+    "requiresExplicitRolloutAcceptance": true
+  },
+  "allowedApplicationDelta": {
+    "dashboardOnly": true,
+    "description": "Horizontal bar axis normalization and its regression test only; all other application behavior remains at the application base revision."
+  }
+}

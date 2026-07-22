@@ -1,0 +1,4 @@
+namespace: asklake-dev
+configMap:
+  name: asklake-runtime
+  data: {}

@@ -1,0 +1,9 @@
+**
+!backend/
+!backend/**
+!infra/
+!infra/eks/
+!infra/eks/images/
+!infra/eks/images/ec2-recovery.Dockerfile
+!infra/eks/images/spark-msk-iam-shaded.pom.xml
+!infra/eks/images/spark-runtime-dependencies.pom.xml

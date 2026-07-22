@@ -677,7 +677,9 @@ production control-plane과 metadata의 권위는 FastAPI/Python이다. Source c
 
 상세 authority matrix, Kafka 보장 범위, bridge error/rollback 계약은 [Spark/Kafka Runtime Script·Python/Node 경계](refactor-2026/contracts/runtime-scripts-node-boundary.md)를, Source connector operation mapping은 [Source Connector Python·Node 권위 경계](refactor-2026/contracts/source-connector-authority-boundary.md)를 따른다.
 
-Production deployment topology에서 EKS 웹·유한 배치 cell과 EC2 Continuous cell의 장기 control-plane claim을 분리한다. 현재 Kafka Continuous runtime sync와 Continuous SQL runtime sync의 canonical deployment owner는 EC2 Continuous cell 하나이며 EKS cell은 두 loop를 claim하지 않는다. `deploy/control-plane-ownership.json`과 exactly-one validator는 이 선언의 누락·중복과 source marker drift를 PR에서 차단하지만 실행 중 cluster discovery나 leader election을 대신하지 않는다. FastAPI lifespan과 실제 workload 이동 없이 적용하는 정적 경계이며, 상세 계약은 [EKS·EC2 Continuous control-plane 단일-owner 계약](refactor-2026/contracts/control-plane-deployment-ownership.md)을 따른다.
+Production recovery topology에서는 EKS web process와 Continuous side effect owner를 분리한다. FastAPI와 collector는 CONTINUOUS_CONTROL_PLANE=disabled이고, EKS의 단일 asklake-realtime-v1-worker만 worker mode, PostgreSQL lease와 owner generation으로 Kafka Continuous runtime sync와 revision 기반 SQL refresh를 claim한다. 이전 EC2 continuous-worker는 0개로 fenced 상태를 유지하며 EKS owner와 동시에 실행할 수 없다. Helm owner-transfer 값은 선언 증거일 뿐이므로 rollout 전후에 EC2 SSM process count와 EKS Ready replica를 함께 확인한다. 복구 release의 세부 source·image·rollback 계약은 [EC2 기준 버전의 EKS 복구 릴리스](eks-ec2-recovery-release.md)를 따른다.
+
+e6f86eb8 복구 source의 Continuous launcher는 Kubernetes SparkApplication을 지원하지만 일반 유한 batch launcher는 Spark Standalone REST 경로만 지원한다. 따라서 현 EKS의 ASKLAKE_SPARK_RUNNER=kubernetes와 정확한 source 복구를 동시에 선택하면 Continuous 자동 갱신은 유지되지만 신규 일반 batch 제출은 별도 호환 작업 전까지 No-Go/명시적 제한이다. 이 차이를 배포 설정만으로 지원된 것처럼 간주하거나 Backend source를 image build 중 암묵적으로 patch하지 않는다.
 
 ## 17) Frontend 상태 소유권과 ETL Wizard 경계
 

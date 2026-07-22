@@ -8,6 +8,22 @@ AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout
 
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
 
+## EC2 기준 EKS 복구 release
+
+2026-07-22 복구는 현재 EC2/EKS에 올라간 e6d6b7f8 전체를 복제하지 않는다. e6f86eb8의 Backend·Jobs UI를 tree hash로 고정하고 가로 막대 NaN 수정만 허용한 codex/eks-recovery-e6f86eb8 branch를 사용한다. EKS chart와 image packaging은 application source와 분리하며 아래 gate를 먼저 통과해야 한다.
+
+~~~bash
+node scripts/verify-eks-recovery-release.mjs
+bash scripts/test-eks-image-source-ref.sh
+cd frontend
+npm run test:dashboard-bar-orientation
+npm run build
+~~~
+
+이미지는 EKS image delivery workflow의 ec2-recovery-e6f86eb8 profile로 만들고, 실제 rollout에는 artifact receipt와 scripts/rollout-eks-recovery-release.sh만 사용한다. live Helm values를 tracked example로 덮어쓰지 않으며 image field 외 diff, EC2 worker 0/EKS worker 1 경계, DB 0026 head, active SparkApplication 0을 배포 전 확인한다.
+
+정확한 e6f86eb8 Backend는 현 EKS Spark Operator에 신규 일반 batch를 제출하지 못한다. 이 제한을 수용하지 않은 상태에서는 실제 rollout을 실행하지 않는다. 전체 준비·rollback·제품 acceptance는 [EC2 기준 버전의 EKS 복구 릴리스](./eks-ec2-recovery-release.md)를 따른다.
+
 ## 1) 로컬 실행
 
 ```bash

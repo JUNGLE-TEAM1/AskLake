@@ -1,0 +1,40 @@
+{{- if .Values.serviceAccounts.backend.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.serviceAccounts.backend.name }}-sparkapplications
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.serviceAccounts.backend.name }}-sparkapplications
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.backend.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.serviceAccounts.backend.name }}-sparkapplications
+{{- end }}

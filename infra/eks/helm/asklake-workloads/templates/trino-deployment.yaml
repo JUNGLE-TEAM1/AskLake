@@ -1,0 +1,95 @@
+{{- if .Values.trino.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklake-trino
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trino
+spec:
+  replicas: {{ .Values.trino.replicas }}
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/trino-configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "asklake-workloads.selectorLabels" (dict "component" "trino" "release" .Release.Name) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.trino.serviceAccountName }}
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.trino.nodeSelector | nindent 8 }}
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: trino
+          image: "{{ required "Trino image repository is required" .Values.trino.image.repository }}@{{ required "Trino image digest is required" .Values.trino.image.digest }}"
+          imagePullPolicy: {{ .Values.trino.image.pullPolicy }}
+          ports:
+            - {name: https, containerPort: 8443, protocol: TCP}
+          env:
+            - {name: TRINO_ICEBERG_CATALOG_NAME, value: {{ .Values.trino.config.jdbcCatalogName | quote }}}
+            - {name: TRINO_ICEBERG_WAREHOUSE_BUCKET, value: {{ .Values.trino.config.warehouseBucket | quote }}}
+            - {name: TRINO_ICEBERG_WAREHOUSE_PREFIX, value: {{ .Values.trino.config.warehousePrefix | quote }}}
+            - {name: TRINO_S3_REGION, value: {{ .Values.global.awsRegion | quote }}}
+            - name: TRINO_ICEBERG_JDBC_URL
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.jdbcUrl }}}
+            - name: TRINO_ICEBERG_JDBC_USER
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.jdbcUser }}}
+            - name: TRINO_ICEBERG_JDBC_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.jdbcPassword }}}
+            - name: TRINO_TLS_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.keystorePassword }}}
+            - name: TRINO_INTERNAL_SHARED_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.trino.runtimeSecret.name }}, key: {{ .Values.trino.runtimeSecret.keys.internalSharedSecret }}}
+          volumeMounts:
+            - {name: trino-config, mountPath: /etc/trino/config.properties, subPath: config.properties, readOnly: true}
+            - {name: trino-config, mountPath: /etc/trino/password-authenticator.properties, subPath: password-authenticator.properties, readOnly: true}
+            - {name: trino-config, mountPath: /etc/trino/access-control.properties, subPath: access-control.properties, readOnly: true}
+            - {name: trino-config, mountPath: /etc/trino/access-control/rules.json, subPath: rules.json, readOnly: true}
+            - {name: trino-config, mountPath: /etc/trino/catalog/iceberg.properties, subPath: iceberg.properties, readOnly: true}
+            - {name: trino-runtime-files, mountPath: /etc/trino/tls/keystore.jks, subPath: trino-keystore.jks, readOnly: true}
+            - {name: trino-runtime-files, mountPath: /etc/trino/auth/password.db, subPath: trino-password.db, readOnly: true}
+          startupProbe:
+            httpGet: {scheme: HTTPS, path: /v1/info, port: https}
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {scheme: HTTPS, path: /v1/info, port: https}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: {scheme: HTTPS, path: /v1/info, port: https}
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.trino.resources | nindent 12 }}
+      volumes:
+        - name: trino-config
+          configMap:
+            name: asklake-trino-config
+        - name: trino-runtime-files
+          secret:
+            secretName: {{ .Values.trino.runtimeSecret.name }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.trino.runtimeSecret.keys.keystoreFile }}, path: trino-keystore.jks}
+              - {key: {{ .Values.trino.runtimeSecret.keys.passwordFile }}, path: trino-password.db}
+{{- end }}

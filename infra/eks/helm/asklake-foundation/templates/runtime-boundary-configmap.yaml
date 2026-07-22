@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asklake-runtime-boundary
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "asklake-foundation.labels" . | nindent 4 }}
+data:
+  contractVersion: "1.2"
+  clusterName: {{ .Values.global.clusterName | quote }}
+  kafkaRuntime: {{ .Values.global.kafkaRuntime | quote }}
+  kafkaAuth: {{ .Values.global.kafkaAuth | quote }}
+  trinoRuntime: {{ .Values.global.trinoRuntime | quote }}
+  continuousOwner: {{ .Values.global.continuousOwner | quote }}
+  workloadIdentityMode: {{ .Values.global.workloadIdentityMode | quote }}
