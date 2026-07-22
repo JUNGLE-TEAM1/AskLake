@@ -40,3 +40,14 @@ test("페이지와 위젯 변경 실패는 전체 Dashboard 로드 오류를 덮
   assert.doesNotMatch(dashboardPage, /const updateRuntimeWidget\s*=/);
   for (const source of mutationSources) assert.doesNotMatch(source, /setDraftError/);
 });
+
+test("수동 새로고침 성공은 페이지 상단에 지속 알림을 남기지 않는다", () => {
+  const refreshHandler = dashboardPage.match(
+    /const refreshRuntimeDashboard = async \(\) => \{([\s\S]*?)\n  \};/,
+  )?.[1] ?? "";
+
+  assert.match(refreshHandler, /await refreshCurrentPageWidgetData\(\)/);
+  assert.match(refreshHandler, /setRuntimeNotice\(null\)/);
+  assert.doesNotMatch(refreshHandler, /현재 페이지의 위젯 데이터를 새로고침했습니다/);
+  assert.match(refreshHandler, /dashboard\.runtime\.refreshed/);
+});
