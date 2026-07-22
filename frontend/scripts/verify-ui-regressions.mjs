@@ -1449,12 +1449,14 @@ const checks = [
       /<ExplorerTree<DatasetTreeNode>/,
       /ariaLabel="Dashboard dataset tree"/,
       /data-dashboard-dataset-node/,
+      /openByDefault=\{false\}/,
       /onNodePress=\{\(node: NodeApi<DatasetTreeNode>\) =>/,
     ],
     forbiddenPatterns: [
       /components\/kibo-ui\/tree/,
       /components\/ui\/tree-view/,
       /<TreePanel/,
+      /initialOpenState=\{\{[\s\S]*?\[systemItemId\]: true/,
     ],
   },
   {
