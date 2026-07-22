@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -333,7 +332,6 @@ class AirflowCatalogReconciliationCommandTests(unittest.TestCase):
         job = SimpleNamespace(dataset_id="ds_orders", id="JOB-1", iceberg_target=None, target="orders")
         run = SimpleNamespace(
             airflow_dag_run_id="RUN-1",
-            created_at=datetime(2026, 7, 16, tzinfo=UTC),
             job_id="JOB-1",
             task_states={
                 "sparkResult": {
@@ -376,7 +374,6 @@ class AirflowCatalogReconciliationCommandTests(unittest.TestCase):
         }
         run = SimpleNamespace(
             airflow_dag_run_id="RUN-1",
-            created_at=datetime(2026, 7, 16, tzinfo=UTC),
             error_summary="-",
             failed_stage="-",
             job_id="JOB-1",
@@ -412,7 +409,6 @@ class AirflowCatalogReconciliationCommandTests(unittest.TestCase):
         job = SimpleNamespace(dataset_id="ds_orders", id="JOB-1", target="orders")
         run = SimpleNamespace(
             airflow_dag_run_id="RUN-1",
-            created_at=datetime(2026, 7, 16, tzinfo=UTC),
             job_id="JOB-1",
             task_states={"sparkResult": {"runId": "RUN-1", "status": "success"}},
         )

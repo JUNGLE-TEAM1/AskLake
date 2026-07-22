@@ -148,7 +148,7 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
             # redeploy can therefore make a conclusively stale report pair
             # with an `unknown` runner status; the committed start intent is
             # still the only safe worker identity to submit.
-            and evidence.container_state in {"exited", "missing", "failed", "unknown"}
+            and evidence.container_state in {"exited", "missing", "unknown"}
         ):
             return ReconciliationDecision(
                 ReconciliationAction.RESTART_WORKER,
@@ -198,7 +198,7 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
                 ReconciliationCertainty.UNCERTAIN,
                 "worker is active but has not published its first report",
             )
-        if evidence.container_state in {"exited", "missing", "failed"}:
+        if evidence.container_state in {"exited", "missing"}:
             return ReconciliationDecision(
                 ReconciliationAction.RESTART_WORKER,
                 ReconciliationCertainty.UNCERTAIN,

@@ -51,6 +51,7 @@ def settings_with_env(**values: str) -> Settings:
 class RealtimeFeatureFlagTests(unittest.TestCase):
     def test_defaults_preserve_polling_and_disable_new_runtime(self) -> None:
         state = resolve_realtime_feature_state(settings_with_env())
+
         self.assertEqual(state.dashboard_sync_mode, "polling")
         self.assertFalse(state.dashboard_auto_refresh_enabled)
         self.assertFalse(state.realtime_events_enabled)
@@ -69,6 +70,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             DASHBOARD_SYNC_MODE="websocket",
             REALTIME_EVENTS_ENABLED="true",
         ))
+
         self.assertEqual(state.dashboard_sync_mode, "polling")
         self.assertEqual(state.fallback_reason, "invalid_dashboard_sync_mode")
 
@@ -77,6 +79,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             DASHBOARD_SYNC_MODE="sse",
             REALTIME_EVENTS_ENABLED="false",
         ))
+
         self.assertEqual(state.dashboard_sync_mode, "polling")
         self.assertEqual(state.fallback_reason, "realtime_events_disabled")
 
@@ -91,6 +94,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             LATEST_STATIC_PER_BATCH_ENABLED="true",
             STATIC_CHANGE_BACKFILL_ENABLED="true",
         ))
+
         self.assertFalse(disabled.latest_static_per_batch_enabled)
         self.assertFalse(disabled.static_change_backfill_enabled)
         self.assertTrue(enabled.latest_static_per_batch_enabled)
@@ -183,11 +187,11 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         with (
             patch("app.api.health.settings", configured),
             patch(
-                "app.realtime.application.ingest_service.RealtimeIngestService.probe",
+                "app.api.health.RealtimeIngestService.probe",
                 return_value=ConnectorProbe(True, False, "UNREGISTERED", ()),
             ),
             patch(
-                "app.services.clickhouse_client.ClickHouseClient.realtime_v2_reader",
+                "app.api.health.ClickHouseClient.realtime_v2_reader",
                 return_value=clickhouse,
             ),
         ):
@@ -264,14 +268,6 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         )
         self.assertEqual(owner, "kafka_connect_v2")
 
-    def test_disabled_health_has_no_retired_v2_projection(self) -> None:
-        response = Response()
-        with patch("app.api.health.settings", settings_with_env()):
-            payload = realtime_health_check(response)
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["status"], "disabled")
-        self.assertNotIn("v2", payload)
-
     def test_diagnostic_response_uses_resolved_state(self) -> None:
         configured = settings_with_env(
             DASHBOARD_SYNC_MODE="hybrid",
@@ -281,8 +277,10 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             CLICKHOUSE_CONTINUOUS_JOIN_ENABLED="true",
         )
         actor = ActorContext(name="config-reader", role="viewer")
+
         with patch("app.api.realtime.settings", configured):
             response = get_realtime_feature_config(actor)
+
         self.assertEqual(response.dashboard_sync_mode, "hybrid")
         self.assertTrue(response.dashboard_auto_refresh_enabled)
         self.assertTrue(response.realtime_events_enabled)

@@ -112,22 +112,10 @@ def main() -> None:
     module = load_dag_module()
     dag_source = DAG_PATH.read_text(encoding="utf-8")
     verify_task_retry_configuration(dag_source)
-    source_boundary = {
-        "broker": "boot.example.kafka-serverless.ap-northeast-2.amazonaws.com:9098",
-        "checkpointPath": "s3a://asklake-output/eks-mvp/checkpoints/run-phase3",
-        "consumerGroup": "asklake-eks-mvp-spark-v1",
-        "expectedCount": 2,
-        "fixtureBatchId": "fixture-batch-phase3",
-        "kind": "kafka_snapshot",
-        "outputPath": "s3a://asklake-output/eks-mvp/output/run-phase3",
-        "snapshotId": "run-phase3",
-        "topic": "asklake.eks-mvp.fixture.v1",
-    }
     conf = {
         "executionMode": "spark",
         "jobId": "job-phase3",
         "runId": "run-phase3",
-        "sourceBoundary": source_boundary,
     }
     spark_result = {
         "inputRows": 2,
@@ -143,29 +131,6 @@ def main() -> None:
         "status": "success",
     }
     captured = {}
-
-    def spark_urlopen(request, timeout):
-        captured["sparkBody"] = json.loads(request.data.decode("utf-8"))
-        captured["sparkUrl"] = request.full_url
-        return FakeResponse(spark_result)
-
-    with patch.dict(
-        os.environ,
-        {
-            "ASKLAKE_EXECUTION_API_BASE_URL": "http://asklake-backend:8080",
-            "ASKLAKE_EXECUTION_API_TOKEN": "phase3-token",
-        },
-        clear=False,
-    ), patch.object(module.urllib.request, "urlopen", side_effect=spark_urlopen):
-        executed = module.execute_spark_run(conf)
-
-    assert captured["sparkUrl"].endswith("/api/internal/airflow/spark-runs/run-phase3/execute")
-    assert captured["sparkBody"] == {
-        "command": "run",
-        "jobId": "job-phase3",
-        "sourceBoundary": source_boundary,
-    }
-    assert executed["runId"] == "run-phase3"
 
     def successful_urlopen(request, timeout):
         captured["body"] = json.loads(request.data.decode("utf-8"))

@@ -40,7 +40,7 @@ def main() -> None:
             first_output = write_parquet_fixture(output_root, first_run_id, b"PAR1-first-output")
             add_run(db, job_id, first_run_id, first_output, output_rows=2)
 
-            first = reconcile_fixture_catalog(db, job_id=job_id, run_id=first_run_id)
+            first = reconcile_airflow_catalog(db, job_id=job_id, run_id=first_run_id)
             assert first.status == "success"
             assert first.dataset.id == dataset_id
             assert first.dataset.source_run_id == first_run_id
@@ -51,14 +51,14 @@ def main() -> None:
             assert len((first.dataset.lineage_graph or {}).get("datasets") or []) == 3
             assert first.dataset.sample_rows == []
 
-            repeated = reconcile_fixture_catalog(db, job_id=job_id, run_id=first_run_id)
+            repeated = reconcile_airflow_catalog(db, job_id=job_id, run_id=first_run_id)
             assert len(repeated.dataset.materialization_runs) == 1
             assert repeated.dataset.materialization_runs[0]["runId"] == first_run_id
 
             second_run_id = f"run_catalog_{suffix}_2"
             second_output = write_parquet_fixture(output_root, second_run_id, b"PAR1-second-output-longer")
             add_run(db, job_id, second_run_id, second_output, output_rows=3)
-            second = reconcile_fixture_catalog(db, job_id=job_id, run_id=second_run_id)
+            second = reconcile_airflow_catalog(db, job_id=job_id, run_id=second_run_id)
             assert second.dataset.id == dataset_id
             assert len(second.dataset.materialization_runs) == 2
             assert {item["runId"] for item in second.dataset.materialization_runs} == {first_run_id, second_run_id}
@@ -69,7 +69,7 @@ def main() -> None:
             not_ready_run_id = f"run_catalog_{suffix}_not_ready"
             add_run(db, job_id, not_ready_run_id, None, spark_status=None)
             assert_api_error(
-                lambda: reconcile_fixture_catalog(db, job_id=job_id, run_id=not_ready_run_id),
+                lambda: reconcile_airflow_catalog(db, job_id=job_id, run_id=not_ready_run_id),
                 "SPARK_RESULT_NOT_READY",
                 409,
             )
@@ -84,7 +84,7 @@ def main() -> None:
                 airflow_dag_run_id="different-airflow-run",
             )
             assert_api_error(
-                lambda: reconcile_fixture_catalog(db, job_id=job_id, run_id=mismatch_run_id),
+                lambda: reconcile_airflow_catalog(db, job_id=job_id, run_id=mismatch_run_id),
                 "AIRFLOW_RUN_MISMATCH",
                 409,
             )
@@ -93,7 +93,7 @@ def main() -> None:
             missing_output = str(Path(output_root) / missing_run_id)
             add_run(db, job_id, missing_run_id, missing_output)
             assert_api_error(
-                lambda: reconcile_fixture_catalog(db, job_id=job_id, run_id=missing_run_id),
+                lambda: reconcile_airflow_catalog(db, job_id=job_id, run_id=missing_run_id),
                 "CATALOG_RECONCILIATION_FAILED",
                 500,
             )
@@ -110,7 +110,7 @@ def main() -> None:
                 side_effect=RuntimeError("injected Catalog transaction failure"),
             ):
                 assert_api_error(
-                    lambda: reconcile_fixture_catalog(db, job_id=job_id, run_id=transaction_run_id),
+                    lambda: reconcile_airflow_catalog(db, job_id=job_id, run_id=transaction_run_id),
                     "CATALOG_RECONCILIATION_FAILED",
                     500,
                 )
@@ -220,27 +220,6 @@ def pipeline_request(suffix: str, output_root: str) -> CreatePipelineRequest:
         "transformOutputColumns": [["customer_id", "string"], ["amount", "double"]],
         "transformSteps": [],
     })
-
-
-def reconcile_fixture_catalog(db, *, job_id: str, run_id: str):
-    with patch(
-        "app.services.etl_service.verify_spark_iceberg_result",
-        side_effect=fixture_verified_iceberg_result,
-    ):
-        return reconcile_airflow_catalog(db, job_id=job_id, run_id=run_id)
-
-
-def fixture_verified_iceberg_result(_job, run_id: str, spark_result: dict) -> dict:
-    physical = inspect_spark_output(str(spark_result.get("outputPath") or ""))
-    return {
-        **spark_result,
-        "dataFileCount": physical["parquetObjectCount"],
-        "icebergCommit": {
-            "dataFileCount": physical["parquetObjectCount"],
-            "snapshotId": f"fixture-{run_id}",
-        },
-        **physical,
-    }
 
 
 def add_run(

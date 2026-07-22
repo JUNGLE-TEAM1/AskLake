@@ -112,9 +112,6 @@ test("a colliding layout is rejected before a layout save request is built", () 
 });
 
 test("the draft editor keeps the canonical 12-column breakpoint while published dashboards stay responsive", () => {
-  assert.match(
-    dashboardCanvasSource,
-    /const editorBreakpoint(?:: DashboardBreakpoint \| undefined)? = editable \? "lg" : undefined/,
-  );
+  assert.match(dashboardCanvasSource, /const editorBreakpoint = editable \? "lg" : undefined/);
   assert.match(dashboardCanvasSource, /breakpoint=\{editorBreakpoint\}/);
 });

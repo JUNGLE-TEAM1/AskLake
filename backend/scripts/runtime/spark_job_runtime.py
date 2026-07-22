@@ -5,25 +5,16 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from pyspark import StorageLevel
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from object_storage_runtime import configure_spark_builder
 from snapshot_rule_runtime import SnapshotRuleExecutionError, apply_snapshot_rules
-from spark_snapshot_rules import (
-    apply_spark_snapshot_rules,
-    pre_materialize_row_preserving_transform_prefix,
-    supports_spark_snapshot_rules,
-)
+from spark_snapshot_rules import apply_spark_snapshot_rules, supports_spark_snapshot_rules
 from spark_source_identity import (
     source_change_detection_mode,
     verify_incremental_source_inventory,
-)
-from kafka_fixture_boundary import (
-    validate_kafka_fixture_boundary,
-    validate_kafka_fixture_row_count,
 )
 from runtime.contracts import (
     append_secondary_error,
@@ -39,66 +30,11 @@ from runtime.spark_iceberg_identifiers import (
     read_spark_iceberg_source,
     required_iceberg_identifier,
 )
-from runtime.spark_materialization_staging import RunScopedParquetStaging, spark_staging_path
-from runtime.spark_hybrid_execution import prepare_hybrid_frame, release_all_cached_frames
 from runtime.spark_text_analysis import *  # noqa: F403 - compatibility re-export façade.
 
 
 class IcebergCommitError(RuntimeError):
     failed_stage = "Iceberg commit"
-
-
-def begin_phase():
-    return {
-        "startedAt": now_iso(),
-        "startedMonotonic": time.monotonic(),
-    }
-
-
-def finish_phase(phase_timings, name, phase):
-    ended_at = now_iso()
-    phase_timings[name] = {
-        "durationMs": max(
-            0,
-            round((time.monotonic() - phase["startedMonotonic"]) * 1000),
-        ),
-        "endedAt": ended_at,
-        "startedAt": phase["startedAt"],
-    }
-
-
-def spark_resource_manifest(spark):
-    return {
-        "cacheStorageLevel": "NONE",
-        "defaultParallelism": spark_runtime_integer(
-            lambda: spark.sparkContext.defaultParallelism,
-            1,
-        ),
-        "driverCores": spark_runtime_integer(
-            lambda: spark.sparkContext.getConf().get("spark.driver.cores", "1"),
-            1,
-        ),
-        "executorCores": spark_runtime_integer(
-            lambda: spark.sparkContext.getConf().get("spark.executor.cores", "1"),
-            1,
-        ),
-        "executorInstances": spark_runtime_integer(
-            lambda: spark.sparkContext.getConf().get("spark.executor.instances", "1"),
-            1,
-        ),
-        "sqlShufflePartitions": spark_runtime_integer(
-            lambda: spark.conf.get("spark.sql.shuffle.partitions"),
-            200,
-        ),
-    }
-
-
-def spark_runtime_integer(loader, fallback):
-    try:
-        parsed = int(str(loader()).strip())
-    except (AttributeError, TypeError, ValueError):
-        return int(fallback)
-    return parsed if parsed > 0 else int(fallback)
 
 
 def main():
@@ -111,11 +47,9 @@ def main():
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
     source_collection = {}
     spark = None
-    iceberg_target = None
     input_bytes = 0
     input_file_count = 0
     staging_path = None
-    materialization = None
     output_write_started = False
     input_rows = 0
     output_file_count = 0
@@ -124,11 +58,6 @@ def main():
     canonical_snapshot = False
     iceberg_commit = None
     iceberg_previous_snapshot = None
-    iceberg_committed_snapshot_id = None
-    iceberg_rollback_required = False
-    cached_frames = []
-    phase_timings = {}
-    spark_resources = {}
     try:
         config = SparkJobConfig.from_environment()
         source_path = config.source_path
@@ -144,13 +73,6 @@ def main():
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         source_collection = manifest.get("sourceCollection") or {}
         source_boundary = manifest.get("sourceBoundary") or source_collection
-        kafka_fixture_boundary = validate_kafka_fixture_boundary(
-            environment=os.environ,
-            iceberg_target=iceberg_target,
-            source_boundary=source_boundary,
-            source_format=source_format,
-            source_path=source_path,
-        )
         record_parsing = manifest.get("recordParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
@@ -159,11 +81,6 @@ def main():
         canonical_runtime_supported = canonical_snapshot and supports_spark_snapshot_rules(canonical_rules)
         final_schema_columns = merge_rule_output_schema(schema_columns, manifest.get("ruleOutputSchema") or [])
         spark = make_spark(source_collection, iceberg_target)
-        spark_resources = spark_resource_manifest(spark)
-        spark_resources["cacheStorageLevel"] = "NONE"
-        spark_resources["materializationMode"] = "run_scoped_parquet_staging"
-        spark_resources["outputFrameCacheMode"] = "staged_parquet_reuse"
-        source_phase = begin_phase()
         verify_spark_source_inventory(
             spark,
             source_path,
@@ -181,42 +98,16 @@ def main():
         )
         input_files = sorted(source_df.inputFiles())
         input_file_count = len(input_files) or int(source_collection.get("expectedFileCount") or 0)
-        input_bytes, direct_cache_source_bytes = measure_source_bytes(
-            spark, input_files, source_collection.get("expectedTotalBytes")
+        input_bytes = source_file_bytes(spark, input_files) if input_files else int(
+            source_collection.get("expectedTotalBytes") or 0
         )
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df, schema_columns, transform_steps)
-        contracted_df, required_targets = project_schema_contract(
+        contracted_df, input_rows = apply_schema_contract_with_count(
             normalized_df,
             schema_columns,
             transform_steps,
         )
-        pre_materialized_transform_count = 0
-        if canonical_runtime_supported:
-            (
-                contracted_df,
-                pre_materialized_transform_count,
-            ) = pre_materialize_row_preserving_transform_prefix(
-                contracted_df,
-                canonical_rules,
-            )
-        staging_path = spark_staging_path(output_path, run_id)
-        materialization = RunScopedParquetStaging(output_path, run_id)
-        delete_spark_path(spark, staging_path)
-        delete_spark_path(spark, materialization.path)
-        quarantine_staging_path = f"{staging_path}_quarantine"
-        staged_df, input_rows, null_required = prepare_hybrid_frame(
-            direct_cache_source_bytes, config.direct_cache_max_source_bytes, contracted_df, cached_frames, spark_resources,
-            StorageLevel.MEMORY_AND_DISK, lambda frame: schema_contract_summary(frame, required_targets),
-            lambda frame: materialization.materialize(spark, frame, phase_timings, spark_resources),
-        )
-        if null_required:
-            raise ValueError(
-                "Approved schema required columns produced null values after casting: "
-                f"{', '.join(null_required)}"
-            )
-        validate_kafka_fixture_row_count(kafka_fixture_boundary, input_rows)
-        finish_phase(phase_timings, "sourceValidation", source_phase)
         review_analysis_preflight = plan_review_row_analysis_checks(transform_steps)
         blocking_text_model_checks = [
             check
@@ -224,9 +115,6 @@ def main():
             if check.get("runtimeStatus") == "missing_model_artifact" and check.get("modelRequired")
         ]
         if blocking_text_model_checks:
-            materialization_cleanup_errors = materialization.cleanup(
-                spark, spark_resources, cleanup_spark_paths
-            )
             ended_at = now_iso()
             quality = {
                 "blockingFailures": len(blocking_text_model_checks),
@@ -253,12 +141,10 @@ def main():
                 "outputFileCount": 0,
                 "outputPath": output_path,
                 "outputRows": 0,
-                "phaseTimings": phase_timings,
                 "quality": quality,
                 "runId": run_id,
                 "sourceCollection": source_collection,
                 "sourcePath": source_path,
-                "sparkResources": spark_resources,
                 "startedAt": started_at,
                 "status": "failed",
                 "textStructuring": text_structuring,
@@ -267,37 +153,31 @@ def main():
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
         quarantine_df = None
-        quarantine_rows = 0
         review_analysis_checks = []
         transform = None
-        rule_phase = begin_phase()
-        try:
-            if canonical_runtime_supported:
-                execution = apply_spark_snapshot_rules(
-                    spark,
-                    staged_df,
-                    canonical_rules,
-                    input_row_count=input_rows,
-                    pre_materialized_transform_count=pre_materialized_transform_count,
-                )
-                transformed_df = execution["frame"]
-                transform = execution["transform"]
-                quality = snapshot_quality_report(execution["quality"])
-                quarantine_df = execution["quarantine"]
-            elif canonical_snapshot:
-                transformed_df = apply_transform_steps(spark, staged_df, transform_steps)
-                canonical_quality_rules = [
-                    rule for rule in canonical_rules
-                    if rule and rule.get("kind") == "quality" and rule.get("enabled") is not False
-                ]
-                quality_execution = apply_snapshot_rules(transformed_df, canonical_quality_rules)
-                transformed_df = quality_execution["frame"]
-                quality = snapshot_quality_report(quality_execution["quality"])
-                quarantine_df = quality_execution["quarantine"]
-            else:
-                transformed_df = apply_transform_steps(spark, staged_df, transform_steps)
-        finally:
-            finish_phase(phase_timings, "ruleEvaluation", rule_phase)
+        if canonical_runtime_supported:
+            execution = apply_spark_snapshot_rules(
+                spark,
+                contracted_df,
+                canonical_rules,
+                input_row_count=input_rows,
+            )
+            transformed_df = execution["frame"]
+            transform = execution["transform"]
+            quality = snapshot_quality_report(execution["quality"])
+            quarantine_df = execution["quarantine"]
+        elif canonical_snapshot:
+            transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
+            canonical_quality_rules = [
+                rule for rule in canonical_rules
+                if rule and rule.get("kind") == "quality" and rule.get("enabled") is not False
+            ]
+            quality_execution = apply_snapshot_rules(transformed_df, canonical_quality_rules)
+            transformed_df = quality_execution["frame"]
+            quality = snapshot_quality_report(quality_execution["quality"])
+            quarantine_df = quality_execution["quarantine"]
+        else:
+            transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
         output_frame = select_final_schema_columns(transformed_df, final_schema_columns)
         output_df = output_frame.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
             "_asklake_ingested_at",
@@ -315,74 +195,52 @@ def main():
                 "ICEBERG_PARTITION_CONTRACT_MISMATCH "
                 f"expected={iceberg_target['partitionColumns']} resolved={resolved_partition_columns}"
             )
+        staging_path = spark_staging_path(output_path, run_id)
+        delete_spark_path(spark, staging_path)
+        quarantine_staging_path = f"{staging_path}_quarantine"
+        if quarantine_df is not None:
+            quarantine_rows = quarantine_df.count()
+            if quarantine_rows:
+                quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
+                quality["quarantine"] = {"count": quarantine_rows, "path": f"{output_path.rstrip('/')}_quarantine"}
+                quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
         write_df = output_df
         if source_collection.get("selectionKind") == "prefix" and input_file_count > 1:
             max_partitions = max(2, int(os.environ.get("ASKLAKE_SPARK_PREFIX_OUTPUT_PARTITIONS_MAX", "32") or "32"))
             write_df = output_df.repartition(min(input_file_count, max_partitions))
-        canonical_output_rows = (
-            canonical_output_row_count(quality)
-            if canonical_snapshot
-            else None
+        if iceberg_target:
+            written_df = write_df.persist()
+            output_rows = written_df.count()
+        else:
+            writer = write_df.write.mode("overwrite")
+            if resolved_partition_columns:
+                writer = writer.partitionBy(*resolved_partition_columns)
+            output_write_started = True
+            writer.parquet(staging_path)
+            written_df = spark.read.parquet(staging_path)
+            output_file_count = len(written_df.inputFiles())
+            output_rows = written_df.count()
+        if not canonical_snapshot:
+            quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
+            classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
+            if classifier_checks:
+                quality["classifierChecks"] = classifier_checks
+            review_analysis_checks = evaluate_review_row_analysis_checks(written_df, transform_steps, total_rows=output_rows)
+            if review_analysis_checks:
+                quality["reviewRowAnalysisChecks"] = review_analysis_checks
+                merge_text_structuring_quality(quality, written_df, review_analysis_checks, staging_path, total_rows=output_rows)
+        text_structuring = text_structuring_manifest(transform_steps, review_analysis_checks)
+        if text_structuring.get("definition", {}).get("columns"):
+            quality["textStructuringExecution"] = text_structuring.get("execution", {})
+        sample_rows = collect_sample_rows(written_df, 10)
+        verify_spark_source_inventory(
+            spark,
+            source_path,
+            source_collection,
+            phase="after_read",
         )
-        written_df = write_df
-        quality_phase = begin_phase()
-        try:
-            if canonical_snapshot:
-                output_rows = canonical_output_rows
-                if output_rows is None:
-                    output_rows = written_df.count()
-                    quality["outputRowCountSource"] = "spark_count_fallback"
-                else:
-                    quality["outputRowCountSource"] = "canonical_quality_counters"
-            else:
-                quality = evaluate_quality_rules(written_df, quality_rules)
-                output_rows = int(quality.get("sampleRows") or 0)
-                quality["outputRowCountSource"] = "legacy_quality_aggregate"
-                classifier_checks = evaluate_custom_csv_classifier_checks(
-                    written_df,
-                    transform_steps,
-                    total_rows=output_rows,
-                )
-                if classifier_checks:
-                    quality["classifierChecks"] = classifier_checks
-                review_analysis_checks = evaluate_review_row_analysis_checks(
-                    written_df,
-                    transform_steps,
-                    total_rows=output_rows,
-                )
-                if review_analysis_checks:
-                    quality["reviewRowAnalysisChecks"] = review_analysis_checks
-                    output_write_started = True
-                    merge_text_structuring_quality(
-                        quality,
-                        written_df,
-                        review_analysis_checks,
-                        staging_path,
-                        total_rows=output_rows,
-                    )
-            text_structuring = text_structuring_manifest(transform_steps, review_analysis_checks)
-            if text_structuring.get("definition", {}).get("columns"):
-                quality["textStructuringExecution"] = text_structuring.get("execution", {})
-            quarantine_rows = quarantine_df.count() if quarantine_df is not None else 0
-            sample_rows = collect_sample_rows(written_df, 10)
-        finally:
-            finish_phase(phase_timings, "qualityAggregation", quality_phase)
-        source_postcheck_phase = begin_phase()
-        try:
-            verify_spark_source_inventory(
-                spark,
-                source_path,
-                source_collection,
-                phase="after_read",
-            )
-        finally:
-            finish_phase(phase_timings, "sourcePostValidation", source_postcheck_phase)
         if quality["status"] == "fail":
             cleanup_errors = cleanup_failed_output_paths(spark, staging_path)
-            materialization_cleanup_errors = materialization.cleanup(
-                spark, spark_resources, cleanup_spark_paths
-            )
-            cleanup_errors.extend(materialization_cleanup_errors)
             ended_at = now_iso()
             result = {
                 "durationMs": int(time.time() * 1000) - started_ms,
@@ -396,7 +254,6 @@ def main():
                 "outputFileCount": output_file_count,
                 "outputPath": output_path,
                 "outputRows": output_rows,
-                "phaseTimings": phase_timings,
                 "outputCleanup": {
                     "errors": cleanup_errors,
                     "status": "failed" if cleanup_errors else "success",
@@ -414,7 +271,6 @@ def main():
                 ],
                 "sourcePath": source_path,
                 "sourceCollection": source_collection,
-                "sparkResources": spark_resources,
                 "startedAt": started_at,
                 "status": "failed",
                 "textStructuring": text_structuring,
@@ -424,57 +280,28 @@ def main():
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
         published_output_path = output_path
-        publish_phase = begin_phase()
-        try:
-            if quarantine_rows:
-                output_write_started = True
-                quarantine_df.write.mode("overwrite").parquet(quarantine_staging_path)
-                quality["quarantine"] = {
-                    "count": quarantine_rows,
-                    "path": f"{output_path.rstrip('/')}_quarantine",
-                }
-                quality["quarantineLocation"] = f"{output_path.rstrip('/')}_quarantine"
-            if iceberg_target:
-                output_write_started = True
-                iceberg_commit = commit_iceberg_table(
-                    spark,
-                    written_df,
-                    iceberg_target,
-                    job_id=str(manifest.get("jobId") or "unknown"),
-                    run_id=run_id,
-                    partition_columns=resolved_partition_columns,
-                    schema_fingerprint=manifest.get("schemaFingerprint"),
-                    rule_fingerprint=manifest.get("ruleFingerprint"),
-                    source_boundary=source_boundary,
-                )
-                iceberg_previous_snapshot = iceberg_commit.pop("_previousSnapshot", None)
-                iceberg_committed_snapshot_id = iceberg_commit.pop("_committedSnapshotId", None)
-                iceberg_rollback_required = bool(iceberg_commit.pop("_rollbackRequired", False))
-                publish_spark_quarantine(spark, quarantine_staging_path, output_path)
-                published_output_path = iceberg_commit["target"]["tableUri"]
-                output_file_count = iceberg_output_file_count(
-                    spark,
-                    iceberg_target,
-                    iceberg_commit["snapshotId"],
-                )
-                commit_file_count = int(iceberg_commit["dataFileCount"])
-                if output_file_count != commit_file_count:
-                    raise RuntimeError(
-                        "ICEBERG_OUTPUT_FILE_COUNT_MISMATCH "
-                        f"reported={commit_file_count} exact={output_file_count}"
-                    )
-            else:
-                writer = written_df.write.mode("overwrite")
-                if resolved_partition_columns:
-                    writer = writer.partitionBy(*resolved_partition_columns)
-                output_write_started = True
-                writer.parquet(staging_path)
-                staged_output = spark.read.parquet(staging_path)
-                output_file_count = len(staged_output.inputFiles())
-                publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
-        finally:
-            finish_phase(phase_timings, "targetPublish", publish_phase)
-        materialization.cleanup(spark, spark_resources, cleanup_spark_paths)
+        if iceberg_target:
+            output_write_started = True
+            iceberg_commit = commit_iceberg_table(
+                spark,
+                written_df,
+                iceberg_target,
+                job_id=str(manifest.get("jobId") or "unknown"),
+                run_id=run_id,
+                partition_columns=resolved_partition_columns,
+                schema_fingerprint=manifest.get("schemaFingerprint"),
+                rule_fingerprint=manifest.get("ruleFingerprint"),
+                source_boundary=source_boundary,
+            )
+            iceberg_previous_snapshot = iceberg_commit.pop("_previousSnapshot", None)
+            publish_spark_quarantine(spark, quarantine_staging_path, output_path)
+            published_output_path = iceberg_commit["target"]["tableUri"]
+            output_file_count = iceberg_output_file_count(spark, iceberg_target)
+        else:
+            publish_spark_paths(spark, staging_path, output_path, quarantine_staging_path)
+            written_df = spark.read.parquet(output_path)
+            output_file_count = len(written_df.inputFiles())
+            output_rows = written_df.count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -486,7 +313,6 @@ def main():
             "outputFileCount": output_file_count,
             "outputPath": published_output_path,
             "outputRows": output_rows,
-            "phaseTimings": phase_timings,
             "quality": quality,
             "runId": run_id,
             "sampleRows": sample_rows,
@@ -501,7 +327,6 @@ def main():
             "sourcePath": source_path,
             "sourceCollection": source_collection,
             "sourceBoundary": source_boundary,
-            "sparkResources": spark_resources,
             "startedAt": started_at,
             "status": "success",
             "textStructuring": text_structuring,
@@ -514,18 +339,9 @@ def main():
         print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
         return 0
     except Exception as exc:
-        if (
-            spark is not None
-            and iceberg_commit is not None
-            and iceberg_rollback_required
-        ):
+        if spark is not None and iceberg_commit is not None:
             try:
-                rollback_iceberg_commit(
-                    spark,
-                    iceberg_target,
-                    iceberg_previous_snapshot,
-                    committed_snapshot_id=iceberg_committed_snapshot_id,
-                )
+                rollback_iceberg_commit(spark, iceberg_target, iceberg_previous_snapshot)
             except Exception as rollback_exc:
                 exc = IcebergCommitError(f"{exc}; rollback failed: {rollback_exc}")
             else:
@@ -536,12 +352,6 @@ def main():
             if spark is not None and output_write_started
             else []
         )
-        materialization_cleanup_errors = (
-            materialization.cleanup(spark, spark_resources, cleanup_spark_paths)
-            if spark is not None and materialization is not None
-            else []
-        )
-        cleanup_errors.extend(materialization_cleanup_errors)
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
@@ -562,11 +372,9 @@ def main():
             "outputFileCount": output_file_count,
             "outputPath": output_path,
             "outputRows": 0,
-            "phaseTimings": phase_timings,
             "runId": run_id,
             "sourceCollection": source_collection,
             "sourcePath": source_path,
-            "sparkResources": spark_resources,
             "startedAt": started_at,
             "status": "failed",
         }
@@ -576,7 +384,7 @@ def main():
         error_transform = getattr(exc, "transform", None) or transform
         if error_transform is not None:
             result["transform"] = error_transform
-        if output_write_started or (materialization and materialization.write_started):
+        if output_write_started:
             result["outputCleanup"] = {
                 "errors": cleanup_errors,
                 "status": "failed" if cleanup_errors else "success",
@@ -589,9 +397,13 @@ def main():
         print(f"Spark job failed: {exc}", file=sys.stderr)
         return 1
     finally:
-        release_all_cached_frames(cached_frames)
         if spark is not None:
             spark.stop()
+
+
+def spark_staging_path(output_path, run_id):
+    safe_run_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(run_id or "run")).strip("_") or "run"
+    return f"{str(output_path).rstrip('/')}.__staging__{safe_run_id}"
 
 
 def delete_spark_path(spark, path_value):
@@ -731,9 +543,7 @@ def iceberg_snapshot(spark, target, snapshot_id):
     table_identifier = spark_iceberg_table_identifier(target)
     rows = spark.sql(
         "SELECT CAST(snapshot_id AS STRING) AS snapshot_id, "
-        "CAST(committed_at AS STRING) AS committed_at, manifest_list, "
-        "CAST(summary['total-data-files'] AS STRING) AS data_file_count, "
-        "CAST(summary['added-data-files'] AS STRING) AS added_data_file_count "
+        "CAST(committed_at AS STRING) AS committed_at, manifest_list "
         f"FROM {table_identifier}.snapshots "
         f"WHERE CAST(snapshot_id AS STRING) = '{str(snapshot_id).replace(chr(39), chr(39) * 2)}' "
         "LIMIT 1"
@@ -744,18 +554,10 @@ def iceberg_snapshot(spark, target, snapshot_id):
     snapshot_id = str(row["snapshot_id"] or "").strip()
     committed_at = str(row["committed_at"] or "").strip()
     warehouse_location = warehouse_location_from_manifest(row["manifest_list"])
-    data_file_count = iceberg_snapshot_count(row["data_file_count"], "total-data-files")
-    added_data_file_count = iceberg_snapshot_count(
-        row["added_data_file_count"],
-        "added-data-files",
-        default=0,
-    )
     if not snapshot_id or not committed_at or not warehouse_location:
         raise RuntimeError("ICEBERG_SNAPSHOT_EVIDENCE_INCOMPLETE")
     return {
-        "addedDataFileCount": added_data_file_count,
         "committedAt": committed_at,
-        "dataFileCount": data_file_count,
         "snapshotId": snapshot_id,
         "warehouseLocation": warehouse_location,
     }
@@ -765,15 +567,8 @@ def current_iceberg_snapshot(spark, target):
     return iceberg_snapshot(spark, target, current_iceberg_snapshot_id(spark, target))
 
 
-def iceberg_output_file_count(spark, target, expected_snapshot_id):
-    expected = str(expected_snapshot_id or "").strip()
-    current = current_iceberg_snapshot_id(spark, target)
-    if not expected or current != expected:
-        raise RuntimeError(
-            "ICEBERG_CURRENT_SNAPSHOT_MISMATCH "
-            f"expected={expected or '-'} actual={current or '-'}"
-        )
-    return iceberg_snapshot(spark, target, expected)["dataFileCount"]
+def iceberg_output_file_count(spark, target):
+    return len(spark.table(spark_iceberg_table_identifier(target)).inputFiles())
 
 
 def latest_iceberg_snapshot(spark, target):
@@ -798,19 +593,6 @@ def warehouse_location_from_manifest(value):
     return manifest_list.split(marker, 1)[0].rstrip("/") if marker in manifest_list else ""
 
 
-def iceberg_snapshot_count(value, metric, *, default=None):
-    text = str(value or "").strip()
-    if not text and default is not None:
-        return int(default)
-    try:
-        parsed = int(text)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(f"ICEBERG_SNAPSHOT_SUMMARY_MISSING metric={metric}") from exc
-    if parsed < 0:
-        raise RuntimeError(f"ICEBERG_SNAPSHOT_SUMMARY_INVALID metric={metric} value={parsed}")
-    return parsed
-
-
 def commit_iceberg_table(
     spark,
     frame,
@@ -832,7 +614,11 @@ def commit_iceberg_table(
     effective_write_mode = target["writeMode"]
     if effective_write_mode == "append" and bool((source_boundary or {}).get("rebaseline")):
         effective_write_mode = "replace"
-    if existed_before and iceberg_source_boundary_exists(spark, target, source_boundary):
+    if (
+        effective_write_mode == "append"
+        and existed_before
+        and iceberg_source_boundary_exists(spark, target, source_boundary)
+    ):
         snapshot = latest_iceberg_snapshot(spark, target)
         return {
             "createdTable": False,
@@ -846,14 +632,9 @@ def commit_iceberg_table(
             "schemaFingerprint": schema_fingerprint,
             "ruleFingerprint": rule_fingerprint,
             "sourceBoundary": source_boundary or {},
-            "dataFileCount": snapshot["dataFileCount"],
-            "addedDataFileCount": snapshot["addedDataFileCount"],
-            "_committedSnapshotId": snapshot["snapshotId"],
             "_previousSnapshot": None,
-            "_rollbackRequired": False,
         }
     committed = False
-    committed_snapshot_id = None
     try:
         writer = frame.writeTo(table_identifier)
         if not existed_before:
@@ -874,12 +655,11 @@ def commit_iceberg_table(
         else:
             writer.create()
         committed = True
-        committed_snapshot_id = current_iceberg_snapshot_id(spark, target)
-        snapshot = iceberg_snapshot(spark, target, committed_snapshot_id)
-        if previous_snapshot and snapshot["snapshotId"] == previous_snapshot["snapshotId"]:
-            raise RuntimeError("ICEBERG_SNAPSHOT_DID_NOT_ADVANCE")
         if truthy(os.environ.get("ASKLAKE_SPARK_FAIL_AFTER_ICEBERG_COMMIT")):
             raise RuntimeError("ICEBERG_FAIL_AFTER_COMMIT_INJECTED")
+        snapshot = latest_iceberg_snapshot(spark, target)
+        if previous_snapshot and snapshot["snapshotId"] == previous_snapshot["snapshotId"]:
+            raise RuntimeError("ICEBERG_SNAPSHOT_DID_NOT_ADVANCE")
         return {
             "createdTable": not existed_before,
             "jobId": job_id,
@@ -892,21 +672,12 @@ def commit_iceberg_table(
             "schemaFingerprint": schema_fingerprint,
             "ruleFingerprint": rule_fingerprint,
             "sourceBoundary": source_boundary or {},
-            "dataFileCount": snapshot["dataFileCount"],
-            "addedDataFileCount": snapshot["addedDataFileCount"],
-            "_committedSnapshotId": snapshot["snapshotId"],
             "_previousSnapshot": previous_snapshot,
-            "_rollbackRequired": True,
         }
     except Exception as exc:
         if committed:
             try:
-                rollback_iceberg_commit(
-                    spark,
-                    target,
-                    previous_snapshot,
-                    committed_snapshot_id=committed_snapshot_id,
-                )
+                rollback_iceberg_commit(spark, target, previous_snapshot)
             except Exception as rollback_exc:
                 raise IcebergCommitError(
                     f"{exc}; rollback failed: {rollback_exc}"
@@ -914,23 +685,8 @@ def commit_iceberg_table(
         raise IcebergCommitError(str(exc)) from exc
 
 
-def rollback_iceberg_commit(
-    spark,
-    target,
-    previous_snapshot,
-    *,
-    committed_snapshot_id,
-):
+def rollback_iceberg_commit(spark, target, previous_snapshot):
     table_identifier = spark_iceberg_table_identifier(target)
-    expected_current = str(committed_snapshot_id or "").strip()
-    if not expected_current:
-        raise RuntimeError("ICEBERG_ROLLBACK_COMMITTED_SNAPSHOT_MISSING")
-    actual_current = current_iceberg_snapshot_id(spark, target)
-    if actual_current != expected_current:
-        raise RuntimeError(
-            "ICEBERG_ROLLBACK_SNAPSHOT_DRIFT "
-            f"expected={expected_current} actual={actual_current}"
-        )
     if previous_snapshot:
         catalog_name = spark_iceberg_catalog_name()
         catalog = quote_spark_identifier(catalog_name)
@@ -1025,53 +781,14 @@ def snapshot_quality_report(quality):
     return report
 
 
-def canonical_output_row_count(quality):
-    if not isinstance(quality, dict):
-        return None
-    required_counters = (
-        "evaluatedRowCount",
-        "droppedCount",
-        "quarantinedCount",
-    )
-    if any(name not in quality for name in required_counters):
-        return None
-    counters = {
-        name: exact_nonnegative_integer(quality.get(name))
-        for name in required_counters
-    }
-    if any(value is None for value in counters.values()):
-        return None
-    removed_rows = counters["droppedCount"] + counters["quarantinedCount"]
-    if removed_rows > counters["evaluatedRowCount"]:
-        return None
-    return counters["evaluatedRowCount"] - removed_rows
-
-
-def exact_nonnegative_integer(value):
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
-    if isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
-        return int(value.strip())
-    return None
-
-
 def cleanup_failed_output_paths(spark, output_path):
-    paths = [str(output_path).rstrip("/"), f"{str(output_path).rstrip('/')}_quarantine"]
-    return cleanup_spark_paths(spark, paths)
-
-
-def cleanup_spark_paths(spark, paths):
     errors = []
+    paths = [str(output_path).rstrip("/"), f"{str(output_path).rstrip('/')}_quarantine"]
     for path in paths:
-        if not path:
-            continue
         try:
             hadoop_path = spark._jvm.org.apache.hadoop.fs.Path(path)
             file_system = hadoop_path.getFileSystem(spark._jsc.hadoopConfiguration())
-            if file_system.exists(hadoop_path) and not file_system.delete(hadoop_path, True):
-                raise RuntimeError(f"Could not delete Spark path: {path}")
+            file_system.delete(hadoop_path, True)
         except Exception as exc:
             reason = " ".join(str(exc).split()) or exc.__class__.__name__
             errors.append({"path": path, "reason": reason[:500]})
@@ -1155,17 +872,17 @@ def verify_spark_source_inventory(spark, source_path, source_collection, *, phas
         raise ValueError(f"{exc} phase={phase}") from exc
 
 
-def measure_source_bytes(spark, paths, inventory_bytes):
-    fallback_bytes, total = int(inventory_bytes or 0), 0
-    if not paths: return fallback_bytes, fallback_bytes
+def source_file_bytes(spark, paths):
+    total = 0
+    configuration = spark.sparkContext._jsc.hadoopConfiguration()
     for value in paths:
         try:
             path = spark._jvm.org.apache.hadoop.fs.Path(value)
-            total += int(path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()).getFileStatus(path).getLen())
-        except Exception as exc:
-            print(f"Spark source byte measurement is incomplete; direct cache is disabled: path={value} error={exc}", file=sys.stderr)
-            return fallback_bytes, None
-    return total, total
+            total += int(path.getFileSystem(configuration).getFileStatus(path).getLen())
+        except Exception:
+            continue
+    return total
+
 
 def read_source(
     spark,
@@ -1204,50 +921,6 @@ def read_source(
         return (reader.schema(source_schema) if source_schema is not None else reader).json(read_path)
     if source_format == "parquet":
         return base_reader.parquet(*read_path) if isinstance(read_path, list) else base_reader.parquet(read_path)
-    if source_format == "iceberg":
-        return spark.table(source_path)
-    if source_format == "kafka":
-        broker = required_env("ASKLAKE_KAFKA_BROKER")
-        topic = os.environ.get("ASKLAKE_KAFKA_TOPIC") or source_path
-        group_id = required_env("ASKLAKE_KAFKA_CONSUMER_GROUP")
-        auth_mode = os.environ.get("ASKLAKE_KAFKA_AUTH_MODE", "").strip().lower()
-        if auth_mode != "iam":
-            raise ValueError("Kubernetes Kafka Spark source requires ASKLAKE_KAFKA_AUTH_MODE=iam")
-        reader = (
-            spark.read.format("kafka")
-            .option("kafka.bootstrap.servers", broker)
-            .option("subscribe", topic)
-            .option("startingOffsets", "earliest")
-            .option("endingOffsets", "latest")
-            .option("failOnDataLoss", "true")
-            .option("kafka.group.id", group_id)
-            .option("kafka.security.protocol", "SASL_SSL")
-            .option("kafka.sasl.mechanism", "AWS_MSK_IAM")
-            .option(
-                "kafka.sasl.jaas.config",
-                "software.amazon.msk.auth.iam.IAMLoginModule required;",
-            )
-            .option(
-                "kafka.sasl.client.callback.handler.class",
-                "software.amazon.msk.auth.iam.IAMClientCallbackHandler",
-            )
-        )
-        kafka_frame = reader.load()
-        source_schema = json_source_schema(schema_columns, transform_steps)
-        if source_schema is None:
-            return kafka_frame.select(F.col("value").cast("string").alias("value"))
-        parsed = (
-            kafka_frame
-            .select(F.from_json(F.col("value").cast("string"), source_schema).alias("payload"))
-            .where(F.col("payload").isNotNull())
-            .select("payload.*")
-        )
-        fixture_batch_id = os.environ.get("ASKLAKE_KAFKA_FIXTURE_BATCH_ID", "").strip()
-        if fixture_batch_id:
-            if not nested_schema_path_exists(parsed.schema, ["raw", "fixture_batch_id"]):
-                raise ValueError("Kafka fixture batch filter requires raw.fixture_batch_id")
-            parsed = parsed.where(F.col("raw.fixture_batch_id") == F.lit(fixture_batch_id))
-        return parsed
     if source_format in {"txt", "text"}:
         if isinstance(record_parsing, dict) and record_parsing.get("enabled"):
             return read_whitespace_records(spark, read_path, record_parsing)
@@ -1458,25 +1131,10 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
     return contracted
 
 
-def apply_schema_contract_with_count(
-    frame,
-    schema_columns,
-    transform_steps=None,
-    *,
-    persist=False,
-):
+def apply_schema_contract_with_count(frame, schema_columns, transform_steps=None):
     contracted, required_targets = project_schema_contract(frame, schema_columns, transform_steps)
-    if persist:
-        contracted = contracted.persist(StorageLevel.MEMORY_AND_DISK)
-    try:
-        input_rows, null_required = schema_contract_summary(contracted, required_targets)
-    except Exception:
-        if persist:
-            contracted.unpersist(blocking=False)
-        raise
+    input_rows, null_required = schema_contract_summary(contracted, required_targets)
     if null_required:
-        if persist:
-            contracted.unpersist(blocking=False)
         raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
     return contracted, input_rows
 
@@ -1601,42 +1259,13 @@ def transform_input_column_names(steps):
 def evaluate_quality_rules(frame, rules, total_rows=None):
     enabled_rules = [rule for rule in rules if rule and rule.get("enabled") is not False and rule.get("targetColumn")]
     failed_details = []
+    failed_condition = None
     blocking_failures = 0
 
-    conditions = []
-    aliases = []
-    failed_condition = None
-    for index, rule in enumerate(enabled_rules):
+    for rule in enabled_rules:
         target_column = str(rule.get("targetColumn") or "")
         condition = quality_failure_condition(frame, target_column, str(rule.get("validationType") or rule.get("kind") or "Not Null"))
-        conditions.append(condition)
-        aliases.append(f"__asklake_quality_rule_{index}")
-        failed_condition = condition if failed_condition is None else failed_condition | condition
-
-    summary = None
-    if enabled_rules:
-        aggregate_expressions = [
-            F.sum(F.when(condition, F.lit(1)).otherwise(F.lit(0))).alias(alias)
-            for condition, alias in zip(conditions, aliases)
-        ]
-        aggregate_expressions.append(
-            F.sum(F.when(failed_condition, F.lit(1)).otherwise(F.lit(0))).alias(
-                "__asklake_quality_invalid_rows"
-            )
-        )
-        if total_rows is None:
-            aggregate_expressions.append(
-                F.count(F.lit(1)).alias("__asklake_quality_total_rows")
-            )
-        summary = frame.agg(*aggregate_expressions).first()
-    elif total_rows is None:
-        summary = frame.agg(
-            F.count(F.lit(1)).alias("__asklake_quality_total_rows")
-        ).first()
-
-    for rule, alias in zip(enabled_rules, aliases):
-        target_column = str(rule.get("targetColumn") or "")
-        failed_count = int((summary[alias] if summary is not None else 0) or 0)
+        failed_count = frame.filter(condition).count()
         if failed_count:
             failed_details.append({
                 "action": str(rule.get("failureAction") or "Warn"),
@@ -1648,17 +1277,10 @@ def evaluate_quality_rules(frame, rules, total_rows=None):
             })
             if str(rule.get("failureAction") or "").lower() == "fail run":
                 blocking_failures += failed_count
+            failed_condition = condition if failed_condition is None else failed_condition | condition
 
-    total_rows = (
-        int(total_rows)
-        if total_rows is not None
-        else int((summary["__asklake_quality_total_rows"] if summary is not None else 0) or 0)
-    )
-    invalid_rows = (
-        int((summary["__asklake_quality_invalid_rows"] if summary is not None else 0) or 0)
-        if enabled_rules
-        else 0
-    )
+    total_rows = int(total_rows) if total_rows is not None else frame.count()
+    invalid_rows = frame.filter(failed_condition).count() if failed_condition is not None else 0
     pass_rate = round(((total_rows - invalid_rows) / total_rows) * 100, 1) if total_rows else 100.0
     status = "pass" if invalid_rows == 0 else "fail" if blocking_failures else "warn"
     summary = f"품질 점수 {pass_rate}% · 유효하지 않은 행 {invalid_rows}개 · 검사 {len(enabled_rules)}개"

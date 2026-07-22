@@ -23,7 +23,6 @@ from app.schemas.dashboard import (
 )
 from app.services.dashboard_dataset_access import require_dashboard_dataset_query_access
 from app.services.dashboard_runtime_service import DashboardRuntimeService
-from app.services.etl_service import external_continuous_control_plane_enabled, require_local_continuous_control_plane
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 
@@ -70,8 +69,6 @@ def dataset_freshness_response(
 
     freshness = live_repository.get_freshness(dataset_id)
     continuous_job = live_repository.continuous_job_by_dataset(dataset_id)
-    if continuous_job is not None and external_continuous_control_plane_enabled():
-        require_local_continuous_control_plane()
     is_continuous = continuous_job is not None
     next_check_after_ms = (
         recommended_dashboard_poll_ms(

@@ -13,7 +13,7 @@ import { getCatalogDataset } from "../../services/catalogApi";
 import { getRealtimeFeatureConfig, type RealtimeFeatureConfig } from "../../services/realtimeConfigApi";
 import { ApiError, type AuditResult, type CatalogDataset } from "../../types";
 import {
-  buildContinuousSqlOutputIdentity,
+  buildClickHouseOutputIdentity,
   buildContinuousSqlOutputName,
   getContinuousSqlUniqueKeyIssue,
   getContinuousSqlRelationMix,
@@ -42,7 +42,20 @@ export function useContinuousSqlJoin({
   const [catalogDataset, setCatalogDataset] = useState<CatalogDataset | null>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const relationMix = useMemo(() => getContinuousSqlRelationMix(selectedDatasets), [selectedDatasets]);
-  const featureEnabled = Boolean(featureConfig?.continuousSqlJoinEnabled);
+  const v2Enabled = Boolean(
+    featureConfig?.clickhouseRealtimeV2Enabled
+      && featureConfig.kafkaConnectSinkEnabled
+      && featureConfig.clickhouseRealtimeConsumerOwner === "kafka_connect_v2",
+  );
+  const servingMode = featureConfig?.continuousSqlServingMode ?? "iceberg";
+  const featureEnabled = Boolean(
+    featureConfig?.continuousSqlJoinEnabled
+      && (
+        servingMode === "iceberg"
+        || featureConfig.clickhouseContinuousJoinEnabled
+        || v2Enabled
+      ),
+  );
 
   useEffect(() => {
     if (apiConfig.useMock) return;
@@ -130,7 +143,7 @@ export function useContinuousSqlJoin({
       // retained for the legacy contract, while producer Jobs own cadence.
       triggerIntervalSeconds: 10,
     };
-    const outputIdentity = buildContinuousSqlOutputIdentity();
+    const outputIdentity = buildClickHouseOutputIdentity();
     setPending(true);
     setError(null);
     setCatalogDataset(null);
@@ -152,21 +165,46 @@ export function useContinuousSqlJoin({
           setProgressMessage("유일키 등록이 완료되어 JOIN SQL을 다시 검증하고 있습니다.");
         }
       }
-      setProgressMessage("정적 Iceberg 스냅샷과 producer Dataset revision을 고정하고 JOIN 실행 트리를 시작하고 있습니다.");
+      setProgressMessage(
+        servingMode === "iceberg"
+          ? "정적 Iceberg 스냅샷과 producer Dataset revision을 고정하고 JOIN 실행 트리를 시작하고 있습니다."
+          : "정적 스냅샷과 producer Dataset revision을 준비하고 JOIN 실행 트리를 시작하고 있습니다. 최초 1회는 데이터 크기에 따라 시간이 걸릴 수 있습니다.",
+      );
       const commonCreateRequest = {
         ...planRequest,
         clientRequestId: createClientRequestId(),
         name: `${outputName.trim()} Continuous SQL`,
       };
-      const job = await createContinuousSqlJob({
-        ...commonCreateRequest,
-        output: {
-          datasetId: outputIdentity.datasetId,
-          datasetName: outputName.trim(),
-          layer: "GOLD",
-          servingMode: "iceberg",
-        },
-      });
+      const job = servingMode === "iceberg"
+        ? await createContinuousSqlJob({
+          ...commonCreateRequest,
+          output: {
+            datasetId: outputIdentity.datasetId,
+            datasetName: outputName.trim(),
+            layer: "GOLD",
+            servingMode: "iceberg",
+          },
+        })
+        : await createContinuousSqlJob({
+          ...commonCreateRequest,
+          output: {
+            clickhouseTarget: v2Enabled
+              ? {
+                  database: "asklake_realtime_v2",
+                  engine: "clickhouse",
+                  table: "serving_events_v2",
+                }
+              : {
+                  database: "asklake",
+                  engine: "clickhouse",
+                  table: outputIdentity.table,
+                },
+            datasetId: outputIdentity.datasetId,
+            datasetName: outputName.trim(),
+            layer: "GOLD",
+            servingMode: "clickhouse",
+          },
+        });
       setResult(job);
       onAction("analysis.continuous_sql.created", "/api/query/continuous-jobs", job.id);
       try {
@@ -216,6 +254,7 @@ export function useContinuousSqlJoin({
     progressMessage,
     relationMix,
     result,
+    servingMode,
     setDialogOpen,
     setOutputName,
   };

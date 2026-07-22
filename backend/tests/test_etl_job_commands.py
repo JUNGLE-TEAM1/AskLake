@@ -34,10 +34,6 @@ def _repository_patches(job: SimpleNamespace):
             "app.application.etl_job_commands.etl_repository.list_kafka_continuous_maintenance_run_models",
             return_value=[],
         ),
-        patch(
-            "app.application.etl_job_commands._delete_catalog_datasets_produced_by_job",
-            return_value=[],
-        ),
     )
 
 
@@ -184,7 +180,6 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             repository_patches[2],
             repository_patches[3],
             repository_patches[4],
-            repository_patches[5],
         ):
             deleted_job_id = delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)
 
@@ -227,7 +222,6 @@ class EtlJobDeleteCommandTests(unittest.TestCase):
             repository_patches[2],
             repository_patches[3],
             repository_patches[4],
-            repository_patches[5],
         ):
             with self.assertRaisesRegex(RuntimeError, "commit failed"):
                 delete_job(db, job.id, ActorContext(name="owner"), hooks=hooks)

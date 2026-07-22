@@ -123,7 +123,8 @@ def apply_snapshot_rules(frame, rules, input_row_count=None):
 
     transform_duration_ms = _elapsed_ms(transform_started_at)
     quality_started_at = time.monotonic()
-    quality_input_count = current_row_count
+    quality_input_count = current_row_count if current_row_count is not None else current.count()
+    quality["evaluatedRowCount"] = quality_input_count
     flag_names = []
     failure_reasons = []
     flagged = current
@@ -134,59 +135,11 @@ def apply_snapshot_rules(frame, rules, input_row_count=None):
         flag_names.append(flag_name)
         failure_reasons.append(reason)
 
-    effective_failure_aliases = []
-    blocking_failure_aliases = []
     if flag_names:
         any_failure = F.col(flag_names[0])
         for flag_name in flag_names[1:]:
             any_failure = any_failure | F.col(flag_name)
-        active = F.lit(True)
-        aggregate_expressions = [
-            F.count(F.lit(1)).alias("__asklake_quality_input_rows"),
-            F.sum(F.when(any_failure, F.lit(1)).otherwise(F.lit(0))).alias(
-                "__asklake_quality_invalid_rows"
-            ),
-        ]
-        for index, (rule, flag_name) in enumerate(zip(quality_rules, flag_names)):
-            flag = F.col(flag_name)
-            effective_alias = f"__asklake_quality_effective_{index}"
-            aggregate_expressions.append(
-                F.sum(F.when(active & flag, F.lit(1)).otherwise(F.lit(0))).alias(
-                    effective_alias
-                )
-            )
-            effective_failure_aliases.append(effective_alias)
-            if _failure_action(rule) == "fail_batch":
-                blocking_alias = f"__asklake_quality_blocking_{index}"
-                aggregate_expressions.append(
-                    F.sum(F.when(flag, F.lit(1)).otherwise(F.lit(0))).alias(
-                        blocking_alias
-                    )
-                )
-                blocking_failure_aliases.append((index, blocking_alias))
-            if _failure_action(rule) in {"quarantine", "drop_row"}:
-                active = active & ~flag
-        aggregate = flagged.agg(*aggregate_expressions).first()
-        quality_input_count = int(
-            (aggregate["__asklake_quality_input_rows"] if aggregate is not None else 0) or 0
-        )
-        quality["invalidRowCount"] = int(
-            (aggregate["__asklake_quality_invalid_rows"] if aggregate is not None else 0) or 0
-        )
-        effective_failure_counts = [
-            int((aggregate[alias] if aggregate is not None else 0) or 0)
-            for alias in effective_failure_aliases
-        ]
-        blocking_failure_counts = {
-            index: int((aggregate[alias] if aggregate is not None else 0) or 0)
-            for index, alias in blocking_failure_aliases
-        }
-    else:
-        if quality_input_count is None:
-            quality_input_count = current.count()
-        effective_failure_counts = []
-        blocking_failure_counts = {}
-    quality["evaluatedRowCount"] = int(quality_input_count or 0)
+        quality["invalidRowCount"] = flagged.filter(any_failure).select(ROW_ID).distinct().count()
     quality["passRate"] = (
         round(((quality_input_count - quality["invalidRowCount"]) / quality_input_count) * 100, 1)
         if quality_input_count
@@ -195,10 +148,10 @@ def apply_snapshot_rules(frame, rules, input_row_count=None):
 
     blocking_rule = None
     blocking_reason = ""
-    for index, (rule, reason) in enumerate(zip(quality_rules, failure_reasons)):
+    for rule, flag_name, reason in zip(quality_rules, flag_names, failure_reasons):
         if _failure_action(rule) != "fail_batch":
             continue
-        failed_count = blocking_failure_counts.get(index, 0)
+        failed_count = flagged.filter(F.col(flag_name)).count()
         quality["blockingFailures"] += failed_count
         if failed_count and blocking_rule is None:
             blocking_rule = rule
@@ -219,9 +172,9 @@ def apply_snapshot_rules(frame, rules, input_row_count=None):
         )
 
     current = flagged
-    for index, (rule, flag_name, reason) in enumerate(zip(quality_rules, flag_names, failure_reasons)):
+    for rule, flag_name, reason in zip(quality_rules, flag_names, failure_reasons):
         invalid = F.col(flag_name)
-        invalid_count = effective_failure_counts[index]
+        invalid_count = current.filter(invalid).count()
         if not invalid_count:
             continue
         action = _failure_action(rule)

@@ -8,7 +8,6 @@ import {
   shouldAcceptContinuousRuntimeUpdate,
 } from "../src/services/continuousRuntimeContract.ts";
 import type { JobRowData, KafkaContinuousRuntime } from "../src/types.ts";
-import { retainedContinuousSessionId } from "../src/pages/ingest/jobs/continuousSessionSelection.ts";
 
 function runtime(overrides: Partial<KafkaContinuousRuntime> = {}): KafkaContinuousRuntime {
   return {
@@ -126,15 +125,4 @@ test("structured stage error wins while lastError remains a compatibility fallba
     lastError: "legacy error",
   })), "Catalog retry is pending.");
   assert.equal(continuousRuntimeErrorMessage(runtime({ lastError: "legacy error" })), "legacy error");
-});
-
-test("continuous session polling retains an explicit user selection", () => {
-  const sessions = [
-    { sessionId: "session-current" },
-    { sessionId: "session-failed" },
-  ] as never[];
-
-  assert.equal(retainedContinuousSessionId(sessions, "session-failed"), "session-failed");
-  assert.equal(retainedContinuousSessionId(sessions, "session-missing"), "session-current");
-  assert.equal(retainedContinuousSessionId([], "session-failed"), null);
 });

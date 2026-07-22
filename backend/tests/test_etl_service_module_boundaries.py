@@ -1,11 +1,9 @@
 import ast
 import hashlib
 from pathlib import Path
-import sys
 import unittest
 
 from app.application import (
-    etl_airflow_projection,
     etl_catalog_projection,
     etl_job_projection,
     etl_pipeline_policy,
@@ -201,15 +199,14 @@ EXTRACTED_EXPORTS = {
 }
 
 REVIEWED_FUNCTION_DIGESTS = {
-    etl_airflow_projection: "4f93125a9f35f22d65eedabd19d0a84cf42ab3d85bd4ed24b39d6d9d5422652a",
-    etl_schedule: "a60c3f1d406e711f459652bae1e1a36bb0747086ab75a0371ea991d96d4f28d1",
-    etl_job_projection: "6d26806ddf2920678e9c0ce6e229b82195da89e9b3dc20bcf855e28d70cac0ee",
-    etl_record_parsing: "f83831544eeb6ea5f6c2dd70fb432affd87a36af647a834d5b6d809a3e3b993b",
-    etl_runtime_support: "2930775e49a12cf20a82a8c1fa58e4fd0891dc178fdb9e1a055181a42fbc4ad8",
-    etl_source_window: "4002bc295053f657e696c40158e6773b567b83913e63b6585f85e42b9ea308c9",
-    etl_run_projection: "fb38c31d6d521bb09ecfe1748762f2f2ed710869eaea1d8bf27deff1e0df5f90",
-    etl_catalog_projection: "4b7b0494c6226465c2e4733cccf2cc056a4344bed33bcd5d9a589eae1c67264b",
-    etl_pipeline_policy: "81ad589380f1d11501cdc398f3c4875a09492fe1e48c6a9db94f7cc84d83a214",
+    etl_schedule: "26c08d45a62467ca65e335f5fb96ceb2d013409d27036f506b08e504def07265",
+    etl_job_projection: "bc2e0c68fdd9c06207e4e926c4dd325c4fb69c99adc4ebeea9205ea59a990a02",
+    etl_record_parsing: "77381844dca157f2f2ac362bd993944e5ce44d5e395ed8d228d45bb75c463400",
+    etl_runtime_support: "d410df2ce0f73d32ababf30b0aeeaac09d091bd2f99f0ef0df373468492e7eeb",
+    etl_source_window: "96021a5f5ed3aa3f6b2e42f3fba4b3a96f19c88c4b32f84b9e47469f12fc3808",
+    etl_run_projection: "009ba2344a14edc775694a32163b3819a5b61eed6fd55e825aa603a6703bfbdd",
+    etl_catalog_projection: "8b7af995d75bb825f1bb436288dc064de9bd0fb886c527a441f2fa07741a7176",
+    etl_pipeline_policy: "17bc003374c35536a33bf94817000da788a92989631d8aad5139fd7d0abbd2f7",
 }
 
 RUNTIME_FACADE_MODULES = (
@@ -225,22 +222,16 @@ RUNTIME_FACADE_MODULES = (
 )
 
 RUNTIME_FACADE_DIGESTS = {
-    api_job_operations: "308721542c7ad9842e3a0b3fe7d41138792a9bd841e32676479d0ce753d20d09",
-    api_review_operations: "dab169abe58f7438226f0deadf2a5a15af115c49931d2697bb997cba548fed0f",
-    snapshot_operations: "a810d372db02d45cb3b2b55cdf8fcdcef22ae7301dded7cc663bb3d33d49f1bc",
-    airflow_operations: "ca91ed7ee6626ece0f46d65f7349ada91b349a358803d4e096de89f4a64df912",
-    source_runtime: "efcd04e1183d832cc478abc1385f74c9337000bea8d6a27152a59c428c73e1e0",
-    continuous_maintenance: "eedd490b307929576724046497874fa9a29dad0ad2a4a4d69d0dcf367f1ffed9",
-    continuous_session: "15904dd1553272b16dff9937aad0514ab951ca819e555624c72cca713be93ed0",
-    continuous_publication: "29c6f09515afa909c459804a8399649014a8925c32017a3db0576cb0cc6e0ee9",
-    replay_schedule: "02df7315c31da09c0b2505f40c19dd5a153272d52342851a70e5a3db2aafc69d",
+    api_job_operations: "2ca3451cf8d8191ee26007932e382e5026e3f04705a53ee71ccc1aa9db788214",
+    api_review_operations: "73cdb622d8015c72d595c814f860ff98ff73b3956fbd5de6842de8d75e58350e",
+    snapshot_operations: "6e6466845b2e74b89ebc8e9686401f24a5d705ccce8c2a2eeedba7638a7640e1",
+    airflow_operations: "3ba467762ed088581513e591e232e7bed96c0b73654541dc24844715beafec76",
+    source_runtime: "50528e057222df75676b42aa6a8f170dd2b94eda123c2b77b7f164071457536f",
+    continuous_maintenance: "250e43bfe5ef4e4250b5d8767c63b6abe463c8708319102910fd9d0282d9497c",
+    continuous_session: "218eea6f08099161193e8c75d52bdfd488f8403c0e1dea24e8b3c60d4d03a3f5",
+    continuous_publication: "c19c098f2079a418a0159107f492981061ad41884517194624966afc7d46cae0",
+    replay_schedule: "fe83ec3f2262ccc5e30aa2c0bfe0226b0425f6556fa59128f1f3297edb4be772",
 }
-
-
-def reviewed_ast_dump(node: ast.AST) -> str:
-    if sys.version_info >= (3, 13):
-        return ast.dump(node, include_attributes=False, show_empty=True)
-    return ast.dump(node, include_attributes=False)
 
 
 class EtlServiceModuleBoundaryTests(unittest.TestCase):
@@ -269,14 +260,13 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
 
     def test_extracted_modules_stay_small_and_do_not_import_the_facade(self) -> None:
         budgets = {
-            etl_airflow_projection: 100,
             etl_schedule: 320,
             etl_job_projection: 480,
             etl_record_parsing: 170,
             etl_runtime_support: 120,
             etl_source_window: 270,
-            etl_run_projection: 646,
-            etl_catalog_projection: 811,
+            etl_run_projection: 620,
+            etl_catalog_projection: 800,
             etl_pipeline_policy: 460,
         }
         for module, line_budget in budgets.items():
@@ -290,7 +280,7 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
                 for node in ast.parse(source).body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            payload = "\n".join(reviewed_ast_dump(node) for node in functions)
+            payload = "\n".join(ast.dump(node, include_attributes=False) for node in functions)
             self.assertEqual(
                 hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                 REVIEWED_FUNCTION_DIGESTS[module],
@@ -301,7 +291,7 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
             api_job_operations: 670,
             api_review_operations: 450,
             snapshot_operations: 460,
-            airflow_operations: 990,
+            airflow_operations: 980,
             source_runtime: 800,
             continuous_maintenance: 660,
             continuous_session: 530,
@@ -318,7 +308,7 @@ class EtlServiceModuleBoundaryTests(unittest.TestCase):
                 for node in ast.parse(source).body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            payload = "\n".join(reviewed_ast_dump(node) for node in functions)
+            payload = "\n".join(ast.dump(node, include_attributes=False) for node in functions)
             payload += "\nEXPORTS\n" + "\n".join(module.EXPORTED_FUNCTIONS)
             self.assertEqual(
                 hashlib.sha256(payload.encode("utf-8")).hexdigest(),

@@ -1,0 +1,11 @@
+{
+  "review-delivery": {
+    "sources": [
+      {
+        "parentDocumentId": "review-parent-001",
+        "chunkDocumentId": "review-chunk-001",
+        "metadata": {"rating": 2}
+      }
+    ]
+  }
+}

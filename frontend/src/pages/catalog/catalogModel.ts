@@ -25,6 +25,7 @@ export const lineageFitViewOptions = { maxZoom: 1.08, padding: 0.08 };
 export type CatalogFilterState = {
   approvalRequired: boolean;
   available: boolean;
+  rag: boolean;
 };
 
 export type CatalogStatusFilter = "all" | keyof CatalogFilterState;
@@ -57,6 +58,7 @@ export const catalogStatusFilterOptions: Array<{ label: string; value: CatalogSt
   { label: "전체", value: "all" },
   { label: "사용 가능", value: "available" },
   { label: "승인 필요", value: "approvalRequired" },
+  { label: "RAG 여부", value: "rag" },
 ];
 
 export const catalogPageSize = 5;
@@ -205,7 +207,9 @@ export function datasetMatchesFilters(dataset: CatalogDataset, filters: CatalogF
   const matchesStatus = !statusFilterActive
     || (filters.available && dataset.status === "available")
     || (filters.approvalRequired && dataset.status === "approval_required");
-  return matchesStatus;
+  const matchesRag = !filters.rag || dataset.rag;
+
+  return matchesStatus && matchesRag;
 }
 
 export function parseCatalogDateTime(value: string) {

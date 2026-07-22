@@ -131,11 +131,6 @@ export function continuousRuntimeLabel(job: JobRowData) {
   return `${continuousRuntimeStatusLabels[runtime.status] ?? runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
 }
 
-export function continuousEngineLabel(job: JobRowData) {
-  if (job.executionMode !== "continuous") return "배치 · Spark";
-  return "실시간 · Spark";
-}
-
 export function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
   if (action === "detail" || action === "runs") return false;
   return !canRunJobCommand(job, action);

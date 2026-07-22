@@ -1,13 +1,10 @@
 from typing import Any
 
-from pydantic import ValidationError
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models.catalog import CatalogDatasetModel
-from app.schemas.catalog import DatasetPhysicalBinding
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -173,12 +170,12 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "upstream": model.upstream or [],
     })
     authoritative_metadata = {
-        "producerJobId": getattr(model, "producer_job_id", None),
-        "producerJobKind": getattr(model, "producer_job_kind", None),
-        "executionMode": getattr(model, "execution_mode", None),
-        "sourceKind": getattr(model, "source_kind", None),
-        "relationMode": getattr(model, "relation_mode", None),
-        "runtimeStatus": getattr(model, "runtime_status", None),
+        "producerJobId": model.producer_job_id,
+        "producerJobKind": model.producer_job_kind,
+        "executionMode": model.execution_mode,
+        "sourceKind": model.source_kind,
+        "relationMode": model.relation_mode,
+        "runtimeStatus": model.runtime_status,
     }
     for key, value in authoritative_metadata.items():
         if value is not None:
@@ -196,12 +193,7 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(physical_bindings, list):
         physical_bindings = []
         clickhouse = normalized_payload.get("clickhouseTable")
-        if (
-            settings.clickhouse_realtime_v2_enabled
-            and isinstance(clickhouse, dict)
-            and clickhouse.get("database")
-            and clickhouse.get("table")
-        ):
+        if isinstance(clickhouse, dict) and clickhouse.get("database") and clickhouse.get("table"):
             physical_bindings.append({
                 "role": "serving", "engine": "clickhouse", "status": "active",
                 "bindingEpoch": int(normalized_payload.get("bindingEpoch") or 0),
@@ -217,7 +209,7 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "table": query_engine["table"],
                 "snapshotId": normalized_payload.get("icebergSnapshotId"),
             })
-    normalized_payload["physicalBindings"] = normalize_physical_bindings(physical_bindings)
+    normalized_payload["physicalBindings"] = physical_bindings
     owner = str(normalized_payload.get("owner") or "")
     normalized_payload["permissionGrants"] = normalized_payload.get("permissionGrants") or permission_grants_from_roles(
         owner,
@@ -231,41 +223,6 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
         else []
     )
     return normalized_payload
-
-
-def normalize_physical_bindings(physical_bindings: list[Any]) -> list[dict[str, Any]]:
-    normalized_bindings: list[dict[str, Any]] = []
-    for binding in physical_bindings:
-        if not isinstance(binding, dict):
-            continue
-        role = binding.get("role")
-        engine = binding.get("engine")
-        # EKS keeps the V1-only profile by default and therefore filters legacy
-        # ClickHouse bindings.  A binding carrying a pipelineVersionId was
-        # produced by the current, explicitly managed V2 publication flow and
-        # remains valid metadata even when this process is only reading it.
-        managed_clickhouse_binding = bool(
-            str(binding.get("pipelineVersionId") or "").strip()
-        )
-        supported = (
-            (role == "archive" and engine == "trino")
-            or (
-                (
-                    settings.clickhouse_realtime_v2_enabled
-                    or managed_clickhouse_binding
-                )
-                and role == "serving"
-                and engine == "clickhouse"
-            )
-        )
-        if not supported:
-            continue
-        try:
-            parsed = DatasetPhysicalBinding.model_validate(binding)
-        except ValidationError:
-            continue
-        normalized_bindings.append(parsed.model_dump(by_alias=True, mode="json"))
-    return normalized_bindings
 
 
 def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict[str, Any]]:

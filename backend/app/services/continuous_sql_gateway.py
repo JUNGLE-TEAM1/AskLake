@@ -10,6 +10,8 @@ from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.schemas.continuous_sql import continuous_sql_serving_mode
+from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
+from app.services.clickhouse_realtime_v2 import ClickHouseRealtimeV2WorkerGateway
 from app.services.node_bridge import run_node_bridge
 
 
@@ -108,8 +110,13 @@ class RoutedContinuousSqlWorkerGateway:
         resolved_settings = runtime_settings or settings
         self.settings = resolved_settings
         self.iceberg_gateway = iceberg_gateway or NodeContinuousSqlWorkerGateway()
-        self.clickhouse_gateway = clickhouse_gateway
-        self.clickhouse_v2_gateway = clickhouse_v2_gateway
+        self.clickhouse_gateway = clickhouse_gateway or ClickHouseContinuousSqlWorkerGateway(
+            resolved_settings
+        )
+        self.clickhouse_v2_gateway = (
+            clickhouse_v2_gateway
+            or ClickHouseRealtimeV2WorkerGateway(resolved_settings)
+        )
 
     def manage(
         self,
@@ -125,16 +132,8 @@ class RoutedContinuousSqlWorkerGateway:
             and self.settings.kafka_connect_sink_enabled
             and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
         ):
-            if self.clickhouse_v2_gateway is None:
-                from app.services.clickhouse_realtime_v2 import ClickHouseRealtimeV2WorkerGateway
-
-                self.clickhouse_v2_gateway = ClickHouseRealtimeV2WorkerGateway(self.settings)
             gateway = self.clickhouse_v2_gateway
         else:
-            if self.clickhouse_gateway is None:
-                from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
-
-                self.clickhouse_gateway = ClickHouseContinuousSqlWorkerGateway(self.settings)
             gateway = self.clickhouse_gateway
         return gateway.manage(job, run, action, options)
 

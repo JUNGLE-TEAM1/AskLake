@@ -6,7 +6,8 @@ import os
 
 
 AWS_ENV_AND_INSTANCE_PROVIDERS = (
-    "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider"
+    "software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider,"
+    "org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider"
 )
 MINIO_SIMPLE_PROVIDER = "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
 S3A_FILE_SYSTEM = "org.apache.hadoop.fs.s3a.S3AFileSystem"

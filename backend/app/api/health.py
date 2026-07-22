@@ -11,6 +11,9 @@ from app.services.realtime_event_service import realtime_event_dispatcher, realt
 from app.services.realtime_feature_flags import resolve_realtime_feature_state
 from app.services.realtime_metrics import realtime_metrics
 from app.core.observability import metrics_snapshot
+from app.realtime.application.ingest_service import RealtimeIngestService
+from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
 
 router = APIRouter()
 
@@ -54,33 +57,9 @@ def observability_metrics() -> dict[str, object]:
 def ai_health_check(response: Response) -> dict[str, object]:
     if settings.ai_query_provider != "gateway":
         return {"ok": True, "status": "disabled", "provider": "direct"}
-    gateway_status = AiGatewayClient().health_status()
-    ready = bool(gateway_status.get("ok"))
+    ready = AiGatewayClient().health_check()
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
-    safe_gateway_status: dict[str, object] = {}
-    for key in ("service", "provider", "model", "mcp"):
-        value = gateway_status.get(key)
-        if isinstance(value, str):
-            safe_gateway_status[key] = value
-    checks = gateway_status.get("checks")
-    if isinstance(checks, dict):
-        safe_gateway_status["checks"] = {
-            key: value
-            for key in ("internalAuth", "provider", "mcp")
-            if isinstance((value := checks.get(key)), str)
-        }
-    capabilities = gateway_status.get("capabilities")
-    safe_gateway_status["capabilities"] = (
-        [value for value in capabilities if isinstance(value, str)]
-        if isinstance(capabilities, list)
-        else []
-    )
-    return {
-        "ok": ready,
-        "status": "ready" if ready else str(gateway_status.get("status") or "unavailable"),
-        "provider": "gateway",
-        "gateway": safe_gateway_status,
-    }
+    return {"ok": ready, "status": "ready" if ready else "unavailable", "provider": "gateway"}
 
 
 @router.get("/health/realtime")
@@ -93,12 +72,6 @@ def realtime_health_check(response: Response) -> dict[str, object]:
     clickhouse_ready = False
     worker_ready = False
     if state.clickhouse_realtime_v2_enabled:
-        # Keep the EKS V1-only profile free from importing or probing the
-        # retired V2 runtime while preserving the enabled EC2 profile.
-        from app.realtime.application.ingest_service import RealtimeIngestService
-        from app.realtime.infrastructure.kafka_connect_gateway import KafkaConnectError
-        from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
-
         try:
             probe = RealtimeIngestService().probe()
             worker_ready = probe.runtime_ready
@@ -115,6 +88,9 @@ def realtime_health_check(response: Response) -> dict[str, object]:
         finally:
             if client is not None:
                 client.close()
+        # A fresh deployment has no connector until a Continuous SQL Job is
+        # started. Readiness must verify the worker and ClickHouse, not require
+        # a connector that cannot exist yet.
         v2_ready = worker_ready and clickhouse_ready
         v2_status = "ready" if v2_ready else "unavailable"
     realtime_v2 = {
@@ -138,16 +114,15 @@ def realtime_health_check(response: Response) -> dict[str, object]:
     if not state.realtime_events_enabled:
         if state.clickhouse_realtime_v2_enabled:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-            return {
-                "ok": False,
-                "status": "not_ready",
-                "effectiveMode": state.dashboard_sync_mode,
-                "v2": realtime_v2,
-            }
         return {
             "ok": not state.clickhouse_realtime_v2_enabled,
-            "status": "disabled",
+            "status": (
+                "not_ready"
+                if state.clickhouse_realtime_v2_enabled
+                else "disabled"
+            ),
             "effectiveMode": state.dashboard_sync_mode,
+            "v2": realtime_v2,
         }
     database_ok = True
     event_cursor = 0
@@ -163,7 +138,7 @@ def realtime_health_check(response: Response) -> dict[str, object]:
     )
     response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
     metrics = realtime_metrics.snapshot()
-    payload = {
+    return {
         "ok": ready,
         "status": "ready" if ready else "unavailable",
         "effectiveMode": state.dashboard_sync_mode,
@@ -172,7 +147,5 @@ def realtime_health_check(response: Response) -> dict[str, object]:
         "listener": {"ready": bool(metrics.get("listenerReady"))},
         "capacity": realtime_event_hub.capacity_snapshot(),
         "eventCursor": event_cursor,
+        "v2": realtime_v2,
     }
-    if state.clickhouse_realtime_v2_enabled:
-        payload["v2"] = realtime_v2
-    return payload

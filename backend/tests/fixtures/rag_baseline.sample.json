@@ -1,0 +1,10 @@
+{
+  "metrics": {
+    "parentRecall": 1.0,
+    "parentMrr": 1.0,
+    "parentNdcg": 1.0,
+    "chunkRecall": 1.0,
+    "filterPrecision": 1.0,
+    "duplicateParentRate": 0.0
+  }
+}

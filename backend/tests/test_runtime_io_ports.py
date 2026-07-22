@@ -22,11 +22,9 @@ from app.services import etl_service
 class SpyBridge:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
-        self.options: dict = {}
 
-    def execute(self, script_name, _success_marker, payload, **options):
+    def execute(self, script_name, _success_marker, payload, **_options):
         self.calls.append((script_name, payload))
-        self.options = options
         return {"ok": True}
 
 
@@ -80,25 +78,6 @@ class RuntimeIoPortTests(unittest.TestCase):
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(bridge.calls, [("fake.mjs", {"jobId": "job-1"})])
-
-    def test_service_facade_forwards_kubernetes_progress_contract(self) -> None:
-        bridge = SpyBridge()
-        progress_file = Path("/private/tmp/spark-progress.json")
-        callback = lambda _progress: None
-
-        etl_service.run_node_bridge(
-            "fake.mjs",
-            "SUCCESS",
-            {"jobId": "job-1"},
-            error_marker="ERROR",
-            timeout_seconds=1,
-            progress_callback=callback,
-            progress_file=progress_file,
-            bridge=bridge,
-        )
-
-        self.assertIs(bridge.options["progress_callback"], callback)
-        self.assertEqual(bridge.options["progress_file"], progress_file)
 
     def test_subprocess_bridge_returns_marker_payload_and_process_evidence(self) -> None:
         calls = []
@@ -181,41 +160,6 @@ class RuntimeIoPortTests(unittest.TestCase):
         self.assertEqual(captured.exception.code, "BACKEND_BRIDGE_TIMEOUT")
         self.assertEqual(recovery_calls, ["recover"])
         self.assertTrue(captured.exception.details["recovery"]["succeeded"])
-
-    def test_subprocess_bridge_forwards_and_cleans_progress_file(self) -> None:
-        progress_updates = []
-        with TemporaryDirectory() as directory:
-            progress_file = Path(directory) / "spark-progress.json"
-
-            def runner(*_args, **_options):
-                progress_file.write_text(
-                    json.dumps({"applicationUid": "spark-uid-001"}),
-                    encoding="utf-8",
-                )
-                return SimpleNamespace(
-                    returncode=0,
-                    stdout='SUCCESS={"status":"submitted"}\n',
-                    stderr="",
-                )
-
-            bridge = SubprocessNodeBridge(
-                backend_dir=Path("/backend"),
-                scripts_dir=Path("/backend/scripts"),
-                runner=runner,
-            )
-            result = bridge.execute(
-                "worker.mjs",
-                "SUCCESS",
-                {},
-                error_marker="ERROR",
-                timeout_seconds=3,
-                progress_callback=progress_updates.append,
-                progress_file=progress_file,
-            )
-
-            self.assertEqual(result["status"], "submitted")
-            self.assertEqual(progress_updates, [{"applicationUid": "spark-uid-001"}])
-            self.assertFalse(progress_file.exists())
 
     def test_legacy_bridge_redacts_secrets_from_diagnostics(self) -> None:
         bridge = SubprocessNodeBridge(

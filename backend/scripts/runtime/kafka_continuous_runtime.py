@@ -38,7 +38,6 @@ from runtime.kafka_state import (
     normalize_stream_partition_cursors,
     stream_partition_cursor_payload,
 )
-from runtime.kafka_source import configure_kafka_auth
 from runtime.runtime_documents import (
     catalog_ack_batch_id,
     requested_runtime_action,
@@ -47,6 +46,7 @@ from runtime.runtime_documents import (
     write_runtime_document_json,
     write_runtime_marker,
 )
+
 
 JOB_ID = os.environ["ASKLAKE_CONTINUOUS_JOB_ID"]
 WORKER_ATTEMPT_ID = os.environ.get("ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID")
@@ -1361,13 +1361,13 @@ def main() -> None:
                 iceberg_commit=latest.get("icebergCommit") if isinstance(latest.get("icebergCommit"), dict) else {},
             )
         LAST_BATCH_EVIDENCE = {**latest, "status": "success", "lastError": None, "dagSteps": latest_steps}
-    source_reader = (spark.readStream.format("kafka")
+    source = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", config.broker)
         .option("subscribe", config.topic)
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
-        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
-        .option("kafka.group.id", config.consumer_group_id))
-    source = configure_kafka_auth(source_reader, os.environ.get("ASKLAKE_KAFKA_AUTH_MODE", "")).load()
+        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "100"))
+        .option("kafka.group.id", config.consumer_group_id)
+        .load())
     raw_payload = col("value").cast("string")
     payload = raw_record_payload(schema, raw_payload) if RECORD_PARSING_ENABLED else from_json(raw_payload, schema)
     raw_map = lit(None).cast(MapType(StringType(), StringType())) if RECORD_PARSING_ENABLED else from_json(raw_payload, MapType(StringType(), StringType()))
@@ -1594,11 +1594,7 @@ def main() -> None:
                 rule_fingerprint=RULE_FINGERPRINT,
                 source_boundary=source_boundary,
             )
-            for private_key in [
-                key for key in iceberg_commit
-                if str(key).startswith("_")
-            ]:
-                iceberg_commit.pop(private_key, None)
+            iceberg_commit.pop("_previousSnapshot", None)
         if quarantined_count:
             quarantine_frame = None
             if schema_invalid_count:
