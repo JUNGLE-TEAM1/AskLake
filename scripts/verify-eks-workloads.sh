@@ -17,15 +17,9 @@ required_files=(
   "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
   "$ROOT_DIR/airflow/Dockerfile"
   "$ROOT_DIR/backend/scripts/spark-kubernetes-client.mjs"
-  "$ROOT_DIR/backend/scripts/spark-kubernetes-client.test.mjs"
-  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
-  "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
+  "$ROOT_DIR/backend/scripts/verify-spark-kubernetes-client.mjs"
   "$ROOT_DIR/backend/scripts/spark_job_run.py"
-  "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
   "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
-  "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
-  "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
-  "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
   "$ROOT_DIR/deploy/profiles/realtime-v1-only.yaml"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-values.mjs"
   "$ROOT_DIR/scripts/build-eks-spark-resource-planner-off-web-values.mjs"
@@ -80,6 +74,22 @@ required_files=(
 for required_file in "${required_files[@]}"; do
   if [[ ! -s "$required_file" ]]; then
     echo "missing required EKS workload file: $required_file" >&2
+    exit 1
+  fi
+done
+
+retired_files=(
+  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
+  "$ROOT_DIR/backend/scripts/kafka_fixture_boundary.py"
+  "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
+  "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs"
+  "$ROOT_DIR/backend/tests/test_kafka_fixture_boundary.py"
+  "$ROOT_DIR/backend/tests/test_continuous_worker_scope.py"
+)
+
+for retired_file in "${retired_files[@]}"; do
+  if [[ -e "$retired_file" ]]; then
+    echo "retired EKS fixture/MSK boundary returned without a replacement contract: $retired_file" >&2
     exit 1
   fi
 done
@@ -372,14 +382,6 @@ if grep -q 'software.amazon.msk:aws-msk-iam-auth' "$OPT_IN_RENDERED_FILE"; then
   exit 1
 fi
 grep -q 'ASKLAKE_SPARK_MSK_IAM_AUTH_JAR' "$RENDERED_FILE"
-grep -q 'option("kafka.sasl.mechanism", "AWS_MSK_IAM")' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
-grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/kafka_source.py"
-grep -q '<pattern>software.amazon.awssdk</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
-grep -q '<shadedPattern>com.asklake.spark.msk.shadow.software.amazon.awssdk</shadedPattern>' \
-  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
-grep -q '<pattern>io.netty</pattern>' "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
-grep -q '<shadedPattern>com.asklake.spark.msk.shadow.io.netty</shadedPattern>' \
-  "$ROOT_DIR/backend/spark-msk-iam-shaded/pom.xml"
 grep -q '"spark.jars.ivy": "/tmp/.ivy2"' "$OPT_IN_RENDERED_FILE"
 grep -q 'ASKLAKE_SPARK_SOURCE_FORMAT' "$OPT_IN_RENDERED_FILE"
 grep -q 'value: "kafka"' "$OPT_IN_RENDERED_FILE"
@@ -444,13 +446,8 @@ if "$HELM_BIN" template asklake-workloads "$CHART_DIR" -f "$VALUES_FILE" \
   exit 1
 fi
 
-grep -q 'option("startingOffsets", "earliest")' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
-grep -q 'option("endingOffsets", "latest")' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
-grep -q 'software.amazon.msk.auth.iam.IAMClientCallbackHandler' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
-grep -q 'Kafka fixture batch filter requires raw.fixture_batch_id' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
-grep -q 'validate_kafka_fixture_row_count' "$ROOT_DIR/backend/scripts/runtime/spark_job_runtime.py"
 grep -q 'platforms: linux/amd64' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
-grep -q 'npm run test:spark-kubernetes' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
+grep -q 'npm run verify:spark-kubernetes-client' "$ROOT_DIR/.github/workflows/eks-b-workload-checks.yml"
 
 for secret_name in asklake-backend-runtime asklake-airflow-runtime asklake-spark-runtime asklake-trino-runtime; do
   grep -q "name: $secret_name\|secretName: $secret_name" "$OPT_IN_RENDERED_FILE"
@@ -535,9 +532,6 @@ node --test \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-web-values.mjs" \
   "$ROOT_DIR/scripts/test-eks-spark-resource-planner-shadow-evidence.mjs"
-node "$ROOT_DIR/backend/scripts/verify-msk-iam-metadata.mjs" --contract-only
-PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_kafka_fixture_boundary
-PYTHONPATH="$ROOT_DIR/backend" "$PYTHON_BIN" -m unittest tests.test_continuous_worker_scope
 "$ROOT_DIR/scripts/verify-eks-trino-distributed.sh"
 "$ROOT_DIR/scripts/verify-eks-realtime-v1-only-profile.sh"
 echo "EKS workload contract verification passed."

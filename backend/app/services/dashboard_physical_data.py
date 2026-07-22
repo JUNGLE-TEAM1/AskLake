@@ -658,7 +658,7 @@ def dashboard_widget_supports_incremental_merge(
     if widget_type == "table":
         return False
     aggregation = str(config.get("aggregation") or "sum").strip().lower()
-    return aggregation in {"count", "sum", "avg", "ratio", "min", "max"}
+    return aggregation in {"count", "sum", "avg", "ratio"}
 
 
 def merge_dashboard_aggregate_states(

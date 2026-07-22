@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     ai_gateway_max_embedding_response_bytes: int = Field(default=8_388_608, ge=65_536, le=134_217_728)
     ai_gateway_classification_path: str = "/v1/generate"
     ai_gateway_embeddings_path: str = "/v1/embeddings"
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimensions: int = Field(default=1_536, ge=1, le=65_536)
+    rag_embedding_batch_size: int = Field(default=64, ge=1, le=2_048)
     ai_mcp_path: str = "/internal/mcp"
     ai_mcp_service_token: str | None = None
     ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
