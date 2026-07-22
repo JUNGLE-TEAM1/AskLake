@@ -475,9 +475,7 @@ export function DashboardPage({
     setIsRefreshingRuntime(true);
     try {
       const refreshed = await refreshCurrentPageWidgetData();
-      setRuntimeNotice(refreshed
-        ? { message: "현재 페이지의 위젯 데이터를 새로고침했습니다.", tone: "info" }
-        : null);
+      setRuntimeNotice(null);
       onAction(
         refreshed ? "dashboard.runtime.refreshed" : "dashboard.runtime.refresh_failed",
         `/api/dashboards/${runtimeSelection.dashboardId}/widgets/query`,

@@ -4,11 +4,25 @@ import {
   sourceConfigValue,
   SPARK_OUTPUT_BUCKET
 } from "./sourceModel";
+import {
+  DEFAULT_TARGET_DATASET,
+  DEFAULT_TARGET_DESCRIPTION,
+  isDefaultTargetDataset,
+  isDefaultTargetDescription,
+  resolveDefaultTargetDataset,
+  resolveDefaultTargetDescription,
+} from "./targetDefaults";
+
+export {
+  DEFAULT_TARGET_DATASET,
+  DEFAULT_TARGET_DESCRIPTION,
+  isDefaultTargetDataset,
+  isDefaultTargetDescription,
+} from "./targetDefaults";
 
 export const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
 export const DEFAULT_VISIBILITY = "조직 내부";
 export const DEFAULT_OWNER = "data-team-01";
-export const DEFAULT_TARGET_DATASET = "customer_review_gold";
 export const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 export const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
 export const DEFAULT_TARGET_TAGS: string[] = [];
@@ -187,20 +201,12 @@ export function normalizeKafkaDatasetName(topic: string) {
   return normalized || "kafka_events";
 }
 
-export function isDefaultTargetDataset(value: string | undefined) {
-  return !value?.trim() || value.trim() === DEFAULT_TARGET_DATASET;
-}
-
 export function isDefaultTargetStoragePath(value: string | undefined) {
   return !value?.trim() || value.trim() === buildTargetStoragePath(DEFAULT_TARGET_DATASET, DEFAULT_TARGET_LAYER);
 }
 
 export function isLegacyKafkaLandingPath(value: string | undefined) {
   return Boolean(value?.includes("kafka-landing/"));
-}
-
-export function isDefaultTargetDescription(value: string | undefined) {
-  return !value?.trim() || value.trim() === "고객 리뷰 분석용 정제 데이터셋";
 }
 
 export const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
@@ -537,7 +543,9 @@ export function getTargetDraftValues(draft: DraftPipeline) {
   const rawTargetDataset = target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset;
   const targetDataset = isKafkaSource && isDefaultTargetDataset(rawTargetDataset)
     ? kafkaDatasetName
-    : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
+    : !isKafkaSource && isDefaultTargetDataset(rawTargetDataset)
+      ? resolveDefaultTargetDataset(rawTargetDataset)
+      : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
   const rawTargetFormat = target?.targetFormat ?? target?.format ?? compatDraft.targetFormat;
   const targetFormat = isContinuousKafka
     ? "parquet"
@@ -559,10 +567,14 @@ export function getTargetDraftValues(draft: DraftPipeline) {
     ? defaultTargetPath
     : getDisplayText(storedPath, defaultTargetPath);
 
+  const rawTargetDescription = target?.description ?? draft.target.description;
+
   return {
-    description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? isContinuousKafka ? "Kafka continuous micro-batch target 데이터셋" : "Kafka snapshot direct target 데이터셋"
-      : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
+    description: isDefaultTargetDescription(rawTargetDescription)
+      ? isKafkaSource
+        ? isContinuousKafka ? "Kafka continuous micro-batch target 데이터셋" : "Kafka snapshot direct target 데이터셋"
+        : resolveDefaultTargetDescription(rawTargetDescription)
+      : getDisplayText(rawTargetDescription, DEFAULT_TARGET_DESCRIPTION),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
     partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
