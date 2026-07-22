@@ -53,3 +53,13 @@ test("analysis criteria are one workflow step with both definition sections visi
   assert.match(page, /semantic-real-analysis-content[\s\S]*<MetricsSection[\s\S]*<DimensionsSection/);
   assert.doesNotMatch(page, /definitionView/);
 });
+
+test("whole-document embedding requires confirmation and index progress stays visible", () => {
+  const page = source("src/pages/semantic/SemanticLayerPage.tsx");
+
+  assert.match(page, /문서 전체 임베딩/);
+  assert.match(page, /pendingWholeDocumentEmbedding/);
+  assert.match(page, /위험을 이해하고 전체 포함/);
+  assert.match(page, /RAG_APPROVAL_COLUMN_LIMIT = 256/);
+  assert.match(page, /<RagJobHistory datasetId=\{selectedDatasetId\}[\s\S]*onLatestJobSettled=\{onRefresh\}/);
+});

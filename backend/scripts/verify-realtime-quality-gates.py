@@ -25,14 +25,6 @@ def forbid(relative_path: str, *fragments: str) -> None:
         raise AssertionError(f"{relative_path}: forbidden realtime coupling found: {found}")
 
 
-def require_absent(*relative_paths: str) -> None:
-    present = [relative_path for relative_path in relative_paths if (ROOT / relative_path).exists()]
-    if present:
-        raise AssertionError(
-            "Retired Dashboard live-refresh files must stay removed: " + ", ".join(present)
-        )
-
-
 def verify_dashboard_realtime_contract() -> None:
     runtime_directory = ROOT / "frontend" / "src" / "pages" / "dashboard" / "runtime"
     timer_violations: list[str] = []
@@ -47,33 +39,16 @@ def verify_dashboard_realtime_contract() -> None:
             + ", ".join(timer_violations)
         )
 
-    require_absent(
+    require(
         "frontend/src/pages/dashboard/runtime/dashboardLiveRefresh.ts",
+        'syncMode === "sse" ? "suspended" : "safety"',
+        'connectionState !== "open"',
+    )
+    require(
         "frontend/src/pages/dashboard/runtime/usePublishedDashboardLiveRefresh.ts",
-        "frontend/src/pages/dashboard/runtime/useDashboardDraftLiveRefresh.ts",
-    )
-    require(
-        "frontend/src/pages/dashboard/runtime/dashboardAutoRefresh.ts",
-        'const PREFERENCE_PREFIX = "asklake:dashboard:auto-refresh"',
-        "readDashboardAutoRefreshPreference",
-        "writeDashboardAutoRefreshPreference",
-        'return "수동 새로고침"',
-    )
-    require(
-        "frontend/src/pages/dashboard/runtime/useDashboardAutoRefresh.ts",
-        "if (!active || !enabled)",
-        'document.visibilityState !== "hidden"',
-        "pendingDatasetIdsRef = useRef(new Set<string>())",
-        "refreshDatasetsRef.current(pendingDatasetIds)",
-        "new RealtimeEventClient()",
-        'config.dashboardSyncMode === "polling"',
-        "client.close()",
-    )
-    require(
-        "frontend/src/pages/dashboard/runtime/useDashboardWidgetData.ts",
-        "refreshCurrentPageWidgetData",
-        "refreshWidgetDataForDatasets",
-        "queryDashboardWidgets",
+        "dashboardLivePollingStrategy(syncMode, connectionState)",
+        "pendingRealtimeEvents = new Map",
+        "queryPublishedDashboardWidgets",
     )
     require(
         "backend/app/repositories/realtime_event_repository.py",
@@ -160,9 +135,8 @@ def main() -> None:
     verify_dashboard_realtime_contract()
     verify_architecture_boundaries()
     print(
-        "Realtime quality gates passed: auto-refresh remains explicit and SSE-driven with a manual "
-        "fallback, no silent polling interval exists, the durable event path is retained, SQL "
-        "validation is present, and God-file size/symbol budgets are retained."
+        "Realtime quality gates passed: no silent polling interval, durable event path retained, "
+        "SQL validation matrix present, and God-file size/symbol budgets retained."
     )
 
 

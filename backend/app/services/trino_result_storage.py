@@ -155,16 +155,6 @@ class TrinoResultStorage:
         if self._bucket_ready:
             return
         client = self._client()
-        if (
-            self.settings.asklake_object_storage_provider == "aws"
-            and not self.settings.trino_result_storage_auto_create_bucket
-        ):
-            # Production S3 buckets are provisioned outside the application. A
-            # HeadBucket request requires bucket-wide s3:ListBucket and cannot
-            # retain the Query Result prefix condition. Keep least privilege and
-            # let the verified object write surface a missing/inaccessible bucket.
-            self._bucket_ready = True
-            return
         try:
             client.head_bucket(Bucket=self.bucket)
         except ClientError as exc:

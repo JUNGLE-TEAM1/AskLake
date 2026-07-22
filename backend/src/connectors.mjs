@@ -5,8 +5,8 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { kafkaSecurityOptions, loadKafkaJs, validateManagedKafkaSourceBoundary } from "./kafka-codecs.mjs";
-import { buildKafkaPreviewConsumerGroups, buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
+import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -762,18 +762,15 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const { Kafka } = await loadKafkaJs();
   const broker = requiredSourceField(fields, "Broker / Endpoint", "Kafka broker endpoint is required.");
   const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
-  validateManagedKafkaSourceBoundary({ broker, topic });
-  const iamMode = String(process.env.ASKLAKE_KAFKA_AUTH_MODE || "none").trim().toLowerCase() === "iam";
-  const { configuredGroupId, sampleGroupId } = buildKafkaPreviewConsumerGroups(fields, iamMode, fieldValue);
+  const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
+  const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
-  const securityOptions = await kafkaSecurityOptions();
   const kafka = new Kafka({
-    brokers: broker.split(",").map((item) => item.trim()).filter(Boolean),
+    brokers: [broker],
     clientId: "asklake-source-test",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
     requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
     retry: { retries: 0 },
-    ...securityOptions,
   });
   const admin = kafka.admin();
   await admin.connect();
@@ -783,13 +780,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     if (!topicMeta || topicMeta.partitions.length === 0) {
       throw apiError("KAFKA_TOPIC_NOT_FOUND", `${topic} Kafka 토픽을 찾지 못했거나 파티션이 없습니다.`, 404);
     }
-    const messages = await sampleKafkaMessages({
-      broker,
-      groupId: sampleGroupId,
-      rowLimit: Math.min(samplePolicy.rowLimit, 100),
-      securityOptions,
-      topic,
-    });
+    const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
     const previewMetadata = buildKafkaPreviewMetadata(messages, parsedSample.format);
@@ -2017,15 +2008,14 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
   }
 }
 
-async function sampleKafkaMessages({ broker, groupId, rowLimit, securityOptions = {}, topic }) {
+async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
-    brokers: broker.split(",").map((item) => item.trim()).filter(Boolean),
+    brokers: [broker],
     clientId: "asklake-source-sampler",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
     requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
     retry: { retries: 0 },
-    ...securityOptions,
   });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
@@ -2054,7 +2044,6 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, securityOptions 
       };
       const timeoutTimer = setTimeout(finish, timeoutMs);
       consumer.run({
-        autoCommit: false,
         eachMessage: async ({ message }) => {
           if (messages.length >= rowLimit) return;
           const value = message.value?.toString("utf8") ?? "";

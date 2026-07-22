@@ -70,15 +70,7 @@ def create_mcp_components() -> tuple[ServiceTokenASGI, Callable[[], AsyncContext
         stateless_http=True,
         streamable_http_path=_configured_mcp_route(),
         transport_security=TransportSecuritySettings(
-            allowed_hosts=[
-                "backend",
-                "backend:8080",
-                "fastapi",
-                "fastapi:8080",
-                "testserver",
-                "localhost:*",
-                "127.0.0.1:*",
-            ]
+            allowed_hosts=["backend", "backend:8080", "testserver", "localhost:*", "127.0.0.1:*"]
         ),
     )
     server.tool(

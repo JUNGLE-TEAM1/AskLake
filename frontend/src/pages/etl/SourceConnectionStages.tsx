@@ -142,14 +142,14 @@ export function SourceConnectStage({
               <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
                 <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
                   <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
-                  <span className="kafka-execution-mode-copy"><strong>배치 · Spark</strong><span>Spark로 직접 실행하거나 일정에 맞춰 수집</span></span>
+                  <span className="kafka-execution-mode-copy"><strong>일괄 수집</strong><span>필요할 때 직접 실행하거나 일정에 맞춰 수집</span></span>
                   <span className="kafka-execution-mode-tag">배치</span>
                   {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                 </button>
                 <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onUpdateContinuousConfig({})}>
                   <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
-                  <span className="kafka-execution-mode-copy"><strong>실시간 · Spark</strong><span>Kafka 스트림을 지속 실행하는 Spark로 새 메시지를 수집</span></span>
-                  <span className="kafka-execution-mode-tag">실시간</span>
+                  <span className="kafka-execution-mode-copy"><strong>실시간 수집</strong><span>새 메시지를 지속적으로 수집</span></span>
+                  <span className="kafka-execution-mode-tag">스트리밍</span>
                   {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                 </button>
               </div>

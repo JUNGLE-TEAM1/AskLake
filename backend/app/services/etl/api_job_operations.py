@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from app.domain.kafka_source_identity import managed_kafka_source_config
-
 RUNTIME_NAMES = {
     'ActorContext',
     'ApiError',
@@ -28,7 +26,6 @@ RUNTIME_NAMES = {
     'PermissionOptionsResponse',
     'QueryRunResponse',
     'ScheduledJobRunItem',
-    'ScheduledJobOccurrenceAlreadyClaimed',
     'ScheduledJobRunResponse',
     'SimpleNamespace',
     'SourceConnectorDefaults',
@@ -70,7 +67,6 @@ RUNTIME_NAMES = {
     'isinstance',
     'iso_now',
     'job_schedule_kind',
-    'job_visible_in_current_control_plane',
     'legacy_permission_grants',
     'len',
     'list',
@@ -92,14 +88,12 @@ RUNTIME_NAMES = {
     'record_compatibility_path',
     'recover_continuous_replay_result',
     'replace_permission_ui_grants',
-    'require_local_continuous_control_plane',
     'require_compiled_rules',
     'require_governed_access',
     'require_permission',
     'resolve_internal_data_lake_source',
     'safe_record_audit_event',
     'schedule_next_run_label',
-    'scheduled_job_next_run_utc',
     'schedule_policy_from_request',
     'select',
     'should_run_scheduled_job',
@@ -287,12 +281,6 @@ def pipeline_create_mapping_context(
             schedule_policy.get("nextRunUtc"),
         ),
         schedule_policy=schedule_policy,
-        source_config=managed_kafka_source_config(
-            request.source_type,
-            request.source_config,
-            execution_mode=request.execution_mode,
-            job_id=job_id,
-        ),
         stats=initial_job_stats(metrics),
     )
 
@@ -317,7 +305,6 @@ def list_jobs(
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 
@@ -336,7 +323,6 @@ def list_job_statuses(
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 
@@ -412,13 +398,7 @@ def run_due_scheduled_jobs(
     request: ScheduledJobRunRequest,
     actor: ActorContext | None = None,
 ) -> ScheduledJobRunResponse:
-    jobs = [
-        job
-        for job in etl_repository.list_job_models(db)
-        if job_visible_in_current_control_plane(
-            getattr(job, "execution_mode", None), getattr(job, "continuous_config", None)
-        )
-    ]
+    jobs = etl_repository.list_job_models(db)
     if request.job_id:
         jobs = [job for job in jobs if job.id == request.job_id]
     items: list[ScheduledJobRunItem] = []
@@ -440,26 +420,15 @@ def run_due_scheduled_jobs(
         command_kwargs: dict[str, ActorContext] = {}
         if getattr(job, "job_kind", None) == "trino_sql_materialization":
             command_kwargs["execution_actor"] = trino_sql_job_run_as_actor(db, job)
-        scheduled_due_at = scheduled_job_next_run_utc(job) if reason == "due" else None
-        try:
-            response = command_job(
-                db,
-                job.id,
-                "run",
-                actor_context,
-                scheduled_due_at=scheduled_due_at,
-                **command_kwargs,
-            )
-        except ScheduledJobOccurrenceAlreadyClaimed:
-            db.rollback()
-            items.append(ScheduledJobRunItem(
-                job_id=job.id,
-                job_name=job.name,
-                reason="already_claimed",
-                schedule=job.schedule,
-                triggered=False,
-            ))
-            continue
+        response = command_job(
+            db,
+            job.id,
+            "run",
+            actor_context,
+            **command_kwargs,
+        )
+        if reason == "due":
+            advance_scheduled_job_after_tick(db, job.id)
         items.append(ScheduledJobRunItem(
             job_id=job.id,
             job_name=job.name,
@@ -477,15 +446,6 @@ def run_due_scheduled_jobs(
 
 
 def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
-    job_model = etl_repository.get_job(db, job_id)
-    if job_model is None:
-        raise ApiError(
-            ErrorCode.NOT_FOUND,
-            f"Job not found: {job_id}",
-            status.HTTP_404_NOT_FOUND,
-        )
-    if job_model.execution_mode == "continuous":
-        require_local_continuous_control_plane(getattr(job_model, "continuous_config", None))
     return hydrate_job_query(
         db,
         job_id,
@@ -495,7 +455,6 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
             schedule_kind=job_schedule_kind,
             with_permissions=with_job_permissions,
             with_list_permissions=with_jobs_permissions,
-            visible=lambda job: job_visible_in_current_control_plane(job.execution_mode, job.continuous_config),
         ),
     )
 

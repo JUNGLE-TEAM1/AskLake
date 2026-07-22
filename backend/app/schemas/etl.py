@@ -729,7 +729,6 @@ class JobCommandRequest(CamelModel):
 class AirflowSparkExecutionRequest(CamelModel):
     command: Literal["run", "retry"] = "run"
     job_id: str
-    source_boundary: dict[str, Any] | None = None
 
 
 class AirflowCatalogReconciliationRequest(CamelModel):

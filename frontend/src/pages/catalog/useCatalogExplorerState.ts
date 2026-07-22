@@ -34,7 +34,7 @@ export function useCatalogExplorerState({
 }: CatalogExplorerStateOptions) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<CatalogPreviewModal | null>(null);
-  const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false });
+  const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
@@ -93,7 +93,7 @@ export function useCatalogExplorerState({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchText, filterState.approvalRequired, filterState.available, sortMode]);
+  }, [debouncedSearchText, filterState.approvalRequired, filterState.available, filterState.rag, sortMode]);
 
   useEffect(() => {
     if (currentPage === currentCatalogPage) return;
@@ -152,12 +152,15 @@ export function useCatalogExplorerState({
     ? "available"
     : filterState.approvalRequired
       ? "approvalRequired"
-      : "all";
+      : filterState.rag
+        ? "rag"
+        : "all";
 
   const updateStatusFilter = useCallback((nextStatus: CatalogStatusFilter) => {
     setFilterState({
       approvalRequired: nextStatus === "approvalRequired",
       available: nextStatus === "available",
+      rag: nextStatus === "rag",
     });
     onAction(
       "catalog.filter_changed",

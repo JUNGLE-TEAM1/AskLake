@@ -280,8 +280,6 @@ def run_node_bridge(
     error_marker: str,
     timeout_seconds: int,
     timeout_recovery: Callable[[], dict[str, Any]] | None = None,
-    progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    progress_file: Path | None = None,
     bridge: NodeBridgePort | None = None,
 ) -> dict[str, Any]:
     runtime_bridge = bridge or SubprocessNodeBridge(
@@ -295,8 +293,6 @@ def run_node_bridge(
         error_marker=error_marker,
         timeout_seconds=timeout_seconds,
         timeout_recovery=timeout_recovery,
-        progress_callback=progress_callback,
-        progress_file=progress_file,
     )
 
 
@@ -324,10 +320,6 @@ def recover_spark_rest_submission(
 
 def spark_rest_mode_enabled() -> bool:
     return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "rest"
-
-
-def spark_kubernetes_mode_enabled() -> bool:
-    return str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "kubernetes"
 
 
 def spark_rest_poll_timeout_ms() -> int:
@@ -365,14 +357,6 @@ def spark_rest_submission_state_file(run_id: str) -> Path:
         report_dir = BACKEND_DIR / report_dir
     safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
     return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-rest-state.json")
-
-
-def spark_kubernetes_execution_state_file(run_id: str) -> Path:
-    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
-    if not report_dir.is_absolute():
-        report_dir = BACKEND_DIR / report_dir
-    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id)).strip("-") or "run"
-    return (report_dir.resolve() / f"{safe_run_id.lower()}.spark-kubernetes-state.json")
 
 
 def continuous_maintenance_state_file(run_id: str) -> Path:
@@ -661,13 +645,11 @@ EXPORTED_FUNCTIONS = (
     'run_node_bridge',
     'recover_spark_rest_submission',
     'spark_rest_mode_enabled',
-    'spark_kubernetes_mode_enabled',
     'spark_rest_poll_timeout_ms',
     'spark_python_bridge_timeout_seconds',
     'continuous_maintenance_poll_timeout_ms',
     'continuous_maintenance_bridge_timeout_seconds',
     'spark_rest_submission_state_file',
-    'spark_kubernetes_execution_state_file',
     'continuous_maintenance_state_file',
     'continuous_maintenance_result_file',
     'read_continuous_maintenance_result',

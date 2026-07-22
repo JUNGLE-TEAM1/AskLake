@@ -78,7 +78,12 @@ class ContinuousSqlRevisionRunner:
         }
 
     def reconcile(self, job: ContinuousSqlJobModel, run: ContinuousSqlRunModel) -> bool:
-        """Transform the latest published inputs once without taking Kafka ownership."""
+        """Transform the latest fully published input set exactly once.
+
+        Reconciliation is deliberately pull-driven by the existing Continuous
+        SQL sync loop.  It does not create a Kafka consumer or polling loop;
+        producer Jobs remain the only Kafka owners.
+        """
         pinned = self.pin_inputs(job, run)
         tree_run = self.repository.active_tree_run(job.id)
         if tree_run is None:
@@ -90,7 +95,11 @@ class ContinuousSqlRevisionRunner:
             if dependency.input_type == "realtime"
         }
         source_revision = max(
-            (item.revision for item in pinned if item.dataset_id in realtime_dataset_ids),
+            (
+                item.revision
+                for item in pinned
+                if item.dataset_id in realtime_dataset_ids
+            ),
             default=0,
         )
         if source_revision <= 0:
@@ -98,6 +107,7 @@ class ContinuousSqlRevisionRunner:
         if self._already_applied(job, run, input_snapshots):
             self.repository.complete_revision_refresh(job.id, source_revision)
             return False
+
         claimed = self.repository.claim_revision_refresh(
             job.id,
             source_revision=source_revision,
@@ -105,6 +115,7 @@ class ContinuousSqlRevisionRunner:
         )
         if not claimed:
             return False
+
         try:
             batch_id = self.repository.next_batch_id(job.id, run.generation)
             publication_run_id = f"{run.run_id}:revision:{batch_id}"

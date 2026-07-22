@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     ai_gateway_service_token: str | None = None
     ai_gateway_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     ai_gateway_max_response_bytes: int = Field(default=1_048_576, ge=65_536, le=16_777_216)
+    ai_gateway_max_embedding_response_bytes: int = Field(default=8_388_608, ge=65_536, le=134_217_728)
+    ai_gateway_classification_path: str = "/v1/generate"
+    ai_gateway_embeddings_path: str = "/v1/embeddings"
     ai_mcp_path: str = "/internal/mcp"
     ai_mcp_service_token: str | None = None
     ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
@@ -42,24 +45,12 @@ class Settings(BaseSettings):
     airflow_request_timeout_seconds: float = 10.0
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     airflow_ui_base_url: str | None = None
-    asklake_continuous_control_plane: Literal["local", "external_ec2"] = "local"
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     # Local development keeps the embedded loop. Deployed web APIs must leave
     # runtime side effects to the separately scheduled control-plane worker.
     # ``external_ec2`` is accepted while existing dev manifests are migrated;
     # it has the same web/API behaviour as ``disabled``.
     continuous_control_plane: Literal["embedded", "disabled", "worker", "external_ec2"] = "embedded"
-    # The deployed EC2 worker keeps both scopes by default. An approved
-    # EC2/EKS transfer may split Kafka and Continuous SQL into separate workers.
-    continuous_worker_scope: Literal["all", "kafka", "continuous_sql"] = "all"
-    continuous_worker_owner: Literal[
-        "ec2-continuous-worker",
-        "eks-continuous-worker-v1",
-    ] = "ec2-continuous-worker"
-    continuous_worker_generation: str | None = None
-    # Web/API admission is separate from worker credentials.
-    kafka_continuous_v1_api_enabled: bool = False
-    kafka_continuous_v1_owner_generation: str | None = None
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
@@ -282,7 +273,10 @@ class Settings(BaseSettings):
             or parsed.params
             or parsed.query
             or parsed.fragment
-            or (parsed_port is not None and not 1 <= parsed_port <= 65_535)
+            or (
+                parsed_port is not None
+                and not 1 <= parsed_port <= 65_535
+            )
         ):
             raise ValueError(
                 "KAFKA_CONNECT_URL must be an absolute http(s) origin without credentials, path, query, or fragment"
@@ -305,6 +299,8 @@ class Settings(BaseSettings):
 
     @field_validator(
         "ai_gateway_generate_path",
+        "ai_gateway_classification_path",
+        "ai_gateway_embeddings_path",
         "ai_mcp_path",
     )
     @classmethod
@@ -326,28 +322,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bootstrap_admin(self) -> "Settings":
-        generation = str(self.continuous_worker_generation or "").strip()
-        if generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", generation) is None:
-            raise ValueError("CONTINUOUS_WORKER_GENERATION must be a lowercase generation token")
-        expected_eks_scope = {
-            "eks-continuous-worker-v1": "all",
-        }.get(self.continuous_worker_owner)
-        if expected_eks_scope is not None and (
-            self.continuous_worker_scope != expected_eks_scope or not generation
-        ):
-            raise ValueError(
-                f"{self.continuous_worker_owner} requires {expected_eks_scope} scope "
-                "and an explicit generation"
-            )
-        self.continuous_worker_generation = generation or None
-        v1_api_generation = str(self.kafka_continuous_v1_owner_generation or "").strip()
-        if v1_api_generation and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", v1_api_generation) is None:
-            raise ValueError("KAFKA_CONTINUOUS_V1_OWNER_GENERATION must be a lowercase generation token")
-        if self.kafka_continuous_v1_api_enabled and not v1_api_generation:
-            raise ValueError("KAFKA_CONTINUOUS_V1_API_ENABLED requires an owner generation")
-        if not self.kafka_continuous_v1_api_enabled and v1_api_generation:
-            raise ValueError("KAFKA_CONTINUOUS_V1_OWNER_GENERATION requires KAFKA_CONTINUOUS_V1_API_ENABLED")
-        self.kafka_continuous_v1_owner_generation = v1_api_generation or None
         self._validate_auth_runtime()
         self._validate_trino_runtime()
         self._validate_clickhouse_runtime()

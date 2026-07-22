@@ -16,7 +16,7 @@ Vite prints the local URL after startup.
 
 If FastAPI is not running at `http://127.0.0.1:8080`, set `VITE_DEV_PROXY_TARGET` to its origin. For frontend-only mock mode, set `VITE_USE_MOCK_API` to `"true"`; this does not mock AI results.
 
-The Semantic Model workspace is available at `/catalog?view=semantic`. It uses the live Semantic Model endpoints while reusing the Catalog dataset list for selection and schema context. RAG indexing/search UI and APIs are retired; SQL and Dashboard keep only a disabled retrieval compatibility shape with empty evidence.
+The Semantic/RAG workspace is available at `/catalog?view=semantic`. It uses the live Semantic Model and RAG endpoints while reusing the Catalog dataset list for selection and schema context.
 
 ## Build
 
@@ -34,8 +34,6 @@ VITE_USE_MOCK_API=true # frontend-only mock QA only
 ```
 
 `VITE_API_BASE_URL` is optional in every build and defaults to same-origin. `VITE_DASHBOARD_ASSISTANT_API_PATH` also defaults to `/api/dashboards/assistant`, including when its Docker build arg is empty. Restart the dev server after changing environment variables.
-
-EKS에서는 ALB가 `/`와 `/api`를 각각 Frontend와 FastAPI로 routing하므로 public hostname을 Frontend image에 고정하지 않는다.
 
 ## Main Files
 

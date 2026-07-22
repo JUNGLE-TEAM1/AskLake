@@ -81,16 +81,14 @@ def validate_s3_source_config(
         return
 
     endpoint = fields.get("endpoint url") or fields.get("endpoint")
-    if not endpoint:
-        return
     allowed_endpoints = configured_s3_endpoints()
     if not allowed_endpoints:
         raise ApiError(
             "SERVICE_UNAVAILABLE",
-            "S3_ALLOWED_ENDPOINTS or S3_ENDPOINT must be configured for a custom source endpoint",
+            "S3_ALLOWED_ENDPOINTS or S3_ENDPOINT must be configured outside local development",
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-    if normalize_s3_endpoint(endpoint) not in allowed_endpoints:
+    if endpoint and normalize_s3_endpoint(endpoint) not in allowed_endpoints:
         raise ApiError(
             ErrorCode.FORBIDDEN,
             "Source S3 endpoint is not available to AskLake",

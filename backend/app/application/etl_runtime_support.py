@@ -86,22 +86,12 @@ def compact_storage_text(value: Any, *, limit: int) -> str:
         return compact
     return f"{compact[: max(0, limit - 32)]} ... [truncated {len(compact)} chars]"
 
-def dag_step(
-    id_: str,
-    title: str,
-    meta: str,
-    status_value: str,
-    details: list[list[Any]] | None = None,
-    logs: list[str] | None = None,
-    *,
-    duration: str | None = None,
-    completed_at: str | None = None,
-) -> dict[str, Any]:
+def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[Any]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
     normalized_details = [
         [str(label or "-"), str(value if value is not None else "-")]
         for label, value in (details or [])
     ]
-    result = {
+    return {
         "details": normalized_details,
         "id": id_,
         "logs": [str(line) for line in (logs or []) if line],
@@ -109,8 +99,3 @@ def dag_step(
         "status": status_value,
         "title": title,
     }
-    if duration and duration != "-":
-        result["duration"] = duration
-    if completed_at:
-        result["completedAt"] = completed_at
-    return result

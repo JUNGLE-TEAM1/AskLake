@@ -8,7 +8,7 @@ import { deletePipelineJob as deleteLivePipelineJob, getJob as getLiveJob, runJo
 
 import { MutationRevisionGate } from "../../state/requestOwnership";
 import type { FlowId, JobCommand, JobRowData } from "../../types";
-import { emptySelectedDataset, normalizeDatasetRow, saveStoredCatalogDataset } from "./catalogState";
+import { normalizeDatasetRow, saveStoredCatalogDataset } from "./catalogState";
 import { WriteAuditLog } from "./contracts";
 import { initialDraftPipeline } from "./etlDraftState";
 
@@ -110,18 +110,7 @@ export function useJobController({
         if (!apiConfig.useMock) await deleteLivePipelineJob(job.id);
         const remaining = jobs.filter((item) => item.id !== job.id);
         const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
-        const deletedDatasetIds = new Set(
-          datasets
-            .filter((dataset) => dataset.producerJobId === job.id)
-            .map((dataset) => dataset.id),
-        );
         setJobs(remaining);
-        if (deletedDatasetIds.size > 0) {
-          setDatasets((items) => items.filter((dataset) => !deletedDatasetIds.has(dataset.id)));
-          setSelectedDataset((dataset) => (
-            deletedDatasetIds.has(dataset.id) ? emptySelectedDataset : dataset
-          ));
-        }
         setJobListFacets((facets) => removeJobFacetCounts(facets, job));
         setSelectedJob(remaining[0] ?? emptySelectedJob);
         setRunsByJobId((state) => withoutRecordKey(state, job.id));

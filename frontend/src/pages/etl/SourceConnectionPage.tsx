@@ -1,18 +1,26 @@
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Braces, FileText } from "lucide-react";
+import {
+  Braces,
+  FileText
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
 import { getDatasets } from "../../services/mockApi";
 import { getSourceConnectorDefaults, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../../types";
 import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
-import { resolveRawTextPreviewLines, shouldShowJsonPreview, shouldShowRawTextPreview } from "../../utils/sourcePreview";
+import {
+  resolveRawTextPreviewLines,
+  shouldShowJsonPreview,
+  shouldShowRawTextPreview,
+} from "../../utils/sourcePreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceExplorerWorkbench } from "./SourceExplorerWorkbench";
 import { SourcePreviewDataTable } from "./SourcePreviewDataTable";
 import { SourceRawSamplePreview } from "./SourceRawSamplePreview";
+
 import { DataLakeDatasetList } from "./DataLakeDatasetList";
 import { SourceChoiceStage, SourceConnectStage } from "./SourceConnectionStages";
 import { buildSourceConnectionDefinitions } from "./sourceDefinitions";

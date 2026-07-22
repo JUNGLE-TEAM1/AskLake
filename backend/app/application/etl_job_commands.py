@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import delete, inspect, select
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.application.pipeline_mapping import CreatePipelineMappingContext
@@ -21,7 +21,6 @@ from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.domain.audit import AuditTargetType
 from app.models import (
-    CatalogDatasetModel,
     ETLJobModel,
     ETLRunModel,
     KafkaContinuousBatchModel,
@@ -509,7 +508,6 @@ def _persist_delete(
 ) -> None:
     job_name = job.name
     job_owner = job.owner
-    deleted_dataset_ids = _delete_catalog_datasets_produced_by_job(db, job.id)
 
     db.execute(delete(KafkaContinuousBatchModel).where(KafkaContinuousBatchModel.job_id == job.id))
     db.execute(delete(KafkaContinuousSessionModel).where(KafkaContinuousSessionModel.job_id == job.id))
@@ -532,10 +530,7 @@ def _persist_delete(
         action="etl_job.deleted",
         api_path=f"/api/etl/jobs/{requested_job_id}",
         http_method="DELETE",
-        metadata={
-            "owner": job_owner,
-            "deletedCatalogDatasetIds": deleted_dataset_ids,
-        },
+        metadata={"owner": job_owner},
         result="success",
         status_code=status.HTTP_200_OK,
         target_id=requested_job_id,
@@ -547,33 +542,3 @@ def _persist_delete(
     except Exception:
         db.rollback()
         raise
-
-
-def _delete_catalog_datasets_produced_by_job(db: Session, job_id: str) -> list[str]:
-    """Remove only Catalog registrations owned by the Job being deleted.
-
-    Job deletion must make its Dataset disappear from Catalog and SQL selection,
-    but it must not implicitly purge the physical lake data. Physical data
-    deletion remains the separate, explicit Catalog Dataset deletion workflow.
-    """
-    if not inspect(db.get_bind()).has_table(CatalogDatasetModel.__tablename__):
-        return []
-
-    dataset_ids = list(
-        db.scalars(
-            select(CatalogDatasetModel.id).where(CatalogDatasetModel.producer_job_id == job_id)
-        )
-    )
-    if not dataset_ids:
-        return []
-
-    db.execute(delete(PermissionGrantModel).where(
-        PermissionGrantModel.resource_type == "dataset",
-        PermissionGrantModel.resource_id.in_(dataset_ids),
-    ))
-    db.execute(delete(ResourceLockModel).where(
-        ResourceLockModel.resource_type == "dataset",
-        ResourceLockModel.resource_id.in_(dataset_ids),
-    ))
-    db.execute(delete(CatalogDatasetModel).where(CatalogDatasetModel.id.in_(dataset_ids)))
-    return sorted(str(dataset_id) for dataset_id in dataset_ids)
