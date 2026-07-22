@@ -170,6 +170,8 @@ services:
       # Web/API replicas persist intent but never own Continuous Spark side
       # effects. The dedicated service below holds the PostgreSQL lease.
       CONTINUOUS_CONTROL_PLANE: disabled
+      ASKLAKE_CONTINUOUS_CONTROL_PLANE: ${ASKLAKE_CONTINUOUS_CONTROL_PLANE:-local}
+      ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: ${ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS:-60}
       STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
       ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_CONTROL_LEASE_SECONDS:-30}
       AIRFLOW_EXECUTION_API_TOKEN: ${AIRFLOW_EXECUTION_API_TOKEN:?AIRFLOW_EXECUTION_API_TOKEN is required}
@@ -383,6 +385,9 @@ services:
     command: ["python", "-m", "app.continuous_worker"]
     environment:
       CONTINUOUS_CONTROL_PLANE: worker
+      CONTINUOUS_WORKER_SCOPE: ${CONTINUOUS_WORKER_SCOPE:-all}
+      CONTINUOUS_WORKER_OWNER: ${CONTINUOUS_WORKER_OWNER:-ec2-continuous-worker}
+      CONTINUOUS_WORKER_GENERATION: ${CONTINUOUS_WORKER_GENERATION:-}
       STARTUP_SCHEMA_MANAGEMENT_ENABLED: "false"
     healthcheck:
       disable: true
