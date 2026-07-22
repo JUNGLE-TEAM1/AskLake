@@ -120,7 +120,7 @@ npm run verify:clickhouse-realtime-v2-recovery-live
 
 cd ../frontend
 npm run verify:ui-regressions
-npm run test:dashboard-runtime
+npm run test:dashboard-realtime-v2
 npm run build
 ```
 
