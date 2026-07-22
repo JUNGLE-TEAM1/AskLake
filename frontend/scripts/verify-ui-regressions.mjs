@@ -58,6 +58,7 @@ const jobsPageFiles = [
   "src/pages/ingest/jobs/JobRunsPage.tsx",
   "src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
   "src/pages/ingest/jobs/SnapshotJobRunsPage.tsx",
+  "src/services/continuousRuntimeContract.ts",
 ];
 
 const askLakeDataFiles = [
@@ -2036,18 +2037,20 @@ const checks = [
     ],
   },
   {
-    name: "Authenticated routes share the compact global app shell",
+    name: "Authenticated routes share the compact sidebar shell without the retired global top bar",
     file: "src/App.tsx",
     patterns: [
       /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
-      /function resolveTopbarSection\(flow: FlowId, dashboardEntry: DashboardEntry\)/,
-      /<Topbar section=\{resolveTopbarSection\(activeFlow, dashboardEntry\)\} \/>/,
+      /<main className=\{activeFlow === "schema" \? "main-shell schema-shell" : "main-shell"\}>/,
+      /<section className=\{activeFlow === "jobs" \? "page-body jobs-body"/,
       /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
       /<Footer \/>/,
       /onRefresh=\{/,
       /<Topbar[^>]*onLogout=/,
+      /<Topbar section=/,
+      /resolveTopbarSection/,
     ],
   },
   {
@@ -2095,7 +2098,7 @@ const checks = [
     ],
   },
   {
-    name: "Primary list and analysis routes leave their visible title in the global top bar",
+    name: "Primary list and analysis routes keep their visible title and actions in local content",
     files: [
       "src/pages/ingest/jobs/JobsLandingPage.tsx",
       "src/pages/catalog/CatalogExplorerPage.tsx",
@@ -2103,10 +2106,10 @@ const checks = [
       "src/pages/dashboard/DashboardLandingPage.tsx",
     ],
     patterns: [
-      /data-page-actions="jobs"/,
+      /title="작업 목록"/,
       /className="catalog-page"/,
       /className=\{cn\(styles\.page,/,
-      /className="dashboard-list-actions"/,
+      /title="대시보드 목록"/,
     ],
     forbiddenPatterns: [
       /PageHeader/,

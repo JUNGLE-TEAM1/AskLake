@@ -171,11 +171,13 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 
 - `Refactor Quality Gates`는 `dev`/`main` PR에서 구조 ratchet과 API/persisted/bridge/legacy 계약을 검사한다.
 - 기존 1,000줄 file과 100줄 Python·JavaScript/TypeScript function은 `docs/refactor-2026/quality-gate-baseline.json`을 넘겨 키울 수 없다.
-- 2026-07-21 기준표는 `feat-#1106`의 필터 기능 이식 전 상태(`18fb51f`)에서 다시 수집했다. 기존 브랜치의 구조 부채만 현재 상한으로 기록했으며, 이번 변경으로 커진 `dashboard_physical_data.py`는 공통 헬퍼로 분리해 기준보다 작게 유지했다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
+- 2026-07-22 기준표는 복구 PR #1147과 후속 `dev` 병합이 반영된 `48c81046`에서 다시 수집했다. 복구로 제거되거나 축소된 경로의 오래된 예외는 폐기하고 현재 남은 구조 부채만 정확한 상한으로 기록한다. 현재 크기를 넘는 추가 증가는 계속 차단하며, 기준 갱신을 기능 PR의 검사 우회 수단으로 사용하지 않는다.
 - Issue #1139의 `dev`/`pair1` 통합은 `origin/dev`에서 그대로 상속되거나 줄어든 구조 부채와 결합 트리에서만 커진 항목을 구분하고, 필요한 path/function만 정확한 현재 줄 수와 2026-08-31 만료일로 예외 처리한다. `origin/pair1`의 기존 예외는 유지하며 전체 기준 재생성, wildcard, 미사용 성장 여유는 허용하지 않는다.
 - 새 import cycle과 문서 없는 API/schema·CI/deploy 변경을 금지한다.
 - baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
+- #1147 복구 기준선에서 Dashboard는 수동 새로고침 계약을 사용한다. `Realtime Quality Gates`는 퇴역한 SSE live-refresh 파일의 부재, 명시적 수동 상태, 무제한 timer 부재와 durable backend event path를 함께 검사한다.
+- `EKS B Workload Checks`는 현재 `verify:spark-kubernetes-client` 계약을 실행한다. 복구에서 제거된 bounded Kafka fixture/MSK helper는 명시적 퇴역 경계로 검사하며, 대체 runtime·테스트 계약 없이 같은 파일을 다시 추가하지 않는다.
 - release 전에는 수동 slow suite로 production Spark와 Continuous runtime contract를 실행한다.
 
 # ETL E2E·복구 gate (2026-07-16)
