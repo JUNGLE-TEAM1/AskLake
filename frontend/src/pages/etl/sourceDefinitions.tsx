@@ -20,6 +20,7 @@ export type SourceConnectionDefinition = {
   assetsTitle: string;
   description: string;
   fields: Array<[string, string]>;
+  fieldSuggestions?: Record<string, string>;
   info?: string;
   logs: string[];
   previewColumns: string[];
@@ -110,14 +111,14 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
     "File / S3": {
       title: `${OBJECT_STORAGE_PROVIDER_LABEL} 연결 설정`,
       description: OBJECT_STORAGE_IS_AWS
-        ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
+        ? "워크스페이스 AWS 권한으로 입력한 S3 버킷을 확인하고 파일을 탐색합니다."
         : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
         ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
         ["Region", OBJECT_STORAGE_REGION],
-        ["Bucket / Stage Name", sourceDefaults.s3Bucket],
-        ["Path / Prefix", sourceDefaults.s3Prefix],
+        ["Bucket / Stage Name", OBJECT_STORAGE_IS_AWS ? "" : sourceDefaults.s3Bucket],
+        ["Path / Prefix", OBJECT_STORAGE_IS_AWS ? "" : sourceDefaults.s3Prefix],
         ["Access Key", ""],
         ["Secret Key", ""],
         ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
@@ -126,6 +127,9 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
+      fieldSuggestions: OBJECT_STORAGE_IS_AWS && sourceDefaults.s3Bucket
+        ? { "Bucket / Stage Name": sourceDefaults.s3Bucket }
+        : undefined,
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
       logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
       assetsTitle: `${OBJECT_STORAGE_PROVIDER_LABEL} 파일 탐색`,
@@ -134,6 +138,9 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
       previewNote: "파일을 선택하면 일부 데이터를 가져와 표시합니다.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
+      info: OBJECT_STORAGE_IS_AWS
+        ? "워크스페이스에 연결된 AWS 권한으로 입력한 버킷에 접근합니다."
+        : "",
     },
     "Data Lake": {
       title: "AskLake 데이터 레이크",

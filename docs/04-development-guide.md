@@ -872,7 +872,7 @@ CLICKHOUSE_E2E_LIVE_TRINO=true npm run verify:clickhouse-kafka-join
 ```
 
 Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다. 이 broker는 Snapshot fixture와 이후 Continuous Spark worker가 같은 Docker network에서 사용할 endpoint이며, 외부 Kafka endpoint를 쓰려면 배포 env에서 `ASKLAKE_KAFKA_BROKER`를 바꾼다.
-ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. 이 값은 새 빈 Source draft에만 한 번 채우고 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
+ETL 생성 화면은 `GET /api/etl/sources/defaults`에서 backend의 비밀이 아닌 Kafka broker/topic과 S3 bucket/prefix 기본값을 읽는다. Kafka와 로컬 MinIO의 새 빈 Source draft에는 이 값을 한 번 채운다. AWS S3의 bucket/prefix는 비워 두고, `s3Bucket`은 버킷 입력창을 포커스했을 때 사용자가 선택할 수 있는 워크스페이스 기본 버킷 제안으로 표시한다. 저장된 draft나 사용자가 편집한 값은 덮어쓰지 않는다. 로컬 Kafka broker 기본값은 `127.0.0.1:19092`, prod-like Compose 기본값은 `redpanda:9092`이며 frontend build 변수로 같은 값을 중복 관리하지 않는다.
 Kafka 소스 연결 테스트는 새 샘플 consumer group이 첫 메시지를 받을 때까지 `ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS`(기본 8초)를 기다린다. 첫 메시지 이후 `ASKLAKE_KAFKA_SAMPLE_MIN_MESSAGES`(기본 3건)에 도달하면 `ASKLAKE_KAFKA_SAMPLE_IDLE_MS`(기본 0.5초) idle window로 종료한다. 최소 건수에 도달하지 못한 희소 topic은 `ASKLAKE_KAFKA_SAMPLE_SETTLE_MS`(기본 1.5초)까지만 추가 메시지를 기다린 뒤 현재 샘플을 반환한다.
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. Production은 `ASKLAKE_SPARK_RUNNER=rest`로 내부 Spark Standalone REST submission을 사용하고 backend에 Docker socket/CLI를 요구하지 않는다. 로컬 개발에서만 `ASKLAKE_SPARK_RUNNER=docker`를 명시해 격리 worker/maintenance container를 실행할 수 있다. 두 경로 모두 같은 Iceberg/JDBC/warehouse package와 runtime environment 계약을 사용한다.

@@ -276,7 +276,7 @@ export function SourceConnectionPage({
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "워크스페이스 AWS 권한" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
