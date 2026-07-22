@@ -331,13 +331,9 @@ export function DatasetSidebar({
               "data-dashboard-dataset-node": node.data.kind,
               title: node.data.title,
             })}
-            initialOpenState={{
-              [systemItemId]: true,
-              [schemaItemId]: true,
-              [tablesItemId]: true,
-            }}
             indent={12}
             minHeight={320}
+            openByDefault={false}
             rowHeight={40}
             toggleOnRowPress={false}
             onNodePress={(node: NodeApi<DatasetTreeNode>) => {
