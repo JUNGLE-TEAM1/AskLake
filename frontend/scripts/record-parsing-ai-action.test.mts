@@ -81,6 +81,19 @@ test("record parsing keeps content focused and makes large previews collapsible"
   assert.match(etlPagesSource, /aria-expanded=\{resultPreviewExpanded\}/);
 });
 
+test("record parsing keeps output column editors mounted while controlled values change", () => {
+  const recordParsingPageSource = readFileSync(
+    new URL("../src/pages/etl/RecordParsingPage.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(recordParsingPageSource, /const updateColumn = useCallback\(/);
+  assert.match(
+    recordParsingPageSource,
+    /const fieldInferenceColumns:[^=]+ = useMemo\(\(\) => \[/,
+  );
+});
+
 test("ETL section headers share one typography and icon treatment", () => {
   const etlPagesSource = readEtlPageSources();
   const schemaSummarySource = readFileSync(new URL("../src/pages/etl/SchemaRuleSummary.tsx", import.meta.url), "utf8");

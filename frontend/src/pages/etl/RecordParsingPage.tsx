@@ -13,7 +13,7 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
 import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
@@ -121,10 +121,11 @@ export function RecordParsingPage({
     void loadPreview(next);
   };
 
-  const updateColumn = (position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
-    const columns = parsing.columns.map((column) => column.position === position ? { ...column, ...patch } : column);
-    const nextParsing = { ...parsing, columns };
-    setParsing(nextParsing);
+  const updateColumn = useCallback((position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
+    setParsing((current) => ({
+      ...current,
+      columns: current.columns.map((column) => column.position === position ? { ...column, ...patch } : column),
+    }));
     setPreview((current) => current ? {
       ...current,
       columns: current.columns.map((column, index) => index === position ? {
@@ -133,14 +134,20 @@ export function RecordParsingPage({
         targetName: patch.name ?? column.targetName,
         type: patch.inferredType ?? column.type,
       } : column),
-      recordParsing: nextParsing,
+      recordParsing: {
+        ...current.recordParsing,
+        columns: current.recordParsing.columns.map((column) => (
+          column.position === position ? { ...column, ...patch } : column
+        )),
+      },
     } : current);
-  };
+  }, []);
 
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
   const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
   const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
-  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = [
+  const firstSampleRow = preview?.sampleRows[0];
+  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = useMemo(() => [
     {
       cell: ({ row }) => row.original.position + 1,
       header: "순서",
@@ -150,7 +157,7 @@ export function RecordParsingPage({
     {
       cell: ({ row }) => (
         <code className="record-parsing-code-cell">
-          {preview?.sampleRows[0]?.[row.original.position] || "-"}
+          {firstSampleRow?.[row.original.position] || "-"}
         </code>
       ),
       header: "샘플 값",
@@ -186,7 +193,7 @@ export function RecordParsingPage({
       id: "inferred-type",
       meta: { widthClassName: "min-w-44" },
     },
-  ];
+  ], [aiInferring, firstSampleRow, updateColumn]);
   const invalidRowColumns: ColumnDef<RecordParsingInvalidRow>[] = [
     { accessorKey: "lineNumber", header: "원본 행", meta: { widthClassName: "w-28" } },
     { accessorKey: "expectedFieldCount", header: "예상", meta: { widthClassName: "w-24" } },
