@@ -65,6 +65,8 @@ export function mergeRuntimeSourceDefaults(
   fields: Array<[string, string]>,
   defaults: SourceConnectorDefaults,
 ): Array<[string, string]> {
+  if (sourceType === "File / S3" && OBJECT_STORAGE_IS_AWS) return fields;
+
   const replacements = sourceType === "File / S3"
     ? new Map<string, { next: string; replaceable: Set<string>; }>([
       ["Bucket / Stage Name", { next: defaults.s3Bucket, replaceable: new Set([""]) }],
@@ -157,7 +159,7 @@ export const sourceFieldLabels: Record<string, string> = {
   "Authentication Type": "인증 방식",
   "Broker / Endpoint": "브로커 / 엔드포인트",
   Bucket: "버킷",
-  "Bucket / Stage Name": "버킷 / 스테이지 이름",
+  "Bucket / Stage Name": "버킷 이름",
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
