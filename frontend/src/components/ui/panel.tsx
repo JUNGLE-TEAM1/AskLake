@@ -85,7 +85,7 @@ const panelHeaderVariants = cva(
 );
 
 const panelHeaderTitleVariants = cva(
-  "m-0 font-[850] leading-tight tracking-normal text-slate-900 [overflow-wrap:anywhere]",
+  "m-0 font-semibold leading-tight tracking-normal text-slate-900 [overflow-wrap:anywhere]",
   {
     defaultVariants: {
       size: "default",
@@ -100,7 +100,7 @@ const panelHeaderTitleVariants = cva(
 );
 
 const panelHeaderDescriptionVariants = cva(
-  "m-0 font-bold leading-snug tracking-normal text-slate-500 [overflow-wrap:anywhere]",
+  "m-0 font-normal leading-snug tracking-normal text-slate-500 [overflow-wrap:anywhere]",
   {
     defaultVariants: {
       size: "default",
@@ -159,11 +159,11 @@ export const PanelHeader = React.forwardRef<HTMLDivElement, PanelHeaderProps>(
         </span>
       ) : null}
       <div className="grid min-w-0 gap-0.5">
-        <h2 className={panelHeaderTitleVariants({ size })}>
+        <h2 className={panelHeaderTitleVariants({ size })} data-slot="panel-title">
           {title}
         </h2>
         {description ? (
-          <p className={panelHeaderDescriptionVariants({ size })}>
+          <p className={panelHeaderDescriptionVariants({ size })} data-slot="panel-description">
             {description}
           </p>
         ) : null}

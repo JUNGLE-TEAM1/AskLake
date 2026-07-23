@@ -47,6 +47,31 @@ type AssistantMessage = {
   text: string;
 };
 
+function semanticRetrievalSummary(response: DashboardAssistantResponse) {
+  const retrieval = response.retrieval;
+  if (!retrieval || (response.sources?.length ?? 0) === 0) return "";
+  const resultCount = retrieval.resultCount ?? response.sources?.length ?? 0;
+  const modelNames = retrieval.semanticModelNames ?? [];
+  const modelVersions = retrieval.semanticModelVersions ?? [];
+  const modelSummary = modelNames.map((name, index) => `${name}${modelVersions[index] ? ` v${modelVersions[index]}` : ""}`).join(", ");
+  const datasetSummary = (retrieval.datasetIds ?? []).join(", ");
+  const sourceTitles = (response.sources ?? [])
+    .map((source) => source.title || source.body?.trim().slice(0, 120) || source.datasetId)
+    .filter((title): title is string => Boolean(title));
+  const evidence = sourceTitles.length > 0 ? ` · 근거: ${sourceTitles.join(" / ")}` : "";
+  const planner = retrieval.queryPlannerProvider || retrieval.queryPlannerModel
+    ? ` · 계획: ${[retrieval.queryPlannerProvider, retrieval.queryPlannerModel].filter(Boolean).join(" · ")}`
+    : "";
+  const embeddings = Object.values(retrieval.queryEmbeddings ?? {})
+    .map((item) => [item.provider, item.model, item.dimensions ? `${item.dimensions}차원` : null].filter(Boolean).join(" · "))
+    .filter(Boolean);
+  const embedding = embeddings.length > 0 ? ` · 임베딩: ${Array.from(new Set(embeddings)).join(", ")}` : "";
+  const relevance = retrieval.relevanceProvider || retrieval.relevanceModel
+    ? ` · 관련성: ${[retrieval.relevanceProvider, retrieval.relevanceModel].filter(Boolean).join(" · ")}`
+    : "";
+  return `RAG 근거 · ${modelSummary || "semantic model 없음"} · Dataset: ${datasetSummary || "-"} · ${retrieval.status ?? "unknown"} · ${resultCount}건${planner}${embedding}${relevance}${evidence}`;
+}
+
 function assistantResponseText(response: DashboardAssistantResponse, actionMessages: string[]) {
   const reportAction = response.actions.find(
     (action): action is DashboardAssistantReportAction => action.type === "report",
@@ -59,6 +84,7 @@ function assistantResponseText(response: DashboardAssistantResponse, actionMessa
     reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
     ...actionMessages,
     provenance,
+    semanticRetrievalSummary(response),
     warning,
   ].filter(Boolean).join("\n\n");
 }

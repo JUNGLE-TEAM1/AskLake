@@ -526,7 +526,7 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
-    ASKLAKE_CONTINUOUS_BROKER: required(request.broker, "broker"),
+    ASKLAKE_CONTINUOUS_BROKER: resolveContinuousWorkerBroker(required(request.broker, "broker"), environment),
     ASKLAKE_CONTINUOUS_TOPIC: required(request.topic, "topic"),
     ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID: required(request.consumerGroupId, "consumerGroupId"),
     ASKLAKE_CONTINUOUS_OUTPUT_PATH: required(request.outputPath, "outputPath"),
@@ -670,7 +670,7 @@ async function startWorkerDocker(request, containerName) {
     ...Object.entries(environment).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     "-e", `ASKLAKE_CONTINUOUS_JOB_ID=${jobId}`,
     "-e", `ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID=${workerAttemptId}`,
-    "-e", `ASKLAKE_CONTINUOUS_BROKER=${required(request.broker, "broker")}`,
+    "-e", `ASKLAKE_CONTINUOUS_BROKER=${resolveContinuousWorkerBroker(required(request.broker, "broker"))}`,
     "-e", `ASKLAKE_CONTINUOUS_TOPIC=${required(request.topic, "topic")}`,
     "-e", `ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID=${required(request.consumerGroupId, "consumerGroupId")}`,
     "-e", `ASKLAKE_CONTINUOUS_OUTPUT_PATH=${required(request.outputPath, "outputPath")}`,
@@ -712,20 +712,16 @@ async function startWorkerDocker(request, containerName) {
   };
 }
 
-export async function ensureOutputBucket(outputPath, options = {}) {
+async function ensureOutputBucket(outputPath) {
   const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
   if (!bucket) return;
-  const minio = options.minio ?? isMinioProvider();
-  // AWS buckets are provisioned outside this runtime. HeadBucket requires
-  // bucket-wide ListBucket permission and would defeat the prefix-scoped
-  // Pod Identity contract merely to prove that an existing bucket exists.
-  if (!minio) return;
   // This preflight runs in the Node control-plane process. Spark receives the
   // Docker endpoint separately through continuousEnvironment().
-  const client = options.client || new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
+  const client = new S3Client(s3ClientOptions(resolveObjectStorageConfig()));
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch (error) {
+    if (!isMinioProvider()) throw error;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }
@@ -920,6 +916,16 @@ function safeSegment(value) {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+export function resolveContinuousWorkerBroker(broker, environment = process.env) {
+  const configured = required(broker, "broker");
+  const dockerOverride = String(environment.ASKLAKE_KAFKA_BROKER_IN_DOCKER || "").trim();
+  if (!dockerOverride) return configured;
+
+  const [host] = configured.split(":", 1);
+  return ["127.0.0.1", "localhost", "::1"].includes(host.toLowerCase())
+    ? dockerOverride
+    : configured;
 }
 function requiredObject(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

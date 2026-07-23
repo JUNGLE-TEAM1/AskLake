@@ -77,8 +77,8 @@ export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, Dash
     },
     colorMode: "series",
     columnRequirements: [
-      { helperText: "비교 기준이 되는 카테고리 컬럼입니다.", kind: "dimension", label: "X축", required: true, role: "x" },
-      { helperText: "막대 길이로 표시할 숫자 컬럼입니다.", kind: "numeric", label: "Y축", required: true, role: "y" },
+      { helperText: "세로 막대의 X축, 가로 막대의 Y축에 표시할 분류 컬럼입니다.", kind: "dimension", label: "분류", required: true, role: "x" },
+      { helperText: "세로 막대의 Y축, 가로 막대의 X축에서 막대 길이를 계산할 숫자 컬럼입니다.", kind: "numeric", label: "값", required: true, role: "y" },
       { helperText: "막대를 그룹으로 나눌 때 사용합니다.", kind: "dimension", label: "그룹", required: false, role: "series" },
     ],
     defaultAggregation: "sum",

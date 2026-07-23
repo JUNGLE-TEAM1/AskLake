@@ -41,10 +41,6 @@
   padding: 4px;
 }
 
-.catalog-results-header .catalog-view-switcher {
-  justify-self: end;
-}
-
 .catalog-view-button {
   min-height: 34px;
   white-space: nowrap;
@@ -85,6 +81,10 @@
   gap: 0;
   border-bottom: 1px solid #e2e8f0;
   padding: 0;
+}
+
+.catalog-results-header .catalog-view-switcher {
+  justify-self: end;
 }
 
 .catalog-result-list {

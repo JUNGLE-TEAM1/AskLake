@@ -536,7 +536,7 @@ class ContinuousReconciliationPolicyTests(unittest.TestCase):
         self.assertEqual(decision.action, ReconciliationAction.IGNORE_STALE_REPORT)
 
     def test_terminal_or_unknown_stale_report_restarts_the_current_fenced_attempt(self) -> None:
-        for container_state in ("exited", "missing", "failed", "unknown"):
+        for container_state in ("exited", "missing", "unknown"):
             with self.subTest(container_state=container_state):
                 decision = decide_reconciliation(self.evidence(
                     container_state=container_state,

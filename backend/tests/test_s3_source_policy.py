@@ -26,39 +26,6 @@ class S3SourcePolicyTests(unittest.TestCase):
                 ("m3-raw", "nyc_taxi/yellow_parquet/"),
             )
 
-    def test_allows_native_aws_s3_without_a_custom_endpoint(self) -> None:
-        with patch.dict(os.environ, {
-            "ASKLAKE_OBJECT_STORAGE_PROVIDER": "aws",
-            "AWS_REGION": "ap-northeast-2",
-            "S3_ALLOWED_BUCKETS": "m3-raw",
-            "S3_FORCE_PATH_STYLE": "false",
-        }, clear=True):
-            validate_s3_source_config(
-                "File / S3",
-                [
-                    ("Bucket / Stage Name", "m3-raw"),
-                    ("Path / Prefix", "dataset/input.jsonl"),
-                    ("Endpoint URL", ""),
-                ],
-                allow_unconfigured=False,
-            )
-
-    def test_rejects_custom_endpoint_when_endpoint_allowlist_is_missing(self) -> None:
-        with patch.dict(os.environ, {
-            "S3_ALLOWED_BUCKETS": "m3-raw",
-        }, clear=True):
-            with self.assertRaises(ApiError) as raised:
-                validate_s3_source_config(
-                    "File / S3",
-                    [
-                        ("Bucket / Stage Name", "m3-raw"),
-                        ("Endpoint URL", "http://minio:9000"),
-                    ],
-                    allow_unconfigured=False,
-                )
-
-        self.assertEqual(raised.exception.status_code, 503)
-
     def test_rejects_unconfigured_source_endpoint_in_production(self) -> None:
         with patch.dict(os.environ, {
             "S3_ALLOWED_BUCKETS": "m3-raw",

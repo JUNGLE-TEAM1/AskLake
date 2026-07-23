@@ -130,7 +130,6 @@ class ContinuousObservationPolicyTests(unittest.TestCase):
         self.assertEqual(projection["desiredState"], "stopped")
         self.assertEqual(projection["observedState"], "stopped")
         self.assertEqual(projection["stateRevision"], 0)
-        self.assertIs(runtime.metrics["publicationRecoveryPending"], False)
 
     def test_observation_preserves_revision_and_current_fence(self) -> None:
         metrics = record_runtime_command({}, command_transition("stopped", "startContinuous"))

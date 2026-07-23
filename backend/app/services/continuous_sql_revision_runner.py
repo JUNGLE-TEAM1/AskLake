@@ -17,6 +17,7 @@ from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
+from app.core.config import settings
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
 from app.repositories.dashboard_live_repository import DashboardLiveRepository
@@ -88,31 +89,58 @@ class ContinuousSqlRevisionRunner:
         if tree_run is None:
             raise ApiError("CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE", "Execution tree disappeared.", status.HTTP_409_CONFLICT)
         input_snapshots = self._input_snapshots(job, run, pinned)
+        realtime_dataset_ids = {
+            dependency.input_dataset_id
+            for dependency in self.repository.list_dependencies(job.id)
+            if dependency.input_type == "realtime"
+        }
+        source_revision = max(
+            (
+                item.revision
+                for item in pinned
+                if item.dataset_id in realtime_dataset_ids
+            ),
+            default=0,
+        )
+        if source_revision <= 0:
+            return False
         if self._already_applied(job, run, input_snapshots):
+            self.repository.complete_revision_refresh(job.id, source_revision)
             return False
 
-        batch_id = self.repository.next_batch_id(job.id, run.generation)
-        publication_run_id = f"{run.run_id}:revision:{batch_id}"
-        source_boundary = {
-            "kind": "continuous_sql_batch",
-            "jobId": job.id,
-            "batchId": batch_id,
-            "runGeneration": int(run.generation),
-            "planHash": job.plan_hash,
-            "fencingTokenHash": hashlib.sha256(run.fencing_token.encode("utf-8")).hexdigest(),
-            "runId": publication_run_id,
-            "sourceRanges": [],
-            "staticSnapshots": list(run.static_bindings or []),
-            "inputDatasetRevisions": dict(tree_run.input_dataset_revisions or {}),
-            "inputSnapshots": input_snapshots,
-        }
-        select_sql = self._transform_select(job, input_snapshots, publication_run_id)
+        claimed = self.repository.claim_revision_refresh(
+            job.id,
+            source_revision=source_revision,
+            stale_after_seconds=settings.continuous_sql_refresh_claim_seconds,
+        )
+        if not claimed:
+            return False
+
         try:
+            batch_id = self.repository.next_batch_id(job.id, run.generation)
+            publication_run_id = f"{run.run_id}:revision:{batch_id}"
+            source_boundary = {
+                "kind": "continuous_sql_batch",
+                "jobId": job.id,
+                "batchId": batch_id,
+                "runGeneration": int(run.generation),
+                "planHash": job.plan_hash,
+                "fencingTokenHash": hashlib.sha256(run.fencing_token.encode("utf-8")).hexdigest(),
+                "runId": publication_run_id,
+                "sourceRanges": [],
+                "staticSnapshots": list(run.static_bindings or []),
+                "inputDatasetRevisions": dict(tree_run.input_dataset_revisions or {}),
+                "inputSnapshots": input_snapshots,
+            }
+            select_sql = self._transform_select(job, input_snapshots, publication_run_id)
             row_count = int(self.writer.query_rows(
                 f"SELECT COUNT(*) FROM ({select_sql}) AS \"__asklake_count\""
             )[0][0])
+            refresh_target = IcebergWriterTarget.model_validate(job.output_target).model_copy(
+                update={"write_mode": "replace"}
+            )
             evidence = self.writer.commit_select(
-                IcebergWriterTarget.model_validate(job.output_target),
+                refresh_target,
                 select_sql,
                 job_id=job.id,
                 run_id=publication_run_id,
@@ -120,39 +148,43 @@ class ContinuousSqlRevisionRunner:
                 rule_fingerprint=job.plan_hash,
                 source_boundary=source_boundary,
             )
+            publication = {
+                "batchId": batch_id,
+                "continuousSqlRunGeneration": int(run.generation),
+                "continuousSqlPlanHash": job.plan_hash,
+                "continuousSqlFencingTokenHash": source_boundary["fencingTokenHash"],
+                "storedCount": row_count,
+                "sourceRanges": [],
+                "staticSnapshots": list(run.static_bindings or []),
+                "sourceBoundary": source_boundary,
+                "runId": publication_run_id,
+                "manifestPath": (
+                    f"{job.output_storage_path.rstrip('/')}/_revision-transforms/"
+                    f"{run.run_id}/{batch_id}.json"
+                ),
+                "icebergCommit": evidence.model_dump(mode="json", by_alias=True),
+                "publishedAt": datetime.now(UTC).isoformat(),
+            }
+            batch = self.publication_service.reconcile_manifest(job, run, publication)
+            if batch.stage != "dashboard_ready":
+                raise ApiError(
+                    batch.last_error_code or "CONTINUOUS_SQL_PUBLICATION_PENDING",
+                    batch.last_error_message or "Dataset revision publication is pending.",
+                    status.HTTP_409_CONFLICT,
+                    {"jobId": job.id, "batchId": batch_id},
+                )
+            self.repository.complete_revision_refresh(job.id, source_revision)
+            return True
         except IcebergWriterError as exc:
+            self.repository.fail_revision_refresh(job.id, source_revision, str(exc))
             raise ApiError(
                 f"CONTINUOUS_SQL_REVISION_TRANSFORM_{exc.code}",
                 str(exc), status.HTTP_502_BAD_GATEWAY,
                 {"jobId": job.id, "runId": run.run_id},
             ) from exc
-
-        publication = {
-            "batchId": batch_id,
-            "continuousSqlRunGeneration": int(run.generation),
-            "continuousSqlPlanHash": job.plan_hash,
-            "continuousSqlFencingTokenHash": source_boundary["fencingTokenHash"],
-            "storedCount": row_count,
-            "sourceRanges": [],
-            "staticSnapshots": list(run.static_bindings or []),
-            "sourceBoundary": source_boundary,
-            "runId": publication_run_id,
-            "manifestPath": (
-                f"{job.output_storage_path.rstrip('/')}/_revision-transforms/"
-                f"{run.run_id}/{batch_id}.json"
-            ),
-            "icebergCommit": evidence.model_dump(mode="json", by_alias=True),
-            "publishedAt": datetime.now(UTC).isoformat(),
-        }
-        batch = self.publication_service.reconcile_manifest(job, run, publication)
-        if batch.stage != "dashboard_ready":
-            raise ApiError(
-                batch.last_error_code or "CONTINUOUS_SQL_PUBLICATION_PENDING",
-                batch.last_error_message or "Dataset revision publication is pending.",
-                status.HTTP_409_CONFLICT,
-                {"jobId": job.id, "batchId": batch_id},
-            )
-        return True
+        except Exception as exc:
+            self.repository.fail_revision_refresh(job.id, source_revision, str(exc))
+            raise
 
     def _input_snapshots(
         self,

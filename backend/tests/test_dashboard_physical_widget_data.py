@@ -531,20 +531,12 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             ],
         )
 
-    def test_only_additive_aggregations_are_incrementally_merged(self) -> None:
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "min", "valueKey": "amount"},
-        ))
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "max", "valueKey": "amount"},
-        ))
+    def test_mergeable_aggregations_are_incrementally_merged(self) -> None:
         self.assertFalse(dashboard_widget_supports_incremental_merge(
             "table",
             {"columns": ["amount"]},
         ))
-        for aggregation in ("count", "sum", "avg", "ratio"):
+        for aggregation in ("count", "sum", "avg", "ratio", "min", "max"):
             with self.subTest(aggregation=aggregation):
                 self.assertTrue(dashboard_widget_supports_incremental_merge(
                     "metric",

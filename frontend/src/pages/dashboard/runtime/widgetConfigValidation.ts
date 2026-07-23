@@ -46,7 +46,10 @@ export function validateWidgetConfig(
   const usesCount = config.aggregation === "count";
   if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
-  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
+  if (type === "bar_chart" && (!config.xKey || (!usesCount && !config.yKey))) {
+    return "분류 컬럼과 값 컬럼을 선택해 주세요.";
+  }
+  if ((type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
     return "X축과 Y축 컬럼을 선택해 주세요.";
   }
   if (type === "bar_chart" || type === "line_chart" || type === "area_chart") {

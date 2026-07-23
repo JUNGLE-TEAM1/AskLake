@@ -8,7 +8,7 @@
 
 | 화면 | 사용자 동작 | 공개 API | 실제 결과 |
 | --- | --- | --- | --- |
-| SQL 분석 | `Nessie로 SQL 작성` | `POST /api/query/ai-suggestions` | 검증된 read-only SQL 초안 |
+| SQL 분석 | `AI로 SQL 작성` | `POST /api/query/ai-suggestions` | 검증된 read-only SQL 초안 |
 | 대시보드 편집 | Assistant에 시각화 요청 | `POST /api/dashboards/assistant` | 검증된 `create_widget`/`update_widget` action을 draft에 저장 |
 | 수집/처리 | 필드·SQL 변환에서 `Nessie로 작성` | `POST /api/ai/generate-sql` | 입력 schema 범위의 Spark/Trino 변환식 |
 | Semantic Layer | RAG 컬럼 분석·검색 | `/api/catalog/datasets/{datasetId}/rag/*` | 승인된 전체 문서 청킹·임베딩·근거 검색 |

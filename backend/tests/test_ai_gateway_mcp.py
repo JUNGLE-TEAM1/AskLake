@@ -362,7 +362,6 @@ class AiContextSecurityTests(unittest.TestCase):
                         headers={
                             "Authorization": "Bearer expected",
                             "Accept": "application/json, text/event-stream",
-                            "Host": "fastapi:8080",
                             "X-AskLake-AI-Context": context_token(),
                         },
                         json={
@@ -618,6 +617,63 @@ class AiGatewayClientTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["headers"]["X-AskLake-AI-Context"], "signed-dashboard-context")
         self.assertEqual(post.call_args.kwargs["json"]["selected_dataset_ids"], ["sales"])
 
+    def test_embeddings_validate_gateway_contract_and_numeric_values(self) -> None:
+        runtime_settings = Settings(
+            ai_gateway_base_url="http://ai-server:8090",
+            ai_gateway_service_token="service-secret",
+            rag_embedding_model="embedding-model",
+            rag_embedding_dimensions=2,
+            rag_embedding_batch_size=2,
+        )
+        client = AiGatewayClient(runtime_settings)
+        request = httpx.Request("POST", "http://ai-server:8090/v1/embeddings")
+        valid_response = httpx.Response(200, request=request, json={
+            "provider": "openai_compatible",
+            "model": "embedding-model",
+            "dimensions": 2,
+            "data": [[0.1, 0.2], [0.3, 0.4]],
+        })
+
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=valid_response) as post:
+            result = client.create_embeddings(["camera", "speaker"])
+
+        self.assertEqual(result, [[0.1, 0.2], [0.3, 0.4]])
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "embedding-model")
+
+        invalid_payloads = (
+            {"provider": "openai_compatible", "model": "other-model", "dimensions": 2, "data": [[0.1, 0.2]]},
+            {"provider": "openai_compatible", "model": "embedding-model", "dimensions": 3, "data": [[0.1, 0.2, 0.3]]},
+            {"provider": "openai_compatible", "model": "embedding-model", "dimensions": 2, "data": []},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), patch(
+                "app.services.ai_gateway_client.httpx.post",
+                return_value=httpx.Response(200, request=request, json=payload),
+            ):
+                with self.assertRaises(ApiError) as raised:
+                    client.create_embeddings(["camera"])
+                self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
+
+        nonfinite_response = httpx.Response(
+            200,
+            request=request,
+            content=b'{"provider":"openai_compatible","model":"embedding-model","dimensions":2,"data":[[NaN,0.2]]}',
+            headers={"content-type": "application/json"},
+        )
+        with patch("app.services.ai_gateway_client.httpx.post", return_value=nonfinite_response):
+            with self.assertRaises(ApiError) as raised:
+                client.create_embeddings(["camera"])
+        self.assertEqual(raised.exception.status_code, status.HTTP_502_BAD_GATEWAY)
+
+    def test_embeddings_reject_invalid_input_without_calling_gateway(self) -> None:
+        with patch("app.services.ai_gateway_client.httpx.post") as post:
+            with self.assertRaises(ApiError) as raised:
+                self.client.create_embeddings(["   "])
+
+        self.assertEqual(raised.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        post.assert_not_called()
+
+
 class AiGatewaySettingsTests(unittest.TestCase):
     def test_gateway_base_url_rejects_credentials_and_query_parameters(self) -> None:
         with self.assertRaises(ValueError):
@@ -630,6 +686,8 @@ class AiGatewaySettingsTests(unittest.TestCase):
             Settings(ai_gateway_generate_path="https://external.example/v1/generate")
         with self.assertRaises(ValueError):
             Settings(ai_mcp_path="/internal/mcp?target=external")
+        with self.assertRaises(ValueError):
+            Settings(ai_gateway_embeddings_path="https://external.example/v1/embeddings")
 
 
 if __name__ == "__main__":

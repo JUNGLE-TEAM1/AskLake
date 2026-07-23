@@ -5,6 +5,10 @@ Total output lines: 4298
 
 > 2026-07-20부터 RAG/OpenSearch/embedding worker runtime과 RAG Dataset API/UI는 제거됐다. 이 문서의 RAG request/response 서술은 persisted payload·migration 호환을 위한 역사적 계약이며 새 runtime을 활성화하지 않는다.
 
+## 일반 Trino SQL Job의 Kafka revision 자동 갱신
+
+`job_kind=trino_sql_materialization`인 Job의 Base와 reference Dataset 전체에 `relationMode=streaming`이 정확히 1개이고 static Dataset이 1개 이상이면 backend worker가 자동 갱신 대상으로 취급한다. 새 `dataset_freshness.latest_revision`마다 기존 Job run과 같은 Trino materialization을 내부 제출한다. 내구 상태는 `continuousConfig.revisionRefresh`에 저장하며 `publishedSourceRevision`은 결과 table 검증과 Catalog 공개가 성공한 뒤에만 전진한다. 실패 시 기존 Catalog Dataset mapping은 유지된다.
+
 이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
 프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
 
@@ -106,7 +110,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - AWS Source request는 provider, region, bucket/prefix만 받으며 frontend는 endpoint/access key/secret 입력을 노출하거나 API payload에 포함하지 않습니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
-- 새 Kafka/S3 Source의 비밀이 아닌 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다.
+- 새 Kafka/MinIO Source의 비밀이 아닌 기본값은 `GET /api/etl/sources/defaults`가 반환하는 backend runtime 값이며 frontend build에 복제하지 않습니다. AWS S3 Source는 bucket/prefix를 자동 입력하지 않고, backend의 S3 bucket 기본값을 사용자가 명시적으로 선택할 수 있는 제안으로만 노출합니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 - Dashboard 원격 widget scan은 `S3_ALLOWED_BUCKETS`, runtime 응답 전체에서 공유하는 기본 512 MiB/256 object 예산, DuckDB query당 기본 15초와 memory/temp 각 256 MiB/2 threads 경계를 사용합니다. 예산은 `ASKLAKE_DASHBOARD_MAX_REMOTE_BYTES`/`ASKLAKE_DASHBOARD_MAX_REMOTE_OBJECTS`, 실행 경계는 `ASKLAKE_DASHBOARD_QUERY_TIMEOUT_SECONDS`/`ASKLAKE_DASHBOARD_DUCKDB_MEMORY_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_TEMP_BYTES`/`ASKLAKE_DASHBOARD_DUCKDB_THREADS`로 설정합니다.
 - Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
@@ -634,7 +638,7 @@ type SourceConnectorDefaults = {
 };
 ```
 
-Frontend는 새 빈 draft에서만 이 응답을 한 번 적용합니다. 저장된 Job을 수정하거나 사용자가 값을 입력한 뒤에는 기존 `sourceConfig`를 덮어쓰지 않습니다. 응답은 비밀이 아닌 연결 위치만 제공하며 credential은 포함하지 않습니다. 실제 연결과 실행은 request에 저장된 값을 사용합니다.
+Frontend는 새 빈 Kafka draft와 로컬 MinIO draft에만 이 응답을 한 번 적용합니다. AWS S3 draft의 bucket/prefix는 비워 두며, `s3Bucket`은 사용자가 명시적으로 선택할 수 있는 워크스페이스 기본 버킷 제안으로만 사용합니다. 저장된 Job을 수정하거나 사용자가 값을 입력한 뒤에는 기존 `sourceConfig`를 덮어쓰지 않습니다. 응답은 비밀이 아닌 연결 위치만 제공하며 credential은 포함하지 않습니다. 실제 연결과 실행은 request에 저장된 값을 사용합니다.
 
 ### Schema Type and Source Path Contract
 
@@ -984,6 +988,9 @@ Source 연결 검증과 schema preview는 서로 다른 요청이다.
 - 사용자가 탐색 화면에서 단일 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
 - File / S3 폴더 disclosure는 하위 항목을 여는 탐색 action이다. 사용자가 별도 prefix 데이터셋 선택 action을 실행하면 frontend는 `Path / Prefix=<canonical prefix>`, `__Selection Kind=prefix`, 빈 `__Selected Object`를 저장하고 `/sources/test`를 호출한다.
 - Prefix는 임의 파일 배열이 아니라 같은 데이터셋 조각이 모인 경로다. Backend는 그 아래를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체, directory marker와 선택 형식이 아닌 객체를 제외한다. 남은 모든 파일의 bounded schema fingerprint가 같아야 성공한다.
+- Backend는 사전식 첫 데이터 파일을 대표 파일로 먼저 검증한다. 대표 파일 검증이 성공하면 나머지 파일을 bounded worker pool로 처리하며 `ASKLAKE_PREFIX_VALIDATION_CONCURRENCY` 기본값은 8, 허용 범위는 1~32다. 결과와 오류 판정 순서는 object key의 사전식 순서를 유지한다.
+- 각 파일은 `ASKLAKE_PREFIX_INITIAL_SAMPLE_BYTES` 기본 65,536 byte의 `bytes=0-65535` Range부터 시작한다. 설정값을 바꾸면 끝 byte도 `initialBytes - 1`로 계산한다. 완전한 레코드가 `__Sample Row Limit`에 부족할 때만 누적 목표를 2배로 확장하고 다음 Range는 직전 마지막 byte 다음에서 시작한다. 기존 데이터를 다시 다운로드하지 않으며 행 제한, object EOF 또는 기존 `__Schema Sample Scope`별 최대 byte 중 하나에 도달하면 중단한다.
+- 위 최적화는 검증 대상 파일 수, 제외 규칙, schema fingerprint 비교, 성공·오류 코드와 response shape를 바꾸지 않는다. 즉 일부 파일만 검사하는 샘플링 정책이 아니다.
 - PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
 
 ```ts
@@ -4323,6 +4330,20 @@ SSE event envelope와 wire/rollback 상세 계약은 docs/realtime-2026/contract
 - `GET /api/query/continuous-jobs`, `GET /api/query/continuous-jobs/{jobId}`: owner/admin 범위 Job과 active Run을 반환한다. Run은 fencing token 원문 대신 `fencingTokenHash`를 반환한다.
 - `POST /api/query/continuous-jobs/{jobId}/commands`: `{command, commandId}`를 받고 start/pause/resume/stop/recover desired/observed state를 전이한다. 같은 commandId 재전송은 외부 worker action을 반복하지 않는다.
 - `GET /api/query/continuous-jobs/{jobId}/batches`: input offset, static snapshot, output commit, Dataset revision과 `output_committed|catalog_ready|dashboard_ready` stage를 반환한다.
+
+Dataset-revision Job response에는 다음 `refreshState`가 항상 포함된다. 브라우저는 이 값을 조회만 하며 refresh 실행을 요청하지 않는다.
+
+```json
+{
+  "latestSourceRevision": 18,
+  "processingSourceRevision": null,
+  "publishedSourceRevision": 18,
+  "status": "dashboard_ready",
+  "lastError": null
+}
+```
+
+`status`는 `idle | running | failed | catalog_ready | dashboard_ready`다. backend reconciliation만 refresh claim을 획득하며 같은 Job에서 동시에 하나의 revision만 처리한다. claim owner가 사라지면 `CONTINUOUS_SQL_REFRESH_CLAIM_SECONDS` 이후 회수할 수 있다. Dataset-revision runner의 Trino 결과는 기존 Gold에 누적 append하지 않고 새 Iceberg snapshot으로 replace하며 Catalog `rows`도 최신 snapshot 행 수를 사용한다. Trino 실행 또는 새 Gold 검증이 실패하면 `publishedSourceRevision`과 기존 Catalog 연결을 유지하고 다음 reconciliation에서 같은 source revision을 재시도한다.
 
 SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
 

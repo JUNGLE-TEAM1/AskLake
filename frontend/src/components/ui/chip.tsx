@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const chipVariants = cva(
-  "inline-flex min-w-0 items-center justify-center gap-1 rounded-full border font-semibold tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex min-w-0 items-center justify-center gap-1 rounded-full border font-medium tracking-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
   {
     defaultVariants: {
       selected: false,
@@ -15,7 +15,7 @@ export const chipVariants = cva(
     variants: {
       selected: {
         false: "",
-        true: "ring-1 ring-blue-500/30",
+        true: "font-semibold ring-1 ring-blue-500/30",
       },
       size: {
         default: "min-h-6 px-2.5 py-0.5 text-xs",
@@ -48,6 +48,8 @@ export const Chip = React.forwardRef<HTMLElement, ChipProps>(
     return (
       <Comp
         className={cn(chipVariants({ className, selected, size, tone }))}
+        data-selected={selected || undefined}
+        data-slot="chip"
         ref={ref}
         {...props}
       />

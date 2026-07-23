@@ -1,14 +1,10 @@
 import {
-  Children,
-  isValidElement,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
-  type ReactNode,
 } from "react";
 import {
   Boxes,
@@ -28,21 +24,19 @@ import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { FormFieldGroup, type NativeSelectFieldProps } from "@/components/ui/form-field-group";
+import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import { DashboardFieldCombobox, type DashboardComboboxOption } from "./DashboardFieldCombobox";
+import { DashboardFieldCombobox } from "./DashboardFieldCombobox";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
   DashboardRuntimeWidgetType,
   DashboardWidgetAggregation,
-  DashboardWidgetAxisRangeMode,
   DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
   DashboardWidgetFilter,
@@ -68,6 +62,13 @@ import {
 import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigValidation";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
+import { barChartFieldLabels } from "./barChartAxes";
+import {
+  dashboardAxisRangeModeFromValue,
+  valueAxisRangeConfigFromDraft,
+  WidgetAxisRangeFields,
+} from "./WidgetAxisRangeFields";
+import { WidgetSelectField } from "./WidgetSelectField";
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -104,41 +105,7 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "세로", value: "vertical" },
   { label: "가로", value: "horizontal" },
 ];
-const axisRangeModeOptions: Array<{ label: string; value: DashboardWidgetAxisRangeMode }> = [
-  { label: "기본 자동 범위", value: "default" },
-  { label: "데이터 차이 강조", value: "data_focus" },
-  { label: "직접 입력", value: "manual" },
-];
-const axisRangeModes = new Set<DashboardWidgetAxisRangeMode>(axisRangeModeOptions.map(({ value }) => value));
 const multiColorFallbackCount = 6;
-function WidgetSelectField({
-  children,
-  onChange,
-  selectClassName,
-  value,
-  ...props
-}: Omit<NativeSelectFieldProps, "children" | "onChange" | "value"> & {
-  children: ReactNode;
-  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
-  value: string;
-}) {
-  const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
-    if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
-    const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
-    return [{ label, value: child.props.value ?? label }];
-  });
-  return (
-    <DashboardFieldCombobox
-      className={cn("asklake-widget-select", selectClassName)}
-      disabled={props.disabled}
-      fieldClassName={props.fieldClassName}
-      label={String(props.label)}
-      options={options}
-      value={value}
-      onValueChange={(nextValue) => onChange?.({ target: { value: nextValue } } as ChangeEvent<HTMLSelectElement>)}
-    />
-  );
-}
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
   area_chart: ChartArea,
@@ -184,17 +151,6 @@ function configStringArray(config: DashboardRuntimeWidgetConfig, key: string) {
 function configBoolean(config: DashboardRuntimeWidgetConfig, key: string) {
   const value = configRecord(config)[key];
   return typeof value === "boolean" ? value : undefined;
-}
-
-function configAxisRangeMode(config: DashboardRuntimeWidgetConfig) {
-  const value = configString(config, "valueAxisRangeMode") as DashboardWidgetAxisRangeMode | undefined;
-  return value && axisRangeModes.has(value) ? value : undefined;
-}
-
-function optionalNumberInput(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColorConfig {
@@ -267,7 +223,7 @@ function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConf
     valueKey: configString(editableConfig, "valueKey"),
     valueAxisMax: configNumber(editableConfig, "valueAxisMax"),
     valueAxisMin: configNumber(editableConfig, "valueAxisMin"),
-    valueAxisRangeMode: configAxisRangeMode(editableConfig),
+    valueAxisRangeMode: dashboardAxisRangeModeFromValue(configRecord(editableConfig).valueAxisRangeMode),
     xKey: configString(editableConfig, "xKey"),
     yKey: configString(editableConfig, "yKey"),
   };
@@ -369,16 +325,7 @@ function buildConfig(
     ...base,
     color: common.color,
   };
-  const valueAxisRangeMode = config.valueAxisRangeMode ?? "default";
-  const valueAxisRange = {
-    valueAxisRangeMode,
-    ...(valueAxisRangeMode === "manual" && config.valueAxisMax !== undefined
-      ? { valueAxisMax: config.valueAxisMax }
-      : {}),
-    ...(valueAxisRangeMode === "manual" && config.valueAxisMin !== undefined
-      ? { valueAxisMin: config.valueAxisMin }
-      : {}),
-  };
+  const valueAxisRange = valueAxisRangeConfigFromDraft(config);
 
   if (type === "metric") {
     return {
@@ -648,6 +595,7 @@ export function WidgetConfigPanel({
   }, [editingWidget, initialCreateInputKey, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const barChartFields = barChartFieldLabels(currentConfig.orientation ?? "vertical");
   const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
   const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
   const radialRangeFloor = Math.min(0, radialRangeStart);
@@ -1053,12 +1001,15 @@ export function WidgetConfigPanel({
 
         {(type === "bar_chart" || type === "line_chart" || type === "area_chart") && (
           <>
-            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            {type === "bar_chart" && <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
+                {orientationOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </WidgetSelectField>}
+            <WidgetSelectField label={type === "bar_chart" ? barChartFields.category : "X축"} value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
             </WidgetSelectField>
-            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            <WidgetSelectField label={type === "bar_chart" ? barChartFields.value : "Y축"} value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
@@ -1074,11 +1025,6 @@ export function WidgetConfigPanel({
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
-                    ))}
-                </WidgetSelectField>
-                <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
-                    {orientationOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                 </WidgetSelectField>
               </>
@@ -1114,53 +1060,7 @@ export function WidgetConfigPanel({
                 <span>누적 영역으로 표시</span>
               </label>
             )}
-            <WidgetSelectField
-              label="값 축 범위"
-              value={currentConfig.valueAxisRangeMode ?? "default"}
-              onChange={(event) => patchCurrentConfig({
-                valueAxisRangeMode: event.target.value as DashboardWidgetAxisRangeMode,
-              })}
-            >
-              {axisRangeModeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </WidgetSelectField>
-            {currentConfig.valueAxisRangeMode === "data_focus" && (
-              <p className="text-xs leading-5 text-slate-500" role="note">
-                표시 데이터의 최솟값과 최댓값에 8% 여백을 더해 작은 차이가 잘 보이도록 조정합니다.
-              </p>
-            )}
-            {currentConfig.valueAxisRangeMode === "manual" && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <FormFieldGroup label="축 최솟값">
-                    <Input
-                      size="sm"
-                      step="any"
-                      type="number"
-                      value={currentConfig.valueAxisMin ?? ""}
-                      onChange={(event) => patchCurrentConfig({
-                        valueAxisMin: optionalNumberInput(event.target.value),
-                      })}
-                    />
-                  </FormFieldGroup>
-                  <FormFieldGroup label="축 최댓값">
-                    <Input
-                      size="sm"
-                      step="any"
-                      type="number"
-                      value={currentConfig.valueAxisMax ?? ""}
-                      onChange={(event) => patchCurrentConfig({
-                        valueAxisMax: optionalNumberInput(event.target.value),
-                      })}
-                    />
-                  </FormFieldGroup>
-                </div>
-                <p className="text-xs leading-5 text-amber-700" role="note">
-                  한쪽 값만 입력하면 반대쪽은 자동 계산됩니다. 지정 범위 밖의 데이터는 차트에서 잘릴 수 있습니다.
-                </p>
-              </>
-            )}
+            <WidgetAxisRangeFields config={currentConfig} onChange={patchCurrentConfig} />
           </>
         )}
 

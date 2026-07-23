@@ -5,8 +5,16 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { kafkaSecurityOptions, loadKafkaJs, validateManagedKafkaSourceBoundary } from "./kafka-codecs.mjs";
-import { buildKafkaPreviewConsumerGroups, buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
+import { loadKafkaJs } from "./kafka-codecs.mjs";
+import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
+import {
+  listDirectObjectsViaMinioContainer,
+  listObjectsViaMinioContainer,
+  listPrefixObjectsViaMinioContainer,
+  listSelectedObjectViaMinioContainer,
+  readObjectSampleRangeViaMinioContainer,
+  readObjectSampleViaMinioContainer,
+} from "./minioDockerClient.mjs";
 import {
   isMinioProvider,
   objectStorageDockerEnv,
@@ -16,6 +24,12 @@ import {
   s3ClientOptions,
 } from "./objectStorageConfig.mjs";
 import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
+import {
+  mapSettledWithConcurrency,
+  prefixInitialSampleBytes,
+  prefixValidationConcurrency,
+  readAdaptivePrefixSample,
+} from "./prefixSampleValidation.mjs";
 import {
   createSparkRestSubmission,
   runSparkRestSubmission,
@@ -35,7 +49,6 @@ const dataLakeSourceTypes = new Set(["Data Lake", "Data Lake Parquet"]);
 const kafkaSourceTypes = new Set(["Stream / Kafka", "Kafka JSON"]);
 const sourceAssetCache = new Map();
 const sourceAssetFailureCache = new Map();
-const minioDockerFailureCache = new Map();
 
 export async function testSourceConnector(sourceType, fields) {
   if (objectStorageSourceTypes.has(sourceType)) return testObjectStorageSource(fields, sourceType);
@@ -762,18 +775,15 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const { Kafka } = await loadKafkaJs();
   const broker = requiredSourceField(fields, "Broker / Endpoint", "Kafka broker endpoint is required.");
   const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
-  validateManagedKafkaSourceBoundary({ broker, topic });
-  const iamMode = String(process.env.ASKLAKE_KAFKA_AUTH_MODE || "none").trim().toLowerCase() === "iam";
-  const { configuredGroupId, sampleGroupId } = buildKafkaPreviewConsumerGroups(fields, iamMode, fieldValue);
+  const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
+  const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
-  const securityOptions = await kafkaSecurityOptions();
   const kafka = new Kafka({
-    brokers: broker.split(",").map((item) => item.trim()).filter(Boolean),
+    brokers: [broker],
     clientId: "asklake-source-test",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
     requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
     retry: { retries: 0 },
-    ...securityOptions,
   });
   const admin = kafka.admin();
   await admin.connect();
@@ -783,13 +793,7 @@ export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
     if (!topicMeta || topicMeta.partitions.length === 0) {
       throw apiError("KAFKA_TOPIC_NOT_FOUND", `${topic} Kafka 토픽을 찾지 못했거나 파티션이 없습니다.`, 404);
     }
-    const messages = await sampleKafkaMessages({
-      broker,
-      groupId: sampleGroupId,
-      rowLimit: Math.min(samplePolicy.rowLimit, 100),
-      securityOptions,
-      topic,
-    });
+    const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
     const previewMetadata = buildKafkaPreviewMetadata(messages, parsedSample.format);
@@ -874,13 +878,13 @@ async function testObjectStoragePrefixDataset({ accessKeyId, bucket, endpoint, f
       forcePathStyle,
       objects,
       prefix,
-      readSample: async ({ bytes, key }) => {
+      readRange: async ({ endByte, key, startByte }) => {
         const objectResult = await client.send(new GetObjectCommand({
           Bucket: bucket,
           Key: key,
-          Range: bytes > 0 ? `bytes=0-${Math.max(0, bytes - 1)}` : undefined,
+          Range: `bytes=${startByte}-${endByte}`,
         }));
-        return readBodyTextWithinLimit(objectResult.Body, bytes);
+        return readBodyBufferWithinLimit(objectResult.Body, endByte - startByte + 1);
       },
       region,
       samplePolicy,
@@ -907,14 +911,21 @@ async function testObjectStoragePrefixDataset({ accessKeyId, bucket, endpoint, f
     forcePathStyle,
     objects,
     prefix,
-    readSample: async ({ bytes, key }) => readObjectSampleViaMinioContainer({
-      accessKeyId,
-      bucket,
-      bytes,
-      endpoint,
-      key,
-      secretAccessKey,
-    }),
+    readRange: async ({ endByte, key, startByte }) => {
+      const sample = await readObjectSampleRangeViaMinioContainer({
+        accessKeyId,
+        bucket,
+        endByte,
+        endpoint,
+        key,
+        secretAccessKey,
+        startByte,
+      });
+      if (sample === null) {
+        throw new Error(`MinIO container sample read failed for ${key}.`);
+      }
+      return sample;
+    },
     region,
     samplePolicy,
     sourceType,
@@ -928,26 +939,31 @@ export async function buildObjectStoragePrefixAnalysis({
   forcePathStyle,
   objects,
   prefix,
-  readSample,
+  readRange,
   region,
   samplePolicy = samplePolicyForFields(fields, "object"),
   sourceType = "File / S3",
 }) {
-  if (typeof readSample !== "function") {
+  if (typeof readRange !== "function") {
     throw apiError("SOURCE_PREFIX_SAMPLE_READER_REQUIRED", "Prefix dataset sample reader is required.", 500);
   }
 
   const canonicalPrefix = datasetPrefix(prefix);
   const configuredFormat = configuredDatasetFormat(fields, sourceType);
   const selection = selectPrefixDatasetObjects(objects, canonicalPrefix, configuredFormat);
-  const samples = [];
-
-  for (const object of selection.objects) {
+  const analyzeObject = async (object, includeParsedSample = false) => {
     const key = String(object.Key);
-    const requestedBytes = sampleObjectRangeBytes(samplePolicy, Number(object.Size ?? 0));
-    let text;
+    const maximumBytes = sampleObjectRangeBytes(samplePolicy, Number(object.Size ?? 0));
+    let adaptiveSample;
     try {
-      text = await readSample({ bytes: requestedBytes, key, object });
+      adaptiveSample = await readAdaptivePrefixSample({
+        initialBytes: prefixInitialSampleBytes(),
+        key,
+        maxBytes: maximumBytes,
+        objectSize: Number(object.Size ?? 0),
+        readRange: (range) => readRange({ ...range, object }),
+        rowLimit: samplePolicy.rowLimit,
+      });
     } catch (error) {
       throw apiError(
         "SOURCE_PREFIX_SAMPLE_READ_FAILED",
@@ -955,7 +971,7 @@ export async function buildObjectStoragePrefixAnalysis({
         502,
       );
     }
-    const parsedSample = parseSourceSample(key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    const parsedSample = adaptiveSample.parsedSample;
     const schemaColumns = inferSchemaColumns(parsedSample);
     if (schemaColumns.length === 0) {
       throw apiError(
@@ -964,16 +980,29 @@ export async function buildObjectStoragePrefixAnalysis({
         400,
       );
     }
-    samples.push({
+    return {
       key,
-      parsedSample,
-      requestedBytes,
+      ...(includeParsedSample ? { parsedSample } : {}),
+      requestedBytes: adaptiveSample.requestedBytes,
       schemaColumns,
       shapeFingerprint: schemaCompatibilityFingerprint(schemaColumns),
-    });
+    };
+  };
+
+  const representativeObject = selection.objects[0];
+  const representative = await analyzeObject(representativeObject, true);
+  const remainingObjects = selection.objects.slice(1);
+  const remainingOutcomes = await mapSettledWithConcurrency(
+    remainingObjects,
+    prefixValidationConcurrency(),
+    (object) => analyzeObject(object),
+  );
+  const samples = [representative];
+  for (const outcome of remainingOutcomes) {
+    if (outcome.status === "rejected") throw outcome.reason;
+    samples.push(outcome.value);
   }
 
-  const representative = samples[0];
   const incompatible = samples.find((sample) => sample.shapeFingerprint !== representative.shapeFingerprint);
   if (incompatible) {
     throw apiError(
@@ -1651,93 +1680,6 @@ function browsableObjectStorageItems(objects, prefix) {
   return [...folders.values(), ...files].sort((left, right) => String(left.Key ?? "").localeCompare(String(right.Key ?? "")));
 }
 
-function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
-  const normalizedPrefix = normalizePrefix(prefix);
-  const maxItems = configuredInlineLimit(limit, sourceListLimit());
-  const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
-  const result = runMinioClientCommand({
-    accessKeyId,
-    command: `mc ls --json ${shellQuote(target)} | head -n ${maxItems}`,
-    endpoint,
-    secretAccessKey,
-  });
-  if (!result) return null;
-
-  return parseMinioListedObjects(result, bucket, normalizedPrefix);
-}
-
-function listPrefixObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
-  const normalizedPrefix = normalizePrefix(prefix);
-  const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
-  const result = runMinioClientCommand({
-    accessKeyId,
-    command: `mc ls --recursive --json ${shellQuote(target)}`,
-    endpoint,
-    secretAccessKey,
-  });
-  if (!result) return null;
-  return parseMinioListedObjects(result, bucket, normalizedPrefix).sort(compareObjectKeys);
-}
-
-function parseMinioListedObjects(result, bucket, normalizedPrefix) {
-  const root = `local/${bucket}/`;
-  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
-  return result
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter((item) => item?.status === "success" && item.key)
-    .map((item) => {
-      const rawKey = String(item.key);
-      const normalizedKey = rawKey.startsWith(root) ? rawKey.slice(root.length) : rawKey.replace(/^\/+/, "");
-      const key = normalizedPrefix
-        ? (normalizedKey.startsWith(normalizedPrefixWithSlash) ? normalizedKey : `${normalizedPrefixWithSlash}${normalizedKey}`)
-        : normalizedKey;
-      return {
-        __folder: item.type === "folder" || String(item.key).endsWith("/"),
-        Key: key,
-        LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
-        Size: Number(item.size ?? 0),
-      };
-    });
-}
-
-function listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
-  return listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
-}
-
-function listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, key, secretAccessKey }) {
-  const normalizedKey = normalizePrefix(key);
-  if (!normalizedKey) return [];
-  const result = runMinioClientCommand({
-    accessKeyId,
-    command: `mc stat --json ${shellQuote(`local/${bucket}/${normalizedKey}`)}`,
-    endpoint,
-    secretAccessKey,
-  });
-  if (!result) return null;
-  const line = result.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1);
-  if (!line) return null;
-  try {
-    const item = JSON.parse(line);
-    return [{
-      __folder: false,
-      Key: normalizedKey,
-      LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
-      Size: Number(item.size ?? 0),
-    }];
-  } catch {
-    return null;
-  }
-}
-
 async function listDirectObjects(client, bucket, prefix, limit = sourceListLimit()) {
   const normalizedPrefix = normalizePrefix(prefix);
   const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
@@ -1766,52 +1708,6 @@ function toSourceAssets(items, limit = sourceListLimit()) {
     item.__folder ? "folder" : formatBytes(item.Size ?? 0),
     item.LastModified ? item.LastModified.toISOString() : "listed",
   ]);
-}
-
-function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, endpoint, key, secretAccessKey }) {
-  const byteLimit = Math.max(1, Math.trunc(Number(bytes) || 512 * 1024));
-  const target = `local/${bucket}/${key}`;
-  return runMinioClientCommand({
-    accessKeyId,
-    command: `mc cat ${shellQuote(target)} | head -c ${byteLimit}`,
-    endpoint,
-    secretAccessKey,
-  }) ?? "";
-}
-
-function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
-  if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
-  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
-  const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || endpointForMinioContainer(endpoint);
-  const failureKey = `${container}:${minioEndpoint}`;
-  const failureUntil = minioDockerFailureCache.get(failureKey) ?? 0;
-  if (failureUntil > Date.now()) return null;
-  const accessKey = accessKeyId || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
-  const secretKey = secretAccessKey || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
-  const script = [
-    `mc alias set local ${shellQuote(minioEndpoint)} ${shellQuote(accessKey)} ${shellQuote(secretKey)} >/dev/null`,
-    command,
-  ].join(" && ");
-  const result = spawnSync("docker", ["exec", "-i", container, "sh", "-lc", script], {
-    encoding: "utf8",
-    env: { ...process.env, MC_QUIET: "1", MC_DISABLE_PAGER: "1" },
-    maxBuffer: 32 * 1024 * 1024,
-    timeout: sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_TIMEOUT_MS", 5000),
-  });
-  if (result.status !== 0) {
-    minioDockerFailureCache.set(
-      failureKey,
-      Date.now() + sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_FAILURE_CACHE_MS", 30000),
-    );
-    return null;
-  }
-  minioDockerFailureCache.delete(failureKey);
-  return result.stdout ?? "";
-}
-
-function endpointForMinioContainer(endpoint) {
-  const value = String(endpoint || "");
-  return value;
 }
 
 function inspectParquetLakeWithSpark({ fields = [], path: sourcePath, rowLimit }) {
@@ -2017,15 +1913,14 @@ async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
   }
 }
 
-async function sampleKafkaMessages({ broker, groupId, rowLimit, securityOptions = {}, topic }) {
+async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await loadKafkaJs();
   const kafka = new Kafka({
-    brokers: broker.split(",").map((item) => item.trim()).filter(Boolean),
+    brokers: [broker],
     clientId: "asklake-source-sampler",
     connectionTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_CONNECT_TIMEOUT_MS", 3000),
     requestTimeout: sourceConnectTimeoutMs("ASKLAKE_KAFKA_REQUEST_TIMEOUT_MS", 5000),
     retry: { retries: 0 },
-    ...securityOptions,
   });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
@@ -2054,7 +1949,6 @@ async function sampleKafkaMessages({ broker, groupId, rowLimit, securityOptions 
       };
       const timeoutTimer = setTimeout(finish, timeoutMs);
       consumer.run({
-        autoCommit: false,
         eachMessage: async ({ message }) => {
           if (messages.length >= rowLimit) return;
           const value = message.value?.toString("utf8") ?? "";
@@ -2088,10 +1982,6 @@ function parseKafkaMessages(topic, messages, rowLimit) {
     return parseSourceSample(`${topic}.csv`, text, { maxRows: rowLimit });
   }
   return parseSourceSample(`${topic}.txt`, text, { maxRows: rowLimit });
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 function parseS3Path(path) {

@@ -53,6 +53,37 @@ import {
   upsertSourceFields
 } from "./sourceModel";
 
+function resetSourceDependentDraft(): DraftPipelinePatch {
+  return {
+    quality: {
+      invalidRows: [],
+      rules: [],
+      score: undefined,
+      status: "idle",
+      summary: "스키마 확인 후 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
+    },
+    schema: {
+      columns: [],
+      sampleRows: [],
+      schemaFingerprint: undefined,
+      summary: "소스 변경 · 스키마 재확인 필요",
+    },
+    transform: {
+      outputColumns: [],
+      steps: [],
+      summary: "스키마 확인 후 변환 규칙을 설정하세요.",
+    },
+  };
+}
+
 export function SourceConnectionPage({
   draft,
   onAction,
@@ -245,7 +276,7 @@ export function SourceConnectionPage({
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "워크스페이스 AWS 권한" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
@@ -332,10 +363,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -398,10 +426,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
   };
 
   const updateCollectionConfig = (patches: Array<[string, string]>) => {

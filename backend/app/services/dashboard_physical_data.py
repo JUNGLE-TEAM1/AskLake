@@ -10,9 +10,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 import duckdb
+import sqlglot
 
-from app.core.config import settings
 from app.core.errors import ApiError
+from app.services.clickhouse_client import ClickHouseClient, ClickHouseError
+from app.services.dashboard_clickhouse_binding import (
+    clickhouse_dataset_table,
+    clickhouse_dataset_user_columns,
+    clickhouse_v2_query_binding,
+)
 from app.services.iceberg_dataset_reader import (
     execute_trino_rows,
     iceberg_dataset_table,
@@ -120,7 +126,7 @@ class DashboardDatasetQuerySession:
         remote_budget: DashboardRemoteScanBudget | None = None,
         query_timeout_seconds: float | None = None,
         trino_client: TrinoClient | None = None,
-        clickhouse_client: Any | None = None,
+        clickhouse_client: ClickHouseClient | None = None,
         iceberg_run_id: str | None = None,
         expected_binding_epoch: int | None = None,
     ) -> None:
@@ -132,7 +138,7 @@ class DashboardDatasetQuerySession:
         )
         self.connection: duckdb.DuckDBPyConnection | None = None
         self.trino_client: TrinoClient | None = None
-        self.clickhouse_client: Any | None = None
+        self.clickhouse_client: ClickHouseClient | None = None
         # Keys remain the Catalog-facing field names used by saved Widget and
         # Assistant configs. Values are the exact physical names used in SQL.
         self.column_map: dict[str, str] = {}
@@ -208,7 +214,7 @@ class DashboardDatasetQuerySession:
             if self.connection is not None:
                 self.connection.close()
             raise
-        except (OSError, RuntimeError, ValueError, duckdb.Error) as error:
+        except (OSError, RuntimeError, ValueError, ClickHouseError, duckdb.Error) as error:
             if self.connection is not None:
                 self.connection.close()
             if self.clickhouse_client is not None:
@@ -218,52 +224,9 @@ class DashboardDatasetQuerySession:
     def _initialize_clickhouse(
         self,
         dataset: Any,
-        clickhouse_client: Any | None,
+        clickhouse_client: ClickHouseClient | None,
         expected_binding_epoch: int | None,
     ) -> bool:
-        if clickhouse_client is None and not settings.clickhouse_realtime_v2_enabled:
-            return False
-        if isinstance(dataset, Mapping):
-            bindings = (
-                dataset.get("physicalBindings")
-                or dataset.get("physical_bindings")
-                or []
-            )
-            storage_format = (
-                dataset.get("storageFormat")
-                or dataset.get("storage_format")
-                or ""
-            )
-            clickhouse_table = (
-                dataset.get("clickhouseTable")
-                or dataset.get("clickhouse_table")
-            )
-        else:
-            bindings = getattr(dataset, "physical_bindings", None) or []
-            storage_format = getattr(dataset, "storage_format", "") or ""
-            clickhouse_table = getattr(dataset, "clickhouse_table", None)
-        has_clickhouse_binding = any(
-            (
-                item.get("engine")
-                if isinstance(item, dict)
-                else getattr(item, "engine", None)
-            )
-            == "clickhouse"
-            for item in bindings
-        )
-        if not (
-            str(storage_format).strip().casefold() == "clickhouse"
-            or clickhouse_table is not None
-            or has_clickhouse_binding
-        ):
-            return False
-        from app.services.clickhouse_client import ClickHouseClient
-        from app.services.dashboard_clickhouse_binding import (
-            clickhouse_dataset_table,
-            clickhouse_dataset_user_columns,
-            clickhouse_v2_query_binding,
-        )
-
         v2_binding = clickhouse_v2_query_binding(
             dataset,
             expected_binding_epoch=expected_binding_epoch,
@@ -337,8 +300,6 @@ class DashboardDatasetQuerySession:
         runtime_config["sourceConfig"] = source_config
         try:
             if self.clickhouse_client is not None:
-                import sqlglot
-
                 clickhouse_queries = sqlglot.transpile(
                     query,
                     read="clickhouse",
@@ -379,7 +340,7 @@ class DashboardDatasetQuerySession:
                 }
                 for row in raw_rows
             ]
-        except (ApiError, RuntimeError, ValueError, duckdb.Error) as error:
+        except (ApiError, RuntimeError, ValueError, ClickHouseError, duckdb.Error) as error:
             raise dashboard_storage_error(self.dataset, iceberg_read_reason(error)) from error
         return {"config": runtime_config, "data": rows}
 
@@ -697,8 +658,6 @@ def dashboard_widget_supports_incremental_merge(
     if widget_type == "table":
         return False
     aggregation = str(config.get("aggregation") or "sum").strip().lower()
-    # Min/max cannot be reconstructed safely from a delta when previous rows can
-    # disappear or be replaced, so they require a full recalculation.
     return aggregation in {"count", "sum", "avg", "ratio"}
 
 

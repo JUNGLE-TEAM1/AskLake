@@ -102,23 +102,25 @@ jobs:
 
       - name: Verify Kubernetes Spark recovery and MSK IAM adapter
         working-directory: backend
-        run: npm run test:spark-kubernetes
+        run: npm run verify:spark-kubernetes-client
 
-      - name: Verify bounded Kafka fixture boundary
-        working-directory: backend
-        run: npm run test:kafka-fixture-boundary
+      - name: Verify retired bounded Kafka fixture boundary
+        run: |
+          test ! -e backend/scripts/kafka_fixture_boundary.py
+          test ! -e backend/scripts/verify-msk-iam-metadata.mjs
+          test ! -e backend/tests/test_kafka_fixture_boundary.py
 
       - name: Verify focused FastAPI runtime contracts
         working-directory: backend
         env:
           PYTHONPATH: .
         run: |
-          python -m pytest -q tests/test_ai_health_api.py tests/test_ai_gateway_mcp.py
+          python -m pytest -q tests/test_ai_gateway_mcp.py
           python -m unittest \
             tests.test_object_storage_mode \
             tests.test_etl_job_delete \
             tests.test_dashboard_live_results \
-            tests.test_eks_runtime_boundary -v
+            tests.test_continuous_runtime_contract -v
 
       - name: Verify Airflow catalog wiring
         working-directory: backend

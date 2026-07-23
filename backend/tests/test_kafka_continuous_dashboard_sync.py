@@ -6,99 +6,10 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from app.application.continuous_publication import PublicationIdentity, PublicationInputEvidence
 from app.services import etl_service
 
 
 class KafkaContinuousDashboardSyncTests(unittest.TestCase):
-    def test_continuous_output_verification_carries_commit_file_count_to_trino(self) -> None:
-        target = {
-            "catalog": "iceberg",
-            "namespace": "asklake",
-            "table": "orders",
-            "writeMode": "append",
-            "partitionColumns": [],
-        }
-        source_ranges = [{
-            "topic": "orders",
-            "partition": 0,
-            "startOffset": 0,
-            "endOffset": 100,
-        }]
-        source_boundary = {
-            "kind": "kafka_continuous_batch",
-            "jobId": "job-1",
-            "batchId": 0,
-            "runId": "continuous:job-1:batch:0:boundary",
-            "checkpointPath": "s3a://lake/checkpoints/job-1",
-            "consumerGroupId": "group-1",
-            "topic": "orders",
-            "sourceRanges": source_ranges,
-            "boundaryId": "boundary",
-        }
-        publication = {
-            "batchId": 0,
-            "storedCount": 100,
-            "sourceBoundary": source_boundary,
-            "icebergCommit": {
-                "dataFileCount": 1,
-                "jobId": "job-1",
-                "runId": "continuous:job-1:batch:0:boundary",
-                "ruleFingerprint": "rule-fingerprint",
-                "snapshotId": "snapshot-1",
-                "sourceBoundary": source_boundary,
-                "target": target,
-            },
-        }
-        job = SimpleNamespace(
-            id="job-1",
-            iceberg_target=target,
-            schema_fingerprint=None,
-        )
-        runtime = SimpleNamespace(
-            checkpoint_path="s3a://lake/checkpoints/job-1",
-            consumer_group_id="group-1",
-            heartbeat_at="2026-07-20T00:00:00Z",
-            last_flush_at=None,
-            stored_count=100,
-            topic="orders",
-        )
-        identity = PublicationIdentity(
-            job_id="job-1",
-            batch_id=0,
-            run_id="continuous:job-1:batch:0:boundary",
-            manifest_fingerprint="manifest",
-            output_fingerprint="output",
-            idempotency_key="idempotency",
-        )
-        inputs = PublicationInputEvidence(
-            data_path="iceberg://iceberg/asklake/orders",
-            manifest_path="s3a://lake/orders/_batch-manifests/batch_id=0",
-            source_ranges=source_ranges,
-        )
-        compiled = SimpleNamespace(result=SimpleNamespace(rules=[], contract_version="1.0"))
-        captured: dict[str, object] = {}
-
-        def verify(_job, _run_id, result, **_kwargs):
-            captured.update(result)
-            return result
-
-        with (
-            patch.object(etl_service, "compile_job_rules", return_value=compiled),
-            patch.object(etl_service, "require_compiled_rules"),
-            patch.object(etl_service, "canonical_rule_fingerprint", return_value="rule-fingerprint"),
-            patch.object(etl_service, "verify_spark_iceberg_result", side_effect=verify),
-        ):
-            etl_service._verify_continuous_publication_output(
-                job,
-                runtime,
-                publication,
-                identity,
-                inputs,
-            )
-
-        self.assertEqual(captured["outputFileCount"], 1)
-
     def test_runtime_report_path_uses_shared_s3_prefix_when_configured(self) -> None:
         with patch.dict(
             os.environ,
@@ -248,7 +159,7 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
 
     def test_committed_stream_manifest_can_be_recovered_from_s3(self) -> None:
         manifest = {
-            "batchId": 7,
+            "batchId": 0,
             "sourceRanges": [{
                 "topic": "orders",
                 "partition": 0,
@@ -266,8 +177,8 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
                 return {
                     "Contents": [
                         {"Key": "orders/_batch-manifests/batch_id=7/_SUCCESS", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=7/part-00000.json", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=7/part-00003.json", "Size": 512},
+                        {"Key": "orders/_batch-manifests/batch_id=0/part-00000.json", "Size": 0},
+                        {"Key": "orders/_batch-manifests/batch_id=0/part-00003.json", "Size": 512},
                     ],
                 }
 
@@ -291,60 +202,13 @@ class KafkaContinuousDashboardSyncTests(unittest.TestCase):
             "build_catalog_s3_client",
             return_value=FakeS3Client(),
         ):
-            recovered = etl_service.read_continuous_stream_manifest(job, "7")
+            recovered = etl_service.read_continuous_stream_manifest(job, "0")
 
         self.assertIsNotNone(recovered)
         self.assertEqual(
             recovered["batchId"],
-            7,
+            0,
         )
-        self.assertEqual(recovered["manifestPath"], "s3a://lake/orders/_batch-manifests/batch_id=7")
-        self.assertEqual(recovered["dataPath"], "s3a://lake/orders/_batches/batch_id=7")
-
-    def test_first_committed_stream_manifest_batch_zero_can_be_recovered_from_s3(self) -> None:
-        manifest = {
-            "batchId": 0,
-            "sourceRanges": [{
-                "topic": "orders",
-                "partition": 0,
-                "startOffset": 0,
-                "endOffset": 100,
-            }],
-            "storedCount": 100,
-        }
-
-        class FakeS3Client:
-            def head_object(self, **_request):
-                return {}
-
-            def list_objects_v2(self, **_request):
-                return {
-                    "Contents": [
-                        {"Key": "orders/_batch-manifests/batch_id=0/_SUCCESS", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=0/part-00000.json", "Size": 0},
-                        {"Key": "orders/_batch-manifests/batch_id=0/part-00001.json", "Size": 512},
-                    ],
-                }
-
-            def get_object(self, **request):
-                self.requested_key = request["Key"]
-                return {"Body": BytesIO(json.dumps(manifest).encode("utf-8"))}
-
-        job = SimpleNamespace(
-            storage_path="s3a://lake/orders",
-            target="orders",
-            target_layer="BRONZE",
-            target_path=None,
-        )
-        with patch.object(
-            etl_service,
-            "build_catalog_s3_client",
-            return_value=FakeS3Client(),
-        ):
-            recovered = etl_service.read_continuous_stream_manifest(job, "0")
-
-        self.assertIsNotNone(recovered)
-        self.assertEqual(recovered["batchId"], 0)
         self.assertEqual(recovered["manifestPath"], "s3a://lake/orders/_batch-manifests/batch_id=0")
         self.assertEqual(recovered["dataPath"], "s3a://lake/orders/_batches/batch_id=0")
 

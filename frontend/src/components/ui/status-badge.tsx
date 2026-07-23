@@ -20,7 +20,7 @@ export interface StatusBadgeProps extends Omit<BadgeProps, "variant"> {
 
 export const StatusBadge = React.forwardRef<HTMLSpanElement, StatusBadgeProps>(
   ({ children, label, tone = "default", ...props }, ref) => (
-    <Badge ref={ref} variant={statusBadgeVariantByTone[tone]} {...props}>
+    <Badge data-status="true" ref={ref} variant={statusBadgeVariantByTone[tone]} {...props}>
       {children ?? label}
     </Badge>
   ),

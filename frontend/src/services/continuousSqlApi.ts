@@ -43,7 +43,14 @@ export type ContinuousSqlJob = {
   observedState: "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed" | "recovering";
   outputDatasetId: string;
   outputDatasetName: string;
-  servingMode: "iceberg";
+  refreshState?: {
+    lastError?: string | null;
+    latestSourceRevision: number;
+    processingSourceRevision?: number | null;
+    publishedSourceRevision: number;
+    status: "idle" | "running" | "failed" | "catalog_ready" | "dashboard_ready";
+  };
+  servingMode: "iceberg" | "clickhouse";
 };
 
 export type ContinuousSqlTreeRun = {
@@ -84,7 +91,23 @@ export type ContinuousSqlTreeRun = {
   triggerType: "parent_tree" | "standalone";
 };
 
-export type CreateContinuousSqlRequest = ContinuousSqlPlanRequest & {
+export type CreateClickHouseContinuousSqlRequest = ContinuousSqlPlanRequest & {
+  clientRequestId: string;
+  name: string;
+  output: {
+    clickhouseTarget: {
+      database: string;
+      engine: "clickhouse";
+      table: string;
+    };
+    datasetId: string;
+    datasetName: string;
+    layer: "GOLD";
+    servingMode: "clickhouse";
+  };
+};
+
+export type CreateIcebergContinuousSqlRequest = ContinuousSqlPlanRequest & {
   clientRequestId: string;
   name: string;
   output: {
@@ -94,6 +117,10 @@ export type CreateContinuousSqlRequest = ContinuousSqlPlanRequest & {
     servingMode: "iceberg";
   };
 };
+
+export type CreateContinuousSqlRequest =
+  | CreateClickHouseContinuousSqlRequest
+  | CreateIcebergContinuousSqlRequest;
 
 export type ContinuousSqlCommandResponse = {
   command: "start" | "pause" | "resume" | "stop" | "recover";
@@ -120,6 +147,10 @@ export function verifyAndRegisterCatalogUniqueKey(datasetId: string, columns: st
     { columns },
     { timeoutMs: 620_000 },
   );
+}
+
+export function createClickHouseContinuousSqlJob(request: CreateClickHouseContinuousSqlRequest) {
+  return apiClient.post<ContinuousSqlJob>("/api/query/continuous-jobs", request);
 }
 
 export function createContinuousSqlJob(request: CreateContinuousSqlRequest) {

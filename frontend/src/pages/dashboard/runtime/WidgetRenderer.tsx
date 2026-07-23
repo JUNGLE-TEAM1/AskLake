@@ -21,6 +21,7 @@ import {
   type DashboardAssistantCreateWidgetAction,
   type DashboardAssistantResponse,
   type DashboardAssistantUpdateWidgetAction,
+  dashboardEvidenceSummary,
   type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
@@ -38,6 +39,11 @@ import {
 import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 import { resolveChartValueAxisRange } from "./chartAxisRange";
+import {
+  buildBarChartAxes,
+  formatChartAxisNumber,
+  formatChartCategoryAxisLabel,
+} from "./barChartAxes";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -57,7 +63,6 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: RuntimeWidgetByType<Type>;
 };
-
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const DASHBOARD_CHART_ANIMATION_MS = 600;
 const CIRCULAR_CHART_VISIBLE_SLICE_LIMIT = 6;
@@ -105,18 +110,6 @@ export function formatCell(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return new Intl.NumberFormat("ko-KR").format(value);
   return String(value);
-}
-
-function formatCategoryAxisLabel(value: unknown) {
-  const text = String(value ?? "");
-  const dayMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (dayMatch) return `${dayMatch[1].slice(2)}.${dayMatch[2]}.${dayMatch[3]}`;
-
-  const monthMatch = text.match(/^(\d{4})-(\d{2})$/);
-  if (monthMatch) return `${monthMatch[1].slice(2)}.${monthMatch[2]}`;
-
-  if (text.length > 10) return `${text.slice(0, 9)}...`;
-  return text;
 }
 
 function firstNumericKey(row: SimpleRow | undefined) {
@@ -453,13 +446,6 @@ function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, select
   return null;
 }
 
-function formatAxisNumber(value: number) {
-  return new Intl.NumberFormat("ko-KR", {
-    maximumFractionDigits: 1,
-    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
-  }).format(value);
-}
-
 function buildBaseChartOptions(color: string): ApexOptions {
   return {
     chart: {
@@ -500,7 +486,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
       strokeDashArray: 4,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 700,
       labels: {
         colors: "#475569",
@@ -550,14 +536,14 @@ function buildBaseChartOptions(color: string): ApexOptions {
         color: "#cbd5e1",
       },
       labels: {
-        formatter: (value) => formatCategoryAxisLabel(value),
+        formatter: (value) => formatChartCategoryAxisLabel(value),
         hideOverlappingLabels: true,
         maxHeight: 42,
         offsetY: 4,
         rotate: 0,
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
         trim: true,
@@ -568,10 +554,10 @@ function buildBaseChartOptions(color: string): ApexOptions {
     },
     yaxis: {
       labels: {
-        formatter: (value: number) => formatAxisNumber(value),
+        formatter: (value: number) => formatChartAxisNumber(value),
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
       },
@@ -652,7 +638,7 @@ function buildCircularChartOptions(color: string): ApexOptions {
       enabled: false,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 800,
       labels: {
         colors: "#475569",
@@ -893,7 +879,10 @@ function VisualizationRequestWidget({
       }
       if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setRequestTone("success");
-      setMessage("AI가 생성한 시각화 변경을 편집기에 적용했습니다.");
+      setMessage([
+        "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
+        dashboardEvidenceSummary(response),
+      ].filter(Boolean).join(" "));
       setIsPromptEditing(false);
     } catch (error) {
       if (lease && !requests.current.isCurrent(lease)) return;
@@ -1131,8 +1120,10 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
-  const horizontal = widget.config.orientation === "horizontal";
+  const orientation = widget.config.orientation ?? "vertical";
+  const isHorizontal = orientation === "horizontal";
   const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series);
+  const axes = buildBarChartAxes(baseOptions, chartData.categories, orientation, valueAxisRange);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1146,16 +1137,12 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        horizontal,
+        horizontal: isHorizontal,
         columnWidth: "48%",
       },
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-      ...(horizontal ? valueAxisRange : {}),
-    },
-    yaxis: yAxisWithRange(baseOptions, horizontal ? {} : valueAxisRange),
+    xaxis: axes.xaxis,
+    yaxis: axes.yaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="bar" widget={widget} />;
@@ -1437,7 +1424,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
           },
           value: {
             color: "#0f172a",
-            formatter: (value: number) => `${formatAxisNumber(value)}%`,
+            formatter: (value: number) => `${formatChartAxisNumber(value)}%`,
             fontSize: "24px",
             fontWeight: 900,
           },

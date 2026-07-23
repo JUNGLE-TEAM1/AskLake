@@ -334,7 +334,7 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor module keeps Nessie, reset, execution, and autocomplete controls",
+    name: "SQL editor module keeps AI writing, reset, execution, and autocomplete controls",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
       /<SqlAiWriterDialog disabled=\{disabled\} \{\.\.\.ai\} \/>/,
@@ -350,18 +350,18 @@ const checks = [
     ],
   },
   {
-    name: "SQL primary action buttons keep their text labels without decorative glyphs",
+    name: "SQL primary action buttons keep consistent labels and AI iconography",
     files: [
       "src/pages/sql/SqlAiWriterDialog.tsx",
       "src/pages/sql/SqlQueryEditorPanel.tsx",
     ],
     patterns: [
-      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*Nessie로 SQL 작성\s*<\/Button>/,
+      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*<Sparkles data-icon="inline-start" \/> AI로 SQL 작성\s*<\/Button>/,
       /<Button type="button" onClick=\{onReset\}[\s\S]*?>\s*SQL 초기화\s*<\/Button>/,
       /<Button type="button" onClick=\{onExecute\}[\s\S]*?>\s*\{pending \? "실행 중" : "실행"\}\s*<\/Button>/,
     ],
     forbiddenPatterns: [
-      /<PopoverTrigger asChild>[\s\S]{0,260}<NessieMark/,
+      /NessieMark/,
     ],
   },
   {
@@ -520,10 +520,14 @@ const checks = [
     ],
   },
   {
-    name: "Nessie SQL writer uses Popover, Bubble, and controlled Collapsible",
+    name: "AI SQL writer uses Popover, Bubble, and controlled Collapsible",
     file: "src/pages/sql/SqlAiWriterDialog.tsx",
     patterns: [
-      /Nessie로 SQL 작성/,
+      /AI로 SQL 작성/,
+      /import \{ Check, Send, Sparkles \} from "lucide-react";/,
+      /<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-600">[\s\S]*?<Sparkles aria-hidden="true" className="size-4 text-white" \/>/,
+      /className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50\/70 p-3"/,
+      /<Send data-icon="inline-start" \/> SQL 초안 생성/,
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /import \{ Collapsible, CollapsibleContent \} from "@\/components\/ui\/collapsible";/,
       /PopoverTrigger/,
@@ -545,27 +549,12 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor keeps the governed Iceberg Continuous SQL execution-tree action",
-    files: [
-      "src/pages/sql/SqlQueryEditorPanel.tsx",
-      "src/pages/sql/ContinuousSqlJoinDialog.tsx",
-      "src/pages/sql/useContinuousSqlJoin.ts",
-      "src/services/continuousSqlApi.ts",
-    ],
+    name: "SQL editor uses the normal SQL Job flow without a separate continuous JOIN action",
+    file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
-      /data-testid="continuous-sql-join-button"/,
-      /실시간 JOIN 만들기/,
       /<SqlAiWriterDialog/,
-      /result\.activeTreeRun/,
-      /servingMode: "iceberg"/,
-      /await createContinuousSqlJob/,
     ],
-    forbiddenPatterns: [
-      /ClickHouse/,
-      /clickhouseTarget/,
-      /kafka_connect_v2/,
-      /createClickHouseContinuousSqlJob/,
-    ],
+    forbiddenPatterns: [/data-testid="continuous-sql-join-button"/, /실시간 JOIN 만들기/],
   },
   {
     name: "SQL result chart keeps its heading compact and fits inside the result panel",
@@ -581,7 +570,7 @@ const checks = [
     ],
   },
   {
-    name: "Catalog semantic workspace uses the live Semantic Model contract",
+    name: "Catalog semantic workspace uses live Semantic Model and RAG contracts",
     files: [
       "src/pages/catalog/CatalogWorkspacePage.tsx",
       "src/pages/semantic/SemanticLayerPage.tsx",
@@ -592,6 +581,8 @@ const checks = [
       /<SemanticLayerPage datasets=\{catalogProps\.datasets\}/,
       /listSemanticModels\(\)/,
       /apiClient\.get<SemanticModel\[\]>\("\/api\/semantic-models"\)/,
+      /apiClient\.post<RagProfile>\(`\/api\/catalog\/datasets\/\$\{encodeURIComponent\(datasetId\)\}\/rag\/approve`/,
+      /<RagJobHistory datasetId=\{selectedDatasetId\}/,
     ],
     forbiddenPatterns: [/semanticLayerMock/, /services\/mockApi/],
   },
@@ -823,6 +814,16 @@ const checks = [
       /\.brand img[\s\S]*?width:\s*112px/,
       /\.nav-item span[\s\S]*?text-overflow:\s*ellipsis/,
       /nameClassName="text-sm"[\s\S]*?size="sm"/,
+    ],
+  },
+  {
+    name: "Global notifications stay anchored to the bottom-right corner",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.app-notification-stack\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*24px;[^}]*right:\s*28px;/s,
+    ],
+    forbiddenPatterns: [
+      /\.app-notification-stack\s*\{[^}]*top:/s,
     ],
   },
   {
@@ -1353,7 +1354,7 @@ const checks = [
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
       /import \{ Field, FieldError, FieldGroup, FieldLabel \} from "@\/components\/ui\/field";/,
-      /import \{ FormFieldGroup, type NativeSelectFieldProps \} from "@\/components\/ui\/form-field-group";/,
+      /import \{ FormFieldGroup \} from "@\/components\/ui\/form-field-group";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
       /import \{ Tooltip, TooltipContent, TooltipProvider, TooltipTrigger \} from "@\/components\/ui\/tooltip";/,
       /<FieldGroup className="contents">/,
@@ -1389,7 +1390,7 @@ const checks = [
   },
   {
     name: "Dashboard cartesian charts expose shared value-axis range controls",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    file: "src/pages/dashboard/runtime/WidgetAxisRangeFields.tsx",
     patterns: [
       /label="값 축 범위"/,
       /valueAxisRangeMode: event\.target\.value as DashboardWidgetAxisRangeMode/,
@@ -1404,22 +1405,43 @@ const checks = [
     file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
     patterns: [
       /import \{ resolveChartValueAxisRange \} from "\.\/chartAxisRange";/,
-      /const horizontal = widget\.config\.orientation === "horizontal";/,
-      /\.\.\.\(horizontal \? valueAxisRange : \{\}\)/,
-      /yaxis: yAxisWithRange\(baseOptions, horizontal \? \{\} : valueAxisRange\)/,
+      /const axes = buildBarChartAxes\(baseOptions, chartData\.categories, orientation, valueAxisRange\);/,
+      /xaxis: axes\.xaxis/,
+      /yaxis: axes\.yaxis/,
       /stacked: widget\.config\.stacked \?\? false/,
     ],
   },
   {
-    name: "Dashboard widget settings use the shared searchable combobox",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    name: "Dashboard horizontal bars keep dev axis formatters while applying value-axis bounds",
+    file: "src/pages/dashboard/runtime/barChartAxes.ts",
+    patterns: [
+      /const isHorizontal = orientation === "horizontal";/,
+      /\.\.\.\(isHorizontal \? valueAxisRange : \{\}\)/,
+      /\.\.\.\(isHorizontal \? \{\} : valueAxisRange\)/,
+      /formatter: axisFormatters\.x/,
+      /formatter: axisFormatters\.y/,
+    ],
+  },
+  {
+    name: "Dashboard widget select adapter uses the shared searchable combobox",
+    file: "src/pages/dashboard/runtime/WidgetSelectField.tsx",
     patterns: [
       /import \{ DashboardFieldCombobox, type DashboardComboboxOption \} from "\.\/DashboardFieldCombobox";/,
-      /function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
+      /export function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
       /Children\.toArray\(children\)\.flatMap/,
       /child\.type !== "option"/,
-      /label="데이터셋"[\s\S]*?options=\{datasets\.map/,
       /className=\{cn\("asklake-widget-select", selectClassName\)\}/,
+    ],
+    forbiddenPatterns: [
+      /<select/,
+    ],
+  },
+  {
+    name: "Dashboard widget settings delegate to the shared searchable combobox",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ WidgetSelectField \} from "\.\/WidgetSelectField";/,
+      /label="데이터셋"[\s\S]*?options=\{datasets\.map/,
       /<strong className="min-w-0 max-w-full break-words">/,
     ],
     forbiddenPatterns: [
@@ -1482,12 +1504,14 @@ const checks = [
       /<ExplorerTree<DatasetTreeNode>/,
       /ariaLabel="Dashboard dataset tree"/,
       /data-dashboard-dataset-node/,
+      /openByDefault=\{false\}/,
       /onNodePress=\{\(node: NodeApi<DatasetTreeNode>\) =>/,
     ],
     forbiddenPatterns: [
       /components\/kibo-ui\/tree/,
       /components\/ui\/tree-view/,
       /<TreePanel/,
+      /initialOpenState=\{\{[\s\S]*?\[systemItemId\]: true/,
     ],
   },
   {
@@ -1628,7 +1652,8 @@ const checks = [
     file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
     patterns: [
       /const usesCount = config\.aggregation === "count";/,
-      /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /type === "bar_chart" && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /\(type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
       /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],

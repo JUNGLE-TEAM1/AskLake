@@ -55,19 +55,19 @@ def verify_dashboard_realtime_contract() -> None:
     require(
         "frontend/src/pages/dashboard/runtime/dashboardAutoRefresh.ts",
         'const PREFERENCE_PREFIX = "asklake:dashboard:auto-refresh"',
-        "readDashboardAutoRefreshPreference",
-        "writeDashboardAutoRefreshPreference",
         'return "수동 새로고침"',
     )
     require(
         "frontend/src/pages/dashboard/runtime/useDashboardAutoRefresh.ts",
-        "if (!active || !enabled)",
-        'document.visibilityState !== "hidden"',
-        "pendingDatasetIdsRef = useRef(new Set<string>())",
-        "refreshDatasetsRef.current(pendingDatasetIds)",
-        "new RealtimeEventClient()",
-        'config.dashboardSyncMode === "polling"',
-        "client.close()",
+        "Dashboard data is intentionally refresh-only.",
+        'const status: DashboardAutoRefreshStatus = "manual"',
+        "return { enabled: false, errorMessage: null, setEnabled, status }",
+    )
+    forbid(
+        "frontend/src/pages/dashboard/runtime/useDashboardAutoRefresh.ts",
+        "RealtimeEventClient",
+        "setInterval(",
+        "refetchInterval",
     )
     require(
         "frontend/src/pages/dashboard/runtime/useDashboardWidgetData.ts",
@@ -160,9 +160,9 @@ def main() -> None:
     verify_dashboard_realtime_contract()
     verify_architecture_boundaries()
     print(
-        "Realtime quality gates passed: auto-refresh remains explicit and SSE-driven with a manual "
-        "fallback, no silent polling interval exists, the durable event path is retained, SQL "
-        "validation is present, and God-file size/symbol budgets are retained."
+        "Realtime quality gates passed: Dashboard refresh stays manual with no silent polling "
+        "interval, the durable event path is retained, SQL validation is present, and God-file "
+        "size/symbol budgets are retained."
     )
 
 

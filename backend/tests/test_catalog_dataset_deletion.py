@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -101,11 +100,6 @@ class CatalogDeletionRepositoryTest(unittest.TestCase):
             with self.assertRaises(ApiError) as raised:
                 ensure_catalog_publication_allowed(db, "ds_orders")
             self.assertEqual(raised.exception.code, "DATASET_DELETION_FENCED")
-            ensure_catalog_publication_allowed(
-                db,
-                "ds_orders",
-                publication_created_at=row.created_at + timedelta(seconds=1),
-            )
 
 
 class CatalogPublicationFenceTest(unittest.TestCase):
@@ -123,7 +117,7 @@ class CatalogPublicationFenceTest(unittest.TestCase):
             patch("app.repositories.catalog_deletion_repository.ensure_catalog_publication_allowed") as etl_fence,
         ):
             etl_repository.get_dataset_by_id_for_update(db, "ds_orders")
-        etl_fence.assert_called_once_with(db, "ds_orders", publication_created_at=None)
+        etl_fence.assert_called_once_with(db, "ds_orders")
 
 
 class CatalogDeletionWorkerTest(unittest.TestCase):
@@ -275,31 +269,34 @@ class CatalogDeletionSafetyTest(unittest.TestCase):
             self.assertTrue(root.exists())
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep")
 
-    def test_retired_rag_artifacts_in_historical_receipt_are_not_purged(self) -> None:
+    def test_clickhouse_artifact_is_purged_from_the_fresh_impact_snapshot(self) -> None:
         row = deletion_row()
         row.impact_snapshot = CatalogDatasetDeletionImpact(
-            artifacts=[
-                {"kind": "opensearch_index", "location": "asklake-rag-ds-orders-v1"},
-                {"kind": "rag_parent_table", "location": "iceberg.rag.ds_orders"},
-                {"kind": "rag_chunk_table", "location": "iceberg.rag.ds_orders_chunks"},
-                {"kind": "rag_checkpoint", "location": "s3://asklake-output/rag/ds_orders"},
-            ],
+            artifacts=[{"kind": "clickhouse_table", "location": "asklake.ds_orders"}],
             blockers=[],
             can_delete=True,
             dataset_id="ds_orders",
             dataset_name="orders",
-            retained_resources=["historical RAG metadata and artifacts"],
+            retained_resources=[],
         ).model_dump(by_alias=True)
         purger = CatalogPhysicalPurger()
-
-        with (
-            patch.object(purger, "_drop_iceberg_artifact") as drop_iceberg,
-            patch.object(purger, "_purge_storage") as purge_storage,
-        ):
+        with patch.object(purger, "_drop_clickhouse_table") as drop_table:
             purger.purge(MagicMock(), row)
+        drop_table.assert_called_once_with({"database": "asklake", "table": "ds_orders"})
 
-        drop_iceberg.assert_not_called()
-        purge_storage.assert_not_called()
+    def test_iceberg_access_denied_does_not_fail_catalog_cleanup(self) -> None:
+        purger = CatalogPhysicalPurger()
+        with patch("app.application.catalog_dataset_deletion.IcebergWriterService") as writer:
+            writer.return_value.drop_table.side_effect = RuntimeError(
+                "Access Denied: Cannot drop table iceberg.asklake.ds_orders"
+            )
+            purger._drop_iceberg_table({
+                "catalog": "iceberg",
+                "schema": "asklake",
+                "table": "ds_orders",
+                "format": "iceberg",
+            })
+        writer.return_value.drop_table.assert_called_once()
 
     def test_downstream_summary_labels_are_not_phantom_dataset_blockers(self) -> None:
         payload = dataset_payload()
@@ -339,7 +336,6 @@ class CatalogDeletionSafetyTest(unittest.TestCase):
         impact = build_deletion_impact(db, dataset, dataset_payload())
         self.assertFalse(impact.can_delete)
         self.assertTrue(any(item.resource_id == job.id and "예약" in item.reason for item in impact.blockers))
-        self.assertIn("historical RAG metadata and artifacts", impact.retained_resources)
 
 
 if __name__ == "__main__":

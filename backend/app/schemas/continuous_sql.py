@@ -33,6 +33,13 @@ ContinuousSqlBatchStage = Literal[
 ContinuousSqlCommand = Literal["start", "pause", "resume", "stop", "recover"]
 ContinuousSqlDependencyInputType = Literal["realtime", "batch", "static"]
 ContinuousSqlDependencyExecutionPolicy = Literal["run_on_tree_start", "reuse_snapshot"]
+ContinuousSqlRefreshStatus = Literal[
+    "idle",
+    "running",
+    "failed",
+    "catalog_ready",
+    "dashboard_ready",
+]
 
 
 class ClickHouseWriterTarget(CamelModel):
@@ -322,6 +329,14 @@ class ContinuousSqlExecutionTree(CamelModel):
     lock_conflict: dict[str, Any] | None = None
 
 
+class ContinuousSqlRefreshState(CamelModel):
+    latest_source_revision: int = 0
+    processing_source_revision: int | None = None
+    published_source_revision: int = 0
+    status: ContinuousSqlRefreshStatus = "idle"
+    last_error: str | None = None
+
+
 class ContinuousSqlJob(CamelModel):
     id: str
     name: str
@@ -354,6 +369,7 @@ class ContinuousSqlJob(CamelModel):
     last_error_message: str | None = None
     active_run: ContinuousSqlRun | None = None
     incremental_binding: dict[str, Any] | None = None
+    refresh_state: ContinuousSqlRefreshState = Field(default_factory=ContinuousSqlRefreshState)
 
 
 class ContinuousSqlCommandRequest(CamelModel):

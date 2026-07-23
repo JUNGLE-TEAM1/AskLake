@@ -3,6 +3,8 @@ Total output lines: 1380
 
 # 03. API Reference
 
+> Kafka streaming Base Dataset과 static reference Dataset을 사용하는 일반 Trino SQL Job은 backend worker가 새 Dataset revision을 감지해 저장 SQL을 재실행한다. 별도 Continuous JOIN 생성 API는 기본 화면 흐름에서 사용하지 않는다.
+
 > RAG Dataset API(`/api/catalog/datasets/{datasetId}/rag/*`)는 2026-07-20에 제거됐다. SQL AI와 Dashboard Assistant의 retrieval 응답은 `mode=disabled`, `status=disabled`, 빈 `sources`를 반환한다.
 
 Query AI 내부 Gateway/MCP 계약은 [ai-gateway-mcp-rollout.md](./ai-gateway-mcp-rollout.md)에 정리되어 있다. Frontend 공개 계약은 기존 `/api/query/ai-suggestions`를 유지한다.
@@ -261,7 +263,7 @@ Phase 1 persistence에 이어 Phase 2 producer resolution/create 계약이 적�
 
 Phase 3부터 dependency가 있는 Job의 `start`/`recover`는 외부 worker 호출 전에 parent와 모든 producer child lock을 원자적으로 획득하고 `activeTreeRun`을 반환한다. `executionTree`에는 `activeTreeRunId`, `lockedJobIds`, `lockConflict`가 있고 tree run에는 node run, lock generation, lease expiry, hash 처리한 fencing token, 아직 비어 있을 수 있는 `inputDatasetRevisions`가 포함된다. 원문 fencing token은 API에 노출하지 않는다. active standalone child 또는 다른 tree lock과 충돌하면 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`, producer Job이 사라졌으면 `409 CONTINUOUS_SQL_DEPENDENCY_UNAVAILABLE`이며 tree/부분 lock은 남지 않는다. tree가 소유한 ETL Job의 standalone command/update/delete도 동일 conflict로 거절한다.
 
-Phase 4에서는 parent가 lock commit 뒤 batch child `run`, realtime child `startContinuous`를 batch → realtime 순서로 internal command path에서 요청하고, node의 `producerRunId`와 status를 응답 `activeTreeRun`에 반영한다. child command는 matching tree run ID와 fencing token이 없으면 여전히 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`다. child start 실패는 이번 tree run의 realtime child를 역순 `stopContinuous`로 보상하고 tree lock/node run을 failed로 종료한다. dependency-managed Job은 `executionInputMode=dataset_revision`으로 생성되고 SQL-owned Kafka 설정을 plan에 남기지 않는다. revision commit의 exact Iceberg `snapshotId`가 준비되면 in-process runner가 `FOR VERSION AS OF` transform을 수행하고 verified output Dataset revision을 게시한다. snapshot이 아직 없으면 Job은 `starting`으로 유지하고 sync loop가 재시도한다. legacy Job(`executionInputMode=legacy_kafka`)만 기존 direct consumer를 유지한다.
+Phase 4에서는 parent가 lock commit 뒤 batch child `run`, realtime child `startContinuous`를 batch → realtime 순서로 internal command path에서 요청하고, node의 `producerRunId`와 status를 응답 `activeTreeRun`에 반영한다. child command는 matching tree run ID와 fencing token이 없으면 여전히 `409 CONTINUOUS_SQL_DEPENDENCY_CONFLICT`다. child start 실패는 이번 tree run의 realtime child를 역순 `stopContinuous`로 보상하고 tree lock/node run을 failed로 종료한다. dependency-managed Job은 `executionInputMode=dataset_revision`으로 생성되고 SQL-owned Kafka 설정을 plan에 남기지 않는다. revision commit의 exact Iceberg `snapshotId`가 준비되면 in-process runner가 `FOR VERSION AS OF` transform을 수행하고 verified output Dataset revision을 게시한다. snapshot이 아직 없으면 Job은 `starting`으로 유지하고 sync loop가 재시도한다. Job 응답의 `refreshState`는 `latestSourceRevision`, nullable `processingSourceRevision`, `publishedSourceRevision`, `status`, nullable `lastError`를 반환한다. refresh 실패는 마지막 published revision을 보존하고 parent를 종료하지 않는다. legacy Job(`executionInputMode=legacy_kafka`)만 기존 direct consumer를 유지한다.
 
 SQL 분석의 Continuous SQL dialog는 이 API가 반환한 authoritative `dependencyBindings`와 `activeTreeRun`만 표시한다. Kafka broker, consumer group, trigger 또는 max-offset 값을 SQL Job 생성 화면에서 수정하거나 제출하지 않는다.
 
@@ -334,7 +336,9 @@ Canonical status values:
 
 `POST /api/ai/generate-sql`은 `{ question, promptType, metadata, context?, engine }`을 받고 `{ sql, schemaContext, model, provider }`를 반환한다. `promptType`은 `query_page`, `field_transform`, `sql_transform`, `partition`, `general` 중 하나다. `field_transform`은 scalar expression만, `sql_transform` 또는 SELECT 응답은 단일 read-only query만 허용한다. Backend는 Gateway 출력에서 supplied metadata 밖의 column/relation, wildcard field transform, Spark script transform과 `reflect`/`java_method` 계열 위험 함수를 거부한다. Gateway 미설정·timeout·invalid provenance·invalid SQL은 성공 초안으로 대체하지 않고 공통 error envelope로 반환한다.
 
-`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "...", "kafkaTopic": "...", "s3Bucket": "...", "s3Prefix": "..." }`를 반환한다. 새 빈 Kafka/S3 Source draft만 build-time 상수 대신 이 값을 한 번 채우며 저장된 설정과 사용자가 편집한 값은 보존한다. 응답에는 access key, secret, token 같은 인증 정보를 포함하지 않는다.
+`GET /api/etl/sources/defaults`는 `{ "kafkaBroker": "...", "kafkaTopic": "...", "s3Bucket": "...", "s3Prefix": "..." }`를 반환한다. 새 빈 Kafka Source draft와 로컬 MinIO draft에는 build-time 상수 대신 이 값을 한 번 채운다. AWS S3 draft는 bucket/prefix를 자동 입력하지 않고, `s3Bucket`을 사용자가 명시적으로 선택할 수 있는 워크스페이스 기본 버킷 제안으로 노출한다. 저장된 설정과 사용자가 편집한 값은 보존하며, 응답에는 access key, secret, token 같은 인증 정보를 포함하지 않는다.
+
+File / S3 Prefix의 `POST /api/etl/sources/test`는 응답 shape를 바꾸지 않고 읽기 비용만 제한한다. 사전식 첫 파일을 대표 샘플로 먼저 검증한 뒤 나머지 파일을 `ASKLAKE_PREFIX_VALIDATION_CONCURRENCY`(기본 8, 1~32) 범위에서 병렬 처리한다. 각 파일은 `ASKLAKE_PREFIX_INITIAL_SAMPLE_BYTES`(기본 65,536 byte)부터 시작하고, 완전한 레코드가 행 제한에 부족할 때만 비중복 Range를 추가해 누적 목표를 2배로 확장한다. 기존 scope별 최대 byte, EOF 또는 행 제한에서 중단하며 모든 대상 파일의 schema fingerprint 검사는 유지한다.
 
 Iceberg Dataset rows에서 Trino coordinator가 응답하지 않으면 HTTP 502 `SQL_STORAGE_ERROR`를 반환하고 `details.reason`은 원래 `ErrorCode`의 wire value인 `BACKEND_TIMEOUT`처럼 정규화한다. Python enum 표현, 내부 endpoint, query나 credential marker를 응답에 포함하지 않는다.
 
@@ -826,6 +830,8 @@ type DashboardRuntimeResponse = {
   filters: Array<{ id: string; label: string; value: unknown }>;
 };
 ```
+
+`BarChartWidgetConfig`의 키 역할은 `orientation`과 무관하다. `xKey`는 분류·그룹 기준이고 `yKey`는 집계할 숫자 값이다. `orientation: "vertical"`에서는 분류를 X축, 숫자 값을 Y축에 표시하고, `orientation: "horizontal"`에서는 분류를 Y축, 숫자 값을 X축에 표시한다. 가로 막대를 만들기 위해 `xKey`와 `yKey`를 교환하거나 문자열을 `yKey`로 전송하지 않는다.
 
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
 

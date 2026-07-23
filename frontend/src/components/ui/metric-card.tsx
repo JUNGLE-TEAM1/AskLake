@@ -58,23 +58,23 @@ export const MetricCard = React.forwardRef<HTMLElement, MetricCardProps>(
           </span>
         ) : null}
         <strong className={cn(
-          "min-w-0 font-bold leading-snug tracking-normal text-slate-600",
+          "min-w-0 font-medium leading-snug tracking-normal text-slate-600",
           size === "compact" ? "text-[13px]" : "text-sm",
-        )}>
+        )} data-slot="metric-label">
           {label}
         </strong>
       </div>
       <span className={cn(
-        "font-extrabold leading-none tracking-normal text-slate-950",
+        "font-bold leading-none tracking-normal text-slate-950",
         size === "compact" ? "text-2xl" : "text-3xl",
-      )}>
+      )} data-slot="metric-value">
         {value}
       </span>
       {detail ? (
         <span className={cn(
-          "font-medium leading-snug tracking-normal text-slate-500",
+          "font-normal leading-snug tracking-normal text-slate-500",
           size === "compact" ? "text-xs" : "text-sm",
-        )}>
+        )} data-slot="metric-detail">
           {detail}
         </span>
       ) : null}

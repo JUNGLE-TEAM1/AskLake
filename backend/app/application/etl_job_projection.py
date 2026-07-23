@@ -6,12 +6,9 @@ import os
 import re
 from typing import Any
 import unicodedata
-from uuid import uuid4
 
 from app.application.etl_schedule import job_schedule_kind, schedule_next_run_label
-from app.core.config import settings
 from app.domain.continuous_runtime import record_runtime_observation
-from app.domain.realtime_job_engine import selected_realtime_job_engine
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousRuntimeModel
 from app.schemas.etl import CreatePipelineRequest, UpdatePipelineRequest
 
@@ -248,9 +245,6 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     config = request.continuous_config
     base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
-        # The deployment profile selects the engine; markerless legacy Jobs remain Spark V1.
-        "runtimeEngine": selected_realtime_job_engine(settings),
-        "runtimeGeneration": 1,
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
         "triggerIntervalSeconds": config.trigger_interval_seconds if config else 10,
         "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 100,
@@ -271,12 +265,7 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
     consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
     config = job.continuous_config or {}
     checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{dataset_storage_key(job.target)}/_checkpoints/{job.id}")
-    metrics = record_runtime_observation(
-        {"publicationRecoveryPending": False},
-        "stopped",
-        default_public_status="stopped",
-    )
-    runtime = KafkaContinuousRuntimeModel(
+    return KafkaContinuousRuntimeModel(
         job_id=job.id,
         broker=broker,
         topic=topic,
@@ -284,16 +273,12 @@ def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel
         target_identity=str(job.storage_path or job.target_path or job.target),
         checkpoint_path=checkpoint_path,
         status="stopped",
-        metrics=metrics,
+        metrics=record_runtime_observation(
+            {},
+            "stopped",
+            default_public_status="stopped",
+        ),
     )
-    from app.services.continuous_runtime_sync import assign_runtime_admission_owner_claim
-    assign_runtime_admission_owner_claim(
-            runtime,
-            runtime_engine=str(config.get("runtimeEngine") or "spark_structured_streaming"),
-            configured_settings=settings,
-            fencing_token=f"create-{uuid4()}",
-    )
-    return runtime
 
 
 def source_unit_label(source_type: str) -> str:
@@ -471,6 +456,7 @@ def format_iso_duration(started_at: str, ended_at: str) -> str:
     except ValueError:
         return "-"
     return format_duration_ms(max(0, int((end - start).total_seconds() * 1000)))
+
 
 def iso_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")

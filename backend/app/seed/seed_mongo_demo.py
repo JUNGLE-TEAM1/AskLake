@@ -57,7 +57,7 @@ def build_catalog_payload(collection: dict[str, Any]) -> dict[str, Any]:
         "nextRefresh": "수동 갱신",
         "owner": "Data Platform Team",
         "quality": "Preview verified",
-        "rag": False,
+        "rag": True,
         "rows": f"{len(documents)} documents",
         "sampleRows": sample_rows,
         "schema": schema,

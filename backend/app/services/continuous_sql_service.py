@@ -55,6 +55,9 @@ from app.schemas.continuous_sql import (
 )
 from app.services.continuous_sql_catalog import ContinuousSqlCatalogResolver
 from app.services.etl_service import command_job as command_etl_job
+from app.services.clickhouse_continuous_publication import (
+    ClickHouseContinuousSqlPublicationService,
+)
 from app.services.continuous_sql_gateway import (
     ContinuousSqlWorkerGateway,
     RoutedContinuousSqlWorkerGateway,
@@ -86,7 +89,7 @@ class ContinuousSqlService:
         runtime_settings: Settings | None = None,
         gateway: ContinuousSqlWorkerGateway | None = None,
         publication_service: ContinuousSqlPublicationService | None = None,
-        clickhouse_publication_service: Any | None = None,
+        clickhouse_publication_service: ClickHouseContinuousSqlPublicationService | None = None,
         revision_runner: ContinuousSqlRevisionRunner | None = None,
         child_commander: Callable[..., Any] | None = None,
     ) -> None:
@@ -106,7 +109,10 @@ class ContinuousSqlService:
         self.planner = ContinuousSqlPlanner()
         self.gateway = gateway or RoutedContinuousSqlWorkerGateway(self.settings)
         self.publication_service = publication_service or ContinuousSqlPublicationService(db)
-        self.clickhouse_publication_service = clickhouse_publication_service
+        self.clickhouse_publication_service = (
+            clickhouse_publication_service
+            or ClickHouseContinuousSqlPublicationService(db)
+        )
         self.child_commander = child_commander or command_etl_job
 
     def validate(
@@ -986,8 +992,13 @@ class ContinuousSqlService:
                     job.last_error_code = None
                     job.last_error_message = None
                 else:
-                    job.observed_state = "failed"
-                    run.status = "failed"
+                    # A failed refresh must not unpublish the last verified
+                    # Gold revision or terminate the long-running parent.
+                    # The next reconciliation cycle retries from the same
+                    # source revision because the published cursor did not
+                    # advance.
+                    job.observed_state = "running"
+                    run.status = "running"
                     job.last_error_code = str(exc.code)
                     job.last_error_message = exc.message
                     run.last_error_code = str(exc.code)
@@ -1037,7 +1048,7 @@ class ContinuousSqlService:
                 job.observed_state = "running"
                 run.status = "running"
             try:
-                self._clickhouse_publication().reconcile_progress(job, run, worker)
+                self.clickhouse_publication_service.reconcile_progress(job, run, worker)
                 job.last_error_code = None
                 job.last_error_message = None
                 run.last_error_code = None
@@ -1629,17 +1640,6 @@ class ContinuousSqlService:
             status.HTTP_409_CONFLICT,
             {"setting": "CONTINUOUS_SQL_JOIN_ENABLED"},
         )
-
-    def _clickhouse_publication(self) -> Any:
-        if self.clickhouse_publication_service is None:
-            from app.services.clickhouse_continuous_publication import (
-                ClickHouseContinuousSqlPublicationService,
-            )
-
-            self.clickhouse_publication_service = ClickHouseContinuousSqlPublicationService(
-                self.db
-            )
-        return self.clickhouse_publication_service
 
     def _require_clickhouse_enabled(self) -> None:
         if self.settings.clickhouse_continuous_join_enabled or (
