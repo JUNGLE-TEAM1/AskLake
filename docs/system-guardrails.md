@@ -177,7 +177,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 - baseline 예외는 owner, reason, expiresAt 없이 추가할 수 없고 만료되면 CI가 실패한다.
 - frontend 변경은 별도 `Frontend UI Checks`의 전체 UI regression과 production build를 계속 필수로 한다.
 - #1147 복구 기준선에서 Dashboard는 수동 새로고침 계약을 사용한다. `Realtime Quality Gates`는 퇴역한 SSE live-refresh 파일의 부재, 명시적 수동 상태, 무제한 timer 부재와 durable backend event path를 함께 검사한다.
-- `EKS B Workload Checks`는 현재 `verify:spark-kubernetes-client` 계약을 실행한다. 복구에서 제거된 bounded Kafka fixture/MSK helper는 명시적 퇴역 경계로 검사하며, 대체 runtime·테스트 계약 없이 같은 파일을 다시 추가하지 않는다.
+- `EKS B Workload Checks`는 현재 `verify:spark-kubernetes-client` 계약을 실행한다. 일반 batch의 Kubernetes SparkApplication 제출 경로는 `ASKLAKE_SPARK_RUNNER=kubernetes`, digest-pinned runtime image, Backend ServiceAccount의 SparkApplication CRUD를 함께 만족해야 하며, 같은 검증이 production mode 수용과 rendered driver ServiceAccount를 확인한다. 복구에서 제거된 bounded Kafka fixture/MSK helper는 명시적 퇴역 경계로 검사하며, 대체 runtime·테스트 계약 없이 같은 파일을 다시 추가하지 않는다.
 - release 전에는 수동 slow suite로 production Spark와 Continuous runtime contract를 실행한다.
 
 # ETL E2E·복구 gate (2026-07-16)

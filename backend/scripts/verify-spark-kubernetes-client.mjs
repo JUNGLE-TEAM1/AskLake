@@ -7,6 +7,8 @@ import {
   sparkApplicationName,
   sparkApplicationState,
 } from "./spark-kubernetes-client.mjs";
+import { createSparkKubernetesApplication } from "../src/sparkKubernetesRunner.mjs";
+import { sparkExecutionMode } from "../src/sparkRunner.mjs";
 
 test("Kubernetes Continuous config requires a digest-pinned image", () => {
   assert.throws(
@@ -48,4 +50,19 @@ test("SparkApplication names and states are normalized for runtime reconciliatio
   assert.equal(sparkApplicationState({ status: { applicationState: { state: "COMPLETED" } } }), "exited");
   assert.equal(sparkApplicationState({ status: { applicationState: { state: "FAILED" } } }), "failed");
   assert.equal(sparkApplicationState(null), "starting");
+});
+
+test("Production batch runner accepts Kubernetes and renders a digest-pinned SparkApplication", () => {
+  const environment = {
+    APP_ENV: "production",
+    ASKLAKE_SPARK_KUBERNETES_IMAGE: "registry.example/asklake-spark@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ASKLAKE_SPARK_KUBERNETES_NAMESPACE: "asklake-dev",
+    ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT: "asklake-spark",
+    ASKLAKE_SPARK_RUNNER: "kubernetes",
+  };
+  assert.equal(sparkExecutionMode(environment), "kubernetes");
+  const application = createSparkKubernetesApplication({ appName: "asklake-batch-job", environmentVariables: {}, jobId: "job-contract", runId: "run-contract" }, environment);
+  assert.equal(application.metadata.namespace, "asklake-dev");
+  assert.match(application.spec.image, /@sha256:/);
+  assert.equal(application.spec.driver.serviceAccount, "asklake-spark");
 });
