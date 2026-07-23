@@ -17,6 +17,10 @@ const dashboardCanvasSource = readFileSync(
   new URL("../src/pages/dashboard/runtime/DashboardCanvas.tsx", import.meta.url),
   "utf8",
 );
+const dashboardRuntimeViewSource = readFileSync(
+  new URL("../src/pages/dashboard/runtime/DashboardRuntimeView.tsx", import.meta.url),
+  "utf8",
+);
 
 function metricWidget(id: string, x: number, y: number): DashboardRuntimeWidget {
   return {
@@ -112,10 +116,10 @@ test("a colliding layout is rejected before a layout save request is built", () 
   assert.equal(hasAnyLayoutCollision(collidingLayout), true);
 });
 
-test("the draft editor keeps the canonical 12-column breakpoint while published dashboards stay responsive", () => {
+test("the draft editor defaults to the canonical 12-column breakpoint while allowing an explicit preview", () => {
   assert.match(
     dashboardCanvasSource,
-    /const editorBreakpoint(?:: DashboardBreakpoint \| undefined)? = editable \? "lg" : undefined/,
+    /const editorBreakpoint(?:: DashboardBreakpoint \| undefined)? = previewBreakpoint \?\? \(editable \? "lg" : undefined\)/,
   );
   assert.match(dashboardCanvasSource, /breakpoint=\{editorBreakpoint\}/);
 });
@@ -148,4 +152,13 @@ test("coordinate editor preserves widget limits and rejects positions outside th
     layoutFromDraft(widget, { h: "1", w: "6", x: "0", y: "3" }),
     "이 위젯의 최소 크기는 2열 × 2행입니다.",
   );
+});
+
+test("draft previews use read-only responsive breakpoints while published dashboards render the saved grid", () => {
+  assert.match(dashboardCanvasSource, /previewBreakpoint \?\? \(editable \? "lg" : undefined\)/);
+  assert.match(dashboardCanvasSource, /preview-\$\{previewBreakpoint\}/);
+  assert.match(dashboardRuntimeViewSource, /const \[layoutPreviewBreakpoint, setLayoutPreviewBreakpoint\] = useState<"lg" \| "sm" \| "xs">\("lg"\);/);
+  assert.match(dashboardRuntimeViewSource, /editable=\{layoutPreviewBreakpoint === "lg"\}/);
+  assert.match(dashboardRuntimeViewSource, /previewBreakpoint=\{layoutPreviewBreakpoint\}/);
+  assert.match(dashboardRuntimeViewSource, /<DashboardCanvas editable=\{false\} widgets=\{selectedPublishedWidgets\} onRetryWidgetData=\{onRetryWidgetData\} \/>/);
 });

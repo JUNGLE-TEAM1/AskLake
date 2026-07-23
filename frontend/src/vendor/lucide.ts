@@ -74,6 +74,7 @@ export { default as Maximize2 } from "lucide-react/dist/esm/icons/maximize-2.mjs
 export { default as Minus } from "lucide-react/dist/esm/icons/minus.mjs";
 export { default as MoreHorizontal } from "lucide-react/dist/esm/icons/ellipsis.mjs";
 export { default as Moon } from "lucide-react/dist/esm/icons/moon.mjs";
+export { default as Monitor } from "lucide-react/dist/esm/icons/monitor.mjs";
 export { default as MousePointer2 } from "lucide-react/dist/esm/icons/mouse-pointer-2.mjs";
 export { default as PanelLeftClose } from "lucide-react/dist/esm/icons/panel-left-close.mjs";
 export { default as PanelLeftOpen } from "lucide-react/dist/esm/icons/panel-left-open.mjs";
@@ -101,7 +102,9 @@ export { default as Sparkles } from "lucide-react/dist/esm/icons/sparkles.mjs";
 export { default as Square } from "lucide-react/dist/esm/icons/square.mjs";
 export { default as Star } from "lucide-react/dist/esm/icons/star.mjs";
 export { default as Table2 } from "lucide-react/dist/esm/icons/table-2.mjs";
+export { default as Tablet } from "lucide-react/dist/esm/icons/tablet.mjs";
 export { default as TerminalSquare } from "lucide-react/dist/esm/icons/terminal-square.mjs";
+export { default as Smartphone } from "lucide-react/dist/esm/icons/smartphone.mjs";
 export { default as Trash2 } from "lucide-react/dist/esm/icons/trash-2.mjs";
 export { default as Type } from "lucide-react/dist/esm/icons/type.mjs";
 export { default as Undo2 } from "lucide-react/dist/esm/icons/undo-2.mjs";

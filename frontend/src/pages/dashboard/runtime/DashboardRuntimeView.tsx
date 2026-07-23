@@ -144,22 +144,6 @@ const emptyDashboardCopy = {
   title: "게시된 위젯이 없습니다",
 };
 
-function PublishedDashboardWidgetGrid({
-  onRetryData,
-  widgets,
-}: {
-  onRetryData: (widgetId: string) => void;
-  widgets: DashboardRuntimeWidget[];
-}) {
-  return (
-    <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-      {widgets.map((widget) => (
-        <WidgetFrame key={widget.id} widget={widget} onRetryData={onRetryData} />
-      ))}
-    </div>
-  );
-}
-
 function RuntimeActionButton({
   onClick,
   primary = false,
@@ -185,6 +169,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
+  const [layoutPreviewBreakpoint, setLayoutPreviewBreakpoint] = useState<"lg" | "sm" | "xs">("lg");
   const {
     autoRefreshEnabled,
     autoRefreshError,
@@ -471,7 +456,8 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
     ) : (
       <DashboardCanvas
         deletingWidgetId={deletingWidgetId}
-        editable
+        editable={layoutPreviewBreakpoint === "lg"}
+        previewBreakpoint={layoutPreviewBreakpoint}
         selectedWidgetId={selectedWidgetId}
         scrollTargetWidgetId={widgetScrollTargetId}
         widgets={selectedDraftWidgets}
@@ -517,7 +503,7 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
       <EmptyDashboardCanvas action={openDraftAction} editable={false} {...emptyDashboardCopy} />
     </div>
   ) : (
-    <PublishedDashboardWidgetGrid widgets={selectedPublishedWidgets} onRetryData={onRetryWidgetData} />
+    <DashboardCanvas editable={false} widgets={selectedPublishedWidgets} onRetryWidgetData={onRetryWidgetData} />
   );
 
   const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
@@ -615,11 +601,13 @@ export function DashboardRuntimeView({ actions, datasets, runtime }: DashboardRu
               canRedo={canRedoLayout}
               canUndo={canUndoLayout}
               disabled={isCreatingToolbarWidget || !selectedPageId}
+              layoutPreview={layoutPreviewBreakpoint}
               onAssistant={() => {
                 setInspectorMode("assistant");
                 setIsInspectorOpen(true);
               }}
               onCursor={handleCursorMode}
+              onLayoutPreviewChange={setLayoutPreviewBreakpoint}
               onCreateToolbarWidget={handleCreateToolbarWidget}
               onRedo={onRedoLayout}
               onUndo={onUndoLayout}

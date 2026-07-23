@@ -148,6 +148,20 @@
   min-width: 960px;
 }
 
+.asklake-dashboard-canvas-wrap.edit .asklake-dashboard-rgl-shell.preview {
+  min-width: 0;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.asklake-dashboard-canvas-wrap.edit .asklake-dashboard-rgl-shell.preview-sm {
+  width: min(100%, 720px);
+}
+
+.asklake-dashboard-canvas-wrap.edit .asklake-dashboard-rgl-shell.preview-xs {
+  width: min(100%, 420px);
+}
+
 .asklake-dashboard-rgl .react-grid-item {
   min-width: 0;
 }

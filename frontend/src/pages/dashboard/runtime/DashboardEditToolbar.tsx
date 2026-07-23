@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
+import { BarChart3, Monitor, MousePointer2, Redo2, Smartphone, Tablet, Type, Undo2 } from "lucide-react";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -16,9 +16,11 @@ export function DashboardEditToolbar({
   canRedo,
   canUndo,
   disabled,
+  layoutPreview,
   onAssistant,
   onCreateToolbarWidget,
   onCursor,
+  onLayoutPreviewChange,
   onRedo,
   onUndo,
 }: {
@@ -26,9 +28,11 @@ export function DashboardEditToolbar({
   canRedo: boolean;
   canUndo: boolean;
   disabled: boolean;
+  layoutPreview: "lg" | "sm" | "xs";
   onAssistant: () => void;
   onCreateToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   onCursor: () => void;
+  onLayoutPreviewChange: (breakpoint: "lg" | "sm" | "xs") => void;
   onRedo: () => void;
   onUndo: () => void;
 }) {
@@ -106,6 +110,12 @@ export function DashboardEditToolbar({
         <ButtonGroup aria-label="편집 기록">
           {actionButton("실행 취소", <Undo2 />, onUndo, { disabled: !canUndo })}
           {actionButton("다시 실행", <Redo2 />, onRedo, { disabled: !canRedo })}
+        </ButtonGroup>
+        <span className="asklake-toolbar-divider" aria-hidden="true" />
+        <ButtonGroup aria-label="반응형 미리보기">
+          {actionButton("데스크톱 편집", <Monitor />, () => onLayoutPreviewChange("lg"), { disabled: layoutPreview === "lg" })}
+          {actionButton("태블릿 미리보기", <Tablet />, () => onLayoutPreviewChange("sm"), { disabled: layoutPreview === "sm" })}
+          {actionButton("모바일 미리보기", <Smartphone />, () => onLayoutPreviewChange("xs"), { disabled: layoutPreview === "xs" })}
         </ButtonGroup>
       </div>
     </TooltipProvider>

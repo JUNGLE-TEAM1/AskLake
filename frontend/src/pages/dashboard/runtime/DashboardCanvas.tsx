@@ -10,7 +10,7 @@ import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision, hasLayoutOutOfBounds } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
-type DashboardBreakpoint = keyof typeof breakpointCols;
+export type DashboardBreakpoint = keyof typeof breakpointCols;
 const gridMargin: [number, number] = [12, 12];
 const gridRowHeight = 48;
 const editGridTrailingRows = 1;
@@ -52,6 +52,7 @@ export function DashboardCanvas({
   onScrollTargetHandled,
   onSelectWidget,
   onSelectWidgetColorSlot,
+  previewBreakpoint,
   scrollTargetWidgetId,
   selectedWidgetId,
   widgets,
@@ -68,6 +69,7 @@ export function DashboardCanvas({
   onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;
   onSelectWidgetColorSlot?: (widgetId: string, slotIndex: number) => void;
+  previewBreakpoint?: DashboardBreakpoint;
   scrollTargetWidgetId?: string | null;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
@@ -144,11 +146,14 @@ export function DashboardCanvas({
   }
 
   // Draft layouts are persisted in the canonical 12-column coordinate system.
-  const editorBreakpoint: DashboardBreakpoint | undefined = editable ? "lg" : undefined;
+  const editorBreakpoint: DashboardBreakpoint | undefined = previewBreakpoint ?? (editable ? "lg" : undefined);
   const preservesManualPlacement = editable || activeBreakpoint === "lg" || activeBreakpoint === "md";
 
   return (
-    <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
+    <div
+      className={`asklake-dashboard-rgl-shell${previewBreakpoint ? ` preview preview-${previewBreakpoint}` : ""}`}
+      ref={containerRef}
+    >
       {mounted && (
         <Responsive<DashboardBreakpoint>
           key={`${editable ? "draft" : "published"}-${resetKey}`}
