@@ -13,6 +13,7 @@ import {
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
+import { createSparkKubernetesApplication, runSparkKubernetesApplication } from "./sparkKubernetesRunner.mjs";
 import {
   normalizeSparkDriverState,
   terminalSparkFailureStates,
@@ -201,23 +202,10 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     rmSync(reportPath, { force: true });
   }
 
-  let result = executionMode === "rest"
-    ? runSparkRestSubmission(
-      createSparkRestSubmission({
-        appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME,
-        environmentVariables: sparkEnvironment,
-        packages,
-        scriptPath: sparkRestRuntimeConfig().jobScript,
-        sparkProperties: sparkExecutorProperties,
-      }),
-      positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
-      process.env,
-      {
-        retryTerminalFailures: true,
-        stateFile: sparkRestStateFile,
-      },
-    )
-    : runSparkSubmitContainer(dockerArgs);
+  let result = submitSparkExecution({
+    dockerArgs, executionMode, job, options, packages, runId, sparkEnvironment,
+    sparkExecutorProperties, sparkRestStateFile,
+  });
   let report = readSparkReport(reportPath, result.stdout);
   if (executionMode === "docker" && report.status !== "success" && shouldRetryDockerWait(result)) {
     rmSync(reportPath, { force: true });
@@ -249,17 +237,28 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   };
 }
 
+function submitSparkExecution({ dockerArgs, executionMode, job, options, packages, runId, sparkEnvironment, sparkExecutorProperties, sparkRestStateFile }) {
+  const timeoutMs = positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs());
+  if (executionMode === "kubernetes") {
+    return runSparkKubernetesApplication(createSparkKubernetesApplication({ appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME, environmentVariables: sparkEnvironment, jobId: job.id, packages, runId }), timeoutMs, process.env);
+  }
+  if (executionMode === "rest") {
+    return runSparkRestSubmission(createSparkRestSubmission({ appName: sparkEnvironment.ASKLAKE_SPARK_APP_NAME, environmentVariables: sparkEnvironment, packages, scriptPath: sparkRestRuntimeConfig().jobScript, sparkProperties: sparkExecutorProperties }), timeoutMs, process.env, { retryTerminalFailures: true, stateFile: sparkRestStateFile });
+  }
+  return runSparkSubmitContainer(dockerArgs);
+}
+
 export function sparkExecutionMode(environment = process.env) {
   const configured = String(environment.ASKLAKE_SPARK_RUNNER || "").trim().toLowerCase();
   const production = [environment.APP_ENV, environment.NODE_ENV]
     .some((value) => ["prod", "production"].includes(String(value || "").trim().toLowerCase()));
-  if (production && configured !== "rest") {
+  if (production && !new Set(["rest", "kubernetes"]).has(configured)) {
     throw sparkConfigurationError(
-      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest; Docker-based submission is not allowed.",
+      "Production Spark execution requires ASKLAKE_SPARK_RUNNER=rest or kubernetes; Docker-based submission is not allowed.",
     );
   }
   const mode = configured || "docker";
-  if (!new Set(["docker", "rest"]).has(mode)) {
+  if (!new Set(["docker", "rest", "kubernetes"]).has(mode)) {
     throw sparkConfigurationError(`Unsupported ASKLAKE_SPARK_RUNNER mode: ${mode}`);
   }
   return mode;

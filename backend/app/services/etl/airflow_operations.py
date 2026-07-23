@@ -111,6 +111,7 @@ RUNTIME_NAMES = {
 def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
     ensure_batch_iceberg_target(db, job)
     rest_mode = spark_rest_mode_enabled()
+    kubernetes_mode = str(os.environ.get("ASKLAKE_SPARK_RUNNER") or "").strip().lower() == "kubernetes"
     poll_timeout_ms = spark_rest_poll_timeout_ms()
     state_file = spark_rest_submission_state_file(run_id)
     incremental_since, incremental_before = source_incremental_window(db, job, run_id)
@@ -148,7 +149,7 @@ def run_spark_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> d
             "runId": run_id,
         },
         error_marker="ASKLAKE_SPARK_RUN_ERROR",
-        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if rest_mode else 900,
+        timeout_seconds=spark_python_bridge_timeout_seconds(poll_timeout_ms) if (rest_mode or kubernetes_mode) else 900,
         timeout_recovery=(lambda: recover_spark_rest_submission(state_file)) if rest_mode else None,
     )
     if source_object_inventory is not None:
