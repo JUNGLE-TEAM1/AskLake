@@ -379,6 +379,34 @@ class AiContextSecurityTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(initialize()), status.HTTP_200_OK)
 
+    def test_mcp_streamable_http_allows_fastapi_service_host(self) -> None:
+        async def initialize() -> int:
+            with patch("app.mcp.server.settings.ai_mcp_service_token", "expected"):
+                internal_app, lifespan = create_mcp_components()
+                async with lifespan():
+                    client = TestClient(internal_app, base_url="http://fastapi:8080")
+                    response = client.post(
+                        "/mcp",
+                        headers={
+                            "Authorization": "Bearer expected",
+                            "Accept": "application/json, text/event-stream",
+                            "X-AskLake-AI-Context": context_token(),
+                        },
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {},
+                                "clientInfo": {"name": "test", "version": "1"},
+                            },
+                        },
+                    )
+                    return response.status_code
+
+        self.assertEqual(asyncio.run(initialize()), status.HTTP_200_OK)
+
     def test_mcp_streamable_http_registers_batch_catalog_tool(self) -> None:
         async def list_tools() -> list[str]:
             with patch("app.mcp.server.settings.ai_mcp_service_token", "expected"):
