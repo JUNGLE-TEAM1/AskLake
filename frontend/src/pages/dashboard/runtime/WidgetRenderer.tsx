@@ -38,8 +38,9 @@ import {
 } from "./timeSeries";
 import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
+import { resolveChartValueAxisRange } from "./chartAxisRange";
 import {
-  barChartAxisLabelFormatters,
+  buildBarChartAxes,
   formatChartAxisNumber,
   formatChartCategoryAxisLabel,
 } from "./barChartAxes";
@@ -62,7 +63,6 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: RuntimeWidgetByType<Type>;
 };
-
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const DASHBOARD_CHART_ANIMATION_MS = 600;
 const CIRCULAR_CHART_VISIBLE_SLICE_LIMIT = 6;
@@ -562,6 +562,14 @@ function buildBaseChartOptions(color: string): ApexOptions {
         },
       },
     },
+  };
+}
+
+function yAxisWithRange(baseOptions: ApexOptions, range: { max?: number; min?: number }): ApexOptions["yaxis"] {
+  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
+  return {
+    ...baseYAxis,
+    ...range,
   };
 }
 
@@ -1114,8 +1122,8 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
   const baseOptions = buildBaseChartOptions(color);
   const orientation = widget.config.orientation ?? "vertical";
   const isHorizontal = orientation === "horizontal";
-  const axisFormatters = barChartAxisLabelFormatters(orientation);
-  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series);
+  const axes = buildBarChartAxes(baseOptions, chartData.categories, orientation, valueAxisRange);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1133,22 +1141,8 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
         columnWidth: "48%",
       },
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-      labels: {
-        ...baseOptions.xaxis?.labels,
-        formatter: axisFormatters.x,
-      },
-    },
-    yaxis: {
-      ...baseYAxis,
-      labels: {
-        ...baseYAxis?.labels,
-        formatter: axisFormatters.y,
-        ...(isHorizontal ? { maxWidth: 220 } : {}),
-      },
-    },
+    xaxis: axes.xaxis,
+    yaxis: axes.yaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="bar" widget={widget} />;
@@ -1178,6 +1172,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1197,6 +1192,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     },
     tooltip: timeAxis.tooltip,
     xaxis: timeAxis.xaxis,
+    yaxis: yAxisWithRange(baseOptions, valueAxisRange),
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="line" widget={widget} />;
@@ -1226,6 +1222,9 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
+  const valueAxisRange = resolveChartValueAxisRange(widget.config, chartData.series, {
+    stacked: widget.config.stacked ?? false,
+  });
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1255,6 +1254,7 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     },
     tooltip: timeAxis.tooltip,
     xaxis: timeAxis.xaxis,
+    yaxis: yAxisWithRange(baseOptions, valueAxisRange),
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="area" widget={widget} />;

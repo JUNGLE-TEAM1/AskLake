@@ -1,14 +1,10 @@
 import {
-  Children,
-  isValidElement,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
-  type ReactNode,
 } from "react";
 import {
   Boxes,
@@ -28,15 +24,14 @@ import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { FormFieldGroup, type NativeSelectFieldProps } from "@/components/ui/form-field-group";
+import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import { DashboardFieldCombobox, type DashboardComboboxOption } from "./DashboardFieldCombobox";
+import { DashboardFieldCombobox } from "./DashboardFieldCombobox";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
@@ -68,6 +63,12 @@ import { validateWidgetConfig, type WidgetConfigDraft } from "./widgetConfigVali
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 import { defaultTimeBucketForColumn } from "./timeSeries";
 import { barChartFieldLabels } from "./barChartAxes";
+import {
+  dashboardAxisRangeModeFromValue,
+  valueAxisRangeConfigFromDraft,
+  WidgetAxisRangeFields,
+} from "./WidgetAxisRangeFields";
+import { WidgetSelectField } from "./WidgetSelectField";
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -105,34 +106,6 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
-function WidgetSelectField({
-  children,
-  onChange,
-  selectClassName,
-  value,
-  ...props
-}: Omit<NativeSelectFieldProps, "children" | "onChange" | "value"> & {
-  children: ReactNode;
-  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
-  value: string;
-}) {
-  const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
-    if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
-    const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
-    return [{ label, value: child.props.value ?? label }];
-  });
-  return (
-    <DashboardFieldCombobox
-      className={cn("asklake-widget-select", selectClassName)}
-      disabled={props.disabled}
-      fieldClassName={props.fieldClassName}
-      label={String(props.label)}
-      options={options}
-      value={value}
-      onValueChange={(nextValue) => onChange?.({ target: { value: nextValue } } as ChangeEvent<HTMLSelectElement>)}
-    />
-  );
-}
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
   area_chart: ChartArea,
@@ -248,6 +221,9 @@ function configDraftFromConfig(config: DashboardRuntimeWidgetConfig): WidgetConf
     sortKey: configString(editableConfig, "sortKey"),
     stacked: configBoolean(editableConfig, "stacked"),
     valueKey: configString(editableConfig, "valueKey"),
+    valueAxisMax: configNumber(editableConfig, "valueAxisMax"),
+    valueAxisMin: configNumber(editableConfig, "valueAxisMin"),
+    valueAxisRangeMode: dashboardAxisRangeModeFromValue(configRecord(editableConfig).valueAxisRangeMode),
     xKey: configString(editableConfig, "xKey"),
     yKey: configString(editableConfig, "yKey"),
   };
@@ -272,6 +248,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       dateUnit: defaultTimeBucket,
       seriesKey: "",
       stacked: false,
+      valueAxisRangeMode: "default",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
@@ -279,6 +256,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       aggregation: "sum",
       groupKey: "",
       orientation: "vertical",
+      valueAxisRangeMode: "default",
       xKey: dimensionFallback,
       yKey: numericFallback,
     },
@@ -298,6 +276,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       curve: "smooth",
       dateUnit: defaultTimeBucket,
       seriesKey: "",
+      valueAxisRangeMode: "default",
       xKey: firstName(lineXAxisColumns),
       yKey: numericFallback,
     },
@@ -346,6 +325,7 @@ function buildConfig(
     ...base,
     color: common.color,
   };
+  const valueAxisRange = valueAxisRangeConfigFromDraft(config);
 
   if (type === "metric") {
     return {
@@ -369,6 +349,7 @@ function buildConfig(
   if (type === "line_chart") {
     return {
       ...chartBase,
+      ...valueAxisRange,
       aggregation: config.aggregation ?? "sum",
       curve: config.curve ?? "smooth",
       dateUnit: config.dateUnit,
@@ -381,6 +362,7 @@ function buildConfig(
   if (type === "area_chart") {
     return {
       ...chartBase,
+      ...valueAxisRange,
       aggregation: config.aggregation ?? "sum",
       dateUnit: config.dateUnit,
       seriesKey: config.seriesKey || undefined,
@@ -423,6 +405,7 @@ function buildConfig(
 
   return {
     ...chartBase,
+    ...valueAxisRange,
     aggregation: config.aggregation ?? "sum",
     groupKey: config.groupKey || undefined,
     orientation: config.orientation ?? "vertical",
@@ -1077,6 +1060,7 @@ export function WidgetConfigPanel({
                 <span>누적 영역으로 표시</span>
               </label>
             )}
+            <WidgetAxisRangeFields config={currentConfig} onChange={patchCurrentConfig} />
           </>
         )}
 

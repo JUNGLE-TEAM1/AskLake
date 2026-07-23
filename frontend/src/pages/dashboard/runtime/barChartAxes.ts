@@ -1,4 +1,6 @@
+import type { ApexOptions } from "apexcharts";
 import type { DashboardWidgetOrientation } from "../../../types";
+import type { ChartValueAxisRange } from "./chartAxisRange";
 
 const VERTICAL_CATEGORY_LABEL_MAX_LENGTH = 10;
 const HORIZONTAL_CATEGORY_LABEL_MAX_LENGTH = 24;
@@ -47,5 +49,36 @@ export function barChartAxisLabelFormatters(orientation: DashboardWidgetOrientat
   return {
     x: (value: unknown) => formatChartCategoryAxisLabel(value, VERTICAL_CATEGORY_LABEL_MAX_LENGTH),
     y: formatChartAxisNumber,
+  };
+}
+
+export function buildBarChartAxes(
+  baseOptions: ApexOptions,
+  categories: string[],
+  orientation: DashboardWidgetOrientation,
+  valueAxisRange: ChartValueAxisRange,
+): Pick<ApexOptions, "xaxis" | "yaxis"> {
+  const isHorizontal = orientation === "horizontal";
+  const axisFormatters = barChartAxisLabelFormatters(orientation);
+  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
+  return {
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories,
+      ...(isHorizontal ? valueAxisRange : {}),
+      labels: {
+        ...baseOptions.xaxis?.labels,
+        formatter: axisFormatters.x,
+      },
+    },
+    yaxis: {
+      ...baseYAxis,
+      ...(isHorizontal ? {} : valueAxisRange),
+      labels: {
+        ...baseYAxis?.labels,
+        formatter: axisFormatters.y,
+        ...(isHorizontal ? { maxWidth: 220 } : {}),
+      },
+    },
   };
 }

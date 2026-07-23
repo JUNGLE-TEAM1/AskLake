@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   barChartAxisLabelFormatters,
   barChartFieldLabels,
+  buildBarChartAxes,
   formatChartAxisNumber,
 } from "../src/pages/dashboard/runtime/barChartAxes.ts";
 
@@ -50,9 +51,20 @@ test("vertical bars retain category X labels and numeric Y ticks", () => {
 });
 
 test("the bar renderer applies the orientation to both bars and physical axis formatters", () => {
+  const axes = buildBarChartAxes(
+    { xaxis: { labels: {} }, yaxis: { labels: {} } },
+    ["상품 A"],
+    "horizontal",
+    { min: 10, max: 20 },
+  );
+
+  assert.equal(axes.xaxis?.min, 10);
+  assert.equal(axes.xaxis?.max, 20);
+  assert.equal(Array.isArray(axes.yaxis) ? axes.yaxis[0]?.min : axes.yaxis?.min, undefined);
   assert.match(rendererSource, /const labelKey = widget\.config\.xKey/);
   assert.match(rendererSource, /const valueKey = widget\.config\.yKey/);
   assert.match(rendererSource, /horizontal: isHorizontal/);
-  assert.match(rendererSource, /formatter: axisFormatters\.x/);
-  assert.match(rendererSource, /formatter: axisFormatters\.y/);
+  assert.match(rendererSource, /const axes = buildBarChartAxes/);
+  assert.match(rendererSource, /xaxis: axes\.xaxis/);
+  assert.match(rendererSource, /yaxis: axes\.yaxis/);
 });

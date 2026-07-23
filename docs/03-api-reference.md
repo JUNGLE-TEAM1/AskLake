@@ -601,6 +601,7 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/admin/audit-logs` | 관리자 감사 로그 조회/검색. admin role 필요 |
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
+`bar_chart`, `line_chart`, `area_chart`의 값 축 config는 optional `valueAxisRangeMode: "default" | "data_focus" | "manual"`, `valueAxisMin`, `valueAxisMax`를 사용한다. mode가 없거나 `default`이면 기존 자동 범위를 유지한다. `data_focus`의 범위는 frontend가 현재 표시 series에서 계산하며 저장 데이터나 backend 집계값을 변경하지 않는다. `manual`은 최소·최대 중 하나 이상이 필요하고 둘 다 있으면 `valueAxisMin < valueAxisMax`여야 한다. 세로 막대·선·영역은 Y축, 가로 막대는 X축에 적용한다.
 Draft page/widget mutation은 변경된 resource를 응답하므로 frontend가 mutation 직후 전체 draft runtime을 다시 조회하지 않는다. 마지막 page 삭제 시에는 backend가 만든 기본 `replacementPage`를 함께 반환한다.
 Dashboard 화면은 runtime shell을 먼저 그리고 선택 page의 `dataStatus=pending` widget만 dataset별로 요청한다. `dataStatus`는 `pending`, `ready`, `error`이며 요청 중 `loading`은 frontend local 상태다.
 
@@ -676,9 +677,16 @@ type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
+type DashboardWidgetAxisRangeMode = "default" | "data_focus" | "manual";
 
 type DashboardWidgetColorConfig = {
   colors: string[];
+};
+
+type DashboardWidgetValueAxisRangeConfig = {
+  valueAxisRangeMode?: DashboardWidgetAxisRangeMode;
+  valueAxisMin?: number;
+  valueAxisMax?: number;
 };
 
 type DashboardWidgetConfigBase = {
@@ -703,7 +711,7 @@ type TableWidgetConfig = DashboardWidgetConfigBase & {
   sortKey?: string;
 };
 
-type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+type BarChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   groupKey?: string;
@@ -712,7 +720,7 @@ type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   yKey: string;
 };
 
-type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+type LineChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   curve?: "smooth" | "straight" | "stepline";
@@ -722,7 +730,7 @@ type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   yKey: string;
 };
 
-type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+type AreaChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   dateUnit?: DashboardWidgetDateUnit;

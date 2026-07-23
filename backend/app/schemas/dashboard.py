@@ -1,4 +1,5 @@
 from enum import Enum
+import math
 import re
 from typing import Any, Literal
 
@@ -153,6 +154,12 @@ class DashboardWidgetOrientation(str, Enum):
     HORIZONTAL = "horizontal"
 
 
+class DashboardWidgetAxisRangeMode(str, Enum):
+    DEFAULT = "default"
+    DATA_FOCUS = "data_focus"
+    MANUAL = "manual"
+
+
 class DashboardWidgetPaletteId(str, Enum):
     ASKLAKE_DEFAULT = "asklake-default"
     AURORA = "aurora"
@@ -300,6 +307,68 @@ class DashboardWidgetColorConfig(CamelModel):
     custom_colors: list[str] | None = None
 
 
+def _validate_dashboard_value_axis_range(
+    mode: DashboardWidgetAxisRangeMode | str | None,
+    minimum: float | None,
+    maximum: float | None,
+) -> None:
+    resolved_mode = DashboardWidgetAxisRangeMode(mode or DashboardWidgetAxisRangeMode.DEFAULT)
+    if resolved_mode != DashboardWidgetAxisRangeMode.MANUAL:
+        if minimum is not None or maximum is not None:
+            raise ValueError("Dashboard value-axis bounds require manual range mode")
+        return
+    if minimum is None and maximum is None:
+        raise ValueError("Dashboard manual value-axis range requires a minimum or maximum")
+    if minimum is not None and maximum is not None and minimum >= maximum:
+        raise ValueError("Dashboard value-axis minimum must be less than maximum")
+
+
+def _source_config_axis_number(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Dashboard {field_name} must be a finite number")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"Dashboard {field_name} must be a finite number")
+    return parsed
+
+
+class CartesianChartWidgetConfig(DashboardWidgetConfigBase):
+    value_axis_range_mode: DashboardWidgetAxisRangeMode | None = None
+    value_axis_min: float | None = Field(default=None, allow_inf_nan=False)
+    value_axis_max: float | None = Field(default=None, allow_inf_nan=False)
+
+    @field_validator("source_config")
+    @classmethod
+    def validate_source_config_axis_range(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        mode = value.get("valueAxisRangeMode", value.get("value_axis_range_mode"))
+        minimum = _source_config_axis_number(
+            value.get("valueAxisMin", value.get("value_axis_min")),
+            "valueAxisMin",
+        )
+        maximum = _source_config_axis_number(
+            value.get("valueAxisMax", value.get("value_axis_max")),
+            "valueAxisMax",
+        )
+        _validate_dashboard_value_axis_range(mode, minimum, maximum)
+        return value
+
+    @model_validator(mode="after")
+    def validate_value_axis_range(self):
+        _validate_dashboard_value_axis_range(
+            self.value_axis_range_mode,
+            self.value_axis_min,
+            self.value_axis_max,
+        )
+        return self
+
+
 class MetricWidgetConfig(DashboardWidgetConfigBase):
     model_config = ConfigDict(json_schema_mode_override="validation")
 
@@ -317,7 +386,7 @@ class TableWidgetConfig(DashboardWidgetConfigBase):
     sort_key: str | None = None
 
 
-class BarChartWidgetConfig(DashboardWidgetConfigBase):
+class BarChartWidgetConfig(CartesianChartWidgetConfig):
     aggregation: DashboardWidgetAggregation
     color: DashboardWidgetColorConfig
     x_key: str
@@ -326,7 +395,7 @@ class BarChartWidgetConfig(DashboardWidgetConfigBase):
     orientation: DashboardWidgetOrientation | None = None
 
 
-class LineChartWidgetConfig(DashboardWidgetConfigBase):
+class LineChartWidgetConfig(CartesianChartWidgetConfig):
     aggregation: DashboardWidgetAggregation
     color: DashboardWidgetColorConfig
     x_key: str
@@ -336,7 +405,7 @@ class LineChartWidgetConfig(DashboardWidgetConfigBase):
     series_key: str | None = None
 
 
-class AreaChartWidgetConfig(DashboardWidgetConfigBase):
+class AreaChartWidgetConfig(CartesianChartWidgetConfig):
     aggregation: DashboardWidgetAggregation
     color: DashboardWidgetColorConfig
     x_key: str

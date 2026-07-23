@@ -1354,7 +1354,7 @@ const checks = [
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
       /import \{ Field, FieldError, FieldGroup, FieldLabel \} from "@\/components\/ui\/field";/,
-      /import \{ FormFieldGroup, type NativeSelectFieldProps \} from "@\/components\/ui\/form-field-group";/,
+      /import \{ FormFieldGroup \} from "@\/components\/ui\/form-field-group";/,
       /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
       /import \{ Tooltip, TooltipContent, TooltipProvider, TooltipTrigger \} from "@\/components\/ui\/tooltip";/,
       /<FieldGroup className="contents">/,
@@ -1389,15 +1389,59 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard widget settings use the shared searchable combobox",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    name: "Dashboard cartesian charts expose shared value-axis range controls",
+    file: "src/pages/dashboard/runtime/WidgetAxisRangeFields.tsx",
+    patterns: [
+      /label="값 축 범위"/,
+      /valueAxisRangeMode: event\.target\.value as DashboardWidgetAxisRangeMode/,
+      /표시 데이터의 최솟값과 최댓값에 8% 여백/,
+      /label="축 최솟값"/,
+      /label="축 최댓값"/,
+      /지정 범위 밖의 데이터는 차트에서 잘릴 수 있습니다/,
+    ],
+  },
+  {
+    name: "Dashboard renderer applies value-axis bounds by chart orientation",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /import \{ resolveChartValueAxisRange \} from "\.\/chartAxisRange";/,
+      /const axes = buildBarChartAxes\(baseOptions, chartData\.categories, orientation, valueAxisRange\);/,
+      /xaxis: axes\.xaxis/,
+      /yaxis: axes\.yaxis/,
+      /stacked: widget\.config\.stacked \?\? false/,
+    ],
+  },
+  {
+    name: "Dashboard horizontal bars keep dev axis formatters while applying value-axis bounds",
+    file: "src/pages/dashboard/runtime/barChartAxes.ts",
+    patterns: [
+      /const isHorizontal = orientation === "horizontal";/,
+      /\.\.\.\(isHorizontal \? valueAxisRange : \{\}\)/,
+      /\.\.\.\(isHorizontal \? \{\} : valueAxisRange\)/,
+      /formatter: axisFormatters\.x/,
+      /formatter: axisFormatters\.y/,
+    ],
+  },
+  {
+    name: "Dashboard widget select adapter uses the shared searchable combobox",
+    file: "src/pages/dashboard/runtime/WidgetSelectField.tsx",
     patterns: [
       /import \{ DashboardFieldCombobox, type DashboardComboboxOption \} from "\.\/DashboardFieldCombobox";/,
-      /function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
+      /export function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
       /Children\.toArray\(children\)\.flatMap/,
       /child\.type !== "option"/,
-      /label="데이터셋"[\s\S]*?options=\{datasets\.map/,
       /className=\{cn\("asklake-widget-select", selectClassName\)\}/,
+    ],
+    forbiddenPatterns: [
+      /<select/,
+    ],
+  },
+  {
+    name: "Dashboard widget settings delegate to the shared searchable combobox",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ WidgetSelectField \} from "\.\/WidgetSelectField";/,
+      /label="데이터셋"[\s\S]*?options=\{datasets\.map/,
       /<strong className="min-w-0 max-w-full break-words">/,
     ],
     forbiddenPatterns: [

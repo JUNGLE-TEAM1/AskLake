@@ -21,6 +21,7 @@ export type DashboardWidgetDateUnit = "minute" | "hour" | "day" | "month" | "yea
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";
+export type DashboardWidgetAxisRangeMode = "default" | "data_focus" | "manual";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 export type DashboardWidgetPlaceholderKind = "visualization_request" | "text";
@@ -49,6 +50,12 @@ export type DashboardWidgetColorConfig = {
   colors: string[];
 };
 
+export type DashboardWidgetValueAxisRangeConfig = {
+  valueAxisMax?: number;
+  valueAxisMin?: number;
+  valueAxisRangeMode?: DashboardWidgetAxisRangeMode;
+};
+
 export type DashboardWidgetConfigBase = {
   body?: string;
   dataMode?: "server_aggregated" | "server_preview";
@@ -74,7 +81,7 @@ export type TableWidgetConfig = DashboardWidgetConfigBase & {
   sortKey?: string;
 };
 
-export type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+export type BarChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   groupKey?: string;
@@ -83,7 +90,7 @@ export type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   yKey: string;
 };
 
-export type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+export type LineChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   curve?: DashboardWidgetLineCurve;
@@ -93,7 +100,7 @@ export type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   yKey: string;
 };
 
-export type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+export type AreaChartWidgetConfig = DashboardWidgetConfigBase & DashboardWidgetValueAxisRangeConfig & {
   aggregation: DashboardWidgetAggregation;
   color: DashboardWidgetColorConfig;
   dateUnit?: DashboardWidgetDateUnit;
