@@ -20,6 +20,7 @@ from runtime.contracts import (  # noqa: E402
     append_secondary_error,
     atomic_write_json,
     bounded_int_env,
+    load_spark_job_manifest,
     read_versioned_json,
     reset_runtime_compatibility_path_counts_for_test,
     required_env,
@@ -82,6 +83,14 @@ class RuntimeScriptContractTests(unittest.TestCase):
         self.assertEqual(required_env("REQUIRED", environ=environment), "value")
         with self.assertRaisesRegex(ValueError, "MISSING"):
             required_env("MISSING", environ=environment)
+
+    def test_inline_spark_manifest_precedes_container_local_path(self) -> None:
+        manifest = {"icebergTarget": {"table": "events"}, "jobId": "job-1"}
+        loaded = load_spark_job_manifest(environ={
+            "ASKLAKE_SPARK_JOB_MANIFEST_JSON": json.dumps(manifest),
+            "ASKLAKE_SPARK_JOB_MANIFEST_FILE": "/work/reports/missing.json",
+        })
+        self.assertEqual(loaded, manifest)
 
     def test_spark_and_kafka_config_validate_without_runtime_dependencies(self) -> None:
         spark = SparkJobConfig.from_environment({

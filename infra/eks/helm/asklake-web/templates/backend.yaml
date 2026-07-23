@@ -55,6 +55,16 @@ spec:
             {{- end }}
           env:
             - {name: ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES, value: {{ .Values.backend.kafkaAllowedTopicPrefixes | quote }}}
+            - name: TRINO_ICEBERG_JDBC_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.sparkRuntimeSecretName }}
+                  key: ASKLAKE_SPARK_ICEBERG_JDBC_USER
+            - name: TRINO_ICEBERG_JDBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.sparkRuntimeSecretName }}
+                  key: ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD
           {{- if or .Values.backend.realtime.enabled (eq .Values.deploymentProfile "realtime-v1-only") }}
             - {name: ASKLAKE_CONTINUOUS_CONTROL_PLANE, value: {{ .Values.backend.realtime.apiControlPlane | quote }}}
             - {name: CONTINUOUS_CONTROL_PLANE, value: "disabled"}

@@ -87,6 +87,14 @@ def load_json_env(
 
 def load_spark_job_manifest(*, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     source = environ if environ is not None else os.environ
+    inline_manifest = source.get("ASKLAKE_SPARK_JOB_MANIFEST_JSON")
+    if inline_manifest:
+        try:
+            payload = json.loads(inline_manifest)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
     raw_path = source.get("ASKLAKE_SPARK_JOB_MANIFEST_FILE") or source.get(
         "ASKLAKE_SPARK_TEXT_STRUCTURING_DEFINITION_FILE"
     )

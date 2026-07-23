@@ -14,6 +14,11 @@ import { sparkKubernetesResourcePlan } from "./sparkResourcePlan.mjs";
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sparkKubernetesClientScript = path.join(backendDir, "scripts", "spark-kubernetes-client.mjs");
 const SPARK_BRIDGE_GRACE_MS = 30_000;
+const RUNTIME_SECRET_ENVIRONMENT_NAMES = new Set([
+  "ASKLAKE_SPARK_ICEBERG_JDBC_PASSWORD",
+  "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
+  "ASKLAKE_SPARK_ICEBERG_JDBC_USER",
+]);
 
 function configurationError(message) {
   const error = new Error(message);
@@ -29,7 +34,12 @@ function positiveInteger(value, fallback) {
 
 function environmentVariables(values) {
   return Object.entries(values)
-    .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
+    .filter(([name, value]) => (
+      !RUNTIME_SECRET_ENVIRONMENT_NAMES.has(name)
+      && value !== undefined
+      && value !== null
+      && String(value) !== ""
+    ))
     .map(([name, value]) => ({ name, value: String(value) }));
 }
 

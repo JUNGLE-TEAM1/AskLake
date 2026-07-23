@@ -206,6 +206,7 @@ const dockerfile = readFileSync(path.join(backendDir, "Dockerfile"), "utf8");
 assert.doesNotMatch(dockerfile, /\bdocker-cli\b/, "Production backend image must not install Docker CLI.");
 assert.match(dockerfile, /^FROM apache\/spark:4\.0\.1 AS spark-runtime$/m);
 assert.match(dockerfile, /^FROM python:3\.13-slim AS backend-runtime$/m);
+assert.match(dockerfile, /install -d -o 185 -g 185 -m 0750[\s\S]*\/work\/reports/);
 
 const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || (process.platform === "win32" ? "python" : "python3");
 const runtimePathsResult = spawnSync(pythonBin, [

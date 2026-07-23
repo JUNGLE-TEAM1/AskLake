@@ -2,7 +2,12 @@ FROM apache/spark:4.0.1 AS spark-runtime
 
 USER root
 COPY --chown=185:185 scripts /opt/asklake/scripts
-RUN chmod -R a=rX /opt/asklake/scripts
+RUN chmod -R a=rX /opt/asklake/scripts \
+  && install -d -o 185 -g 185 -m 0750 \
+    /work \
+    /work/output \
+    /work/reports \
+    /work/review-text-models
 USER 185:185
 
 FROM python:3.13-slim AS backend-runtime
