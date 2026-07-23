@@ -10,6 +10,7 @@ import {
   runtimePageLayoutSnapshot,
 } from "../src/pages/dashboard/runtime/draftWidgetLayoutPersistence.ts";
 import { hasAnyLayoutCollision } from "../src/pages/dashboard/runtime/dashboardLayoutUtils.ts";
+import { dashboardPublishPreflight } from "../src/pages/dashboard/runtime/dashboardPublishPreflight.ts";
 import { layoutFromDraft } from "../src/pages/dashboard/runtime/widgetLayoutEditor.ts";
 import type { DashboardRuntimeResponse, DashboardRuntimeWidget } from "../src/types/dashboard.ts";
 
@@ -114,6 +115,27 @@ test("a colliding layout is rejected before a layout save request is built", () 
   ];
 
   assert.equal(hasAnyLayoutCollision(collidingLayout), true);
+});
+
+test("publishing is blocked when a saved layout collides or widget data no longer matches its field settings", () => {
+  const runtime = draftRuntime();
+  runtime.widgetsByPageId["page-1"] = [
+    {
+      ...metricWidget("widget-1", 0, 0),
+      config: { aggregation: "sum", valueKey: "amount" },
+      data: [{ label: "A" }],
+      title: "매출",
+    },
+    metricWidget("widget-2", 2, 0),
+  ];
+
+  const issues = dashboardPublishPreflight(runtime);
+
+  assert.equal(issues.some((issue) => issue.message === "겹쳐 있는 위젯이 있습니다."), true);
+  assert.equal(
+    issues.some((issue) => issue.widgetTitle === "매출" && issue.message.includes("amount")),
+    true,
+  );
 });
 
 test("the draft editor defaults to the canonical 12-column breakpoint while allowing an explicit preview", () => {

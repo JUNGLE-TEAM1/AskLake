@@ -81,7 +81,7 @@ export function DashboardTopBar({
   return (
     <header className="asklake-dashboard-topbar">
       <div className="asklake-dashboard-title">
-        <span>{mode === "published" ? "보기 모드" : "편집 모드"}</span>
+        <span>{mode === "published" ? "게시된 보기" : "Draft 편집"}</span>
         {isEditingTitle ? (
           <form className="asklake-dashboard-title-edit" onSubmit={(event) => void submitTitle(event)}>
             <Input
@@ -142,12 +142,12 @@ export function DashboardTopBar({
               onClick={onPublishDraft}
             >
               <Save size={16} />
-              {isPublishing ? "저장 중" : "저장"}
+              {isPublishing ? "게시 중" : "게시"}
             </Button>
             {hasPublishedRevision && (
               <Button className="asklake-dashboard-action" type="button" onClick={onOpenPublished} size="sm" variant="outline">
                 <Eye size={16} />
-                보기 모드
+                게시된 보기
               </Button>
             )}
           </>

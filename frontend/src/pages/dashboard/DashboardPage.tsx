@@ -4,6 +4,7 @@ import { sqlResultToDashboardOption } from "./runtime/dashboardDatasetAdapters";
 import { useDashboardLayoutHistory } from "./runtime/useDashboardLayoutHistory";
 import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
+import { dashboardPublishPreflight } from "./runtime/dashboardPublishPreflight";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
 import { useDashboardAutoRefresh } from "./runtime/useDashboardAutoRefresh";
@@ -514,6 +515,22 @@ export function DashboardPage({
 
   const publishDraftRuntime = async () => {
     if (runtimeSelection.mode !== "draft" || isPublishingRuntime) return;
+
+    const preflightIssues = dashboardPublishPreflight(draftRuntime);
+    if (preflightIssues.length) {
+      const [firstIssue] = preflightIssues;
+      const location = firstIssue.widgetTitle
+        ? `${firstIssue.pageTitle} · ${firstIssue.widgetTitle}`
+        : firstIssue.pageTitle;
+      const remainingIssueCount = preflightIssues.length - 1;
+      setRuntimeNotice({
+        message: `게시 전 확인: ${location} — ${firstIssue.message}${remainingIssueCount ? ` 외 ${remainingIssueCount}건` : ""}`,
+        tone: "error",
+      });
+      onAction("dashboard.runtime.publish_blocked", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId, "failed");
+      return;
+    }
+
     setIsPublishingRuntime(true);
     try {
       await cleanupEmptyVisualizationRequestWidgets();
