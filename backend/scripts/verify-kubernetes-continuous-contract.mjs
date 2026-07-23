@@ -67,6 +67,62 @@ test("Kubernetes Continuous SparkApplication keeps JDBC credentials in Secret re
     assert.equal(application.spec.hadoopConf["fs.s3a.aws.credentials.provider"], "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider");
     assert.equal(application.spec.driver.nodeSelector["asklake.io/workload-class"], "spark");
     assert.equal(application.spec.executor.tolerations[0].effect, "NoSchedule");
+    assert.equal(application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_KAFKA_AUTH_MODE")?.value, "none");
+    assert.equal(application.spec.deps.jars, undefined);
+  } finally {
+    restoreEnvironment(saved);
+  }
+});
+
+test("Kubernetes Continuous MSK IAM is image-local and fails closed on a different JAR", () => {
+  const saved = captureEnvironment([
+    "ASKLAKE_SPARK_ICEBERG_JDBC_URL",
+    "TRINO_ICEBERG_JDBC_USER",
+    "TRINO_ICEBERG_JDBC_PASSWORD",
+    "TRINO_ICEBERG_WAREHOUSE_BUCKET",
+  ]);
+  Object.assign(process.env, {
+    ASKLAKE_SPARK_ICEBERG_JDBC_URL: "jdbc:postgresql://postgres:5432/asklake",
+    TRINO_ICEBERG_JDBC_USER: "contract-user",
+    TRINO_ICEBERG_JDBC_PASSWORD: "contract-password",
+    TRINO_ICEBERG_WAREHOUSE_BUCKET: "asklake-warehouse",
+  });
+  const environment = {
+    ASKLAKE_CONTINUOUS_RUNTIME_DOCUMENT_PREFIX: "s3a://asklake-runtime/continuous",
+    ASKLAKE_KAFKA_AUTH_MODE: "iam",
+    ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar",
+  };
+  try {
+    const application = continuousSparkApplication({
+      ...request,
+      broker: "b-1.example:9098,b-2.example:9098",
+    }, {
+      image: "registry/asklake-spark@sha256:1234",
+      namespace: "asklake-dev",
+      serviceAccount: "asklake-spark",
+    }, "attempt-msk-iam", environment);
+
+    assert.deepEqual(application.spec.deps.jars, [
+      "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar",
+    ]);
+    assert.equal(
+      application.spec.driver.env.find((entry) => entry.name === "ASKLAKE_KAFKA_AUTH_MODE")?.value,
+      "iam",
+    );
+    assert.throws(
+      () => continuousSparkApplication({
+        ...request,
+        broker: "b-1.example:9098,b-2.example:9098",
+      }, {
+        image: "registry/asklake-spark@sha256:1234",
+        namespace: "asklake-dev",
+        serviceAccount: "asklake-spark",
+      }, "attempt-invalid-jar", {
+        ...environment,
+        ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: "s3a://runtime-jars/unreviewed.jar",
+      }),
+      /requires local:\/\/\/opt\/asklake\/jars\/aws-msk-iam-auth/,
+    );
   } finally {
     restoreEnvironment(saved);
   }

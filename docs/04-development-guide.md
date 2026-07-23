@@ -15,6 +15,8 @@ EKS와 EC2 배포는 모두 `dev`를 source branch로 사용하고 각 release�
 
 revision 기반 Trino SQL 직렬화 변경은 `asklake-web`의 `trino-result-collector`와 `asklake-realtime-v1`의 `realtime-v1-worker`가 함께 소유한다. EKS rollout 완료 판정에는 같은 승인된 Backend image receipt의 digest가 두 Deployment에 모두 적용됐다는 증거가 필요하다. Collector만 교체하거나 worker만 교체한 상태에서는 중복 실행 방지 배포가 완료된 것으로 보지 않는다.
 
+Realtime worker rollout은 live Deployment에만 존재하는 script/ConfigMap volume, 외부 MSK IAM JAR URL 또는 수동 env patch를 정상 상태로 인정하지 않는다. Spark runtime image가 shaded IAM JAR와 runtime Python을 자체 포함하고, Helm 값은 exact local JAR를 가리키며, 새 SparkApplication이 `deps.jars`와 IAM option을 함께 렌더하는지 먼저 검증한다. 수동 hotfix를 제거하는 교체는 active SparkApplication과 active Continuous/SQL run이 모두 0일 때만 수행하며 checkpoint와 source revision cursor는 보존한다.
+
 ## 1) 로컬 실행
 
 ```bash

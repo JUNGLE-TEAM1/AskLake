@@ -215,6 +215,9 @@ owner와 같은 generation으로 Ready 1/1이어야 하며 구형 external EC2 o
 - 동일 broker/topic/group/generation/checkpoint identity의 active owner는 정확히 하나다.
 - owner fence, 승인, 새 generation, MSK IAM, S3 runtime document/checkpoint가 하나라도
   없으면 workload 활성화를 거부한다.
+- MSK IAM은 9098 broker, `ASKLAKE_KAFKA_AUTH_MODE=iam`, image-local shaded JAR의 exact
+  세 항목이 함께 있어야 한다. 외부 S3/HTTP JAR와 Deployment-only script/ConfigMap hotfix는
+  정식 release 상태가 아니며, Git·image·Helm 계약으로 수렴하기 전 worker image rollout을 막는다.
 - rollback은 새 generation과 보존된 checkpoint를 사용하며 checkpoint 삭제·rewind,
   dual-run, 다른 엔진으로 자동 전환을 금지한다.
 - EKS V1-only 전환 전 Catalog JSONB의 `serving/clickhouse` physical binding은 원본을 삭제하지
