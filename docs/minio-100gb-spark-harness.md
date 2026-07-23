@@ -9,6 +9,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/src/s3.service.mjs`: Target 저장경로 picker용 S3 bucket/prefix 조회
 - `backend/src/targetDatabase.service.mjs`: Target DB picker용 허용 DB 목록 조회
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
+- `backend/src/prefixSampleValidation.mjs`: Prefix 대표 파일 우선 처리, bounded worker pool, 비중복 적응형 Range 샘플러
 - `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/seed-minio-click-log.mjs`: whitespace-delimited raw click log 100-row fixture
@@ -37,9 +38,12 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 cd backend
 npm install
 npm run minio:seed-verify
+npm run verify:prefix-source
 npm run verify
 npm run dev
 ```
+
+`verify:prefix-source`는 외부 MinIO 없이 Prefix 샘플러와 connector 계약을 검증한다. 실제 Prefix Preview는 사전식 대표 파일을 먼저 읽고 나머지를 `ASKLAKE_PREFIX_VALIDATION_CONCURRENCY` 기본 8개 worker로 처리한다. 파일별 읽기는 `ASKLAKE_PREFIX_INITIAL_SAMPLE_BYTES` 기본 64KiB에서 시작하며 완전한 샘플 행이 부족한 경우에만 이전 구간과 겹치지 않는 다음 Range를 요청한다. 기존 sample scope의 최대 byte, EOF 또는 행 제한에서 멈추며 모든 데이터 파일의 schema 호환성 검사는 생략하지 않는다.
 
 로컬 MinIO가 없다면 먼저 repo root에서 실행한다.
 

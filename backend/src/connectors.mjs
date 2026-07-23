@@ -1,10 +1,11 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { loadKafkaJs } from "./kafka-codecs.mjs";
 import { buildKafkaPreviewMetadata } from "./kafkaPreview.mjs";
 import {
@@ -16,6 +17,12 @@ import {
   s3ClientOptions,
 } from "./objectStorageConfig.mjs";
 import { canonicalSchemaType, fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
+import {
+  mapSettledWithConcurrency,
+  prefixInitialSampleBytes,
+  prefixValidationConcurrency,
+  readAdaptivePrefixSample,
+} from "./prefixSampleValidation.mjs";
 import {
   createSparkRestSubmission,
   runSparkRestSubmission,
@@ -36,6 +43,7 @@ const kafkaSourceTypes = new Set(["Stream / Kafka", "Kafka JSON"]);
 const sourceAssetCache = new Map();
 const sourceAssetFailureCache = new Map();
 const minioDockerFailureCache = new Map();
+const execFileAsync = promisify(execFile);
 
 export async function testSourceConnector(sourceType, fields) {
   if (objectStorageSourceTypes.has(sourceType)) return testObjectStorageSource(fields, sourceType);
@@ -865,13 +873,13 @@ async function testObjectStoragePrefixDataset({ accessKeyId, bucket, endpoint, f
       forcePathStyle,
       objects,
       prefix,
-      readSample: async ({ bytes, key }) => {
+      readRange: async ({ endByte, key, startByte }) => {
         const objectResult = await client.send(new GetObjectCommand({
           Bucket: bucket,
           Key: key,
-          Range: bytes > 0 ? `bytes=0-${Math.max(0, bytes - 1)}` : undefined,
+          Range: `bytes=${startByte}-${endByte}`,
         }));
-        return readBodyTextWithinLimit(objectResult.Body, bytes);
+        return readBodyBufferWithinLimit(objectResult.Body, endByte - startByte + 1);
       },
       region,
       samplePolicy,
@@ -898,14 +906,21 @@ async function testObjectStoragePrefixDataset({ accessKeyId, bucket, endpoint, f
     forcePathStyle,
     objects,
     prefix,
-    readSample: async ({ bytes, key }) => readObjectSampleViaMinioContainer({
-      accessKeyId,
-      bucket,
-      bytes,
-      endpoint,
-      key,
-      secretAccessKey,
-    }),
+    readRange: async ({ endByte, key, startByte }) => {
+      const sample = await readObjectSampleRangeViaMinioContainer({
+        accessKeyId,
+        bucket,
+        endByte,
+        endpoint,
+        key,
+        secretAccessKey,
+        startByte,
+      });
+      if (sample === null) {
+        throw new Error(`MinIO container sample read failed for ${key}.`);
+      }
+      return sample;
+    },
     region,
     samplePolicy,
     sourceType,
@@ -919,26 +934,31 @@ export async function buildObjectStoragePrefixAnalysis({
   forcePathStyle,
   objects,
   prefix,
-  readSample,
+  readRange,
   region,
   samplePolicy = samplePolicyForFields(fields, "object"),
   sourceType = "File / S3",
 }) {
-  if (typeof readSample !== "function") {
+  if (typeof readRange !== "function") {
     throw apiError("SOURCE_PREFIX_SAMPLE_READER_REQUIRED", "Prefix dataset sample reader is required.", 500);
   }
 
   const canonicalPrefix = datasetPrefix(prefix);
   const configuredFormat = configuredDatasetFormat(fields, sourceType);
   const selection = selectPrefixDatasetObjects(objects, canonicalPrefix, configuredFormat);
-  const samples = [];
-
-  for (const object of selection.objects) {
+  const analyzeObject = async (object, includeParsedSample = false) => {
     const key = String(object.Key);
-    const requestedBytes = sampleObjectRangeBytes(samplePolicy, Number(object.Size ?? 0));
-    let text;
+    const maximumBytes = sampleObjectRangeBytes(samplePolicy, Number(object.Size ?? 0));
+    let adaptiveSample;
     try {
-      text = await readSample({ bytes: requestedBytes, key, object });
+      adaptiveSample = await readAdaptivePrefixSample({
+        initialBytes: prefixInitialSampleBytes(),
+        key,
+        maxBytes: maximumBytes,
+        objectSize: Number(object.Size ?? 0),
+        readRange: (range) => readRange({ ...range, object }),
+        rowLimit: samplePolicy.rowLimit,
+      });
     } catch (error) {
       throw apiError(
         "SOURCE_PREFIX_SAMPLE_READ_FAILED",
@@ -946,7 +966,7 @@ export async function buildObjectStoragePrefixAnalysis({
         502,
       );
     }
-    const parsedSample = parseSourceSample(key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    const parsedSample = adaptiveSample.parsedSample;
     const schemaColumns = inferSchemaColumns(parsedSample);
     if (schemaColumns.length === 0) {
       throw apiError(
@@ -955,16 +975,29 @@ export async function buildObjectStoragePrefixAnalysis({
         400,
       );
     }
-    samples.push({
+    return {
       key,
-      parsedSample,
-      requestedBytes,
+      ...(includeParsedSample ? { parsedSample } : {}),
+      requestedBytes: adaptiveSample.requestedBytes,
       schemaColumns,
       shapeFingerprint: schemaCompatibilityFingerprint(schemaColumns),
-    });
+    };
+  };
+
+  const representativeObject = selection.objects[0];
+  const representative = await analyzeObject(representativeObject, true);
+  const remainingObjects = selection.objects.slice(1);
+  const remainingOutcomes = await mapSettledWithConcurrency(
+    remainingObjects,
+    prefixValidationConcurrency(),
+    (object) => analyzeObject(object),
+  );
+  const samples = [representative];
+  for (const outcome of remainingOutcomes) {
+    if (outcome.status === "rejected") throw outcome.reason;
+    samples.push(outcome.value);
   }
 
-  const representative = samples[0];
   const incompatible = samples.find((sample) => sample.shapeFingerprint !== representative.shapeFingerprint);
   if (incompatible) {
     throw apiError(
@@ -1770,6 +1803,27 @@ function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, endpoin
   }) ?? "";
 }
 
+async function readObjectSampleRangeViaMinioContainer({
+  accessKeyId,
+  bucket,
+  endByte,
+  endpoint,
+  key,
+  secretAccessKey,
+  startByte,
+}) {
+  const normalizedStart = Math.max(0, Math.trunc(Number(startByte) || 0));
+  const normalizedEnd = Math.max(normalizedStart, Math.trunc(Number(endByte) || normalizedStart));
+  const byteLength = normalizedEnd - normalizedStart + 1;
+  const target = `local/${bucket}/${key}`;
+  return runMinioClientCommandAsync({
+    accessKeyId,
+    command: `mc cat --offset ${normalizedStart} ${shellQuote(target)} | head -c ${byteLength}`,
+    endpoint,
+    secretAccessKey,
+  });
+}
+
 function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
   if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
   const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
@@ -1798,6 +1852,38 @@ function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.
   }
   minioDockerFailureCache.delete(failureKey);
   return result.stdout ?? "";
+}
+
+async function runMinioClientCommandAsync({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
+  if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
+  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
+  const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || endpointForMinioContainer(endpoint);
+  const failureKey = `${container}:${minioEndpoint}`;
+  const failureUntil = minioDockerFailureCache.get(failureKey) ?? 0;
+  if (failureUntil > Date.now()) return null;
+  const accessKey = accessKeyId || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
+  const secretKey = secretAccessKey || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
+  const script = [
+    `mc alias set local ${shellQuote(minioEndpoint)} ${shellQuote(accessKey)} ${shellQuote(secretKey)} >/dev/null`,
+    command,
+  ].join(" && ");
+
+  try {
+    const result = await execFileAsync("docker", ["exec", "-i", container, "sh", "-lc", script], {
+      encoding: "buffer",
+      env: { ...process.env, MC_QUIET: "1", MC_DISABLE_PAGER: "1" },
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_TIMEOUT_MS", 5000),
+    });
+    minioDockerFailureCache.delete(failureKey);
+    return Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
+  } catch {
+    minioDockerFailureCache.set(
+      failureKey,
+      Date.now() + sourceConnectTimeoutMs("ASKLAKE_MINIO_DOCKER_FAILURE_CACHE_MS", 30000),
+    );
+    return null;
+  }
 }
 
 function endpointForMinioContainer(endpoint) {

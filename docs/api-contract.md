@@ -988,6 +988,9 @@ Source 연결 검증과 schema preview는 서로 다른 요청이다.
 - 사용자가 탐색 화면에서 단일 대상을 선택하면 frontend는 선택값을 `DATASET OR TABLE SELECTOR` 또는 `__Selected Object`에 넣어 `POST /api/etl/sources/test`를 호출한다.
 - File / S3 폴더 disclosure는 하위 항목을 여는 탐색 action이다. 사용자가 별도 prefix 데이터셋 선택 action을 실행하면 frontend는 `Path / Prefix=<canonical prefix>`, `__Selection Kind=prefix`, 빈 `__Selected Object`를 저장하고 `/sources/test`를 호출한다.
 - Prefix는 임의 파일 배열이 아니라 같은 데이터셋 조각이 모인 경로다. Backend는 그 아래를 재귀 조회해 `_SUCCESS`, `manifest.json`, basename이 `_` 또는 `.`으로 시작하는 객체, directory marker와 선택 형식이 아닌 객체를 제외한다. 남은 모든 파일의 bounded schema fingerprint가 같아야 성공한다.
+- Backend는 사전식 첫 데이터 파일을 대표 파일로 먼저 검증한다. 대표 파일 검증이 성공하면 나머지 파일을 bounded worker pool로 처리하며 `ASKLAKE_PREFIX_VALIDATION_CONCURRENCY` 기본값은 8, 허용 범위는 1~32다. 결과와 오류 판정 순서는 object key의 사전식 순서를 유지한다.
+- 각 파일은 `ASKLAKE_PREFIX_INITIAL_SAMPLE_BYTES` 기본 65,536 byte의 `bytes=0-65535` Range부터 시작한다. 설정값을 바꾸면 끝 byte도 `initialBytes - 1`로 계산한다. 완전한 레코드가 `__Sample Row Limit`에 부족할 때만 누적 목표를 2배로 확장하고 다음 Range는 직전 마지막 byte 다음에서 시작한다. 기존 데이터를 다시 다운로드하지 않으며 행 제한, object EOF 또는 기존 `__Schema Sample Scope`별 최대 byte 중 하나에 도달하면 중단한다.
+- 위 최적화는 검증 대상 파일 수, 제외 규칙, schema fingerprint 비교, 성공·오류 코드와 response shape를 바꾸지 않는다. 즉 일부 파일만 검사하는 샘플링 정책이 아니다.
 - PostgreSQL과 MongoDB의 `/sources/test`는 선택값이 없으면 `400`을 반환한다. 첫 테이블이나 첫 컬렉션으로 자동 대체하지 않는다.
 
 ```ts
