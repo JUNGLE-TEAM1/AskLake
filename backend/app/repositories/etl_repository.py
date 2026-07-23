@@ -4,6 +4,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.compatibility import record_legacy_runtime_error_projection
+from app.core.config import settings
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.domain.continuous_runtime import runtime_contract_projection
 from app.models import (
@@ -37,6 +38,9 @@ def ensure_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
     if bind_key in _schema_ready_bind_ids:
+        return
+    if not settings.startup_schema_management_enabled:
+        _schema_ready_bind_ids.add(bind_key)
         return
 
     with bind.begin() as connection:
@@ -291,11 +295,15 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
 
 def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
-    return db.scalar(
+    model = db.scalar(
         select(CatalogDatasetModel)
         .where(CatalogDatasetModel.id == dataset_id)
         .with_for_update()
     )
+    from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+
+    ensure_catalog_publication_allowed(db, dataset_id)
+    return model
 
 
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
@@ -318,6 +326,7 @@ def get_dataset_schema_by_id(db: Session, dataset_id: str) -> CatalogDataset | N
 
 def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatasetModel) -> tuple[JobRowData, CatalogDataset]:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     db.add(dataset)
     db.add(job)
     db.commit()
@@ -328,6 +337,7 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
 
 def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
     ensure_schema(db)
+    get_dataset_by_id_for_update(db, dataset.id)
     dataset = db.merge(dataset)
     try:
         db.commit()
@@ -345,6 +355,8 @@ def save_command_result(
     dataset: CatalogDatasetModel | None = None,
 ) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
     ensure_schema(db)
+    if dataset is not None:
+        get_dataset_by_id_for_update(db, dataset.id)
     merged_dataset = db.merge(dataset) if dataset is not None else None
     if run is not None:
         db.add(run)
@@ -917,6 +929,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             storage_size_bytes=payload.get("storageSizeBytes"),
             lineage_graph=payload.get("lineageGraph"),
             materialization_runs=payload.get("materializationRuns") or [],
+            producer_job_id=dataset.producer_job_id or payload.get("producerJobId"),
+            producer_job_kind=dataset.producer_job_kind or payload.get("producerJobKind"),
+            execution_mode=dataset.execution_mode or payload.get("executionMode"),
+            source_kind=dataset.source_kind or payload.get("sourceKind"),
+            relation_mode=dataset.relation_mode or payload.get("relationMode"),
+            runtime_status=dataset.runtime_status or payload.get("runtimeStatus"),
         )
 
     return CatalogDataset(
@@ -945,6 +963,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
         materialization_runs=[],
+        producer_job_id=dataset.producer_job_id,
+        producer_job_kind=dataset.producer_job_kind,
+        execution_mode=dataset.execution_mode,
+        source_kind=dataset.source_kind,
+        relation_mode=dataset.relation_mode,
+        runtime_status=dataset.runtime_status,
     )
 
 

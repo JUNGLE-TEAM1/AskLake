@@ -207,7 +207,7 @@ Spark micro-batch 재시도와 process crash가 output duplicate나 Dashboard �
 
 ## 구현 작업
 
-1. idempotency key를 `(query_id, run_generation, batch_id)`로 정의하거나 동등한 stable key를 사용한다.
+1. idempotency key를 `(query_id, generation, batch_id)`로 정의하거나 동등한 stable key를 사용한다.
 2. batch commit registry를 DB/report/Iceberg snapshot 중 canonical evidence와 함께 설계한다.
 3. append-only 결과는 checkpoint와 commit ID로 duplicate를 막고, replay/backfill 결과는 deterministic row key 기반 upsert를 사용한다.
 4. `foreachBatch` 재실행 전에 이미 committed batch인지 확인한다.

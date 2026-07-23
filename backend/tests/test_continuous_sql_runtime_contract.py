@@ -10,9 +10,16 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext
 from app.core.config import Settings
-from app.models.continuous_sql import ContinuousSqlBatchModel, ContinuousSqlJobModel
+from app.models.continuous_sql import (
+    ContinuousSqlBatchModel,
+    ContinuousSqlIncrementalBindingModel,
+    ContinuousSqlJobModel,
+)
 from app.repositories.continuous_sql_repository import ContinuousSqlRepository
-from app.repositories.dashboard_live_repository import ensure_dashboard_live_schema
+from app.repositories.dashboard_live_repository import (
+    DashboardLiveRepository,
+    ensure_dashboard_live_schema,
+)
 from app.repositories.realtime_event_repository import ensure_realtime_event_schema
 from app.schemas.continuous_sql import ContinuousSqlCommandRequest
 from app.schemas.iceberg import IcebergCommitEvidence
@@ -21,6 +28,10 @@ from app.services.continuous_sql_catalog import parse_row_count, unique_key_sets
 from app.services.continuous_sql_publication import (
     ContinuousSqlPublicationError,
     ContinuousSqlPublicationService,
+    _coverage_contains,
+    _merge_next_offsets,
+    _source_range_coverage,
+    _source_ranges_consumed,
     validate_publication_identity,
 )
 from app.services.continuous_sql_service import ContinuousSqlService, worker_identity_error
@@ -30,7 +41,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 from continuous_sql_runtime import (  # noqa: E402
+    RUNTIME_METADATA_COLUMNS,
     binding_manifest_path,
+    execute_continuous_sql_batch,
     validate_binding_manifest,
     validate_runtime_plan,
 )
@@ -102,6 +115,32 @@ class FakeIcebergWriter:
 
 
 class ContinuousSqlRuntimeContractTests(unittest.TestCase):
+    def test_foreach_batch_sql_uses_the_stream_frames_spark_session(self) -> None:
+        class BatchSpark:
+            def __init__(self) -> None:
+                self.queries = []
+
+            def sql(self, query):
+                self.queries.append(query)
+                return type("Result", (), {"columns": list(RUNTIME_METADATA_COLUMNS)})()
+
+        class WrongSpark:
+            def sql(self, _query):
+                raise AssertionError("the global SparkSession must not execute foreachBatch SQL")
+
+        batch_spark = BatchSpark()
+        stream_frame = type("Frame", (), {"sparkSession": batch_spark})()
+
+        result = execute_continuous_sql_batch(
+            WrongSpark(),
+            stream_frame,
+            {"relations": [], "runtimeSql": "SELECT 1", "outputSchema": []},
+            [],
+        )
+
+        self.assertEqual(result.columns, list(RUNTIME_METADATA_COLUMNS))
+        self.assertEqual(batch_spark.queries, ["SELECT 1"])
+
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         self.db = Session(self.engine)
@@ -421,6 +460,152 @@ class ContinuousSqlRuntimeContractTests(unittest.TestCase):
         payload = publication_service.catalog_repository.get_dataset_payload(job.output_dataset_id)
         self.assertEqual(len(payload["materializationRuns"]), 1)
         self.assertEqual(payload["sourceRunId"], boundary["runId"])
+
+    def test_incremental_publication_waits_for_source_commit_and_advances_once(self) -> None:
+        binding = ContinuousSqlIncrementalBindingModel(
+            job_id=self.job.id,
+            source_dataset_id="dataset-events",
+            baseline_dataset_id=self.job.output_dataset_id,
+            baseline_snapshot_id="499",
+            baseline_revision=0,
+            source_revision=0,
+            static_snapshots=[
+                {
+                    "datasetId": "dataset-users",
+                    "schemaFingerprint": "users-schema",
+                    "snapshotId": "101",
+                }
+            ],
+            next_offsets=[
+                {"topic": "events", "partition": 0, "nextOffset": 0}
+            ],
+            output_revision=0,
+        )
+        self.repository.add_incremental_binding(binding)
+        self.db.commit()
+        started = self.service.command(
+            self.job.id,
+            ContinuousSqlCommandRequest(command="start", commandId="start-bound"),
+            self.actor,
+        )
+        job = self.repository.get_job(self.job.id)
+        run = self.repository.get_run(started.job.active_run_id)
+        fence_hash = hashlib.sha256(run.fencing_token.encode()).hexdigest()
+        source_ranges = [
+            {"topic": "events", "partition": 0, "startOffset": 0, "endOffset": 2}
+        ]
+        boundary = {
+            "batchId": 3,
+            "fencingTokenHash": fence_hash,
+            "jobId": job.id,
+            "kind": "continuous_sql_batch",
+            "planHash": job.plan_hash,
+            "runGeneration": run.generation,
+            "runId": "continuous-sql:batch:3",
+            "sourceRanges": source_ranges,
+            "staticSnapshots": list(binding.static_snapshots),
+        }
+        publication = {
+            "batchId": 3,
+            "continuousSqlFencingTokenHash": fence_hash,
+            "continuousSqlPlanHash": job.plan_hash,
+            "continuousSqlRunGeneration": run.generation,
+            "icebergCommit": {"snapshotId": "503", "sourceBoundary": boundary},
+            "manifestPath": "s3a://lake/output/_batch-manifests/batch_id=3",
+            "publishedAt": "2026-07-16T00:00:02Z",
+            "runId": boundary["runId"],
+            "sourceBoundary": boundary,
+            "sourceRanges": source_ranges,
+            "staticSnapshots": list(binding.static_snapshots),
+            "storedCount": 2,
+        }
+        writer = FakeIcebergWriter()
+        publication_service = ContinuousSqlPublicationService(self.db, writer=writer)
+
+        pending = publication_service.reconcile_manifest(job, run, publication)
+        self.assertEqual(pending.stage, "output_committed")
+        self.assertEqual(pending.last_error_code, "CONTINUOUS_SQL_SOURCE_COMMIT_PENDING")
+        self.assertEqual(writer.verified_runs, [])
+
+        live = DashboardLiveRepository(self.db, ensure_schema=False)
+        source_commit, _created = live.record_dataset_commit(
+            dataset_id="dataset-events",
+            run_id="source-batch-3",
+            storage_location="s3://lake/events",
+            storage_format="iceberg",
+            materialization_mode="delta",
+            row_count=2,
+            next_check_after_ms=5_000,
+            source_ranges=source_ranges,
+            commit_kind="stream",
+            manifest_location="s3://lake/events/_batch-manifests/batch_id=3",
+        )
+        self.db.commit()
+
+        published = publication_service.reconcile_manifest(job, run, publication)
+        repeated = publication_service.reconcile_manifest(job, run, publication)
+        advanced = self.repository.get_incremental_binding(job.id)
+
+        self.assertEqual(published.stage, "dashboard_ready")
+        self.assertEqual(repeated.dataset_revision, published.dataset_revision)
+        self.assertEqual(writer.verified_runs, [boundary["runId"]])
+        self.assertEqual(advanced.source_revision, source_commit.revision)
+        self.assertEqual(advanced.next_offsets[0]["nextOffset"], 2)
+        self.assertEqual(advanced.processed_rows, 2)
+        self.assertEqual(advanced.output_revision, published.dataset_revision)
+
+        duplicate_boundary = {
+            **boundary,
+            "batchId": 4,
+            "runId": "continuous-sql:batch:4",
+        }
+        duplicate = publication_service.reconcile_manifest(
+            job,
+            run,
+            {
+                **publication,
+                "batchId": 4,
+                "icebergCommit": {
+                    "snapshotId": "504",
+                    "sourceBoundary": duplicate_boundary,
+                },
+                "manifestPath": "s3a://lake/output/_batch-manifests/batch_id=4",
+                "runId": duplicate_boundary["runId"],
+                "sourceBoundary": duplicate_boundary,
+            },
+        )
+        self.assertEqual(duplicate.stage, "failed")
+        self.assertEqual(
+            duplicate.last_error_code,
+            "CONTINUOUS_SQL_SOURCE_RANGE_ALREADY_APPLIED",
+        )
+        self.assertEqual(writer.verified_runs, [boundary["runId"]])
+
+    def test_incremental_micro_batch_may_use_part_of_a_source_commit(self) -> None:
+        source_commit_ranges = [
+            {"topic": "events", "partition": 0, "startOffset": 0, "endOffset": 100}
+        ]
+        micro_batch_ranges = [
+            {"topic": "events", "partition": 0, "startOffset": 0, "endOffset": 10}
+        ]
+        self.assertTrue(
+            _coverage_contains(
+                _source_range_coverage(source_commit_ranges),
+                _source_range_coverage(micro_batch_ranges),
+            )
+        )
+        next_offsets = _merge_next_offsets(
+            [{"topic": "events", "partition": 0, "nextOffset": 0}],
+            [{"topic": "events", "partition": 0, "nextOffset": 10}],
+        )
+        self.assertEqual(next_offsets[0]["nextOffset"], 10)
+        self.assertFalse(_source_ranges_consumed(source_commit_ranges, next_offsets))
+        self.assertTrue(
+            _source_ranges_consumed(
+                source_commit_ranges,
+                [{"topic": "events", "partition": 0, "nextOffset": 100}],
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -97,6 +97,7 @@ REVOKE ALL ON *.* FROM asklake_v2_migration_role;
 REVOKE ALL ON *.* FROM asklake_v2_observer_role;
 
 GRANT SELECT, INSERT ON \`${database}\`.* TO asklake_v2_ingest_role;
+GRANT CREATE TABLE ON \`${database}\`.connect_state TO asklake_v2_ingest_role;
 GRANT SELECT, INSERT ON \`${database}\`.* TO asklake_v2_materializer_role;
 GRANT SELECT ON \`${database}\`.* TO asklake_v2_reader_role;
 GRANT SELECT, INSERT, CREATE TABLE, CREATE VIEW, ALTER TABLE, DROP TABLE, DROP VIEW, TRUNCATE ON \`${database}\`.* TO asklake_v2_migration_role;
@@ -106,6 +107,7 @@ GRANT SELECT ON system.asynchronous_metrics TO asklake_v2_observer_role;
 GRANT SELECT ON system.parts TO asklake_v2_observer_role;
 GRANT SELECT ON system.merges TO asklake_v2_observer_role;
 GRANT SELECT ON system.replicas TO asklake_v2_observer_role;
+GRANT SHOW TABLES ON \`${database}\`.* TO asklake_v2_observer_role;
 
 ALTER ROLE asklake_v2_ingest_role SETTINGS max_execution_time = 300, max_memory_usage = 4000000000;
 ALTER ROLE asklake_v2_materializer_role SETTINGS max_execution_time = 900, max_memory_usage = 8000000000;

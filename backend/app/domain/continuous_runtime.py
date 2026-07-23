@@ -194,7 +194,7 @@ def observed_state_from_evidence(
         return ContinuousObservedState.RUNNING
     if container in {"created", "restarting", "starting"}:
         return ContinuousObservedState.STARTING
-    if container in {"exited", "missing", "stopped", "dead"}:
+    if container in {"exited", "missing", "not_running", "stopped", "dead"}:
         return ContinuousObservedState.STOPPED
     return ContinuousObservedState.UNKNOWN
 

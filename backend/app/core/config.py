@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     local_lake_storage_dir: str | None = None
     openai_api_key: str | None = None
     openai_assistant_enabled: bool = True
-    openai_assistant_model: str = "gpt-4o-mini"
+    openai_assistant_model: str = "gpt-4.1"
     openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
-    openai_query_ai_model: str = "gpt-4.1-mini"
+    openai_query_ai_model: str = "gpt-4.1"
     ai_query_provider: Literal["direct", "gateway"] = "direct"
     ai_gateway_base_url: str | None = None
     ai_gateway_generate_path: str = "/v1/generate"
@@ -31,47 +31,22 @@ class Settings(BaseSettings):
     ai_gateway_max_embedding_response_bytes: int = Field(default=8_388_608, ge=65_536, le=134_217_728)
     ai_gateway_classification_path: str = "/v1/generate"
     ai_gateway_embeddings_path: str = "/v1/embeddings"
+    rag_embedding_model: str = "text-embedding-3-small"
+    rag_embedding_dimensions: int = Field(default=1_536, ge=1, le=65_536)
+    rag_embedding_batch_size: int = Field(default=64, ge=1, le=2_048)
     ai_mcp_path: str = "/internal/mcp"
     ai_mcp_service_token: str | None = None
     ai_context_signing_secret: str = "asklake-local-ai-context-signing-secret"
     ai_context_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     ai_context_max_sample_rows: int = Field(default=20, ge=0, le=20)
     semantic_model_default_version: int = Field(default=1, ge=1)
-    rag_classification_sample_rows: int = Field(default=20, ge=1, le=100)
-    rag_document_preview_limit: int = Field(default=20, ge=1, le=100)
-    rag_embedding_model: str = "text-embedding-3-small"
-    rag_embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
-    rag_embedding_batch_size: int = Field(default=64, ge=1, le=256)
-    rag_chunk_target_tokens: int = Field(default=800, ge=100, le=2_000)
-    rag_chunk_overlap_tokens: int = Field(default=400, ge=0, le=1_000)
-    rag_chunk_max_tokens: int = Field(default=1_200, ge=100, le=4_000)
-    rag_context_max_tokens: int = Field(default=6_000, ge=256, le=32_000)
-    rag_query_intelligence_enabled: bool = True
-    rag_relevance_min_score: float = Field(default=0.6, ge=0.0, le=1.0)
-    rag_failed_row_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
-    rag_job_stale_seconds: int = Field(default=7_200, ge=300, le=604_800)
-    rag_artifact_retention_days: int = Field(default=30, ge=1, le=3_650)
-    rag_artifact_keep_previous_indexes: int = Field(default=1, ge=0, le=100)
-    rag_runtime_create_schema: bool = False
-    rag_staging_base_path: str = "s3a://asklake-warehouse/rag-staging"
-    rag_parent_iceberg_namespace: str = "rag"
-    rag_index_prefix: str = "asklake-rag"
-    opensearch_base_url: str | None = None
-    opensearch_username: str | None = None
-    opensearch_password: str | None = None
-    opensearch_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
-    opensearch_verify_tls: bool = True
-    opensearch_ca_cert: str | None = None
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
-    rag_airflow_dag_id: str = "asklake_rag_index"
     airflow_api_token: str | None = None
     airflow_username: str | None = None
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_run_sync_interval_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
-    rag_worker_base_url: str | None = None
-    rag_worker_token: str | None = None
     airflow_ui_base_url: str | None = None
     continuous_runtime_sync_interval_seconds: float = Field(default=1.0, ge=1.0, le=60.0)
     # Local development keeps the embedded loop. Deployed web APIs must leave
@@ -82,13 +57,19 @@ class Settings(BaseSettings):
     startup_schema_management_enabled: bool = True
     continuous_control_lease_seconds: int = Field(default=30, ge=5, le=300)
     dashboard_sync_mode: str = "polling"
+    dashboard_auto_refresh_enabled: bool = False
     realtime_events_enabled: bool = False
     continuous_sql_join_enabled: bool = False
+    continuous_sql_serving_mode: Literal["iceberg", "clickhouse"] = "iceberg"
     latest_static_per_batch_enabled: bool = False
     static_change_backfill_enabled: bool = False
     continuous_sql_static_broadcast_max_rows: int = Field(default=100_000, ge=0, le=100_000_000)
     continuous_sql_static_cache_max_rows: int = Field(default=5_000_000, ge=0, le=1_000_000_000)
+    continuous_sql_micro_batch_max_rows: int = Field(default=100, ge=1, le=100_000)
+    continuous_sql_static_pruning_max_keys: int = Field(default=100, ge=1, le=10_000)
     continuous_sql_max_output_rows_per_input: int = Field(default=10, ge=1, le=10_000)
+    continuous_sql_tree_lock_lease_seconds: int = Field(default=120, ge=10, le=3600)
+    continuous_sql_refresh_claim_seconds: int = Field(default=900, ge=30, le=7200)
     clickhouse_continuous_join_enabled: bool = False
     clickhouse_realtime_v2_enabled: bool = False
     kafka_connect_sink_enabled: bool = False
@@ -100,6 +81,18 @@ class Settings(BaseSettings):
     kafka_connect_url: str | None = None
     kafka_connect_connector_name: str = "asklake-clickhouse-realtime-v2"
     kafka_connect_request_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
+    clickhouse_v2_url: str = "https://localhost:8443"
+    clickhouse_v2_database: str = "asklake_realtime_v2"
+    clickhouse_v2_materializer_user: str = "asklake_v2_materializer"
+    clickhouse_v2_materializer_password: str | None = None
+    clickhouse_v2_reader_user: str = "asklake_v2_reader"
+    clickhouse_v2_reader_password: str | None = None
+    clickhouse_v2_tls_ca_file: str | None = None
+    clickhouse_realtime_v2_batch_max_positions: int = Field(
+        default=10_000,
+        ge=1,
+        le=100_000,
+    )
     clickhouse_url: str = "http://localhost:8123"
     clickhouse_user: str = "asklake"
     clickhouse_password: str | None = None
@@ -118,6 +111,8 @@ class Settings(BaseSettings):
     realtime_sse_send_timeout_seconds: int = Field(default=10, ge=1, le=60)
     scheduled_job_tick_interval_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     review_analysis_worker_interval_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
+    catalog_deletion_worker_enabled: bool = True
+    catalog_deletion_worker_interval_seconds: float = Field(default=2.0, ge=0.5, le=300.0)
     airflow_execution_api_token: str | None = None
     airflow_internal_token: str | None = None
     asklake_object_storage_provider: str = "minio"
@@ -335,7 +330,6 @@ class Settings(BaseSettings):
         self._validate_clickhouse_runtime()
         self._validate_clickhouse_realtime_v2_runtime()
         self._validate_ai_runtime()
-        self._validate_rag_runtime()
         return self
 
     def _validate_auth_runtime(self) -> None:
@@ -544,6 +538,42 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Kafka Engine V1 and Kafka Connect V2 cannot own the same active ClickHouse generation"
                 )
+        if not self.clickhouse_realtime_v2_enabled or self.is_development_runtime:
+            return
+        parsed_url = urlparse(self.clickhouse_v2_url)
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError(
+                "CLICKHOUSE_V2_URL must be an explicit https URL outside local development"
+            )
+        if re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*",
+            self.clickhouse_v2_database,
+        ) is None:
+            raise ValueError(
+                "CLICKHOUSE_V2_DATABASE must be a safe ClickHouse identifier"
+            )
+        if not self.clickhouse_v2_tls_ca_file:
+            raise ValueError(
+                "CLICKHOUSE_V2_TLS_CA_FILE is required outside local development"
+            )
+        credentials = {
+            "CLICKHOUSE_V2_MATERIALIZER_PASSWORD": self.clickhouse_v2_materializer_password,
+            "CLICKHOUSE_V2_READER_PASSWORD": self.clickhouse_v2_reader_password,
+        }
+        for key, secret in credentials.items():
+            normalized = str(secret or "")
+            if len(normalized) < 16 or "replace-with-" in normalized:
+                raise ValueError(
+                    f"{key} must be a non-placeholder value with at least 16 characters"
+                )
+        if self.clickhouse_v2_materializer_user == self.clickhouse_v2_reader_user:
+            raise ValueError(
+                "CLICKHOUSE_V2_MATERIALIZER_USER and CLICKHOUSE_V2_READER_USER must be distinct"
+            )
+        if self.clickhouse_v2_materializer_password == self.clickhouse_v2_reader_password:
+            raise ValueError(
+                "CLICKHOUSE_V2 materializer and reader passwords must be distinct"
+            )
 
     def _validate_ai_runtime(self) -> None:
         if (
@@ -570,18 +600,6 @@ class Settings(BaseSettings):
         if len(self.ai_context_signing_secret) < 32:
             raise ValueError(
                 "AI_CONTEXT_SIGNING_SECRET must contain at least 32 characters"
-            )
-
-    def _validate_rag_runtime(self) -> None:
-        minimum_budget = (
-            self.rag_embedding_batch_size
-            * self.rag_embedding_dimensions
-            * 32
-            + 16_384
-        )
-        if self.ai_gateway_max_embedding_response_bytes < minimum_budget:
-            raise ValueError(
-                "AI_GATEWAY_MAX_EMBEDDING_RESPONSE_BYTES is too small for the configured RAG embedding batch contract"
             )
 
     @property

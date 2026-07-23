@@ -72,16 +72,16 @@ export function PageHeader({
           )}
           <div className={cn("grid min-w-0", compact ? "gap-1" : "gap-2")}>
             {eyebrow && (
-              <div className="text-xs font-semibold uppercase tracking-normal text-blue-700">
+              <div className="text-xs font-medium uppercase tracking-normal text-blue-700" data-slot="page-eyebrow">
                 {eyebrow}
               </div>
             )}
             <div className={cn("grid min-w-0", compact ? "gap-0.5" : "gap-1")}>
               <h1 className={cn(
-                "font-semibold leading-tight tracking-normal text-slate-950",
+                "font-bold leading-tight tracking-normal text-slate-950",
                 compact ? "text-2xl sm:text-[28px]" : "text-3xl sm:text-4xl",
                 titleClassName,
-              )}>
+              )} data-slot="page-title">
                 {title}
               </h1>
               {description && (

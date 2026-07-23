@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
-import { navItems, wizardFlows } from "./data/appShellData";
+import { wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
-import { Topbar } from "./components/layout/Topbar";
-import { Stepper } from "./components/layout/Stepper";
+import { EtlWizardHeader } from "./components/layout/EtlWizardHeader";
 import { CatalogDetailPage, CatalogPage, type CatalogView } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
 import { AuthPage } from "./pages/auth/AuthPage";
+import { authModeFromPath, authPath, type AuthMode } from "./pages/auth/authRoute";
 import { ProfilePage } from "./pages/profile/ProfilePage";
 import { JobDetailPage } from "./pages/ingest/jobs/JobDetailPage";
 import { JobRunsPage } from "./pages/ingest/jobs/JobRunsPage";
@@ -46,17 +46,12 @@ function isContinuousKafkaDraft(draft: DraftPipeline) {
 }
 const emptyDatasetId = "dataset_not_selected";
 const emptyJobId = "JOB-NONE";
-const topbarNavIdByFlow: Partial<Record<FlowId, NavId>> = {
-  catalog: "catalog",
-  jobs: "ingest",
-  sql: "sql",
-};
-
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
 
 type AppRouteState = {
+  authMode?: AuthMode;
   catalogView?: CatalogView;
   dashboardRoute: DashboardRouteState | null;
   datasetId?: string;
@@ -71,13 +66,6 @@ type FlowPathContext = {
   selectedDataset?: CatalogDataset;
   selectedJob?: JobRowData;
 };
-
-function resolveTopbarSection(flow: FlowId, dashboardEntry: DashboardEntry) {
-  const navId = flow === "dashboard" && dashboardEntry.view === "list"
-    ? "dashboard"
-    : topbarNavIdByFlow[flow];
-  return navItems.find((item) => item.id === navId) ?? null;
-}
 
 const defaultScheduleFlow: ScheduleFlowId = "repeat";
 const semanticCatalogCompatibilityPaths = new Set(["/ai", "/semantic-layer"]);
@@ -130,6 +118,9 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const dashboardRoute = parseDashboardRoute(pathname);
   if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
 
+  const authMode = authModeFromPath(pathname);
+  if (authMode) return { authMode, dashboardRoute: null, flow: "login" };
+
   const segments = pathname.split("/").filter(Boolean);
   const [area, id, action] = segments;
 
@@ -155,7 +146,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   if (semanticCatalogCompatibilityPaths.has(pathname)) return { catalogView: "semantic", dashboardRoute: null, flow: "catalog" };
   if (area === "admin") return { dashboardRoute: null, flow: "admin" };
   if (area === "profile") return { dashboardRoute: null, flow: "profile" };
-  if (area === "login") return { dashboardRoute: null, flow: "login" };
 
   return { dashboardRoute: null, flow: "jobs", unknownPath: pathname };
 }
@@ -239,6 +229,7 @@ export function App() {
   const [completedWizardFlows, setCompletedWizardFlows] = useState<Set<FlowId>>(() => new Set());
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [publicSignupEnabled, setPublicSignupEnabled] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
@@ -267,7 +258,8 @@ export function App() {
     catalogError,
     catalogLoading,
     createPipeline,
-    dataRequirements,
+    dataRequirements, datasetDeletionPendingById,
+    deleteDataset, loadDatasetDeletionImpact,
     deleteMaterializationRun,
     datasets,
     draftPipeline,
@@ -360,10 +352,16 @@ export function App() {
     let active = true;
     fetchAuthSession()
       .then((session) => {
-        if (active) setCurrentUser(session.user);
+        if (active) {
+          setCurrentUser(session.user);
+          setPublicSignupEnabled(session.publicSignupEnabled);
+        }
       })
       .catch(() => {
-        if (active) setCurrentUser(null);
+        if (active) {
+          setCurrentUser(null);
+          setPublicSignupEnabled(false);
+        }
       })
       .finally(() => {
         if (active) setAuthChecked(true);
@@ -372,6 +370,11 @@ export function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authChecked || routeState.authMode !== "signup" || publicSignupEnabled) return;
+    navigate("/login", { replace: true });
+  }, [authChecked, navigate, publicSignupEnabled, routeState.authMode]);
 
   useEffect(() => {
     if (!authChecked || currentUser || activeFlow === "login") return;
@@ -529,6 +532,11 @@ export function App() {
     moveToFlow("jobs");
   };
 
+  const changeAuthMode = (mode: AuthMode) => {
+    const nextPath = authPath(mode);
+    if (location.pathname !== nextPath) navigate(nextPath);
+  };
+
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
     setSelectedDataset(dataset);
@@ -559,12 +567,20 @@ export function App() {
     writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
     moveToFlow("jobRuns", { selectedJob: job });
   };
-  if (!authChecked && activeFlow !== "login") {
+  if (!authChecked) {
     return <div className="workspace-route-loading" role="status">로그인 상태를 확인하는 중...</div>;
   }
 
   if (!currentUser || activeFlow === "login") {
-    return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
+    return (
+      <AuthPage
+        initialMode={routeState.authMode ?? "login"}
+        onAction={writeAuditLog}
+        onAuthenticated={handleAuthenticated}
+        onModeChange={changeAuthMode}
+        publicSignupEnabled={publicSignupEnabled}
+      />
+    );
   }
 
   return (
@@ -580,11 +596,22 @@ export function App() {
         onNavigate={navigateSidebar}
       />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
-        <Topbar section={resolveTopbarSection(activeFlow, dashboardEntry)} />
-        {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-        {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending">{pendingMessage}</div>}
-        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={wizardActiveIndex} isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true} steps={wizardStepLabels} onStepSelect={navigateWizardStep} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
+        {(toast || apiPending || (activeDataLoading && activeDataHasRows)) && (
+          <div className="app-notification-stack">
+            {toast && <div className={`app-toast ${toast.tone}`} role="status">{toast.message}</div>}
+            {(apiPending || (activeDataLoading && activeDataHasRows)) && <div className="app-api-pending" role="status">{pendingMessage}</div>}
+          </div>
+        )}
+        {wizardFlows.includes(activeFlow) && (
+          <EtlWizardHeader
+            activeIndex={wizardActiveIndex}
+            isStepDisabled={(stepIndex) => wizardStepDisabled[stepIndex] ?? true}
+            onBack={() => moveToFlow("jobs")}
+            onStepSelect={navigateWizardStep}
+            steps={wizardStepLabels}
+          />
+        )}
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : activeFlow === "catalog" ? "page-body catalog-body" : "page-body"} data-etl-route={etlStyleRoute(activeFlow) ?? undefined}>
           {!isIndependentFlow && shouldBlockForInitialData && (
             <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
               <Skeleton className="h-5 w-24" />
@@ -613,16 +640,16 @@ export function App() {
           {activeFlow === "jobRuns" && <JobRunsPage catalogDatasetId={selectedJobCatalogDataset?.id} catalogRowCount={selectedJobCatalogDataset?.rows} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => completeWizardFlowAndMove("source", requiresRecordParsing ? "recordParsing" : "schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "recordParsing" && <RecordParsingPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => completeWizardFlowAndMove("recordParsing", "schema")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => completeWizardFlowAndMove("schema", continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
+          {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(requiresRecordParsing ? "recordParsing" : "source")} onNext={() => completeWizardFlowAndMove("schema", continuousKafkaDraft ? "permission" : lastScheduleFlow)} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "rules" && <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => completeWizardFlowAndMove("schema", continuousKafkaDraft ? "permission" : lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => completeWizardFlowAndMove(lastScheduleFlow, "permission")} onSave={() => saveDraft(activeFlow)} />}
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => completeWizardFlowAndMove("target", "review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(continuousKafkaDraft ? "schema" : lastScheduleFlow)} onNext={() => completeWizardFlowAndMove("permission", "target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={catalogError} loading={catalogLoading} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasetDeletionPendingById={datasetDeletionPendingById} datasets={datasets} error={catalogError} loading={catalogLoading} onDeleteDataset={deleteDataset} onLoadDeletionImpact={loadDatasetDeletionImpact} onViewChange={changeCatalogView} selectedDataset={selectedDataset} view={routeState.catalogView ?? "catalog"} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} createPending={apiPending} currentUser={currentUser} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onCreateDatasetJob={createSqlDatasetJob} onCreateTrinoSqlJob={createTrinoSqlJob} onResultChange={setSqlResultDraft} />}
-          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
+          {activeFlow === "dashboard" && <DashboardPage currentUserId={currentUser.id} dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
             </>

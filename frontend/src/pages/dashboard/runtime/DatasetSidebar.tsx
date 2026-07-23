@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2, X } from "lucide-react";
+import { AlertCircle, CalendarDays, Database, Hash, LetterText, Pin, Server, Table2, X } from "lucide-react";
 import type { NodeApi } from "react-arborist";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -20,7 +20,9 @@ type DatasetSidebarProps = {
   onClose?: () => void;
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
+  lockedDatasetId?: string | null;
   selectedDatasetId: string | null;
+  selectedDatasetIds?: string[];
 };
 
 type DatasetTreeNode = ExplorerTreeNode & {
@@ -145,7 +147,9 @@ export function DatasetSidebar({
   onClose,
   onSelectColumn,
   onSelectDataset,
+  lockedDatasetId = null,
   selectedDatasetId,
+  selectedDatasetIds,
 }: DatasetSidebarProps) {
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
@@ -205,7 +209,9 @@ export function DatasetSidebar({
                   id: datasetTreeItemId(dataset.id),
                   kind: "dataset" as const,
                   label: dataset.name,
-                  selected: dataset.id === selectedDatasetId,
+                  selected: dataset.id === lockedDatasetId || (selectedDatasetIds !== undefined
+                    ? selectedDatasetIds.includes(dataset.id)
+                    : dataset.id === selectedDatasetId),
                   title: dataset.name,
                 };
               }),
@@ -268,7 +274,7 @@ export function DatasetSidebar({
       label: "system",
       title: "system",
     },
-  ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
+  ], [datasets, lockedDatasetId, selectedDatasetId, selectedDatasetIds, totalColumnCount, totalMetricCount]);
 
   return (
     <aside
@@ -284,8 +290,8 @@ export function DatasetSidebar({
           </IconButton>
         ) : undefined}
         className="min-h-0 p-4"
-        description="위젯에 연결할 데이터셋과 필드를 선택하세요."
-        icon={<Database />}
+        description={lockedDatasetId ? "Job 출력 Dataset이 선택된 상태로 고정됩니다." : "위젯에 연결할 데이터셋과 필드를 선택하세요."}
+        icon={lockedDatasetId ? <Pin /> : <Database />}
         iconVariant="outline"
         title="데이터"
       />
@@ -312,7 +318,6 @@ export function DatasetSidebar({
             className="mt-2 min-h-0 flex-1 pr-2"
             data={treeData}
             defaultHeight={620}
-            disableMultiSelection
             disableSelect
             getIcon={(node) => node.data.icon}
             getLabel={(node) => (
@@ -326,19 +331,15 @@ export function DatasetSidebar({
               "data-dashboard-dataset-node": node.data.kind,
               title: node.data.title,
             })}
-            initialOpenState={{
-              [systemItemId]: true,
-              [schemaItemId]: true,
-              [tablesItemId]: true,
-            }}
             indent={12}
             minHeight={320}
+            openByDefault={false}
             rowHeight={40}
             toggleOnRowPress={false}
             onNodePress={(node: NodeApi<DatasetTreeNode>) => {
               const item = node.data;
               if (item.kind === "dataset" && item.datasetId) {
-                onSelectDataset(item.datasetId);
+                if (item.datasetId !== lockedDatasetId) onSelectDataset(item.datasetId);
                 return;
               }
               if (item.kind !== "column" || !item.datasetId || !item.columnName) return;

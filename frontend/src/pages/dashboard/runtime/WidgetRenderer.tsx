@@ -29,7 +29,20 @@ import {
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import type { RequestLease } from "../../../state/requestOwnership";
 import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
+import {
+  boundedTimeSeriesSlice,
+  bucketTimeLabel,
+  formatTimeAxisLabel,
+  TIME_SERIES_POINT_LIMIT,
+  timeSeriesCategoryTimestamps,
+} from "./timeSeries";
+import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
+import {
+  barChartAxisLabelFormatters,
+  formatChartAxisNumber,
+  formatChartCategoryAxisLabel,
+} from "./barChartAxes";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -52,6 +65,8 @@ type RuntimeChartWidgetProps<Type extends DashboardRuntimeWidget["type"]> = {
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const DASHBOARD_CHART_ANIMATION_MS = 600;
+const CIRCULAR_CHART_VISIBLE_SLICE_LIMIT = 6;
+const CIRCULAR_CHART_OTHER_LABEL = "기타";
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -97,18 +112,6 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
-function formatCategoryAxisLabel(value: unknown) {
-  const text = String(value ?? "");
-  const dayMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (dayMatch) return `${dayMatch[1].slice(2)}.${dayMatch[2]}.${dayMatch[3]}`;
-
-  const monthMatch = text.match(/^(\d{4})-(\d{2})$/);
-  if (monthMatch) return `${monthMatch[1].slice(2)}.${monthMatch[2]}`;
-
-  if (text.length > 10) return `${text.slice(0, 9)}...`;
-  return text;
-}
-
 function firstNumericKey(row: SimpleRow | undefined) {
   if (!row) return null;
   return Object.keys(row).find((key) => typeof row[key] === "number") ?? null;
@@ -132,7 +135,7 @@ function numericValue(row: SimpleRow, key: string | null) {
 function labelValue(row: SimpleRow, key: string | null, fallback: string, dateUnit?: DashboardWidgetDateUnit) {
   const value = key ? row[key] : undefined;
   if (value === null || value === undefined || value === "") return fallback;
-  if (dateUnit) return bucketDateLabel(value, dateUnit) ?? String(value);
+  if (dateUnit) return bucketTimeLabel(value, dateUnit) ?? String(value);
   return String(value);
 }
 
@@ -179,17 +182,6 @@ function sortRows(rows: SimpleRow[], sortKey: string | undefined, sortDirection:
   return [...rows].sort((a, b) => compareValues(a[sortKey], b[sortKey]) * direction);
 }
 
-function bucketDateLabel(value: unknown, dateUnit: DashboardWidgetDateUnit) {
-  const date = value instanceof Date ? value : new Date(String(value));
-  if (!Number.isFinite(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  if (dateUnit === "year") return String(year);
-  if (dateUnit === "month") return `${year}-${month}`;
-  return `${year}-${month}-${day}`;
-}
-
 function groupedChartPoints({
   aggregation,
   dateUnit,
@@ -202,7 +194,7 @@ function groupedChartPoints({
   aggregation: DashboardWidgetAggregation;
   dateUnit?: DashboardWidgetDateUnit;
   labelKey: string | null;
-  limit: number;
+  limit?: number;
   rows: SimpleRow[];
   sortByLabel?: boolean;
   valueKey: string | null;
@@ -238,7 +230,50 @@ function groupedChartPoints({
     return first - second;
   });
 
-  return points.slice(0, limit);
+  return typeof limit === "number" ? points.slice(0, Math.max(0, limit)) : points;
+}
+
+function circularChartTotal(points: ChartPoint[]) {
+  return points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
+}
+
+function compactCircularChartPoints(points: ChartPoint[], visibleSliceLimit: number) {
+  const positivePoints = points
+    .map((point, index) => ({
+      index,
+      point: {
+        ...point,
+        value: Math.max(0, point.value),
+      },
+    }))
+    .filter(({ point }) => point.value > 0)
+    .sort((left, right) => right.point.value - left.point.value || left.index - right.index)
+    .map(({ point }) => point);
+  const safeLimit = Math.max(1, Math.floor(visibleSliceLimit));
+
+  if (positivePoints.length <= safeLimit) return positivePoints;
+
+  const visiblePoints = positivePoints.slice(0, safeLimit);
+  const hiddenTotal = circularChartTotal(positivePoints.slice(safeLimit));
+  if (hiddenTotal <= 0) return visiblePoints;
+
+  const visibleOtherIndex = visiblePoints.findIndex((point) => point.label === CIRCULAR_CHART_OTHER_LABEL);
+  if (visibleOtherIndex >= 0) {
+    return visiblePoints.map((point, index) => (
+      index === visibleOtherIndex
+        ? { ...point, value: point.value + hiddenTotal }
+        : point
+    ));
+  }
+
+  return [
+    ...visiblePoints,
+    {
+      label: CIRCULAR_CHART_OTHER_LABEL,
+      sortValue: CIRCULAR_CHART_OTHER_LABEL,
+      value: hiddenTotal,
+    },
+  ];
 }
 
 function groupedSeriesChartPoints({
@@ -250,6 +285,7 @@ function groupedSeriesChartPoints({
   rows,
   seriesKey,
   sortByLabel = false,
+  takeLatest = false,
   valueKey,
 }: {
   aggregation: DashboardWidgetAggregation;
@@ -260,6 +296,7 @@ function groupedSeriesChartPoints({
   rows: SimpleRow[];
   seriesKey?: string;
   sortByLabel?: boolean;
+  takeLatest?: boolean;
   valueKey: string | null;
 }) {
   const labelGroups = new Map<string, {
@@ -296,7 +333,9 @@ function groupedSeriesChartPoints({
     return a.order - b.order;
   });
 
-  const visibleLabels = labels.slice(0, limit);
+  const visibleLabels = takeLatest
+    ? boundedTimeSeriesSlice(labels, labels.map((group) => group.label), limit)
+    : labels.slice(0, limit);
   const categories = visibleLabels.map((group) => group.label);
   const series = seriesLabels.map((seriesLabel) => ({
     data: visibleLabels.map((group) => {
@@ -407,13 +446,6 @@ function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, select
   return null;
 }
 
-function formatAxisNumber(value: number) {
-  return new Intl.NumberFormat("ko-KR", {
-    maximumFractionDigits: 1,
-    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
-  }).format(value);
-}
-
 function buildBaseChartOptions(color: string): ApexOptions {
   return {
     chart: {
@@ -454,7 +486,7 @@ function buildBaseChartOptions(color: string): ApexOptions {
       strokeDashArray: 4,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 700,
       labels: {
         colors: "#475569",
@@ -504,14 +536,14 @@ function buildBaseChartOptions(color: string): ApexOptions {
         color: "#cbd5e1",
       },
       labels: {
-        formatter: (value) => formatCategoryAxisLabel(value),
+        formatter: (value) => formatChartCategoryAxisLabel(value),
         hideOverlappingLabels: true,
         maxHeight: 42,
         offsetY: 4,
         rotate: 0,
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
         trim: true,
@@ -522,14 +554,51 @@ function buildBaseChartOptions(color: string): ApexOptions {
     },
     yaxis: {
       labels: {
-        formatter: (value: number) => formatAxisNumber(value),
+        formatter: (value: number) => formatChartAxisNumber(value),
         style: {
           colors: "#64748b",
-          fontSize: "11px",
+          fontSize: "12px",
           fontWeight: 700,
         },
       },
     },
+  };
+}
+
+function timeSeriesAxisOptions(
+  baseOptions: ApexOptions,
+  categories: string[],
+  dateUnit?: DashboardWidgetDateUnit,
+) {
+  const timestamps = timeSeriesCategoryTimestamps(categories);
+  if (!timestamps) {
+    return {
+      tooltip: baseOptions.tooltip,
+      xaxis: {
+        ...baseOptions.xaxis,
+        categories,
+      } satisfies ApexOptions["xaxis"],
+    };
+  }
+
+  return {
+    tooltip: {
+      ...baseOptions.tooltip,
+      x: {
+        formatter: (value: number) => formatTimeAxisLabel(value, dateUnit, true),
+      },
+    } satisfies ApexOptions["tooltip"],
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories: timestamps,
+      labels: {
+        ...baseOptions.xaxis?.labels,
+        datetimeUTC: false,
+        formatter: (value, timestamp) => formatTimeAxisLabel(timestamp ?? value, dateUnit),
+      },
+      tickAmount: Math.min(6, Math.max(2, timestamps.length - 1)),
+      type: "datetime",
+    } satisfies ApexOptions["xaxis"],
   };
 }
 
@@ -561,7 +630,7 @@ function buildCircularChartOptions(color: string): ApexOptions {
       enabled: false,
     },
     legend: {
-      fontSize: "12px",
+      fontSize: "13px",
       fontWeight: 800,
       labels: {
         colors: "#475569",
@@ -713,7 +782,19 @@ function VisualizationRequestWidget({
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useDashboardAssistantRequestGate(JSON.stringify([assistantContext?.activeDatasetId, assistantContext?.dashboardId, assistantContext?.pageId, widget.id]), () => { setIsSaving(false); assistantContext?.onWorkingWidgetChange?.(null); });
+  const assistantWidgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+  const surfaceKey = JSON.stringify([
+    assistantContext?.dashboardId,
+    assistantContext?.pageId ?? widget.pageId,
+    widget.id,
+  ]);
+  const surfaceKeyRef = useRef(surfaceKey);
+  surfaceKeyRef.current = surfaceKey;
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([
+    assistantContext?.activeDatasetId,
+    surfaceKey,
+    dashboardAssistantWidgetContextSignature(assistantWidgets),
+  ]), () => { setIsSaving(false); assistantContext?.onWorkingWidgetChange?.(null); });
 
   useEffect(() => {
     setPrompt(savedPrompt);
@@ -756,7 +837,7 @@ function VisualizationRequestWidget({
         return;
       }
 
-      const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+      const submissionSurfaceKey = surfaceKey;
       lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-widget-assistant", version: assistantContext?.pageId ?? widget.pageId, params: { currentDatasetId: assistantContext?.activeDatasetId ?? widget.datasetId ?? null, dashboardId: assistantContext?.dashboardId, prompt: nextPrompt, widgetId: widget.id } });
       const response = await requestDashboardAssistant({
         dashboardId: assistantContext?.dashboardId,
@@ -766,11 +847,10 @@ function VisualizationRequestWidget({
         prompt: nextPrompt,
         selectedWidgetId: widget.id,
         widgetId: widget.id,
-        widgets: widgets.map(buildDashboardAssistantWidgetContext),
+        widgets: assistantWidgets.map(buildDashboardAssistantWidgetContext),
       }, { signal: lease.signal });
       if (!requests.current.isCurrent(lease)) return;
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
-      const configPatch = widgetPatch?.config ?? response.configPatch;
       if (widgetPatch && onApplyWidgetPatch) {
         if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
           throw new Error("AI가 시각화 위젯으로 변환할 type 또는 datasetId를 만들지 못했습니다.");
@@ -786,13 +866,10 @@ function VisualizationRequestWidget({
           },
         });
         if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
-      } else if (configPatch && Object.keys(configPatch).length > 0) {
-        const applied = await onPatchConfig({ prompt: nextPrompt, ...configPatch });
-        if (applied !== true) throw new Error("시각화 변경사항을 저장하지 못했습니다.");
       } else {
         throw new Error(response.message?.trim() || "AI가 적용 가능한 위젯 변경을 생성하지 못했습니다.");
       }
-      if (!requests.current.isCurrent(lease)) return;
+      if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setRequestTone("success");
       setMessage([
         "AI가 생성한 시각화 변경을 편집기에 적용했습니다.",
@@ -849,8 +926,6 @@ function visualizationResponseWidgetPatch(
     ),
   );
   if (updateAction) return updateAction.patch;
-
-  if (response.widgetPatch) return response.widgetPatch;
 
   const createAction = response.actions.find(
     (action): action is DashboardAssistantCreateWidgetAction => action.type === "create_widget",
@@ -1037,6 +1112,10 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const orientation = widget.config.orientation ?? "vertical";
+  const isHorizontal = orientation === "horizontal";
+  const axisFormatters = barChartAxisLabelFormatters(orientation);
+  const baseYAxis = Array.isArray(baseOptions.yaxis) ? baseOptions.yaxis[0] : baseOptions.yaxis;
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1050,13 +1129,25 @@ function BarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"
     plotOptions: {
       bar: {
         borderRadius: 5,
-        horizontal: widget.config.orientation === "horizontal",
+        horizontal: isHorizontal,
         columnWidth: "48%",
       },
     },
     xaxis: {
       ...baseOptions.xaxis,
       categories: chartData.categories,
+      labels: {
+        ...baseOptions.xaxis?.labels,
+        formatter: axisFormatters.x,
+      },
+    },
+    yaxis: {
+      ...baseYAxis,
+      labels: {
+        ...baseYAxis?.labels,
+        formatter: axisFormatters.y,
+        ...(isHorizontal ? { maxWidth: 220 } : {}),
+      },
     },
   };
 
@@ -1074,10 +1165,11 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     dateUnit: widget.config.dateUnit,
     defaultSeriesName: aggregationLabels[aggregation],
     labelKey,
-    limit: 12,
+    limit: TIME_SERIES_POINT_LIMIT,
     rows,
     seriesKey: widget.config.seriesKey,
     sortByLabel: true,
+    takeLatest: true,
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
@@ -1085,6 +1177,7 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1102,10 +1195,8 @@ function LineChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
       ...baseOptions.stroke,
       curve: widget.config.curve ?? "smooth",
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-    },
+    tooltip: timeAxis.tooltip,
+    xaxis: timeAxis.xaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="line" widget={widget} />;
@@ -1122,10 +1213,11 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
     dateUnit: widget.config.dateUnit,
     defaultSeriesName: aggregationLabels[aggregation],
     labelKey,
-    limit: 12,
+    limit: TIME_SERIES_POINT_LIMIT,
     rows,
     seriesKey: widget.config.seriesKey,
     sortByLabel: true,
+    takeLatest: true,
     valueKey,
   });
   if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
@@ -1133,6 +1225,7 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
   const colors = colorsFromConfig(widget.config.color);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
+  const timeAxis = timeSeriesAxisOptions(baseOptions, chartData.categories, widget.config.dateUnit);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -1160,10 +1253,8 @@ function AreaChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<
       curve: "smooth",
       width: 2,
     },
-    xaxis: {
-      ...baseOptions.xaxis,
-      categories: chartData.categories,
-    },
+    tooltip: timeAxis.tooltip,
+    xaxis: timeAxis.xaxis,
   };
 
   return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={chartData.series} type="area" widget={widget} />;
@@ -1183,10 +1274,11 @@ function PieLikeChartWidget({
   const aggregation = aggregationValue(widget.config.aggregation);
   const labelKey = widget.config.labelKey || firstTextKey(firstRow);
   const valueKey = widget.config.valueKey || firstNumericKey(firstRow);
-  const points = groupedChartPoints({ aggregation, labelKey, limit: 6, rows, valueKey });
-  if (!points.length) return <EmptyWidgetData />;
+  const allPoints = groupedChartPoints({ aggregation, labelKey, rows, valueKey });
+  const points = compactCircularChartPoints(allPoints, CIRCULAR_CHART_VISIBLE_SLICE_LIMIT);
+  if (!allPoints.length || !points.length) return <EmptyWidgetData />;
 
-  const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
+  const total = circularChartTotal(allPoints);
   if (total <= 0) return <EmptyWidgetData />;
 
   const colors = colorsForSlots(widget.config.color, points.length);
@@ -1227,7 +1319,7 @@ function PieLikeChartWidget({
     labels: points.map((point) => point.label),
     legend: {
       ...baseOptions.legend,
-      position: "right",
+      show: false,
     },
     plotOptions: piePlotOptions,
     stroke: {
@@ -1238,7 +1330,48 @@ function PieLikeChartWidget({
   };
   const series = points.map((point) => Math.max(0, point.value));
 
-  return <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={series} type={chartType} widget={widget} />;
+  return (
+    <div className="asklake-circular-chart-widget">
+      <div className="asklake-circular-chart-plot">
+        <RuntimeApexChart onSelectColorSlot={onSelectColorSlot} options={options} series={series} type={chartType} widget={widget} />
+      </div>
+      <ul className="asklake-circular-chart-legend" aria-label="차트 범례" tabIndex={0}>
+        {points.map((point, index) => {
+          const legendContent = (
+            <>
+              <span
+                aria-hidden="true"
+                className="asklake-circular-chart-legend-swatch"
+                style={{ backgroundColor: colors[index] }}
+              />
+              <span className="asklake-circular-chart-legend-label" title={point.label}>{point.label}</span>
+              <span className="asklake-circular-chart-legend-value">{formatCell(point.value)}</span>
+            </>
+          );
+
+          return (
+            <li className="asklake-circular-chart-legend-item" key={`${point.label}-${index}`}>
+              {onSelectColorSlot ? (
+                <button
+                  aria-label={`${point.label} 색상 변경`}
+                  className="asklake-circular-chart-legend-content interactive"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectColorSlot(index);
+                  }}
+                  type="button"
+                >
+                  {legendContent}
+                </button>
+              ) : (
+                <div className="asklake-circular-chart-legend-content">{legendContent}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function DonutChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetProps<"donut_chart">) {
@@ -1291,7 +1424,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
           },
           value: {
             color: "#0f172a",
-            formatter: (value: number) => `${formatAxisNumber(value)}%`,
+            formatter: (value: number) => `${formatChartAxisNumber(value)}%`,
             fontSize: "24px",
             fontWeight: 900,
           },

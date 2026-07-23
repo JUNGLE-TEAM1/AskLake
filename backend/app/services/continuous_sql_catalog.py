@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
@@ -23,9 +22,15 @@ from app.services.resource_permission_service import dataset_with_persisted_perm
 
 
 class ContinuousSqlCatalogResolver:
-    def __init__(self, db: Session) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        allow_clickhouse_streaming: bool = False,
+    ) -> None:
         self.db = db
         self.catalog_repository = CatalogRepository(db)
+        self.allow_clickhouse_streaming = allow_clickhouse_streaming
 
     def resolve_authorized(
         self,
@@ -69,7 +74,12 @@ class ContinuousSqlCatalogResolver:
             relations.append(self._relation(payload, dataset))
         return relations
 
-    def resolve_current(self, dataset_id: str) -> CatalogRelation:
+    def resolve_current(
+        self,
+        dataset_id: str,
+        *,
+        legacy_binding: dict[str, Any] | None = None,
+    ) -> CatalogRelation:
         payload = self.catalog_repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ContinuousSqlValidationError(
@@ -77,21 +87,38 @@ class ContinuousSqlCatalogResolver:
                 "A bound Catalog Dataset no longer exists.",
                 {"datasetId": dataset_id},
             )
-        return self._relation(payload, CatalogDatasetResponse.model_validate(payload))
+        return self._relation(
+            payload,
+            CatalogDatasetResponse.model_validate(payload),
+            legacy_binding=legacy_binding,
+        )
 
     def _relation(
         self,
         payload: dict[str, Any],
         dataset: CatalogDatasetResponse,
+        *,
+        legacy_binding: dict[str, Any] | None = None,
     ) -> CatalogRelation:
-        stream_job = self._stream_job(dataset.id)
-        mode = self._relation_mode(payload, dataset.id, stream_job)
-        normalized_mapping = self._query_engine_mapping(payload, dataset.id)
+        legacy_mode = str((legacy_binding or {}).get("mode") or "").strip().casefold()
+        use_legacy_binding = (
+            dataset.relation_mode is None
+            and legacy_mode in {"streaming", "static"}
+        )
+        mode = legacy_mode if use_legacy_binding else self._relation_mode(dataset)
+        producer_job = None if use_legacy_binding else self._producer_job(dataset, mode)
+        effective_payload = dict(payload)
+        if use_legacy_binding and isinstance(
+            (legacy_binding or {}).get("streamingSource"),
+            dict,
+        ):
+            effective_payload["streamingSource"] = dict(legacy_binding["streamingSource"])
+        normalized_mapping = self._relation_mapping(effective_payload, dataset.id, mode)
         schema, fingerprint, snapshot_id = self._schema_identity(
-            payload, dataset.id, stream_job, mode,
+            effective_payload, dataset.id, producer_job, mode,
         )
 
-        streaming_source = self._streaming_source(payload, stream_job) if mode == "streaming" else None
+        streaming_source = self._streaming_source(effective_payload, producer_job) if mode == "streaming" else None
         if mode == "streaming" and not streaming_source:
             raise ContinuousSqlValidationError(
                 "CONTINUOUS_SQL_STREAM_SOURCE_UNRESOLVED",
@@ -116,38 +143,173 @@ class ContinuousSqlCatalogResolver:
             schema_fingerprint=fingerprint,
             snapshot_id=snapshot_id,
             streaming_source=streaming_source,
-            unique_key_sets=tuple(unique_key_sets(payload)),
-            estimated_row_count=parse_row_count(payload.get("estimatedRowCount") or payload.get("rows")),
+            unique_key_sets=tuple(unique_key_sets(effective_payload)),
+            estimated_row_count=parse_row_count(
+                effective_payload.get("estimatedRowCount")
+                or effective_payload.get("rows")
+            ),
+            producer_job_id=dataset.producer_job_id,
+            producer_job_kind=dataset.producer_job_kind,
+            execution_mode=dataset.execution_mode,
+            source_kind=dataset.source_kind,
+            runtime_status=(producer_job.status if producer_job is not None else dataset.runtime_status),
         )
 
-    def _stream_job(self, dataset_id: str) -> ETLJobModel | None:
-        return self.db.scalars(
-            select(ETLJobModel)
-            .where(
-                ETLJobModel.dataset_id == dataset_id,
-                ETLJobModel.execution_mode == "continuous",
-                ETLJobModel.source_type.ilike("%kafka%"),
+    def _producer_job(
+        self,
+        dataset: CatalogDatasetResponse,
+        mode: str,
+    ) -> ETLJobModel | None:
+        producer_job_id = str(dataset.producer_job_id or "").strip()
+        metadata = {
+            "producerJobKind": dataset.producer_job_kind,
+            "executionMode": dataset.execution_mode,
+            "sourceKind": dataset.source_kind,
+        }
+        if not producer_job_id:
+            if mode == "streaming":
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED",
+                    "Streaming Continuous SQL input requires an authoritative Kafka producer Job.",
+                    {"datasetId": dataset.id},
+                )
+            if any(str(value or "").strip() for value in metadata.values()):
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED",
+                    "Catalog producer metadata is incomplete.",
+                    {"datasetId": dataset.id, **metadata},
+                )
+            return None
+
+        job = self.db.get(ETLJobModel, producer_job_id)
+        if job is None or job.dataset_id != dataset.id:
+            raise ContinuousSqlValidationError(
+                (
+                    "CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED"
+                    if mode == "streaming"
+                    else "CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED"
+                ),
+                "Catalog producer metadata does not resolve to the Dataset-producing Job.",
+                {"datasetId": dataset.id, "producerJobId": producer_job_id},
             )
-            .order_by(ETLJobModel.updated_at.desc(), ETLJobModel.created_at.desc())
-            .limit(1)
-        ).first()
+
+        expected_kind = str(dataset.producer_job_kind or "").strip().casefold()
+        expected_execution = str(dataset.execution_mode or "").strip().casefold()
+        expected_source = str(dataset.source_kind or "").strip().casefold()
+        actual_kind = str(job.job_kind or "pipeline").strip().casefold()
+        actual_execution = str(job.execution_mode or "snapshot").strip().casefold()
+        actual_source = (
+            "kafka"
+            if is_kafka_producer_job(job)
+            else "sql"
+            if str(job.source_type or "").strip().casefold() == "sql result"
+            else "etl"
+        )
+        if not all((expected_kind, expected_execution, expected_source)) or (
+            expected_kind != actual_kind
+            or expected_execution != actual_execution
+            or expected_source != actual_source
+        ):
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED",
+                "Catalog producer metadata does not match the Dataset-producing Job.",
+                {
+                    "datasetId": dataset.id,
+                    "producerJobId": producer_job_id,
+                    "expected": metadata,
+                    "actual": {
+                        "producerJobKind": actual_kind,
+                        "executionMode": actual_execution,
+                        "sourceKind": actual_source,
+                    },
+                },
+            )
+        if mode == "streaming" and not (
+            actual_execution == "continuous" and actual_source == "kafka"
+        ):
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_REALTIME_PRODUCER_REQUIRED",
+                "Streaming Continuous SQL input must be produced by a Kafka Continuous Job.",
+                {"datasetId": dataset.id, "producerJobId": producer_job_id},
+            )
+        if mode == "static" and actual_execution == "continuous":
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_INPUT_RELATION_UNSUPPORTED",
+                "A Continuous producer cannot be bound as a static Continuous SQL input.",
+                {"datasetId": dataset.id, "producerJobId": producer_job_id},
+            )
+        return job
 
     @staticmethod
-    def _relation_mode(
+    def _relation_mode(dataset: CatalogDatasetResponse) -> str:
+        explicit_mode = str(dataset.relation_mode or "").strip().casefold()
+        if explicit_mode not in {"streaming", "static"}:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_RELATION_MODE_REQUIRED",
+                "Catalog relationMode is required for Continuous SQL inputs.",
+                {"datasetId": dataset.id},
+            )
+        return explicit_mode
+
+    def _relation_mapping(
+        self,
         payload: dict[str, Any],
         dataset_id: str,
-        stream_job: ETLJobModel | None,
-    ) -> str:
-        explicit_mode = str(
-            payload.get("relationMode") or payload.get("relation_mode") or ""
+        mode: str,
+    ) -> dict[str, Any]:
+        if mode == "streaming" and self.allow_clickhouse_streaming:
+            return self._clickhouse_stream_mapping(payload, dataset_id)
+        return self._query_engine_mapping(payload, dataset_id)
+
+    @staticmethod
+    def _clickhouse_stream_mapping(
+        payload: dict[str, Any],
+        dataset_id: str,
+    ) -> dict[str, Any]:
+        mapping = payload.get("clickhouseTable") or payload.get("clickhouse_table")
+        storage_format = str(
+            payload.get("storageFormat") or payload.get("storage_format") or ""
         ).strip().casefold()
-        if explicit_mode and explicit_mode not in {"streaming", "static"}:
+        if not isinstance(mapping, dict) or storage_format != "clickhouse":
             raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_RELATION_MODE_INVALID",
-                "Catalog relationMode must be streaming or static.",
-                {"datasetId": dataset_id, "relationMode": explicit_mode},
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
             )
-        return explicit_mode or ("streaming" if stream_job is not None else "static")
+        database = str(mapping.get("database") or "").strip()
+        table = str(mapping.get("table") or "").strip()
+        if not database or not table:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
+            )
+        active_binding = next(
+            (
+                item
+                for item in payload.get("physicalBindings") or []
+                if isinstance(item, dict)
+                and str(item.get("role") or "").strip().casefold() in {"raw", "serving"}
+                and str(item.get("engine") or "").strip().casefold() == "clickhouse"
+                and str(item.get("status") or "").strip().casefold() == "active"
+                and str(item.get("database") or "").strip() == database
+                and str(item.get("table") or "").strip() == table
+            ),
+            None,
+        )
+        if active_binding is None:
+            raise ContinuousSqlValidationError(
+                "CONTINUOUS_SQL_STREAM_NOT_CLICKHOUSE_BOUND",
+                "ClickHouse V2 streaming relations require an active ClickHouse table binding.",
+                {"datasetId": dataset_id},
+            )
+        return {
+            "catalog": "clickhouse",
+            "schema": database,
+            "table": table,
+            "format": "clickhouse",
+            "partitionColumns": [],
+        }
 
     @staticmethod
     def _query_engine_mapping(payload: dict[str, Any], dataset_id: str) -> dict[str, Any]:
@@ -324,6 +486,16 @@ def source_config_fields(value: Any) -> dict[str, str]:
             if key and field_value:
                 fields[key] = field_value
     return fields
+
+
+def is_kafka_producer_job(job: ETLJobModel) -> bool:
+    if "kafka" in str(job.source_type or "").casefold():
+        return True
+    fields = source_config_fields(job.source_config or [])
+    return bool(
+        (fields.get("broker / endpoint") or fields.get("broker"))
+        and (fields.get("topic / queue name") or fields.get("topic"))
+    )
 
 
 def first_text(*values: Any) -> str:

@@ -1,0 +1,609 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["namespace", "deploymentProfile", "global", "frontend", "backend", "airflow", "mskSmoke", "sparkApplication", "realtimeV1", "trino"],
+  "properties": {
+    "namespace": {"type": "string", "const": "asklake-dev"},
+    "deploymentProfile": {"type": "string", "enum": ["standard", "realtime-v1-only"]},
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "awsRegion"],
+      "properties": {
+        "environment": {"type": "string", "const": "production"},
+        "awsRegion": {"type": "string", "minLength": 1}
+      }
+    },
+    "frontend": {"$ref": "#/$defs/frontend"},
+    "backend": {"$ref": "#/$defs/backend"},
+    "airflow": {"$ref": "#/$defs/airflow"},
+    "mskSmoke": {"$ref": "#/$defs/mskSmoke"},
+    "sparkApplication": {"$ref": "#/$defs/sparkApplication"},
+    "realtimeV1": {"$ref": "#/$defs/realtimeV1"},
+    "trino": {"$ref": "#/$defs/trino"}
+  },
+  "allOf": [
+    {
+      "not": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": true}
+                }
+              }
+            }
+          },
+          "realtimeV1": {
+            "properties": {
+              "enabled": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": {"const": "realtime-v1-only"}
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": false},
+                  "apiControlPlane": {"const": "local"},
+                  "continuousSqlJoinEnabled": {"const": false},
+                  "dashboardSyncMode": {"const": "polling"},
+                  "realtimeEventsEnabled": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": {"const": "standard"},
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "apiControlPlane": {"const": "external_ec2"}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "optionalImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$|^$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/$defs/resourceValues"},
+        "limits": {"$ref": "#/$defs/resourceValues"}
+      }
+    },
+    "resourceValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": {"type": "string", "minLength": 1},
+        "memory": {"type": "string", "minLength": 1}
+      }
+    },
+    "trinoWorkerResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/$defs/trinoWorkerResourceValues"},
+        "limits": {"$ref": "#/$defs/trinoWorkerResourceValues"}
+      }
+    },
+    "trinoWorkerResourceValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": {"type": "string", "pattern": "^(?:[1-9][0-9]*|[1-9][0-9]*m|0\\.[0-9]+|[1-9][0-9]*\\.[0-9]+)$"},
+        "memory": {"type": "string", "pattern": "^[1-9][0-9]*(?:Ki|Mi|Gi|Ti)$"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "port"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "amd64NodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kubernetes.io/arch"],
+      "properties": {
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
+    "generalNodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asklake.io/workload-class", "kubernetes.io/arch"],
+      "properties": {
+        "asklake.io/workload-class": {"type": "string", "const": "general"},
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
+    "sparkNodeSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asklake.io/workload-class", "kubernetes.io/arch"],
+      "properties": {
+        "asklake.io/workload-class": {"type": "string", "const": "spark"},
+        "kubernetes.io/arch": {"type": "string", "const": "amd64"}
+      }
+    },
+    "sparkTolerations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "operator", "value", "effect"],
+        "properties": {
+          "key": {"type": "string", "const": "asklake.io/workload-class"},
+          "operator": {"type": "string", "const": "Equal"},
+          "value": {"type": "string", "const": "spark"},
+          "effect": {"type": "string", "const": "NoSchedule"}
+        }
+      }
+    },
+    "secretKeyMap": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "backendRealtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "apiControlPlane", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "apiControlPlane": {"type": "string", "enum": ["external_ec2", "local"]},
+        "continuousSqlJoinEnabled": {"type": "boolean"},
+        "dashboardSyncMode": {"type": "string", "enum": ["polling", "hybrid", "sse"]},
+        "realtimeEventsEnabled": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": false}}},
+          "then": {
+            "properties": {
+              "continuousSqlJoinEnabled": {"const": false},
+              "dashboardSyncMode": {"const": "polling"},
+              "realtimeEventsEnabled": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"enabled": {"const": true}}},
+          "then": {
+            "properties": {
+              "apiControlPlane": {"const": "local"},
+              "continuousSqlJoinEnabled": {"const": true},
+              "dashboardSyncMode": {"enum": ["hybrid", "sse"]},
+              "realtimeEventsEnabled": {"const": true}
+            }
+          }
+        }
+      ]
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicas": {"type": "integer", "minimum": 2},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-frontend"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {"name": {"const": "frontend"}}
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "nodeSelector", "image", "serviceAccountName", "service", "config", "realtime", "runtimeSecret", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicas": {"type": "integer", "minimum": 2},
+        "nodeSelector": {"$ref": "#/$defs/amd64NodeSelector"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-backend"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {"name": {"const": "fastapi"}}
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["aiQueryProvider", "airflowApiAuthMode", "corsOrigins", "bootstrapAdminEmail", "kafkaBroker", "kafkaAuthMode", "kafkaAllowedTopicPrefixes", "objectStorageProvider", "rawBucket", "outputBucket", "outputPrefix", "allowedBuckets", "sparkRunner", "sparkExecutionLeaseSeconds", "sparkResourcePlannerMode", "sparkResourceTargetPartitionBytes", "sparkResourceTargetPartitionsPerExecutor", "sparkResourceMinExecutors", "sparkResourceMaxExecutors", "airflowApiBaseUrl", "airflowDagId", "trinoEnabled", "trinoBaseUrl", "trinoCatalog", "trinoSchema", "trinoUser", "trinoWarehouseBucket", "trinoWarehousePrefix", "trinoResultStorageBucket"],
+          "properties": {
+            "aiQueryProvider": {"type": "string", "enum": ["direct", "gateway"]},
+            "airflowApiAuthMode": {"type": "string", "enum": ["api_token", "username_password"]},
+            "corsOrigins": {"type": "string", "pattern": "^https://"},
+            "bootstrapAdminEmail": {"type": "string", "format": "email"},
+            "kafkaBroker": {"type": "string", "minLength": 1},
+            "kafkaAuthMode": {"type": "string", "const": "iam"},
+            "kafkaAllowedTopicPrefixes": {"type": "string", "const": "asklake."},
+            "objectStorageProvider": {"type": "string", "const": "aws"},
+            "rawBucket": {"type": "string", "minLength": 1},
+            "outputBucket": {"type": "string", "minLength": 1},
+            "outputPrefix": {"type": "string", "minLength": 1},
+            "allowedBuckets": {"type": "string", "minLength": 1},
+            "sparkRunner": {"type": "string", "const": "kubernetes"},
+            "sparkExecutionLeaseSeconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+            "sparkResourcePlannerMode": {"type": "string", "enum": ["off", "shadow", "enforce"]},
+            "sparkResourceTargetPartitionBytes": {"type": "integer", "const": 134217728},
+            "sparkResourceTargetPartitionsPerExecutor": {"type": "integer", "const": 384},
+            "sparkResourceMinExecutors": {"type": "integer", "const": 1},
+            "sparkResourceMaxExecutors": {"type": "integer", "const": 4},
+            "airflowApiBaseUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080$"},
+            "airflowDagId": {"type": "string", "const": "asklake_etl_job"},
+            "trinoEnabled": {"type": "boolean", "const": true},
+            "trinoBaseUrl": {"type": "string", "pattern": "^https://.+:8443$"},
+            "trinoCatalog": {"type": "string", "const": "iceberg"},
+            "trinoSchema": {"type": "string", "minLength": 1},
+            "trinoUser": {"type": "string", "minLength": 1},
+            "trinoWarehouseBucket": {"type": "string", "minLength": 1},
+            "trinoWarehousePrefix": {"type": "string", "minLength": 1},
+            "trinoResultStorageBucket": {"type": "string", "minLength": 1}
+          }
+        },
+        "realtime": {"$ref": "#/$defs/backendRealtime"},
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "trinoCaKey", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-backend-runtime"},
+            "trinoCaKey": {"type": "string", "const": "trino-ca.pem"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["databaseUrl", "bootstrapAdminPassword", "aiGatewayServiceToken", "aiMcpServiceToken", "aiContextSigningSecret", "openaiApiKey", "airflowApiToken", "airflowPassword", "airflowExecutionApiToken", "airflowInternalToken", "trinoAuthUsername", "trinoAuthPassword", "trinoMaterializerUsername", "trinoMaterializerPassword", "trinoResultCursorSecret", "trinoQueryConfirmationSecret"]
+            }
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "airflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-airflow"},
+        "service": {"$ref": "#/$defs/service"},
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["executor", "authManager", "executionApiServerUrl", "internalBaseUrl", "executionApiBaseUrl", "dagId", "jwtIssuer", "apiUsername", "apiUserEmail", "rdsCaConfigMapName", "rdsCaKey", "rdsCaMountPath", "internalTimeoutSeconds", "executionApiTimeoutSeconds"],
+          "properties": {
+            "executor": {"type": "string", "const": "LocalExecutor"},
+            "authManager": {"type": "string", "minLength": 1},
+            "executionApiServerUrl": {"type": "string", "pattern": "^http://airflow-apiserver:8080/execution/$"},
+            "internalBaseUrl": {"type": "string", "const": "http://fastapi:8080"},
+            "executionApiBaseUrl": {"type": "string", "const": "http://fastapi:8080"},
+            "dagId": {"type": "string", "const": "asklake_etl_job"},
+            "jwtIssuer": {"type": "string", "minLength": 1},
+            "apiUsername": {"type": "string", "const": "airflow"},
+            "apiUserEmail": {"type": "string", "format": "email"},
+            "rdsCaConfigMapName": {"type": "string", "const": "asklake-rds-ca"},
+            "rdsCaKey": {"type": "string", "const": "ap-northeast-2-bundle.pem"},
+            "rdsCaMountPath": {"type": "string", "const": "/var/run/asklake/rds-ca/ap-northeast-2-bundle.pem"},
+            "internalTimeoutSeconds": {"type": "integer", "minimum": 30},
+            "executionApiTimeoutSeconds": {"type": "integer", "minimum": 30}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-airflow-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["databaseUrl", "apiPassword", "executionApiToken", "internalToken", "fernetKey", "jwtSecret"]
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiServer", "scheduler", "dagProcessor", "migration"],
+          "properties": {
+            "apiServer": {"$ref": "#/$defs/resources"},
+            "scheduler": {"$ref": "#/$defs/resources"},
+            "dagProcessor": {"$ref": "#/$defs/resources"},
+            "migration": {"$ref": "#/$defs/resources"}
+          }
+        }
+      }
+    },
+    "mskSmoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "serviceAccountName", "topic", "timeoutSeconds", "resources"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "serviceAccountName": {"type": "string", "const": "asklake-msk-smoke"},
+        "topic": {"type": "string", "minLength": 1},
+        "timeoutSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "sparkApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "nodeSelector", "tolerations", "image", "serviceAccountName", "runId", "jobId", "mainApplicationFile", "timeoutSeconds", "kafka", "output", "checkpoint", "warehouse", "target", "runtimeSecret", "driver", "executor"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "nodeSelector": {"$ref": "#/$defs/sparkNodeSelector"},
+        "tolerations": {"$ref": "#/$defs/sparkTolerations"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-spark"},
+        "runId": {"type": "string"},
+        "jobId": {"type": "string"},
+        "mainApplicationFile": {"type": "string", "pattern": "^local:///"},
+        "timeoutSeconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "kafka": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["broker", "topic", "consumerGroup", "fixtureBatchId", "expectedCount", "authMode", "iamAuthJar"],
+          "properties": {
+            "broker": {"type": "string", "pattern": "^([^,\\s]+:9098)(,[^,\\s]+:9098)*$"},
+            "topic": {"type": "string", "const": "asklake.eks-mvp.fixture.v1"},
+            "consumerGroup": {"type": "string", "const": "asklake-eks-mvp-spark-v1"},
+            "fixtureBatchId": {"type": "string"},
+            "expectedCount": {"type": "integer", "minimum": 1, "maximum": 100000},
+            "authMode": {"type": "string", "const": "iam"},
+            "iamAuthJar": {"type": "string", "const": "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar"}
+          }
+        },
+        "output": {
+          "allOf": [{"$ref": "#/$defs/bucketPrefix"}],
+          "properties": {"prefix": {"type": "string", "const": "eks-mvp/output"}}
+        },
+        "checkpoint": {
+          "allOf": [{"$ref": "#/$defs/bucketPrefix"}],
+          "properties": {"prefix": {"type": "string", "const": "eks-mvp/checkpoints"}}
+        },
+        "warehouse": {"$ref": "#/$defs/bucketPrefix"},
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["catalog", "namespace", "table", "writeMode"],
+          "properties": {
+            "catalog": {"type": "string", "const": "iceberg"},
+            "namespace": {"type": "string", "const": "asklake"},
+            "table": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+            "writeMode": {"type": "string", "const": "replace"}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-spark-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["jdbcUrl", "jdbcUser", "jdbcPassword"]
+            }
+          }
+        },
+        "driver": {"$ref": "#/$defs/sparkPod"},
+        "executor": {
+          "allOf": [{"$ref": "#/$defs/sparkPod"}],
+          "required": ["instances"],
+          "properties": {"instances": {"type": "integer", "minimum": 1, "maximum": 4}}
+        }
+      }
+    },
+    "sparkPod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cores", "memory", "memoryOverhead", "resources"],
+      "properties": {
+        "cores": {"type": "integer", "minimum": 1},
+        "memory": {"type": "string", "minLength": 1},
+        "memoryOverhead": {"type": "string", "minLength": 1},
+        "instances": {"type": "integer", "minimum": 1},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "realtimeV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "serviceAccountName", "runtimeConfigMapName", "ownerTransfer", "nodeSelector", "runtimeDocument", "spark", "kafka", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicas": {"type": "integer", "const": 1},
+        "serviceAccountName": {"type": "string", "const": "asklake-realtime-v1-worker"},
+        "runtimeConfigMapName": {"type": "string", "const": "asklake-runtime"},
+        "ownerTransfer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["approved", "previousOwnerFenced", "generation"],
+          "properties": {
+            "approved": {"type": "boolean"},
+            "previousOwnerFenced": {"type": "boolean"},
+            "generation": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$|^$"}
+          }
+        },
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+        "runtimeDocument": {
+          "allOf": [{"$ref": "#/$defs/bucketPrefix"}],
+          "properties": {"prefix": {"type": "string", "const": "continuous-runtime"}}
+        },
+        "spark": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serviceAccountName", "runtimeSecretName", "mainApplicationFile"],
+          "properties": {
+            "serviceAccountName": {"type": "string", "const": "asklake-realtime-v1-spark"},
+            "runtimeSecretName": {"type": "string", "const": "asklake-spark-runtime"},
+            "mainApplicationFile": {"type": "string", "const": "local:///opt/asklake/scripts/kafka_continuous_stream.py"}
+          }
+        },
+        "kafka": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authMode", "iamAuthJar", "topicPrefix", "consumerGroupPrefix"],
+          "properties": {
+            "authMode": {"type": "string", "const": "iam"},
+            "iamAuthJar": {"type": "string", "const": "local:///opt/asklake/jars/aws-msk-iam-auth-2.3.6-asklake-shaded.jar"},
+            "topicPrefix": {"type": "string", "const": "asklake.eks-realtime.fixture"},
+            "consumerGroupPrefix": {"type": "string", "const": "asklake-eks-realtime-v1"}
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "bucketPrefix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "prefix"],
+      "properties": {
+        "bucket": {"type": "string", "minLength": 1},
+        "prefix": {"type": "string", "minLength": 1}
+      }
+    },
+    "trino": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "distributed", "nodeSelector", "image", "serviceAccountName", "service", "config", "runtimeSecret", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicas": {"type": "integer", "const": 1},
+        "distributed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "workerReplicas": {"type": "integer", "const": 2},
+            "includeCoordinator": {"type": "boolean", "const": false},
+            "workerNodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+            "workerTerminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+            "workerResources": {"$ref": "#/$defs/trinoWorkerResources"}
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["enabled"],
+                "properties": {"enabled": {"const": true}}
+              },
+              "then": {
+                "required": ["workerReplicas", "includeCoordinator", "workerNodeSelector", "workerTerminationGracePeriodSeconds", "workerResources"]
+              },
+              "else": {"maxProperties": 1}
+            }
+          ]
+        },
+        "nodeSelector": {"$ref": "#/$defs/generalNodeSelector"},
+        "image": {"$ref": "#/$defs/image"},
+        "serviceAccountName": {"type": "string", "const": "asklake-trino"},
+        "service": {
+          "allOf": [{"$ref": "#/$defs/service"}],
+          "properties": {
+            "name": {"const": "asklake-trino"},
+            "port": {"const": 8443}
+          }
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["catalogName", "jdbcCatalogName", "schemaName", "warehouseBucket", "warehousePrefix", "queryUser", "materializerUser"],
+          "properties": {
+            "catalogName": {"type": "string", "const": "iceberg"},
+            "jdbcCatalogName": {"type": "string", "minLength": 1},
+            "schemaName": {"type": "string", "const": "asklake"},
+            "warehouseBucket": {"type": "string", "minLength": 1},
+            "warehousePrefix": {"type": "string", "minLength": 1},
+            "queryUser": {"type": "string", "minLength": 1},
+            "materializerUser": {"type": "string", "minLength": 1}
+          }
+        },
+        "runtimeSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys"],
+          "properties": {
+            "name": {"type": "string", "const": "asklake-trino-runtime"},
+            "keys": {
+              "allOf": [{"$ref": "#/$defs/secretKeyMap"}],
+              "required": ["jdbcUrl", "jdbcUser", "jdbcPassword", "keystorePassword", "internalSharedSecret", "keystoreFile", "passwordFile"]
+            }
+          }
+        },
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    }
+  }
+}

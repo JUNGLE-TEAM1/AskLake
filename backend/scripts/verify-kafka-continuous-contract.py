@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.continuous_runtime import command_transition, record_runtime_command
 from app.models.etl import ETLJobModel, KafkaContinuousMaintenanceRunModel
 from app.repositories import etl_repository
 from app.schemas.catalog import DatasetMaterializationRun
@@ -134,8 +135,8 @@ def main() -> None:
     config = etl_service.continuous_config_from_request(request, "JOB-CONTINUOUS-CONTRACT")
     assert config == {
         "initialOffsetPolicy": "earliest",
-        "triggerIntervalSeconds": 30,
-        "maxOffsetsPerTrigger": 10000,
+        "triggerIntervalSeconds": 10,
+        "maxOffsetsPerTrigger": 100,
         "schemaEvolutionPolicy": {
             "additiveNullable": "allow",
             "missingRequired": "quarantine",
@@ -297,7 +298,7 @@ def main() -> None:
         etl_repository.list_runs_for_job = lambda _db, _job_id: []
         etl_repository.save_kafka_continuous_command = lambda _db, saved_job, _runtime: etl_repository.job_to_schema(None, saved_job)
         etl_service.with_job_permissions = lambda _db, job_schema, _actor: job_schema
-        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action: {"action": action, "containerState": "starting"}
+        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action, _options=None: {"action": action, "containerState": "starting"}
 
         response = etl_service.command_kafka_continuous_job(None, job, "startContinuous", ActorContext())
         assert response.action == "etl.continuous.start_requested"
@@ -350,7 +351,7 @@ def main() -> None:
             None,
         )
         etl_repository.stage_kafka_continuous_batch = lambda _db, batch: stored_batches.setdefault(batch.id, batch)
-        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action: {
+        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action, _options=None: {
             "action": action,
             "containerState": "starting",
             "workerAttemptId": f"attempt-{len(stored_sessions) + 1}",
@@ -886,14 +887,19 @@ def main() -> None:
                 "quarantinedCount": 0,
                 "failedCount": 0,
             }), encoding="utf-8")
-            runtime.status = "pausing"
+            runtime.status = "running"
+            pause_transition = command_transition(runtime.status, "pauseContinuous")
+            runtime.metrics = record_runtime_command(runtime.metrics, pause_transition)
+            runtime.status = pause_transition.next_status.value
             runtime.failed_count = 0
             etl_service.continuous_worker_status = lambda _job, _runtime: {"containerState": "exited", "containerId": "attempt-graceful", "exitCode": 143}
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert runtime.status == "paused"
             assert runtime.failed_count == 0
 
-            runtime.status = "stopping"
+            stop_transition = command_transition(runtime.status, "stopContinuous")
+            runtime.metrics = record_runtime_command(runtime.metrics, stop_transition)
+            runtime.status = stop_transition.next_status.value
             etl_service.refresh_kafka_continuous_runtime(None, job)
             assert runtime.status == "stopped"
 

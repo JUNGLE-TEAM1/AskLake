@@ -76,7 +76,14 @@ class ClickHouseRealtimeCompiler:
             raise ValueError("validated realtime runtime SQL is not a SELECT")
         fact_alias = self._fact_alias(runtime)
         output_names = {name.casefold() for name, _type in plan.output_schema}
-        for metadata in ("kafka_topic", "event_key", "payload_hash"):
+        for metadata in (
+            "kafka_topic",
+            "kafka_partition",
+            "kafka_offset",
+            "kafka_timestamp",
+            "event_key",
+            "payload_hash",
+        ):
             if metadata not in output_names:
                 runtime.select(exp.column(metadata, table=fact_alias).as_(metadata), append=True, copy=False)
         self._inject_temporal_predicates(runtime, plan, fact_alias)
@@ -170,7 +177,7 @@ class ClickHouseRealtimeCompiler:
         projections = [
             f"{quote_clickhouse_identifier(name)} AS {quote_clickhouse_identifier(name)}"
             if name in _FACT_METADATA
-            else f"{_json_value(name, type_name)} AS {quote_clickhouse_identifier(name)}"
+            else f"{_fact_value(relation, name, type_name)} AS {quote_clickhouse_identifier(name)}"
             for name, type_name in relation.schema
         ]
         for metadata in sorted(_FACT_METADATA):
@@ -272,6 +279,44 @@ def _json_value(column: str, type_name: str) -> str:
     identifier = validate_clickhouse_identifier(column)
     path = quote_clickhouse_string(identifier)
     raw = f"JSONExtractString(payload, {path})"
+    normalized = str(type_name).strip().casefold()
+    if normalized in {"byte", "short", "int", "integer", "long", "bigint"}:
+        return f"toInt64OrNull({raw})"
+    if normalized in {"float", "double", "decimal", "number"}:
+        return f"toFloat64OrNull({raw})"
+    if normalized in {"boolean", "bool"}:
+        return f"toUInt8OrNull({raw})"
+    if normalized in {"timestamp", "datetime", "date"}:
+        return f"parseDateTime64BestEffortOrNull({raw}, 3)"
+    return raw
+
+
+def _fact_value(relation: RealtimeRelation, column: str, type_name: str) -> str:
+    parsing = relation.record_parsing or {}
+    if parsing.get("enabled") is not True:
+        return _json_value(column, type_name)
+    if parsing.get("delimiterKind", "whitespace") != "whitespace":
+        raise ValueError("realtime fact parsing supports only whitespace records")
+    delimiter = str(parsing.get("delimiterPattern") or r"\s+")
+    if delimiter != r"\s+":
+        raise ValueError("realtime fact parsing requires the \\s+ delimiter")
+    columns = [item for item in parsing.get("columns", []) if isinstance(item, dict)]
+    positions = {
+        str(item.get("name") or "").casefold(): int(item.get("position", -1)) + 1
+        for item in columns
+    }
+    position = positions.get(column.casefold())
+    if position is None or position <= 0:
+        raise ValueError(f"realtime fact parsing column is missing: {column}")
+    expected = int(parsing.get("expectedFieldCount") or 0)
+    if expected <= 0 or len(columns) != expected:
+        raise ValueError("realtime fact parsing contract is invalid")
+    fields = f"splitByRegexp({quote_clickhouse_string(delimiter)}, trimBoth(payload))"
+    raw = f"if(length({fields}) = {expected}, {fields}[{position}], NULL)"
+    return _cast_raw_value(raw, type_name)
+
+
+def _cast_raw_value(raw: str, type_name: str) -> str:
     normalized = str(type_name).strip().casefold()
     if normalized in {"byte", "short", "int", "integer", "long", "bigint"}:
         return f"toInt64OrNull({raw})"

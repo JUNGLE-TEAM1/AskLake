@@ -83,6 +83,10 @@
   padding: 0;
 }
 
+.catalog-results-header .catalog-view-switcher {
+  justify-self: end;
+}
+
 .catalog-result-list {
   display: grid;
   gap: 12px;

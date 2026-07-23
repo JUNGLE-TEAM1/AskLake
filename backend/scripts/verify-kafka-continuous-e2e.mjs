@@ -4,7 +4,12 @@ if (process.env.ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E !== "true") {
   throw new Error("Set ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true after starting deploy/docker-compose.prod.yml.");
 }
 
-const composeFile = process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILE || "../deploy/docker-compose.prod.yml";
+const composeFiles = (process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILES
+  || process.env.ASKLAKE_CONTINUOUS_COMPOSE_FILE
+  || "../deploy/docker-compose.prod.yml")
+  .split(/[;,]/)
+  .map((value) => value.trim())
+  .filter(Boolean);
 const envFile = process.env.ASKLAKE_CONTINUOUS_ENV_FILE || "../deploy/.env";
 const baseUrl = process.env.ASKLAKE_CONTINUOUS_E2E_BASE_URL || "http://127.0.0.1:8080";
 const suffix = Date.now().toString(36);
@@ -284,11 +289,21 @@ function killWorker() {
 }
 
 function restartBackend() {
-  run("docker", ["compose", "--env-file", envFile, "-f", composeFile, "restart", "backend"]);
+  run("docker", composeArgs("restart", "backend"));
 }
 
 function rpk(args, input = "") {
-  run("docker", ["compose", "--env-file", envFile, "-f", composeFile, "exec", "-T", "redpanda", "rpk", ...args], input);
+  run("docker", composeArgs("exec", "-T", "redpanda", "rpk", ...args), input);
+}
+
+function composeArgs(...args) {
+  return [
+    "compose",
+    "--env-file",
+    envFile,
+    ...composeFiles.flatMap((composeFile) => ["-f", composeFile]),
+    ...args,
+  ];
 }
 
 function run(command, args, input = "") {

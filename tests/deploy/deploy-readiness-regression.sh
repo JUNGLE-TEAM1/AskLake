@@ -56,6 +56,28 @@ make_fake_docker
 make_fake_node
 make_fake_npm
 
+cat >"$TEMP_DIR/python-wrong-version" <<'EOF'
+#!/usr/bin/env bash
+echo 'error: deploy readiness requires Python 3.13; ASKLAKE_PYTHON_BIN resolved to Python 3.12' >&2
+exit 1
+EOF
+chmod +x "$TEMP_DIR/python-wrong-version"
+
+wrong_version_log="$TEMP_DIR/wrong-version-docker-calls.log"
+if ASKLAKE_DOCKER_BIN="$TEMP_DIR/docker" \
+  ASKLAKE_NODE_BIN="$TEMP_DIR/node" \
+  ASKLAKE_NPM_BIN="$TEMP_DIR/npm" \
+  ASKLAKE_PYTHON_BIN="$TEMP_DIR/python-wrong-version" \
+  ASKLAKE_DOCKER_CALL_LOG="$wrong_version_log" \
+  bash "$ROOT_DIR/scripts/verify-deploy-readiness.sh" >/dev/null 2>&1
+then
+  record_fail 'readiness rejects Python versions other than 3.13'
+elif [[ ! -s "$wrong_version_log" ]]; then
+  record_pass 'readiness rejects non-3.13 Python before Docker work'
+else
+  record_fail 'readiness rejects non-3.13 Python before Docker work'
+fi
+
 record_path="$TEMP_DIR/record.json"
 call_log="$TEMP_DIR/docker-calls.log"
 if ASKLAKE_DOCKER_BIN="$TEMP_DIR/docker" \

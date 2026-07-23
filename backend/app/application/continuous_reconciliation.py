@@ -33,6 +33,7 @@ class ReconciliationAction(StrEnum):
     IGNORE_STALE_REPORT = "ignore_stale_report"
     RECOVER_PUBLICATION = "recover_publication"
     RESTART_WORKER = "restart_worker"
+    WAIT_FOR_TERMINAL_CONFIRMATION = "wait_for_terminal_confirmation"
     WAIT_FOR_REPORT = "wait_for_report"
     RECORD_REPORT_ERROR = "record_report_error"
 
@@ -97,11 +98,16 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
     # before the restart path would immediately undo the new start request.
     terminal_intent_is_current = evidence.desired_state != "running" and (
         requested_terminal
-        or evidence.public_status in {"pausing", "stopping"}
+        or evidence.public_status in {"pausing", "paused", "stopping", "stopped"}
     )
-    if terminal_intent_is_current and evidence.container_state in {"exited", "missing"}:
+    if terminal_intent_is_current and evidence.container_state in {
+        "exited", "missing", "not_running",
+    }:
         terminal_status = requested_terminal or (
-            "paused" if evidence.public_status == "pausing" else "stopped"
+            "paused"
+            if evidence.public_status in {"pausing", "paused"}
+            or evidence.desired_state == "paused"
+            else "stopped"
         )
         if evidence.report_state is JsonDocumentState.FOUND:
             return ReconciliationDecision(
@@ -116,11 +122,39 @@ def decide_reconciliation(evidence: RuntimeEvidence) -> ReconciliationDecision:
             "terminal command is durable and the worker is no longer active",
             terminal_status=terminal_status,
         )
+    if terminal_intent_is_current and evidence.container_state in {
+        "created", "healthy", "running", "starting", "unknown",
+    }:
+        return ReconciliationDecision(
+            ReconciliationAction.WAIT_FOR_TERMINAL_CONFIRMATION,
+            ReconciliationCertainty.UNCERTAIN,
+            "terminal command is durable but authoritative worker termination is not confirmed",
+            terminal_status=requested_terminal or (
+                "paused"
+                if evidence.public_status in {"pausing", "paused"}
+                or evidence.desired_state == "paused"
+                else "stopped"
+            ),
+        )
     if (
         evidence.observed_worker_attempt_id
         and evidence.expected_worker_attempt_id
         and evidence.observed_worker_attempt_id != evidence.expected_worker_attempt_id
     ):
+        if (
+            evidence.desired_state == "running"
+            and evidence.contract_initialized
+            # REST runner state is an ephemeral file.  A control-plane
+            # redeploy can therefore make a conclusively stale report pair
+            # with an `unknown` runner status; the committed start intent is
+            # still the only safe worker identity to submit.
+            and evidence.container_state in {"exited", "missing", "unknown"}
+        ):
+            return ReconciliationDecision(
+                ReconciliationAction.RESTART_WORKER,
+                ReconciliationCertainty.CONFIRMED,
+                "stale worker is terminal; submit the durable current start intent",
+            )
         return ReconciliationDecision(
             ReconciliationAction.IGNORE_STALE_REPORT,
             ReconciliationCertainty.CONFIRMED,
@@ -205,6 +239,11 @@ def reconcile_continuous_runtime(
     )
     if not signal_applied:
         return
+    if worker_status.get("worker") == "kafka_connect_clickhouse_v2":
+        _reconcile_clickhouse_kafka_ingest_v2(
+            db, job, runtime, worker_status, container_state, worker, hooks
+        )
+        return
     payload, contract_initialized, evidence = _runtime_evidence(
         runtime, report_document, worker_status, container_state
     )
@@ -222,6 +261,16 @@ def reconcile_continuous_runtime(
 
     if decision.action is ReconciliationAction.APPLY_TERMINAL_INTENT:
         _apply_terminal_intent(db, job, runtime, decision.terminal_status or "stopped", container_state, hooks)
+        return
+    if decision.action is ReconciliationAction.WAIT_FOR_TERMINAL_CONFIRMATION:
+        _wait_for_terminal_confirmation(
+            db,
+            job,
+            runtime,
+            evidence,
+            container_state,
+            hooks,
+        )
         return
     if decision.action is ReconciliationAction.IGNORE_STALE_REPORT:
         runtime.metrics = record_runtime_error(
@@ -285,14 +334,31 @@ def _apply_deferred_terminal_signal(
     container_state: str,
 ) -> tuple[dict[str, Any], str, bool]:
     """Let the lease owner apply a terminal intent persisted by the web API."""
-    should_signal = runtime.status in {"pausing", "stopping"} and container_state in {
-        "running", "starting", "created", "healthy",
+    terminal_transition = runtime.status in {"pausing", "paused", "stopping", "stopped"}
+    should_signal = terminal_transition and container_state in {
+        "running", "starting", "created", "healthy", "unknown",
     }
     if not should_signal:
         return worker_status, container_state, True
-    action = "pause" if runtime.status == "pausing" else "stop"
+    action = "pause" if runtime.status in {"pausing", "paused"} else "stop"
+    signal_identity = _terminal_signal_identity(runtime, action)
+    if _terminal_signal_already_applied(runtime.metrics, signal_identity):
+        return worker_status, container_state, True
     try:
-        worker.command(job, runtime, action)
+        command_result = worker.command(
+            job,
+            runtime,
+            action,
+            _terminal_worker_options(runtime),
+        )
+        runtime.metrics = _record_terminal_signal(
+            runtime.metrics,
+            signal_identity,
+            command_result,
+        )
+        command_state = str(command_result.get("containerState") or "unknown")
+        if command_state in {"exited", "missing", "not_running"}:
+            return command_result, command_state, True
         worker_status = hooks.worker_status(job, runtime)
         return (
             worker_status,
@@ -300,6 +366,16 @@ def _apply_deferred_terminal_signal(
             True,
         )
     except Exception as exc:
+        recovered_status = hooks.worker_status(job, runtime)
+        recovered_state = str(recovered_status.get("containerState") or "unknown")
+        recovered_action = _optional_string(recovered_status.get("requestedAction"))
+        if recovered_state in {"exited", "missing", "not_running"} or recovered_action == action:
+            runtime.metrics = _record_terminal_signal(
+                runtime.metrics,
+                signal_identity,
+                recovered_status,
+            )
+            return recovered_status, recovered_state, True
         runtime.metrics = record_runtime_error(
             runtime.metrics,
             stage=ContinuousErrorStage.SUBMISSION,
@@ -311,6 +387,225 @@ def _apply_deferred_terminal_signal(
         runtime.last_error = str(exc)
         etl_repository.save_kafka_continuous_command(db, job, runtime)
         return worker_status, container_state, False
+
+
+def _wait_for_terminal_confirmation(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    evidence: RuntimeEvidence,
+    container_state: str,
+    hooks: ContinuousReconciliationHooks,
+) -> None:
+    observed = observed_state_from_evidence(runtime.status, container_state)
+    runtime.status = derive_public_status(evidence.desired_state, observed).value
+    runtime.metrics = record_runtime_observation(
+        runtime.metrics,
+        observed,
+        default_public_status=runtime.status,
+    )
+    if container_state == "unknown":
+        message = (
+            "Continuous worker termination is pending because the authoritative "
+            "runner state is unavailable."
+        )
+        runtime.metrics = record_runtime_error(
+            runtime.metrics,
+            stage=ContinuousErrorStage.RECONCILIATION,
+            code="terminal_worker_state_unknown",
+            message=message,
+            retryable=True,
+            context={
+                "jobId": job.id,
+                "desiredState": evidence.desired_state,
+                "expectedWorkerAttemptId": evidence.expected_worker_attempt_id,
+                "observedWorkerAttemptId": evidence.observed_worker_attempt_id,
+            },
+        )
+        runtime.last_error = message
+    job.status = "running"
+    if evidence.desired_state == "paused":
+        job.last_state = "Continuous worker 일시정지 완료 확인 중"
+        job.progress = {"label": "일시정지 확인 중", "value": 95}
+    else:
+        job.last_state = "Continuous worker 중지 완료 확인 중"
+        job.progress = {"label": "중지 확인 중", "value": 95}
+    hooks.sync_session(db, runtime)
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
+
+
+def _terminal_worker_options(
+    runtime: KafkaContinuousRuntimeModel,
+) -> dict[str, Any] | None:
+    contract = runtime_contract_projection(
+        runtime.metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
+    worker_attempt_id = _optional_string(contract.get("fencingToken"))
+    return {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
+
+
+def _terminal_signal_identity(
+    runtime: KafkaContinuousRuntimeModel,
+    action: str,
+) -> dict[str, Any]:
+    contract = runtime_contract_projection(
+        runtime.metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
+    return {
+        "action": action,
+        "stateRevision": int(contract.get("stateRevision") or 0),
+        "workerAttemptId": _optional_string(contract.get("fencingToken")),
+    }
+
+
+def _terminal_signal_already_applied(
+    metrics: dict[str, Any] | None,
+    identity: dict[str, Any],
+) -> bool:
+    previous = (metrics or {}).get("terminalSignal")
+    if not isinstance(previous, dict):
+        return False
+    if not all(previous.get(key) == value for key, value in identity.items()):
+        return False
+    return previous.get("containerState") in {"exited", "missing", "not_running"}
+
+
+def _record_terminal_signal(
+    metrics: dict[str, Any] | None,
+    identity: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **(metrics or {}),
+        "terminalSignal": {
+            **identity,
+            "containerState": str(result.get("containerState") or "unknown"),
+            "requestedAction": _optional_string(result.get("requestedAction")),
+        },
+    }
+
+
+def _reconcile_clickhouse_kafka_ingest_v2(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    worker_status: dict[str, Any],
+    container_state: str,
+    worker: KafkaRuntimeGateway,
+    hooks: ContinuousReconciliationHooks,
+) -> None:
+    """Project Kafka Connect V2 evidence without waiting for a Spark report."""
+
+    requested_action = _optional_string(worker_status.get("requestedAction"))
+    if container_state in {"exited", "missing"}:
+        if runtime.status in {"pausing", "stopping"} or requested_action in {
+            "pause",
+            "stop",
+            "terminate",
+        }:
+            terminal_status = (
+                "paused"
+                if runtime.status == "pausing" or requested_action == "pause"
+                else "stopped"
+            )
+            _apply_clickhouse_kafka_ingest_v2_terminal(
+                db, job, runtime, terminal_status, container_state, hooks
+            )
+            return
+        if runtime.status in {"starting", "running"}:
+            _restart_missing_worker(db, job, runtime, worker, hooks)
+            return
+
+    if container_state not in {"running", "starting", "created", "healthy"}:
+        message = _optional_string(worker_status.get("error"))
+        if message:
+            if runtime.status != "failed":
+                runtime.failed_count = int(runtime.failed_count or 0) + 1
+            runtime.status = "failed"
+            runtime.last_error = message
+            runtime.metrics = record_runtime_error(
+                runtime.metrics,
+                stage=ContinuousErrorStage.EXECUTION,
+                code="kafka_connect_clickhouse_v2_status_failed",
+                message=message,
+                retryable=True,
+                context={"jobId": job.id},
+            )
+            job.status = "failed"
+            job.last_state = "Kafka Connect → ClickHouse V2 수집 상태 확인 실패"
+            job.progress = None
+            hooks.sync_session(db, runtime)
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return
+
+    try:
+        total_rows = max(0, int(worker_status.get("storedCount") or 0))
+    except (TypeError, ValueError):
+        total_rows = 0
+    observed = "running" if container_state in {"running", "healthy"} else "starting"
+    runtime.consumed_count = max(int(runtime.consumed_count or 0), total_rows)
+    runtime.stored_count = max(int(runtime.stored_count or 0), total_rows)
+    runtime.status = observed
+    runtime.last_error = None
+    runtime.metrics = {
+        **(runtime.metrics or {}),
+        "clickhouseKafkaIngestV2": {
+            "offsets": list(worker_status.get("clickhouseOffsets") or []),
+            "publicationRevision": worker_status.get("publicationRevision"),
+            "storedCount": total_rows,
+            "worker": "kafka_connect_clickhouse_v2",
+        },
+    }
+    runtime.metrics = clear_runtime_error(runtime.metrics)
+    runtime.metrics = record_runtime_observation(
+        runtime.metrics,
+        observed,
+        default_public_status=observed,
+        worker_attempt_id=_optional_string(worker_status.get("workerAttemptId")),
+    )
+    job.status = "running"
+    if observed == "running" and total_rows > 0:
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 중 · Catalog/Dashboard 게시됨"
+        job.progress = {"label": "Kafka Connect V2 수집 중", "value": 70}
+    elif observed == "running":
+        job.last_state = "Kafka Connect → ClickHouse V2 첫 offset 대기"
+        job.progress = {"label": "Kafka Connect V2 첫 데이터 대기", "value": 20}
+    else:
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 시작 확인 중"
+        job.progress = {"label": "Kafka Connect V2 시작 확인 중", "value": 10}
+    hooks.sync_session(db, runtime)
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
+
+
+def _apply_clickhouse_kafka_ingest_v2_terminal(
+    db: Session,
+    job: ETLJobModel,
+    runtime: KafkaContinuousRuntimeModel,
+    terminal_status: str,
+    container_state: str,
+    hooks: ContinuousReconciliationHooks,
+) -> None:
+    runtime.status = terminal_status
+    runtime.metrics = clear_runtime_error(runtime.metrics)
+    runtime.metrics = record_runtime_observation(
+        runtime.metrics,
+        observed_state_from_evidence(terminal_status, container_state),
+        default_public_status=terminal_status,
+    )
+    runtime.last_error = None
+    if terminal_status == "paused":
+        job.status = "paused"
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 일시정지됨"
+    else:
+        job.status = "stopped"
+        job.last_state = "Kafka Connect → ClickHouse V2 수집 중지됨"
+    job.progress = None
+    hooks.sync_session(db, runtime)
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
 
 
 def _runtime_evidence(
@@ -452,7 +747,14 @@ def _restart_missing_worker(
     hooks: ContinuousReconciliationHooks,
 ) -> None:
     try:
-        result = worker.command(job, runtime, "start")
+        contract = runtime_contract_projection(
+            runtime.metrics,
+            public_status=runtime.status,
+            legacy_error=runtime.last_error,
+        )
+        worker_attempt_id = _optional_string(contract.get("fencingToken"))
+        options = {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
+        result = worker.command(job, runtime, "start", options)
     except Exception as exc:
         hooks.mark_failed(
             job,

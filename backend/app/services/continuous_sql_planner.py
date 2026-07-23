@@ -11,7 +11,7 @@ from sqlglot.errors import ParseError
 
 
 PLAN_VERSION = "continuous-sql-v1"
-DEFAULT_TRIGGER_INTERVAL_SECONDS = 5
+DEFAULT_TRIGGER_INTERVAL_SECONDS = 10
 RUNTIME_METADATA_COLUMNS = (
     "kafka_timestamp",
     "kafka_partition",
@@ -46,6 +46,11 @@ class CatalogRelation:
     streaming_source: dict[str, Any] | None
     unique_key_sets: tuple[tuple[str, ...], ...]
     estimated_row_count: int | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
 
     @property
     def schema_by_name(self) -> dict[str, tuple[str, str]]:
@@ -111,6 +116,7 @@ NONDETERMINISTIC_FUNCTIONS = {
     "RANDOM",
     "UUID",
 }
+SUPPORTED_AGGREGATES = {"COUNT", "COUNT_IF", "SUM", "MIN", "MAX", "AVG"}
 
 
 class ContinuousSqlPlanner:
@@ -123,6 +129,7 @@ class ContinuousSqlPlanner:
         trigger_interval_seconds: int = DEFAULT_TRIGGER_INTERVAL_SECONDS,
         static_broadcast_max_rows: int = 100_000,
         static_cache_max_rows: int = 5_000_000,
+        static_pruning_max_keys: int = 100,
         max_output_rows_per_input: int = 10,
     ) -> CompiledContinuousSqlPlan:
         relation_list = list(relations)
@@ -162,6 +169,7 @@ class ContinuousSqlPlanner:
             "maxOutputRowsPerInput": max(1, int(max_output_rows_per_input)),
             "staticBroadcastMaxRows": max(0, int(static_broadcast_max_rows)),
             "staticCacheMaxRows": max(0, int(static_cache_max_rows)),
+            "staticPruningMaxKeys": max(1, int(static_pruning_max_keys)),
             "relations": bindings,
             "joins": compiled_joins,
             "outputSchema": output_schema,
@@ -170,8 +178,9 @@ class ContinuousSqlPlanner:
             "capabilities": {
                 "streamRelationCount": 1,
                 "staticRelationCount": len(static),
-                "stateful": False,
+                "stateful": next(expression.find_all(exp.AggFunc), None) is not None,
                 "watermarkRequired": False,
+                "aggregateDelta": next(expression.find_all(exp.AggFunc), None) is not None,
             },
         }
         plan_hash = canonical_hash(plan_without_hash)
@@ -313,8 +322,7 @@ class ContinuousSqlPlanner:
     def _validate_query_shape(self, expression: exp.Select) -> None:
         forbidden_args = {
             "distinct": "CONTINUOUS_SQL_DISTINCT_UNSUPPORTED",
-            "group": "CONTINUOUS_SQL_AGGREGATION_UNSUPPORTED",
-            "having": "CONTINUOUS_SQL_AGGREGATION_UNSUPPORTED",
+            "having": "CONTINUOUS_SQL_HAVING_UNSUPPORTED",
             "order": "CONTINUOUS_SQL_ORDER_BY_UNSUPPORTED",
             "limit": "CONTINUOUS_SQL_LIMIT_UNSUPPORTED",
             "offset": "CONTINUOUS_SQL_LIMIT_UNSUPPORTED",
@@ -336,15 +344,26 @@ class ContinuousSqlPlanner:
                 "CONTINUOUS_SQL_WINDOW_UNSUPPORTED",
                 "Window expressions require a separate stateful capability.",
             )
-        if next(expression.find_all(exp.AggFunc), None) is not None:
-            raise ContinuousSqlValidationError(
-                "CONTINUOUS_SQL_AGGREGATION_UNSUPPORTED",
-                "Aggregations require a separate stateful capability.",
-            )
+        for aggregate in expression.find_all(exp.AggFunc):
+            name = function_name(aggregate)
+            if name not in SUPPORTED_AGGREGATES:
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_AGGREGATE_UNSUPPORTED",
+                    "Continuous SQL supports COUNT, COUNT_IF, SUM, MIN, MAX, and AVG aggregate deltas.",
+                    {"function": name},
+                )
+            if isinstance(aggregate.this, exp.Distinct):
+                raise ContinuousSqlValidationError(
+                    "CONTINUOUS_SQL_DISTINCT_UNSUPPORTED",
+                    "Distinct aggregates are not supported in Continuous SQL.",
+                    {"function": name},
+                )
         for function in expression.find_all(exp.Func):
             if isinstance(function, exp.Connector):
                 continue
             name = function_name(function)
+            if isinstance(function, exp.AggFunc) and name in SUPPORTED_AGGREGATES:
+                continue
             if name in NONDETERMINISTIC_FUNCTIONS:
                 raise ContinuousSqlValidationError(
                     "CONTINUOUS_SQL_NONDETERMINISTIC_FUNCTION",
@@ -723,6 +742,10 @@ def infer_expression_type(
         return inferred[0] if inferred and len(set(inferred)) == 1 else "string"
     if isinstance(expression, exp.Func):
         name = function_name(expression)
+        if name in {"COUNT", "COUNT_IF"}:
+            return "long"
+        if name in {"SUM", "MIN", "MAX", "AVG"}:
+            return "double"
         if name in {"ABS", "CEIL", "CEILING", "FLOOR", "ROUND"}:
             return "double"
         if name == "LENGTH":
@@ -750,12 +773,12 @@ def runtime_sql_for(
         table.set("db", None)
         table.set("catalog", None)
     stream_alias = str(select_base_table(runtime).alias_or_name or "").strip()
+    aggregate_delta = next(runtime.find_all(exp.AggFunc), None) is not None
     for column_name in RUNTIME_METADATA_COLUMNS:
-        runtime.select(
-            exp.column(column_name, table=stream_alias or None).as_(column_name),
-            append=True,
-            copy=False,
-        )
+        lineage = exp.column(column_name, table=stream_alias or None)
+        if aggregate_delta:
+            lineage = exp.Max(this=lineage)
+        runtime.select(lineage.as_(column_name), append=True, copy=False)
     return runtime.sql(dialect="spark", normalize=True, pretty=False)
 
 
@@ -791,6 +814,11 @@ def relation_binding_payload(
         "streamingSource": relation.streaming_source,
         "uniqueKeySets": [list(item) for item in relation.unique_key_sets],
         "estimatedRowCount": relation.estimated_row_count,
+        "producerJobId": relation.producer_job_id,
+        "producerJobKind": relation.producer_job_kind,
+        "executionMode": relation.execution_mode,
+        "sourceKind": relation.source_kind,
+        "runtimeStatus": relation.runtime_status,
         "broadcastHint": broadcast_hint,
         "cacheHint": cache_hint,
         "referencedColumns": sorted(referenced, key=normalize_identifier),

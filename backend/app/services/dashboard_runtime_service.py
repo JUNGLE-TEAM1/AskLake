@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
+from app.domain.audit import AuditTargetType
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
@@ -69,7 +70,9 @@ from app.services.dashboard_physical_data import (
     dashboard_source_config,
     dashboard_widget_supports_incremental_merge,
     merge_dashboard_aggregate_states,
+    prune_dashboard_aggregate_state,
 )
+from app.services.dashboard_prepared_result import prepared_live_widget_response
 from app.services.dashboard_realtime_bridge import (
     append_dashboard_published_event,
     dashboard_datetime_to_iso,
@@ -100,10 +103,13 @@ class DashboardRuntimeService:
         catalog_repository: CatalogRepository,
         live_repository: DashboardLiveRepository | None = None,
         batch_result_repository: DashboardBatchResultRepository | None = None,
+        *,
+        prepared_live_results_only: bool = True,
     ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.live_repository = live_repository
+        self.prepared_live_results_only = prepared_live_results_only
         repository_db = getattr(repository, "db", None)
         self.batch_result_repository = batch_result_repository or (
             DashboardBatchResultRepository(repository_db)
@@ -284,15 +290,16 @@ class DashboardRuntimeService:
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = dashboard_widget_type_enum(request.type)
+        dataset_id = request.dataset_id
         widget = self.repository.create_widget(
             page.id,
             widget_type=widget_type.value,
             title=request.title,
-            dataset_id=request.dataset_id,
+            dataset_id=dataset_id,
             query_id=None,
             layout=self._layout_to_json(request.layout or default_dashboard_widget_layout()),
             config=self._config_to_json(widget_type, request.config),
-            data=self._resolve_widget_data(request.data, request.dataset_id),
+            data=self._resolve_widget_data(request.data, dataset_id),
         )
         self.repository.db.commit()
         return self._build_widget_mutation_response(
@@ -319,20 +326,21 @@ class DashboardRuntimeService:
         next_config = None
         if request.config is not None or type_changed:
             next_config = self._config_to_json(next_type, request.config)
+        next_dataset_id = request.dataset_id if "dataset_id" in request.model_fields_set else widget.dataset_id
         next_data = None
         update_data = False
         if "data" in request.model_fields_set:
-            next_data = self._resolve_widget_data(request.data, request.dataset_id)
+            next_data = self._resolve_widget_data(request.data, next_dataset_id)
             update_data = True
         elif "dataset_id" in request.model_fields_set:
-            next_data = self._resolve_widget_data(None, request.dataset_id)
+            next_data = self._resolve_widget_data(None, next_dataset_id)
             update_data = True
         widget = self.repository.update_widget(
             widget,
             widget_type=next_type.value if type_changed else None,
             title=request.title,
             update_title="title" in request.model_fields_set,
-            dataset_id=request.dataset_id,
+            dataset_id=next_dataset_id,
             update_dataset_id="dataset_id" in request.model_fields_set,
             config=next_config,
             data=next_data,
@@ -542,7 +550,7 @@ class DashboardRuntimeService:
                 status_code=exc.status_code,
                 target_id=dashboard.id,
                 target_name=dashboard.name,
-                target_type="dashboard",
+                target_type=AuditTargetType.DASHBOARD,
             )
             raise
         return dashboard
@@ -787,10 +795,14 @@ class DashboardRuntimeService:
         widget_type = DashboardRuntimeWidgetType(widget.type)
         config = self._normalize_widget_config(widget_type, widget.config)
         dataset_id = str(widget.dataset_id)
-        # ETL publishes Catalog metadata and freshness in one transaction while
-        # locking Catalog first. Use the same lock order so a widget can never
-        # pair an old S3 run list with a newer applied revision.
-        payload = self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        # Browser refreshes only read the last prepared result and must never
+        # wait behind a background calculation's row locks. Calculating workers
+        # retain the Catalog -> freshness -> result lock order.
+        payload = (
+            self.catalog_repository.get_dataset_payload(dataset_id)
+            if self.prepared_live_results_only
+            else self.catalog_repository.get_dataset_payload_for_update(dataset_id)
+        )
         catalog_payloads[dataset_id] = payload
         if payload is None:
             return self._live_widget_response(
@@ -802,10 +814,11 @@ class DashboardRuntimeService:
                 },
                 data=[],
             )
-
-        freshness = self.live_repository.get_freshness(dataset_id, for_update=True)
+        freshness = self.live_repository.get_freshness(
+            dataset_id,
+            for_update=not self.prepared_live_results_only,
+        )
         latest_revision = int(freshness.latest_revision or 0) if freshness is not None else 0
-
         if dataset_id not in session_errors:
             try:
                 dataset = dataset_with_persisted_permission_grants(
@@ -839,7 +852,6 @@ class DashboardRuntimeService:
                 config={**config, "error": error_code, "errorMessage": error_message},
                 data=[],
             )
-
         calculation_version = self._widget_calculation_version(
             widget_type,
             dataset_id,
@@ -849,13 +861,18 @@ class DashboardRuntimeService:
         saved = self.live_repository.get_widget_result(
             widget.id,
             calculation_version,
-            for_update=True,
+            for_update=not self.prepared_live_results_only,
         )
         saved_payload = dict(saved.result_payload or {}) if saved is not None else None
         saved_state = dict(saved.calculation_state or {}) if saved is not None else None
         saved_revision = int(saved.applied_revision or 0) if saved is not None else None
         saved_calculated_at = saved.calculated_at if saved is not None else None
         source_config = dashboard_source_config(config)
+        if self.prepared_live_results_only:
+            return prepared_live_widget_response(
+                self.live_repository, widget, config, calculation_version,
+                saved_payload, saved_revision, saved_calculated_at,
+            )
         if saved is not None and int(saved.applied_revision or 0) >= latest_revision:
             self.live_repository.db.commit()
             return self._live_widget_response(
@@ -866,7 +883,6 @@ class DashboardRuntimeService:
                 calculation_version=calculation_version,
                 calculated_at=saved_calculated_at,
             )
-
         computed_result: dict[str, Any] | None = None
         computed_state: dict[str, Any] = {}
         calculation_mode = "full"
@@ -898,7 +914,6 @@ class DashboardRuntimeService:
                     remote_budget=remote_budget, expected_binding_epoch=_binding_epoch(freshness),
                 )
                 calculation_mode = "full"
-
             persisted = self.live_repository.save_widget_result(
                 widget_id=widget.id,
                 calculation_version=calculation_version,
@@ -1001,6 +1016,7 @@ class DashboardRuntimeService:
         try:
             state = session.read_aggregate_state(widget_type.value, config)
             if state is not None:
+                state = prune_dashboard_aggregate_state(state)
                 return dashboard_result_from_aggregate_state(state), state
             return session.read_widget(widget_type.value, config), {}
         finally:

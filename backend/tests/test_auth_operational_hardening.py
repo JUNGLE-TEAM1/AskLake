@@ -53,7 +53,45 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
-    def test_legacy_demo_accounts_are_disabled_and_sessions_revoked(self) -> None:
+    def test_local_signup_creates_a_viewer_and_session(self) -> None:
+        local = SimpleNamespace(allows_public_signup=True)
+        with patch.object(auth_service, "settings", local):
+            session = AuthService(self.db).signup(
+                email=" New.User@Example.com ",
+                password="strong-local-password",
+                display_name="New User",
+            )
+
+        user = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "new.user@example.com"))
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user.role, "viewer")
+        self.assertEqual(user.groups, ["analytics"])
+        self.assertEqual(session["actor"]["id"], user.id)
+        self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
+
+    def test_session_contract_reports_the_runtime_signup_policy(self) -> None:
+        service = SimpleNamespace(actor_for_session=lambda _token: None)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), patch.object(
+                auth,
+                "settings",
+                SimpleNamespace(allows_public_signup=enabled),
+            ):
+                response = auth.get_session(
+                    service=service,
+                    db=self.db,
+                    session_token=None,
+                )
+
+            self.assertFalse(response.authenticated)
+            self.assertEqual(response.public_signup_enabled, enabled)
+            self.assertEqual(
+                response.model_dump(by_alias=True)["publicSignupEnabled"],
+                enabled,
+            )
+
+    def test_production_startup_preserves_existing_legacy_account_status_and_sessions(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
         with patch.object(auth_service, "settings", local):
             initialize_auth(self.db)
@@ -61,6 +99,10 @@ class OperationalAuthHardeningTests(unittest.TestCase):
             admin = self.db.get(AuthUserModel, "admin-user")
             assert admin is not None
             session = local_service.create_session(admin)
+            viewer = self.db.get(AuthUserModel, "demo-user")
+            assert viewer is not None
+            viewer.status = "disabled"
+            self.db.commit()
 
         production = SimpleNamespace(
             allows_header_auth_fallback=False,
@@ -70,17 +112,28 @@ class OperationalAuthHardeningTests(unittest.TestCase):
         )
         with patch.object(auth_service, "settings", production):
             initialize_auth(self.db)
-
-        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "disabled")
-        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "disabled")
-        self.assertIsNone(self.db.get(AuthSessionModel, str(session["token"])))
-
-        with (
-            patch.object(auth_service, "settings", production),
-            patch.object(self.db, "commit", wraps=self.db.commit) as commit,
-        ):
             initialize_auth(self.db)
-        commit.assert_not_called()
+
+        self.assertEqual(self.db.get(AuthUserModel, "admin-user").status, "active")
+        self.assertEqual(self.db.get(AuthUserModel, "demo-user").status, "disabled")
+        self.assertIsNotNone(self.db.get(AuthSessionModel, str(session["token"])))
+
+    def test_production_startup_does_not_seed_legacy_demo_accounts_without_opt_in(self) -> None:
+        production = SimpleNamespace(
+            allows_header_auth_fallback=False,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            bootstrap_admin_display_name="Production Owner",
+        )
+        with patch.object(auth_service, "settings", production):
+            initialize_auth(self.db)
+
+        self.assertIsNone(self.db.get(AuthUserModel, "admin-user"))
+        self.assertIsNone(self.db.get(AuthUserModel, "demo-user"))
+        bootstrap = self.db.scalar(select(AuthUserModel).where(AuthUserModel.email == "owner@example.com"))
+        assert bootstrap is not None
+        self.assertEqual(bootstrap.role, "admin")
+        self.assertEqual(bootstrap.status, "active")
 
     def test_production_demo_opt_in_preserves_active_accounts_and_sessions_across_restart(self) -> None:
         local = SimpleNamespace(allows_header_auth_fallback=True)
@@ -141,7 +194,6 @@ class OperationalAuthHardeningTests(unittest.TestCase):
                     patch.object(auth_service, "settings", configured),
                     patch.object(AuthService, "_ensure_tables") as ensure_tables,
                     patch.object(AuthService, "_ensure_demo_users") as ensure_demo_users,
-                    patch.object(AuthService, "_disable_legacy_demo_users") as disable_demo_users,
                     patch.object(AuthService, "_ensure_bootstrap_admin") as ensure_bootstrap_admin,
                     patch.object(auth_service, "hash_password") as hash_password,
                 ):
@@ -152,7 +204,6 @@ class OperationalAuthHardeningTests(unittest.TestCase):
                 self.assertIsInstance(second, AuthService)
                 ensure_tables.assert_not_called()
                 ensure_demo_users.assert_not_called()
-                disable_demo_users.assert_not_called()
                 ensure_bootstrap_admin.assert_not_called()
                 hash_password.assert_not_called()
 
@@ -284,6 +335,28 @@ class OperationalAuthHardeningTests(unittest.TestCase):
 
 
 class ProductionConfigurationHardeningTests(unittest.TestCase):
+    def test_public_signup_is_local_by_default_and_requires_production_opt_in(self) -> None:
+        local = Settings(app_env="local", backend_cors_origins=[], _env_file=None)
+        production = Settings(
+            app_env="production",
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+        production_opt_in = Settings(
+            app_env="production",
+            auth_public_signup_enabled=True,
+            bootstrap_admin_email="owner@example.com",
+            bootstrap_admin_password="strong-bootstrap-password",
+            backend_cors_origins=[],
+            _env_file=None,
+        )
+
+        self.assertTrue(local.allows_public_signup)
+        self.assertFalse(production.allows_public_signup)
+        self.assertTrue(production_opt_in.allows_public_signup)
+
     def test_session_cookie_is_secure_by_default_when_header_auth_is_disabled(self) -> None:
         production = Settings(
             app_env="production",

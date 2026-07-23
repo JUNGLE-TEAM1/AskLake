@@ -4,10 +4,14 @@ import hashlib
 import json
 from typing import Any, Protocol
 
+from fastapi import status
+
 from app.core.config import Settings, settings
+from app.core.errors import ApiError
 from app.models.continuous_sql import ContinuousSqlJobModel, ContinuousSqlRunModel
 from app.schemas.continuous_sql import continuous_sql_serving_mode
 from app.services.clickhouse_continuous_sql import ClickHouseContinuousSqlWorkerGateway
+from app.services.clickhouse_realtime_v2 import ClickHouseRealtimeV2WorkerGateway
 from app.services.node_bridge import run_node_bridge
 
 
@@ -30,6 +34,19 @@ class NodeContinuousSqlWorkerGateway:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         plan = dict(job.compiled_plan or {})
+        if str(plan.get("executionInputMode") or "legacy_kafka") == "dataset_revision":
+            # Do not silently fall through to the historical Kafka runner:
+            # that would create a SQL-owned consumer and break the execution
+            # tree's single-producer ownership guarantee.  A revision runner
+            # is selected by the routed gateway in the next implementation
+            # step; keeping this guard here protects old deployments that
+            # instantiate NodeContinuousSqlWorkerGateway directly.
+            raise ApiError(
+                "CONTINUOUS_SQL_REVISION_RUNNER_REQUIRED",
+                "Dataset-revision Continuous SQL requires the revision transform runner; "
+                "the legacy Kafka worker is not permitted for this Job.",
+                status.HTTP_409_CONFLICT,
+            )
         source = plan.get("streamingSource") if isinstance(plan.get("streamingSource"), dict) else {}
         runtime_plan = {
             **plan,
@@ -56,7 +73,7 @@ class NodeContinuousSqlWorkerGateway:
                 "initialOffsetPolicy": source.get("initialOffsetPolicy") or "earliest",
                 "initialSchemaState": {},
                 "jobId": job.id,
-                "maxOffsetsPerTrigger": source.get("maxOffsetsPerTrigger") or 10_000,
+                "maxOffsetsPerTrigger": source.get("maxOffsetsPerTrigger") or 100,
                 "outputPath": job.output_storage_path,
                 "recordParsing": source.get("recordParsing") or {},
                 "ruleContractVersion": "1.0",
@@ -88,11 +105,17 @@ class RoutedContinuousSqlWorkerGateway:
         *,
         iceberg_gateway: ContinuousSqlWorkerGateway | None = None,
         clickhouse_gateway: ContinuousSqlWorkerGateway | None = None,
+        clickhouse_v2_gateway: ContinuousSqlWorkerGateway | None = None,
     ) -> None:
         resolved_settings = runtime_settings or settings
+        self.settings = resolved_settings
         self.iceberg_gateway = iceberg_gateway or NodeContinuousSqlWorkerGateway()
         self.clickhouse_gateway = clickhouse_gateway or ClickHouseContinuousSqlWorkerGateway(
             resolved_settings
+        )
+        self.clickhouse_v2_gateway = (
+            clickhouse_v2_gateway
+            or ClickHouseRealtimeV2WorkerGateway(resolved_settings)
         )
 
     def manage(
@@ -102,11 +125,16 @@ class RoutedContinuousSqlWorkerGateway:
         action: str,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        gateway = (
-            self.clickhouse_gateway
-            if continuous_sql_serving_mode(job) == "clickhouse"
-            else self.iceberg_gateway
-        )
+        if continuous_sql_serving_mode(job) != "clickhouse":
+            gateway = self.iceberg_gateway
+        elif (
+            self.settings.clickhouse_realtime_v2_enabled
+            and self.settings.kafka_connect_sink_enabled
+            and self.settings.clickhouse_realtime_consumer_owner == "kafka_connect_v2"
+        ):
+            gateway = self.clickhouse_v2_gateway
+        else:
+            gateway = self.clickhouse_gateway
         return gateway.manage(job, run, action, options)
 
 

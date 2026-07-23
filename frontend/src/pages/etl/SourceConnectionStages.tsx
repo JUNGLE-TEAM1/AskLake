@@ -3,9 +3,10 @@ import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Panel } from "@/components/ui/panel";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Check, ChevronDown, ChevronUp, Clock3, Database, Repeat2 } from "lucide-react";
-import type { Dispatch, SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 
 import { InfoBox } from "../../components/common";
 import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
@@ -13,6 +14,7 @@ import { getSourceBrandMeta, SourceBrandIcon } from "../../components/source/Sou
 import type { DraftPipelinePatch, SourceDraft } from "../../types";
 import type { SourceConnectionDefinition, SourceConnectorMeta } from "./sourceDefinitions";
 import {
+  OBJECT_STORAGE_IS_AWS,
   isSecretSourceField,
   isVisibleSourceField,
   requiredSourceConnectionFields,
@@ -105,6 +107,7 @@ export function SourceConnectStage({
   sourceLocked: boolean;
 }) {
   const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
+  const [focusedSuggestionField, setFocusedSuggestionField] = useState<string | null>(null);
 
   return (
     <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
@@ -120,21 +123,64 @@ export function SourceConnectStage({
             title={current.title}
           />
           <div className="hegun-field-grid source-flow-fields">
-            {visibleEditableFields.map(([label, value]) => (
-              <FormFieldGroup
-                className={value.length > 38 ? "field wide" : "field"}
-                key={`${activeSourceType}-${label}`}
-                label={requiredSourceConnectionFields(activeSourceType).includes(label) ? `${sourceFieldLabel(label)} *` : sourceFieldLabel(label)}
-              >
-                <Input
-                  autoComplete={isSecretSourceField(label) ? "new-password" : undefined}
-                  readOnly={isSqlResultSource}
-                  type={isSecretSourceField(label) ? "password" : "text"}
-                  value={value}
-                  onChange={(event) => onFieldChange(label, event.target.value)}
-                />
-              </FormFieldGroup>
-            ))}
+            {visibleEditableFields.map(([label, value]) => {
+              const suggestion = current.fieldSuggestions?.[label];
+              const showSuggestion = Boolean(suggestion)
+                && focusedSuggestionField === label
+                && !value.trim();
+
+              return (
+                <FormFieldGroup
+                  className={value.length > 38 ? "field wide" : "field"}
+                  key={`${activeSourceType}-${label}`}
+                  label={requiredSourceConnectionFields(activeSourceType).includes(label) ? `${sourceFieldLabel(label)} *` : sourceFieldLabel(label)}
+                >
+                  <Popover open={showSuggestion} onOpenChange={(open) => setFocusedSuggestionField(open ? label : null)}>
+                    <PopoverAnchor asChild>
+                      <Input
+                        autoComplete={isSecretSourceField(label) ? "new-password" : undefined}
+                        placeholder={OBJECT_STORAGE_IS_AWS && activeSourceType === "File / S3" && label === "Bucket / Stage Name"
+                          ? "버킷 이름을 입력하거나 기본 버킷을 선택하세요"
+                          : undefined}
+                        readOnly={isSqlResultSource}
+                        type={isSecretSourceField(label) ? "password" : "text"}
+                        value={value}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          onFieldChange(label, nextValue);
+                          if (!nextValue.trim()) setFocusedSuggestionField(label);
+                        }}
+                        onClick={() => setFocusedSuggestionField(label)}
+                        onFocus={() => setFocusedSuggestionField(label)}
+                      />
+                    </PopoverAnchor>
+                    {suggestion && (
+                      <PopoverContent
+                        align="start"
+                        className="w-80 p-2"
+                        onOpenAutoFocus={(event) => event.preventDefault()}
+                      >
+                        <Button
+                          className="h-auto w-full justify-start px-3 py-2 text-left"
+                          size="content"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            onFieldChange(label, suggestion);
+                            setFocusedSuggestionField(null);
+                          }}
+                        >
+                          <span className="grid min-w-0 gap-1">
+                            <strong className="text-sm text-slate-700">워크스페이스 기본 버킷</strong>
+                            <span className="truncate text-sm font-normal text-slate-500">{suggestion}</span>
+                          </span>
+                        </Button>
+                      </PopoverContent>
+                    )}
+                  </Popover>
+                </FormFieldGroup>
+              );
+            })}
           </div>
           {activeSourceType === "Stream / Kafka" && (
             <section className="source-step-section" aria-label="Kafka 실행 방식">
@@ -185,7 +231,16 @@ export function SourceConnectStage({
               )}
             </section>
           )}
-          {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
+          {current.info && (
+            <InfoBox
+              title={isSqlResultSource
+                ? "SQL Preview 입력"
+                : OBJECT_STORAGE_IS_AWS && activeSourceType === "File / S3"
+                  ? "워크스페이스 AWS 권한"
+                  : "보안 연결"}
+              body={current.info}
+            />
+          )}
         </Panel>
 
         <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">

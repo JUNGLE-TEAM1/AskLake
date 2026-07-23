@@ -179,6 +179,12 @@ esac
 kafka_connect_connector_name="$(env_value_for KAFKA_CONNECT_CONNECTOR_NAME)"
 kafka_connect_connector_name="${kafka_connect_connector_name:-asklake-clickhouse-realtime-v2}"
 
+asklake_continuous_control_plane="$(env_value_for ASKLAKE_CONTINUOUS_CONTROL_PLANE)"
+[[ "$asklake_continuous_control_plane" == "local" ]] || {
+  printf 'error: EC2 Compose requires ASKLAKE_CONTINUOUS_CONTROL_PLANE=local\n' >&2
+  exit 1
+}
+
 has_compose_profile() {
   local requested_profile="$1"
   local configured_profiles
@@ -261,17 +267,15 @@ required_keys=(
   AI_PROVIDER_API_KEY
   APP_DOMAIN
   APP_ENV
+  ASKLAKE_CONTINUOUS_CONTROL_PLANE
   ASKLAKE_HOST_DATA_DIR
   ASKLAKE_OBJECT_STORAGE_PROVIDER
   ASKLAKE_REPLAY_HOST_INPUT_DIR
   MONGO_INITDB_ROOT_PASSWORD
   MONGO_INITDB_ROOT_USERNAME
-  OPENSEARCH_INITIAL_ADMIN_PASSWORD
-  OPENSEARCH_PASSWORD
   POSTGRES_DB
   POSTGRES_PASSWORD
   POSTGRES_USER
-  RAG_WORKER_TOKEN
   VITE_API_BASE_URL
 )
 
@@ -336,10 +340,14 @@ if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
     CLICKHOUSE_V2_IMAGE
     CLICKHOUSE_V2_INGEST_PASSWORD
     CLICKHOUSE_V2_MATERIALIZER_PASSWORD
+    CLICKHOUSE_V2_MATERIALIZER_USER
     CLICKHOUSE_V2_MIGRATION_PASSWORD
     CLICKHOUSE_V2_OBSERVER_PASSWORD
     CLICKHOUSE_V2_READER_PASSWORD
+    CLICKHOUSE_V2_READER_USER
+    CLICKHOUSE_V2_URL
     CLICKHOUSE_V2_TLS_CA_FILE
+    CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE
     CLICKHOUSE_V2_TLS_CERT_FILE
     CLICKHOUSE_V2_TLS_KEY_FILE
     COMPOSE_PROFILES
@@ -394,6 +402,22 @@ if [[ "$clickhouse_v2_infra_enabled" == "true" ]]; then
       exit 1
     }
   done
+  [[ "$(env_value_for CLICKHOUSE_V2_URL)" == "https://clickhouse-v2:8443" ]] || {
+    printf 'error: CLICKHOUSE_V2_URL must be the private https://clickhouse-v2:8443 origin\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_MATERIALIZER_USER)" == "asklake_v2_materializer" ]] || {
+    printf 'error: CLICKHOUSE_V2_MATERIALIZER_USER must use the fixed materializer identity\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_READER_USER)" == "asklake_v2_reader" ]] || {
+    printf 'error: CLICKHOUSE_V2_READER_USER must use the fixed reader identity\n' >&2
+    exit 1
+  }
+  [[ "$(env_value_for CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE)" == "/run/secrets/clickhouse-v2-ca.crt" ]] || {
+    printf 'error: CLICKHOUSE_V2_TLS_CA_CONTAINER_FILE must use the fixed backend trust path\n' >&2
+    exit 1
+  }
 
   clickhouse_v2_secrets=(
     "$(env_value_for CLICKHOUSE_V2_ADMIN_PASSWORD)"
@@ -763,6 +787,7 @@ export ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD="$minio_root_password"
 export ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY="$minio_access_key"
 export ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY="$minio_secret_key"
 export ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER="$storage_provider"
+export ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE="$asklake_continuous_control_plane"
 export ASKLAKE_PREFLIGHT_AWS_REGION="$(env_value_for AWS_REGION)"
 export ASKLAKE_PREFLIGHT_RAW_BUCKET="$(env_value_for ASKLAKE_RAW_BUCKET)"
 export ASKLAKE_PREFLIGHT_OUTPUT_BUCKET="$(env_value_for ASKLAKE_SPARK_OUTPUT_BUCKET)"
@@ -777,6 +802,7 @@ export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED="$kafka_connect_enabled"
 export ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER="$clickhouse_consumer_owner"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL="$(env_value_for KAFKA_CONNECT_URL)"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME="$kafka_connect_connector_name"
+export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE="$(env_value_for CLICKHOUSE_V2_DATABASE)"
 export ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE="$(env_value_for CLICKHOUSE_V2_IMAGE)"
 export ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE="$(env_value_for KAFKA_CONNECT_V2_IMAGE)"
 
@@ -823,6 +849,9 @@ try:
         if clickhouse_v2_infra_enabled
         else profiled_clickhouse_v2_services.isdisjoint(services)
     )
+    profile_wiring_valid = profile_wiring_valid and {
+        "opensearch", "embedding-worker", "rag-artifact-cleanup"
+    }.isdisjoint(services)
     if provider == "aws":
         readiness = services["aws-s3-readiness"]["environment"]
         forbidden = {
@@ -910,7 +939,9 @@ try:
         services[name] for name in ("backend", "continuous-worker") if name in services
     )
     valid = valid and all(
-        runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_V2_ENABLED")
+        runtime_service.get("environment", {}).get("ASKLAKE_CONTINUOUS_CONTROL_PLANE")
+        == os.environ["ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_REALTIME_V2_ENABLED")
         == ("true" if clickhouse_v2_enabled else "false")
         and runtime_service.get("environment", {}).get("KAFKA_CONNECT_SINK_ENABLED")
         == ("true" if kafka_connect_enabled else "false")
@@ -920,6 +951,16 @@ try:
         == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL"]
         and runtime_service.get("environment", {}).get("KAFKA_CONNECT_CONNECTOR_NAME")
         == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_URL")
+        == "https://clickhouse-v2:8443"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_DATABASE")
+        == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE"]
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_MATERIALIZER_USER")
+        == "asklake_v2_materializer"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_READER_USER")
+        == "asklake_v2_reader"
+        and runtime_service.get("environment", {}).get("CLICKHOUSE_V2_TLS_CA_FILE")
+        == "/run/secrets/clickhouse-v2-ca.crt"
         for runtime_service in backend_runtime_services
     )
     if clickhouse_v2_infra_enabled:
@@ -940,7 +981,17 @@ try:
         }
         backend_networks = set(services["backend"].get("networks", {}))
         redpanda_networks = set(services["redpanda"].get("networks", {}))
+        backend_ca_mounted = all(
+            any(
+                volume.get("target") == "/run/secrets/clickhouse-v2-ca.crt"
+                and volume.get("type") == "bind"
+                and volume.get("read_only") is True
+                for volume in runtime_service.get("volumes", [])
+            )
+            for runtime_service in backend_runtime_services
+        )
         valid = valid and all((
+            backend_ca_mounted,
             clickhouse_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE"],
             kafka_connect_v2.get("image") == os.environ["ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE"],
             "build" not in kafka_connect_v2,
@@ -992,6 +1043,7 @@ unset ASKLAKE_PREFLIGHT_MINIO_ROOT_PASSWORD
 unset ASKLAKE_PREFLIGHT_MINIO_ACCESS_KEY
 unset ASKLAKE_PREFLIGHT_MINIO_SECRET_KEY
 unset ASKLAKE_PREFLIGHT_OBJECT_STORAGE_PROVIDER
+unset ASKLAKE_PREFLIGHT_CONTINUOUS_CONTROL_PLANE
 unset ASKLAKE_PREFLIGHT_AWS_REGION
 unset ASKLAKE_PREFLIGHT_RAW_BUCKET
 unset ASKLAKE_PREFLIGHT_OUTPUT_BUCKET
@@ -1006,6 +1058,7 @@ unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_ENABLED
 unset ASKLAKE_PREFLIGHT_CLICKHOUSE_CONSUMER_OWNER
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_URL
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_CONNECTOR_NAME
+unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_DATABASE
 unset ASKLAKE_PREFLIGHT_CLICKHOUSE_V2_IMAGE
 unset ASKLAKE_PREFLIGHT_KAFKA_CONNECT_V2_IMAGE
 

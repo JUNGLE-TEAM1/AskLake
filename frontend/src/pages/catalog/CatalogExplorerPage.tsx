@@ -18,29 +18,38 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Skeleton } from "@/components/ui/skeleton";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AuditResult, CatalogDataset } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetDeletionImpact } from "../../types";
 import { permissionDeniedMessage } from "../../utils/permissions";
 import { cn } from "@/lib/utils";
 import { type CatalogSortMode, type CatalogStatusFilter, catalogSortOptions, catalogStatusFilterOptions, formatCatalogDateTime } from "./catalogModel";
 import { CatalogDatasetViewer, CatalogMiniMetric, CatalogSchemaTable, DatasetStatusBadge } from "./CatalogDetailPage";
 import { CatalogLineage } from "./CatalogLineage";
 import { useCatalogExplorerState } from "./useCatalogExplorerState";
+import { CatalogDatasetDeleteAction } from "./CatalogDatasetDeleteAction";
 export function CatalogPage({
+  datasetDeletionPendingById,
   datasets,
   error = null,
   loading = false,
   onAction,
+  onDeleteDataset,
+  onLoadDeletionImpact,
   onOpenSql,
   onRefresh,
   selectedDataset,
+  viewSwitcher,
 }: {
+  datasetDeletionPendingById: Record<string, boolean>;
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onDeleteDataset: (datasetId: string) => Promise<boolean>;
+  onLoadDeletionImpact: (datasetId: string) => Promise<CatalogDatasetDeletionImpact>;
   onOpenSql: (dataset: CatalogDataset) => void;
   onRefresh?: () => void;
   selectedDataset: CatalogDataset;
+  viewSwitcher?: React.ReactNode;
 }) {
   const {
     activeModal,
@@ -208,6 +217,7 @@ export function CatalogPage({
           <Panel className="catalog-results-section">
             <div className="catalog-results-header">
               <PanelHeader
+                actions={viewSwitcher}
                 bordered={false}
                 icon={<BookOpen size={16} />}
                 iconVariant="outline"
@@ -327,6 +337,13 @@ export function CatalogPage({
                           </div>
                         </div>
                       </Button>
+                      <CatalogDatasetDeleteAction
+                        dataset={dataset}
+                        onAction={onAction}
+                        onDeleteDataset={onDeleteDataset}
+                        onLoadDeletionImpact={onLoadDeletionImpact}
+                        pending={Boolean(datasetDeletionPendingById[dataset.id])}
+                      />
                     </Card>
                   </div>
                 );

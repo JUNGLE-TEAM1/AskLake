@@ -19,24 +19,13 @@ export type ContinuousSqlRelationMix = {
 };
 
 export function isStreamingCatalogDataset(dataset: CatalogDataset) {
-  const hasContinuousKafkaRun = (dataset.materializationRuns ?? []).some((run) => (
-    run.sourceKind === "kafka" && run.materializationMode === "delta"
-  ));
-  if (hasContinuousKafkaRun) return true;
-
-  const evidence = [
-    dataset.source,
-    dataset.description,
-    dataset.nextRefresh,
-    ...dataset.tags,
-    ...dataset.upstream,
-  ].join(" ");
-  return /(?:kafka|stream(?:ing)?|continuous|real[- ]?time|실시간|스트림)/i.test(evidence);
+  return dataset.relationMode === "streaming";
 }
 
 export function getContinuousSqlRelationMix(datasets: CatalogDataset[]): ContinuousSqlRelationMix | null {
   const streamingDatasets = datasets.filter(isStreamingCatalogDataset);
-  const staticDatasets = datasets.filter((dataset) => !isStreamingCatalogDataset(dataset));
+  const staticDatasets = datasets.filter((dataset) => dataset.relationMode === "static");
+  if (streamingDatasets.length + staticDatasets.length !== datasets.length) return null;
   if (streamingDatasets.length !== 1 || staticDatasets.length < 1) return null;
   return { staticDatasets, streamingDataset: streamingDatasets[0] };
 }

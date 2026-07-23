@@ -6,6 +6,7 @@ import { removeRuntimeWidget } from "./runtime/dashboardRuntimeMutations";
 import { dashboardRuntimeErrorMessage } from "./runtime/dashboardRuntimeErrors";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDashboardRuntimeResources } from "./runtime/useDashboardRuntimeResources";
+import { useDashboardAutoRefresh } from "./runtime/useDashboardAutoRefresh";
 import { useDraftPageMutations } from "./runtime/useDraftPageMutations";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
@@ -24,6 +25,7 @@ import { createDashboard, deleteDashboard, updateDashboardTitle } from "../../se
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, SavedDashboardCard, SqlResultDraft } from "../../types";
 import type { DashboardDatasetOption } from "./runtime/dashboardRuntimeTypes";
+import { onCatalogDatasetDeleted } from "../../services/catalogEvents";
 
 type RuntimeNotice = {
   message: string;
@@ -69,12 +71,14 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
 };
 
 export function DashboardPage({
+  currentUserId,
   dataset,
   entry,
   sqlResult,
   onAction,
   onRuntimeNavigate,
 }: {
+  currentUserId: string;
   dataset: CatalogDataset;
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
@@ -101,6 +105,7 @@ export function DashboardPage({
   const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
+  const [deletedDatasetIds, setDeletedDatasetIds] = useState<Set<string>>(() => new Set());
   const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>([]);
   const dashboardList = useDashboardLandingList(onAction, entry.version + dashboardListRefreshKey);
@@ -115,11 +120,28 @@ export function DashboardPage({
     isLoading: dashboardDatasetsLoading,
   } = useDashboardDatasets(view === "runtime");
   const availableDashboardDatasets = useMemo(
-    () => sqlDashboardDataset
-      ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
-      : dashboardDatasets,
-    [dashboardDatasets, sqlDashboardDataset],
+    () => {
+      const datasets = sqlDashboardDataset
+        ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
+        : dashboardDatasets;
+      return datasets.filter((item) => !deletedDatasetIds.has(item.id));
+    },
+    [dashboardDatasets, deletedDatasetIds, sqlDashboardDataset],
   );
+  const availableDashboardDatasetIds = useMemo(
+    () => new Set(availableDashboardDatasets.map((item) => item.id)),
+    [availableDashboardDatasets],
+  );
+  const dashboardDatasetCatalogReady = !dashboardDatasetsLoading && !dashboardDatasetsError;
+
+  useEffect(() => onCatalogDatasetDeleted((datasetId) => {
+    setDeletedDatasetIds((current) => {
+      if (current.has(datasetId)) return current;
+      const next = new Set(current);
+      next.add(datasetId);
+      return next;
+    });
+  }), []);
 
   useEffect(() => {
     setView(entry.view);
@@ -142,8 +164,8 @@ export function DashboardPage({
     loadPublishedRuntime,
     pages: runtimePages,
     publishedRuntime,
-    realtimeConnectionState,
-    realtimeDataState,
+    refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
     retryWidgetData,
     runtimeError,
     runtimeLoading,
@@ -152,6 +174,16 @@ export function DashboardPage({
     setPublishedRuntime,
     setSelectedPageId: setSelectedRuntimePageId,
   } = runtimeResources;
+  const activeRuntime = runtimeSelection.mode === "published" ? publishedRuntime : draftRuntime;
+  const dashboardAutoRefresh = useDashboardAutoRefresh({
+    active: view === "runtime",
+    currentUserId,
+    dashboardId: runtimeSelection.dashboardId,
+    refreshCurrentPageWidgetData,
+    refreshWidgetDataForDatasets,
+    runtime: activeRuntime,
+    selectedPageId: selectedRuntimePageId,
+  });
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -182,8 +214,16 @@ export function DashboardPage({
     [previewDraftWidget, selectedDraftWidgets],
   );
   const selectedDraftWidget = useMemo(
-    () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
-    [selectedDraftWidgets, selectedWidgetId],
+    () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId
+      && (!widget.datasetId || (!deletedDatasetIds.has(widget.datasetId)
+        && (!dashboardDatasetCatalogReady || availableDashboardDatasetIds.has(widget.datasetId))))) ?? null,
+    [availableDashboardDatasetIds, dashboardDatasetCatalogReady, deletedDatasetIds, selectedDraftWidgets, selectedWidgetId],
+  );
+  const visibleSelectedDraftWidgets = useMemo(
+    () => dashboardDatasetCatalogReady
+      ? selectedDraftWidgets.filter((widget) => !widget.datasetId || (!deletedDatasetIds.has(widget.datasetId) && availableDashboardDatasetIds.has(widget.datasetId)))
+      : selectedDraftWidgets.filter((widget) => !widget.datasetId || !deletedDatasetIds.has(widget.datasetId)),
+    [availableDashboardDatasetIds, dashboardDatasetCatalogReady, deletedDatasetIds, selectedDraftWidgets],
   );
   const selectedDraftWidgetIds = useMemo(
     () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
@@ -199,6 +239,12 @@ export function DashboardPage({
       ? publishedRuntime.widgetsByPageId[selectedRuntimePageId] ?? []
       : [],
     [publishedRuntime?.revision, publishedRuntime?.widgetsByPageId, runtimeSelection.mode, selectedRuntimePageId],
+  );
+  const visibleSelectedPublishedWidgets = useMemo(
+    () => dashboardDatasetCatalogReady
+      ? selectedPublishedWidgets.filter((widget) => !widget.datasetId || (!deletedDatasetIds.has(widget.datasetId) && availableDashboardDatasetIds.has(widget.datasetId)))
+      : selectedPublishedWidgets.filter((widget) => !widget.datasetId || !deletedDatasetIds.has(widget.datasetId)),
+    [availableDashboardDatasetIds, dashboardDatasetCatalogReady, deletedDatasetIds, selectedPublishedWidgets],
   );
 
   const pageMutations = useDraftPageMutations({
@@ -346,7 +392,7 @@ export function DashboardPage({
   };
 
   const openDashboardFromList = (dashboard: SavedDashboardCard) => {
-    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
+    openRuntimeDashboard(dashboard.id, "published");
   };
 
   const selectRuntimeWidget = (widgetId: string) => {
@@ -427,14 +473,18 @@ export function DashboardPage({
 
   const refreshRuntimeDashboard = async () => {
     setIsRefreshingRuntime(true);
-    const runtime = runtimeSelection.mode === "published"
-      ? await loadPublishedRuntime(runtimeSelection.dashboardId)
-      : await loadDraftRuntime(runtimeSelection.dashboardId);
-    setIsRefreshingRuntime(false);
-    setRuntimeNotice(runtime
-      ? { message: "대시보드를 새로고침했습니다.", tone: "info" }
-      : { message: "대시보드를 새로고침하지 못했습니다.", tone: "error" });
-    onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
+    try {
+      const refreshed = await refreshCurrentPageWidgetData();
+      setRuntimeNotice(null);
+      onAction(
+        refreshed ? "dashboard.runtime.refreshed" : "dashboard.runtime.refresh_failed",
+        `/api/dashboards/${runtimeSelection.dashboardId}/widgets/query`,
+        runtimeSelection.dashboardId,
+        refreshed ? undefined : "failed",
+      );
+    } finally {
+      setIsRefreshingRuntime(false);
+    }
   };
 
   const shareRuntimeDashboard = () => {
@@ -576,6 +626,7 @@ export function DashboardPage({
       publishDraft: publishDraftRuntime,
       redoLayout: layoutHistory.redo,
       refresh: refreshRuntimeDashboard,
+      setAutoRefreshEnabled: dashboardAutoRefresh.setEnabled,
       renamePage: pageMutations.renamePage,
       renameTitle: renameRuntimeDashboardTitle,
       retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
@@ -613,19 +664,22 @@ export function DashboardPage({
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,
+      autoRefreshEnabled: dashboardAutoRefresh.enabled,
+      autoRefreshError: dashboardAutoRefresh.errorMessage,
+      autoRefreshStatus: dashboardAutoRefresh.status,
       mode: runtimeSelection.mode,
       notice: runtimeNotice,
       pages: runtimePages,
       publishedRuntime,
-      realtimeConnectionState,
-      realtimeDataState,
       renamingPageId: pageMutations.renamingPageId,
       runtimeError,
       runtimeLoading,
-      selectedDraftWidgets: previewDraftWidgets,
+      selectedDraftWidgets: dashboardDatasetCatalogReady
+        ? previewDraftWidgets.filter((widget) => !widget.datasetId || (!deletedDatasetIds.has(widget.datasetId) && availableDashboardDatasetIds.has(widget.datasetId)))
+        : previewDraftWidgets.filter((widget) => !widget.datasetId || !deletedDatasetIds.has(widget.datasetId)),
       selectedDraftWidget,
       selectedPageId: selectedRuntimePageId,
-      selectedPublishedWidgets,
+      selectedPublishedWidgets: visibleSelectedPublishedWidgets,
       selectedWidgetId,
       shareLink: runtimeShareLink,
       title: runtimeTitle,

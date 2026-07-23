@@ -137,6 +137,7 @@ def ensure_dashboard_live_schema(db: Session) -> None:
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS commit_kind varchar(32) NOT NULL DEFAULT 'legacy'",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS source_fingerprint varchar(64)",
             "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS manifest_location varchar(2048)",
+            "ALTER TABLE dataset_revision_commits ADD COLUMN IF NOT EXISTS snapshot_id varchar(255)",
             "CREATE TABLE IF NOT EXISTS dashboard_live_schema_migrations (version varchar(96) PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT NOW())",
             "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM dashboard_live_schema_migrations WHERE version = '20260714_kafka_partition_cursor_v1') THEN UPDATE dataset_revision_commits SET commit_kind = CASE WHEN materialization_mode = 'snapshot' THEN 'backfill' WHEN run_id LIKE 'continuous-replay_%' THEN 'replay' WHEN run_id LIKE 'continuous:%:batch:%' THEN 'stream' ELSE commit_kind END WHERE commit_kind = 'legacy'; INSERT INTO dataset_kafka_partition_cursors (dataset_id, commit_kind, topic, partition, next_offset, updated_revision, updated_at) SELECT commits.dataset_id, 'stream', ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer, MAX((ranges.item ->> 'endOffset')::bigint), MAX(commits.revision), NOW() FROM dataset_revision_commits AS commits CROSS JOIN LATERAL jsonb_array_elements(commits.source_ranges) AS ranges(item) WHERE commits.commit_kind IN ('stream', 'backfill') AND jsonb_typeof(commits.source_ranges) = 'array' AND ranges.item ? 'topic' AND ranges.item ? 'partition' AND ranges.item ? 'endOffset' AND (ranges.item ->> 'partition') ~ '^[0-9]+$' AND (ranges.item ->> 'endOffset') ~ '^[0-9]+$' GROUP BY commits.dataset_id, ranges.item ->> 'topic', (ranges.item ->> 'partition')::integer ON CONFLICT (dataset_id, commit_kind, topic, partition) DO UPDATE SET next_offset = GREATEST(dataset_kafka_partition_cursors.next_offset, EXCLUDED.next_offset), updated_revision = GREATEST(dataset_kafka_partition_cursors.updated_revision, EXCLUDED.updated_revision), updated_at = NOW(); INSERT INTO dashboard_live_schema_migrations (version) VALUES ('20260714_kafka_partition_cursor_v1'); END IF; END $$",
             "ALTER TABLE dashboard_widget_results ALTER COLUMN result_payload TYPE jsonb USING result_payload::jsonb",
@@ -440,6 +441,7 @@ class DashboardLiveRepository:
         source_ranges: list[dict[str, Any]] | None = None,
         commit_kind: str = LEGACY_COMMIT_KIND,
         manifest_location: str | None = None,
+        snapshot_id: str | None = None,
     ) -> tuple[DatasetRevisionCommitModel, bool]:
         normalized_commit_kind = str(commit_kind or LEGACY_COMMIT_KIND).strip().lower()
         if normalized_commit_kind not in {
@@ -456,6 +458,7 @@ class DashboardLiveRepository:
         source_fingerprint = kafka_source_fingerprint(normalized_ranges)
         normalized_storage_location = str(storage_location or "").strip()
         normalized_manifest_location = str(manifest_location or "").strip() or None
+        normalized_snapshot_id = str(snapshot_id or "").strip() or None
         normalized_row_count = max(0, int(row_count or 0))
         if normalized_commit_kind in {STREAM_COMMIT_KIND, REPLAY_COMMIT_KIND}:
             if not normalized_storage_location:
@@ -538,6 +541,7 @@ class DashboardLiveRepository:
             source_ranges=normalized_ranges,
             source_fingerprint=source_fingerprint,
             manifest_location=normalized_manifest_location,
+            snapshot_id=normalized_snapshot_id,
             committed_at=now,
         )
         freshness.latest_revision = revision
@@ -564,6 +568,16 @@ class DashboardLiveRepository:
         if through_revision is not None:
             statement = statement.where(DatasetRevisionCommitModel.revision <= through_revision)
         return list(self.db.scalars(statement.order_by(DatasetRevisionCommitModel.revision.asc())).all())
+
+    def get_commit(
+        self,
+        dataset_id: str,
+        revision: int,
+    ) -> DatasetRevisionCommitModel | None:
+        return self.db.get(
+            DatasetRevisionCommitModel,
+            {"dataset_id": dataset_id, "revision": int(revision)},
+        )
 
     def get_widget_result(
         self,
@@ -646,6 +660,7 @@ def save_catalog_dataset_and_revision(
     source_ranges: list[dict[str, Any]] | None = None,
     commit_kind: str = STREAM_COMMIT_KIND,
     manifest_location: str | None = None,
+    snapshot_id: str | None = None,
 ) -> DatasetRevisionCommitModel:
     """Commit Catalog metadata and its visible dashboard revision atomically."""
     commit: DatasetRevisionCommitModel | None = None
@@ -664,6 +679,7 @@ def save_catalog_dataset_and_revision(
                 source_ranges=source_ranges,
                 commit_kind=commit_kind,
                 manifest_location=manifest_location,
+                snapshot_id=snapshot_id,
             )
             merged_dataset = db.merge(dataset) if created else None
             db.commit()

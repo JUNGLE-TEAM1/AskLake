@@ -58,6 +58,7 @@ const jobsPageFiles = [
   "src/pages/ingest/jobs/JobRunsPage.tsx",
   "src/pages/ingest/jobs/ContinuousJobRunsPage.tsx",
   "src/pages/ingest/jobs/SnapshotJobRunsPage.tsx",
+  "src/services/continuousRuntimeContract.ts",
 ];
 
 const askLakeDataFiles = [
@@ -205,15 +206,17 @@ const checks = [
     ],
   },
   {
-    name: "Production login hides demo credentials by default and supports an explicit demo opt-in",
+    name: "Authentication UI uses the backend signup policy and hides demo credentials by default",
     file: "src/pages/auth/AuthPage.tsx",
     patterns: [
       /const demoDefaultsEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_LEGACY_DEMO_USERS_ENABLED === "true";/,
-      /const publicSignupEnabled = import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_AUTH_PUBLIC_SIGNUP === "true";/,
+      /publicSignupEnabled: boolean;/,
       /useState\(demoDefaultsEnabled \? "admin\.user@asklake\.local" : ""\)/,
       /\{publicSignupEnabled && \(/,
+      /data-testid="auth-signup-tab"/,
       /demoDefaultsEnabled\s*\? <small>Admin/,
     ],
+    forbiddenPatterns: [/VITE_AUTH_PUBLIC_SIGNUP/],
   },
   {
     name: "Authentication failures stay server-side instead of creating browser-local users",
@@ -331,7 +334,7 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor module keeps Nessie, reset, execution, and autocomplete controls",
+    name: "SQL editor module keeps AI writing, reset, execution, and autocomplete controls",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
       /<SqlAiWriterDialog disabled=\{disabled\} \{\.\.\.ai\} \/>/,
@@ -347,18 +350,18 @@ const checks = [
     ],
   },
   {
-    name: "SQL primary action buttons keep their text labels without decorative glyphs",
+    name: "SQL primary action buttons keep consistent labels and AI iconography",
     files: [
       "src/pages/sql/SqlAiWriterDialog.tsx",
       "src/pages/sql/SqlQueryEditorPanel.tsx",
     ],
     patterns: [
-      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*Nessie로 SQL 작성\s*<\/Button>/,
+      /<PopoverTrigger asChild>[\s\S]*?<Button disabled=\{disabled\}[\s\S]*?>\s*<Sparkles data-icon="inline-start" \/> AI로 SQL 작성\s*<\/Button>/,
       /<Button type="button" onClick=\{onReset\}[\s\S]*?>\s*SQL 초기화\s*<\/Button>/,
       /<Button type="button" onClick=\{onExecute\}[\s\S]*?>\s*\{pending \? "실행 중" : "실행"\}\s*<\/Button>/,
     ],
     forbiddenPatterns: [
-      /<PopoverTrigger asChild>[\s\S]{0,260}<NessieMark/,
+      /NessieMark/,
     ],
   },
   {
@@ -517,10 +520,14 @@ const checks = [
     ],
   },
   {
-    name: "Nessie SQL writer uses Popover, Bubble, and controlled Collapsible",
+    name: "AI SQL writer uses Popover, Bubble, and controlled Collapsible",
     file: "src/pages/sql/SqlAiWriterDialog.tsx",
     patterns: [
-      /Nessie로 SQL 작성/,
+      /AI로 SQL 작성/,
+      /import \{ Check, Send, Sparkles \} from "lucide-react";/,
+      /<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-600">[\s\S]*?<Sparkles aria-hidden="true" className="size-4 text-white" \/>/,
+      /className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50\/70 p-3"/,
+      /<Send data-icon="inline-start" \/> SQL 초안 생성/,
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /import \{ Collapsible, CollapsibleContent \} from "@\/components\/ui\/collapsible";/,
       /PopoverTrigger/,
@@ -542,13 +549,12 @@ const checks = [
     ],
   },
   {
-    name: "SQL editor exposes the governed ClickHouse continuous JOIN action before existing actions",
+    name: "SQL editor uses the normal SQL Job flow without a separate continuous JOIN action",
     file: "src/pages/sql/SqlQueryEditorPanel.tsx",
     patterns: [
-      /data-testid="continuous-sql-join-button"/,
-      /실시간 JOIN 만들기/,
       /<SqlAiWriterDialog/,
     ],
+    forbiddenPatterns: [/data-testid="continuous-sql-join-button"/, /실시간 JOIN 만들기/],
   },
   {
     name: "SQL result chart keeps its heading compact and fits inside the result panel",
@@ -609,7 +615,7 @@ const checks = [
     patterns: [
       /const createPipelineFromDraft = async \(/,
       /const createSqlDatasetJob = async \(request: CreateDerivedDatasetRequest\) =>/,
-      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false \}\);/,
+      /return createPipelineFromDraft\(nextDraft, \{ resetDraft: false, runAfterCreate: true \}\);/,
       /roles: buildSqlJobPermissionRoles\(request\.job\?\.accessScope, request\.job\?\.principalId\)/,
       /description: request\.dataset\.description/,
       /tags: \[\]/,
@@ -808,6 +814,16 @@ const checks = [
       /\.brand img[\s\S]*?width:\s*112px/,
       /\.nav-item span[\s\S]*?text-overflow:\s*ellipsis/,
       /nameClassName="text-sm"[\s\S]*?size="sm"/,
+    ],
+  },
+  {
+    name: "Global notifications stay anchored to the bottom-right corner",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.app-notification-stack\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*24px;[^}]*right:\s*28px;/s,
+    ],
+    forbiddenPatterns: [
+      /\.app-notification-stack\s*\{[^}]*top:/s,
     ],
   },
   {
@@ -1237,6 +1253,17 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard list entries always open in published view mode",
+    file: "src/pages/dashboard/DashboardPage.tsx",
+    patterns: [
+      /const openDashboardFromList = \(dashboard: SavedDashboardCard\) => \{\s*openRuntimeDashboard\(dashboard\.id, "published"\);\s*\};/,
+      /openRuntimeDashboard\(nextDashboard\.id, "draft"\);/,
+    ],
+    forbiddenPatterns: [
+      /openRuntimeDashboard\(dashboard\.id, dashboard\.status === "published" \? "published" : "draft"\);/,
+    ],
+  },
+  {
     name: "Dashboard API adapters do not hide backend failures with local state",
     file: "src/services/dashboardRuntimeApi.ts",
     patterns: [
@@ -1352,6 +1379,12 @@ const checks = [
       /minStepsBetweenThumbs=\{1\}/,
       /onValueChange=\{\(\[min = 0, max = 100\]\) => patchCurrentConfig\(\{ min, max \}\)\}/,
       /value=\{\[radialRangeStart, radialRangeEnd\]\}/,
+    ],
+  },
+  {
+    name: "Dashboard radial range validation remains in the shared widget validator",
+    file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
+    patterns: [
       /최솟값은 최댓값보다 작아야 합니다/,
     ],
   },
@@ -1427,12 +1460,14 @@ const checks = [
       /<ExplorerTree<DatasetTreeNode>/,
       /ariaLabel="Dashboard dataset tree"/,
       /data-dashboard-dataset-node/,
+      /openByDefault=\{false\}/,
       /onNodePress=\{\(node: NodeApi<DatasetTreeNode>\) =>/,
     ],
     forbiddenPatterns: [
       /components\/kibo-ui\/tree/,
       /components\/ui\/tree-view/,
       /<TreePanel/,
+      /initialOpenState=\{\{[\s\S]*?\[systemItemId\]: true/,
     ],
   },
   {
@@ -1547,7 +1582,7 @@ const checks = [
     patterns: [
       /const nextDatasetId = patch\.datasetId \?\? widget\.datasetId \?\? selectedDatasetId \?\? null;/,
       /const nextData = cloneDatasetRows\(dashboardDatasets, nextDatasetId\);/,
-      /activeDatasetId: selectedDatasetId,/,
+      /activeDatasetId:\s*inspectorMode === "assistant"\s*\?\s*assistantDatasetIds\[0\] \?\? null\s*:\s*selectedDatasetId,/,
     ],
   },
   {
@@ -1563,17 +1598,18 @@ const checks = [
     name: "Widget config updates include selected dataset rows",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
-      /function cloneDatasetRows\(dataset: DashboardDatasetOption \| null \| undefined\)/,
-      /data: cloneDatasetRows\(selectedDataset\),/,
-      /await onCreateWidget\(\{\s*\.\.\.nextInput,\s*data: cloneDatasetRows\(selectedDataset\),/s,
+      /function cloneDatasetRows\(\s*dataset: DashboardDatasetOption \| null \| undefined,\s*filters: DashboardWidgetFilter\[\],\s*\)/,
+      /data: cloneDatasetRows\(selectedDataset, currentConfig\.filters \?\? \[\]\),/,
+      /await onCreateWidget\(\{\s*\.\.\.nextInput,\s*data: cloneDatasetRows\(selectedDataset, currentConfig\.filters \?\? \[\]\),/s,
     ],
   },
   {
     name: "Count visualization settings do not require a numeric value column",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    file: "src/pages/dashboard/runtime/widgetConfigValidation.ts",
     patterns: [
       /const usesCount = config\.aggregation === "count";/,
-      /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /type === "bar_chart" && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /\(type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
       /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],
@@ -2013,18 +2049,20 @@ const checks = [
     ],
   },
   {
-    name: "Authenticated routes share the compact global app shell",
+    name: "Authenticated routes share the compact sidebar shell without the retired global top bar",
     file: "src/App.tsx",
     patterns: [
       /<Sidebar[\s\S]*currentUser=\{currentUser\}/,
-      /function resolveTopbarSection\(flow: FlowId, dashboardEntry: DashboardEntry\)/,
-      /<Topbar section=\{resolveTopbarSection\(activeFlow, dashboardEntry\)\} \/>/,
+      /<main className=\{activeFlow === "schema" \? "main-shell schema-shell" : "main-shell"\}>/,
+      /<section className=\{activeFlow === "jobs" \? "page-body jobs-body"/,
       /activeFlow === "rules" && <RuleApplicationPage/,
     ],
     forbiddenPatterns: [
       /<Footer \/>/,
       /onRefresh=\{/,
       /<Topbar[^>]*onLogout=/,
+      /<Topbar section=/,
+      /resolveTopbarSection/,
     ],
   },
   {
@@ -2034,7 +2072,7 @@ const checks = [
       /const \[completedWizardFlows, setCompletedWizardFlows\] = useState<Set<FlowId>>/,
       /canNavigateToWizardStep\(\{/,
       /if \(!nextFlow \|\| nextFlow === activeFlow \|\| wizardStepDisabled\[stepIndex\]\) return;/,
-      /<Stepper[\s\S]*isStepDisabled=\{/,
+      /<EtlWizardHeader[\s\S]*isStepDisabled=\{/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("source"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("schema"/,
       /onNext=\{\(\) => completeWizardFlowAndMove\("permission", "target"\)\}/,
@@ -2072,7 +2110,7 @@ const checks = [
     ],
   },
   {
-    name: "Primary list and analysis routes leave their visible title in the global top bar",
+    name: "Primary list and analysis routes keep their visible title and actions in local content",
     files: [
       "src/pages/ingest/jobs/JobsLandingPage.tsx",
       "src/pages/catalog/CatalogExplorerPage.tsx",
@@ -2080,10 +2118,10 @@ const checks = [
       "src/pages/dashboard/DashboardLandingPage.tsx",
     ],
     patterns: [
-      /data-page-actions="jobs"/,
+      /title="작업 목록"/,
       /className="catalog-page"/,
       /className=\{cn\(styles\.page,/,
-      /className="dashboard-list-actions"/,
+      /title="대시보드 목록"/,
     ],
     forbiddenPatterns: [
       /PageHeader/,

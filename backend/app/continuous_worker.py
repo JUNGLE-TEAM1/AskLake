@@ -12,7 +12,9 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.repositories.continuous_control_lease_repository import acquire_or_renew
 from app.services.continuous_sql_service import sync_active_continuous_sql_jobs
+from app.services.continuous_sql_incremental import reconcile_continuous_sql_source_bindings
 from app.services.etl_service import sync_active_kafka_continuous_runtimes
+from app.services.trino_sql_auto_refresh import sync_revision_driven_trino_sql_jobs
 
 logger = logging.getLogger(__name__)
 _OWNER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
@@ -29,6 +31,8 @@ def run_once() -> bool:
     if generation is None:
         return False
     sync_active_kafka_continuous_runtimes()
+    sync_revision_driven_trino_sql_jobs()
+    reconcile_continuous_sql_source_bindings()
     sync_active_continuous_sql_jobs()
     return True
 

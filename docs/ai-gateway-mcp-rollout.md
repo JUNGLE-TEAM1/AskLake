@@ -2,7 +2,7 @@
 
 ## 목적
 
-브라우저가 모델 공급자와 직접 통신하지 않고, 기존 `POST /api/query/ai-suggestions` 계약을 유지하면서 내부 AI Gateway와 AskLake Catalog MCP를 연결한다. 배포는 기존 EC2 Docker Compose 안에서 `backend`와 `ai-server`를 별도 컨테이너로 운영한다.
+브라우저가 모델 공급자와 직접 통신하지 않고, 기존 `POST /api/query/ai-suggestions` 계약을 유지하면서 내부 AI Gateway와 AskLake Catalog MCP를 연결한다. EC2 Docker Compose는 `backend`와 `ai-server`를 별도 컨테이너로 운영하고, EKS는 `asklake-web` release 안에서 digest-pinned 단일 replica Gateway와 private ClusterIP Service를 운영한다.
 
 ```text
 Browser -> Caddy -> backend /api/query/ai-suggestions
@@ -41,7 +41,7 @@ Browser -> Caddy -> backend /api/query/ai-suggestions
 1. `[기능] AI Gateway service`: internal auth, provider adapter, strict structured output, limits, health.
 2. `[기능] AskLake Catalog MCP`: Streamable HTTP, read-only catalog tool, signed scope and permission 재검증.
 3. `[기능] Query AI gateway migration`: public API 유지, gateway/direct compatibility, SQL validation regression tests.
-4. `[배포] AI Gateway Compose integration`: internal-only service, provider secret isolation, health checks, deploy scripts.
+4. `[배포] AI Gateway Compose/EKS integration`: internal-only service, provider secret isolation, health checks, NetworkPolicy, deploy scripts.
 5. `[검증/문서] AI release gate`: contract/security tests, fixed NL-to-SQL evaluation set, runbook and rollback notes.
 
 각 child issue에는 위 파일 소유 범위, acceptance tests, 이 문서 링크를 포함한다. Dashboard Assistant migration이나 vector RAG는 첫 릴리스 이슈에 섞지 않는다.
@@ -51,6 +51,8 @@ Browser -> Caddy -> backend /api/query/ai-suggestions
 - Production과 일반 local 실행은 모두 `AI_QUERY_PROVIDER=gateway`와 실제 OpenAI-compatible provider를 사용한다. `PROVIDER=mock`은 `APP_ENV=test|testing`인 격리 테스트에서만 허용되며 local 앱 실행에는 사용할 수 없다.
 - Gateway가 비정상이면 backend는 시작할 수 있지만 `/api/health/ai`와 Query AI는 명시적인 unavailable 오류를 반환한다.
 - 현재 context replay 방지는 Gateway 프로세스 메모리 범위다. Gateway를 수평 확장할 때는 Redis 같은 shared replay store를 먼저 도입하고, 그 전에는 단일 replica 정책을 유지한다.
+- EKS Gateway는 public Ingress·LoadBalancer·NodePort를 만들지 않는다. Backend만 8090/TCP로 접근하고 Gateway egress는 cluster DNS, Backend MCP와 provider HTTPS로 제한한다.
+- EKS Backend Secret에는 provider key를 두지 않는다. `asklake-ai-gateway-runtime`의 provider key만 `PROVIDER_API_KEY`로 주입하며 service/MCP token은 논리 shared binding으로 byte-exact하게 관리한다.
 - SQL·Dashboard·ETL·RAG·Review 요청은 `AI_QUERY_PROVIDER=gateway` 한 경로로만 들어가며 provider key는 ai-server에만 둔다. Backend의 과거 direct OpenAI 설정과 frontend mock 전환 환경변수는 제거했다.
 
 ## 연구 기반 성능 기준

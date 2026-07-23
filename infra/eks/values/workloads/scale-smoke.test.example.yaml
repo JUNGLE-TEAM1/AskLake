@@ -1,0 +1,12 @@
+enabled: true
+namespace: asklake-dev
+metricsApiReady: true
+generalNodePoolReady: true
+imageReceiptVerified: true
+image: 000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/asklake/dev/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000
+replicaCount: 2
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits: { cpu: 500m, memory: 512Mi }
+nodeSelector:
+  asklake.io/workload-class: general

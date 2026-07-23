@@ -63,14 +63,64 @@ def request_schema_names(document: Mapping[str, Any]) -> set[str]:
     return discovered
 
 
-def property_shape(value: Mapping[str, Any]) -> tuple[Any, ...]:
+class SchemaReferenceError(ValueError):
+    """Raised when an OpenAPI schema reference cannot be resolved safely."""
+
+
+def resolve_local_schema(
+    value: Mapping[str, Any],
+    document: Mapping[str, Any],
+    references: tuple[str, ...] = (),
+) -> Mapping[str, Any]:
+    reference = value.get("$ref")
+    if not isinstance(reference, str):
+        return value
+    if not reference.startswith("#/"):
+        raise SchemaReferenceError(f"unsupported schema reference: {reference}")
+    if reference in references:
+        raise SchemaReferenceError(f"cyclic schema reference: {reference}")
+
+    resolved: Any = document
+    for raw_token in reference[2:].split("/"):
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if not isinstance(resolved, Mapping) or token not in resolved:
+            raise SchemaReferenceError(f"unresolved schema reference: {reference}")
+        resolved = resolved[token]
+    if not isinstance(resolved, Mapping):
+        raise SchemaReferenceError(f"schema reference is not an object: {reference}")
+
+    canonical = dict(resolve_local_schema(resolved, document, (*references, reference)))
+    canonical.update({key: nested for key, nested in value.items() if key != "$ref"})
+    return canonical
+
+
+def property_shape(value: Mapping[str, Any], document: Mapping[str, Any]) -> tuple[Any, ...]:
+    resolved = resolve_local_schema(value, document)
     return (
-        value.get("$ref"),
-        value.get("type"),
-        value.get("format"),
-        value.get("nullable"),
-        property_shape(value["items"]) if isinstance(value.get("items"), Mapping) else None,
+        resolved.get("type"),
+        resolved.get("format"),
+        resolved.get("nullable"),
+        property_shape(resolved["items"], document) if isinstance(resolved.get("items"), Mapping) else None,
+        tuple(
+            property_shape(item, document)
+            for item in resolved.get("allOf", [])
+            if isinstance(item, Mapping)
+        ),
+        tuple(
+            property_shape(item, document)
+            for item in resolved.get("anyOf", [])
+            if isinstance(item, Mapping)
+        ),
+        tuple(
+            property_shape(item, document)
+            for item in resolved.get("oneOf", [])
+            if isinstance(item, Mapping)
+        ),
     )
+
+
+def schema_enum(value: Mapping[str, Any], document: Mapping[str, Any]) -> set[Any]:
+    return set(resolve_local_schema(value, document).get("enum", []))
 
 
 def compare_openapi(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> tuple[list[str], list[str]]:
@@ -133,10 +183,21 @@ def compare_openapi(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> 
             new_property = new_properties.get(property_name)
             if not isinstance(new_property, Mapping):
                 breaking.append(f"removed property: {name}.{property_name}")
-            elif property_shape(old_property) != property_shape(new_property):
-                breaking.append(f"property shape changed: {name}.{property_name}")
-            elif not set(old_property.get("enum", [])).issubset(set(new_property.get("enum", []))):
-                breaking.append(f"property enum values removed: {name}.{property_name}")
+            else:
+                try:
+                    old_shape = property_shape(old_property, baseline)
+                    new_shape = property_shape(new_property, current)
+                    old_property_enum = schema_enum(old_property, baseline)
+                    new_property_enum = schema_enum(new_property, current)
+                except SchemaReferenceError as error:
+                    breaking.append(f"property schema reference invalid: {name}.{property_name} ({error})")
+                    continue
+                if old_shape != new_shape:
+                    breaking.append(f"property shape changed: {name}.{property_name}")
+                elif not old_property_enum.issubset(new_property_enum):
+                    breaking.append(f"property enum values removed: {name}.{property_name}")
+                elif new_property_enum - old_property_enum:
+                    additive.append(f"property enum values added: {name}.{property_name}")
         new_required = set(new_schema.get("required", [])) - set(old_schema.get("required", []))
         if new_required:
             message = f"new required fields: {name} ({', '.join(sorted(new_required))})"

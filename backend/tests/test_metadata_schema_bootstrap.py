@@ -3,9 +3,21 @@ from unittest.mock import MagicMock, patch
 
 from app import main
 from app.migrations.metadata_schema import bootstrap_metadata_schema
+from app.repositories import etl_repository
 
 
 class MetadataSchemaBootstrapTests(unittest.TestCase):
+    def test_etl_repository_skips_runtime_ddl_when_schema_management_is_disabled(self) -> None:
+        database = MagicMock()
+        bind = MagicMock()
+        database.get_bind.return_value = bind
+        etl_repository._schema_ready_bind_ids.discard(id(bind))
+
+        with patch.object(etl_repository.settings, "startup_schema_management_enabled", False):
+            etl_repository.ensure_schema(database)
+
+        bind.begin.assert_not_called()
+
     def test_bootstrap_owns_metadata_schema_preparation(self) -> None:
         database = object()
         with (
@@ -13,6 +25,7 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
             patch("app.migrations.metadata_schema.ensure_dashboard_live_schema") as dashboard_live,
             patch("app.migrations.metadata_schema.ensure_realtime_event_schema") as realtime,
             patch("app.migrations.metadata_schema.ensure_continuous_sql_schema") as continuous_sql,
+            patch("app.migrations.metadata_schema.ensure_catalog_deletion_schema") as catalog_deletion,
             patch("app.migrations.metadata_schema.etl_repository.ensure_schema") as etl,
             patch("app.migrations.metadata_schema.ensure_sql_schema") as sql,
         ):
@@ -23,6 +36,7 @@ class MetadataSchemaBootstrapTests(unittest.TestCase):
         dashboard_live.assert_called_once_with(database)
         realtime.assert_called_once_with(database)
         continuous_sql.assert_called_once_with(database)
+        catalog_deletion.assert_called_once_with(database)
         etl.assert_called_once_with(database)
         sql.assert_called_once_with(database)
 

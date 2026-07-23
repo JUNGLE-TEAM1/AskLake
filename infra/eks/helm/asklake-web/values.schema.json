@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "deploymentProfile", "namespace", "environment", "readiness", "placement", "frontend", "backend", "aiGateway", "collector"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "deploymentProfile": { "type": "string", "enum": ["standard", "realtime-v1-only"] },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "environment": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["foundationReady", "generalNodePoolReady", "imageReceiptVerified", "runtimeConfigReady", "runtimeSecretReady", "backendRuntimeBoundaryReady"],
+      "properties": {
+        "foundationReady": { "type": "boolean" },
+        "generalNodePoolReady": { "type": "boolean" },
+        "imageReceiptVerified": { "type": "boolean" },
+        "runtimeConfigReady": { "type": "boolean" },
+        "runtimeSecretReady": { "type": "boolean" },
+        "backendRuntimeBoundaryReady": { "type": "boolean" }
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeSelector"],
+      "properties": {
+        "nodeSelector": {
+          "type": "object",
+          "minProperties": 1,
+          "required": ["kubernetes.io/arch"],
+          "properties": {
+            "kubernetes.io/arch": { "const": "amd64" }
+          },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "frontend": { "$ref": "#/$defs/frontend" },
+    "backend": { "$ref": "#/$defs/backend" },
+    "aiGateway": { "$ref": "#/$defs/aiGateway" },
+    "collector": { "$ref": "#/$defs/collector" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": { "const": "realtime-v1-only" }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": { "const": false },
+                  "apiControlPlane": { "const": "local" },
+                  "continuousSqlJoinEnabled": { "const": false },
+                  "dashboardSyncMode": { "const": "polling" },
+                  "realtimeEventsEnabled": { "const": false }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deploymentProfile": { "const": "standard" },
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "enabled": { "const": false }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "backend": {
+            "properties": {
+              "realtime": {
+                "properties": {
+                  "apiControlPlane": { "const": "external_ec2" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "foundationReady": { "const": true },
+              "generalNodePoolReady": { "const": true },
+              "imageReceiptVerified": { "const": true },
+              "runtimeConfigReady": { "const": true },
+              "runtimeSecretReady": { "const": true },
+              "backendRuntimeBoundaryReady": { "const": true }
+            }
+          },
+          "frontend": {
+            "properties": {
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "minimum": 2 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          },
+          "backend": {
+            "properties": {
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "minimum": 2 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          },
+          "aiGateway": {
+            "properties": {
+              "enabled": { "const": true },
+              "image": { "$ref": "#/$defs/digestImage" },
+              "replicaCount": { "const": 1 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          },
+          "collector": {
+            "properties": {
+              "enabled": { "const": true },
+              "replicaCount": { "const": 1 },
+              "resources": { "$ref": "#/$defs/resources" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "foundationReady": { "const": false },
+              "generalNodePoolReady": { "const": false },
+              "imageReceiptVerified": { "const": false },
+              "runtimeConfigReady": { "const": false },
+              "runtimeSecretReady": { "const": false },
+              "backendRuntimeBoundaryReady": { "const": false }
+            }
+          },
+          "frontend": { "properties": { "image": { "maxLength": 0 }, "replicaCount": { "const": 0 }, "resources": { "maxProperties": 0 } } },
+          "backend": {
+            "properties": {
+              "image": { "maxLength": 0 },
+              "replicaCount": { "const": 0 },
+              "autoscaling": { "properties": { "enabled": { "const": false } } },
+              "resources": { "maxProperties": 0 }
+            }
+          },
+          "aiGateway": {
+            "properties": {
+              "enabled": { "const": false },
+              "image": { "maxLength": 0 },
+              "replicaCount": { "const": 0 },
+              "resources": { "maxProperties": 0 }
+            }
+          },
+          "collector": { "properties": { "resources": { "maxProperties": 0 } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digestImage": {
+      "type": "string",
+      "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$"
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "port"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "type": { "type": "string", "const": "ClusterIP" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "frontendService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "frontend" }, "port": { "const": 80 } } }
+      ]
+    },
+    "backendService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "fastapi" }, "port": { "const": 8080 } } }
+      ]
+    },
+    "aiGatewayService": {
+      "allOf": [
+        { "$ref": "#/$defs/service" },
+        { "properties": { "name": { "const": "ai-gateway" }, "port": { "const": 8090 } } }
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/$defs/resourcePair" },
+        "limits": { "$ref": "#/$defs/resourcePair" }
+      }
+    },
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "replicaCount", "serviceAccountName", "service", "resources"],
+      "properties": {
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string", "const": "asklake-frontend" },
+        "service": { "$ref": "#/$defs/frontendService" },
+        "resources": { "type": "object" }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "replicaCount", "terminationGracePeriodSeconds", "preStopDelaySeconds", "autoscaling", "serviceAccountName", "service", "runtimeConfigMapName", "runtimeBoundaryConfigMapName", "runtimeSecretName", "trinoRuntimeSecretName", "runtimeSecretTrinoCaKey", "kafkaAllowedTopicPrefixes", "realtime", "resources"],
+      "properties": {
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "terminationGracePeriodSeconds": { "type": "integer", "const": 360 },
+        "preStopDelaySeconds": { "type": "integer", "const": 310 },
+        "autoscaling": { "$ref": "#/$defs/autoscaling" },
+        "serviceAccountName": { "type": "string", "const": "asklake-backend" },
+        "service": { "$ref": "#/$defs/backendService" },
+        "runtimeConfigMapName": { "type": "string", "const": "asklake-runtime" },
+        "runtimeBoundaryConfigMapName": { "type": "string", "const": "asklake-runtime-boundary" },
+        "runtimeConfigRevision": { "type": "string", "maxLength": 128 },
+        "runtimeSecretName": { "type": "string", "const": "asklake-backend-runtime" },
+        "trinoRuntimeSecretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "runtimeSecretTrinoCaKey": { "type": "string", "const": "trino-ca.pem" },
+        "kafkaAllowedTopicPrefixes": { "type": "string", "const": "asklake." },
+        "realtime": { "$ref": "#/$defs/backendRealtime" },
+        "resources": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "autoscaling": {
+                "properties": {
+                  "enabled": { "const": true }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "replicaCount": { "const": 2 }
+            }
+          }
+        }
+      ]
+    },
+    "backendRealtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "apiControlPlane", "v1ApiEnabled", "v1OwnerGeneration", "continuousSqlJoinEnabled", "dashboardSyncMode", "realtimeEventsEnabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "apiControlPlane": { "type": "string", "enum": ["local", "external_ec2"] },
+        "v1ApiEnabled": { "type": "boolean" },
+        "v1OwnerGeneration": { "type": "string", "pattern": "^$|^[a-z0-9][a-z0-9.-]{0,62}$" },
+        "continuousSqlJoinEnabled": { "type": "boolean" },
+        "dashboardSyncMode": { "type": "string", "enum": ["polling", "sse"] },
+        "realtimeEventsEnabled": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "v1ApiEnabled": { "const": true } } },
+          "then": {
+            "properties": {
+              "apiControlPlane": { "const": "local" },
+              "v1OwnerGeneration": { "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$", "minLength": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "v1OwnerGeneration": { "const": "" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "enabled": { "const": false } } },
+          "then": {
+            "properties": {
+              "continuousSqlJoinEnabled": { "const": false },
+              "dashboardSyncMode": { "const": "polling" },
+              "realtimeEventsEnabled": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "enabled": { "const": true } } },
+          "then": {
+            "properties": {
+              "apiControlPlane": { "const": "local" },
+              "continuousSqlJoinEnabled": { "const": true },
+              "dashboardSyncMode": { "const": "sse" },
+              "realtimeEventsEnabled": { "const": true }
+            }
+          }
+        }
+      ]
+    },
+    "aiGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "replicaCount", "serviceAccountName", "service", "runtimeSecretName", "runtimeSecretKeys", "provider", "providerBaseUrl", "providerModel", "mcpServerUrl", "requestTimeoutSeconds", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "serviceAccountName": { "type": "string", "const": "asklake-ai-gateway" },
+        "service": { "$ref": "#/$defs/aiGatewayService" },
+        "runtimeSecretName": { "type": "string", "const": "asklake-ai-gateway-runtime" },
+        "runtimeSecretKeys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["internalAuthToken", "mcpServiceToken", "providerApiKey"],
+          "properties": {
+            "internalAuthToken": { "type": "string", "const": "AI_GATEWAY_SERVICE_TOKEN" },
+            "mcpServiceToken": { "type": "string", "const": "AI_MCP_SERVICE_TOKEN" },
+            "providerApiKey": { "type": "string", "const": "AI_PROVIDER_API_KEY" }
+          }
+        },
+        "provider": { "type": "string", "const": "openai_compatible" },
+        "providerBaseUrl": { "type": "string", "pattern": "^https://[^?#]+$" },
+        "providerModel": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "mcpServerUrl": { "type": "string", "const": "http://fastapi:8080/internal/mcp" },
+        "requestTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "resources": { "type": "object" }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage", "behavior"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "const": 2 },
+        "maxReplicas": { "type": "integer", "const": 6 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scaleUp", "scaleDown"],
+          "properties": {
+            "scaleUp": { "$ref": "#/$defs/scaleUpBehavior" },
+            "scaleDown": { "$ref": "#/$defs/scaleDownBehavior" }
+          }
+        }
+      }
+    },
+    "scaleUpBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stabilizationWindowSeconds", "pods", "periodSeconds"],
+      "properties": {
+        "stabilizationWindowSeconds": { "type": "integer", "minimum": 0, "maximum": 300 },
+        "pods": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "periodSeconds": { "type": "integer", "minimum": 15, "maximum": 1800 }
+      }
+    },
+    "scaleDownBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stabilizationWindowSeconds", "pods", "periodSeconds"],
+      "properties": {
+        "stabilizationWindowSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
+        "pods": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "periodSeconds": { "type": "integer", "minimum": 15, "maximum": 1800 }
+      }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicaCount", "serviceAccountName", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string", "const": "asklake-backend" },
+        "resources": { "type": "object" }
+      }
+    }
+  }
+}

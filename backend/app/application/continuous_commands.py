@@ -24,6 +24,7 @@ from app.domain.continuous_runtime import (
     record_runtime_command,
     record_runtime_error,
     record_runtime_observation,
+    runtime_contract_projection,
 )
 from app.models import (
     ETLJobModel,
@@ -69,6 +70,7 @@ class ContinuousCommandHooks:
     fail_session: Callable[[KafkaContinuousSessionModel | None, str, str], None]
     mark_session_stopping: Callable[[Session | None, KafkaContinuousRuntimeModel, str], None]
     with_permissions: Callable[[Session, Any, ActorContext], Any]
+    worker_kind: Callable[[ETLJobModel], str] = lambda _job: "spark_structured_streaming"
 
 
 def execute_continuous_command(
@@ -102,6 +104,24 @@ def execute_continuous_command(
     )
     if runtime is None:
         runtime = hooks.runtime_from_job(job)
+
+    if command == "stopContinuous" and runtime.status in {"stopping", "stopped"}:
+        saved_job = etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return JobCommandResponse(
+            action=CONTINUOUS_ACTION_BY_COMMAND[command],
+            api_path=f"/api/etl/jobs/{job.id}/commands",
+            job=hooks.with_permissions(db, saved_job, actor),
+            processing_result={
+                "controlPlaneOnly": not dispatch_worker,
+                "idempotent": True,
+                "runtimeStatus": runtime.status,
+                "worker": hooks.worker_kind(job),
+                "workerResult": {
+                    "alreadyRequested": runtime.status == "stopping",
+                    "alreadyTerminal": runtime.status == "stopped",
+                },
+            },
+        )
 
     if command in {"startContinuous", "resumeContinuous"}:
         job, runtime = _lock_start_resources(db, job, runtime, hooks)
@@ -137,6 +157,9 @@ def execute_continuous_command(
         worker_attempt_id = _optional_string(
             worker_result.get("workerAttemptId") or worker_result.get("containerId")
         ) or requested_attempt_id
+        if worker_result.get("worker") == "kafka_connect_clickhouse_v2":
+            job.last_state = "Kafka Connect → ClickHouse V2 수집 시작 요청"
+            job.progress = {"label": "Kafka Connect V2 시작 요청", "value": 5}
         if session is not None:
             session.worker_attempt_id = worker_attempt_id
         runtime.metrics = bind_worker_attempt(runtime.metrics, worker_attempt_id)
@@ -167,7 +190,7 @@ def execute_continuous_command(
         # response is reconciled from the deterministic worker identity.
         etl_repository.save_kafka_continuous_command(db, job, runtime)
         worker_result = _dispatch_terminal(
-            db, job, runtime, command, verb, worker, dispatch_worker
+            db, job, runtime, command, verb, worker, hooks, dispatch_worker
         )
         runtime.metrics = record_runtime_observation(
             runtime.metrics,
@@ -183,7 +206,7 @@ def execute_continuous_command(
         processing_result={
             "controlPlaneOnly": not dispatch_worker,
             "runtimeStatus": runtime.status,
-            "worker": "spark_structured_streaming",
+            "worker": str(worker_result.get("worker") or "spark_structured_streaming"),
             "workerResult": worker_result,
         },
     )
@@ -200,9 +223,13 @@ def _dispatch_start(
     dispatch_worker: bool,
 ) -> dict[str, Any]:
     if not dispatch_worker:
-        return {"deferred": True, "owner": "continuous-worker"}
+        return {
+            "deferred": True,
+            "owner": "continuous-worker",
+            "worker": hooks.worker_kind(job),
+        }
     try:
-        return worker.command(job, runtime, "start")
+        return worker.command(job, runtime, "start", _start_worker_options(runtime))
     except ApiError as exc:
         recovered = _recover_lost_start_response(worker, job, runtime)
         if recovered is not None:
@@ -218,12 +245,24 @@ def _dispatch_terminal(
     command: str,
     verb: str,
     worker: KafkaRuntimeGateway,
+    hooks: ContinuousCommandHooks,
     dispatch_worker: bool,
 ) -> dict[str, Any]:
     if not dispatch_worker:
-        return {"deferred": True, "owner": "continuous-worker"}
+        return {
+            "deferred": True,
+            "owner": "continuous-worker",
+            "worker": hooks.worker_kind(job),
+        }
     try:
-        return worker.command(job, runtime, verb)
+        contract = runtime_contract_projection(
+            runtime.metrics,
+            public_status=runtime.status,
+            legacy_error=runtime.last_error,
+        )
+        worker_attempt_id = _optional_string(contract.get("fencingToken"))
+        options = {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
+        return worker.command(job, runtime, verb, options)
     except ApiError as exc:
         runtime.metrics = record_runtime_error(
             runtime.metrics,
@@ -335,6 +374,23 @@ def _recover_lost_start_response(
     }:
         return None
     return {**observed, "submissionRecovered": True, "started": False}
+
+
+def _start_worker_options(runtime: KafkaContinuousRuntimeModel) -> dict[str, Any] | None:
+    """Carry the committed start fence through to the external runner.
+
+    The production API only persists intent; the lease-owning control-plane
+    submits later.  Supplying the durable fence on both paths makes a delayed
+    submission distinguishable from the previous REST driver without replacing
+    the provisional token after submission.
+    """
+    contract = runtime_contract_projection(
+        runtime.metrics,
+        public_status=runtime.status,
+        legacy_error=runtime.last_error,
+    )
+    worker_attempt_id = _optional_string(contract.get("fencingToken"))
+    return {"workerAttemptId": worker_attempt_id} if worker_attempt_id else None
 
 
 def _record_start_failure(

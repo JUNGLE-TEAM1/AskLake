@@ -192,6 +192,7 @@ export type JobRowData = {
   status: JobStatus;
   name: string;
   id: string;
+  datasetId?: string;
   owner: string;
   ownerAvatarUrl?: string;
   createdBy?: string;

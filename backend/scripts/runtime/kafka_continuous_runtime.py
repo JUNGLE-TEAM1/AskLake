@@ -1365,7 +1365,7 @@ def main() -> None:
         .option("kafka.bootstrap.servers", config.broker)
         .option("subscribe", config.topic)
         .option("startingOffsets", os.environ.get("ASKLAKE_CONTINUOUS_OFFSET_POLICY", "earliest"))
-        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "10000"))
+        .option("maxOffsetsPerTrigger", os.environ.get("ASKLAKE_CONTINUOUS_MAX_OFFSETS", "100"))
         .option("kafka.group.id", config.consumer_group_id)
         .load())
     raw_payload = col("value").cast("string")
@@ -1578,15 +1578,6 @@ def main() -> None:
         quarantine_batch_path = f"{quarantine_path.rstrip('/')}/_batches/batch_id={batch_id}" if quarantined_count else None
         evidence_batch_path = None
         if stored_count:
-            missing_partitions = [
-                name for name in iceberg_target["partitionColumns"]
-                if name not in target_frame.columns
-            ]
-            if missing_partitions:
-                raise RuntimeError(
-                    "Continuous Iceberg partition contract references missing output columns: "
-                    + ", ".join(missing_partitions)
-                )
             iceberg_frame = (
                 target_frame
                 .withColumn("_asklake_run_id", lit(run_id))

@@ -9,15 +9,21 @@ import duckdb
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.schemas.catalog import (
+    CatalogDatasetFilterValuesRequest,
     CatalogDatasetResponse,
     CatalogDatasetRowsResponse,
+    ClickHouseTableRef,
     DatasetMaterializationRun,
 )
+from app.schemas.permissions import ResourcePermissions
+from app.services.clickhouse_client import ClickHouseRows
 from app.schemas.trino import TrinoClientPage
 from app.services.catalog_service import (
     CatalogService,
     dataset_for_latest_successful_materialization,
+    with_dataset_permissions,
 )
+from app.services.catalog_filter_values_service import query_catalog_dataset_filter_values
 from app.services.dataset_rows_service import read_dataset_rows
 
 
@@ -39,6 +45,24 @@ class FakeCatalogRowsTrinoClient:
 
     def fetch(self, _next_uri: str, **_kwargs) -> TrinoClientPage:
         raise AssertionError("fixture query should fit in one Trino page")
+
+
+class FakeCatalogRowsClickHouseClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.closed = False
+
+    def query(self, query: str, **_kwargs) -> ClickHouseRows:
+        self.queries.append(query)
+        if "count()" in query:
+            return ClickHouseRows(columns=["row_count"], rows=[[3]])
+        return ClickHouseRows(
+            columns=["event_time", "level"],
+            rows=[["2026-07-19T07:30:00Z", "INFO"]],
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def build_dataset(storage_location: str) -> CatalogDatasetResponse:
@@ -140,6 +164,55 @@ class CatalogDatasetRowsTest(unittest.TestCase):
         get_dataset.assert_called_once_with(self.dataset.id, actor)
         read_rows.assert_called_once_with(self.dataset, limit=25, offset=50)
 
+    def test_catalog_service_queries_dynamic_filter_values_with_query_permission(self) -> None:
+        actor = ActorContext()
+        service = CatalogService(
+            lake_storage=None,
+            repository=SimpleNamespace(db=object()),  # type: ignore[arg-type]
+            sql_repository=None,
+        )
+        request = CatalogDatasetFilterValuesRequest.model_validate({
+            "column": "label",
+            "contextFilters": [{
+                "id": "id-filter",
+                "column": "id",
+                "operator": "gte",
+                "value": 10,
+            }],
+            "limit": 25,
+            "search": "row",
+        })
+        query_session = SimpleNamespace(
+            close=lambda: None,
+            read_filter_values=lambda *_args, **_kwargs: {
+                "truncated": False,
+                "values": ["row-10", "row-11"],
+            },
+        )
+
+        with (
+            patch.object(service, "get_dataset", return_value=self.dataset) as get_dataset,
+            patch("app.services.catalog_filter_values_service.require_governed_access") as governed_access,
+            patch("app.services.catalog_filter_values_service.require_permission") as permission,
+            patch(
+                "app.services.catalog_filter_values_service.DashboardDatasetQuerySession",
+                return_value=query_session,
+            ) as session_class,
+        ):
+            actual = query_catalog_dataset_filter_values(
+                service,
+                self.dataset.id,
+                request,
+                actor,
+            )
+
+        self.assertEqual(actual.dataset_id, self.dataset.id)
+        self.assertEqual([item.value for item in actual.values], ["row-10", "row-11"])
+        get_dataset.assert_called_once_with(self.dataset.id, actor)
+        governed_access.assert_called_once()
+        permission.assert_called_once()
+        session_class.assert_called_once_with(self.dataset)
+
     def test_declared_but_missing_materialization_is_not_reported_as_actual_data(self) -> None:
         missing_dataset = build_dataset(
             str(Path(self.temporary_directory.name) / "missing.parquet")
@@ -213,6 +286,65 @@ class CatalogDatasetRowsTest(unittest.TestCase):
             ],
         )
         self.assertTrue(all("_asklake_" not in query for query in client.queries))
+
+    def test_clickhouse_dataset_rows_use_the_realtime_v2_reader(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
+            "physical_bindings": [{
+                "role": "serving",
+                "engine": "clickhouse",
+                "status": "active",
+                "bindingEpoch": 1,
+                "versionId": "kiv2-job",
+                "pipelineVersionId": "kiv2-job",
+                "database": "asklake_v2",
+                "table": "raw_events_v2_current",
+            }],
+            "schema_": [["event_time", "Timestamp"], ["level", "String"]],
+            "storage_format": "clickhouse",
+            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
+            "streaming_source": {"topic": "events.v2"},
+        })
+        client = FakeCatalogRowsClickHouseClient()
+
+        with patch(
+            "app.services.dataset_rows_service.ClickHouseClient.realtime_v2_reader",
+            return_value=client,
+        ) as reader:
+            page = read_dataset_rows(dataset, limit=1, offset=0)
+
+        reader.assert_called_once_with()
+        self.assertEqual(page.row_count, 3)
+        self.assertEqual(page.rows, [["2026-07-19T07:30:00Z", "INFO"]])
+        self.assertTrue(client.closed)
+        self.assertTrue(all("kafka_topic = 'events.v2'" in query for query in client.queries))
+
+    def test_clickhouse_dataset_query_permission_does_not_require_trino_registration(self) -> None:
+        dataset = self.dataset.model_copy(update={
+            "clickhouse_table": ClickHouseTableRef(database="asklake_v2", table="raw_events_v2"),
+            "query_engine_status": "unavailable",
+            "query_engine_table": None,
+            "storage_format": "clickhouse",
+            "storage_location": "clickhouse://asklake_v2/raw_events_v2",
+        })
+        permissions = ResourcePermissions(
+            canView=True,
+            canQuery=True,
+            computedFor="Admin User",
+            enforced=True,
+        )
+
+        with (
+            patch("app.services.catalog_service.settings.trino_enabled", True),
+            patch(
+                "app.services.catalog_service.permissions_for_actor_with_governance",
+                return_value=permissions,
+            ),
+        ):
+            projected = with_dataset_permissions(dataset, ActorContext(role="admin"), object())
+
+        self.assertTrue(projected.permissions.can_query)
+        self.assertFalse(projected.query_engine_required)
 
 if __name__ == "__main__":
     unittest.main()

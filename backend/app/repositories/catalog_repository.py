@@ -27,20 +27,33 @@ class CatalogRepository:
         ensure_catalog_schema(self.db)
         return self.db.get(CatalogDatasetModel, dataset_id)
 
-    def get_dataset_model_for_update(self, dataset_id: str) -> CatalogDatasetModel | None:
+    def get_dataset_model_for_update(
+        self,
+        dataset_id: str,
+        *,
+        allow_deletion_fence: bool = False,
+    ) -> CatalogDatasetModel | None:
         ensure_catalog_schema(self.db)
-        return self.db.scalar(
+        model = self.db.scalar(
             select(CatalogDatasetModel)
             .where(CatalogDatasetModel.id == dataset_id)
             .with_for_update()
         )
+        if not allow_deletion_fence:
+            from app.repositories.catalog_deletion_repository import ensure_catalog_publication_allowed
+
+            ensure_catalog_publication_allowed(self.db, dataset_id)
+        return model
 
     def get_dataset_payload(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.get_dataset_model(dataset_id)
-        return dataset_model_to_payload(model) if model else None
+        if model is None:
+            return None
+        self._raise_if_deletion_in_progress(dataset_id)
+        return dataset_model_to_payload(model)
 
     def get_dataset_payload_for_update(self, dataset_id: str) -> dict[str, Any] | None:
-        model = self.get_dataset_model_for_update(dataset_id)
+        model = self.get_dataset_model_for_update(dataset_id, allow_deletion_fence=True)
         return dataset_model_to_payload(model) if model else None
 
     def get_dataset_payload_by_name(self, dataset_name: str) -> dict[str, Any] | None:
@@ -58,7 +71,7 @@ class CatalogRepository:
     def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         ensure_catalog_schema(self.db)
         dataset_id = str(payload["id"])
-        model = self.get_dataset_model(dataset_id)
+        model = self.get_dataset_model_for_update(dataset_id)
 
         if model is None:
             self.db.add(CatalogDatasetModel(id=dataset_id, **dataset_payload_to_model_values(payload)))
@@ -69,6 +82,19 @@ class CatalogRepository:
         self.db.flush()
         self.db.commit()
         return payload
+
+    def _raise_if_deletion_in_progress(self, dataset_id: str) -> None:
+        from app.core.errors import ApiError
+        from app.repositories.catalog_deletion_repository import ACTIVE_DELETION_STATUSES, CatalogDeletionRepository
+
+        deletion = CatalogDeletionRepository(self.db).latest_for_dataset(dataset_id)
+        if deletion is not None and deletion.status in ACTIVE_DELETION_STATUSES:
+            raise ApiError(
+                "DATASET_DELETION_IN_PROGRESS",
+                "Dataset deletion is in progress.",
+                409,
+                {"datasetId": dataset_id, "deletionId": deletion.id, "status": deletion.status},
+            )
 
 
 def ensure_catalog_schema(db: Session) -> None:
@@ -92,6 +118,12 @@ def ensure_catalog_schema(db: Session) -> None:
             "status": "VARCHAR(64)",
             "freshness": "VARCHAR(64)",
             "source": "VARCHAR(255)",
+            "producer_job_id": "VARCHAR(160)",
+            "producer_job_kind": "VARCHAR(64)",
+            "execution_mode": "VARCHAR(32)",
+            "source_kind": "VARCHAR(64)",
+            "relation_mode": "VARCHAR(32)",
+            "runtime_status": "VARCHAR(64)",
             "source_manifest": "JSON",
             "rows": "VARCHAR(120)",
             "size": "VARCHAR(120)",
@@ -114,10 +146,7 @@ def ensure_catalog_schema(db: Session) -> None:
 
 
 def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
-    if model.payload:
-        return normalize_dataset_payload(model.payload)
-
-    return normalize_dataset_payload({
+    payload = dict(model.payload or {
         "description": model.description or "",
         "downstream": model.downstream or [],
         "freshness": model.freshness or "latest",
@@ -140,10 +169,26 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "tags": model.tags or [],
         "upstream": model.upstream or [],
     })
+    authoritative_metadata = {
+        "producerJobId": model.producer_job_id,
+        "producerJobKind": model.producer_job_kind,
+        "executionMode": model.execution_mode,
+        "sourceKind": model.source_kind,
+        "relationMode": model.relation_mode,
+        "runtimeStatus": model.runtime_status,
+    }
+    for key, value in authoritative_metadata.items():
+        if value is not None:
+            payload[key] = value
+    return normalize_dataset_payload(payload)
 
 
 def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_payload = dict(payload)
+    # RAG is no longer a product/runtime capability. Older durable Catalog
+    # payloads may omit this former field, so retain a harmless compatibility
+    # default instead of making the whole Catalog list fail validation.
+    normalized_payload.setdefault("rag", False)
     physical_bindings = normalized_payload.get("physicalBindings")
     if not isinstance(physical_bindings, list):
         physical_bindings = []
@@ -204,6 +249,12 @@ def dataset_payload_to_model_values(payload: dict[str, Any]) -> dict[str, Any]:
         "status": payload.get("status"),
         "freshness": payload.get("freshness"),
         "source": payload.get("source"),
+        "producer_job_id": payload.get("producerJobId") or payload.get("producer_job_id"),
+        "producer_job_kind": payload.get("producerJobKind") or payload.get("producer_job_kind"),
+        "execution_mode": payload.get("executionMode") or payload.get("execution_mode"),
+        "source_kind": payload.get("sourceKind") or payload.get("source_kind"),
+        "relation_mode": payload.get("relationMode") or payload.get("relation_mode"),
+        "runtime_status": payload.get("runtimeStatus") or payload.get("runtime_status"),
         "source_manifest": payload.get("sourceManifest") or payload.get("source_manifest"),
         "rows": payload.get("rows"),
         "size": payload.get("size"),

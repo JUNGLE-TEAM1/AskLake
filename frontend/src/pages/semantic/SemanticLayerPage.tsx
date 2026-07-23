@@ -39,7 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Textarea } from "../../components/ui/textarea";
 import "../../styles/semantic-layer-real.css";
 
-type Tab = "datasets" | "analysis" | "rag" | "access";
+type Tab = "datasets" | "analysis" | "access";
 type Notice = { tone: "success" | "error" | "info"; message: string };
 type RagRolePayload = Pick<RagProfile, "bodyColumns" | "titleColumns" | "metadataColumns" | "identifierColumns" | "excludedColumns">;
 
@@ -295,17 +295,8 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
     }
   };
 
-  useEffect(() => {
-    if (!ragDatasetId || activeTab !== "rag" || profiles[ragDatasetId]) return;
-    void run(`profile:${ragDatasetId}`, async () => refreshProfile(ragDatasetId));
-  }, [activeTab, ragDatasetId, profiles]);
-
   const { publishSelected, saveDatasets, saveDimensions, saveMetrics, saveModelInfo } = buildSemanticModelActions({
     onAction, run, selected, setModels, setNotice,
-  });
-
-  const { approve, classify, index } = buildSemanticRagActions({
-    onAction, ragDatasetId, ragProfile, refreshProfile, run, selected, setNotice, setPreviews, setProfiles, setRagJobsRefreshToken,
   });
 
   if (loading) return <div className="semantic-real-loading" role="status"><Loader2 className="semantic-spin" /> 실제 Semantic Model과 Catalog schema를 불러오는 중입니다.</div>;
@@ -328,7 +319,6 @@ export function SemanticLayerPage({ datasets: providedDatasets, onAction }: Sema
             <ModelWorkflowNav activeTab={activeTab} onChange={setActiveTab} />
             {activeTab === "datasets" && <DatasetsTab model={selected} catalogDatasets={catalogDatasets} onSave={saveDatasets} />}
             {activeTab === "analysis" && <AnalysisDefinitionsTab model={selected} catalogDatasets={catalogDatasets} onSaveMetrics={saveMetrics} onSaveDimensions={saveDimensions} />}
-            {activeTab === "rag" && <RagTab model={selected} selectedDatasetId={ragDatasetId} profile={ragProfile} previewDocuments={previews[ragDatasetId] ?? []} jobsRefreshToken={ragJobsRefreshToken} onDatasetChange={setSelectedRagDatasetId} onRefresh={() => void run("profile", async () => refreshProfile(ragDatasetId))} onClassify={classify} onApprove={approve} onIndex={index} busy={busy} />}
             {activeTab === "access" && <AccessTab model={selected} />}
         </main>
       </>}
@@ -367,8 +357,7 @@ function ModelWorkflowNav({ activeTab, onChange }: { activeTab: Tab; onChange: (
   const steps: Array<{ id: Tab; number: number; title: string }> = [
     { id: "datasets", number: 1, title: "데이터 선택" },
     { id: "analysis", number: 2, title: "분석 기준" },
-    { id: "rag", number: 3, title: "AI 검색" },
-    { id: "access", number: 4, title: "권한" },
+    { id: "access", number: 3, title: "권한" },
   ];
   const activeIndex = Math.max(0, steps.findIndex((step) => step.id === activeTab));
   return <nav className="semantic-real-workflow" aria-label="업무 모델 설정 순서">

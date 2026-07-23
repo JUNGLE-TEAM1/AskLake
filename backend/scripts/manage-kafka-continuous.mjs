@@ -137,7 +137,11 @@ async function startWorkerKubernetes(request, containerName) {
 
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
   await clearKubernetesCommand(jobId);
-  const workerAttemptId = randomUUID();
+  // The API/control-plane has already committed this fence before asking the
+  // runner to submit.  Preserve it so a stale REST status cannot leave a
+  // durable start intent permanently stuck in `starting`.
+  const requestedWorkerAttemptId = String(request.workerAttemptId || "").trim() || null;
+  const workerAttemptId = requestedWorkerAttemptId || randomUUID();
   const application = continuousSparkApplication(request, runtime, workerAttemptId);
   const created = await client.create(application);
   return kubernetesWorkerResult(jobId, containerName, created, { started: true, workerAttemptId });
@@ -302,7 +306,7 @@ async function startWorkerRest(request, containerName) {
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
 
-  const workerAttemptId = randomUUID();
+  const workerAttemptId = String(request.workerAttemptId || "").trim() || randomUUID();
   const runtime = continuousRestRuntime();
   const submission = createSparkRestSubmission({
     appName: `${continuousSqlContract ? "asklake-continuous-sql" : "asklake-kafka-continuous"}-${safeSegment(jobId)}`,
@@ -522,14 +526,14 @@ function continuousEnvironment(request, workerAttemptId, runtimeReportDir, inclu
   return {
     ASKLAKE_CONTINUOUS_JOB_ID: jobId,
     ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID: workerAttemptId,
-    ASKLAKE_CONTINUOUS_BROKER: required(request.broker, "broker"),
+    ASKLAKE_CONTINUOUS_BROKER: resolveContinuousWorkerBroker(required(request.broker, "broker"), environment),
     ASKLAKE_CONTINUOUS_TOPIC: required(request.topic, "topic"),
     ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID: required(request.consumerGroupId, "consumerGroupId"),
     ASKLAKE_CONTINUOUS_OUTPUT_PATH: required(request.outputPath, "outputPath"),
     ASKLAKE_CONTINUOUS_CHECKPOINT_PATH: required(request.checkpointPath, "checkpointPath"),
     ASKLAKE_CONTINUOUS_OFFSET_POLICY: request.initialOffsetPolicy || "earliest",
-    ASKLAKE_CONTINUOUS_TRIGGER_SECONDS: positiveInt(request.triggerIntervalSeconds, 30),
-    ASKLAKE_CONTINUOUS_MAX_OFFSETS: positiveInt(request.maxOffsetsPerTrigger, 10000),
+    ASKLAKE_CONTINUOUS_TRIGGER_SECONDS: positiveInt(request.triggerIntervalSeconds, 10),
+    ASKLAKE_CONTINUOUS_MAX_OFFSETS: positiveInt(request.maxOffsetsPerTrigger, 100),
     ASKLAKE_CONTINUOUS_INITIAL_COUNTS: JSON.stringify(request.initialCounts || {}),
     ASKLAKE_CONTINUOUS_INITIAL_METRICS: JSON.stringify(request.initialMetrics || {}),
     ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE: JSON.stringify(request.initialSchemaState || {}),
@@ -645,7 +649,7 @@ async function startWorkerDocker(request, containerName) {
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
   clearCommand(jobId);
   if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
-  const workerAttemptId = randomUUID();
+  const workerAttemptId = String(request.workerAttemptId || "").trim() || randomUUID();
   const icebergTarget = requiredObject(request.icebergTarget, "icebergTarget");
   const packages = continuousSparkPackages(request.outputPath, icebergTarget).join(",");
   const environment = continuousEnvironment(request, workerAttemptId, reportContainerDir);
@@ -666,14 +670,14 @@ async function startWorkerDocker(request, containerName) {
     ...Object.entries(environment).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     "-e", `ASKLAKE_CONTINUOUS_JOB_ID=${jobId}`,
     "-e", `ASKLAKE_CONTINUOUS_WORKER_ATTEMPT_ID=${workerAttemptId}`,
-    "-e", `ASKLAKE_CONTINUOUS_BROKER=${required(request.broker, "broker")}`,
+    "-e", `ASKLAKE_CONTINUOUS_BROKER=${resolveContinuousWorkerBroker(required(request.broker, "broker"))}`,
     "-e", `ASKLAKE_CONTINUOUS_TOPIC=${required(request.topic, "topic")}`,
     "-e", `ASKLAKE_CONTINUOUS_CONSUMER_GROUP_ID=${required(request.consumerGroupId, "consumerGroupId")}`,
     "-e", `ASKLAKE_CONTINUOUS_OUTPUT_PATH=${required(request.outputPath, "outputPath")}`,
     "-e", `ASKLAKE_CONTINUOUS_CHECKPOINT_PATH=${required(request.checkpointPath, "checkpointPath")}`,
     "-e", `ASKLAKE_CONTINUOUS_OFFSET_POLICY=${request.initialOffsetPolicy || "earliest"}`,
-    "-e", `ASKLAKE_CONTINUOUS_TRIGGER_SECONDS=${positiveInt(request.triggerIntervalSeconds, 30)}`,
-    "-e", `ASKLAKE_CONTINUOUS_MAX_OFFSETS=${positiveInt(request.maxOffsetsPerTrigger, 10000)}`,
+    "-e", `ASKLAKE_CONTINUOUS_TRIGGER_SECONDS=${positiveInt(request.triggerIntervalSeconds, 10)}`,
+    "-e", `ASKLAKE_CONTINUOUS_MAX_OFFSETS=${positiveInt(request.maxOffsetsPerTrigger, 100)}`,
     "-e", `ASKLAKE_CONTINUOUS_INITIAL_COUNTS=${JSON.stringify(request.initialCounts || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_INITIAL_METRICS=${JSON.stringify(request.initialMetrics || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_INITIAL_SCHEMA_STATE=${JSON.stringify(request.initialSchemaState || {})}`,
@@ -912,6 +916,16 @@ function safeSegment(value) {
 function required(value, name) {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(`${name} is required`);
   return String(value);
+}
+export function resolveContinuousWorkerBroker(broker, environment = process.env) {
+  const configured = required(broker, "broker");
+  const dockerOverride = String(environment.ASKLAKE_KAFKA_BROKER_IN_DOCKER || "").trim();
+  if (!dockerOverride) return configured;
+
+  const [host] = configured.split(":", 1);
+  return ["127.0.0.1", "localhost", "::1"].includes(host.toLowerCase())
+    ? dockerOverride
+    : configured;
 }
 function requiredObject(value, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

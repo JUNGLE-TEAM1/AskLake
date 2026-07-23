@@ -62,31 +62,7 @@
   padding-top: 2px;
 }
 
-.dashboard-list-actions {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.dashboard-create-button {
-  display: inline-flex;
-  height: 44px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 800;
-  line-height: 1;
-  padding: 0 16px;
-}
-
-.dashboard-create-button svg {
-  flex: 0 0 auto;
-}
-
-.dashboard-create-button:disabled {
+.app-page-primary-action:disabled {
   cursor: wait;
   opacity: 0.72;
 }

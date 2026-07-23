@@ -20,6 +20,7 @@ export type SourceConnectionDefinition = {
   assetsTitle: string;
   description: string;
   fields: Array<[string, string]>;
+  fieldSuggestions?: Record<string, string>;
   info?: string;
   logs: string[];
   previewColumns: string[];
@@ -30,16 +31,17 @@ export type SourceConnectionDefinition = {
   title: string;
 };
 
+const connectorMeta: Record<string, SourceConnectorMeta> = {
+  "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: getSourceBrandMeta("File / S3").label, status: "실제 연결" },
+  PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: getSourceBrandMeta("PostgreSQL").label, status: "실제 연결" },
+  MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: getSourceBrandMeta("MongoDB").label, status: "실제 연결" },
+  "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: getSourceBrandMeta("REST API").label, status: "실제 연결" },
+  "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: getSourceBrandMeta("Data Lake").label, status: "목록 조회" },
+  "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <SourceBrandIcon kind="sql" />, label: getSourceBrandMeta("SQL Result").label, status: "검증 완료" },
+  "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: getSourceBrandMeta("Stream / Kafka").label, status: "메타데이터" },
+};
+
 export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnectorDefaults) {
-  const connectorMeta: Record<string, SourceConnectorMeta> = {
-    "File / S3": { description: "S3 버킷의 CSV, JSON, Parquet 파일을 가져옵니다.", icon: <SourceBrandIcon kind="s3" />, label: getSourceBrandMeta("File / S3").label, status: "실제 연결" },
-    PostgreSQL: { description: "PostgreSQL 테이블에서 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="postgres" />, label: getSourceBrandMeta("PostgreSQL").label, status: "실제 연결" },
-    MongoDB: { description: "MongoDB 컬렉션에서 문서를 가져옵니다.", icon: <SourceBrandIcon kind="mongo" />, label: getSourceBrandMeta("MongoDB").label, status: "실제 연결" },
-    "REST API": { description: "API를 호출해 응답 데이터를 가져옵니다.", icon: <SourceBrandIcon kind="rest" />, label: getSourceBrandMeta("REST API").label, status: "실제 연결" },
-    "Data Lake": { description: "AskLake에 저장된 데이터셋을 다시 사용합니다.", icon: <SourceBrandIcon kind="lake" />, label: getSourceBrandMeta("Data Lake").label, status: "목록 조회" },
-    "SQL Result": { description: "검증된 SQL 분석 결과를 다시 사용합니다.", icon: <SourceBrandIcon kind="sql" />, label: getSourceBrandMeta("SQL Result").label, status: "검증 완료" },
-    "Stream / Kafka": { description: "Kafka에서 들어오는 데이터를 실시간 또는 구간별로 가져옵니다.", icon: <SourceBrandIcon kind="kafka" />, label: getSourceBrandMeta("Stream / Kafka").label, status: "메타데이터" },
-  };
   const sourceConfigs: Record<string, SourceConnectionDefinition> = {
     "SQL Result": {
       title: "SQL 결과 입력",
@@ -108,16 +110,16 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
       info: "",
     },
     "File / S3": {
-      title: "Amazon S3 연결 설정",
+      title: `${OBJECT_STORAGE_PROVIDER_LABEL} 연결 설정`,
       description: OBJECT_STORAGE_IS_AWS
-        ? "배포 서버의 IAM Role로 AWS S3 버킷과 제한 샘플을 조회합니다."
+        ? "워크스페이스 AWS 권한으로 입력한 S3 버킷을 확인하고 파일을 탐색합니다."
         : "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
         ["Storage Provider", OBJECT_STORAGE_PROVIDER_LABEL],
         ["Endpoint URL", ""],
         ["Region", OBJECT_STORAGE_REGION],
-        ["Bucket / Stage Name", sourceDefaults.s3Bucket],
-        ["Path / Prefix", sourceDefaults.s3Prefix],
+        ["Bucket / Stage Name", OBJECT_STORAGE_IS_AWS ? "" : sourceDefaults.s3Bucket],
+        ["Path / Prefix", OBJECT_STORAGE_IS_AWS ? "" : sourceDefaults.s3Prefix],
         ["Access Key", ""],
         ["Secret Key", ""],
         ["Use Path Style", String(!OBJECT_STORAGE_IS_AWS)],
@@ -126,14 +128,20 @@ export function buildSourceConnectionDefinitions(sourceDefaults: SourceConnector
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
+      fieldSuggestions: OBJECT_STORAGE_IS_AWS && sourceDefaults.s3Bucket
+        ? { "Bucket / Stage Name": sourceDefaults.s3Bucket }
+        : undefined,
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
       logs: [`${OBJECT_STORAGE_PROVIDER_LABEL} 소스 식별이 아직 검증되지 않았습니다.`, "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
-      assetsTitle: "Amazon S3 파일 탐색",
+      assetsTitle: `${OBJECT_STORAGE_PROVIDER_LABEL} 파일 탐색`,
       assets: [],
       previewTitle: "데이터 미리보기",
       previewNote: "파일을 선택하면 일부 데이터를 가져와 표시합니다.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
+      info: OBJECT_STORAGE_IS_AWS
+        ? "워크스페이스에 연결된 AWS 권한으로 입력한 버킷에 접근합니다."
+        : "",
     },
     "Data Lake": {
       title: "AskLake 데이터 레이크",

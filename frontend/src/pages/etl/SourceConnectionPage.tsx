@@ -3,12 +3,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Braces,
-  Cable,
   FileText
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
-import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
 import { getDatasets } from "../../services/mockApi";
 import { getSourceConnectorDefaults, listSourceAssets, testSourceConnector, type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import type { AuditResult, CatalogDataset, DraftPipeline, DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../../types";
@@ -54,6 +52,37 @@ import {
   sourceTypeLabel,
   upsertSourceFields
 } from "./sourceModel";
+
+function resetSourceDependentDraft(): DraftPipelinePatch {
+  return {
+    quality: {
+      invalidRows: [],
+      rules: [],
+      score: undefined,
+      status: "idle",
+      summary: "스키마 확인 후 품질 규칙을 설정하세요.",
+    },
+    recordParsing: {
+      columns: [],
+      delimiterKind: "whitespace",
+      delimiterPattern: "\\s+",
+      enabled: false,
+      expectedFieldCount: 0,
+      header: false,
+    },
+    schema: {
+      columns: [],
+      sampleRows: [],
+      schemaFingerprint: undefined,
+      summary: "소스 변경 · 스키마 재확인 필요",
+    },
+    transform: {
+      outputColumns: [],
+      steps: [],
+      summary: "스키마 확인 후 변환 규칙을 설정하세요.",
+    },
+  };
+}
 
 export function SourceConnectionPage({
   draft,
@@ -247,7 +276,7 @@ export function SourceConnectionPage({
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "EC2 IAM Role" : "MinIO 액세스 키") : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : isInternalDataLake ? "AskLake 로그인 권한" : activeSourceType === "File / S3" ? (OBJECT_STORAGE_IS_AWS ? "워크스페이스 AWS 권한" : "MinIO 액세스 키") : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : (sourceRuntime?.draftPatch.source?.requiresRecordParsing ? "레코드 구조화" : "스키마 추론")],
   ];
 
@@ -334,10 +363,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
@@ -400,10 +426,7 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-    onDraftChange({
-      recordParsing: { columns: [], delimiterKind: "whitespace", delimiterPattern: "\\s+", enabled: false, expectedFieldCount: 0, header: false },
-      schema: { columns: [], sampleRows: [], summary: "" },
-    });
+    onDraftChange(resetSourceDependentDraft());
   };
 
   const updateCollectionConfig = (patches: Array<[string, string]>) => {
@@ -839,14 +862,9 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={sourceNextDisabled} showPrev={false} split onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceNextDisabled} split onPrev={onPrev} onNext={goNext} />}
       className="source-creation-flow"
     >
-      <EtlStepHeader
-        className="etl-step-standalone-header"
-        icon={<Cable />}
-        title="소스 연결"
-      />
       <section className="panel hegun-console-panel source-connect-panel source-workbench-panel" aria-label="소스 선택 및 연결">
         <div className="source-workbench-body">
           <Tabs

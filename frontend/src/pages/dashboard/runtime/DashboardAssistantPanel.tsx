@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,12 @@ import {
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 import { applyAssistantWidgetActions, hasWidgetMutationAction } from "./dashboardAssistantActions";
-import { classifyDashboardAssistantMode } from "./dashboardAssistantIntent";
+import { dashboardAssistantWidgetContextSignature } from "./dashboardAssistantContextSignature";
+import {
+  buildDashboardAssistantRequestPrompt,
+  classifyDashboardAssistantMode,
+  resolveDashboardAssistantMutationTarget,
+} from "./dashboardAssistantIntent";
 import { beginDashboardAssistantRequest, useDashboardAssistantRequestGate } from "./useDashboardAssistantRequestGate";
 import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
@@ -26,6 +31,7 @@ type DashboardAssistantPanelProps = {
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<boolean>;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
+  selectedDatasetIds?: string[];
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
 };
@@ -70,7 +76,7 @@ function assistantResponseText(response: DashboardAssistantResponse, actionMessa
   const reportAction = response.actions.find(
     (action): action is DashboardAssistantReportAction => action.type === "report",
   );
-  const provenance = response.provider && !["local-input-guard", "unavailable"].includes(response.provider)
+  const provenance = response.provider && !["local-input-guard", "local-join-guard", "unavailable"].includes(response.provider)
     ? `AI 모델 · ${[response.provider, response.model].filter(Boolean).join(" · ")}`
     : "";
   const warning = response.warnings.length > 0 ? `경고: ${response.warnings.join(" / ")}` : "";
@@ -95,6 +101,20 @@ function appendPromptText(currentPrompt: string, nextText: string) {
   return `${current} ${next}`;
 }
 
+function buildAssistantRequestIntent(
+  prompt: string,
+  messages: AssistantMessage[],
+  hasSelectedWidget: boolean,
+) {
+  const previousUserPrompts = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.text);
+  return {
+    mode: classifyDashboardAssistantMode(prompt, { hasSelectedWidget, previousUserPrompts }),
+    requestPrompt: buildDashboardAssistantRequestPrompt(prompt, previousUserPrompts),
+  };
+}
+
 export function DashboardAssistantPanel({
   currentDatasetId,
   dashboardId,
@@ -103,6 +123,7 @@ export function DashboardAssistantPanel({
   onUpdateWidget,
   pageId,
   promptInsertion,
+  selectedDatasetIds = [],
   selectedWidget,
   widgets,
 }: DashboardAssistantPanelProps) {
@@ -112,13 +133,19 @@ export function DashboardAssistantPanel({
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
-  const requests = useDashboardAssistantRequestGate(JSON.stringify([currentDatasetId, dashboardId, pageId, selectedWidget?.id]), () => setIsSubmitting(false));
+  const surfaceKey = JSON.stringify([dashboardId, pageId]);
+  const surfaceKeyRef = useRef(surfaceKey);
+  surfaceKeyRef.current = surfaceKey;
+  const requests = useDashboardAssistantRequestGate(JSON.stringify([
+    currentDatasetId,
+    dashboardId,
+    pageId,
+    selectedWidget?.id,
+    selectedDatasetIds,
+    dashboardAssistantWidgetContextSignature(widgets),
+  ]), () => setIsSubmitting(false));
   const isConfigured = isDashboardAssistantConfigured();
   const shouldReduceMotion = useReducedMotion();
-  const targetWidgets = useMemo(() => {
-    return selectedWidget ? [selectedWidget] : widgets;
-  }, [selectedWidget, widgets]);
-
   const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
@@ -143,18 +170,24 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
-    const mode = classifyDashboardAssistantMode(nextPrompt, {
-      hasSelectedWidget: Boolean(selectedWidget),
-    });
-    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: nextPrompt, selectedWidgetId: selectedWidget?.id ?? null } });
+    const { mode, requestPrompt } = buildAssistantRequestIntent(nextPrompt, messages, Boolean(selectedWidget));
+    const selectedWidgetId = mode === "visualization_request"
+      ? resolveDashboardAssistantMutationTarget(nextPrompt, selectedWidget?.id)
+      : selectedWidget?.id ?? null;
+    const targetWidgets = selectedWidgetId
+      ? widgets.filter((widget) => widget.id === selectedWidgetId)
+      : widgets;
+    const submissionSurfaceKey = surfaceKey;
+    const lease = beginDashboardAssistantRequest(requests.current, { resource: "dashboard-assistant", version: pageId, params: { currentDatasetId, dashboardId, mode, prompt: requestPrompt, selectedWidgetId } });
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
         currentDatasetId,
         mode,
         pageId,
-        prompt: nextPrompt,
-        selectedWidgetId: selectedWidget?.id ?? null,
+        prompt: requestPrompt,
+        selectedDatasetIds,
+        selectedWidgetId,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       }, { signal: lease.signal });
       if (!requests.current.isCurrent(lease)) return;
@@ -168,7 +201,7 @@ export function DashboardAssistantPanel({
         response,
         widgets,
       });
-      if (!requests.current.isCurrent(lease)) return;
+      if (surfaceKeyRef.current !== submissionSurfaceKey) return;
       setMessages((current) => [
         ...current,
         {

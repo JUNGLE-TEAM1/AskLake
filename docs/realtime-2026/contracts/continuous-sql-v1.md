@@ -1,5 +1,7 @@
 # Continuous SQL V1 계약
 
+> 현재 구현된 legacy direct-consumer runtime 계약이다. Issue #1117의 목표 execution ownership은 [SQL Job 실행 트리 V1 계약](sql-job-execution-tree-v1.md)이 정의한다. 기존 Continuous SQL Job은 자동 마이그레이션하지 않으며, 목표 구조가 구현되기 전까지 이 문서의 runtime 동작이 유지된다.
+
 ## 실행 범위
 
 Continuous SQL은 기존 일회성 SQL API와 별개의 장기 실행 Job이다. SQL AST를 생성 전에 컴파일하고 다음 범위만 허용한다.
@@ -24,7 +26,7 @@ Catalog row 통계가 있고 `estimatedRowCount <= CONTINUOUS_SQL_STATIC_BROADCA
 
 ## low-latency 실행 계약
 
-- 새 validate/create request에서 `triggerIntervalSeconds`를 생략하면 5초다. 허용 범위는 1~3,600초이고 기존 persisted Job은 저장된 값을 유지한다. 5초는 micro-batch 시작 주기이며 end-to-end SLA가 아니다.
+- 새 validate/create request에서 `triggerIntervalSeconds`를 생략하면 API 기본값은 10초다. 현재 SQL 분석 frontend는 5초를 명시적으로 제출한다. 허용 범위는 1~3,600초이고 기존 persisted Job은 저장된 값을 유지한다. `baselineDatasetId=output.datasetId`는 최초 Trino JOIN snapshot과 Kafka cursor를 고정하며 이후에는 최대 100행 source range만 처리한다. Issue #1117 목표 구조에서는 이 SQL-owned trigger/max-message 설정을 제거하고 producer Job 설정을 따른다.
 - `estimatedRowCount <= CONTINUOUS_SQL_STATIC_CACHE_MAX_ROWS`인 static relation은 plan에 `cacheHint=true`를 기록한다. worker는 exact `(datasetId, snapshotId, schemaFingerprint)` identity의 frame을 memory/disk에 재사용하고, 같은 snapshot·JOIN key의 유일성 scan을 한 번만 수행한다.
 - snapshot이 바뀌면 이전 frame을 unpersist하고 유일성을 다시 검증한다. 통계가 없거나 한도를 넘는 relation은 frame을 cache하지 않고, 한도 0은 cache 비활성이다.
 - 새 Continuous SQL Iceberg output table은 `_asklake_run_id` identity partition을 갖는다. exact publication count와 Dashboard revision delta query는 해당 batch partition을 가지치기할 수 있다. 사용자 projection에는 marker를 노출하지 않는다.

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, require_permission
+from app.domain.audit import AuditTargetType
 from app.core.compatibility import (
     CompatibilityPath,
     record_compatibility_path,
@@ -249,6 +250,10 @@ from app.application.source_connectors import (
     test_source_connector as execute_test_source_connector,
 )
 from app.core.config import settings
+from app.services.kafka_ingest_v2 import (
+    kafka_ingest_v2_enabled as clickhouse_kafka_ingest_v2_enabled,
+    run_clickhouse_kafka_ingest_v2,
+)
 from app.core.errors import ApiError
 from app.core.materialization import (
     SOURCE_WINDOW_CONTRACT_VERSION,
@@ -308,6 +313,10 @@ from app.ports.runtime_io import (
 )
 from app.repositories.audit_repository import add_audit_event, safe_record_audit_event
 from app.repositories import etl_repository, snapshot_status_repository
+from app.repositories.execution_tree_lock_repository import (
+    require_standalone_job_unlocked,
+    require_tree_owned_job,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.governance_repository import blocked_principal_for_actor, locked_resource_ids
 from app.repositories.dashboard_live_repository import (
@@ -441,6 +450,7 @@ LEGACY_PERMISSION_GROUP_IDS = {
 DEFAULT_SOURCE_IDENTITY_WORKERS = 16
 MAX_SOURCE_IDENTITY_WORKERS = 64
 DEFAULT_SPARK_EXECUTION_LEASE_SECONDS = 1200
+SPARK_EXECUTION_OWNER_ID = secrets.token_hex(16)
 AIRFLOW_MISSING_RUN_FAILURE_LIMIT = 3
 SPARK_REST_BRIDGE_GRACE_SECONDS = 30
 
@@ -484,7 +494,7 @@ def create_trino_sql_job(
             status_code=status.HTTP_403_FORBIDDEN,
             target_id=request.source_run_id,
             target_name=request.source_run_id,
-            target_type="query_run",
+            target_type=AuditTargetType.QUERY_RUN,
         )
         raise ApiError(
             ErrorCode.FORBIDDEN,
@@ -662,7 +672,7 @@ def create_trino_sql_job(
         metadata={"baseDatasetId": request.base_dataset_id, "sourceRunId": request.source_run_id},
         target_id=job.id,
         target_name=job.name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
     return CreatePipelineResponse(
         catalog_target={
@@ -691,15 +701,13 @@ def command_job(
     actor: ActorContext | None = None,
     *,
     execution_actor: ActorContext | None = None,
+    tree_run_id: str | None = None,
+    tree_fencing_token: str | None = None,
 ) -> JobCommandResponse:
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    job = (
-        etl_repository.get_job_for_update(db, job_id)
-        if command in {"run", "retry", "startContinuous", "resumeContinuous"}
-        else etl_repository.get_job(db, job_id)
-    )
+    job = etl_repository.get_job_for_update(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
@@ -736,9 +744,25 @@ def command_job(
             status_code=exc.status_code,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
         raise
+    if tree_run_id is not None or tree_fencing_token is not None:
+        if not tree_run_id or not tree_fencing_token:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "SQL execution tree command context is incomplete.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        require_tree_owned_job(
+            db,
+            job.id,
+            tree_run_id=tree_run_id,
+            fencing_token=tree_fencing_token,
+            action=f"command:{command}",
+        )
+    else:
+        require_standalone_job_unlocked(db, job.id, action=f"command:{command}")
     if job.execution_mode == "continuous" and command not in continuous_commands:
         raise ApiError(
             ErrorCode.INVALID_JOB_STATE,
@@ -1985,6 +2009,7 @@ def materialize_continuous_replay(
             source_ranges=source_ranges,
             commit_kind=REPLAY_COMMIT_KIND,
             manifest_location=replay_manifest_path,
+            snapshot_id=str(verified.get("icebergSnapshotId") or "") or None,
         )
     except Exception as exc:  # Replay data is already durable; Catalog can retry independently.
         db.rollback()

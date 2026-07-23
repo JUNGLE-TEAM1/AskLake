@@ -1,0 +1,5 @@
+enabled: false
+namespace: asklake-dev
+runFingerprint: ""
+image: ""
+resources: {}

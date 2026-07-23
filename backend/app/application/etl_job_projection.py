@@ -246,8 +246,8 @@ def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) 
     base_path = (request.storage_path or f"s3a://asklake-output/{dataset_storage_key(request.target_dataset)}/").rstrip("/")
     return {
         "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
-        "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
-        "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
+        "triggerIntervalSeconds": config.trigger_interval_seconds if config else 10,
+        "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 100,
         "schemaEvolutionPolicy": config.schema_evolution_policy.model_dump(mode="json", by_alias=True) if config else {
             "additiveNullable": "allow",
             "missingRequired": "quarantine",

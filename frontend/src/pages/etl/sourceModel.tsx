@@ -10,7 +10,10 @@ import {
 } from "lucide-react";
 import { type SourceConnectorAnalysis, type SourceConnectorDefaults } from "../../services/sourceConnectorService";
 import type { DraftPipeline, SourceDraft } from "../../types";
-import { sanitizeSourceConnectorFields } from "../../utils/sourceConnectorFields";
+import {
+  sanitizeSourceConnectorFields,
+  shouldReplaceSourceRuntimeDefault,
+} from "../../utils/sourceConnectorFields";
 
 
 export const OBJECT_STORAGE_IS_AWS = String(import.meta.env.VITE_OBJECT_STORAGE_PROVIDER ?? "minio").trim().toLowerCase() === "aws";
@@ -62,6 +65,8 @@ export function mergeRuntimeSourceDefaults(
   fields: Array<[string, string]>,
   defaults: SourceConnectorDefaults,
 ): Array<[string, string]> {
+  if (sourceType === "File / S3" && OBJECT_STORAGE_IS_AWS) return fields;
+
   const replacements = sourceType === "File / S3"
     ? new Map<string, { next: string; replaceable: Set<string>; }>([
       ["Bucket / Stage Name", { next: defaults.s3Bucket, replaceable: new Set([""]) }],
@@ -74,7 +79,10 @@ export function mergeRuntimeSourceDefaults(
 
   return fields.map(([label, value]) => {
     const replacement = replacements.get(label);
-    if (!replacement?.next || !replacement.replaceable.has(value.trim())) return [label, value] as [string, string];
+    const replaceable = sourceType === "File / S3"
+      ? shouldReplaceSourceRuntimeDefault(value)
+      : replacement?.replaceable.has(value.trim());
+    if (!replacement?.next || !replaceable) return [label, value] as [string, string];
     return [label, replacement.next] as [string, string];
   });
 }
@@ -151,7 +159,7 @@ export const sourceFieldLabels: Record<string, string> = {
   "Authentication Type": "인증 방식",
   "Broker / Endpoint": "브로커 / 엔드포인트",
   Bucket: "버킷",
-  "Bucket / Stage Name": "버킷 / 스테이지 이름",
+  "Bucket / Stage Name": "버킷 이름",
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
@@ -404,7 +412,9 @@ export function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 export function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"].includes(label);
+    const hiddenFields = ["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix", "File Type", "Delimiter", "Encoding"];
+    if (OBJECT_STORAGE_IS_AWS) hiddenFields.push("Endpoint URL", "Access Key", "Secret Key");
+    return !hiddenFields.includes(label);
   }
   if (sourceType === "PostgreSQL") {
     return !["Schema", "DATASET OR TABLE SELECTOR"].includes(label);
@@ -427,7 +437,7 @@ export function isVisibleSourceField(sourceType: string, label: string) {
 export function requiredSourceConnectionFields(sourceType: string) {
   const fields: Record<string, string[]> = {
     "Data Lake": [],
-    "File / S3": OBJECT_STORAGE_IS_AWS ? ["Bucket / Stage Name"] : ["Endpoint URL", "Bucket / Stage Name", "Access Key", "Secret Key"],
+    "File / S3": ["Bucket / Stage Name"],
     MongoDB: ["Endpoint / Host", "Port", "Database Name"],
     PostgreSQL: ["Endpoint / Host", "Port", "Database Name", "Username", "Password / Auth Token"],
     "REST API": ["Method", "Endpoint URL"],

@@ -29,6 +29,7 @@ RUNTIME_NAMES = {
     'backfill_catalog_revision',
     'callable',
     'canonical_storage_path',
+    'clickhouse_kafka_ingest_v2_enabled',
     'compact_storage_text',
     'continuous_runtime_report_path',
     'continuous_stream_publication_metadata',
@@ -62,6 +63,7 @@ RUNTIME_NAMES = {
     'recommended_dashboard_poll_ms',
     'reconcile_continuous_publications',
     'run_kafka_continuous_worker',
+    'settings',
     'set',
     'sorted',
     'str',
@@ -77,6 +79,12 @@ def continuous_worker_status(job: ETLJobModel, runtime: KafkaContinuousRuntimeMo
     try:
         return run_kafka_continuous_worker(job, runtime, "status")
     except ApiError as exc:
+        if clickhouse_kafka_ingest_v2_enabled(job, settings):
+            return {
+                "containerState": "failed",
+                "error": exc.message,
+                "worker": "kafka_connect_clickhouse_v2",
+            }
         return {"containerState": "unknown", "error": exc.message}
 
 
@@ -87,7 +95,7 @@ def continuous_heartbeat_is_stale(heartbeat_at: str | None, job: ETLJobModel) ->
         heartbeat = datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))
     except ValueError:
         return True
-    trigger_seconds = int((job.continuous_config or {}).get("triggerIntervalSeconds") or 30)
+    trigger_seconds = int((job.continuous_config or {}).get("triggerIntervalSeconds") or 10)
     timeout_seconds = int(os.environ.get("ASKLAKE_CONTINUOUS_HEARTBEAT_TIMEOUT_SECONDS") or max(90, trigger_seconds * 3))
     return datetime.now(UTC) - heartbeat > timedelta(seconds=timeout_seconds)
 
@@ -278,7 +286,7 @@ def read_continuous_stream_manifest(
             if not manifest_line:
                 continue
             manifest = json.loads(manifest_line)
-            if not isinstance(manifest, dict) or optional_string(manifest.get("batchId")) != batch_id:
+            if not isinstance(manifest, dict) or optional_int(manifest.get("batchId")) != optional_int(batch_id):
                 return None
             manifest["manifestPath"] = f"s3a://{bucket}/{manifest_key}"
             if nonnegative_int(manifest.get("storedCount"), 0) > 0:
@@ -619,6 +627,7 @@ def _publish_continuous_dashboard_revision(
             source_ranges=inputs.source_ranges,
             commit_kind=STREAM_COMMIT_KIND,
             manifest_location=inputs.manifest_path,
+            snapshot_id=str(output.verified_result.get("icebergSnapshotId") or "") or None,
         )
     db.commit()
 

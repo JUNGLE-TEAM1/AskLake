@@ -10,7 +10,7 @@ from app.schemas.iceberg import IcebergWriterTarget
 
 ContinuousSqlStaticBindingPolicy = Literal["PINNED_AT_START", "LATEST_PER_BATCH"]
 ContinuousSqlServingMode = Literal["iceberg", "clickhouse"]
-CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 5
+CONTINUOUS_SQL_DEFAULT_TRIGGER_SECONDS = 10
 ContinuousSqlDesiredState = Literal["stopped", "running", "paused"]
 ContinuousSqlObservedState = Literal[
     "starting",
@@ -31,6 +31,15 @@ ContinuousSqlBatchStage = Literal[
     "failed",
 ]
 ContinuousSqlCommand = Literal["start", "pause", "resume", "stop", "recover"]
+ContinuousSqlDependencyInputType = Literal["realtime", "batch", "static"]
+ContinuousSqlDependencyExecutionPolicy = Literal["run_on_tree_start", "reuse_snapshot"]
+ContinuousSqlRefreshStatus = Literal[
+    "idle",
+    "running",
+    "failed",
+    "catalog_ready",
+    "dashboard_ready",
+]
 
 
 class ClickHouseWriterTarget(CamelModel):
@@ -78,11 +87,11 @@ class ContinuousSqlOutput(CamelModel):
     @model_validator(mode="after")
     def require_mode_target(self) -> "ContinuousSqlOutput":
         if self.serving_mode == "iceberg":
-            if self.storage_path is None or self.iceberg_target is None:
+            if (self.storage_path is None) != (self.iceberg_target is None):
                 raise ValueError(
-                    "Iceberg Continuous SQL output requires storagePath and icebergTarget"
+                    "Iceberg Continuous SQL output must provide both storagePath and icebergTarget or let the backend derive both"
                 )
-            if self.iceberg_target.write_mode != "append":
+            if self.iceberg_target is not None and self.iceberg_target.write_mode != "append":
                 raise ValueError("Continuous SQL output requires an append Iceberg target")
             if self.clickhouse_target is not None:
                 raise ValueError("Iceberg Continuous SQL output cannot include clickhouseTarget")
@@ -124,6 +133,7 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
     output: ContinuousSqlOutput
     checkpoint_path: str | None = Field(default=None, max_length=2048)
     client_request_id: str | None = Field(default=None, max_length=160)
+    baseline_dataset_id: str | None = Field(default=None, min_length=1, max_length=160)
 
     @field_validator("checkpoint_path")
     @classmethod
@@ -139,6 +149,11 @@ class ContinuousSqlCreateRequest(ContinuousSqlPlanRequest):
     def reject_clickhouse_checkpoint(self) -> "ContinuousSqlCreateRequest":
         if self.output.serving_mode == "clickhouse" and self.checkpoint_path is not None:
             raise ValueError("ClickHouse Continuous SQL does not accept checkpointPath")
+        if self.baseline_dataset_id is not None:
+            if self.output.serving_mode != "iceberg":
+                raise ValueError("Incremental baseline binding requires Iceberg serving")
+            if self.baseline_dataset_id != self.output.dataset_id:
+                raise ValueError("baselineDatasetId must equal output.datasetId")
         return self
 
 
@@ -156,8 +171,63 @@ class ContinuousSqlRelationBinding(CamelModel):
     streaming_source: dict[str, Any] | None = None
     unique_key_sets: list[list[str]] = Field(default_factory=list)
     estimated_row_count: int | None = None
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    runtime_status: str | None = None
     broadcast_hint: bool = False
     cache_hint: bool = False
+
+
+class ContinuousSqlDependencyBinding(CamelModel):
+    sql_job_id: str | None = None
+    input_dataset_id: str
+    child_job_id: str | None = None
+    input_type: ContinuousSqlDependencyInputType
+    execution_policy: ContinuousSqlDependencyExecutionPolicy
+    required: bool = True
+
+    @model_validator(mode="after")
+    def validate_execution_ownership(self) -> "ContinuousSqlDependencyBinding":
+        if self.input_type == "realtime" and not self.child_job_id:
+            raise ValueError("Realtime Continuous SQL dependency requires childJobId")
+        if self.child_job_id is None and self.execution_policy != "reuse_snapshot":
+            raise ValueError("Jobless static dependency requires reuse_snapshot policy")
+        if self.child_job_id is not None and self.execution_policy != "run_on_tree_start":
+            raise ValueError("Producer dependency requires run_on_tree_start policy")
+        return self
+
+
+class ContinuousSqlRevisionInput(CamelModel):
+    """One producer Dataset in the private revision-transform runner payload."""
+
+    input_dataset_id: str
+    input_type: ContinuousSqlDependencyInputType
+    child_job_id: str | None = None
+    execution_policy: ContinuousSqlDependencyExecutionPolicy
+    required: bool = True
+    revision: int | None = None
+    snapshot_id: str | None = None
+
+
+class ContinuousSqlRevisionTransformRequest(CamelModel):
+    """Private worker contract for a Dataset-revision SQL tree run.
+
+    This model deliberately excludes Kafka broker, topic, consumer group, and
+    offset fields.  Those belong only to the producer child Job.
+    """
+
+    execution_input_mode: Literal["dataset_revision"] = "dataset_revision"
+    tree_run_id: str
+    tree_fencing_token: str
+    sql_job_id: str
+    continuous_sql_run_id: str
+    run_generation: int
+    input_datasets: list[ContinuousSqlRevisionInput] = Field(default_factory=list)
+    static_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    output_dataset_id: str
+    output_target: dict[str, Any]
 
 
 class ContinuousSqlPlanResponse(CamelModel):
@@ -166,6 +236,7 @@ class ContinuousSqlPlanResponse(CamelModel):
     plan_hash: str
     runtime_sql: str
     relations: list[ContinuousSqlRelationBinding]
+    dependency_bindings: list[ContinuousSqlDependencyBinding] = Field(default_factory=list)
     joins: list[dict[str, Any]]
     output_schema: list[list[str]]
     static_binding_policy: ContinuousSqlStaticBindingPolicy
@@ -209,6 +280,63 @@ class ContinuousSqlBatch(CamelModel):
     last_error_message: str | None = None
 
 
+class ContinuousSqlTreeJobLock(CamelModel):
+    job_id: str
+    node_run_id: str
+    lock_kind: Literal["parent", "child"]
+    generation: int
+    fencing_token_hash: str
+    lease_expires_at: str
+    active: bool
+
+
+class ContinuousSqlTreeNodeRun(CamelModel):
+    node_run_id: str
+    tree_run_id: str
+    job_id: str
+    node_type: Literal["parent", "realtime", "batch"]
+    trigger_type: Literal["parent_tree", "standalone"]
+    parent_run_id: str | None = None
+    producer_run_id: str | None = None
+    status: str
+    input_dataset_revisions: dict[str, int] = Field(default_factory=dict)
+    started_at: str
+    ended_at: str | None = None
+
+
+class ContinuousSqlTreeRun(CamelModel):
+    tree_run_id: str
+    sql_job_id: str
+    continuous_sql_run_id: str | None = None
+    generation: int
+    trigger_type: Literal["parent_tree", "standalone"]
+    status: str
+    fencing_token_hash: str
+    lease_expires_at: str
+    input_dataset_revisions: dict[str, int] = Field(default_factory=dict)
+    nodes: list[ContinuousSqlTreeNodeRun] = Field(default_factory=list)
+    locks: list[ContinuousSqlTreeJobLock] = Field(default_factory=list)
+    started_at: str
+    ended_at: str | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+
+
+class ContinuousSqlExecutionTree(CamelModel):
+    sql_job_id: str
+    active_tree_run_id: str | None = None
+    locked_job_ids: list[str] = Field(default_factory=list)
+    lock_conflict: dict[str, Any] | None = None
+
+
+class ContinuousSqlRefreshState(CamelModel):
+    latest_source_revision: int = 0
+    processing_source_revision: int | None = None
+    published_source_revision: int = 0
+    status: ContinuousSqlRefreshStatus = "idle"
+    last_error: str | None = None
+
+
 class ContinuousSqlJob(CamelModel):
     id: str
     name: str
@@ -220,6 +348,9 @@ class ContinuousSqlJob(CamelModel):
     plan_hash: str
     compiled_plan: dict[str, Any]
     relation_bindings: list[ContinuousSqlRelationBinding]
+    dependency_bindings: list[ContinuousSqlDependencyBinding] = Field(default_factory=list)
+    execution_tree: ContinuousSqlExecutionTree | None = None
+    active_tree_run: ContinuousSqlTreeRun | None = None
     static_binding_policy: ContinuousSqlStaticBindingPolicy
     trigger_interval_seconds: int
     serving_mode: ContinuousSqlServingMode = "iceberg"
@@ -237,6 +368,8 @@ class ContinuousSqlJob(CamelModel):
     last_error_code: str | None = None
     last_error_message: str | None = None
     active_run: ContinuousSqlRun | None = None
+    incremental_binding: dict[str, Any] | None = None
+    refresh_state: ContinuousSqlRefreshState = Field(default_factory=ContinuousSqlRefreshState)
 
 
 class ContinuousSqlCommandRequest(CamelModel):

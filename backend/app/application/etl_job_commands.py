@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.application.pipeline_mapping import CreatePipelineMappingContext
 from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
+from app.domain.audit import AuditTargetType
 from app.models import (
     ETLJobModel,
     ETLRunModel,
@@ -31,6 +32,10 @@ from app.models import (
     ResourceLockModel,
 )
 from app.repositories import etl_repository
+from app.repositories.execution_tree_lock_repository import (
+    lock_etl_job_row,
+    require_standalone_job_unlocked,
+)
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CreatePipelineRequest,
@@ -260,6 +265,8 @@ def update_pipeline(
 
     actor_context = actor or ActorContext()
     _authorize_update(db, job, job_id, actor_context, hooks)
+    lock_etl_job_row(db, job.id)
+    require_standalone_job_unlocked(db, job.id, action="update")
     _prepare_update_request(job, request, hooks)
     target_changed = _validate_update_mutability(db, job, job_id, request, hooks)
     hooks.apply_update_request(job, request, target_changed)
@@ -383,6 +390,7 @@ def delete_job(
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
     actor_context = _authorize_delete(db, job, job_id, actor, hooks)
+    require_standalone_job_unlocked(db, job.id, action="delete")
     _require_idle_job(db, job, job_id, hooks)
     _persist_delete(db, job, job_id, actor_context, hooks)
     return job_id
@@ -427,7 +435,7 @@ def _authorize_delete(
             status_code=exc.status_code,
             target_id=job.id,
             target_name=job.name,
-            target_type="etl_job",
+            target_type=AuditTargetType.ETL_JOB,
         )
         raise
     return actor_context
@@ -527,7 +535,7 @@ def _persist_delete(
         status_code=status.HTTP_200_OK,
         target_id=requested_job_id,
         target_name=job_name,
-        target_type="etl_job",
+        target_type=AuditTargetType.ETL_JOB,
     )
     try:
         db.commit()

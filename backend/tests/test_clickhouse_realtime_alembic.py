@@ -10,6 +10,18 @@ import unittest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from app.models.benchmark import BenchmarkRunModel
+from app.models.dashboard_live import (
+    DatasetFreshnessModel,
+    DatasetRevisionCommitModel,
+)
+from app.models.realtime import (
+    RealtimeEventModel,
+    RealtimeParityCheckModel,
+    RealtimeRecoveryOperationModel,
+    RealtimeRoutingAssignmentModel,
+)
+
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = BACKEND_ROOT / "alembic.ini"
@@ -94,6 +106,7 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
         _run_alembic(self.database_path, "upgrade", "head")
         inspector = inspect(self.engine)
         self.assertEqual(_revision(self.engine), current_head)
+
         self.assertTrue(EXPECTED_V2_TABLES.issubset(inspector.get_table_names()))
         self.assertNotIn("dataset_serving_revisions", inspector.get_table_names())
 
@@ -300,6 +313,31 @@ class ClickHouseRealtimeAlembicTests(unittest.TestCase):
                 ).scalar_one(),
                 1,
             )
+
+    def test_upgrade_accepts_tables_created_by_legacy_metadata_bootstrap(self) -> None:
+        precreated_tables = [
+            DatasetFreshnessModel.__table__,
+            DatasetRevisionCommitModel.__table__,
+            RealtimeEventModel.__table__,
+            RealtimeParityCheckModel.__table__,
+            RealtimeRecoveryOperationModel.__table__,
+            RealtimeRoutingAssignmentModel.__table__,
+            BenchmarkRunModel.__table__,
+        ]
+        BenchmarkRunModel.metadata.create_all(
+            bind=self.engine,
+            tables=precreated_tables,
+        )
+
+        current_head = _run_alembic(self.database_path, "heads").stdout.split()[0]
+        _run_alembic(self.database_path, "upgrade", "head")
+
+        self.assertEqual(_revision(self.engine), current_head)
+        indexes = {
+            item["name"]
+            for item in inspect(self.engine).get_indexes("realtime_routing_assignments")
+        }
+        self.assertIn("ix_realtime_routing_assignments_engine", indexes)
 
     def test_current_upgrade_and_development_downgrade_preserve_prior_schema(self) -> None:
         current_head = _run_alembic(self.database_path, "heads").stdout.split()[0]

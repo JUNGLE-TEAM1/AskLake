@@ -77,7 +77,7 @@ export interface FilterToolbarInputProps
 export const FilterToolbarInput = React.forwardRef<HTMLInputElement, FilterToolbarInputProps>(
   ({ className, ...props }, ref) => (
     <InputGroupInput
-      className={cn("h-auto min-w-0 flex-1 px-0 py-0 !text-[16px] font-semibold text-slate-900 placeholder:text-slate-400", className)}
+      className={cn("h-auto min-w-0 flex-1 px-0 py-0 !text-[16px] font-normal text-slate-900 placeholder:text-slate-400", className)}
       ref={ref}
       variant="ghost"
       {...props}
@@ -109,7 +109,7 @@ export const FilterToolbarFieldGroup = React.forwardRef<HTMLDivElement, FilterTo
       {...props}
     >
       {label ? (
-        <span className="inline-flex min-h-9 items-center text-sm font-bold text-slate-900">
+        <span className="inline-flex min-h-9 items-center text-sm font-medium text-slate-900">
           {label}
         </span>
       ) : null}
@@ -153,7 +153,7 @@ export interface FilterToolbarCheckboxProps
 export const FilterToolbarCheckbox = React.forwardRef<HTMLLabelElement, FilterToolbarCheckboxProps>(
   ({ checked, children, className, disabled, onCheckedChange, ...props }, ref) => (
     <label
-      className={cn("inline-flex min-h-8 items-center gap-2 text-sm font-bold text-slate-600", disabled && "cursor-not-allowed opacity-50", className)}
+      className={cn("inline-flex min-h-8 items-center gap-2 text-sm font-medium text-slate-600", disabled && "cursor-not-allowed opacity-50", className)}
       ref={ref}
       {...props}
     >

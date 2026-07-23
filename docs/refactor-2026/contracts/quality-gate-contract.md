@@ -15,11 +15,12 @@
 - migration syntax/duplicate revision
 - owner, reason, expiresAt이 없거나 만료된 예외
 
-예외는 baseline의 `exceptions`에 owner, reason, expiresAt과 좁은 대상을 명시한다. 기준을 낮추는 대신 만료 시 게이트가 실패해야 한다.
+예외는 baseline의 `exceptions`에 `id`, `owner`, `reason`, `expiresAt`과 좁은 대상을 명시한다. `oversizedFiles`, `oversizedPythonFunctions`, `oversizedJavascriptFunctions`에는 정확한 path 또는 `path::function`과 현재 허용 상한을 기록한다. 이 예외는 지정 대상이 상한 이하일 때만 유효하며 한 줄이라도 더 커지거나 만료되면 게이트가 다시 실패한다. 기준 전체를 다시 수집하거나 대상 패턴으로 넓게 우회하지 않는다.
 
 ## 실행 계층
 
 - 빠른 PR gate: `cd backend && npm run verify:quality-gates`
+- `dev`, `main`, `pair1` 대상 PR은 `Refactor Quality Gates`에서 같은 ratchet과 예외 만료 검사를 실행한다.
 - API/DB 호환: `npm run verify:backward-compatibility`
 - legacy registry: `npm run verify:legacy-paths`
 - backend contract tests: observability, runtime I/O, backward compatibility

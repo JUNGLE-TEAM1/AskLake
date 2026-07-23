@@ -47,14 +47,15 @@ export function dashboardWidgetDataSignature(widget: DashboardRuntimeWidget) {
   });
 }
 
-export function dashboardWidgetDataRequests(
+function buildDashboardWidgetDataRequests(
   runtime: DashboardRuntimeResponse | null,
   pageId: string | null,
+  include: (widget: DashboardRuntimeWidget) => boolean,
 ): DashboardWidgetDataRequest[] {
   if (!runtime || !pageId) return [];
   const grouped = new Map<string, DashboardRuntimeWidget[]>();
   for (const widget of runtime.widgetsByPageId[pageId] ?? []) {
-    if (widget.dataStatus !== "pending" && widget.dataStatus !== "loading") continue;
+    if (!include(widget)) continue;
     const groupKey = widget.datasetId ? `dataset:${widget.datasetId}` : `widget:${widget.id}`;
     grouped.set(groupKey, [...(grouped.get(groupKey) ?? []), widget]);
   }
@@ -68,6 +69,54 @@ export function dashboardWidgetDataRequests(
       ),
       widgetIds: widgets.map((widget) => widget.id).sort(),
     }));
+}
+
+export function dashboardWidgetDataRequests(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+): DashboardWidgetDataRequest[] {
+  return buildDashboardWidgetDataRequests(
+    runtime,
+    pageId,
+    (widget) => widget.dataStatus === "pending" || widget.dataStatus === "loading",
+  );
+}
+
+export function dashboardWidgetDataRefreshRequests(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+): DashboardWidgetDataRequest[] {
+  return buildDashboardWidgetDataRequests(
+    runtime,
+    pageId,
+    (widget) => Boolean(widget.datasetId),
+  );
+}
+
+export function dashboardWidgetDataRefreshRequestsForDatasets(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+  datasetIds: readonly string[],
+): DashboardWidgetDataRequest[] {
+  const selectedDatasetIds = new Set(datasetIds.map((id) => id.trim()).filter(Boolean));
+  if (selectedDatasetIds.size === 0) return [];
+  return buildDashboardWidgetDataRequests(
+    runtime,
+    pageId,
+    (widget) => Boolean(widget.datasetId && selectedDatasetIds.has(widget.datasetId)),
+  );
+}
+
+export function dashboardPageDatasetIds(
+  runtime: DashboardRuntimeResponse | null,
+  pageId: string | null,
+) {
+  if (!runtime || !pageId) return [];
+  return Array.from(new Set(
+    (runtime.widgetsByPageId[pageId] ?? [])
+      .map((widget) => widget.datasetId?.trim() ?? "")
+      .filter(Boolean),
+  )).sort();
 }
 
 export function dashboardWidgetDataSelectionKey(

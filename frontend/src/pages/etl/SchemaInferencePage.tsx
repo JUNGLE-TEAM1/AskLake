@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { CommandBar } from "@/components/ui/command-bar";
 import {
   Check,
   Database,
@@ -7,6 +6,8 @@ import {
   Table2
 } from "lucide-react";
 import { useState } from "react";
+import { CreationTopActions } from "../../components/creation/CreationFlow";
+import { EtlWizardHeaderActionsPortal } from "../../components/layout/EtlWizardHeaderActionsPortal";
 import { testSourceConnector } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, SchemaColumnDraft } from "../../types";
 import { SchemaResultPreview } from "./SchemaResultPreview";
@@ -34,8 +35,7 @@ import {
 } from "./schemaModel";
 import {
   mergeConnectorAnalysisSourceConfig,
-  publicConnectorAnalysis,
-  publicSchemaSummary
+  publicConnectorAnalysis
 } from "./sourceModel";
 
 export function SchemaInferencePage({
@@ -45,7 +45,6 @@ export function SchemaInferencePage({
   onNotify,
   onNext,
   onPrev,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -53,7 +52,6 @@ export function SchemaInferencePage({
   onNotify: (message: string) => void;
   onNext: () => void;
   onPrev: () => void;
-  onSave: () => void;
 }) {
   const [schemaFilter, setSchemaFilter] = useState("");
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0);
@@ -86,7 +84,6 @@ export function SchemaInferencePage({
     : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
   const previewRow = schemaSampleRows[0] ?? [];
   const sourcePreviewText = buildSourceShapePreview(schemaColumns, previewRow);
-  const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
   const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
   const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
   const selectedSampleScopeLabel = sampleScopeOptions.find((option) => option.value === schemaSampleScope)?.label ?? sampleScopeOptions[0].label;
@@ -238,14 +235,6 @@ export function SchemaInferencePage({
     return true;
   };
 
-  const saveSchemaDraft = () => {
-    if (!applySchemaDraft(approvedSummary)) {
-      onNotify("저장할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
-      return;
-    }
-    onSave();
-  };
-
   const confirmCurrentSchema = () => {
     if (!approveSchema()) return;
     onNext();
@@ -297,52 +286,56 @@ export function SchemaInferencePage({
   };
 
   return (
-    <div className="schema-workbench schema-workbench-focused">
-      <section className="schema-status-strip">
-        <div className="schema-status-item source">
-          <Database size={17} />
-          <span>데이터 소스</span>
-          <strong>{draft.source.sourceLabel || "-"}</strong>
-        </div>
-        <div className="schema-status-item">
-          <span>샘플 행</span>
-          <strong>{schemaSampleRows.length.toLocaleString()}</strong>
-        </div>
-        <div className={lowConfidenceCount > 0 ? "schema-status-item warning" : "schema-status-item success"}>
-          <span>상태</span>
-          <strong>{hasInferredSchema ? (lowConfidenceCount > 0 ? "검토 필요" : "추론 완료") : "소스 연결 필요"}</strong>
-        </div>
-        <div className="schema-status-actions">
-          <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
-            <RefreshCw size={15} /> 매핑 초기화
-          </Button>
-          <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
-            <Check size={15} /> 스키마 승인
-          </Button>
-        </div>
-      </section>
+    <>
+      <EtlWizardHeaderActionsPortal>
+        <CreationTopActions
+          nextDisabled={!hasInferredSchema}
+          onNext={confirmCurrentSchema}
+          onPrev={onPrev}
+          split
+        />
+      </EtlWizardHeaderActionsPortal>
+      <div className="schema-workbench schema-workbench-focused">
+        <section className="schema-status-strip">
+          <div className="schema-status-item source">
+            <Database size={17} />
+            <span>데이터 소스</span>
+            <strong>{draft.source.sourceLabel || "-"}</strong>
+          </div>
+          <div className="schema-status-item">
+            <span>샘플 행</span>
+            <strong>{schemaSampleRows.length.toLocaleString()}</strong>
+          </div>
+          <div className={lowConfidenceCount > 0 ? "schema-status-item warning" : "schema-status-item success"}>
+            <span>상태</span>
+            <strong>{hasInferredSchema ? (lowConfidenceCount > 0 ? "검토 필요" : "추론 완료") : "소스 연결 필요"}</strong>
+          </div>
+          <div className="schema-status-actions">
+            <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
+              <RefreshCw size={15} /> 매핑 초기화
+            </Button>
+            <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
+              <Check size={15} /> 스키마 승인
+            </Button>
+          </div>
+        </section>
 
-      <CommandBar className="schema-bottom-bar schema-top-actions" density="compact">
-        <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전</Button>
-        <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
-        <Button
-          aria-expanded={showResultPreview}
-          className="secondary-button schema-result-preview-button"
-          type="button"
-          variant="outline"
-          disabled={!hasInferredSchema}
-          onClick={() => setShowResultPreview((current) => !current)}
-        >
-          <Table2 size={15} /> {showResultPreview ? "미리보기 닫기" : "결과 미리보기"}
-        </Button>
-        <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>다음</Button>
-        <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
-      </CommandBar>
-
-      <div className="schema-workbench-content">
+        <div className="schema-workbench-content">
         <SchemaTransformWorkbench
           columns={schemaColumns}
           executionMode={draft.source.executionMode}
+          headerActions={(
+            <Button
+              aria-expanded={showResultPreview}
+              className="secondary-button schema-result-preview-button"
+              type="button"
+              variant="outline"
+              disabled={!hasInferredSchema}
+              onClick={() => setShowResultPreview((current) => !current)}
+            >
+              <Table2 size={15} /> {showResultPreview ? "변환 결과 닫기" : "변환 결과 미리보기"}
+            </Button>
+          )}
           sampleRows={schemaSampleRows}
           selectedIndex={selectedIndex}
           sourceFormat={sourceFormat}
@@ -382,6 +375,7 @@ export function SchemaInferencePage({
             columns={schemaColumns}
             qualityRules={draft.quality.rules}
             sampleRows={schemaSampleRows}
+            transformSteps={draft.transform.steps}
           />
         ) : null}
 
@@ -390,8 +384,8 @@ export function SchemaInferencePage({
           qualityRules={draft.quality.rules}
           transformSteps={draft.transform.steps}
         />
+        </div>
       </div>
-
-    </div>
+    </>
   );
 }

@@ -10,6 +10,7 @@ import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision, hasLayoutOutOfBounds } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
+type DashboardBreakpoint = keyof typeof breakpointCols;
 const gridMargin: [number, number] = [12, 12];
 const gridRowHeight = 48;
 const editGridTrailingRows = 1;
@@ -139,11 +140,15 @@ export function DashboardCanvas({
     );
   }
 
+  // Draft layouts are persisted in the canonical 12-column coordinate system.
+  const editorBreakpoint: DashboardBreakpoint | undefined = editable ? "lg" : undefined;
+
   return (
     <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
       {mounted && (
-        <Responsive
+        <Responsive<DashboardBreakpoint>
           key={`${editable ? "draft" : "published"}-${resetKey}`}
+          breakpoint={editorBreakpoint}
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}

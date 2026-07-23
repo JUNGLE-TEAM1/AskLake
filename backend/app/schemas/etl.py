@@ -191,8 +191,8 @@ class KafkaSchemaEvolutionPolicy(CamelModel):
 
 class KafkaContinuousConfigDraft(CamelModel):
     initial_offset_policy: Literal["earliest", "latest"] = "earliest"
-    trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
-    max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
+    trigger_interval_seconds: int = Field(default=10, ge=1, le=3600)
+    max_offsets_per_trigger: int = Field(default=100, ge=1, le=1_000_000)
     schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
 
 
@@ -505,7 +505,7 @@ class CatalogDataset(CamelModel):
     permission_grants: list[PermissionGrant] = Field(default_factory=list)
     permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
-    status: Literal["available", "approval_required"]
+    status: Literal["preparing", "available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
     source: str
     rows: str
@@ -528,6 +528,12 @@ class CatalogDataset(CamelModel):
     index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
+    producer_job_id: str | None = None
+    producer_job_kind: str | None = None
+    execution_mode: str | None = None
+    source_kind: str | None = None
+    relation_mode: Literal["streaming", "static"] | None = None
+    runtime_status: str | None = None
 
 
 class DerivedDatasetSpec(CamelModel):

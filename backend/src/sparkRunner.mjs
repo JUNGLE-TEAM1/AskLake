@@ -7,10 +7,16 @@ import {
   defaultRawBucket,
   isMinioProvider,
   objectStorageDockerEnv,
+  objectStorageDockerEnvWithoutCredentials,
   resolveObjectStorageConfig,
+  resolveInheritedObjectStorageCredentials,
   toDockerEnvArgs,
 } from "./objectStorageConfig.mjs";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
+import {
+  normalizeSparkDriverState,
+  terminalSparkFailureStates,
+} from "../scripts/spark-rest-client.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
@@ -68,10 +74,9 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
   assertSparkRestStorageCredentials(job.sourceConfig ?? [], executionMode);
   writeSparkJobManifest(manifestPath, job);
   const storageEnvironment = Object.fromEntries(
-    objectStorageDockerEnv(job.sourceConfig ?? []).filter(([name]) => (
-      executionMode === "docker"
-      || !["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].includes(name)
-    )),
+    executionMode === "docker"
+      ? objectStorageDockerEnv(job.sourceConfig ?? [])
+      : objectStorageDockerEnvWithoutCredentials(job.sourceConfig ?? []),
   );
   const sparkEnvironment = {
     ...storageEnvironment,
@@ -189,6 +194,13 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
     "/work/scripts/spark_job_run.py",
   ];
 
+  const sparkRestStateFile = executionMode === "rest"
+    ? sparkRestStateFileForRun(runId, options.sparkRestStateFile)
+    : null;
+  if (sparkRestStateFile && hasTerminalSparkRestFailure(sparkRestStateFile)) {
+    rmSync(reportPath, { force: true });
+  }
+
   let result = executionMode === "rest"
     ? runSparkRestSubmission(
       createSparkRestSubmission({
@@ -201,7 +213,8 @@ function runSparkPipelineWithSource(job, command, runId, source, executionMode, 
       positiveInteger(options.sparkRestTimeoutMs, sparkRunTimeoutMs()),
       process.env,
       {
-        stateFile: sparkRestStateFileForRun(runId, options.sparkRestStateFile),
+        retryTerminalFailures: true,
+        stateFile: sparkRestStateFile,
       },
     )
     : runSparkSubmitContainer(dockerArgs);
@@ -331,6 +344,7 @@ export function runSparkRestSubmission(submission, timeoutMs, environment = proc
     input: JSON.stringify({
       pollIntervalMs: positiveInteger(environment.ASKLAKE_SPARK_REST_POLL_INTERVAL_MS, 1_000),
       restUrl: runtime.restUrl,
+      retryTerminalFailures: options.retryTerminalFailures === true,
       stateFile,
       submission,
       timeoutMs: effectiveTimeoutMs,
@@ -354,6 +368,16 @@ export function runSparkRestSubmission(submission, timeoutMs, environment = proc
     ...result,
     stderr: [result.stderr, recoveryDetail].filter(Boolean).join("\n"),
   };
+}
+
+export function hasTerminalSparkRestFailure(stateFile) {
+  if (!stateFile || !existsSync(stateFile)) return false;
+  try {
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    return terminalSparkFailureStates.has(normalizeSparkDriverState(state?.driverState));
+  } catch {
+    return false;
+  }
 }
 
 function writeSparkJobManifest(manifestPath, job) {
@@ -1130,10 +1154,10 @@ export function assertSparkRestStorageCredentials(sourceConfig = [], executionMo
   if (executionMode !== "rest" || !isMinioProvider(sourceConfig)) return;
 
   const sourceStorage = resolveObjectStorageConfig(sourceConfig, { docker: true });
-  const inheritedStorage = resolveObjectStorageConfig([], { docker: true });
+  const inheritedCredentials = resolveInheritedObjectStorageCredentials([], { docker: true });
   if (
-    sourceStorage.accessKeyId !== inheritedStorage.accessKeyId
-    || sourceStorage.secretAccessKey !== inheritedStorage.secretAccessKey
+    sourceStorage.accessKeyId !== inheritedCredentials.accessKeyId
+    || sourceStorage.secretAccessKey !== inheritedCredentials.secretAccessKey
   ) {
     throw sparkConfigurationError(
       "Spark REST execution only supports the MinIO application credentials inherited by the worker.",

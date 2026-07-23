@@ -24,6 +24,7 @@ export type DashboardAssistantRequest = {
   mode: DashboardAssistantMode;
   pageId?: string | null;
   prompt: string;
+  selectedDatasetIds?: string[];
   selectedWidgetId?: string | null;
   widgetId?: string | null;
   widgets: DashboardAssistantWidgetContext[];

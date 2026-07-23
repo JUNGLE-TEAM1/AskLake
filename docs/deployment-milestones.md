@@ -21,8 +21,8 @@ PR merge to dev
 
 ## 전제 조건
 
-- `main`, `dev`, `pair1`, `pair2`, `pair3`는 protected branch다.
-- `dev` PR은 `pair1`, `pair2`, `pair3`에서만 들어갈 수 있다.
+- `main`과 `dev`는 protected branch다. 기존 pair branch 보호 여부는 repository ruleset을 따른다.
+- `dev` 변경은 승인된 task/work branch의 PR로만 들어가며 배포용 pair branch를 별도로 유지하지 않는다.
 - 배포 workflow는 `dev` 업데이트를 기준으로 한다.
 - 실제 AWS credential, domain, IP, secret 값은 문서나 repo에 기록하지 않는다.
 - 서버의 실제 `.env`는 EC2에만 둔다.
@@ -813,7 +813,7 @@ MONGO_URL=mongodb://...
 | CORS 문제 | frontend API 실패 | `BACKEND_CORS_ORIGINS` 고정 |
 | HTTPS 발급 실패 | 외부 접속 실패 | DNS/80/443 확인 |
 | empty preview | 데모 설득력 저하 | fixture sample rows 보장 |
-| branch policy 실패 | PR merge 불가 | `dev <- pair1|pair2|pair3` 준수 |
+| branch policy 실패 | PR merge 불가 | 승인된 task/work branch → `dev`, `dev` → `main` PR 흐름 준수 |
 | direct push 차단 | 배포 branch 갱신 실패 | PR 기반 흐름 준수 |
 
 ## Definition of Done

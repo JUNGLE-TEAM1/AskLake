@@ -13,7 +13,7 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
 import { EtlSectionHeader } from "../../components/etl/EtlSectionHeader";
 import { EtlStepHeader } from "../../components/etl/EtlStepHeader";
@@ -40,6 +40,25 @@ type RecordParsingResultRow = {
 
 type RecordParsingColumnDraft = RecordParsingDraft["columns"][number];
 
+const CLICK_EVENT_RECORD_SCHEMA_PRESET = [
+  { name: "event_time", inferredType: "Timestamp" },
+  { name: "event_id", inferredType: "String" },
+  { name: "user_id", inferredType: "String" },
+  { name: "session_id", inferredType: "String" },
+  { name: "event_type", inferredType: "String" },
+  { name: "product_id", inferredType: "String" },
+  { name: "page_url", inferredType: "String" },
+  { name: "device_type", inferredType: "String" },
+  { name: "referrer", inferredType: "String" },
+  { name: "properties.position", inferredType: "Integer" },
+] as const satisfies ReadonlyArray<Pick<RecordParsingColumnDraft, "name" | "inferredType">>;
+
+const DEMO_AI_INFERENCE_DELAY_MS = 1_000;
+
+function waitForDemoInference() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, DEMO_AI_INFERENCE_DELAY_MS));
+}
+
 export function RecordParsingPage({
   draft,
   onAction,
@@ -59,6 +78,7 @@ export function RecordParsingPage({
   const [preview, setPreview] = useState<RecordParsingPreviewResponse | null>(null);
   const [parsing, setParsing] = useState<RecordParsingDraft>(draft.recordParsing);
   const [loading, setLoading] = useState(false);
+  const [aiInferring, setAiInferring] = useState(false);
   const [error, setError] = useState("");
   const [rawSampleExpanded, setRawSampleExpanded] = useState(true);
   const [resultPreviewExpanded, setResultPreviewExpanded] = useState(true);
@@ -101,10 +121,11 @@ export function RecordParsingPage({
     void loadPreview(next);
   };
 
-  const updateColumn = (position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
-    const columns = parsing.columns.map((column) => column.position === position ? { ...column, ...patch } : column);
-    const nextParsing = { ...parsing, columns };
-    setParsing(nextParsing);
+  const updateColumn = useCallback((position: number, patch: Partial<RecordParsingDraft["columns"][number]>) => {
+    setParsing((current) => ({
+      ...current,
+      columns: current.columns.map((column) => column.position === position ? { ...column, ...patch } : column),
+    }));
     setPreview((current) => current ? {
       ...current,
       columns: current.columns.map((column, index) => index === position ? {
@@ -113,14 +134,20 @@ export function RecordParsingPage({
         targetName: patch.name ?? column.targetName,
         type: patch.inferredType ?? column.type,
       } : column),
-      recordParsing: nextParsing,
+      recordParsing: {
+        ...current.recordParsing,
+        columns: current.recordParsing.columns.map((column) => (
+          column.position === position ? { ...column, ...patch } : column
+        )),
+      },
     } : current);
-  };
+  }, []);
 
   const normalizedNames = parsing.columns.map((column) => normalizeTargetColumnName(column.name));
   const columnNamesValid = normalizedNames.every(Boolean) && new Set(normalizedNames).size === normalizedNames.length;
   const canApply = Boolean(preview?.canApply && columnNamesValid && parsing.columns.length === parsing.expectedFieldCount);
-  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = [
+  const firstSampleRow = preview?.sampleRows[0];
+  const fieldInferenceColumns: ColumnDef<RecordParsingColumnDraft>[] = useMemo(() => [
     {
       cell: ({ row }) => row.original.position + 1,
       header: "순서",
@@ -130,7 +157,7 @@ export function RecordParsingPage({
     {
       cell: ({ row }) => (
         <code className="record-parsing-code-cell">
-          {preview?.sampleRows[0]?.[row.original.position] || "-"}
+          {firstSampleRow?.[row.original.position] || "-"}
         </code>
       ),
       header: "샘플 값",
@@ -141,6 +168,7 @@ export function RecordParsingPage({
       cell: ({ row }) => (
         <Input
           aria-label={`${row.original.position + 1}번째 출력 컬럼명`}
+          disabled={aiInferring}
           value={row.original.name}
           onChange={(event) => updateColumn(row.original.position, { name: event.target.value })}
         />
@@ -152,6 +180,7 @@ export function RecordParsingPage({
     {
       cell: ({ row }) => (
         <NativeSelect
+          disabled={aiInferring}
           value={row.original.inferredType}
           onChange={(event) => updateColumn(row.original.position, {
             inferredType: event.target.value as RecordParsingColumnDraft["inferredType"],
@@ -164,7 +193,7 @@ export function RecordParsingPage({
       id: "inferred-type",
       meta: { widthClassName: "min-w-44" },
     },
-  ];
+  ], [aiInferring, firstSampleRow, updateColumn]);
   const invalidRowColumns: ColumnDef<RecordParsingInvalidRow>[] = [
     { accessorKey: "lineNumber", header: "원본 행", meta: { widthClassName: "w-28" } },
     { accessorKey: "expectedFieldCount", header: "예상", meta: { widthClassName: "w-24" } },
@@ -191,25 +220,66 @@ export function RecordParsingPage({
     meta: { widthClassName: "min-w-40" },
   }));
 
+  const applyRecommendedSchema = async () => {
+    if (aiInferring || loading) return;
+    if (!preview) {
+      onNotify("필드 미리보기가 준비된 뒤 다시 시도해 주세요.");
+      return;
+    }
+    if (
+      parsing.expectedFieldCount !== CLICK_EVENT_RECORD_SCHEMA_PRESET.length
+      || parsing.columns.length !== CLICK_EVENT_RECORD_SCHEMA_PRESET.length
+    ) {
+      onNotify(`현재 데모 자동 추론은 ${CLICK_EVENT_RECORD_SCHEMA_PRESET.length}개 필드 로그에만 적용할 수 있습니다.`);
+      return;
+    }
+
+    setAiInferring(true);
+    setError("");
+    try {
+      await waitForDemoInference();
+      const columns = parsing.columns.map((column, index) => ({
+        ...column,
+        ...CLICK_EVENT_RECORD_SCHEMA_PRESET[index],
+      }));
+      const nextParsing = { ...parsing, columns };
+      setParsing(nextParsing);
+      setPreview((current) => current ? {
+        ...current,
+        columns: current.columns.map((column, index) => ({
+          ...column,
+          sourceName: columns[index].name,
+          targetName: columns[index].name,
+          type: columns[index].inferredType,
+        })),
+        recordParsing: nextParsing,
+      } : current);
+      onNotify("AI 필드 자동 추론이 완료되었습니다.");
+    } finally {
+      setAiInferring(false);
+    }
+  };
+
   const applyAndContinue = () => {
     if (!preview || !canApply) {
       onNotify("필드 개수와 컬럼명을 확인한 뒤 다시 시도해 주세요.");
       return;
     }
     const columns = parsing.columns.map((column) => {
-      const name = normalizeTargetColumnName(column.name) || `field_${column.position + 1}`;
+      const sourceName = column.name.trim() || `field_${column.position + 1}`;
+      const targetName = normalizeTargetColumnName(sourceName);
       return {
         confidence: 90,
         included: false,
         nullable: false,
-        sourceName: name,
-        targetName: name,
+        sourceName,
+        targetName,
         type: column.inferredType,
       } satisfies SchemaColumnDraft;
     });
     const normalizedParsing: RecordParsingDraft = {
       ...parsing,
-      columns: parsing.columns.map((column) => ({ ...column, name: normalizeTargetColumnName(column.name) })),
+      columns: parsing.columns.map((column) => ({ ...column, name: column.name.trim() })),
       enabled: true,
     };
     onDraftChange({
@@ -231,7 +301,7 @@ export function RecordParsingPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions nextDisabled={!canApply || loading} split onPrev={onPrev} onNext={applyAndContinue} />}
+      actions={<CreationTopActions nextDisabled={!canApply || loading || aiInferring} split onPrev={onPrev} onNext={applyAndContinue} />}
     >
       <EtlStepHeader
         className="etl-step-standalone-header"
@@ -270,12 +340,14 @@ export function RecordParsingPage({
               <Button
                 className="record-parsing-ai-button"
                 data-testid="record-parsing-ai-button"
+                disabled={loading || aiInferring}
                 size="sm"
                 type="button"
                 variant="outline"
+                onClick={() => void applyRecommendedSchema()}
               >
                 <Sparkles aria-hidden="true" />
-                AI 필드 자동 추론
+                {aiInferring ? "AI 분석 중..." : "AI 필드 자동 추론"}
               </Button>
             )}
             icon={<SlidersHorizontal />}
@@ -287,7 +359,11 @@ export function RecordParsingPage({
                 <NativeSelect disabled value="whitespace"><option value="whitespace">연속 공백 (\\s+)</option></NativeSelect>
               </FormFieldGroup>
               <FormFieldGroup className="field" label="헤더 처리">
-                <NativeSelect value={parsing.header ? "first" : "none"} onChange={(event) => updateHeader(event.target.value === "first")}>
+                <NativeSelect
+                  disabled={aiInferring}
+                  value={parsing.header ? "first" : "none"}
+                  onChange={(event) => updateHeader(event.target.value === "first")}
+                >
                   <option value="none">헤더 없음</option>
                   <option value="first">첫 줄을 헤더로 사용</option>
                 </NativeSelect>

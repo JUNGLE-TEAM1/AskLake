@@ -1,5 +1,5 @@
-import type { CatalogDataset } from "../../../types";
-import { apiClient } from "../../../services/apiClient";
+import type { CatalogDataset, DashboardWidgetFilter, DashboardWidgetFilterValue } from "../../../types";
+import { apiClient, type ApiRequestOptions } from "../../../services/apiClient";
 
 type CatalogDatasetListResponse = {
   datasets: CatalogDataset[];
@@ -8,4 +8,38 @@ type CatalogDatasetListResponse = {
 export async function getDashboardCatalogDatasets(): Promise<CatalogDataset[]> {
   const response = await apiClient.get<CatalogDatasetListResponse | CatalogDataset[]>("/api/catalog/datasets");
   return Array.isArray(response) ? response : response.datasets;
+}
+
+export type DashboardFilterValueOption = {
+  label: string;
+  value: DashboardWidgetFilterValue;
+};
+
+type DashboardFilterValuesResponse = {
+  column: string;
+  datasetId: string;
+  truncated: boolean;
+  values: DashboardFilterValueOption[];
+};
+
+export async function getDashboardDatasetFilterValues(
+  datasetId: string,
+  input: {
+    column: string;
+    contextFilters?: DashboardWidgetFilter[];
+    limit?: number;
+    search?: string;
+  },
+  options: ApiRequestOptions = {},
+): Promise<DashboardFilterValuesResponse> {
+  return apiClient.post<DashboardFilterValuesResponse>(
+    `/api/catalog/datasets/${encodeURIComponent(datasetId)}/filter-values/query`,
+    {
+      column: input.column,
+      contextFilters: input.contextFilters ?? [],
+      limit: input.limit ?? 50,
+      search: input.search?.trim() || undefined,
+    },
+    options,
+  );
 }

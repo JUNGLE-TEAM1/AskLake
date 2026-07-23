@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -16,7 +17,12 @@ from app.core.errors import ApiError
 from app.core.observability import metrics_snapshot, reset_metrics_for_test
 from app.migrations.dashboard_schema import migrate_dashboard_schema
 from app.schemas.common import ErrorCode
-from app.schemas.dashboard import DashboardRuntimeWidgetType, DonutChartWidgetConfig
+from app.schemas.dashboard import (
+    AreaChartWidgetConfig,
+    DashboardRuntimeWidgetType,
+    DonutChartWidgetConfig,
+    LineChartWidgetConfig,
+)
 from app.schemas.trino import TrinoClientPage
 from app.services import dashboard_physical_data
 from app.services.dashboard_physical_data import (
@@ -29,6 +35,7 @@ from app.services.dashboard_physical_data import (
     execute_dashboard_query,
     preflight_dashboard_s3_segments,
     dashboard_widget_supports_incremental_merge,
+    merge_dashboard_aggregate_states,
 )
 from app.services.dashboard_runtime_service import (
     DASHBOARD_DATA_FORBIDDEN,
@@ -170,6 +177,39 @@ class FakeDashboardTrinoClient:
         raise AssertionError("fixture query should fit in one Trino page")
 
 
+class CaseMismatchedIcebergTrinoClient(FakeDashboardTrinoClient):
+    """Catalog uses title case while the materialized Iceberg fields are lowercase."""
+
+    def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+        self.queries.append(query)
+        if query.startswith("DESCRIBE"):
+            return TrinoClientPage(
+                columns=["Column", "Type"],
+                rows=[
+                    ["topic", "varchar"],
+                    ["partition", "bigint"],
+                    ["leader", "bigint"],
+                    ["_asklake_run_id", "varchar"],
+                ],
+                queryId="describe",
+            )
+        if "COUNT(*)" in query and "GROUP BY" not in query:
+            return TrinoClientPage(
+                columns=[DASHBOARD_VALUE_ALIAS], rows=[[10_000]], queryId="metric",
+            )
+        if "GROUP BY" in query:
+            return TrinoClientPage(
+                columns=["Topic", DASHBOARD_VALUE_ALIAS],
+                rows=[["reviews.raw", 10_000]],
+                queryId="bar-chart",
+            )
+        return TrinoClientPage(
+            columns=["Topic", "Partition", "Leader"],
+            rows=[["reviews.raw", 0, 0]],
+            queryId="table",
+        )
+
+
 class EndlessDashboardTrinoClient:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
@@ -252,6 +292,49 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertIn('GROUP BY "category"', client.queries[1])
         self.assertNotIn("GROUP BY ALL", client.queries[1])
         self.assertNotIn("_asklake_run_id", client.queries[1])
+
+    def test_iceberg_case_mismatched_catalog_columns_use_physical_sql_names(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["schema"] = [["Topic", "string"], ["Partition", "number"], ["Leader", "number"]]
+        client = CaseMismatchedIcebergTrinoClient()
+        session = DashboardDatasetQuerySession(dataset, trino_client=client)  # type: ignore[arg-type]
+        try:
+            metric = session.read_widget("metric", {"aggregation": "count"})
+            chart = session.read_widget("bar_chart", {
+                "aggregation": "count", "xKey": "Topic", "yKey": "Partition",
+            })
+            table = session.read_widget("table", {
+                "columns": ["Topic", "Partition", "Leader"], "sortKey": "Partition",
+            })
+        finally:
+            session.close()
+
+        self.assertEqual(metric["data"], [{DASHBOARD_VALUE_ALIAS: 10_000}])
+        self.assertEqual(chart["data"], [{"Topic": "reviews.raw", DASHBOARD_VALUE_ALIAS: 10_000}])
+        self.assertEqual(table["data"], [{"Topic": "reviews.raw", "Partition": 0, "Leader": 0}])
+        self.assertEqual(session.columns, {"Topic", "Partition", "Leader"})
+        self.assertIn('"topic" AS "Topic"', client.queries[2])
+        self.assertIn('GROUP BY "topic"', client.queries[2])
+        self.assertIn('"partition" AS "Partition"', client.queries[3])
+        self.assertIn('ORDER BY "partition" ASC', client.queries[3])
+
+    def test_iceberg_case_insensitive_physical_collision_is_rejected(self) -> None:
+        dataset = self.iceberg_dataset()
+        dataset["schema"] = [["Topic", "string"]]
+
+        class CollisionClient(CaseMismatchedIcebergTrinoClient):
+            def submit(self, query: str, **_kwargs) -> TrinoClientPage:
+                self.queries.append(query)
+                return TrinoClientPage(
+                    columns=["Column", "Type"],
+                    rows=[["Topic", "varchar"], ["topic", "varchar"]],
+                    queryId="describe",
+                )
+
+        with self.assertRaisesRegex(ApiError, "physical data could not be read") as raised:
+            DashboardDatasetQuerySession(dataset, trino_client=CollisionClient())  # type: ignore[arg-type]
+
+        self.assertIn("ambiguous case-insensitive column", str(raised.exception.details))
 
     def test_iceberg_aggregate_state_uses_trino_with_explicit_group_by(self) -> None:
         client = FakeDashboardTrinoClient()
@@ -448,20 +531,12 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             ],
         )
 
-    def test_only_additive_aggregations_are_incrementally_merged(self) -> None:
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "min", "valueKey": "amount"},
-        ))
-        self.assertFalse(dashboard_widget_supports_incremental_merge(
-            "metric",
-            {"aggregation": "max", "valueKey": "amount"},
-        ))
+    def test_mergeable_aggregations_are_incrementally_merged(self) -> None:
         self.assertFalse(dashboard_widget_supports_incremental_merge(
             "table",
             {"columns": ["amount"]},
         ))
-        for aggregation in ("count", "sum", "avg"):
+        for aggregation in ("count", "sum", "avg", "ratio", "min", "max"):
             with self.subTest(aggregation=aggregation):
                 self.assertTrue(dashboard_widget_supports_incremental_merge(
                     "metric",
@@ -471,6 +546,39 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             "metric",
             {"aggregation": "distinct", "valueKey": "order_id"},
         ))
+
+    def test_rolling_day_state_evicts_expired_buckets_without_full_scan(self) -> None:
+        current = {
+            "version": 1,
+            "widgetType": "line_chart",
+            "aggregation": "ratio",
+            "dimensionKeys": ["event_date"],
+            "valueConfigKey": "yKey",
+            "valueAlias": "conversion_rate_pct",
+            "windowDays": 30,
+            "windowDimensionKey": "event_date",
+            "rows": [{
+                "event_date": "2026-06-01T00:00:00",
+                "__asklake_state_count": 100,
+                "__asklake_state_sum": 5,
+            }],
+        }
+        delta = {
+            **current,
+            "rows": [{
+                "event_date": "2026-07-01T00:00:00",
+                "__asklake_state_count": 100,
+                "__asklake_state_sum": 7,
+            }],
+        }
+
+        merged = merge_dashboard_aggregate_states(current, delta)
+
+        self.assertIsNotNone(merged)
+        self.assertEqual(
+            [row["event_date"] for row in merged["rows"]],
+            ["2026-07-01T00:00:00"],
+        )
 
     def test_table_preview_is_sorted_and_capped_before_browser_response(self) -> None:
         with TemporaryDirectory() as directory:
@@ -500,6 +608,64 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
         self.assertEqual(result["data"][0], {"id": 505, "value": "value-505"})
         self.assertEqual(result["data"][-1], {"id": 6, "value": "value-6"})
         self.assertEqual(result["config"]["dataMode"], "server_preview")
+
+    def test_time_series_supports_minute_and_hour_buckets_and_keeps_latest_window(self) -> None:
+        line_config = LineChartWidgetConfig.model_validate({
+            "aggregation": "sum",
+            "color": {"colors": ["#2563eb"]},
+            "dateUnit": "minute",
+            "xKey": "event_time",
+            "yKey": "amount",
+        })
+        area_config = AreaChartWidgetConfig.model_validate({
+            "aggregation": "sum",
+            "color": {"colors": ["#2563eb"]},
+            "dateUnit": "hour",
+            "xKey": "event_time",
+            "yKey": "amount",
+        })
+        self.assertEqual(line_config.date_unit, "minute")
+        self.assertEqual(area_config.date_unit, "hour")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            start = datetime(2026, 7, 19)
+            rows = "\n".join(
+                f"{(start + timedelta(minutes=index)).isoformat()},1"
+                for index in range(505)
+            )
+            (root / "part.csv").write_text(
+                f"event_time,amount\nnot-a-timestamp,1\n{rows}\n",
+                encoding="utf-8",
+            )
+            dataset = SimpleNamespace(
+                id="catalog-dataset",
+                materialization_runs=[],
+                name="dashboard_time_series",
+                sample_rows=[],
+                storage_format="csv",
+                storage_location=str(root),
+            )
+            session = DashboardDatasetQuerySession(dataset)
+            try:
+                minute_result = session.read_widget(
+                    "line_chart",
+                    line_config.model_dump(by_alias=True, mode="json"),
+                )
+                hour_result = session.read_widget(
+                    "area_chart",
+                    area_config.model_dump(by_alias=True, mode="json"),
+                )
+            finally:
+                session.close()
+
+        self.assertEqual(len(minute_result["data"]), 500)
+        self.assertEqual(minute_result["data"][0]["event_time"], "2026-07-19T00:05:00")
+        self.assertEqual(minute_result["data"][-1]["event_time"], "2026-07-19T08:24:00")
+        self.assertTrue(all(row["event_time"] is not None for row in minute_result["data"]))
+        self.assertEqual(len(hour_result["data"]), 9)
+        self.assertEqual(hour_result["data"][0]["amount"], 60.0)
+        self.assertEqual(hour_result["data"][-1]["amount"], 25.0)
 
     def test_catalog_widgets_ignore_client_rows_but_bounded_query_snapshots_remain_supported(self) -> None:
         service = DashboardRuntimeService(SimpleNamespace(), FakeCatalogRepository())
@@ -713,6 +879,20 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
             {**base_config, "aggregation": "avg"},
             base_actor,
         )
+        changed_filter = dashboard_batch_cache_identity(
+            base_payload,
+            DashboardRuntimeWidgetType.BAR_CHART,
+            {
+                **base_config,
+                "filters": [{
+                    "id": "category-filter",
+                    "column": "category",
+                    "operator": "eq",
+                    "value": "Wearable Technology",
+                }],
+            },
+            base_actor,
+        )
         changed_actor = dashboard_batch_cache_identity(
             base_payload,
             DashboardRuntimeWidgetType.BAR_CHART,
@@ -722,6 +902,7 @@ class DashboardPhysicalWidgetDataTests(unittest.TestCase):
 
         self.assertNotEqual(base.cache_key, changed_dataset.cache_key)
         self.assertNotEqual(base.cache_key, changed_config.cache_key)
+        self.assertNotEqual(base.cache_key, changed_filter.cache_key)
         self.assertNotEqual(base.cache_key, changed_actor.cache_key)
 
     def test_runtime_widget_returns_a_stable_error_when_physical_storage_is_unavailable(self) -> None:

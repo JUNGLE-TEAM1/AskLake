@@ -98,9 +98,80 @@ class DashboardClickHouseV2QueryTests(unittest.TestCase):
         self.assertIn("serving_dataset_id = 'joined'", query)
         self.assertIn("pipeline_version_id = 'pipeline-v7'", query)
         self.assertIn("JSON_VALUE(payload", query)
+        self.assertIn("toFloat64OrNull", query)
         self.assertIn("LIMIT 25", query)
         self.assertNotIn(" FINAL", query)
         self.assertEqual(options["timeout_seconds"], 3)
+
+    def test_active_raw_ingest_binding_is_scoped_to_its_kafka_topic(self) -> None:
+        raw = dataset_payload()
+        raw["physicalBindings"] = [{
+            "role": "serving",
+            "engine": "clickhouse",
+            "status": "active",
+            "bindingEpoch": 7,
+            "versionId": "kiv2-job",
+            "pipelineVersionId": "kiv2-job",
+            "database": "asklake_realtime_v2",
+            "table": "raw_events_v2_current",
+        }]
+        raw["streamingSource"] = {"topic": "events.v2"}
+        clickhouse = _ClickHouse()
+        session = DashboardDatasetQuerySession(
+            raw,
+            clickhouse_client=clickhouse,  # type: ignore[arg-type]
+            expected_binding_epoch=7,
+        )
+        try:
+            session.read_widget("table", {"columns": ["region"], "limit": 25})
+        finally:
+            session.close()
+
+        query, _options = clickhouse.queries[0]
+        self.assertIn("raw_events_v2_current", query)
+        self.assertIn("kafka_topic = 'events.v2'", query)
+        self.assertNotIn("serving_dataset_id", query)
+
+    def test_active_raw_ingest_binding_projects_whitespace_log_fields(self) -> None:
+        raw = dataset_payload()
+        raw["physicalBindings"] = [{
+            "role": "serving",
+            "engine": "clickhouse",
+            "status": "active",
+            "bindingEpoch": 7,
+            "versionId": "kiv2-job",
+            "pipelineVersionId": "kiv2-job",
+            "database": "asklake_realtime_v2",
+            "table": "raw_events_v2_current",
+        }]
+        raw["streamingSource"] = {
+            "topic": "logs.v2",
+            "recordParsing": {
+                "enabled": True,
+                "delimiterKind": "whitespace",
+                "delimiterPattern": r"\s+",
+                "expectedFieldCount": 2,
+                "columns": [
+                    {"name": "region", "position": 0},
+                    {"name": "amount", "position": 1},
+                ],
+            },
+        }
+        clickhouse = _ClickHouse()
+        session = DashboardDatasetQuerySession(
+            raw,
+            clickhouse_client=clickhouse,  # type: ignore[arg-type]
+            expected_binding_epoch=7,
+        )
+        try:
+            session.read_widget("table", {"columns": ["region", "amount"], "limit": 25})
+        finally:
+            session.close()
+
+        query, _options = clickhouse.queries[0]
+        self.assertIn("splitByRegexp('\\\\s+'", query)
+        self.assertIn("trimBoth(payload)", query)
+        self.assertNotIn("JSON_VALUE(payload", query)
 
     def test_stale_or_ambiguous_active_binding_fails_closed(self) -> None:
         with self.assertRaises(ApiError) as stale:

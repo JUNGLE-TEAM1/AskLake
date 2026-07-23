@@ -15,8 +15,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
-import type { RealtimeConnectionState } from "../../../services/realtimeEvents";
-import type { DashboardLiveDataState } from "./dashboardLiveRefresh";
+import type { DashboardAutoRefreshStatus } from "./dashboardAutoRefresh";
 
 type DashboardPageTab = {
   id: string;
@@ -29,6 +28,9 @@ type RuntimeNotice = {
 };
 
 export function DashboardRuntimeShell({
+  autoRefreshEnabled,
+  autoRefreshError,
+  autoRefreshStatus,
   children,
   datasetSidebar,
   datasetSidebarOpen = false,
@@ -42,6 +44,7 @@ export function DashboardRuntimeShell({
   mode,
   notice,
   onAddPage,
+  onAutoRefreshChange,
   onCloseSharePanel,
   onDeletePage,
   onOpenDraft,
@@ -55,13 +58,14 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar,
   onToggleInspector,
   pages,
-  realtimeConnectionState,
-  realtimeDataState,
   renamingPageId,
   selectedPageId,
   shareLink,
   title,
 }: {
+  autoRefreshEnabled: boolean;
+  autoRefreshError?: string | null;
+  autoRefreshStatus: DashboardAutoRefreshStatus;
   children: ReactNode;
   datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
@@ -75,6 +79,7 @@ export function DashboardRuntimeShell({
   mode: "published" | "draft";
   notice?: RuntimeNotice | null;
   onAddPage?: () => void;
+  onAutoRefreshChange: (enabled: boolean) => void;
   onCloseSharePanel?: () => void;
   onDeletePage?: (pageId: string) => void;
   onOpenDraft?: () => void;
@@ -88,8 +93,6 @@ export function DashboardRuntimeShell({
   onToggleDatasetSidebar?: () => void;
   onToggleInspector?: () => void;
   pages: DashboardPageTab[];
-  realtimeConnectionState?: RealtimeConnectionState;
-  realtimeDataState?: DashboardLiveDataState;
   renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
@@ -141,35 +144,23 @@ export function DashboardRuntimeShell({
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
+        autoRefreshEnabled={autoRefreshEnabled}
+        autoRefreshError={autoRefreshError}
+        autoRefreshStatus={autoRefreshStatus}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
         mode={mode}
-        realtimeConnectionState={realtimeConnectionState}
-        realtimeDataState={realtimeDataState}
         title={title}
         onOpenDraft={onOpenDraft}
+        onAutoRefreshChange={onAutoRefreshChange}
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
         onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
-      {mode === "published" && realtimeDataState && realtimeDataState !== "fresh" ? (
-        <Alert
-          aria-live="polite"
-          className={`asklake-dashboard-runtime-notice ${realtimeDataState === "degraded" ? "error" : ""}`}
-          role="status"
-          variant={realtimeDataState === "degraded" ? "destructive" : "default"}
-        >
-          <AlertDescription>
-            {realtimeDataState === "degraded"
-              ? "최신 데이터 확인에 실패했습니다. 마지막으로 확인된 결과를 표시하고 있으며 수동 새로고침이 필요할 수 있습니다."
-              : "실시간 동기화가 지연되어 마지막으로 확인된 결과를 표시하고 있습니다."}
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {notice && (
         <Alert
           className={`asklake-dashboard-runtime-notice ${notice.tone}`}
@@ -177,6 +168,15 @@ export function DashboardRuntimeShell({
           variant={notice.tone === "error" ? "destructive" : "default"}
         >
           <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      )}
+      {autoRefreshEnabled && autoRefreshError && (
+        <Alert
+          className="asklake-dashboard-runtime-notice error"
+          role="status"
+          variant="destructive"
+        >
+          <AlertDescription>{autoRefreshError}</AlertDescription>
         </Alert>
       )}
       <Sheet

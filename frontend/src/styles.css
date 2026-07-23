@@ -13,6 +13,7 @@
 @import "./styles/responsive.css";
 @import "./styles/landing.css";
 @import "./styles/access-control.css";
+@import "./styles/typography.css";
 
 .page-title h1,
 .dashboard-header h1 {

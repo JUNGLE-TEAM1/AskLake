@@ -1,0 +1,72 @@
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asklake-backend-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-workloads.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+data:
+  APP_ENV: {{ .Values.global.environment | quote }}
+  AWS_REGION: {{ .Values.global.awsRegion | quote }}
+  BACKEND_CORS_ORIGINS: {{ .Values.backend.config.corsOrigins | quote }}
+  BOOTSTRAP_ADMIN_EMAIL: {{ .Values.backend.config.bootstrapAdminEmail | quote }}
+  AUTH_LEGACY_DEMO_USERS_ENABLED: "false"
+  AUTH_PUBLIC_SIGNUP_ENABLED: "false"
+  AI_QUERY_PROVIDER: {{ .Values.backend.config.aiQueryProvider | quote }}
+  ASKLAKE_OBJECT_STORAGE_PROVIDER: {{ .Values.backend.config.objectStorageProvider | quote }}
+  ASKLAKE_RAW_BUCKET: {{ .Values.backend.config.rawBucket | quote }}
+  ASKLAKE_SPARK_OUTPUT_BUCKET: {{ .Values.backend.config.outputBucket | quote }}
+  ASKLAKE_SPARK_OUTPUT_PREFIX: {{ .Values.backend.config.outputPrefix | quote }}
+  S3_ALLOWED_BUCKETS: {{ .Values.backend.config.allowedBuckets | quote }}
+  S3_FORCE_PATH_STYLE: "false"
+  ASKLAKE_KAFKA_BROKER: {{ .Values.backend.config.kafkaBroker | quote }}
+  ASKLAKE_KAFKA_AUTH_MODE: {{ .Values.backend.config.kafkaAuthMode | quote }}
+  ASKLAKE_KAFKA_ALLOWED_TOPIC_PREFIXES: {{ .Values.backend.config.kafkaAllowedTopicPrefixes | quote }}
+  ASKLAKE_SPARK_RUNNER: {{ .Values.backend.config.sparkRunner | quote }}
+  ASKLAKE_SPARK_EXECUTION_LEASE_SECONDS: {{ .Values.backend.config.sparkExecutionLeaseSeconds | quote }}
+  ASKLAKE_SPARK_RESOURCE_PLANNER_MODE: {{ .Values.backend.config.sparkResourcePlannerMode | quote }}
+  ASKLAKE_SPARK_RESOURCE_TARGET_PARTITION_BYTES: {{ .Values.backend.config.sparkResourceTargetPartitionBytes | int64 | quote }}
+  ASKLAKE_SPARK_RESOURCE_TARGET_PARTITIONS_PER_EXECUTOR: {{ .Values.backend.config.sparkResourceTargetPartitionsPerExecutor | quote }}
+  ASKLAKE_SPARK_RESOURCE_MIN_EXECUTORS: {{ .Values.backend.config.sparkResourceMinExecutors | quote }}
+  ASKLAKE_SPARK_RESOURCE_MAX_EXECUTORS: {{ .Values.backend.config.sparkResourceMaxExecutors | quote }}
+  ASKLAKE_SPARK_KUBERNETES_NAMESPACE: {{ .Values.namespace | quote }}
+  ASKLAKE_SPARK_KUBERNETES_IMAGE: {{ printf "%s@%s" .Values.sparkApplication.image.repository .Values.sparkApplication.image.digest | quote }}
+  ASKLAKE_SPARK_KUBERNETES_SERVICE_ACCOUNT: {{ .Values.sparkApplication.serviceAccountName | quote }}
+  ASKLAKE_SPARK_KUBERNETES_RUNTIME_SECRET: {{ .Values.sparkApplication.runtimeSecret.name | quote }}
+  ASKLAKE_SPARK_KUBERNETES_JDBC_URL_KEY: {{ .Values.sparkApplication.runtimeSecret.keys.jdbcUrl | quote }}
+  ASKLAKE_SPARK_KUBERNETES_JDBC_USER_KEY: {{ .Values.sparkApplication.runtimeSecret.keys.jdbcUser | quote }}
+  ASKLAKE_SPARK_KUBERNETES_JDBC_PASSWORD_KEY: {{ .Values.sparkApplication.runtimeSecret.keys.jdbcPassword | quote }}
+  ASKLAKE_SPARK_KUBERNETES_MAIN_APPLICATION_FILE: {{ .Values.sparkApplication.mainApplicationFile | quote }}
+  ASKLAKE_SPARK_RUN_TIMEOUT_SECONDS: {{ .Values.sparkApplication.timeoutSeconds | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_CORES: {{ .Values.sparkApplication.driver.cores | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_REQUEST: {{ .Values.sparkApplication.driver.resources.requests.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_CORE_LIMIT: {{ .Values.sparkApplication.driver.resources.limits.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY: {{ .Values.sparkApplication.driver.memory | quote }}
+  ASKLAKE_SPARK_KUBERNETES_DRIVER_MEMORY_OVERHEAD: {{ .Values.sparkApplication.driver.memoryOverhead | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_INSTANCES: {{ .Values.sparkApplication.executor.instances | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORES: {{ .Values.sparkApplication.executor.cores | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_REQUEST: {{ .Values.sparkApplication.executor.resources.requests.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_CORE_LIMIT: {{ .Values.sparkApplication.executor.resources.limits.cpu | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY: {{ .Values.sparkApplication.executor.memory | quote }}
+  ASKLAKE_SPARK_KUBERNETES_EXECUTOR_MEMORY_OVERHEAD: {{ .Values.sparkApplication.executor.memoryOverhead | quote }}
+  ASKLAKE_SPARK_MSK_IAM_AUTH_JAR: {{ .Values.sparkApplication.kafka.iamAuthJar | quote }}
+  ASKLAKE_CONTINUOUS_CONTROL_PLANE: {{ .Values.backend.realtime.apiControlPlane | quote }}
+  CONTINUOUS_CONTROL_PLANE: "disabled"
+  CONTINUOUS_SQL_JOIN_ENABLED: {{ .Values.backend.realtime.continuousSqlJoinEnabled | quote }}
+  DASHBOARD_SYNC_MODE: {{ .Values.backend.realtime.dashboardSyncMode | quote }}
+  REALTIME_EVENTS_ENABLED: {{ .Values.backend.realtime.realtimeEventsEnabled | quote }}
+  AIRFLOW_API_BASE_URL: {{ .Values.backend.config.airflowApiBaseUrl | quote }}
+  AIRFLOW_DAG_ID: {{ .Values.backend.config.airflowDagId | quote }}
+  TRINO_ENABLED: {{ .Values.backend.config.trinoEnabled | quote }}
+  TRINO_BASE_URL: {{ .Values.backend.config.trinoBaseUrl | quote }}
+  TRINO_CATALOG: {{ .Values.backend.config.trinoCatalog | quote }}
+  TRINO_SCHEMA: {{ .Values.backend.config.trinoSchema | quote }}
+  TRINO_USER: {{ .Values.backend.config.trinoUser | quote }}
+  TRINO_ICEBERG_WAREHOUSE_BUCKET: {{ .Values.backend.config.trinoWarehouseBucket | quote }}
+  TRINO_ICEBERG_WAREHOUSE_PREFIX: {{ .Values.backend.config.trinoWarehousePrefix | quote }}
+  TRINO_RESULT_STORAGE_BUCKET: {{ .Values.backend.config.trinoResultStorageBucket | quote }}
+  TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET: "false"
+  TRINO_TLS_CA_FILE: "/var/run/asklake/secrets/trino-ca.pem"
+{{- end }}

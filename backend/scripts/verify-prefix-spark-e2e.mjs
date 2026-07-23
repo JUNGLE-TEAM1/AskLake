@@ -286,8 +286,8 @@ function loadExpectedDataset() {
   } catch (error) {
     throw new Error(`Synthetic-commerce manifest could not be read: ${manifestPath}: ${error.message}`);
   }
-  if (manifest?.generator_version !== 2 || !manifest.run_id) {
-    throw new Error(`Synthetic-commerce v2 manifest is required: ${manifestPath}`);
+  if (![2, 3].includes(manifest?.generator_version) || !manifest.run_id) {
+    throw new Error(`Synthetic-commerce v2 or v3 manifest is required: ${manifestPath}`);
   }
   const dataset = manifest.datasets?.click_events;
   if (!dataset || !Array.isArray(dataset.files) || dataset.files.length < 2) {

@@ -9,6 +9,12 @@ import {
   type RealtimeConnectionState,
   type RealtimeEventEnvelope,
 } from "../src/services/realtimeEvents.ts";
+import {
+  dashboardAutoRefreshPreferenceKey,
+  dashboardAutoRefreshStatusCopy,
+  readDashboardAutoRefreshPreference,
+  writeDashboardAutoRefreshPreference,
+} from "../src/pages/dashboard/runtime/dashboardAutoRefresh.ts";
 
 
 class FakeEventSource {
@@ -32,6 +38,25 @@ class FakeEventSource {
     (this.listeners.get(type) ?? []).forEach((listener) => listener(message as unknown as Event));
   }
 }
+
+test("Dashboard auto-refresh preference is scoped by user and Dashboard and defaults off", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+
+  assert.equal(readDashboardAutoRefreshPreference("user-a", "dash-1", storage), false);
+  writeDashboardAutoRefreshPreference("user-a", "dash-1", true, storage);
+  assert.equal(readDashboardAutoRefreshPreference("user-a", "dash-1", storage), true);
+  assert.equal(readDashboardAutoRefreshPreference("user-b", "dash-1", storage), false);
+  assert.notEqual(
+    dashboardAutoRefreshPreferenceKey("user-a", "dash-1"),
+    dashboardAutoRefreshPreferenceKey("user-a", "dash-2"),
+  );
+  assert.equal(dashboardAutoRefreshStatusCopy("active"), "자동 갱신 중");
+  assert.equal(dashboardAutoRefreshStatusCopy("manual"), "수동 새로고침");
+});
 
 
 function realtimeEvent(

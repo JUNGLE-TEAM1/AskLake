@@ -1,7 +1,7 @@
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi import Response
 
@@ -19,14 +19,23 @@ from app.realtime.infrastructure.kafka_connect_gateway import ConnectorProbe
 
 REALTIME_ENV_KEYS = {
     "DASHBOARD_SYNC_MODE",
+    "DASHBOARD_AUTO_REFRESH_ENABLED",
     "REALTIME_EVENTS_ENABLED",
     "CONTINUOUS_SQL_JOIN_ENABLED",
+    "CONTINUOUS_SQL_SERVING_MODE",
     "CLICKHOUSE_CONTINUOUS_JOIN_ENABLED",
     "CLICKHOUSE_REALTIME_V2_ENABLED",
     "KAFKA_CONNECT_SINK_ENABLED",
     "CLICKHOUSE_REALTIME_CONSUMER_OWNER",
     "KAFKA_CONNECT_URL",
     "KAFKA_CONNECT_CONNECTOR_NAME",
+    "CLICKHOUSE_V2_URL",
+    "CLICKHOUSE_V2_DATABASE",
+    "CLICKHOUSE_V2_MATERIALIZER_USER",
+    "CLICKHOUSE_V2_MATERIALIZER_PASSWORD",
+    "CLICKHOUSE_V2_READER_USER",
+    "CLICKHOUSE_V2_READER_PASSWORD",
+    "CLICKHOUSE_V2_TLS_CA_FILE",
     "LATEST_STATIC_PER_BATCH_ENABLED",
     "STATIC_CHANGE_BACKFILL_ENABLED",
 }
@@ -44,8 +53,10 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
         state = resolve_realtime_feature_state(settings_with_env())
 
         self.assertEqual(state.dashboard_sync_mode, "polling")
+        self.assertFalse(state.dashboard_auto_refresh_enabled)
         self.assertFalse(state.realtime_events_enabled)
         self.assertFalse(state.continuous_sql_join_enabled)
+        self.assertEqual(state.continuous_sql_serving_mode, "iceberg")
         self.assertFalse(state.clickhouse_continuous_join_enabled)
         self.assertFalse(state.clickhouse_realtime_v2_enabled)
         self.assertFalse(state.kafka_connect_sink_enabled)
@@ -170,12 +181,18 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             CLICKHOUSE_PASSWORD="never-return-this-clickhouse-secret",
         )
         response = Response()
+        clickhouse = Mock()
+        clickhouse.ping.return_value = True
 
         with (
             patch("app.api.health.settings", configured),
             patch(
                 "app.api.health.RealtimeIngestService.probe",
                 return_value=ConnectorProbe(True, False, "UNREGISTERED", ()),
+            ),
+            patch(
+                "app.api.health.ClickHouseClient.realtime_v2_reader",
+                return_value=clickhouse,
             ),
         ):
             payload = realtime_health_check(response)
@@ -187,17 +204,20 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             payload["v2"],
             {
                 "enabled": True,
-                "ready": False,
-                "status": "degraded",
+                "ready": True,
+                "status": "ready",
                 "consumerOwner": "kafka_connect_v2",
                 "connector": {
                     "enabled": True,
                     "configured": True,
                     "state": "UNREGISTERED",
                     "taskStates": [],
+                    "workerReady": True,
                 },
+                "clickhouse": {"ready": True},
             },
         )
+        clickhouse.close.assert_called_once_with()
         encoded = json.dumps(payload)
         self.assertNotIn("connect.internal", encoded)
         self.assertNotIn("asklake-orders-v2", encoded)
@@ -251,6 +271,7 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
     def test_diagnostic_response_uses_resolved_state(self) -> None:
         configured = settings_with_env(
             DASHBOARD_SYNC_MODE="hybrid",
+            DASHBOARD_AUTO_REFRESH_ENABLED="true",
             REALTIME_EVENTS_ENABLED="true",
             CONTINUOUS_SQL_JOIN_ENABLED="true",
             CLICKHOUSE_CONTINUOUS_JOIN_ENABLED="true",
@@ -261,8 +282,10 @@ class RealtimeFeatureFlagTests(unittest.TestCase):
             response = get_realtime_feature_config(actor)
 
         self.assertEqual(response.dashboard_sync_mode, "hybrid")
+        self.assertTrue(response.dashboard_auto_refresh_enabled)
         self.assertTrue(response.realtime_events_enabled)
         self.assertTrue(response.continuous_sql_join_enabled)
+        self.assertEqual(response.continuous_sql_serving_mode, "iceberg")
         self.assertTrue(response.clickhouse_continuous_join_enabled)
         self.assertFalse(response.clickhouse_realtime_v2_enabled)
         self.assertFalse(response.kafka_connect_sink_enabled)

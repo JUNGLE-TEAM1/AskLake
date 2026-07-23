@@ -6,42 +6,33 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { EtlSectionHeader } from "@/components/etl/EtlSectionHeader";
 import { Panel } from "@/components/ui/panel";
-import type { QualityRuleDraft, SchemaColumnDraft } from "../../types";
+import type { QualityRuleDraft, SchemaColumnDraft, TransformStepDraft } from "../../types";
+import { buildSchemaResultPreviewModel, type SchemaPreviewModelRow } from "./schemaResultPreviewModel";
 
 type SchemaResultPreviewProps = {
   columns: SchemaColumnDraft[];
   qualityRules: QualityRuleDraft[];
   sampleRows: string[][];
+  transformSteps: TransformStepDraft[];
 };
 
 const COLLAPSED_ROW_COUNT = 3;
 const EXPANDED_ROW_LIMIT = 20;
 
-type SchemaPreviewRow = {
-  id: string;
-  result: ReturnType<typeof validatePreviewRow>;
-  values: string[];
-};
-
-export function SchemaResultPreview({ columns, qualityRules, sampleRows }: SchemaResultPreviewProps) {
+export function SchemaResultPreview({ columns, qualityRules, sampleRows, transformSteps }: SchemaResultPreviewProps) {
   const [expanded, setExpanded] = useState(false);
-  const outputColumns = useMemo(() => columns
-    .map((column, sourceIndex) => ({ column, sourceIndex }))
-    .filter(({ column }) => column.included !== false)
-    .sort((left, right) => (
-      (left.column.targetOrder ?? left.sourceIndex) - (right.column.targetOrder ?? right.sourceIndex)
-    )), [columns]);
-  const visibleRows = useMemo<SchemaPreviewRow[]>(() => sampleRows
-    .slice(0, expanded ? EXPANDED_ROW_LIMIT : COLLAPSED_ROW_COUNT)
-    .map((values, rowIndex) => ({
-      id: `schema-preview-${rowIndex}`,
-      result: validatePreviewRow(values, columns, qualityRules),
-      values,
-    })), [columns, expanded, qualityRules, sampleRows]);
-  const tableColumns = useMemo<ColumnDef<SchemaPreviewRow>[]>(() => {
-    const valueColumns: ColumnDef<SchemaPreviewRow>[] = outputColumns.map(({ column, sourceIndex }) => ({
+  const previewModel = useMemo(() => buildSchemaResultPreviewModel({
+    columns,
+    qualityRules,
+    sampleRows,
+    transformSteps,
+  }), [columns, qualityRules, sampleRows, transformSteps]);
+  const { outputColumns } = previewModel;
+  const visibleRows = previewModel.rows.slice(0, expanded ? EXPANDED_ROW_LIMIT : COLLAPSED_ROW_COUNT);
+  const tableColumns = useMemo<ColumnDef<SchemaPreviewModelRow>[]>(() => {
+    const valueColumns: ColumnDef<SchemaPreviewModelRow>[] = outputColumns.map(({ column }, outputIndex) => ({
       cell: ({ row }) => {
-        const value = row.original.values[sourceIndex];
+        const value = row.original.values[outputIndex];
         return <span title={value || "-"}>{formatPreviewValue(value)}</span>;
       },
       enableSorting: false,
@@ -51,9 +42,9 @@ export function SchemaResultPreview({ columns, qualityRules, sampleRows }: Schem
           <small>{column.type}</small>
         </span>
       ),
-      id: `${column.targetName || column.sourceName}-${sourceIndex}`,
+      id: `${column.targetName || column.sourceName}-${outputIndex}`,
     }));
-    const resultColumn: ColumnDef<SchemaPreviewRow> = {
+    const resultColumn: ColumnDef<SchemaPreviewModelRow> = {
       cell: ({ row }) => (
         <span className={row.original.result.issueCount > 0 ? "schema-preview-status warning" : "schema-preview-status success"}>
           {row.original.result.issueCount > 0 ? <AlertTriangle /> : null}
@@ -126,66 +117,4 @@ export function SchemaResultPreview({ columns, qualityRules, sampleRows }: Schem
 function formatPreviewValue(value: string | undefined) {
   if (value === undefined || value === null || value === "") return "-";
   return value;
-}
-
-function validatePreviewRow(row: string[], columns: SchemaColumnDraft[], qualityRules: QualityRuleDraft[]) {
-  let errorCount = 0;
-  let warningCount = 0;
-
-  qualityRules.filter((rule) => rule.enabled).forEach((rule) => {
-    const columnIndex = columns.findIndex((column) => (
-      column.targetName === rule.targetColumn || column.sourceName === rule.targetColumn
-    ));
-    if (columnIndex < 0) return;
-    const value = row[columnIndex] ?? "";
-    if (!failsRule(value, rule)) return;
-    if (rule.severity === "Error") errorCount += 1;
-    else warningCount += 1;
-  });
-
-  columns.forEach((column, columnIndex) => {
-    if (column.included === false || column.nullable !== false) return;
-    const hasExplicitRule = qualityRules.some((rule) => (
-      rule.enabled
-      && rule.validationType === "Not Null"
-      && (rule.targetColumn === column.targetName || rule.targetColumn === column.sourceName)
-    ));
-    if (!hasExplicitRule && isBlank(row[columnIndex])) errorCount += 1;
-  });
-
-  const issueCount = errorCount + warningCount;
-  return {
-    issueCount,
-    label: issueCount === 0
-      ? "통과"
-      : [errorCount ? `오류 ${errorCount}` : "", warningCount ? `경고 ${warningCount}` : ""].filter(Boolean).join(" · "),
-  };
-}
-
-function failsRule(value: string, rule: QualityRuleDraft) {
-  if (rule.validationType === "Not Null") return isBlank(value);
-  if (rule.validationType === "Range Check") {
-    const [min, max] = String(rule.params || "").split(",").map((item) => Number(item.trim()));
-    const numericValue = Number(value);
-    return !Number.isFinite(numericValue)
-      || (Number.isFinite(min) && numericValue < min)
-      || (Number.isFinite(max) && numericValue > max);
-  }
-  if (rule.validationType === "Accepted Values") {
-    const acceptedValues = String(rule.params || "").split(",").map((item) => item.trim()).filter(Boolean);
-    return acceptedValues.length > 0 && !acceptedValues.includes(value);
-  }
-  if (rule.validationType === "Regex Match") {
-    if (!rule.params) return false;
-    try {
-      return !new RegExp(rule.params).test(value);
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function isBlank(value: string | undefined) {
-  return value === undefined || value === null || value.trim() === "";
 }

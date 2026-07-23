@@ -241,12 +241,6 @@ CI에서는 다음처럼 흔들리지 않는 값을 검사한다.
 
 PR 1은 **Dashboard 전용 versioned migration/bootstrap**을 선택했다. Alembic을 저장소 전체에 도입하지는 않았다.
 
-- `dashboard_schema_migrations`에 `20260718_dashboard_card_runtime_v1` 적용 여부를 기록한다.
-- backend 시작 시와 `npm run migrate:dashboard-schema` 명령에서 아직 적용하지 않은 Dashboard migration만 실행한다.
-- PostgreSQL에서는 advisory lock으로 여러 backend instance가 동시에 같은 migration을 실행하지 않게 한다.
-- Dashboard 목록·runtime repository와 API 요청 경로에서는 schema DDL을 실행하지 않는다.
-- 이 방식은 Dashboard 카드와 draft runtime 범위만 다룬다. PostgreSQL 전체, ClickHouse 등 모든 DB의 migration 정책을 정하는 Alembic 도입은 별도 이슈에서 결정한다.
-
 검증 명령은 아래와 같다.
 
 ```bash

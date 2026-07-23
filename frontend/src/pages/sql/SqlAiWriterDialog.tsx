@@ -1,8 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
-import {
-  SqlPageIcon as Check,
-  SqlPageIcon as Sparkles,
-} from "./SqlPageIcon";
+import { Check, Send, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
@@ -25,7 +22,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { QueryAiSuggestion } from "../../services/queryAiService";
-import { NessieMark } from "./NessieMark";
 import styles from "./SqlAiWriterDialog.module.css";
 
 export type SqlAiWriterDialogProps = {
@@ -109,6 +105,35 @@ function SqlAiSuggestionEvidence({ suggestion }: { suggestion: QueryAiSuggestion
   );
 }
 
+function SqlAiJoinEvidence({ suggestion }: { suggestion: QueryAiSuggestion }) {
+  const evidence = suggestion.joinEvidence ?? [];
+  if (evidence.length === 0) return null;
+
+  return (
+    <Bubble className="max-w-full" variant="tinted">
+      <BubbleContent className="max-w-full text-sm">
+        <strong>JOIN 근거</strong>
+        {evidence.map((relationship, index) => {
+          const sourceLabel = relationship.source.startsWith("semantic_model:")
+            ? "게시된 시맨틱 관계"
+            : "Catalog 검증 고유키";
+          const predicates = relationship.columnPairs.map((pair) => (
+            `${relationship.leftDatasetName}.${pair.leftColumn} = ${relationship.rightDatasetName}.${pair.rightColumn}`
+          )).join(" AND ");
+          return (
+            <span
+              className="mt-1 block text-muted-foreground"
+              key={`${relationship.leftDatasetId}-${relationship.rightDatasetId}-${index}`}
+            >
+              {index + 1}. {predicates} · {sourceLabel} · {relationship.relationshipType}
+            </span>
+          );
+        })}
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
 export function SqlAiWriterDialog({
   disabled = false,
   error,
@@ -164,7 +189,7 @@ export function SqlAiWriterDialog({
     <Popover onOpenChange={onOpenChange} open={open}>
       <PopoverTrigger asChild>
         <Button disabled={disabled} size="sm" type="button" variant="outline">
-          Nessie로 SQL 작성
+          <Sparkles data-icon="inline-start" /> AI로 SQL 작성
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -178,54 +203,56 @@ export function SqlAiWriterDialog({
         side="bottom"
         sideOffset={8}
       >
-        <BubbleGroup aria-live="polite">
-          <Bubble className="max-w-full" variant="tinted">
-            <BubbleContent className="max-w-full">
-              <span className="flex items-center gap-2 font-semibold">
-                <NessieMark className="size-5" /> Nessie
-              </span>
-              <span className="mt-1 block text-sm">
+        <div className="grid gap-3 rounded-xl border border-blue-200 bg-blue-50/70 p-3">
+          <div className="flex items-start gap-3">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-600">
+              <Sparkles aria-hidden="true" className="size-4 text-white" />
+            </span>
+            <span className="min-w-0">
+              <strong className="block text-sm font-semibold text-blue-950">AI</strong>
+              <span className="mt-0.5 block text-sm leading-5 text-slate-600">
                 선택한 데이터셋을 기준으로 자연어 요청을 SQL 초안으로 바꿔드릴게요.
               </span>
-            </BubbleContent>
-          </Bubble>
-        </BubbleGroup>
+            </span>
+          </div>
 
-        <Collapsible open={promptOpen}>
-          <CollapsibleContent>
-            <FieldGroup>
-              <Field data-invalid={Boolean(error)}>
-                <FieldLabel htmlFor="sql-query-ai-popover-prompt">어떤 SQL이 필요한가요?</FieldLabel>
-                <Textarea
-                  aria-invalid={Boolean(error)}
-                  disabled={disabled || pending}
-                  id="sql-query-ai-popover-prompt"
-                  onChange={(event) => onPromptChange(event.target.value)}
-                  onKeyDown={handlePromptKeyDown}
-                  placeholder="예: 최근 30일 동안 카테고리별 주문 금액 합계를 큰 순서대로 보여줘"
-                  ref={promptRef}
-                  rows={4}
-                  value={prompt}
-                />
-                {disabled && (
-                  <FieldDescription>
-                    먼저 분석 테이블에서 데이터셋을 선택해 주세요.
-                  </FieldDescription>
-                )}
-                {error && <FieldError role="alert">{error}</FieldError>}
-              </Field>
-              <Button
-                className="w-full"
-                disabled={generateDisabled}
-                onClick={() => void onGenerate()}
-                type="button"
-                variant="secondary"
-              >
-                <Sparkles data-icon="inline-start" /> SQL 초안 생성
-              </Button>
-            </FieldGroup>
-          </CollapsibleContent>
-        </Collapsible>
+          <Collapsible open={promptOpen}>
+            <CollapsibleContent>
+              <FieldGroup className="gap-3">
+                <Field data-invalid={Boolean(error)}>
+                  <FieldLabel htmlFor="sql-query-ai-popover-prompt">어떤 SQL이 필요한가요?</FieldLabel>
+                  <Textarea
+                    aria-invalid={Boolean(error)}
+                    className="border-blue-200 bg-white"
+                    disabled={disabled || pending}
+                    id="sql-query-ai-popover-prompt"
+                    onChange={(event) => onPromptChange(event.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder="예: 최근 30일 동안 카테고리별 주문 금액 합계를 큰 순서대로 보여줘"
+                    ref={promptRef}
+                    rows={4}
+                    value={prompt}
+                  />
+                  {disabled && (
+                    <FieldDescription>
+                      먼저 분석 테이블에서 데이터셋을 선택해 주세요.
+                    </FieldDescription>
+                  )}
+                  {error && <FieldError role="alert">{error}</FieldError>}
+                </Field>
+                <Button
+                  className="w-full disabled:bg-slate-300 disabled:text-white disabled:opacity-100"
+                  disabled={generateDisabled}
+                  onClick={() => void onGenerate()}
+                  type="button"
+                  variant="primary"
+                >
+                  <Send data-icon="inline-start" /> SQL 초안 생성
+                </Button>
+              </FieldGroup>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
 
         {pending && (
           <div className="outline-none" ref={pendingStatusRef} role="status" tabIndex={-1}>
@@ -240,6 +267,7 @@ export function SqlAiWriterDialog({
         {suggestion?.sql && (
           <BubbleGroup aria-live="polite">
             <SqlAiSuggestionSummary suggestion={suggestion} />
+            <SqlAiJoinEvidence suggestion={suggestion} />
             <SqlAiSuggestionEvidence suggestion={suggestion} />
             <Bubble className="w-full max-w-full" variant="outline">
               <BubbleContent className="w-full max-w-full p-0">

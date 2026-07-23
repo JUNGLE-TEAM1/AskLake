@@ -87,21 +87,9 @@ export function WidgetFrame({
       }}
     >
       <header>
-        <div className="asklake-widget-heading">
-          <span>{widgetTypeLabel(widget)}</span>
-          <h2>{widget.title || "제목 없는 위젯"}</h2>
-        </div>
+        <span className="asklake-widget-type">{widgetTypeLabel(widget)}</span>
+        <h2 className="asklake-widget-title">{widget.title || "제목 없는 위젯"}</h2>
         <div className="asklake-widget-header-actions">
-          {liveRevision !== null && (
-            <span
-              aria-live="polite"
-              className="asklake-widget-live-status"
-              title={`데이터셋 revision ${liveRevision.toLocaleString("ko-KR")}까지 반영됨`}
-            >
-              <span aria-hidden="true" className="asklake-widget-live-dot" />
-              실시간
-            </span>
-          )}
           {editable && selected && (
             <Button
               aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
@@ -137,6 +125,10 @@ export function WidgetFrame({
             </Button>
           </div>
         ) : (
+        <div
+          className="asklake-widget-refresh-content"
+          key={`widget-content-${widget.id}-${liveRevision ?? "static"}`}
+        >
           <WidgetRenderer
             assistantContext={assistantContext}
             widget={widget}
@@ -144,6 +136,7 @@ export function WidgetFrame({
             onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
             onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
           />
+        </div>
         )}
       </div>
       {isAiWorking && (

@@ -1,0 +1,39 @@
+{{- if and .Values.enabled .Values.backend.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "asklake-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fastapi
+  minReplicas: {{ .Values.backend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backend.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.backend.autoscaling.behavior.scaleUp.stabilizationWindowSeconds }}
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: {{ .Values.backend.autoscaling.behavior.scaleUp.pods }}
+          periodSeconds: {{ .Values.backend.autoscaling.behavior.scaleUp.periodSeconds }}
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.backend.autoscaling.behavior.scaleDown.stabilizationWindowSeconds }}
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: {{ .Values.backend.autoscaling.behavior.scaleDown.pods }}
+          periodSeconds: {{ .Values.backend.autoscaling.behavior.scaleDown.periodSeconds }}
+{{- end }}
