@@ -73,100 +73,44 @@ class TrinoSqlJobService:
         command: str,
         actor: ActorContext,
         *,
+        run_id: str | None = None,
         auto_refresh_context: dict[str, Any] | None = None,
     ) -> TrinoSqlJobCommandResult:
         self._require_job(job)
-        if self.repository.get_active_trino_job_run_payload(job.id) is not None:
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "SQL Job already has an active Trino run",
-                status.HTTP_409_CONFLICT,
-                {"jobId": job.id},
-            )
-
-        recipe = self._recipe(job)
-        compiled_query, _ = self.query_access.compile_for_actor(
-            base_dataset_id=str(recipe["baseDatasetId"]),
-            reference_dataset_ids=string_list(recipe.get("referenceDatasetIds")),
-            query=str(recipe["query"]),
-            actor=actor,
-            api_path=f"/api/etl/jobs/{job.id}/commands",
+        resolved_run_id = run_id or f"run_sql_{uuid4().hex[:16]}"
+        job = self._lock_submission_job(job.id)
+        self._require_submission_slot(
+            job,
+            resolved_run_id,
+            auto_refresh_context,
         )
-        target_info = dict_value(recipe.get("target"))
-        dataset_id = str(target_info.get("datasetId") or job.dataset_id or "").strip()
-        dataset_name = str(target_info.get("datasetName") or job.target or "").strip()
-        if not dataset_id or not dataset_name:
-            raise ApiError(
-                ErrorCode.VALIDATION_ERROR,
-                "SQL Job target Dataset is incomplete",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-
-        run_id = f"run_sql_{uuid4().hex[:16]}"
-        target = build_query_engine_table(dataset_name, f"{dataset_id}:{run_id}", self.settings).model_copy(
-            update={"partition_columns": string_list(target_info.get("partitionColumns"))}
+        run, payload, target = self._reserve_submission(
+            job,
+            actor,
+            resolved_run_id,
+            auto_refresh_context,
         )
-        self._ensure_target_schema(target)
-        statement = build_versioned_ctas(target, compiled_query)
-        started_at = utc_now()
 
         try:
-            page = self.client.submit(statement)
+            self._ensure_target_schema(target)
         except ApiError as exc:
-            run = self._new_run(job, run_id, started_at, target)
-            run.status = "failed"
-            run.ended_at = utc_now()
-            run.duration = duration_label(started_at, run.ended_at)
-            run.failed_stage = "Iceberg table 생성"
-            run.error_summary = exc.message
-            run.airflow_state = "failed"
-            run.task_states = task_states("failed", error=exc.message)
-            self._apply_terminal_job_state(job, run, "failed", target)
-            job.dag_steps = dag_steps("failed", error=exc.message)
-            job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_id: job.dag_steps}
-            etl_repository.save_command_result(self.repository.db, job, run)
-            self._record("submit_failed", job, run_id, actor, result="failed", error_code=str(exc.code))
+            rejected_payload = {
+                **payload,
+                "error": {"code": str(exc.code), "message": exc.message},
+                "status": "failed",
+                "submissionOutcome": "rejected",
+            }
+            self._finalize(rejected_payload, "failed", exc.message)
             raise
 
-        trino_run_status = trino_status(page)
-        run = self._new_run(job, run_id, started_at, target)
-        run.status = etl_run_status(trino_run_status)
-        run.airflow_state = trino_run_status
-        run.task_states = task_states(trino_run_status, page)
-        job.status = "running" if trino_run_status not in TERMINAL_TRINO_STATUSES else terminal_job_status(trino_run_status)
-        job.last_run = started_at
-        job.last_state = "Trino Iceberg materialization 실행 중"
-        job.progress = progress_payload(page, trino_run_status)
-        job.dag_steps = dag_steps(trino_run_status, page)
-        job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_id: job.dag_steps}
+        try:
+            page = self.client.submit(str(payload["query"]))
+        except ApiError as exc:
+            self._persist_unknown_submission(job, run, payload, actor, exc)
+            raise
 
-        payload = {
-            "autoRefresh": auto_refresh_context,
-            "baseDatasetId": str(recipe["baseDatasetId"]),
-            "compiledQuery": compiled_query,
-            "datasetId": dataset_id,
-            "engine": "trino-job-materialization",
-            "error": error_payload(page),
-            "etlRunId": run_id,
-            "jobId": job.id,
-            "query": statement,
-            "rawStats": page.raw_stats,
-            "recipeQuery": str(recipe["query"]),
-            "referenceDatasetIds": string_list(recipe.get("referenceDatasetIds")),
-            "runId": run_id,
-            "status": trino_run_status,
-            "submittedAt": started_at,
-            "submittedByName": actor.name,
-            "submittedByUserId": actor.id,
-            "target": target.model_dump(by_alias=True, mode="json"),
-            "trinoNextUri": page.next_uri,
-            "trinoQueryId": page.query_id or None,
-            "updateCount": page.update_count,
-        }
-        self.repository.db.add(job)
-        self.repository.db.add(run)
-        self.repository.save_run_payload(payload)
-        self._record(f"{command}_submitted", job, run_id, actor)
+        trino_run_status = self._persist_accepted_submission(job, run, payload, page)
+        self._record(f"{command}_submitted", job, resolved_run_id, actor)
 
         if trino_run_status in TERMINAL_TRINO_STATUSES:
             return self._finalize(payload, trino_run_status, page.error.message if page.error else None)
@@ -184,6 +128,13 @@ class TrinoSqlJobService:
             )
         run_id = str(payload["runId"])
         next_uri = str(payload.get("trinoNextUri") or "").strip()
+        if payload.get("submissionOutcome") == "pending" and not next_uri:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Trino submission is still awaiting its coordinator response",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "runId": run_id},
+            )
         cancelled_payload = dict(payload)
         cancelled_payload.update({"status": "cancelled", "trinoNextUri": None})
         if not self.repository.cancel_trino_run_payload(cancelled_payload):
@@ -254,31 +205,44 @@ class TrinoSqlJobService:
 
     def _apply_progress(self, payload: dict[str, Any], page: TrinoClientPage, run_status: str) -> None:
         run_id = str(payload["etlRunId"])
-        job = etl_repository.get_job(self.repository.db, str(payload["jobId"]))
+        job = etl_repository.get_job_for_update(self.repository.db, str(payload["jobId"]))
         run = etl_repository.get_run_model(self.repository.db, run_id)
         if job is None or run is None:
             return
         run.status = etl_run_status(run_status)
         run.airflow_state = run_status
         run.task_states = task_states(run_status, page)
-        job.status = "running"
-        job.last_state = "Trino Iceberg materialization 실행 중"
-        job.progress = progress_payload(page, run_status)
-        job.dag_steps = dag_steps(run_status, page)
-        job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_id: job.dag_steps}
-        self.repository.db.add(job)
+        if self._auto_refresh_claim_matches(job, payload):
+            job.status = "running"
+            job.last_state = "Trino Iceberg materialization 실행 중"
+            job.progress = progress_payload(page, run_status)
+            job.dag_steps = dag_steps(run_status, page)
+            job.dag_steps_by_run_id = {
+                **(job.dag_steps_by_run_id or {}),
+                run_id: job.dag_steps,
+            }
+            self.repository.db.add(job)
         self.repository.db.add(run)
         self.repository.db.commit()
 
     def _finalize(self, payload: dict[str, Any], run_status: str, error_message: str | None) -> TrinoSqlJobCommandResult:
-        job = etl_repository.get_job(self.repository.db, str(payload["jobId"]))
+        job = etl_repository.get_job_for_update(self.repository.db, str(payload["jobId"]))
         run = etl_repository.get_run_model(self.repository.db, str(payload["etlRunId"]))
         if job is None or run is None:
             raise ApiError(ErrorCode.NOT_FOUND, "SQL Job run state was not found", status.HTTP_404_NOT_FOUND)
         target = QueryEngineTableRef.model_validate(payload["target"])
         final_status = run_status
+        auto_refresh_claim_matches = self._auto_refresh_claim_matches(job, payload)
+        already_published = (
+            not auto_refresh_claim_matches
+            and run_status == "succeeded"
+            and self._catalog_source_run_matches(payload)
+        )
+        if not auto_refresh_claim_matches and not already_published:
+            final_status = "failed"
+            error_message = "Revision refresh execution claim is no longer active."
         schema_rows: list[list[object]] = []
-        if run_status == "succeeded":
+        if final_status == "succeeded" and not already_published:
             try:
                 schema_rows = self.registration.describe_table(target)
             except Exception as exc:
@@ -293,24 +257,28 @@ class TrinoSqlJobService:
         run.error_summary = "" if final_status == "succeeded" else (error_message or "Trino SQL Job 실행 실패")
         run.airflow_state = final_status
         run.task_states = task_states(final_status, error=run.error_summary or None)
-        self._apply_terminal_job_state(job, run, final_status, target)
-        job.dag_steps = dag_steps(final_status, error=run.error_summary or None)
-        job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run.run_id: job.dag_steps}
+        if auto_refresh_claim_matches:
+            self._apply_terminal_job_state(job, run, final_status, target)
+            job.dag_steps = dag_steps(final_status, error=run.error_summary or None)
+            job.dag_steps_by_run_id = {
+                **(job.dag_steps_by_run_id or {}),
+                run.run_id: job.dag_steps,
+            }
 
         dataset: CatalogDataset | None = None
         if final_status == "succeeded":
-            self._apply_auto_refresh_result(job, payload, succeeded=True)
-            dataset_payload = self._catalog_payload(job, run, payload, target, schema_rows)
-            self.repository.db.add(job)
+            if auto_refresh_claim_matches:
+                self._apply_auto_refresh_result(job, payload, succeeded=True)
+                dataset_payload = self._catalog_payload(job, run, payload, target, schema_rows)
+                self.repository.db.add(job)
+                self.catalog_repository.save_dataset_payload(dataset_payload, commit=False)
             self.repository.db.add(run)
-            self.catalog_repository.save_dataset_payload(dataset_payload)
-            dataset = etl_repository.get_dataset_schema_by_id(self.repository.db, str(payload["datasetId"]))
         else:
-            self._apply_auto_refresh_result(job, payload, succeeded=False, error_message=run.error_summary)
+            if auto_refresh_claim_matches:
+                self._apply_auto_refresh_result(job, payload, succeeded=False, error_message=run.error_summary)
             self._drop_unpublished_target(payload)
             self.repository.db.add(job)
             self.repository.db.add(run)
-            self.repository.db.commit()
 
         final_payload = dict(payload)
         final_payload.update({
@@ -320,7 +288,17 @@ class TrinoSqlJobService:
             "status": final_status,
             "trinoNextUri": None,
         })
-        self.repository.save_run_payload(final_payload)
+        try:
+            self.repository.save_run_payload(final_payload, commit=False)
+            self.repository.db.commit()
+        except Exception:
+            self.repository.db.rollback()
+            raise
+        if final_status == "succeeded":
+            dataset = etl_repository.get_dataset_schema_by_id(
+                self.repository.db,
+                str(payload["datasetId"]),
+            )
         self._record(
             final_status,
             job,
@@ -335,18 +313,54 @@ class TrinoSqlJobService:
             run=etl_repository.run_to_schema(run),
         )
 
+    @staticmethod
     def _apply_auto_refresh_result(
-        self,
         job: ETLJobModel,
         payload: dict[str, Any],
         *,
         succeeded: bool,
         error_message: str | None = None,
+    ) -> bool:
+        context = payload.get("autoRefresh")
+        if not isinstance(context, dict):
+            return True
+        if not TrinoSqlJobService._auto_refresh_claim_matches(job, payload):
+            return False
+        source_revision = int(context.get("sourceRevision") or 0)
+        config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+        state_value = config.get("revisionRefresh")
+        state = dict(state_value) if isinstance(state_value, dict) else {}
+        completed_state = {
+            key: value
+            for key, value in state.items()
+            if key not in {"claimId", "claimedAt"}
+        }
+        job.continuous_config = {
+            **config,
+            "revisionRefresh": {
+                **completed_state,
+                "lastError": None if succeeded else (error_message or "Trino SQL Job 실행 실패"),
+                "latestSourceRevision": max(int(state.get("latestSourceRevision") or 0), source_revision),
+                "processingRunId": None,
+                "processingSourceRevision": None,
+                "publishedSourceRevision": max(int(state.get("publishedSourceRevision") or 0), source_revision) if succeeded else int(state.get("publishedSourceRevision") or 0),
+                "sourceDatasetId": str(context.get("sourceDatasetId") or state.get("sourceDatasetId") or ""),
+                "status": "dashboard_ready" if succeeded else "failed",
+            },
+        }
+        return True
+
+    @staticmethod
+    def _mark_auto_refresh_submission_unknown(
+        job: ETLJobModel,
+        payload: dict[str, Any],
+        error_message: str,
     ) -> None:
         context = payload.get("autoRefresh")
         if not isinstance(context, dict):
             return
-        source_revision = int(context.get("sourceRevision") or 0)
+        if not TrinoSqlJobService._auto_refresh_claim_matches(job, payload):
+            return
         config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
         state_value = config.get("revisionRefresh")
         state = dict(state_value) if isinstance(state_value, dict) else {}
@@ -354,14 +368,46 @@ class TrinoSqlJobService:
             **config,
             "revisionRefresh": {
                 **state,
-                "lastError": None if succeeded else (error_message or "Trino SQL Job 실행 실패"),
-                "latestSourceRevision": max(int(state.get("latestSourceRevision") or 0), source_revision),
-                "processingSourceRevision": None,
-                "publishedSourceRevision": max(int(state.get("publishedSourceRevision") or 0), source_revision) if succeeded else int(state.get("publishedSourceRevision") or 0),
-                "sourceDatasetId": str(context.get("sourceDatasetId") or state.get("sourceDatasetId") or ""),
-                "status": "dashboard_ready" if succeeded else "failed",
+                "lastError": error_message,
+                "status": "failed",
             },
         }
+
+    def _catalog_source_run_matches(self, payload: dict[str, Any]) -> bool:
+        dataset = self.catalog_repository.get_dataset_payload(str(payload["datasetId"]))
+        return bool(
+            dataset
+            and str(dataset.get("sourceRunId") or "").strip()
+            == str(payload.get("runId") or payload.get("etlRunId") or "").strip()
+        )
+
+    @staticmethod
+    def _auto_refresh_claim_matches(job: ETLJobModel, payload: dict[str, Any]) -> bool:
+        context = payload.get("autoRefresh")
+        if not isinstance(context, dict):
+            config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+            state_value = config.get("revisionRefresh")
+            state = dict(state_value) if isinstance(state_value, dict) else {}
+            return int(state.get("processingSourceRevision") or 0) <= 0
+        source_revision = int(context.get("sourceRevision") or 0)
+        config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+        state_value = config.get("revisionRefresh")
+        state = dict(state_value) if isinstance(state_value, dict) else {}
+        if source_revision <= 0 or int(state.get("processingSourceRevision") or 0) != source_revision:
+            return False
+
+        claim_id = str(context.get("claimId") or "").strip()
+        state_claim_id = str(state.get("claimId") or "").strip()
+        if state_claim_id and claim_id != state_claim_id:
+            return False
+        if claim_id and not state_claim_id:
+            return False
+
+        run_id = str(payload.get("runId") or payload.get("etlRunId") or "").strip()
+        processing_run_id = str(state.get("processingRunId") or "").strip()
+        if processing_run_id and run_id != processing_run_id:
+            return False
+        return True
 
     def _catalog_payload(
         self,
@@ -466,6 +512,161 @@ class TrinoSqlJobService:
             "totalRuns": f"{len(runs)}회",
         }
 
+    def _reserve_submission(
+        self,
+        job: ETLJobModel,
+        actor: ActorContext,
+        run_id: str,
+        auto_refresh_context: dict[str, Any] | None,
+    ) -> tuple[ETLRunModel, dict[str, Any], QueryEngineTableRef]:
+        recipe = self._recipe(job)
+        compiled_query, _ = self.query_access.compile_for_actor(
+            base_dataset_id=str(recipe["baseDatasetId"]),
+            reference_dataset_ids=string_list(recipe.get("referenceDatasetIds")),
+            query=str(recipe["query"]),
+            actor=actor,
+            api_path=f"/api/etl/jobs/{job.id}/commands",
+        )
+        target_info = dict_value(recipe.get("target"))
+        dataset_id = str(target_info.get("datasetId") or job.dataset_id or "").strip()
+        dataset_name = str(target_info.get("datasetName") or job.target or "").strip()
+        if not dataset_id or not dataset_name:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "SQL Job target Dataset is incomplete",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        target = build_query_engine_table(
+            dataset_name,
+            f"{dataset_id}:{run_id}",
+            self.settings,
+        ).model_copy(
+            update={"partition_columns": string_list(target_info.get("partitionColumns"))}
+        )
+        started_at = utc_now()
+        run = self._new_run(job, run_id, started_at, target)
+        job.status = "running"
+        job.last_run = started_at
+        job.last_state = "Trino Iceberg materialization 제출 중"
+        job.progress = {"label": "Trino 요청 제출 중", "value": 5}
+        job.dag_steps = dag_steps("queued")
+        job.dag_steps_by_run_id = {
+            **(job.dag_steps_by_run_id or {}),
+            run_id: job.dag_steps,
+        }
+        payload = {
+            "autoRefresh": auto_refresh_context,
+            "baseDatasetId": str(recipe["baseDatasetId"]),
+            "compiledQuery": compiled_query,
+            "datasetId": dataset_id,
+            "engine": "trino-job-materialization",
+            "error": None,
+            "etlRunId": run_id,
+            "finalized": False,
+            "jobId": job.id,
+            "query": build_versioned_ctas(target, compiled_query),
+            "rawStats": {},
+            "recipeQuery": str(recipe["query"]),
+            "referenceDatasetIds": string_list(recipe.get("referenceDatasetIds")),
+            "runId": run_id,
+            "status": "queued",
+            "submissionOutcome": "pending",
+            "submittedAt": started_at,
+            "submittedByName": actor.name,
+            "submittedByUserId": actor.id,
+            "target": target.model_dump(by_alias=True, mode="json"),
+            "trinoNextUri": None,
+            "trinoQueryId": None,
+            "updateCount": None,
+        }
+        # This commit is the safety boundary before the external CTAS request.
+        self.repository.db.add(job)
+        self.repository.db.add(run)
+        self.repository.save_run_payload(payload)
+        return run, payload, target
+
+    def _persist_unknown_submission(
+        self,
+        job: ETLJobModel,
+        run: ETLRunModel,
+        payload: dict[str, Any],
+        actor: ActorContext,
+        error: ApiError,
+    ) -> None:
+        run.status = "running"
+        run.duration = "확인 필요"
+        run.failed_stage = "Trino 제출 결과 확인"
+        run.error_summary = (
+            "Trino가 요청을 수락했는지 확인할 수 없어 자동 재실행을 중단했습니다. "
+            f"{error.message}"
+        )
+        run.airflow_state = "unknown"
+        run.task_states = task_states("running", error=run.error_summary)
+        if self._auto_refresh_claim_matches(job, payload):
+            job.status = "running"
+            job.last_state = "Trino 제출 결과 확인 필요"
+            job.progress = {"label": "중복 방지를 위해 재실행 중단", "value": 5}
+            self._mark_auto_refresh_submission_unknown(job, payload, run.error_summary)
+            job.dag_steps = dag_steps("running", error=run.error_summary)
+            job.dag_steps_by_run_id = {
+                **(job.dag_steps_by_run_id or {}),
+                run.run_id: job.dag_steps,
+            }
+        unknown_payload = {
+            **payload,
+            "error": {
+                "code": "TRINO_SUBMISSION_OUTCOME_UNKNOWN",
+                "message": run.error_summary,
+            },
+            "status": "submission_unknown",
+            "submissionOutcome": "unknown",
+        }
+        self.repository.db.add(job)
+        self.repository.db.add(run)
+        self.repository.save_run_payload(unknown_payload)
+        self._record(
+            "submit_unknown",
+            job,
+            run.run_id,
+            actor,
+            result="failed",
+            error_code="TRINO_SUBMISSION_OUTCOME_UNKNOWN",
+        )
+
+    def _persist_accepted_submission(
+        self,
+        job: ETLJobModel,
+        run: ETLRunModel,
+        payload: dict[str, Any],
+        page: TrinoClientPage,
+    ) -> str:
+        run_status = trino_status(page)
+        run.status = etl_run_status(run_status)
+        run.airflow_state = run_status
+        run.task_states = task_states(run_status, page)
+        job.status = "running" if run_status not in TERMINAL_TRINO_STATUSES else terminal_job_status(run_status)
+        job.last_run = str(payload["submittedAt"])
+        job.last_state = "Trino Iceberg materialization 실행 중"
+        job.progress = progress_payload(page, run_status)
+        job.dag_steps = dag_steps(run_status, page)
+        job.dag_steps_by_run_id = {
+            **(job.dag_steps_by_run_id or {}),
+            run.run_id: job.dag_steps,
+        }
+        payload.update({
+            "error": error_payload(page),
+            "rawStats": page.raw_stats,
+            "status": run_status,
+            "submissionOutcome": "accepted",
+            "trinoNextUri": page.next_uri,
+            "trinoQueryId": page.query_id or None,
+            "updateCount": page.update_count,
+        })
+        self.repository.db.add(job)
+        self.repository.db.add(run)
+        self.repository.save_run_payload(payload)
+        return run_status
+
     def _new_run(self, job: ETLJobModel, run_id: str, started_at: str, target: QueryEngineTableRef) -> ETLRunModel:
         return ETLRunModel(
             run_id=run_id,
@@ -519,6 +720,66 @@ class TrinoSqlJobService:
             raise ApiError(ErrorCode.CONFLICT, "Trino query runtime is not enabled", status.HTTP_409_CONFLICT)
         if job.job_kind != "trino_sql_materialization":
             raise ApiError(ErrorCode.INVALID_JOB_STATE, "Job is not a Trino SQL Job", status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    def _lock_submission_job(self, job_id: str) -> ETLJobModel:
+        job = etl_repository.get_job_for_update(self.repository.db, job_id)
+        if job is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "SQL Job was not found",
+                status.HTTP_404_NOT_FOUND,
+                {"jobId": job_id},
+            )
+        self.repository.db.refresh(job, with_for_update=True)
+        return job
+
+    def _require_submission_slot(
+        self,
+        job: ETLJobModel,
+        run_id: str,
+        auto_refresh_context: dict[str, Any] | None,
+    ) -> None:
+        unfinalized = self.repository.get_unfinalized_trino_job_run_payload(job.id)
+        if unfinalized is not None:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "SQL Job has a Trino run whose publication is not finalized",
+                status.HTTP_409_CONFLICT,
+                {
+                    "jobId": job.id,
+                    "runId": unfinalized.get("runId"),
+                    "status": unfinalized.get("status"),
+                },
+            )
+
+        claim_probe = {
+            "autoRefresh": auto_refresh_context,
+            "runId": run_id,
+        }
+        if auto_refresh_context is not None:
+            if self._auto_refresh_claim_matches(job, claim_probe):
+                return
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Revision refresh execution claim is no longer active",
+                status.HTTP_409_CONFLICT,
+                {"jobId": job.id, "runId": run_id},
+            )
+
+        config = job.continuous_config if isinstance(job.continuous_config, dict) else {}
+        state_value = config.get("revisionRefresh")
+        state = dict(state_value) if isinstance(state_value, dict) else {}
+        if int(state.get("processingSourceRevision") or 0) > 0:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "SQL Job has a revision refresh awaiting finalization",
+                status.HTTP_409_CONFLICT,
+                {
+                    "jobId": job.id,
+                    "runId": state.get("processingRunId"),
+                    "sourceRevision": state.get("processingSourceRevision"),
+                },
+            )
 
     @staticmethod
     def _recipe(job: ETLJobModel) -> dict[str, Any]:

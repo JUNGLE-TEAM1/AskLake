@@ -21,7 +21,12 @@ class CatalogReaderPort(Protocol):
 
 
 class CatalogWriterPort(CatalogReaderPort, Protocol):
-    def save_dataset_payload(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def save_dataset_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]: ...
 
 
 CatalogPort = CatalogWriterPort

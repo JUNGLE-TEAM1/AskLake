@@ -7,6 +7,7 @@ MODULES = (
     "tests.test_continuous_sql_planner",
     "tests.test_continuous_sql_runtime_performance",
     "tests.test_continuous_sql_runtime_contract",
+    "tests.test_trino_sql_auto_refresh_state",
 )
 
 

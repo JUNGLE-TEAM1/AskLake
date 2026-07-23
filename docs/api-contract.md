@@ -7,7 +7,7 @@ Total output lines: 4298
 
 ## 일반 Trino SQL Job의 Kafka revision 자동 갱신
 
-`job_kind=trino_sql_materialization`인 Job의 Base와 reference Dataset 전체에 `relationMode=streaming`이 정확히 1개이고 static Dataset이 1개 이상이면 backend worker가 자동 갱신 대상으로 취급한다. 새 `dataset_freshness.latest_revision`마다 기존 Job run과 같은 Trino materialization을 내부 제출한다. 내구 상태는 `continuousConfig.revisionRefresh`에 저장하며 `publishedSourceRevision`은 결과 table 검증과 Catalog 공개가 성공한 뒤에만 전진한다. 실패 시 기존 Catalog Dataset mapping은 유지된다.
+`job_kind=trino_sql_materialization`인 Job의 Base와 reference Dataset 전체에 `relationMode=streaming`이 정확히 1개이고 static Dataset이 1개 이상이면 backend worker가 자동 갱신 대상으로 취급한다. 새 `dataset_freshness.latest_revision`은 기존 Job run과 같은 Trino materialization으로 내부 제출하되 한 Job의 Run은 직렬로만 실행한다. 내구 상태는 `continuousConfig.revisionRefresh`에 저장하며 내부 `claimId`, `claimedAt`, `processingRunId`, `processingSourceRevision`이 현재 실행을 식별한다. CTAS 외부 요청 전에 같은 `processingRunId`의 unfinalized SQL Run reservation을 commit한다. 이 reservation 또는 claim이 남아 있으면 자동 실행과 수동 `run`/`retry`를 모두 거절한다. Trino payload가 terminal이 된 것만으로 다음 실행을 허용하지 않는다. 같은 claim의 결과 table 검증, Catalog 공개, Run `finalized` 표시와 `publishedSourceRevision` 전진이 한 DB transaction으로 확정된 다음 worker cycle에서만 후속 revision을 제출한다. 늦게 도착한 다른 claim/Run/revision 결과는 현재 Job이나 Catalog를 변경하지 못한다. 제출 결과가 불명확하면 `submissionOutcome=unknown`, `finalized=false` reservation과 기존 Gold를 유지한 채 fail closed한다. 확정된 실패 시 기존 Catalog Dataset mapping은 유지된다.
 
 이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
 프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
@@ -4343,7 +4343,7 @@ Dataset-revision Job response에는 다음 `refreshState`가 항상 포함된다
 }
 ```
 
-`status`는 `idle | running | failed | catalog_ready | dashboard_ready`다. backend reconciliation만 refresh claim을 획득하며 같은 Job에서 동시에 하나의 revision만 처리한다. claim owner가 사라지면 `CONTINUOUS_SQL_REFRESH_CLAIM_SECONDS` 이후 회수할 수 있다. Dataset-revision runner의 Trino 결과는 기존 Gold에 누적 append하지 않고 새 Iceberg snapshot으로 replace하며 Catalog `rows`도 최신 snapshot 행 수를 사용한다. Trino 실행 또는 새 Gold 검증이 실패하면 `publishedSourceRevision`과 기존 Catalog 연결을 유지하고 다음 reconciliation에서 같은 source revision을 재시도한다.
+`status`는 `idle | running | failed | catalog_ready | dashboard_ready`다. backend reconciliation만 refresh claim을 획득하며 같은 Job에서 동시에 하나의 revision만 처리한다. claim의 내부 identity는 public `refreshState`에 노출하지 않는다. terminal SQL payload는 아직 완료 조건이 아니며 matching 결과의 검증, Catalog 공개, Run finalization, revision cursor 갱신이 원자적으로 commit되어 claim이 해제된 뒤에만 후속 revision을 처리한다. durable Run 증거가 있는 동안에는 claim 시간이 지나도 중복 제출하지 않으며, claim ID·Run ID·source revision이 다른 stale 결과는 publication과 claim 해제가 모두 거절된다. 모든 CTAS는 외부 요청 전에 durable reservation을 만들기 때문에, reservation 없이 owner가 사라진 claim만 `CONTINUOUS_SQL_REFRESH_CLAIM_SECONDS` 이후 안전하게 회수할 수 있다. `submissionOutcome=unknown` reservation은 자동 회수하지 않는다. Dataset-revision runner의 Trino 결과는 기존 Gold에 누적 append하지 않고 새 Iceberg snapshot으로 replace하며 Catalog `rows`도 최신 snapshot 행 수를 사용한다. 확정된 Trino 실행 또는 새 Gold 검증 실패는 `publishedSourceRevision`과 기존 Catalog 연결을 유지하고 다음 reconciliation에서 같은 source revision을 재시도한다.
 
 SQL 분석 frontend는 create 응답의 stopped Job을 먼저 보존하고 별도 `start` command를 한 번 전송한다. start 요청 또는 observed failure는 durable create 결과를 삭제하지 않으며 `Continuous SQL Job은 생성됐지만 시작에 실패`한 상태로 안내한다. create 실패와 start 실패는 서로 다른 audit action을 사용한다.
 

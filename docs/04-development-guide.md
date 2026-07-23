@@ -3,7 +3,7 @@ Total output lines: 2679
 
 # 04. Development Guide
 
-> Kafka revision 기반 SQL 자동 갱신은 API server가 아니라 `app.continuous_worker`에서 실행된다. 로컬 검증 시 Kafka continuous worker와 Trino collector를 함께 실행하고, `etl_jobs.continuous_config.revisionRefresh.publishedSourceRevision`이 Catalog 공개 성공 뒤에만 증가하는지 확인한다.
+> Kafka revision 기반 SQL 자동 갱신은 API server가 아니라 `app.continuous_worker`에서 실행된다. 로컬 검증 시 Kafka continuous worker와 Trino collector를 함께 실행하고, CTAS 요청 전에 unfinalized SQL Run reservation이 commit되는지와 terminal SQL payload와 collector finalization 사이에도 `etl_jobs.continuous_config.revisionRefresh.processingRunId`가 유지되는지 확인한다. matching Run의 Catalog 공개·`finalized` marker·`publishedSourceRevision`이 한 transaction으로 확정된 뒤에만 processing claim이 비워지고 다음 worker cycle에서 후속 revision이 시작되어야 한다. Trino 제출 응답을 잃은 reservation은 자동 또는 수동 재실행을 허용하지 않는다.
 
 > RAG/OpenSearch/embedding worker는 2026-07-20에 제품과 Compose runtime에서 제거됐다. 이 문서의 이후 RAG 실행·검증 절은 과거 이력이며 실행하지 않는다.
 
@@ -12,6 +12,8 @@ AI Gateway 로컬 실행과 backend/MCP 검증 명령은 [ai-gateway-mcp-rollout
 이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
 
 EKS와 EC2 배포는 모두 `dev`를 source branch로 사용하고 각 release는 실제 배포한 exact SHA를 receipt에 남긴다. 두 환경의 배포 시점이 다르면 SHA는 다를 수 있다. EC2는 Spark/Iceberg 기본값과 opt-in ClickHouse V2/Kafka Connect 프로필을 보존하고, EKS는 Realtime V1-only 프로필만 사용한다. 환경별 차이는 별도 브랜치가 아니라 profile/values로 관리하며, active Continuous owner는 항상 하나만 허용한다.
+
+revision 기반 Trino SQL 직렬화 변경은 `asklake-web`의 `trino-result-collector`와 `asklake-realtime-v1`의 `realtime-v1-worker`가 함께 소유한다. EKS rollout 완료 판정에는 같은 승인된 Backend image receipt의 digest가 두 Deployment에 모두 적용됐다는 증거가 필요하다. Collector만 교체하거나 worker만 교체한 상태에서는 중복 실행 방지 배포가 완료된 것으로 보지 않는다.
 
 ## 1) 로컬 실행
 
@@ -1581,6 +1583,8 @@ cd ..
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
 git diff --check
 ```
+
+`verify:continuous-sql-contract`에는 일반 Trino SQL Job의 revision 직렬화 회귀가 포함된다. 같은 source revision의 terminal-but-unfinalized payload가 남은 상태에서 sync를 두 번 호출해도 submit은 한 번뿐이어야 한다. CTAS client 호출 시점에는 다른 DB session에서도 pending reservation이 보여야 하고, 제출 결과가 불명확하면 claim과 unfinalized reservation이 모두 남아야 한다. 자동 claim 중 수동 실행과 수동 Run finalization 중 자동 실행도 거절해야 한다. matching finalization은 Catalog payload, Run `finalized` marker와 claim 해제를 단일 commit으로 저장해야 하며, 이전 claim의 늦은 완료는 새 Job 상태나 Catalog mapping을 바꾸지 않아야 한다.
 
 STACK-04 PR smoke:
 
